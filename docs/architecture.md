@@ -51,14 +51,18 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 `TerminalWorkspace` is a C++ `QQuickItem` exposed to QML. QML owns only the
 application chrome and dialogs. Each tab owns a recursive binary tree whose
 leaves are `TerminalPane` objects; internal nodes describe horizontal or
-vertical 50/50 splits. Only the current tab's panes are visible. The active
-pane supplies the tab title and receives toolbar and directional-focus actions.
+vertical splits with mutable ratios. The workspace supports cyclic in-order and
+wrapped spatial focus, nearest-axis divider resizing, axis-aware equalization,
+and a per-tab zoomed leaf. Zoom changes only presentation: the complete tree,
+ratios, PTYs, and logical geometry remain intact. Only the current tab's panes
+are visible. The active pane supplies the tab title and receives toolbar and
+directional-focus actions.
 
 Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
 vector rows or raw pane pointers across deferred operations. A
 `QAbstractListModel` publishes tab identity, title, active pane, working
-directory, running state, attention, progress, and read-only roles to QML. The
+directory, running state, zoom, attention, progress, and read-only roles to QML. The
 current tab strip consumes that model; several roles are foundations for later
 parity work rather than user-visible features today.
 
@@ -305,7 +309,7 @@ atomically; `end_key_sequence` flushes only the leaders. This preserves the VT
 mode that existed at each leader press and prevents reload or stale queued
 operations from leaking input. Supported actions then pass through
 `GhosttyActionCatalog` and the same typed
-workspace dispatcher used by QML controls; pane-local copy, paste, zoom,
+workspace dispatcher used by QML controls; pane-local copy, paste, font zoom,
 scroll, and reload actions use their terminal operations directly.
 
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
@@ -313,7 +317,9 @@ focused pane lookup, matching Ghostty's app/surface split while leaving leaders
 and mixed-scope chains to the pane. A pane that matches `all` or `global`
 forwards the chain to that process controller. It executes app actions once and
 surface actions over a stable pane snapshot, action-major across the chain;
-`unconsumed` and `performable` do not alter broad-binding consumption.
+`unconsumed` and `performable` do not alter broad-binding consumption. Split
+container actions resolve from each tab's current active pane during that
+fanout, matching the pinned GTK split-tree action boundary.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions
@@ -404,9 +410,10 @@ The default CTest suite has seventeen layers:
   shell's idle/job/idle foreground transitions.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
-  exit, and approval is emitted once.
-- `workspace-foundation` verifies stable tab identity after row removal, tab
-  model role updates, and typed action context dispatch.
+  exit, approval is emitted once, and workspace navigation/layout actions
+  preserve stable tab and pane identity.
+- `workspace-foundation` verifies stable tab identity after row removal and
+  movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
   action-string parsing and deterministic malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
@@ -439,8 +446,9 @@ The default CTest suite has seventeen layers:
   relocated private config helper, verifies runtime terminfo lookup, and checks
   valid and invalid explicit overrides.
 
-Interactive selection/tab/split and unsafe-paste confirmation behavior are not
-fully automated yet. The offscreen tests validate QML startup, close-dialog
+Interactive selection and unsafe-paste confirmation behavior are not fully
+automated yet. Typed-action tests cover tab and split state transitions; the
+offscreen tests validate QML startup, close-dialog
 shutdown, and scene-graph frame replacement in a headless environment, but they
 do not validate the hardware RHI path. `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a
 test escape hatch rather than a
@@ -460,7 +468,8 @@ in a real Wayland session.
   precedence over DEC mode 12, and the text config dump cannot expose the
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
-- Split ratios are fixed; no divider interaction is implemented.
+- Split ratios support keybinding resize/equalization, but draggable divider
+  interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
   actions, search, hyperlinks, multi-window operation, saved sessions, and
   production packaging remain future work.

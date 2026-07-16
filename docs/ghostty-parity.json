@@ -660,9 +660,17 @@
           "status": "partial",
           "note": "Root and named-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it."
         },
+        "equalize_splits": {
+          "status": "supported",
+          "note": "Equalizes the source tab with Ghostty's same-axis subtree weighting while preserving focus and split zoom."
+        },
         "goto_split": {
-          "status": "partial",
-          "note": "Local root triggers and the action catalog support cardinal directions and legacy top/bottom aliases; previous/next remain absent."
+          "status": "supported",
+          "note": "Supports wrapped tree-order previous/next traversal, wrapped spatial directions, legacy top/bottom aliases, and Ghostty's default navigation-unzoom behavior."
+        },
+        "goto_tab": {
+          "status": "supported",
+          "note": "Selects a one-based tab index, rejects zero or values outside Ghostty's c_int frontend range at execution, and clamps higher representable indices to the final tab."
         },
         "increase_font_size": {
           "status": "partial"
@@ -673,6 +681,14 @@
         },
         "inspector": {
           "scope": "qt_mapping"
+        },
+        "last_tab": {
+          "status": "supported",
+          "note": "Selects the final tab, matching Ghostty's non-MRU semantics."
+        },
+        "move_tab": {
+          "status": "supported",
+          "note": "Moves the source surface's tab by a signed cyclic offset while retaining stable tab identity and selection."
         },
         "new_split": {
           "status": "partial",
@@ -713,6 +729,10 @@
           "status": "not_applicable",
           "scope": "macos"
         },
+        "resize_split": {
+          "status": "supported",
+          "note": "Moves the nearest matching-axis ancestor divider by the requested pixel amount, clamps its ratio, and preserves focus and zoom."
+        },
         "scroll_page_down": {
           "status": "partial"
         },
@@ -739,6 +759,10 @@
         "toggle_secure_input": {
           "status": "not_applicable",
           "scope": "macos"
+        },
+        "toggle_split_zoom": {
+          "status": "supported",
+          "note": "Zooms the active leaf without rebuilding the tree or PTY sessions and publishes the zoom state to the tab strip."
         },
         "toggle_tab_overview": {
           "scope": "qt_mapping"

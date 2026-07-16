@@ -8,10 +8,12 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QKeyEvent>
+#include <QPointer>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <limits>
 #include <memory>
 
 namespace {
@@ -62,6 +64,12 @@ private Q_SLOTS:
     void multiPaneShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
+    void indexedLastAndMovedTabsPreserveStableIds();
+    void splitNavigationWrapsInTreeAndSpatialOrder();
+    void splitResizeAndEqualizeRespectTreeAxes();
+    void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
+    void broadContainerActionsResolveFromActivePane();
+    void inactiveTabResizeAppliesWhenActivated();
 };
 
 void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
@@ -447,6 +455,542 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         {QStringLiteral("close_tab:other")});
     QCOMPARE(quit.count(), 0);
     QCOMPARE(workspace.tabCount(), 2);
+}
+
+void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId first = workspace.tabModel()->idAt(0);
+    const PaneId firstPane = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    workspace.newTab();
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 3);
+    const TabId second = workspace.tabModel()->idAt(1);
+    const TabId third = workspace.tabModel()->idAt(2);
+    QVERIFY(first.isValid());
+    QVERIFY(second.isValid());
+    QVERIFY(third.isValid());
+    QVERIFY(first != second && second != third && first != third);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateTabByIndex,
+        {TabId{}, PaneId{}, 1},
+    }));
+    QCOMPARE(workspace.currentIndex(), 0);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+
+    // A high one-based index clamps to the final tab.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateTabByIndex,
+        {TabId{}, PaneId{}, 999},
+    }));
+    QCOMPARE(workspace.currentIndex(), 2);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), third);
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::ActivateLastTab,
+        {},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::ActivateTabByIndex,
+        {TabId{}, PaneId{}, 0},
+    }));
+
+    // The parser accepts usize, but Ghostty's execution boundary is c_int.
+    // Start away from the final tab so an old clamp-to-final implementation
+    // cannot make this rejection assertion pass accidentally.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateTabByIndex,
+        {TabId{}, PaneId{}, 2},
+    }));
+    const TabId selectedBeforeOversizedIndex =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::ActivateTabByIndex,
+        {TabId{}, PaneId{},
+         static_cast<qint64>(std::numeric_limits<int>::max()) + 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             selectedBeforeOversizedIndex);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateLastTab,
+        {},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), third);
+
+    // Move the first tab forward without changing the selected tab identity.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {first, firstPane, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(0), second);
+    QCOMPARE(workspace.tabModel()->idAt(1), first);
+    QCOMPARE(workspace.tabModel()->idAt(2), third);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), third);
+
+    // Moving the selected final tab forward wraps it to the front and updates
+    // only its row index; the stable TabId remains selected.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {third, PaneId{}, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(0), third);
+    QCOMPARE(workspace.tabModel()->idAt(1), second);
+    QCOMPARE(workspace.tabModel()->idAt(2), first);
+    QCOMPARE(workspace.currentIndex(), 0);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), third);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {third, PaneId{}, 3},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {TabId{}, PaneId(999'999), 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(0), third);
+    QCOMPARE(workspace.tabModel()->idAt(1), second);
+    QCOMPARE(workspace.tabModel()->idAt(2), first);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateLastTab,
+        {},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+}
+
+void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId first = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, first, 0},
+    }));
+    const PaneId second = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(second.isValid());
+    QVERIFY(second != first);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, second, 0},
+    }));
+    const PaneId third = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(third.isValid());
+    QVERIFY(third != first && third != second);
+
+    // DFS leaf order is first, second, third; relative navigation wraps.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, third, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, first);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, first, -1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third);
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, third, 3},
+    }));
+
+    // The first pane has no pane to its left. Spatial navigation wraps to the
+    // nearest pane on the opposite edge, which is the upper-right pane.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePane,
+        {tabId, first, Qt::Key_Left},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, second);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePane,
+        {tabId, second, Qt::Key_Right},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, first);
+
+    // Likewise, wrapping upward from the full-height left pane selects the
+    // lower-right pane because it is nearest after translating by one grid.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePane,
+        {tabId, first, Qt::Key_Up},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third);
+}
+
+void TerminalWorkspaceTest::splitResizeAndEqualizeRespectTreeAxes()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane) secondPane = candidate;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, secondId, 0},
+    }));
+    const PaneId thirdId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane && candidate != secondPane) {
+            thirdPane = candidate;
+        }
+    }
+    QVERIFY(thirdPane != nullptr);
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
+
+    const qreal initialSecondWidth = secondPane->width();
+    const qreal initialThirdWidth = thirdPane->width();
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ResizeSplit,
+        {tabId, thirdId, Qt::Key_Right, 60},
+    }));
+    QVERIFY(qAbs(secondPane->width() - (initialSecondWidth + 60.0)) <= 1.0);
+    QVERIFY(qAbs(thirdPane->width() - (initialThirdWidth - 60.0)) <= 1.0);
+
+    // A split tree is performable even when this leaf has no ancestor on the
+    // requested axis, but the tree remains unchanged. Zero amount is not
+    // performable.
+    const QSizeF unchangedFirst = firstPane->size();
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ResizeSplit,
+        {tabId, firstId, Qt::Key_Up, 10},
+    }));
+    QCOMPARE(firstPane->size(), unchangedFirst);
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::ResizeSplit,
+        {tabId, firstId, Qt::Key_Right, 0},
+    }));
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, thirdId, 0},
+    }));
+    const PaneId fourthId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *fourthPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane && candidate != secondPane
+            && candidate != thirdPane) {
+            fourthPane = candidate;
+        }
+    }
+    QVERIFY(fourthPane != nullptr);
+
+    const qreal initialThirdHeight = thirdPane->height();
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ResizeSplit,
+        {tabId, fourthId, Qt::Key_Down, 60},
+    }));
+    QVERIFY(qAbs(thirdPane->height() - (initialThirdHeight + 60.0)) <= 1.0);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::EqualizeSplits,
+        {tabId, fourthId, 0},
+    }));
+    // The two contiguous horizontal splits weight the left leaf against the
+    // two right-hand units at 1:2, while the perpendicular vertical subtree
+    // counts as one unit. All three columns therefore have equal width.
+    QVERIFY(qAbs(firstPane->width() - secondPane->width()) <= 1.0);
+    QVERIFY(qAbs(secondPane->width() - thirdPane->width()) <= 1.0);
+    QVERIFY(qAbs(thirdPane->height() - fourthPane->height()) <= 1.0);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, fourthId);
+}
+
+void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSplit()
+{
+    // Keep later split/tab shells alive while the explicitly held /bin/true
+    // source becomes a stopped pane that can be closed without confirmation.
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane) secondPane = candidate;
+    }
+    QVERIFY(secondPane != nullptr);
+    const QSizeF normalFirstSize = firstPane->size();
+    const QSizeF normalSecondSize = secondPane->size();
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QVERIFY(!firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+    QCOMPARE(secondPane->position(), workspace.boundingRect().topLeft());
+    QCOMPARE(secondPane->size(), workspace.boundingRect().size());
+
+    workspace.newTab();
+    QCOMPARE(workspace.currentIndex(), 1);
+    QVERIFY(!firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateTab,
+        {tabId, PaneId{}, 0},
+    }));
+    QCOMPARE(workspace.currentIndex(), 0);
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QVERIFY(!firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+    QCOMPARE(secondPane->size(), workspace.boundingRect().size());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+    QCOMPARE(firstPane->size(), normalFirstSize);
+    QCOMPARE(secondPane->size(), normalSecondSize);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, secondId, 1},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 4);
+    int visiblePaneCount = 0;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane->isVisible()) ++visiblePaneCount;
+    }
+    // The second tab remains hidden; every pane in the current tab is visible
+    // after splitting resets zoom.
+    QCOMPARE(visiblePaneCount, 3);
+
+    const PaneId zoomTarget = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, zoomTarget, 0},
+    }));
+    TerminalPane *zoomedPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane->isVisible()) zoomedPane = pane;
+    }
+    QVERIFY(zoomedPane != nullptr);
+    QPointer<TerminalPane> zoomedPaneGuard(zoomedPane);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstPane->isRunning(), 1000);
+    const int paneCountBeforeClose =
+        workspace.findChildren<TerminalPane *>().size();
+    QPointer<TerminalPane> closedPane(firstPane);
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, firstId, 0},
+    }));
+    QCOMPARE(confirmation.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
+                              paneCountBeforeClose - 1,
+                              1000);
+    QTRY_VERIFY_WITH_TIMEOUT(closedPane.isNull(), 1000);
+    QCOMPARE(workspace.tabCount(), 2);
+    QCOMPARE(workspace.tabModel()->count(), 2);
+    const TabListEntry *survivingTab = workspace.tabModel()->entryAt(0);
+    QVERIFY(survivingTab != nullptr);
+    QVERIFY(survivingTab->zoomed);
+    QCOMPARE(survivingTab->activePaneId, zoomTarget);
+    QVERIFY(!zoomedPaneGuard.isNull());
+    QVERIFY(zoomedPaneGuard->isVisible());
+}
+
+void TerminalWorkspaceTest::broadContainerActionsResolveFromActivePane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane) secondPane = candidate;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, secondId, 0},
+    }));
+    const PaneId thirdId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane && candidate != secondPane) {
+            thirdPane = candidate;
+        }
+    }
+    QVERIFY(thirdPane != nullptr);
+
+    const qreal firstWidth = firstPane->width();
+    const qreal secondWidth = secondPane->width();
+    const qreal thirdWidth = thirdPane->width();
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("resize_split:right,10")));
+
+    // All three snapshot surfaces resolve resize from the tree's active third
+    // pane, so only its nearest divider moves, three times.
+    QVERIFY(qAbs(firstPane->width() - firstWidth) <= 1.0);
+    QVERIFY(qAbs(secondPane->width() - (secondWidth + 30.0)) <= 1.0);
+    QVERIFY(qAbs(thirdPane->width() - (thirdWidth - 30.0)) <= 1.0);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, thirdId);
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("goto_split:previous")));
+    // Three wrapped moves across three panes return to the original active
+    // pane; resolving from each snapshot source would end on a different ID.
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, thirdId);
+}
+
+void TerminalWorkspaceTest::inactiveTabResizeAppliesWhenActivated()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTab = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTab, firstId, 0},
+    }));
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane) secondPane = candidate;
+    }
+    QVERIFY(secondPane != nullptr);
+    const qreal firstWidth = firstPane->width();
+    const qreal secondWidth = secondPane->width();
+
+    workspace.newTab();
+    QCOMPARE(workspace.currentIndex(), 1);
+    QVERIFY(!firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ResizeSplit,
+        {firstTab, secondId, Qt::Key_Right, 90},
+    }));
+    // Hidden panes retain their last applied PTY size until their tab is shown.
+    QCOMPARE(firstPane->width(), firstWidth);
+    QCOMPARE(secondPane->width(), secondWidth);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivateTab,
+        {firstTab, PaneId{}, 0},
+    }));
+    QVERIFY(qAbs(firstPane->width() - (firstWidth + 90.0)) <= 1.0);
+    QVERIFY(qAbs(secondPane->width() - (secondWidth - 90.0)) <= 1.0);
 }
 
 QTEST_MAIN(TerminalWorkspaceTest)

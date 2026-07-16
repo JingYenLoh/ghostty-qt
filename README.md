@@ -28,9 +28,10 @@ the host-language comparison and remaining engineering risks.
 - Mouse selection, double-click word selection, rectangular selection with
   `Alt`, clipboard copy, primary-selection paste, and an unsafe-paste review
   dialog.
-- Tabs, recursively nested right/down splits, pane navigation, and close
-  confirmation that distinguishes an idle interactive shell from a foreground
-  job on its PTY.
+- Tabs with indexed/last selection and cyclic reordering; recursively nested
+  right/down splits with wrapped spatial/tree-order navigation, keybinding
+  resize/equalize, split zoom, and close confirmation that distinguishes an
+  idle interactive shell from a foreground job on its PTY.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
@@ -255,9 +256,19 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | `Ctrl+Shift+W` | Close the active tab. |
 | `Ctrl+Shift+Q` | Quit. |
 | `Ctrl+Shift+Tab` / `Ctrl+Tab` | Select the previous / next tab. |
+| `Alt+1` … `Alt+8` / `Alt+9` | Select a numbered tab / the final tab. |
+| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the active tab backward / forward. |
+| `Ctrl+Super+[` / `Ctrl+Super+]` | Focus the previous / next split in tree order. |
 | `Ctrl+Alt+Arrow` | Focus the nearest pane in that direction. |
+| `Super+Ctrl+Shift+Arrow` | Move the nearest matching split divider by 10 pixels. |
+| `Ctrl+Shift+Enter` | Toggle zoom for the active split. |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Increase, decrease, or reset the active pane's font size. |
 | `Shift+PageUp` / `Shift+PageDown` | Scroll by one terminal page. |
+
+These are the pinned Ghostty Linux defaults when configuration integration is
+enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
+`goto_split`, `resize_split`, `equalize_splits`, and `toggle_split_zoom`
+directly.
 
 Drag with the left mouse button to select; double-click to select a word and
 hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
@@ -306,8 +317,9 @@ protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
 application's short-lived process/window lifecycle, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
-exercised headlessly; interactive tab, split, selection, and unsafe-paste
-dialog input are not yet fully automated.
+exercised headlessly; workspace tab ordering, split layout, navigation, and
+zoom are covered through typed actions, while interactive selection and
+unsafe-paste dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -328,7 +340,8 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   initial frame, but it still rebuilds scene-graph children and text layouts
   for each presented update. Persistent row nodes and run batching remain
   CPU/allocation optimizations.
-- Splits are fixed at 50/50; there are no draggable dividers.
+- Split ratios can be resized and equalized through Ghostty keybindings, but
+  there are no draggable dividers yet.
 - No X11 backend, multi-window support, theme editor, search UI, session
   persistence, or production package metadata yet. Configuration support is
   limited to the documented compatibility slice; most Ghostty keys remain

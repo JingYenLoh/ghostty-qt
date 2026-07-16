@@ -44,7 +44,8 @@ ApplicationWindow {
                     TabButton {
                         required property int index
                         required property string title
-                        text: title
+                        required property bool zoomed
+                        text: (zoomed ? "🔍 " : "") + title
                         width: Math.min(Math.max(130, implicitWidth), 240)
                         focusPolicy: Qt.NoFocus
                         onClicked: workspace.setCurrentIndex(index)

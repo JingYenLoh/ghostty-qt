@@ -80,6 +80,8 @@ private:
     bool executeAction(const WorkspaceActionRequest &request);
     void createNewTab();
     void activateTab(TabId id);
+    bool activateTabByIndex(qint64 oneBasedIndex);
+    bool moveTab(TabId tabId, qint64 delta);
     void activatePane(PaneId id);
     void requestQuitImpl();
     void approveQuit();
@@ -99,7 +101,9 @@ private:
     void refreshTab(TabId tabId);
     TabListEntry tabListEntry(const Tab &tab) const;
     void layoutCurrentTab();
-    void layoutNode(Node *node, const QRectF &geometry);
+    void updateNodeGeometry(Node *node, const QRectF &geometry);
+    void applyNodeGeometry(Node *node);
+    void updateTabVisibility(Tab &tab, bool visible);
     void setNodeVisibility(Node *node, bool visible);
     Node *findNode(Node *node, PaneId paneId) const;
     bool removePaneFromNode(std::unique_ptr<Node> &node, PaneId paneId);
@@ -108,6 +112,14 @@ private:
     TerminalPane *paneForId(PaneId paneId) const;
     void collectPanes(Node *node, std::vector<TerminalPane *> *panes) const;
     bool navigateFrom(PaneId paneId, int direction);
+    bool navigateRelative(PaneId paneId, qint64 delta);
+    bool resizeSplit(PaneId paneId, int direction, int amount);
+    bool equalizeSplits(TabId tabId);
+    bool toggleSplitZoom(TabId tabId);
+    bool findNodePath(Node *node, PaneId paneId,
+                      std::vector<Node *> *path) const;
+    static int equalizeWeight(const Node *node, Qt::Orientation orientation);
+    static void equalizeNode(Node *node);
     bool shouldConfirmTabClose(const Tab &tab) const;
     bool shouldConfirmWorkspaceClose() const;
     int tabIndexForId(TabId tabId) const;
@@ -132,4 +144,5 @@ private:
     TabId pendingTabId_;
     QString pendingPaste_;
     QVector<PaneId> pendingPastePaneIds_;
+    bool broadActionFanout_ = false;
 };

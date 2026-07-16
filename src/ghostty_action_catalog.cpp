@@ -5,6 +5,7 @@
 #include <QtCore/qnamespace.h>
 
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -15,6 +16,80 @@ using OptionalView = std::optional<QStringView>;
 bool equals(QStringView value, QLatin1StringView expected)
 {
     return value == expected;
+}
+
+std::optional<quint64> parseUnsignedInteger(QStringView value)
+{
+    // Binding.Action.parse ultimately delegates integer fields to
+    // std.fmt.parseInt with base 10. Match its optional sign and interior
+    // underscore handling rather than QString's more permissive conversion.
+    if (value.isEmpty()) return std::nullopt;
+
+    bool negative = false;
+    if (value.front() == u'+' || value.front() == u'-') {
+        negative = value.front() == u'-';
+        value = value.sliced(1);
+    }
+    if (value.isEmpty() || value.front() == u'_'
+        || value.back() == u'_') {
+        return std::nullopt;
+    }
+
+    constexpr quint64 limit =
+        static_cast<quint64>(std::numeric_limits<quintptr>::max());
+    quint64 result = 0;
+    for (const QChar character : value) {
+        if (character == u'_') continue;
+        if (character < u'0' || character > u'9') return std::nullopt;
+
+        const quint64 digit = character.unicode() - u'0';
+        if (result > (limit - digit) / 10) {
+            return std::nullopt;
+        }
+        result = result * 10 + digit;
+    }
+
+    // Zig accepts -0 for unsigned parseInt fields, but no other negative
+    // value can be represented by usize/u16.
+    if (negative && result != 0) return std::nullopt;
+    return result;
+}
+
+std::optional<qint64> parseSignedInteger(QStringView value)
+{
+    if (value.isEmpty()) return std::nullopt;
+
+    bool negative = false;
+    if (value.front() == u'+' || value.front() == u'-') {
+        negative = value.front() == u'-';
+        value = value.sliced(1);
+    }
+    if (value.isEmpty() || value.front() == u'_'
+        || value.back() == u'_') {
+        return std::nullopt;
+    }
+
+    constexpr quint64 positiveLimit =
+        static_cast<quint64>(std::numeric_limits<qintptr>::max());
+    constexpr quint64 negativeLimit = positiveLimit + 1;
+    const quint64 limit = negative ? negativeLimit : positiveLimit;
+    quint64 magnitude = 0;
+    for (const QChar character : value) {
+        if (character == u'_') continue;
+        if (character < u'0' || character > u'9') return std::nullopt;
+
+        const quint64 digit = character.unicode() - u'0';
+        if (magnitude > (limit - digit) / 10) return std::nullopt;
+        magnitude = magnitude * 10 + digit;
+    }
+
+    if (!negative) return static_cast<qint64>(magnitude);
+    constexpr quint64 qint64NegativeLimit =
+        static_cast<quint64>(std::numeric_limits<qint64>::max()) + 1;
+    if (magnitude == qint64NegativeLimit) {
+        return std::numeric_limits<qint64>::min();
+    }
+    return -static_cast<qint64>(magnitude);
 }
 
 GhosttyActionTranslation reject(Error error,
@@ -51,6 +126,9 @@ bool isVoidAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("close_surface"))
         || equals(actionName, QLatin1StringView("previous_tab"))
         || equals(actionName, QLatin1StringView("next_tab"))
+        || equals(actionName, QLatin1StringView("last_tab"))
+        || equals(actionName, QLatin1StringView("toggle_split_zoom"))
+        || equals(actionName, QLatin1StringView("equalize_splits"))
         || equals(actionName, QLatin1StringView("quit"));
 }
 
@@ -59,7 +137,10 @@ bool isCatalogAction(QStringView actionName)
     return isVoidAction(actionName)
         || equals(actionName, QLatin1StringView("close_tab"))
         || equals(actionName, QLatin1StringView("new_split"))
-        || equals(actionName, QLatin1StringView("goto_split"));
+        || equals(actionName, QLatin1StringView("goto_split"))
+        || equals(actionName, QLatin1StringView("goto_tab"))
+        || equals(actionName, QLatin1StringView("move_tab"))
+        || equals(actionName, QLatin1StringView("resize_split"));
 }
 
 QStringView actionName(QStringView serializedAction)
@@ -137,8 +218,64 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                       actionName,
                       parameter);
     }
+    if (equals(actionName, QLatin1StringView("last_tab"))) {
+        return accept(WorkspaceAction::ActivateLastTab,
+                      context,
+                      actionName,
+                      parameter);
+    }
+    if (equals(actionName, QLatin1StringView("toggle_split_zoom"))) {
+        return accept(WorkspaceAction::ToggleSplitZoom,
+                      context,
+                      actionName,
+                      parameter);
+    }
+    if (equals(actionName, QLatin1StringView("equalize_splits"))) {
+        return accept(WorkspaceAction::EqualizeSplits,
+                      context,
+                      actionName,
+                      parameter);
+    }
     if (equals(actionName, QLatin1StringView("quit"))) {
         return accept(WorkspaceAction::RequestQuit,
+                      context,
+                      actionName,
+                      parameter);
+    }
+
+    if (equals(actionName, QLatin1StringView("goto_tab"))) {
+        if (!parameter.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        const std::optional<quint64> index =
+            parseUnsignedInteger(*parameter);
+        if (!index.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        // Preserve successful usize parsing across qint64 storage. The
+        // execution layer rejects values above Ghostty's c_int boundary, so
+        // qint64::max is an unambiguous rejection sentinel for the upper half
+        // of Linux's usize range.
+        context.value = *index > static_cast<quint64>(
+                                      std::numeric_limits<qint64>::max())
+            ? std::numeric_limits<qint64>::max()
+            : static_cast<qint64>(*index);
+        return accept(WorkspaceAction::ActivateTabByIndex,
+                      context,
+                      actionName,
+                      parameter);
+    }
+
+    if (equals(actionName, QLatin1StringView("move_tab"))) {
+        if (!parameter.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        const std::optional<qint64> offset = parseSignedInteger(*parameter);
+        if (!offset.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        context.value = *offset;
+        return accept(WorkspaceAction::MoveTab,
                       context,
                       actionName,
                       parameter);
@@ -186,10 +323,43 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
         return reject(Error::InvalidFormat, actionName, parameter);
     }
 
-    // goto_split has no default and uses a custom parser in Binding.zig. The
-    // cardinal directions are supported here; previous/next require an
-    // ordering-aware workspace operation that does not exist yet. Ghostty's
-    // backwards-compatible top/bottom spellings remain accepted.
+    if (equals(actionName, QLatin1StringView("resize_split"))) {
+        if (!parameter.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        const qsizetype comma = parameter->indexOf(u',');
+        if (comma < 0 || parameter->indexOf(u',', comma + 1) >= 0) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+
+        const QStringView direction = parameter->first(comma);
+        if (equals(direction, QLatin1StringView("left"))) {
+            context.value = Qt::Key_Left;
+        } else if (equals(direction, QLatin1StringView("right"))) {
+            context.value = Qt::Key_Right;
+        } else if (equals(direction, QLatin1StringView("up"))) {
+            context.value = Qt::Key_Up;
+        } else if (equals(direction, QLatin1StringView("down"))) {
+            context.value = Qt::Key_Down;
+        } else {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+
+        const std::optional<quint64> amount =
+            parseUnsignedInteger(parameter->sliced(comma + 1));
+        if (!amount.has_value()
+            || *amount > std::numeric_limits<quint16>::max()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        context.amount = static_cast<int>(*amount);
+        return accept(WorkspaceAction::ResizeSplit,
+                      context,
+                      actionName,
+                      parameter);
+    }
+
+    // goto_split has no default and uses a custom parser in Binding.zig.
+    // Ghostty's backwards-compatible top/bottom spellings remain accepted.
     if (!parameter.has_value()) {
         return reject(Error::InvalidFormat, actionName, parameter);
     }
@@ -204,9 +374,18 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
     } else if (equals(*parameter, QLatin1StringView("down"))
                || equals(*parameter, QLatin1StringView("bottom"))) {
         context.value = Qt::Key_Down;
-    } else if (equals(*parameter, QLatin1StringView("previous"))
-               || equals(*parameter, QLatin1StringView("next"))) {
-        return reject(Error::UnsupportedParameter, actionName, parameter);
+    } else if (equals(*parameter, QLatin1StringView("previous"))) {
+        context.value = -1;
+        return accept(WorkspaceAction::NavigatePaneRelative,
+                      context,
+                      actionName,
+                      parameter);
+    } else if (equals(*parameter, QLatin1StringView("next"))) {
+        context.value = 1;
+        return accept(WorkspaceAction::NavigatePaneRelative,
+                      context,
+                      actionName,
+                      parameter);
     } else {
         return reject(Error::InvalidFormat, actionName, parameter);
     }

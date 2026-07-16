@@ -1421,16 +1421,23 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         Q_EMIT requestSplit(static_cast<int>(Qt::Vertical));
         return true;
     case WorkspaceAction::NavigatePane:
-        Q_EMIT requestNavigate(request.context.value);
+        Q_EMIT requestNavigate(static_cast<int>(request.context.value));
         return true;
     case WorkspaceAction::ChangeTabRelative:
-        Q_EMIT requestTabChange(request.context.value);
+        Q_EMIT requestTabChange(static_cast<int>(request.context.value));
         return true;
     case WorkspaceAction::RequestQuit:
         Q_EMIT requestQuit();
         return true;
     case WorkspaceAction::ActivateTab:
     case WorkspaceAction::ActivatePane:
+    case WorkspaceAction::NavigatePaneRelative:
+    case WorkspaceAction::ActivateTabByIndex:
+    case WorkspaceAction::ActivateLastTab:
+    case WorkspaceAction::MoveTab:
+    case WorkspaceAction::ResizeSplit:
+    case WorkspaceAction::EqualizeSplits:
+    case WorkspaceAction::ToggleSplitZoom:
         return false;
     }
     return false;

@@ -13,6 +13,7 @@ struct TabListEntry {
     QString titleOverride;
     QString currentDirectory;
     bool running = false;
+    bool zoomed = false;
     bool attention = false;
     int progress = -1;
     bool readOnly = false;
@@ -31,6 +32,7 @@ public:
         TitleOverrideRole,
         CurrentDirectoryRole,
         RunningRole,
+        ZoomedRole,
         AttentionRole,
         ProgressRole,
         ReadOnlyRole,
@@ -51,6 +53,7 @@ public:
 
     void append(TabListEntry entry);
     bool replace(TabId id, TabListEntry entry);
+    bool move(TabId id, int destination);
     bool remove(TabId id);
 
 Q_SIGNALS:

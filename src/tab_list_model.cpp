@@ -34,6 +34,8 @@ QVariant TabListModel::data(const QModelIndex &index, int role) const
         return entry->currentDirectory;
     case RunningRole:
         return entry->running;
+    case ZoomedRole:
+        return entry->zoomed;
     case AttentionRole:
         return entry->attention;
     case ProgressRole:
@@ -55,6 +57,7 @@ QHash<int, QByteArray> TabListModel::roleNames() const
         {TitleOverrideRole, QByteArrayLiteral("titleOverride")},
         {CurrentDirectoryRole, QByteArrayLiteral("currentDirectory")},
         {RunningRole, QByteArrayLiteral("running")},
+        {ZoomedRole, QByteArrayLiteral("zoomed")},
         {AttentionRole, QByteArrayLiteral("attention")},
         {ProgressRole, QByteArrayLiteral("progress")},
         {ReadOnlyRole, QByteArrayLiteral("readOnly")},
@@ -123,6 +126,9 @@ bool TabListModel::replace(TabId id, TabListEntry entry)
     if (previous.running != entries_[row].running) {
         roles.append(RunningRole);
     }
+    if (previous.zoomed != entries_[row].zoomed) {
+        roles.append(ZoomedRole);
+    }
     if (previous.attention != entries_[row].attention) {
         roles.append(AttentionRole);
     }
@@ -136,6 +142,30 @@ bool TabListModel::replace(TabId id, TabListEntry entry)
         roles.append(ActivePaneIdRole);
     }
     Q_EMIT dataChanged(index(row, 0), index(row, 0), roles);
+    return true;
+}
+
+bool TabListModel::move(TabId id, int destination)
+{
+    const int source = indexOf(id);
+    if (source < 0 || destination < 0 || destination >= entries_.size()) {
+        return false;
+    }
+    if (source == destination) {
+        return true;
+    }
+
+    // beginMoveRows uses the insertion point before removal, whereas
+    // QVector::move uses the final row index.
+    const int destinationChild = source < destination
+        ? destination + 1
+        : destination;
+    if (!beginMoveRows(QModelIndex(), source, source,
+                       QModelIndex(), destinationChild)) {
+        return false;
+    }
+    entries_.move(source, destination);
+    endMoveRows();
     return true;
 }
 

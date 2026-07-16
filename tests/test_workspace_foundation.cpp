@@ -11,6 +11,7 @@ class WorkspaceFoundationTest : public QObject {
 
 private Q_SLOTS:
     void tabIdsRemainStableWhenRowsMoveAfterRemoval();
+    void tabModelMovesStableEntries();
     void tabModelPublishesRoleChanges();
     void dispatcherPreservesTypedActionContext();
 };
@@ -38,6 +39,33 @@ void WorkspaceFoundationTest::tabIdsRemainStableWhenRowsMoveAfterRemoval()
     QCOMPARE(model.indexOf(TabId(22)), 0);
 }
 
+void WorkspaceFoundationTest::tabModelMovesStableEntries()
+{
+    TabListModel model;
+    for (quint64 value = 1; value <= 3; ++value) {
+        TabListEntry entry;
+        entry.id = TabId(value);
+        entry.title = QString::number(value);
+        model.append(entry);
+    }
+    QSignalSpy moved(&model, &QAbstractItemModel::rowsMoved);
+
+    QVERIFY(model.move(TabId(1), 2));
+    QCOMPARE(moved.count(), 1);
+    QCOMPARE(model.idAt(0), TabId(2));
+    QCOMPARE(model.idAt(1), TabId(3));
+    QCOMPARE(model.idAt(2), TabId(1));
+    QCOMPARE(model.indexOf(TabId(1)), 2);
+
+    QVERIFY(model.move(TabId(1), 0));
+    QCOMPARE(moved.count(), 2);
+    QCOMPARE(model.idAt(0), TabId(1));
+    QCOMPARE(model.idAt(1), TabId(2));
+    QCOMPARE(model.idAt(2), TabId(3));
+    QVERIFY(model.move(TabId(2), 1));
+    QCOMPARE(moved.count(), 2);
+}
+
 void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
 {
     TabListModel model;
@@ -51,6 +79,7 @@ void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
     entry.title = QStringLiteral("editor");
     entry.currentDirectory = QStringLiteral("/tmp/project");
     entry.running = true;
+    entry.zoomed = true;
     QVERIFY(model.replace(TabId(7), entry));
 
     QCOMPARE(changed.count(), 1);
@@ -60,6 +89,7 @@ void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
     QCOMPARE(model.data(index, TabListModel::CurrentDirectoryRole).toString(),
              QStringLiteral("/tmp/project"));
     QCOMPARE(model.data(index, TabListModel::RunningRole).toBool(), true);
+    QCOMPARE(model.data(index, TabListModel::ZoomedRole).toBool(), true);
     QCOMPARE(model.data(index, TabListModel::ActivePaneIdRole).toULongLong(),
              quint64(70));
 }

@@ -2,6 +2,8 @@
 
 #include "workspace_ids.h"
 
+#include <QtTypes>
+
 #include <functional>
 #include <utility>
 
@@ -14,14 +16,22 @@ enum class WorkspaceAction {
     SplitRight,
     SplitDown,
     NavigatePane,
+    NavigatePaneRelative,
     ChangeTabRelative,
+    ActivateTabByIndex,
+    ActivateLastTab,
+    MoveTab,
+    ResizeSplit,
+    EqualizeSplits,
+    ToggleSplitZoom,
     RequestQuit,
 };
 
 struct WorkspaceActionContext {
     TabId tabId;
     PaneId paneId;
-    int value = 0;
+    qint64 value = 0;
+    int amount = 0;
 
     friend bool operator==(const WorkspaceActionContext &,
                            const WorkspaceActionContext &) = default;

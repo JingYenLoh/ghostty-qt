@@ -4,12 +4,27 @@
 
 #include <QKeyEvent>
 #include <QPointer>
+#include <QScopedValueRollback>
 #include <QTimer>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
+
+namespace {
+
+constexpr qreal splitGap = 2.0;
+
+qreal splitExtent(const QRectF &geometry, Qt::Orientation orientation)
+{
+    const qreal extent = orientation == Qt::Horizontal
+        ? geometry.width()
+        : geometry.height();
+    return std::max(0.0, extent - splitGap);
+}
+
+} // namespace
 
 struct TerminalWorkspace::PaneHandle {
     PaneId id;
@@ -38,6 +53,7 @@ struct TerminalWorkspace::Tab {
     TabId id;
     std::unique_ptr<Node> root;
     PaneId activePaneId;
+    PaneId zoomedPaneId;
 };
 
 LaunchOptions TerminalWorkspace::defaultOptions_;
@@ -139,6 +155,7 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
         }
     }
 
+    QScopedValueRollback<bool> broadFanout(broadActionFanout_, true);
     bool performed = false;
     for (const QPointer<TerminalPane> &pane : panes) {
         if (pane != nullptr) {
@@ -188,12 +205,62 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     case WorkspaceAction::NavigatePane:
         if (paneForId(request.context.paneId) == nullptr
             || !contextMatchesPane()) return false;
-        return navigateFrom(request.context.paneId, request.context.value);
+        return navigateFrom(request.context.paneId,
+                            static_cast<int>(request.context.value));
+    case WorkspaceAction::NavigatePaneRelative:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        return navigateRelative(request.context.paneId,
+                                request.context.value);
     case WorkspaceAction::ChangeTabRelative:
         if (request.context.tabId.isValid()
             && tabById(request.context.tabId) == nullptr) return false;
-        return changeTabRelativeImpl(request.context.value,
+        return changeTabRelativeImpl(static_cast<int>(request.context.value),
                                      request.context.tabId);
+    case WorkspaceAction::ActivateTabByIndex:
+        return activateTabByIndex(request.context.value);
+    case WorkspaceAction::ActivateLastTab:
+        return activateTabByIndex(static_cast<qint64>(tabs_.size()));
+    case WorkspaceAction::MoveTab:
+        if ((request.context.tabId.isValid()
+             && tabById(request.context.tabId) == nullptr)
+            || (request.context.paneId.isValid()
+                && (paneForId(request.context.paneId) == nullptr
+                    || !contextMatchesPane()))) {
+            return false;
+        }
+        return moveTab(request.context.tabId.isValid()
+                           ? request.context.tabId
+                           : tabIdForPane(request.context.paneId),
+                       request.context.value);
+    case WorkspaceAction::ResizeSplit:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        return resizeSplit(request.context.paneId,
+                           static_cast<int>(request.context.value),
+                           request.context.amount);
+    case WorkspaceAction::EqualizeSplits: {
+        if (request.context.paneId.isValid() && !contextMatchesPane()) {
+            return false;
+        }
+        const TabId tabId = request.context.tabId.isValid()
+            ? request.context.tabId
+            : (request.context.paneId.isValid()
+                   ? tabIdForPane(request.context.paneId)
+                   : currentTabId());
+        return equalizeSplits(tabId);
+    }
+    case WorkspaceAction::ToggleSplitZoom: {
+        if (request.context.paneId.isValid() && !contextMatchesPane()) {
+            return false;
+        }
+        const TabId tabId = request.context.tabId.isValid()
+            ? request.context.tabId
+            : (request.context.paneId.isValid()
+                   ? tabIdForPane(request.context.paneId)
+                   : currentTabId());
+        return toggleSplitZoom(tabId);
+    }
     case WorkspaceAction::RequestQuit:
         requestQuitImpl();
         return true;
@@ -251,6 +318,25 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
         [this, paneId](WorkspaceActionRequest request) {
             request.context.tabId = tabIdForPane(paneId);
             request.context.paneId = paneId;
+            if (broadActionFanout_) {
+                switch (request.action) {
+                case WorkspaceAction::SplitRight:
+                case WorkspaceAction::SplitDown:
+                case WorkspaceAction::NavigatePane:
+                case WorkspaceAction::NavigatePaneRelative:
+                case WorkspaceAction::ResizeSplit:
+                    if (const Tab *tab = tabById(request.context.tabId);
+                        tab != nullptr) {
+                        // Pinned GTK resolves these container operations from
+                        // the split tree's current active surface, even while
+                        // an all/global fanout is visiting another surface.
+                        request.context.paneId = tab->activePaneId;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
             return dispatchAction(request);
         });
     connect(pane, &TerminalPane::activated, this,
@@ -367,16 +453,71 @@ void TerminalWorkspace::activateTab(TabId id)
     }
 
     if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(tabs_.size())) {
-        setNodeVisibility(tabs_[static_cast<size_t>(currentIndex_)]->root.get(), false);
+        updateTabVisibility(*tabs_[static_cast<size_t>(currentIndex_)], false);
     }
     currentIndex_ = index;
-    setNodeVisibility(tabs_[static_cast<size_t>(currentIndex_)]->root.get(), true);
+    updateTabVisibility(*tabs_[static_cast<size_t>(currentIndex_)], true);
     layoutCurrentTab();
     Q_EMIT currentIndexChanged();
     Q_EMIT currentTitleChanged();
     if (TerminalPane *pane = paneForId(currentPaneId()); pane != nullptr) {
         pane->focusTerminal();
     }
+}
+
+bool TerminalWorkspace::activateTabByIndex(qint64 oneBasedIndex)
+{
+    // The binding stores usize, but Ghostty's frontend action ABI and GTK tab
+    // model narrow numeric destinations to c_int before clamping.
+    if (tabs_.empty() || oneBasedIndex <= 0
+        || oneBasedIndex > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    const qint64 last = static_cast<qint64>(tabs_.size()) - 1;
+    const int target = static_cast<int>(std::min(oneBasedIndex - 1, last));
+    if (target == currentIndex_) {
+        return false;
+    }
+    activateTab(tabs_[static_cast<size_t>(target)]->id);
+    return true;
+}
+
+bool TerminalWorkspace::moveTab(TabId tabId, qint64 delta)
+{
+    if (tabs_.size() <= 1) {
+        return false;
+    }
+    const int source = tabId.isValid()
+        ? tabIndexForId(tabId)
+        : currentIndex_;
+    if (source < 0) {
+        return false;
+    }
+
+    const qint64 count = static_cast<qint64>(tabs_.size());
+    const qint64 offset = delta % count;
+    const int destination = static_cast<int>(
+        (static_cast<qint64>(source) + offset + count) % count);
+    if (source == destination) {
+        return false;
+    }
+
+    const TabId sourceId = tabs_[static_cast<size_t>(source)]->id;
+    const TabId selected = currentTabId();
+    std::unique_ptr<Tab> moved = std::move(tabs_[static_cast<size_t>(source)]);
+    tabs_.erase(tabs_.begin() + source);
+    tabs_.insert(tabs_.begin() + destination, std::move(moved));
+    const bool modelMoved = tabModel_.move(sourceId, destination);
+    Q_ASSERT(modelMoved);
+    Q_UNUSED(modelMoved);
+
+    const int previousCurrentIndex = currentIndex_;
+    currentIndex_ = tabIndexForId(selected);
+    Q_EMIT tabTitlesChanged();
+    if (currentIndex_ != previousCurrentIndex) {
+        Q_EMIT currentIndexChanged();
+    }
+    return true;
 }
 
 bool TerminalWorkspace::changeTabRelativeImpl(int delta, TabId origin)
@@ -423,6 +564,8 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation)
 
     TerminalPane *oldPane = node->pane;
     const PaneHandle newPane = createPane(oldPane->splitLaunchOptions());
+    // Ghostty resets split zoom whenever the tree structure is split.
+    tab->zoomedPaneId = {};
     const PaneHandle oldHandle{node->paneId, oldPane};
     node->paneId = {};
     node->pane = nullptr;
@@ -432,10 +575,11 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation)
     node->second = std::make_unique<Node>(newPane);
     tab->activePaneId = newPane.id;
     const bool targetIsCurrent = tabId == currentTabId();
-    newPane.pane->setVisible(targetIsCurrent);
     if (targetIsCurrent) {
         layoutCurrentTab();
         newPane.pane->focusTerminal();
+    } else {
+        updateTabVisibility(*tab, false);
     }
     refreshTab(tabId);
 }
@@ -446,8 +590,19 @@ void TerminalWorkspace::activatePane(PaneId paneId)
     if (tabIndex < 0) {
         return;
     }
+    Tab *targetTab = tabs_[static_cast<size_t>(tabIndex)].get();
+    if (targetTab->zoomedPaneId.isValid()
+        && targetTab->zoomedPaneId != paneId) {
+        // A tab must never advertise a hidden active pane. Default Ghostty
+        // behavior clears zoom when focus moves to another split.
+        targetTab->zoomedPaneId = {};
+        refreshTab(targetTab->id);
+        if (tabIndex == currentIndex_) {
+            layoutCurrentTab();
+        }
+    }
     if (tabIndex != currentIndex_) {
-        activateTab(tabs_[static_cast<size_t>(tabIndex)]->id);
+        activateTab(targetTab->id);
     }
     Tab *tab = currentTab();
     if (tab != nullptr && tab->activePaneId != paneId) {
@@ -489,6 +644,9 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
     const TabId tabId = tab->id;
     const bool removedActivePane = tab->activePaneId == paneId;
+    if (tab->zoomedPaneId == paneId) {
+        tab->zoomedPaneId = {};
+    }
     resolvePendingPaneRemoval(paneId);
     removePaneFromNode(tab->root, paneId);
     if (tab->root == nullptr) {
@@ -791,6 +949,7 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     TabListEntry entry;
     entry.id = tab.id;
     entry.activePaneId = tab.activePaneId;
+    entry.zoomed = tab.zoomedPaneId.isValid();
     entry.title = activePane != nullptr
         ? activePane->title()
         : QStringLiteral("Terminal");
@@ -829,39 +988,81 @@ void TerminalWorkspace::layoutCurrentTab()
     if (tab == nullptr || tab->root == nullptr) {
         return;
     }
-    layoutNode(tab->root.get(), boundingRect());
+    // Keep logical geometry current while zoomed, but don't resize hidden
+    // PTYs or briefly resize the zoomed pane twice.
+    updateNodeGeometry(tab->root.get(), boundingRect());
+    updateTabVisibility(*tab, true);
+    if (Node *zoomed = findNode(tab->root.get(), tab->zoomedPaneId);
+        zoomed != nullptr && zoomed->isLeaf()) {
+        zoomed->pane->setPosition(boundingRect().topLeft());
+        zoomed->pane->setSize(boundingRect().size());
+    } else {
+        applyNodeGeometry(tab->root.get());
+    }
 }
 
-void TerminalWorkspace::layoutNode(Node *node, const QRectF &geometry)
+void TerminalWorkspace::updateNodeGeometry(Node *node,
+                                           const QRectF &geometry)
 {
     if (node == nullptr) {
         return;
     }
     node->geometry = geometry;
     if (node->isLeaf()) {
-        node->pane->setPosition(geometry.topLeft());
-        node->pane->setSize(geometry.size());
         return;
     }
 
-    constexpr qreal gap = 2.0;
     if (node->orientation == Qt::Horizontal) {
-        const qreal available = std::max(0.0, geometry.width() - gap);
+        const qreal available = splitExtent(geometry, node->orientation);
         const qreal firstWidth = std::floor(available * node->ratio);
-        layoutNode(node->first.get(),
-                   QRectF(geometry.x(), geometry.y(), firstWidth, geometry.height()));
-        layoutNode(node->second.get(),
-                   QRectF(geometry.x() + firstWidth + gap, geometry.y(),
-                          available - firstWidth, geometry.height()));
+        updateNodeGeometry(
+            node->first.get(),
+            QRectF(geometry.x(), geometry.y(), firstWidth, geometry.height()));
+        updateNodeGeometry(
+            node->second.get(),
+            QRectF(geometry.x() + firstWidth + splitGap, geometry.y(),
+                   available - firstWidth, geometry.height()));
     } else {
-        const qreal available = std::max(0.0, geometry.height() - gap);
+        const qreal available = splitExtent(geometry, node->orientation);
         const qreal firstHeight = std::floor(available * node->ratio);
-        layoutNode(node->first.get(),
-                   QRectF(geometry.x(), geometry.y(), geometry.width(), firstHeight));
-        layoutNode(node->second.get(),
-                   QRectF(geometry.x(), geometry.y() + firstHeight + gap,
-                          geometry.width(), available - firstHeight));
+        updateNodeGeometry(
+            node->first.get(),
+            QRectF(geometry.x(), geometry.y(), geometry.width(), firstHeight));
+        updateNodeGeometry(
+            node->second.get(),
+            QRectF(geometry.x(), geometry.y() + firstHeight + splitGap,
+                   geometry.width(), available - firstHeight));
     }
+}
+
+void TerminalWorkspace::applyNodeGeometry(Node *node)
+{
+    if (node == nullptr) {
+        return;
+    }
+    if (node->isLeaf()) {
+        node->pane->setPosition(node->geometry.topLeft());
+        node->pane->setSize(node->geometry.size());
+        return;
+    }
+    applyNodeGeometry(node->first.get());
+    applyNodeGeometry(node->second.get());
+}
+
+void TerminalWorkspace::updateTabVisibility(Tab &tab, bool visible)
+{
+    if (!visible) {
+        setNodeVisibility(tab.root.get(), false);
+        return;
+    }
+
+    Node *zoomed = findNode(tab.root.get(), tab.zoomedPaneId);
+    if (zoomed == nullptr || !zoomed->isLeaf()) {
+        setNodeVisibility(tab.root.get(), true);
+        return;
+    }
+    setNodeVisibility(tab.root.get(), false);
+    zoomed->pane->setVisible(true);
 }
 
 void TerminalWorkspace::setNodeVisibility(Node *node, bool visible)
@@ -929,43 +1130,264 @@ void TerminalWorkspace::collectPanes(Node *node,
 
 bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
 {
-    TerminalPane *pane = paneForId(paneId);
-    const Tab *tab = tabById(tabIdForPane(paneId));
-    if (tab == nullptr || pane == nullptr) return false;
+    Tab *tab = tabById(tabIdForPane(paneId));
+    if (tab == nullptr || tab->root == nullptr) return false;
+
+    // Ghostty's spatial tree is normalized to a unit square and excludes the
+    // visual divider. This keeps direction choices independent of window
+    // aspect ratio and divider thickness.
+    std::vector<std::pair<PaneId, QRectF>> slots;
+    const auto collectSlots = [&slots](auto &&self, Node *node,
+                                       const QRectF &geometry) -> void {
+        if (node == nullptr) return;
+        if (node->isLeaf()) {
+            slots.emplace_back(node->paneId, geometry);
+            return;
+        }
+        if (node->orientation == Qt::Horizontal) {
+            const qreal firstWidth = geometry.width() * node->ratio;
+            self(self, node->first.get(),
+                 QRectF(geometry.x(), geometry.y(), firstWidth,
+                        geometry.height()));
+            self(self, node->second.get(),
+                 QRectF(geometry.x() + firstWidth, geometry.y(),
+                        geometry.width() - firstWidth, geometry.height()));
+        } else {
+            const qreal firstHeight = geometry.height() * node->ratio;
+            self(self, node->first.get(),
+                 QRectF(geometry.x(), geometry.y(), geometry.width(),
+                        firstHeight));
+            self(self, node->second.get(),
+                 QRectF(geometry.x(), geometry.y() + firstHeight,
+                        geometry.width(), geometry.height() - firstHeight));
+        }
+    };
+    collectSlots(collectSlots, tab->root.get(), QRectF(0.0, 0.0, 1.0, 1.0));
+    if (slots.size() <= 1) return false;
+
+    const auto sourceSlot = std::find_if(
+        slots.cbegin(), slots.cend(),
+        [paneId](const auto &slot) { return slot.first == paneId; });
+    if (sourceSlot == slots.cend()) return false;
+
+    const auto findNearest = [&slots, paneId, direction](
+                                 const QRectF &source) -> PaneId {
+        PaneId best;
+        qreal bestDistance = std::numeric_limits<qreal>::max();
+        for (const auto &[candidateId, candidate] : slots) {
+            if (candidateId == paneId) continue;
+            const bool valid =
+                (direction == Qt::Key_Left
+                 && candidate.right() <= source.left())
+                || (direction == Qt::Key_Right
+                    && candidate.left() >= source.right())
+                || (direction == Qt::Key_Up
+                    && candidate.bottom() <= source.top())
+                || (direction == Qt::Key_Down
+                    && candidate.top() >= source.bottom());
+            if (!valid) continue;
+
+            const qreal dx = candidate.x() - source.x();
+            const qreal dy = candidate.y() - source.y();
+            const qreal distance = std::sqrt(dx * dx + dy * dy);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = candidateId;
+            }
+        }
+        return best;
+    };
+
+    if (direction != Qt::Key_Left && direction != Qt::Key_Right
+        && direction != Qt::Key_Up && direction != Qt::Key_Down) {
+        return false;
+    }
+
+    QRectF source = sourceSlot->second;
+    PaneId target = findNearest(source);
+    if (!target.isValid()) {
+        if (direction == Qt::Key_Left) {
+            source.translate(1.0, 0.0);
+        } else if (direction == Qt::Key_Right) {
+            source.translate(-1.0, 0.0);
+        } else if (direction == Qt::Key_Up) {
+            source.translate(0.0, 1.0);
+        } else {
+            source.translate(0.0, -1.0);
+        }
+        target = findNearest(source);
+    }
+    if (!target.isValid()) return false;
+
+    if (tab->zoomedPaneId.isValid()) {
+        tab->zoomedPaneId = {};
+        refreshTab(tab->id);
+        if (tab->id == currentTabId()) layoutCurrentTab();
+    }
+    activatePane(target);
+    return true;
+}
+
+bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
+{
+    Tab *tab = tabById(tabIdForPane(paneId));
+    if (tab == nullptr) return false;
     std::vector<TerminalPane *> panes;
     collectPanes(tab->root.get(), &panes);
-    const QPointF source = pane->boundingRect().center() + pane->position();
-    TerminalPane *best = nullptr;
-    qreal bestScore = std::numeric_limits<qreal>::max();
+    if (panes.size() <= 1) return false;
 
-    for (TerminalPane *candidate : panes) {
-        if (candidate == pane) continue;
-        const QPointF target = candidate->boundingRect().center() + candidate->position();
-        const qreal dx = target.x() - source.x();
-        const qreal dy = target.y() - source.y();
-        qreal primary = 0.0;
-        qreal secondary = 0.0;
-        bool valid = false;
-        if (direction == Qt::Key_Left && dx < 0.0) {
-            primary = -dx; secondary = std::abs(dy); valid = true;
-        } else if (direction == Qt::Key_Right && dx > 0.0) {
-            primary = dx; secondary = std::abs(dy); valid = true;
-        } else if (direction == Qt::Key_Up && dy < 0.0) {
-            primary = -dy; secondary = std::abs(dx); valid = true;
-        } else if (direction == Qt::Key_Down && dy > 0.0) {
-            primary = dy; secondary = std::abs(dx); valid = true;
-        }
-        const qreal score = primary * 1000.0 + secondary;
-        if (valid && score < bestScore) {
-            bestScore = score;
-            best = candidate;
-        }
+    const auto current = std::find_if(
+        panes.cbegin(), panes.cend(),
+        [this, paneId](TerminalPane *pane) {
+            return paneIdForPane(pane) == paneId;
+        });
+    if (current == panes.cend()) return false;
+
+    const qint64 count = static_cast<qint64>(panes.size());
+    const qint64 source = std::distance(panes.cbegin(), current);
+    const qint64 offset = delta % count;
+    const size_t destination = static_cast<size_t>(
+        (source + offset + count) % count);
+    if (destination == static_cast<size_t>(source)) return false;
+
+    if (tab->zoomedPaneId.isValid()) {
+        tab->zoomedPaneId = {};
+        refreshTab(tab->id);
+        if (tab->id == currentTabId()) layoutCurrentTab();
     }
-    if (best != nullptr) {
-        activatePane(paneIdForPane(best));
+    activatePane(paneIdForPane(panes[destination]));
+    return true;
+}
+
+bool TerminalWorkspace::findNodePath(Node *node, PaneId paneId,
+                                     std::vector<Node *> *path) const
+{
+    if (node == nullptr || path == nullptr) return false;
+    path->push_back(node);
+    if (node->isLeaf()) {
+        if (node->paneId == paneId) return true;
+        path->pop_back();
+        return false;
+    }
+    if (findNodePath(node->first.get(), paneId, path)
+        || findNodePath(node->second.get(), paneId, path)) {
         return true;
     }
+    path->pop_back();
     return false;
+}
+
+bool TerminalWorkspace::resizeSplit(PaneId paneId, int direction, int amount)
+{
+    Tab *tab = tabById(tabIdForPane(paneId));
+    if (tab == nullptr || tab->root == nullptr || tab->root->isLeaf()
+        || amount <= 0 || boundingRect().width() <= 0.0
+        || boundingRect().height() <= 0.0) {
+        return false;
+    }
+
+    Qt::Orientation orientation;
+    qreal sign;
+    if (direction == Qt::Key_Left) {
+        orientation = Qt::Horizontal;
+        sign = -1.0;
+    } else if (direction == Qt::Key_Right) {
+        orientation = Qt::Horizontal;
+        sign = 1.0;
+    } else if (direction == Qt::Key_Up) {
+        orientation = Qt::Vertical;
+        sign = -1.0;
+    } else if (direction == Qt::Key_Down) {
+        orientation = Qt::Vertical;
+        sign = 1.0;
+    } else {
+        return false;
+    }
+
+    updateNodeGeometry(tab->root.get(), boundingRect());
+    std::vector<Node *> path;
+    if (!findNodePath(tab->root.get(), paneId, &path)) return false;
+
+    Node *split = nullptr;
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
+        if (!(*it)->isLeaf() && (*it)->orientation == orientation) {
+            split = *it;
+            break;
+        }
+    }
+    if (split != nullptr) {
+        const qreal extent = splitExtent(split->geometry, orientation);
+        if (extent > 0.0) {
+            split->ratio = std::clamp(
+                split->ratio + sign * static_cast<qreal>(amount) / extent,
+                0.0,
+                1.0);
+        }
+        if (tab->id == currentTabId()) {
+            layoutCurrentTab();
+        } else {
+            updateNodeGeometry(tab->root.get(), boundingRect());
+        }
+    }
+
+    // Ghostty reports a resize as performed for any nontrivial tree even
+    // when the active leaf has no ancestor split on the requested axis.
+    return true;
+}
+
+int TerminalWorkspace::equalizeWeight(const Node *node,
+                                      Qt::Orientation orientation)
+{
+    if (node == nullptr || node->isLeaf()
+        || node->orientation != orientation) {
+        return 1;
+    }
+    return equalizeWeight(node->first.get(), orientation)
+        + equalizeWeight(node->second.get(), orientation);
+}
+
+void TerminalWorkspace::equalizeNode(Node *node)
+{
+    if (node == nullptr || node->isLeaf()) return;
+    const int firstWeight = equalizeWeight(node->first.get(),
+                                           node->orientation);
+    const int secondWeight = equalizeWeight(node->second.get(),
+                                            node->orientation);
+    node->ratio = static_cast<qreal>(firstWeight)
+        / static_cast<qreal>(firstWeight + secondWeight);
+    equalizeNode(node->first.get());
+    equalizeNode(node->second.get());
+}
+
+bool TerminalWorkspace::equalizeSplits(TabId tabId)
+{
+    Tab *tab = tabById(tabId);
+    if (tab == nullptr || tab->root == nullptr) return false;
+    equalizeNode(tab->root.get());
+    if (tab->id == currentTabId()) {
+        layoutCurrentTab();
+    } else {
+        updateNodeGeometry(tab->root.get(), boundingRect());
+    }
+    return true;
+}
+
+bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
+{
+    Tab *tab = tabById(tabId);
+    if (tab == nullptr || tab->root == nullptr || tab->root->isLeaf()) {
+        return false;
+    }
+    tab->zoomedPaneId = tab->zoomedPaneId.isValid()
+        ? PaneId{}
+        : tab->activePaneId;
+    refreshTab(tab->id);
+    if (tab->id == currentTabId()) {
+        layoutCurrentTab();
+    } else {
+        updateTabVisibility(*tab, false);
+    }
+    return true;
 }
 
 bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
