@@ -26,85 +26,74 @@ ApplicationWindow {
         workspace.requestQuit()
     }
 
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
+    header: ToolBar {
+        id: windowHeader
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 38
-            color: "#2e3440"
+        RowLayout {
+            anchors.fill: parent
+            spacing: 4
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 5
-                anchors.rightMargin: 5
-                spacing: 4
+            TabBar {
+                id: tabs
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                currentIndex: workspace.currentIndex
 
-                TabBar {
-                    id: tabs
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    currentIndex: workspace.currentIndex
-                    background: Item {}
-
-                    Repeater {
-                        model: workspace.tabTitles
-                        TabButton {
-                            required property int index
-                            required property string modelData
-                            text: modelData
-                            width: Math.min(Math.max(130, implicitWidth), 240)
-                            focusPolicy: Qt.NoFocus
-                            onClicked: workspace.setCurrentIndex(index)
-                        }
+                Repeater {
+                    model: workspace.tabTitles
+                    TabButton {
+                        required property int index
+                        required property string modelData
+                        text: modelData
+                        width: Math.min(Math.max(130, implicitWidth), 240)
+                        focusPolicy: Qt.NoFocus
+                        onClicked: workspace.setCurrentIndex(index)
                     }
                 }
+            }
 
-                ToolButton {
-                    text: "+"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: "New tab"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "New tab (Ctrl+Shift+T)"
-                    onClicked: workspace.newTab()
-                }
-                ToolButton {
-                    text: "↔"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: "Split right"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Split right (Ctrl+Shift+E)"
-                    onClicked: workspace.splitRight()
-                }
-                ToolButton {
-                    text: "↕"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: "Split down"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Split down (Ctrl+Shift+O)"
-                    onClicked: workspace.splitDown()
-                }
-                ToolButton {
-                    text: "×"
-                    focusPolicy: Qt.NoFocus
-                    Accessible.name: "Close pane"
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Close pane (Ctrl+Shift+W)"
-                    onClicked: workspace.closeActivePane()
-                }
+            ToolButton {
+                text: "+"
+                focusPolicy: Qt.NoFocus
+                Accessible.name: "New tab"
+                ToolTip.visible: hovered
+                ToolTip.text: "New tab (Ctrl+Shift+T)"
+                onClicked: workspace.newTab()
+            }
+            ToolButton {
+                text: "↔"
+                focusPolicy: Qt.NoFocus
+                Accessible.name: "Split right"
+                ToolTip.visible: hovered
+                ToolTip.text: "Split right (Ctrl+Shift+E)"
+                onClicked: workspace.splitRight()
+            }
+            ToolButton {
+                text: "↕"
+                focusPolicy: Qt.NoFocus
+                Accessible.name: "Split down"
+                ToolTip.visible: hovered
+                ToolTip.text: "Split down (Ctrl+Shift+O)"
+                onClicked: workspace.splitDown()
+            }
+            ToolButton {
+                text: "×"
+                focusPolicy: Qt.NoFocus
+                Accessible.name: "Close pane"
+                ToolTip.visible: hovered
+                ToolTip.text: "Close pane (Ctrl+Shift+W)"
+                onClicked: workspace.closeActivePane()
             }
         }
+    }
 
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            color: "#3b4252"
+    Rectangle {
+        anchors.fill: parent
+        color: "#3b4252"
 
-            TerminalWorkspace {
-                id: workspace
-                anchors.fill: parent
-            }
+        TerminalWorkspace {
+            id: workspace
+            anchors.fill: parent
         }
     }
 

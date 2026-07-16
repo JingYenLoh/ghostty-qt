@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(GNUInstallDirs)
+
 option(GHOSTTY_QT_BUILD_TESTS "Build ghostty-qt tests" ON)
 option(GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY "Allow a Ghostty checkout other than the pinned revision" OFF)
 
@@ -86,6 +88,25 @@ set(GHOSTTY_QT_TERMINFO_SOURCE
     "${CMAKE_CURRENT_BINARY_DIR}/terminfo/ghostty.terminfo")
 set(GHOSTTY_QT_TERMINFO_DIR "${CMAKE_CURRENT_BINARY_DIR}/share/terminfo")
 set(GHOSTTY_QT_TERMINFO_STAMP "${CMAKE_CURRENT_BINARY_DIR}/terminfo/compiled.stamp")
+set(GHOSTTY_QT_INSTALL_TERMINFO_DIR
+    "${CMAKE_INSTALL_DATADIR}/ghostty-qt/terminfo")
+
+# Keep the compiled resource locator relocatable. It records only the path from
+# the installed executable directory to the private terminfo database, never a
+# configure-time build or installation prefix.
+set(_ghostty_qt_install_bindir "${CMAKE_INSTALL_BINDIR}")
+cmake_path(ABSOLUTE_PATH _ghostty_qt_install_bindir
+    BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+    NORMALIZE
+    OUTPUT_VARIABLE _ghostty_qt_install_bindir_absolute)
+set(_ghostty_qt_install_terminfo_dir "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
+cmake_path(ABSOLUTE_PATH _ghostty_qt_install_terminfo_dir
+    BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+    NORMALIZE
+    OUTPUT_VARIABLE _ghostty_qt_install_terminfo_dir_absolute)
+cmake_path(RELATIVE_PATH _ghostty_qt_install_terminfo_dir_absolute
+    BASE_DIRECTORY "${_ghostty_qt_install_bindir_absolute}"
+    OUTPUT_VARIABLE GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR)
 add_custom_command(
     OUTPUT "${GHOSTTY_QT_TERMINFO_STAMP}"
     COMMAND "${CMAKE_COMMAND}"
@@ -104,6 +125,18 @@ add_custom_command(
     COMMENT "Generating and compiling xterm-ghostty terminfo"
     VERBATIM)
 add_custom_target(ghostty-qt-terminfo DEPENDS "${GHOSTTY_QT_TERMINFO_STAMP}")
+
+add_library(ghostty-qt-runtime-paths STATIC
+    src/terminfo_paths.cpp
+    src/terminfo_paths.h
+)
+target_include_directories(ghostty-qt-runtime-paths PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-runtime-paths PUBLIC Qt6::Core)
+target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
+    GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR}"
+)
 
 qt_add_executable(ghostty-qt
     src/main.cpp
@@ -133,13 +166,13 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    ghostty-qt-runtime-paths
     ghostty-vt-static
     util
 )
 
 target_compile_definitions(ghostty-qt PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_TERMINFO_DIR="${GHOSTTY_QT_TERMINFO_DIR}"
 )
 
 add_dependencies(ghostty-qt ghostty-qt-terminfo)
@@ -148,8 +181,9 @@ target_compile_options(ghostty-qt PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
-install(TARGETS ghostty-qt RUNTIME DESTINATION bin)
-install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/" DESTINATION share/terminfo)
+install(TARGETS ghostty-qt RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"
+    DESTINATION "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
 
 if(GHOSTTY_QT_BUILD_TESTS)
     enable_testing()

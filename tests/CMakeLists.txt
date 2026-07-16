@@ -23,12 +23,12 @@ qt_add_executable(test-session-worker
 target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_TERMINFO_DIR="${GHOSTTY_QT_TERMINFO_DIR}"
 )
 target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-runtime-paths
     ghostty-vt-static
     util
 )
@@ -49,13 +49,13 @@ qt_add_executable(test-terminal-pane
 target_include_directories(test-terminal-pane PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-terminal-pane PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_TERMINFO_DIR="${GHOSTTY_QT_TERMINFO_DIR}"
 )
 target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
     Qt6::Test
+    ghostty-qt-runtime-paths
     ghostty-vt-static
     util
 )
@@ -64,7 +64,7 @@ add_test(NAME terminal-pane-render COMMAND test-terminal-pane)
 set_tests_properties(terminal-pane-render PROPERTIES
     TIMEOUT 10
     ENVIRONMENT
-        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
 )
 
 add_test(
@@ -82,3 +82,30 @@ set_tests_properties(application-lifecycle PROPERTIES
 set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
     TIMEOUT 20
 )
+set_tests_properties(session-worker PROPERTIES
+    ENVIRONMENT "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
+)
+
+qt_add_executable(test-terminfo-path-probe
+    test_terminfo_path_probe.cpp
+)
+target_link_libraries(test-terminfo-path-probe PRIVATE
+    Qt6::Core
+    ghostty-qt-runtime-paths
+)
+
+if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
+   AND NOT IS_ABSOLUTE "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
+    add_test(
+        NAME terminfo-relocatable-install
+        COMMAND "${CMAKE_COMMAND}"
+            "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+            "-DSTAGE_DIR=${CMAKE_CURRENT_BINARY_DIR}/terminfo-relocation-stage"
+            "-DINSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
+            "-DINSTALL_TERMINFO_DIR=${GHOSTTY_QT_INSTALL_TERMINFO_DIR}"
+            "-DPROBE=$<TARGET_FILE:test-terminfo-path-probe>"
+            "-DCONFIG=$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/RunTerminfoRelocationTest.cmake"
+    )
+    set_tests_properties(terminfo-relocatable-install PROPERTIES TIMEOUT 30)
+endif()

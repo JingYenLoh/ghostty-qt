@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_PARALLEL_LEVEL: 2
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Debug (Qt 6.8 minimum)
+            preset: dev
+            qt_version: '6.8.3'
+          - name: GCC Release (Qt 6.8 minimum)
+            preset: release
+            qt_version: '6.8.3'
+          - name: Clang ASan + UBSan (Qt 6.8 minimum)
+            preset: sanitize
+            qt_version: '6.8.3'
+          - name: GCC Debug (current Qt)
+            preset: dev
+            qt_version: '6.11.1'
+
+    steps:
+      - name: Check out pinned sources
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libgl1-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            ncurses-bin \
+            ninja-build \
+            wayland-protocols \
+            xz-utils
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt_version }}
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: qtwaylandcompositor
+          cache: true
+
+      - name: Install verified Zig toolchain
+        run: ./scripts/bootstrap-zig.sh
+
+      - name: Verify pinned inputs
+        run: |
+          test "$(./.local/bin/zig version)" = "0.15.2"
+          test "$(git -C ghostty rev-parse HEAD)" = "c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3"
+          test "$(qmake -query QT_VERSION)" = "${{ matrix.qt_version }}"
+          cmake --version
+
+      - name: Configure
+        run: cmake --preset "${{ matrix.preset }}"
+
+      - name: Build
+        run: cmake --build --preset "${{ matrix.preset }}"
+
+      - name: Test
+        run: ctest --preset "${{ matrix.preset }}"

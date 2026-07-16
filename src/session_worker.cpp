@@ -1,4 +1,5 @@
 #include "session_worker.h"
+#include "terminfo_paths.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -243,8 +244,13 @@ bool SessionWorker::spawnChild()
     argv.push_back(nullptr);
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
+    if (!terminfo) {
+        Q_EMIT errorOccurred(terminfo.error);
+        return false;
+    }
     environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-ghostty"));
-    environment.insert(QStringLiteral("TERMINFO"), QStringLiteral(GHOSTTY_QT_TERMINFO_DIR));
+    environment.insert(QStringLiteral("TERMINFO"), terminfo.directory);
     environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
     environment.insert(QStringLiteral("TERM_PROGRAM"), QStringLiteral("ghostty-qt"));
     environment.insert(QStringLiteral("TERM_PROGRAM_VERSION"),

@@ -7,8 +7,9 @@ scene-graph rendering, clipboard, and input-method integration.
 
 This is an early developer build, not a drop-in replacement for the Ghostty
 application. See [Architecture](docs/architecture.md) for the design and the
-current tradeoffs, and [Feasibility and stack decision](docs/feasibility.md)
-for the host-language comparison and remaining engineering risks.
+current tradeoffs, [Development and CI](docs/development.md) for the supported
+build workflows, and [Feasibility and stack decision](docs/feasibility.md) for
+the host-language comparison and remaining engineering risks.
 
 ## What works
 
@@ -51,15 +52,16 @@ checkout without becoming repository content. The expected layout is:
 .local/toolchains/zig-0.15.2/
 ```
 
-To create it from the official Linux archive in a fresh checkout:
+Install the exact toolchain from Zig's official release archive and verify its
+published SHA-256 checksum with:
 
 ```sh
-mkdir -p .local/bin .local/toolchains
-tar -xf /path/to/zig-x86_64-linux-0.15.2.tar.xz -C .local/toolchains
-mv .local/toolchains/zig-x86_64-linux-0.15.2 .local/toolchains/zig-0.15.2
-ln -s ../toolchains/zig-0.15.2/zig .local/bin/zig
+./scripts/bootstrap-zig.sh
 ./.local/bin/zig version
 ```
+
+See [Development and CI](docs/development.md) for cache and mirror controls,
+the sanitizer preset, and the CI build matrix.
 
 ## Get the pinned Ghostty source
 
@@ -170,6 +172,13 @@ Inspect the generated entry with:
 infocmp -A build/dev/share/terminfo -x xterm-ghostty
 ```
 
+An installed copy keeps its private database under
+`${CMAKE_INSTALL_DATADIR}/ghostty-qt/terminfo` and resolves that directory
+relative to the running executable, so the installation prefix can be moved.
+For diagnostics or nonstandard layouts, set `GHOSTTY_QT_TERMINFO` to a directory
+containing a compiled `xterm-ghostty` entry. An explicit invalid override is an
+error rather than falling back silently to another database.
+
 ## Tests
 
 ```sh
@@ -177,9 +186,10 @@ ctest --preset dev
 ```
 
 The suite covers option parsing, core `libghostty-vt` parse/render/input APIs,
-a PTY-backed worker session, replacement of rendered terminal frames, and the
-complete application's short-lived process/window lifecycle. Interactive tab,
-split, selection, and dialog input are not yet fully automated.
+a PTY-backed worker session, replacement of rendered terminal frames, the
+complete application's short-lived process/window lifecycle, and staged
+install relocation of the private terminfo database. Interactive tab, split,
+selection, and dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -202,7 +212,7 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   could reduce.
 - Splits are fixed at 50/50; there are no draggable dividers.
 - No X11 backend, multi-window support, configuration files, theme editor,
-  search UI, session persistence, or relocatable production package yet.
+  search UI, session persistence, or production package metadata yet.
 - No Kitty graphics/inline images, color-emoji pipeline, or terminal-cell
   ligature shaping. Per-cell text rendering prioritizes correctness of the MVP
   architecture over advanced typography.

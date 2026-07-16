@@ -65,8 +65,8 @@ advanced text/graphics support, and distribution:
   review and protocol regressions.
 - Color emoji, ligatures across cells, Kitty graphics, hyperlinks, and search
   each require explicit UI/render policy beyond VT parsing.
-- The current binary embeds a build-tree terminfo path. A relocatable package
-  must resolve resources relative to its installed executable or data prefix.
+- Runtime terminfo lookup is relocatable and covered by a staged-install test;
+  desktop integration metadata and distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path
   needs interactive visual and performance qualification on representative
   Wayland compositors and GPU drivers.

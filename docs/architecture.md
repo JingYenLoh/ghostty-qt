@@ -119,7 +119,7 @@ The child inherits the host environment with these terminal-specific values:
 
 ```text
 TERM=xterm-ghostty
-TERMINFO=<build tree>/share/terminfo
+TERMINFO=<resolved private database>
 COLORTERM=truecolor
 TERM_PROGRAM=ghostty-qt
 TERM_PROGRAM_VERSION=<project version>
@@ -143,22 +143,26 @@ pinned Ghostty source. The C++ executable links that static target and Linux
 
 The build also runs a small Zig generator against Ghostty's terminfo source and
 compiles the result with `tic -x`. The generated database is a dependency of the
-application and PTY integration test. Children point directly at the selected
-preset's database, so no system terminfo installation is required for a build-
-tree run.
+application and PTY integration test. A build-tree run finds `share/terminfo`
+beside the executable. An installed executable first resolves its private
+`${CMAKE_INSTALL_DATADIR}/ghostty-qt/terminfo` directory using only a relative
+path, so moving the complete installation prefix does not invalidate it. The
+`GHOSTTY_QT_TERMINFO` environment variable is an authoritative diagnostic
+override. No system terminfo installation is required.
 
 Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
 developer and release CMake trees. Those presets must not build concurrently.
-The current install rules are preliminary: runtime terminfo lookup is compiled
-with the build-tree path, so the project does not yet claim a relocatable binary
-package.
+The staged relocation test installs into a temporary prefix, moves the prefix,
+and runs a Qt Core-only probe from the moved `bin` directory to verify that it
+selects the moved private database. Production desktop metadata and packaging
+remain separate work.
 
 Qt's `emit` macro is disabled with `QT_NO_KEYWORDS` because the public Ghostty C
 API legitimately contains struct fields named `emit`.
 
 ## Test boundaries
 
-The CTest suite has five layers:
+The CTest suite has six layers:
 
 - `launch-options` validates defaults, accepted values, and invalid CLI input.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
@@ -172,6 +176,8 @@ The CTest suite has five layers:
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
+- `terminfo-relocatable-install` stages and moves an installation, verifies its
+  runtime terminfo lookup, and checks valid and invalid explicit overrides.
 
 Interactive selection/tab/split and confirmation-button behavior are not fully
 automated yet. The offscreen tests validate QML startup and scene-graph frame
