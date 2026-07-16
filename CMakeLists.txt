@@ -15,6 +15,8 @@ include(GNUInstallDirs)
 
 option(GHOSTTY_QT_BUILD_TESTS "Build ghostty-qt tests" ON)
 option(GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY "Allow a Ghostty checkout other than the pinned revision" OFF)
+option(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG
+    "Build the pinned Ghostty application config parser" ON)
 
 set(GHOSTTY_QT_GHOSTTY_REVISION
     "c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3"
@@ -79,6 +81,100 @@ endif()
 # Ghostty's wrapper invokes Zig and exports the ghostty-vt-static target.
 add_subdirectory("${GHOSTTY_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/ghostty" EXCLUDE_FROM_ALL)
 
+# Ghostty's exact application configuration parser is not part of
+# libghostty-vt. Build the pinned internal library in an isolated cache and
+# consume it only from a small helper process; no internal handle crosses into
+# the Qt application. The source-local build area is shared by the checked-in
+# CMake presets, with parser outputs isolated by Ghostty revision.
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    set(GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig-global"
+        CACHE PATH "Project-local Zig package and artifact cache")
+    set(GHOSTTY_QT_CONFIG_BUILD_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/.cache/ghostty-internal"
+        CACHE PATH "Project-local build area for Ghostty's config parser")
+    set(GHOSTTY_QT_CONFIG_BUILD_REVISION
+        "${GHOSTTY_QT_GHOSTTY_REVISION}")
+    if(DEFINED GHOSTTY_QT_ACTUAL_GHOSTTY_REVISION
+       AND DEFINED GHOSTTY_QT_GIT_RESULT
+       AND GHOSTTY_QT_GIT_RESULT EQUAL 0)
+        set(GHOSTTY_QT_CONFIG_BUILD_REVISION
+            "${GHOSTTY_QT_ACTUAL_GHOSTTY_REVISION}")
+    endif()
+    set(GHOSTTY_QT_CONFIG_REVISION_DIR
+        "${GHOSTTY_QT_CONFIG_BUILD_DIR}/${GHOSTTY_QT_CONFIG_BUILD_REVISION}")
+    set(GHOSTTY_QT_CONFIG_PREFIX
+        "${GHOSTTY_QT_CONFIG_REVISION_DIR}/prefix")
+    set(GHOSTTY_QT_CONFIG_CACHE_DIR
+        "${GHOSTTY_QT_CONFIG_REVISION_DIR}/cache")
+    set(GHOSTTY_QT_CONFIG_LIBRARY
+        "${GHOSTTY_QT_CONFIG_PREFIX}/lib/ghostty-internal${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # The pinned build emits ghostty-internal.so but records libghostty.so as
+    # its ELF SONAME. Keep a private copy under that runtime name so both the
+    # build-tree and relocatable installation resolve DT_NEEDED correctly.
+    set(GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY
+        "${GHOSTTY_QT_CONFIG_PREFIX}/lib/libghostty${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    set(GHOSTTY_QT_CONFIG_HEADER
+        "${GHOSTTY_QT_CONFIG_PREFIX}/include/ghostty.h")
+    file(MAKE_DIRECTORY
+        "${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
+        "${GHOSTTY_QT_CONFIG_CACHE_DIR}"
+        "${GHOSTTY_QT_CONFIG_PREFIX}/include")
+
+    add_custom_command(
+        OUTPUT
+            "${GHOSTTY_QT_CONFIG_LIBRARY}"
+            "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+            "${GHOSTTY_QT_CONFIG_HEADER}"
+        COMMAND "${GHOSTTY_QT_ZIG_EXECUTABLE}" build -j2
+            --cache-dir "${GHOSTTY_QT_CONFIG_CACHE_DIR}"
+            --global-cache-dir "${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
+            -Dapp-runtime=none
+            -Demit-exe=false
+            -Demit-lib-vt=false
+            -Demit-docs=false
+            -Demit-themes=false
+            -Demit-terminfo=false
+            -Demit-xcframework=false
+            -Dsentry=false
+            -Di18n=false
+            -Dsimd=false
+            -Dfont-backend=freetype
+            -Doptimize=ReleaseFast
+            --prefix "${GHOSTTY_QT_CONFIG_PREFIX}"
+            --summary failures
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${GHOSTTY_QT_CONFIG_LIBRARY}"
+            "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+        WORKING_DIRECTORY "${GHOSTTY_SOURCE_DIR}"
+        DEPENDS
+            "${GHOSTTY_SOURCE_DIR}/build.zig"
+            "${GHOSTTY_SOURCE_DIR}/build.zig.zon"
+            "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/show_config.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/validate_config.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
+        COMMENT "Building pinned Ghostty configuration parser"
+        USES_TERMINAL
+        VERBATIM)
+    add_custom_target(ghostty-qt-config-parser
+        DEPENDS
+            "${GHOSTTY_QT_CONFIG_LIBRARY}"
+            "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+            "${GHOSTTY_QT_CONFIG_HEADER}")
+    add_dependencies(ghostty-qt-config-parser zig_build_lib_vt)
+
+    add_library(ghostty-config-internal SHARED IMPORTED GLOBAL)
+    set_target_properties(ghostty-config-internal PROPERTIES
+        IMPORTED_LOCATION "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${GHOSTTY_QT_CONFIG_PREFIX}/include")
+    add_dependencies(ghostty-config-internal ghostty-qt-config-parser)
+endif()
+
 # libghostty-vt has public C struct fields named `emit`. Disabling Qt's
 # convenience keywords avoids a preprocessor collision with that valid API.
 add_compile_definitions(QT_NO_KEYWORDS)
@@ -140,10 +236,24 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
 
 qt_add_executable(ghostty-qt
     src/main.cpp
+    src/ghostty_action_catalog.cpp
+    src/ghostty_action_catalog.h
+    src/ghostty_config_loader.h
+    src/ghostty_config_process_loader.cpp
+    src/ghostty_config_process_loader.h
+    src/ghostty_config_service.cpp
+    src/ghostty_config_service.h
+    src/ghostty_config_snapshot.h
+    src/ghostty_keybind_set.cpp
+    src/ghostty_keybind_set.h
+    src/ghostty_vt_adapter.cpp
+    src/ghostty_vt_adapter.h
     src/launch_options.cpp
     src/launch_options.h
     src/session_worker.cpp
     src/session_worker.h
+    src/tab_list_model.cpp
+    src/tab_list_model.h
     src/terminal_controller.cpp
     src/terminal_controller.h
     src/terminal_pane.cpp
@@ -151,6 +261,8 @@ qt_add_executable(ghostty-qt
     src/terminal_types.h
     src/terminal_workspace.cpp
     src/terminal_workspace.h
+    src/workspace_action.h
+    src/workspace_ids.h
 )
 
 qt_add_qml_module(ghostty-qt
@@ -180,6 +292,41 @@ add_dependencies(ghostty-qt ghostty-qt-terminfo)
 target_compile_options(ghostty-qt PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
+
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    add_executable(ghostty-qt-config-helper
+        src/ghostty_config_cli_main.cpp
+    )
+    target_link_libraries(ghostty-qt-config-helper PRIVATE
+        ghostty-config-internal
+    )
+    target_compile_options(ghostty-qt-config-helper PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+    )
+
+    set(_ghostty_qt_config_install_dir
+        "${CMAKE_INSTALL_LIBDIR}/ghostty-qt")
+    cmake_path(ABSOLUTE_PATH _ghostty_qt_config_install_dir
+        BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+        NORMALIZE
+        OUTPUT_VARIABLE _ghostty_qt_config_install_dir_absolute)
+    cmake_path(RELATIVE_PATH _ghostty_qt_config_install_dir_absolute
+        BASE_DIRECTORY "${_ghostty_qt_install_bindir_absolute}"
+        OUTPUT_VARIABLE _ghostty_qt_config_install_relative_dir)
+    set_target_properties(ghostty-qt-config-helper PROPERTIES
+        BUILD_RPATH "${GHOSTTY_QT_CONFIG_PREFIX}/lib"
+        INSTALL_RPATH "\$ORIGIN/${_ghostty_qt_config_install_relative_dir}")
+
+    target_compile_definitions(ghostty-qt PRIVATE
+        GHOSTTY_QT_CONFIG_ENABLED=1
+        GHOSTTY_QT_CONFIG_HELPER_NAME="ghostty-qt-config-helper")
+    add_dependencies(ghostty-qt ghostty-qt-config-helper)
+
+    install(TARGETS ghostty-qt-config-helper
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+        DESTINATION "${_ghostty_qt_config_install_dir}")
+endif()
 
 install(TARGETS ghostty-qt RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"

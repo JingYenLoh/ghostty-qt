@@ -28,15 +28,23 @@ jobs:
           - name: GCC Debug (Qt 6.8 minimum)
             preset: dev
             qt_version: '6.8.3'
+            config_parser: 'ON'
           - name: GCC Release (Qt 6.8 minimum)
             preset: release
             qt_version: '6.8.3'
+            config_parser: 'ON'
           - name: Clang ASan + UBSan (Qt 6.8 minimum)
             preset: sanitize
             qt_version: '6.8.3'
+            config_parser: 'ON'
           - name: GCC Debug (current Qt)
             preset: dev
             qt_version: '6.11.1'
+            config_parser: 'ON'
+          - name: GCC Debug, config parser disabled (Qt 6.8 minimum)
+            preset: dev
+            qt_version: '6.8.3'
+            config_parser: 'OFF'
 
     steps:
       - name: Check out pinned sources
@@ -86,7 +94,9 @@ jobs:
           cmake --version
 
       - name: Configure
-        run: cmake --preset "${{ matrix.preset }}"
+        run: >-
+          cmake --preset "${{ matrix.preset }}"
+          -DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=${{ matrix.config_parser }}
 
       - name: Build
         run: cmake --build --preset "${{ matrix.preset }}"

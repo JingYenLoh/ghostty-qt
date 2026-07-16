@@ -1,5 +1,6 @@
 #include "terminal_controller.h"
 
+#include "ghostty_vt_adapter.h"
 #include "session_worker.h"
 
 #include <QClipboard>
@@ -7,16 +8,18 @@
 #include <QMetaObject>
 #include <QThread>
 
-#include <ghostty/vt.h>
-
 TerminalController::TerminalController(const LaunchOptions &options, QObject *parent)
     : QObject(parent)
     , options_(options)
     , currentDirectory_(options.workingDirectory)
+    // Treat a starting child conservatively until the worker can identify an
+    // idle interactive-shell prompt.
+    , activeProcess_(true)
 {
-    qRegisterMetaType<TerminalFrame>();
+    qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalKeyInput>();
     qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<LaunchOptions>();
 
     thread_ = new QThread(this);
     worker_ = new SessionWorker;
@@ -47,9 +50,13 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::endSelection, Qt::QueuedConnection);
     connect(this, &TerminalController::scrollRequested,
             worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
+    connect(this, &TerminalController::runtimeOptionsRequested,
+            worker_, &SessionWorker::applyRuntimeOptions, Qt::QueuedConnection);
+    connect(this, &TerminalController::shutdownRequested,
+            worker_, &SessionWorker::shutdown, Qt::QueuedConnection);
 
-    connect(worker_, &SessionWorker::frameReady,
-            this, &TerminalController::frameReady, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::terminalUpdated,
+            this, &TerminalController::terminalUpdated, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::titleChanged, this,
             [this](const QString &title) {
                 if (title_ == title) return;
@@ -68,6 +75,18 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
                 mouseTracking_ = enabled;
                 Q_EMIT mouseTrackingChanged(mouseTracking_);
             }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::activeProcessChanged, this,
+            [this](bool active) {
+                if (activeProcess_ == active) return;
+                activeProcess_ = active;
+                Q_EMIT activeProcessChanged(activeProcess_);
+            }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::selectionAvailableChanged, this,
+            [this](bool available) {
+                if (selectionAvailable_ == available) return;
+                selectionAvailable_ = available;
+                Q_EMIT selectionAvailableChanged(selectionAvailable_);
+            }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
             [](const QString &text) {
                 if (QGuiApplication::clipboard() != nullptr) {
@@ -81,6 +100,10 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     connect(worker_, &SessionWorker::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
                 if (closing_) return;
+                if (activeProcess_) {
+                    activeProcess_ = false;
+                    Q_EMIT activeProcessChanged(false);
+                }
                 if (running_) {
                     running_ = false;
                     Q_EMIT runningChanged(false);
@@ -113,13 +136,34 @@ void TerminalController::resizeTerminal(int columns, int rows,
                          surfaceWidthPixels, surfaceHeightPixels);
 }
 
+void TerminalController::applyRuntimeOptions(const LaunchOptions &options)
+{
+    options_ = options;
+    Q_EMIT runtimeOptionsRequested(options_);
+}
+
+void TerminalController::beginShutdown()
+{
+    if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
+        Q_EMIT shutdownRequested();
+    }
+}
+
 void TerminalController::sendKey(const TerminalKeyInput &input)
 {
+    if (input.pressed
+        && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
+            || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
+        notePotentialActivity();
+    }
     Q_EMIT keyRequested(input);
 }
 
 void TerminalController::sendText(const QString &text)
 {
+    if (text.contains(u'\n') || text.contains(u'\r')) {
+        notePotentialActivity();
+    }
     Q_EMIT textRequested(text);
 }
 
@@ -135,7 +179,19 @@ void TerminalController::setFocused(bool focused)
 
 void TerminalController::paste(const QString &text)
 {
+    if (text.contains(u'\n') || text.contains(u'\r')) {
+        notePotentialActivity();
+    }
     Q_EMIT pasteRequested(text);
+}
+
+void TerminalController::notePotentialActivity()
+{
+    if (!running_ || !options_.program.isEmpty() || activeProcess_) {
+        return;
+    }
+    activeProcess_ = true;
+    Q_EMIT activeProcessChanged(true);
 }
 
 void TerminalController::copySelection()
@@ -172,5 +228,5 @@ void TerminalController::scrollViewport(int rows)
 bool TerminalController::isPasteSafe(const QString &text)
 {
     const QByteArray utf8 = text.toUtf8();
-    return ghostty_paste_is_safe(utf8.constData(), static_cast<size_t>(utf8.size()));
+    return GhosttyVtAdapter::isPasteSafe(utf8);
 }

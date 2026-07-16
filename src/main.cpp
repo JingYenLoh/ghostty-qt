@@ -1,11 +1,19 @@
 #include "launch_options.h"
 #include "terminal_workspace.h"
 
+#if GHOSTTY_QT_CONFIG_ENABLED
+#include "ghostty_config_process_loader.h"
+#include "ghostty_config_service.h"
+#endif
+
+#include <QDebug>
+#include <QDir>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QTextStream>
+#include <QTimer>
 #include <QtQml>
 
 namespace {
@@ -21,9 +29,29 @@ void printHelp()
               "      --working-directory DIR   Start the command in DIR.\n"
               "      --font-family FAMILY      Use FAMILY for terminal text.\n"
               "      --font-size POINTS        Set font size (default: 12).\n"
-              "      --scrollback-lines LINES  Set scrollback limit (default: 10000).\n"
+              "      --scrollback-lines LINES  Estimate capacity for LINES (default: 10000).\n"
               "      --hold                    Keep the pane after the command exits.\n";
 }
+
+#if GHOSTTY_QT_CONFIG_ENABLED
+void reportConfigDiagnostics(const GhosttyConfigSnapshot &snapshot)
+{
+    for (const GhosttyConfigDiagnostic &diagnostic : snapshot.diagnostics) {
+        QString location;
+        if (!diagnostic.sourcePath.isEmpty()) {
+            location = diagnostic.sourcePath;
+            if (diagnostic.line > 0) {
+                location += QStringLiteral(":%1").arg(diagnostic.line);
+                if (diagnostic.column > 0) {
+                    location += QStringLiteral(":%1").arg(diagnostic.column);
+                }
+            }
+            location += QStringLiteral(": ");
+        }
+        qWarning().noquote() << location + diagnostic.message;
+    }
+}
+#endif
 
 } // namespace
 
@@ -72,10 +100,61 @@ int main(int argc, char *argv[])
     TerminalWorkspace::setDefaultLaunchOptions(options);
     qmlRegisterType<TerminalWorkspace>("GhosttyQt", 1, 0, "TerminalWorkspace");
 
+#if GHOSTTY_QT_CONFIG_ENABLED
+    const QString configHelperPath = QDir(QCoreApplication::applicationDirPath())
+                                         .filePath(QStringLiteral(
+                                             GHOSTTY_QT_CONFIG_HELPER_NAME));
+    GhosttyConfigService configService(makeGhosttyConfigProcessLoader({
+        .helperPath = configHelperPath,
+    }));
+    if (!configService.hasSnapshot()) {
+        qWarning().noquote()
+            << "Ghostty configuration is unavailable; using built-in and command-line defaults"
+            << QStringLiteral("(helper: %1):").arg(configHelperPath)
+            << configService.lastError();
+    } else {
+        reportConfigDiagnostics(configService.snapshot());
+    }
+    QObject::connect(&configService, &GhosttyConfigService::reloadFailed,
+                     &application, [](const QString &message) {
+                         qWarning().noquote()
+                             << "Ghostty configuration reload failed; keeping the last valid configuration:"
+                             << message;
+                     });
+#endif
+
     QQmlApplicationEngine engine;
     engine.loadFromModule(QStringLiteral("GhosttyQt"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
+
+    TerminalWorkspace *workspace =
+        engine.rootObjects().constFirst()->findChild<TerminalWorkspace *>();
+    if (workspace == nullptr) {
+        qCritical() << "QML root does not contain a TerminalWorkspace";
+        return 1;
+    }
+#if GHOSTTY_QT_CONFIG_ENABLED
+    if (configService.hasSnapshot()) {
+        workspace->applyConfigSnapshot(configService.snapshot());
+    }
+    QObject::connect(&configService, &GhosttyConfigService::changed,
+                     workspace, &TerminalWorkspace::applyConfigSnapshot);
+    QObject::connect(&configService, &GhosttyConfigService::changed,
+                     &application, &reportConfigDiagnostics);
+    QObject::connect(workspace, &TerminalWorkspace::configReloadRequested,
+                     &configService, &GhosttyConfigService::requestReload);
+#endif
+
+    // Headless regression hook: exercise the real QML confirmation dialog and
+    // complete shutdown without synthesizing compositor input. It is inert in
+    // every normal launch.
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
+        QTimer::singleShot(100, workspace, &TerminalWorkspace::requestQuit);
+        QTimer::singleShot(300, workspace, &TerminalWorkspace::confirmClose);
+    }
+
     return application.exec();
 }

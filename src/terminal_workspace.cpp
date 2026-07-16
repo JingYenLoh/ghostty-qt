@@ -10,14 +10,21 @@
 #include <limits>
 #include <utility>
 
+struct TerminalWorkspace::PaneHandle {
+    PaneId id;
+    TerminalPane *pane = nullptr;
+};
+
 struct TerminalWorkspace::Node {
-    explicit Node(TerminalPane *terminalPane)
-        : pane(terminalPane)
+    explicit Node(PaneHandle handle)
+        : paneId(handle.id)
+        , pane(handle.pane)
     {
     }
 
     bool isLeaf() const { return pane != nullptr; }
 
+    PaneId paneId;
     TerminalPane *pane = nullptr;
     Qt::Orientation orientation = Qt::Horizontal;
     qreal ratio = 0.5;
@@ -27,14 +34,19 @@ struct TerminalWorkspace::Node {
 };
 
 struct TerminalWorkspace::Tab {
+    TabId id;
     std::unique_ptr<Node> root;
-    QPointer<TerminalPane> activePane;
+    PaneId activePaneId;
 };
 
 LaunchOptions TerminalWorkspace::defaultOptions_;
 
 TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
     : QQuickItem(parent)
+    , effectiveOptions_(defaultOptions_)
+    , actionDispatcher_([this](const WorkspaceActionRequest &request) {
+        return executeAction(request);
+    })
 {
     setClip(true);
     QTimer::singleShot(0, this, [this] {
@@ -51,18 +63,95 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
     defaultOptions_ = options;
 }
 
+void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
+{
+    effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        std::vector<TerminalPane *> panes;
+        collectPanes(tab->root.get(), &panes);
+        for (TerminalPane *pane : panes) {
+            pane->applyRuntimeOptions(effectiveOptions_);
+        }
+    }
+    reevaluatePendingClose();
+}
+
 QStringList TerminalWorkspace::tabTitles() const
 {
     QStringList result;
-    result.reserve(static_cast<qsizetype>(tabs_.size()));
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        TerminalPane *pane = tab->activePane;
-        if (pane == nullptr) {
-            pane = firstPane(tab->root.get());
-        }
-        result.append(pane != nullptr ? pane->title() : QStringLiteral("Terminal"));
+    result.reserve(tabModel_.count());
+    for (int index = 0; index < tabModel_.count(); ++index) {
+        result.append(tabModel_.data(tabModel_.index(index, 0),
+                                     TabListModel::TitleRole).toString());
     }
     return result;
+}
+
+QString TerminalWorkspace::currentTitle() const
+{
+    const TabListEntry *entry = tabModel_.entryAt(currentIndex_);
+    if (entry == nullptr) {
+        return {};
+    }
+    return entry->titleOverride.isEmpty() ? entry->title : entry->titleOverride;
+}
+
+bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
+{
+    return actionDispatcher_.dispatch(request);
+}
+
+bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
+{
+    const auto contextMatchesPane = [this, &request] {
+        return !request.context.tabId.isValid()
+            || tabIdForPane(request.context.paneId) == request.context.tabId;
+    };
+    switch (request.action) {
+    case WorkspaceAction::NewTab:
+        createNewTab();
+        return true;
+    case WorkspaceAction::ActivateTab:
+        if (tabById(request.context.tabId) == nullptr) return false;
+        activateTab(request.context.tabId);
+        return true;
+    case WorkspaceAction::ActivatePane:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        activatePane(request.context.paneId);
+        return true;
+    case WorkspaceAction::CloseTab:
+        if (tabById(request.context.tabId) == nullptr) return false;
+        closeTab(request.context.tabId);
+        return true;
+    case WorkspaceAction::ClosePane:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        closePane(request.context.paneId);
+        return true;
+    case WorkspaceAction::SplitRight:
+    case WorkspaceAction::SplitDown:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        splitPane(request.context.paneId,
+                  request.action == WorkspaceAction::SplitRight
+                      ? Qt::Horizontal
+                      : Qt::Vertical);
+        return true;
+    case WorkspaceAction::NavigatePane:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) return false;
+        return navigateFrom(request.context.paneId, request.context.value);
+    case WorkspaceAction::ChangeTabRelative:
+        if (request.context.tabId.isValid()
+            && tabById(request.context.tabId) == nullptr) return false;
+        return changeTabRelativeImpl(request.context.value,
+                                     request.context.tabId);
+    case WorkspaceAction::RequestQuit:
+        requestQuitImpl();
+        return true;
+    }
+    return false;
 }
 
 TerminalWorkspace::Tab *TerminalWorkspace::currentTab()
@@ -81,50 +170,127 @@ const TerminalWorkspace::Tab *TerminalWorkspace::currentTab() const
     return tabs_[static_cast<size_t>(currentIndex_)].get();
 }
 
-TerminalPane *TerminalWorkspace::createPane(const LaunchOptions &options)
+TerminalWorkspace::Tab *TerminalWorkspace::tabById(TabId id)
 {
+    const int index = tabIndexForId(id);
+    return index >= 0 ? tabs_[static_cast<size_t>(index)].get() : nullptr;
+}
+
+const TerminalWorkspace::Tab *TerminalWorkspace::tabById(TabId id) const
+{
+    const int index = tabIndexForId(id);
+    return index >= 0 ? tabs_[static_cast<size_t>(index)].get() : nullptr;
+}
+
+TabId TerminalWorkspace::currentTabId() const
+{
+    const Tab *tab = currentTab();
+    return tab != nullptr ? tab->id : TabId{};
+}
+
+PaneId TerminalWorkspace::currentPaneId() const
+{
+    const Tab *tab = currentTab();
+    return tab != nullptr ? tab->activePaneId : PaneId{};
+}
+
+TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
+    const LaunchOptions &options)
+{
+    const PaneId paneId(nextPaneId_++);
     auto *pane = new TerminalPane(options, this);
     pane->setVisible(false);
+    pane->setWorkspaceActionHandler(
+        [this, paneId](WorkspaceActionRequest request) {
+            request.context.tabId = tabIdForPane(paneId);
+            request.context.paneId = paneId;
+            return dispatchAction(request);
+        });
     connect(pane, &TerminalPane::activated, this,
-            [this](TerminalPane *activatedPane) { setActivePane(activatedPane); });
+            [this, paneId](TerminalPane *) {
+                dispatchAction({WorkspaceAction::ActivatePane,
+                                {TabId{}, paneId, 0}});
+            });
     connect(pane, &TerminalPane::titleChanged, this,
-            [this] { Q_EMIT tabTitlesChanged(); });
+            [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::currentDirectoryChanged, this,
-            [this] { Q_EMIT tabTitlesChanged(); });
-    connect(pane, &TerminalPane::requestNewTab, this, &TerminalWorkspace::newTab);
+            [this, paneId] { refreshTab(tabIdForPane(paneId)); });
+    connect(pane, &TerminalPane::sessionEnded, this,
+            [this, paneId](TerminalPane *, int, int) {
+                refreshTab(tabIdForPane(paneId));
+            });
+    connect(pane, &TerminalPane::processStateChanged, this,
+            [this, paneId] {
+                refreshTab(tabIdForPane(paneId));
+                reevaluatePendingClose();
+            });
+    connect(pane, &TerminalPane::requestNewTab, this,
+            [this] { dispatchAction({WorkspaceAction::NewTab, {}}); });
     connect(pane, &TerminalPane::requestSplit, this,
-            [this](int orientation) {
-                splitActive(static_cast<Qt::Orientation>(orientation));
+            [this, paneId](int orientation) {
+                dispatchAction({orientation == Qt::Horizontal
+                                    ? WorkspaceAction::SplitRight
+                                    : WorkspaceAction::SplitDown,
+                                {tabIdForPane(paneId), paneId, 0}});
             });
     connect(pane, &TerminalPane::requestClose, this,
-            [this, pane] { closePane(pane); });
+            [this, paneId] {
+                dispatchAction({WorkspaceAction::ClosePane,
+                                {tabIdForPane(paneId), paneId, 0}});
+            });
+    connect(pane, &TerminalPane::requestCloseTab, this,
+            [this, paneId] {
+                const TabId tabId = tabIdForPane(paneId);
+                dispatchAction({WorkspaceAction::CloseTab,
+                                {tabId, PaneId{}, 0}});
+            });
     connect(pane, &TerminalPane::requestNavigate, this,
-            [this, pane](int direction) { navigateFrom(pane, direction); });
+            [this, paneId](int direction) {
+                dispatchAction({WorkspaceAction::NavigatePane,
+                                {tabIdForPane(paneId), paneId, direction}});
+            });
     connect(pane, &TerminalPane::requestTabChange, this,
-            &TerminalWorkspace::changeTabRelative);
-    connect(pane, &TerminalPane::requestQuit, this, &TerminalWorkspace::requestQuit);
+            [this, paneId](int delta) {
+        dispatchAction({WorkspaceAction::ChangeTabRelative,
+                        {tabIdForPane(paneId), paneId, delta}});
+    });
+    connect(pane, &TerminalPane::requestQuit, this, [this] {
+        dispatchAction({WorkspaceAction::RequestQuit, {}});
+    });
+    connect(pane, &TerminalPane::requestConfigReload,
+            this, &TerminalWorkspace::configReloadRequested);
     connect(pane, &TerminalPane::unsafePasteRequested, this,
-            &TerminalWorkspace::beginUnsafePaste);
-    return pane;
+            [this, paneId](const QString &text, TerminalPane *) {
+                beginUnsafePaste(text, paneId);
+            });
+    return {paneId, pane};
 }
 
 void TerminalWorkspace::newTab()
 {
-    LaunchOptions options = defaultOptions_;
+    dispatchAction({WorkspaceAction::NewTab, {}});
+}
+
+void TerminalWorkspace::createNewTab()
+{
+    LaunchOptions options = effectiveOptions_;
     if (initialTabCreated_) {
         options.program.clear();
         options.hold = false;
     }
     initialTabCreated_ = true;
 
-    TerminalPane *pane = createPane(options);
+    const PaneHandle pane = createPane(options);
     auto tab = std::make_unique<Tab>();
+    tab->id = TabId(nextTabId_++);
     tab->root = std::make_unique<Node>(pane);
-    tab->activePane = pane;
+    tab->activePaneId = pane.id;
+    const TabId tabId = tab->id;
     tabs_.push_back(std::move(tab));
 
+    tabModel_.append(tabListEntry(*tabs_.back()));
     Q_EMIT tabTitlesChanged();
-    setCurrentIndex(static_cast<int>(tabs_.size()) - 1);
+    activateTab(tabId);
 }
 
 void TerminalWorkspace::setCurrentIndex(int index)
@@ -134,9 +300,19 @@ void TerminalWorkspace::setCurrentIndex(int index)
         return;
     }
     index = std::clamp(index, 0, static_cast<int>(tabs_.size()) - 1);
+    dispatchAction({WorkspaceAction::ActivateTab,
+                    {tabs_[static_cast<size_t>(index)]->id, PaneId{}, 0}});
+}
+
+void TerminalWorkspace::activateTab(TabId id)
+{
+    const int index = tabIndexForId(id);
+    if (index < 0) {
+        return;
+    }
     if (currentIndex_ == index) {
-        if (Tab *tab = currentTab(); tab != nullptr && tab->activePane != nullptr) {
-            tab->activePane->focusTerminal();
+        if (TerminalPane *pane = paneForId(currentPaneId()); pane != nullptr) {
+            pane->focusTerminal();
         }
         return;
     }
@@ -148,128 +324,160 @@ void TerminalWorkspace::setCurrentIndex(int index)
     setNodeVisibility(tabs_[static_cast<size_t>(currentIndex_)]->root.get(), true);
     layoutCurrentTab();
     Q_EMIT currentIndexChanged();
-    if (Tab *tab = currentTab(); tab != nullptr && tab->activePane != nullptr) {
-        tab->activePane->focusTerminal();
+    Q_EMIT currentTitleChanged();
+    if (TerminalPane *pane = paneForId(currentPaneId()); pane != nullptr) {
+        pane->focusTerminal();
     }
 }
 
-void TerminalWorkspace::changeTabRelative(int delta)
+bool TerminalWorkspace::changeTabRelativeImpl(int delta, TabId origin)
 {
     if (tabs_.empty()) {
-        return;
+        return false;
     }
     const int count = static_cast<int>(tabs_.size());
-    const int target = (currentIndex_ + delta % count + count) % count;
+    const int base = origin.isValid() ? tabIndexForId(origin) : currentIndex_;
+    if (base < 0) {
+        return false;
+    }
+    const int target = (base + delta % count + count) % count;
+    if (target == currentIndex_) {
+        return false;
+    }
     setCurrentIndex(target);
+    return true;
 }
 
 void TerminalWorkspace::splitRight()
 {
-    splitActive(Qt::Horizontal);
+    dispatchAction({WorkspaceAction::SplitRight,
+                    {TabId{}, currentPaneId(), 0}});
 }
 
 void TerminalWorkspace::splitDown()
 {
-    splitActive(Qt::Vertical);
+    dispatchAction({WorkspaceAction::SplitDown,
+                    {TabId{}, currentPaneId(), 0}});
 }
 
-void TerminalWorkspace::splitActive(Qt::Orientation orientation)
+void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation)
 {
-    Tab *tab = currentTab();
-    if (tab == nullptr || tab->activePane == nullptr) {
+    const TabId tabId = tabIdForPane(paneId);
+    Tab *tab = tabById(tabId);
+    if (tab == nullptr) {
         return;
     }
-    Node *node = findNode(tab->root.get(), tab->activePane);
+    Node *node = findNode(tab->root.get(), paneId);
     if (node == nullptr || !node->isLeaf()) {
         return;
     }
 
     TerminalPane *oldPane = node->pane;
-    TerminalPane *newPane = createPane(oldPane->splitLaunchOptions());
+    const PaneHandle newPane = createPane(oldPane->splitLaunchOptions());
+    const PaneHandle oldHandle{node->paneId, oldPane};
+    node->paneId = {};
     node->pane = nullptr;
     node->orientation = orientation;
     node->ratio = 0.5;
-    node->first = std::make_unique<Node>(oldPane);
+    node->first = std::make_unique<Node>(oldHandle);
     node->second = std::make_unique<Node>(newPane);
-    tab->activePane = newPane;
-    newPane->setVisible(true);
-    layoutCurrentTab();
-    newPane->focusTerminal();
-    Q_EMIT tabTitlesChanged();
+    tab->activePaneId = newPane.id;
+    const bool targetIsCurrent = tabId == currentTabId();
+    newPane.pane->setVisible(targetIsCurrent);
+    if (targetIsCurrent) {
+        layoutCurrentTab();
+        newPane.pane->focusTerminal();
+    }
+    refreshTab(tabId);
 }
 
-void TerminalWorkspace::setActivePane(TerminalPane *pane)
+void TerminalWorkspace::activatePane(PaneId paneId)
 {
-    const int tabIndex = tabIndexForPane(pane);
+    const int tabIndex = tabIndexForPane(paneId);
     if (tabIndex < 0) {
         return;
     }
     if (tabIndex != currentIndex_) {
-        setCurrentIndex(tabIndex);
+        activateTab(tabs_[static_cast<size_t>(tabIndex)]->id);
     }
     Tab *tab = currentTab();
-    if (tab != nullptr && tab->activePane != pane) {
-        tab->activePane = pane;
-        Q_EMIT tabTitlesChanged();
+    if (tab != nullptr && tab->activePaneId != paneId) {
+        tab->activePaneId = paneId;
+        refreshTab(tab->id);
+    }
+    if (TerminalPane *pane = paneForId(paneId); pane != nullptr) {
+        pane->focusTerminal();
     }
 }
 
 void TerminalWorkspace::closeActivePane()
 {
-    if (Tab *tab = currentTab(); tab != nullptr) {
-        closePane(tab->activePane);
-    }
+    dispatchAction({WorkspaceAction::ClosePane,
+                    {TabId{}, currentPaneId(), 0}});
 }
 
-void TerminalWorkspace::closePane(TerminalPane *pane, bool force)
+void TerminalWorkspace::closePane(PaneId paneId, bool force)
 {
+    TerminalPane *pane = paneForId(paneId);
     if (pane == nullptr) {
         return;
     }
-    const int tabIndex = tabIndexForPane(pane);
+    const int tabIndex = tabIndexForPane(paneId);
     if (tabIndex < 0) {
         return;
     }
-    if (!force && pane->isRunning()) {
+    if (!force && shouldConfirmClose(effectiveOptions_.confirmCloseMode,
+                                     pane->isRunning(),
+                                     pane->hasActiveProcess())) {
         pendingClose_ = PendingClose::Pane;
-        pendingPane_ = pane;
+        pendingPaneId_ = paneId;
+        pendingTabId_ = tabs_[static_cast<size_t>(tabIndex)]->id;
         Q_EMIT closeConfirmationRequested(
             QStringLiteral("A process is still running in this pane. Close it?"));
         return;
     }
 
     Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
-    removePaneFromNode(tab->root, pane);
+    const TabId tabId = tab->id;
+    const bool removedActivePane = tab->activePaneId == paneId;
+    resolvePendingPaneRemoval(paneId);
+    removePaneFromNode(tab->root, paneId);
     if (tab->root == nullptr) {
-        removeTab(tabIndex);
+        removeTab(tabId);
         return;
     }
-    tab->activePane = firstPane(tab->root.get());
+    if (removedActivePane || paneForId(tab->activePaneId) == nullptr) {
+        tab->activePaneId = firstPaneId(tab->root.get());
+    }
     if (tabIndex == currentIndex_) {
         layoutCurrentTab();
-        if (tab->activePane != nullptr) tab->activePane->focusTerminal();
+        if (TerminalPane *activePane = paneForId(tab->activePaneId);
+            activePane != nullptr) {
+            activePane->focusTerminal();
+        }
     }
-    Q_EMIT tabTitlesChanged();
+    refreshTab(tabId);
 }
 
 bool TerminalWorkspace::removePaneFromNode(std::unique_ptr<Node> &node,
-                                           TerminalPane *pane)
+                                           PaneId paneId)
 {
     if (node == nullptr) {
         return false;
     }
     if (node->isLeaf()) {
-        if (node->pane != pane) {
+        if (node->paneId != paneId) {
             return false;
         }
-        pane->setVisible(false);
-        pane->deleteLater();
+        node->pane->beginShutdown();
+        node->pane->setVisible(false);
+        node->pane->deleteLater();
         node.reset();
         return true;
     }
 
-    const bool removed = removePaneFromNode(node->first, pane)
-        || removePaneFromNode(node->second, pane);
+    const bool removed = removePaneFromNode(node->first, paneId)
+        || removePaneFromNode(node->second, paneId);
     if (!removed || node == nullptr) {
         return removed;
     }
@@ -283,63 +491,172 @@ bool TerminalWorkspace::removePaneFromNode(std::unique_ptr<Node> &node,
 
 void TerminalWorkspace::closeCurrentTab()
 {
-    const Tab *tab = currentTab();
+    dispatchAction({WorkspaceAction::CloseTab,
+                    {currentTabId(), PaneId{}, 0}});
+}
+
+void TerminalWorkspace::closeTab(TabId tabId, bool force)
+{
+    const Tab *tab = tabById(tabId);
     if (tab == nullptr) {
         return;
     }
-    std::vector<TerminalPane *> panes;
-    collectPanes(tab->root.get(), &panes);
-    const bool running = std::any_of(panes.cbegin(), panes.cend(),
-                                     [](TerminalPane *pane) { return pane->isRunning(); });
-    if (running) {
+    if (!force && shouldConfirmTabClose(*tab)) {
         pendingClose_ = PendingClose::Tab;
-        pendingTabIndex_ = currentIndex_;
+        pendingPaneId_ = {};
+        pendingTabId_ = tabId;
         Q_EMIT closeConfirmationRequested(
             QStringLiteral("Processes are still running in this tab. Close the tab?"));
         return;
     }
-    removeTab(currentIndex_);
+    removeTab(tabId);
 }
 
-void TerminalWorkspace::removeTab(int index)
+void TerminalWorkspace::removeTab(TabId tabId)
 {
-    if (index < 0 || index >= static_cast<int>(tabs_.size())) {
+    const int index = tabIndexForId(tabId);
+    if (index < 0) {
         return;
     }
+    const bool removedCurrentTab = index == currentIndex_;
     std::vector<TerminalPane *> panes;
     collectPanes(tabs_[static_cast<size_t>(index)]->root.get(), &panes);
     for (TerminalPane *pane : panes) {
+        pane->beginShutdown();
         pane->setVisible(false);
         pane->deleteLater();
     }
     tabs_.erase(tabs_.begin() + index);
+    tabModel_.remove(tabId);
+    Q_EMIT tabTitlesChanged();
+    resolvePendingTabRemoval(tabId);
 
     if (tabs_.empty()) {
         currentIndex_ = -1;
-        Q_EMIT tabTitlesChanged();
         Q_EMIT currentIndexChanged();
-        Q_EMIT quitApproved();
+        Q_EMIT currentTitleChanged();
+        approveQuit();
         return;
     }
 
-    const int nextIndex = std::min(index, static_cast<int>(tabs_.size()) - 1);
-    currentIndex_ = -1;
-    Q_EMIT tabTitlesChanged();
-    setCurrentIndex(nextIndex);
+    if (pendingClose_ == PendingClose::Quit && !shouldConfirmWorkspaceClose()) {
+        pendingClose_ = PendingClose::None;
+        pendingPaneId_ = {};
+        pendingTabId_ = {};
+        Q_EMIT closeConfirmationResolved();
+        approveQuit();
+        return;
+    }
+
+    if (removedCurrentTab) {
+        const int nextIndex = std::min(index, static_cast<int>(tabs_.size()) - 1);
+        currentIndex_ = -1;
+        activateTab(tabs_[static_cast<size_t>(nextIndex)]->id);
+    } else if (index < currentIndex_) {
+        --currentIndex_;
+        Q_EMIT currentIndexChanged();
+    }
+}
+
+void TerminalWorkspace::resolvePendingPaneRemoval(PaneId paneId)
+{
+    if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != paneId) {
+        return;
+    }
+    pendingClose_ = PendingClose::None;
+    pendingPaneId_ = {};
+    pendingTabId_ = {};
+    Q_EMIT closeConfirmationResolved();
+}
+
+void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)
+{
+    if (pendingClose_ != PendingClose::Tab || pendingTabId_ != tabId) {
+        return;
+    }
+    pendingClose_ = PendingClose::None;
+    pendingPaneId_ = {};
+    pendingTabId_ = {};
+    Q_EMIT closeConfirmationResolved();
+}
+
+void TerminalWorkspace::reevaluatePendingClose()
+{
+    if (pendingClose_ == PendingClose::None) {
+        return;
+    }
+
+    const PendingClose action = pendingClose_;
+    const PaneId paneId = pendingPaneId_;
+    const TabId tabId = pendingTabId_;
+    if (action == PendingClose::Pane) {
+        TerminalPane *pane = paneForId(paneId);
+        if (pane != nullptr
+            && shouldConfirmClose(effectiveOptions_.confirmCloseMode,
+                                  pane->isRunning(),
+                                  pane->hasActiveProcess())) {
+            return;
+        }
+    } else if (action == PendingClose::Tab) {
+        const Tab *tab = tabById(tabId);
+        if (tab != nullptr && shouldConfirmTabClose(*tab)) {
+            return;
+        }
+    } else if (action == PendingClose::Quit
+               && shouldConfirmWorkspaceClose()) {
+        return;
+    }
+
+    pendingClose_ = PendingClose::None;
+    pendingPaneId_ = {};
+    pendingTabId_ = {};
+    Q_EMIT closeConfirmationResolved();
+
+    if (action == PendingClose::Pane && paneForId(paneId) != nullptr) {
+        closePane(paneId, true);
+    } else if (action == PendingClose::Tab && tabById(tabId) != nullptr) {
+        closeTab(tabId, true);
+    } else if (action == PendingClose::Quit) {
+        approveQuit();
+    }
 }
 
 void TerminalWorkspace::requestQuit()
 {
+    dispatchAction({WorkspaceAction::RequestQuit, {}});
+}
+
+void TerminalWorkspace::requestQuitImpl()
+{
     if (pendingClose_ == PendingClose::Quit) {
         return;
     }
-    if (hasRunningProcesses()) {
+    if (shouldConfirmWorkspaceClose()) {
         pendingClose_ = PendingClose::Quit;
-        pendingPane_.clear();
-        pendingTabIndex_ = -1;
+        pendingPaneId_ = {};
+        pendingTabId_ = {};
         Q_EMIT closeConfirmationRequested(
             QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
         return;
+    }
+    approveQuit();
+}
+
+void TerminalWorkspace::approveQuit()
+{
+    if (quitApprovedEmitted_) {
+        return;
+    }
+    quitApprovedEmitted_ = true;
+    // Start every worker shutdown before QObject hierarchy teardown. The
+    // per-process grace periods then overlap on their independent threads
+    // instead of accumulating serially on the GUI thread.
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        std::vector<TerminalPane *> panes;
+        collectPanes(tab->root.get(), &panes);
+        for (TerminalPane *pane : panes) {
+            pane->beginShutdown();
+        }
     }
     Q_EMIT quitApproved();
 }
@@ -347,32 +664,32 @@ void TerminalWorkspace::requestQuit()
 void TerminalWorkspace::confirmClose()
 {
     const PendingClose action = pendingClose_;
-    QPointer<TerminalPane> pane = pendingPane_;
-    const int tabIndex = pendingTabIndex_;
+    const PaneId paneId = pendingPaneId_;
+    const TabId tabId = pendingTabId_;
     pendingClose_ = PendingClose::None;
-    pendingPane_.clear();
-    pendingTabIndex_ = -1;
+    pendingPaneId_ = {};
+    pendingTabId_ = {};
 
-    if (action == PendingClose::Pane && pane != nullptr) {
-        closePane(pane, true);
+    if (action == PendingClose::Pane && tabIdForPane(paneId) == tabId) {
+        closePane(paneId, true);
     } else if (action == PendingClose::Tab) {
-        removeTab(tabIndex);
+        closeTab(tabId, true);
     } else if (action == PendingClose::Quit) {
-        Q_EMIT quitApproved();
+        approveQuit();
     }
 }
 
 void TerminalWorkspace::cancelClose()
 {
     pendingClose_ = PendingClose::None;
-    pendingPane_.clear();
-    pendingTabIndex_ = -1;
+    pendingPaneId_ = {};
+    pendingTabId_ = {};
 }
 
-void TerminalWorkspace::beginUnsafePaste(const QString &text, TerminalPane *pane)
+void TerminalWorkspace::beginUnsafePaste(const QString &text, PaneId paneId)
 {
     pendingPaste_ = text;
-    pendingPastePane_ = pane;
+    pendingPastePaneId_ = paneId;
     QString preview = text.left(240);
     preview.replace(QLatin1Char('\n'), QStringLiteral("↵\n"));
     if (text.size() > preview.size()) {
@@ -383,8 +700,8 @@ void TerminalWorkspace::beginUnsafePaste(const QString &text, TerminalPane *pane
 
 void TerminalWorkspace::confirmPaste()
 {
-    if (pendingPastePane_ != nullptr) {
-        pendingPastePane_->pasteText(pendingPaste_);
+    if (TerminalPane *pane = paneForId(pendingPastePaneId_); pane != nullptr) {
+        pane->pasteText(pendingPaste_);
     }
     cancelPaste();
 }
@@ -392,7 +709,47 @@ void TerminalWorkspace::confirmPaste()
 void TerminalWorkspace::cancelPaste()
 {
     pendingPaste_.clear();
-    pendingPastePane_.clear();
+    pendingPastePaneId_ = {};
+}
+
+TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
+{
+    TerminalPane *activePane = paneForId(tab.activePaneId);
+    if (activePane == nullptr) {
+        activePane = firstPane(tab.root.get());
+    }
+
+    std::vector<TerminalPane *> panes;
+    collectPanes(tab.root.get(), &panes);
+    const bool running = std::any_of(panes.cbegin(), panes.cend(),
+                                     [](TerminalPane *pane) {
+                                         return pane->isRunning();
+                                     });
+
+    TabListEntry entry;
+    entry.id = tab.id;
+    entry.activePaneId = tab.activePaneId;
+    entry.title = activePane != nullptr
+        ? activePane->title()
+        : QStringLiteral("Terminal");
+    entry.currentDirectory = activePane != nullptr
+        ? activePane->currentDirectory()
+        : QString{};
+    entry.running = running;
+    return entry;
+}
+
+void TerminalWorkspace::refreshTab(TabId tabId)
+{
+    const Tab *tab = tabById(tabId);
+    if (tab == nullptr) {
+        return;
+    }
+    tabModel_.replace(tabId, tabListEntry(*tab));
+    Q_EMIT tabTitlesChanged();
+    if (tabId == currentTabId()) {
+        Q_EMIT currentTitleChanged();
+    }
 }
 
 void TerminalWorkspace::geometryChange(const QRectF &newGeometry,
@@ -459,12 +816,12 @@ void TerminalWorkspace::setNodeVisibility(Node *node, bool visible)
 }
 
 TerminalWorkspace::Node *TerminalWorkspace::findNode(Node *node,
-                                                     TerminalPane *pane) const
+                                                     PaneId paneId) const
 {
     if (node == nullptr) return nullptr;
-    if (node->isLeaf()) return node->pane == pane ? node : nullptr;
-    if (Node *result = findNode(node->first.get(), pane)) return result;
-    return findNode(node->second.get(), pane);
+    if (node->isLeaf()) return node->paneId == paneId ? node : nullptr;
+    if (Node *result = findNode(node->first.get(), paneId)) return result;
+    return findNode(node->second.get(), paneId);
 }
 
 TerminalPane *TerminalWorkspace::firstPane(Node *node) const
@@ -473,6 +830,27 @@ TerminalPane *TerminalWorkspace::firstPane(Node *node) const
     if (node->isLeaf()) return node->pane;
     if (TerminalPane *pane = firstPane(node->first.get())) return pane;
     return firstPane(node->second.get());
+}
+
+PaneId TerminalWorkspace::firstPaneId(Node *node) const
+{
+    if (node == nullptr) return {};
+    if (node->isLeaf()) return node->paneId;
+    const PaneId first = firstPaneId(node->first.get());
+    return first.isValid() ? first : firstPaneId(node->second.get());
+}
+
+TerminalPane *TerminalWorkspace::paneForId(PaneId paneId) const
+{
+    if (!paneId.isValid()) {
+        return nullptr;
+    }
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        if (Node *node = findNode(tab->root.get(), paneId); node != nullptr) {
+            return node->pane;
+        }
+    }
+    return nullptr;
 }
 
 void TerminalWorkspace::collectPanes(Node *node,
@@ -487,10 +865,11 @@ void TerminalWorkspace::collectPanes(Node *node,
     collectPanes(node->second.get(), panes);
 }
 
-void TerminalWorkspace::navigateFrom(TerminalPane *pane, int direction)
+bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
 {
-    const Tab *tab = currentTab();
-    if (tab == nullptr || pane == nullptr) return;
+    TerminalPane *pane = paneForId(paneId);
+    const Tab *tab = tabById(tabIdForPane(paneId));
+    if (tab == nullptr || pane == nullptr) return false;
     std::vector<TerminalPane *> panes;
     collectPanes(tab->root.get(), &panes);
     const QPointF source = pane->boundingRect().center() + pane->position();
@@ -521,30 +900,78 @@ void TerminalWorkspace::navigateFrom(TerminalPane *pane, int direction)
         }
     }
     if (best != nullptr) {
-        setActivePane(best);
-        best->focusTerminal();
+        activatePane(paneIdForPane(best));
+        return true;
     }
+    return false;
 }
 
-bool TerminalWorkspace::hasRunningProcesses() const
+bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
+{
+    std::vector<TerminalPane *> panes;
+    collectPanes(tab.root.get(), &panes);
+    const bool childRunning = std::any_of(
+        panes.cbegin(), panes.cend(),
+        [](TerminalPane *pane) { return pane->isRunning(); });
+    const bool activeProcess = std::any_of(
+        panes.cbegin(), panes.cend(),
+        [](TerminalPane *pane) { return pane->hasActiveProcess(); });
+    return shouldConfirmClose(effectiveOptions_.confirmCloseMode,
+                              childRunning, activeProcess);
+}
+
+bool TerminalWorkspace::shouldConfirmWorkspaceClose() const
 {
     for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<TerminalPane *> panes;
-        collectPanes(tab->root.get(), &panes);
-        if (std::any_of(panes.cbegin(), panes.cend(),
-                        [](TerminalPane *pane) { return pane->isRunning(); })) {
+        if (shouldConfirmTabClose(*tab)) {
             return true;
         }
     }
     return false;
 }
 
-int TerminalWorkspace::tabIndexForPane(TerminalPane *pane) const
+int TerminalWorkspace::tabIndexForId(TabId tabId) const
 {
     for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
-        if (findNode(tabs_[static_cast<size_t>(index)]->root.get(), pane) != nullptr) {
+        if (tabs_[static_cast<size_t>(index)]->id == tabId) {
             return index;
         }
     }
     return -1;
+}
+
+int TerminalWorkspace::tabIndexForPane(PaneId paneId) const
+{
+    for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
+        if (findNode(tabs_[static_cast<size_t>(index)]->root.get(), paneId) != nullptr) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+TabId TerminalWorkspace::tabIdForPane(PaneId paneId) const
+{
+    const int index = tabIndexForPane(paneId);
+    return index >= 0 ? tabs_[static_cast<size_t>(index)]->id : TabId{};
+}
+
+PaneId TerminalWorkspace::paneIdForPane(TerminalPane *pane) const
+{
+    if (pane == nullptr) {
+        return {};
+    }
+    const auto findPaneId = [pane](auto &&self, Node *node) -> PaneId {
+        if (node == nullptr) return {};
+        if (node->isLeaf()) return node->pane == pane ? node->paneId : PaneId{};
+        const PaneId first = self(self, node->first.get());
+        return first.isValid() ? first : self(self, node->second.get());
+    };
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        const PaneId paneId = findPaneId(findPaneId, tab->root.get());
+        if (paneId.isValid()) {
+            return paneId;
+        }
+    }
+    return {};
 }

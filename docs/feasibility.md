@@ -40,8 +40,9 @@ scaffolding them:
   links statically into a Qt executable.
 - A real nonblocking PTY drives Ghostty parsing on a worker thread, including
   query callbacks and final-output draining during child exit.
-- Ghostty render state crosses to Qt as owned value snapshots; wide cells,
-  styles, selection, cursor, and scrollback metadata are represented.
+- Ghostty render state crosses to Qt as owned value updates; an initial full
+  frame is followed by dirty-row replacements. Wide cells, styles, selection,
+  cursor, and scrollback metadata are represented.
 - A `QQuickItem` renderer uses public `QSGTextNode` objects with `QtRendering`
   for distance-field glyph atlases on hardware RHI backends. Per-cell
   `QTextLayout` preserves exact grid placement, while batched colored geometry
@@ -57,10 +58,11 @@ The project is feasible as a terminal MVP, but production parity is a larger
 effort. The main risks are renderer performance, the evolving libghostty API,
 advanced text/graphics support, and distribution:
 
-- Renderer-v1 has the intended QSG/GPU glyph path, but still consumes a full
-  value snapshot, rebuilds the retained root's child nodes, and lays out text
-  per cell. Dirty-row reuse, persistent child nodes, and larger compatible runs
-  will be needed to reduce CPU overhead in high-throughput workloads.
+- Renderer-v1 has the intended QSG/GPU glyph path and dirty-row worker/UI
+  transport, but still rebuilds the retained root's child nodes and lays out
+  text per cell when presenting an update. Persistent row nodes and larger
+  compatible runs will be needed to reduce CPU overhead in high-throughput
+  workloads.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji, ligatures across cells, Kitty graphics, hyperlinks, and search

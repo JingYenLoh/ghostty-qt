@@ -5,6 +5,7 @@
 #include <QString>
 #include <QVector>
 
+#include <algorithm>
 #include <cstdint>
 
 struct TerminalCell {
@@ -41,10 +42,112 @@ struct TerminalFrame {
     quint64 scrollLength = 0;
 };
 
+// A row is the smallest cell payload that crosses the worker/UI thread
+// boundary after the initial frame. The row index is viewport-relative.
+struct TerminalRowUpdate {
+    int row = 0;
+    QVector<TerminalCell> cells;
+};
+
+// Value-only delta produced from libghostty's render state. A full update is
+// the fallback used for the first frame and whenever the viewport shape or
+// global render state changes. Partial updates contain only dirty rows and
+// independently identify non-cell visual changes.
+struct TerminalUpdate {
+    int columns = 0;
+    int rows = 0;
+    bool fullFrame = false;
+    QVector<TerminalRowUpdate> dirtyRows;
+
+    bool colorsChanged = false;
+    QColor foreground = QColor(QStringLiteral("#d8dee9"));
+    QColor background = QColor(QStringLiteral("#1e222a"));
+    QColor cursorColor = QColor(QStringLiteral("#d8dee9"));
+
+    bool cursorChanged = false;
+    bool cursorVisible = false;
+    bool cursorBlinking = false;
+    int cursorColumn = 0;
+    int cursorRow = 0;
+    int cursorStyle = 1;
+    int cursorColumnSpan = 1;
+
+    bool scrollbarChanged = false;
+    quint64 scrollTotal = 0;
+    quint64 scrollOffset = 0;
+    quint64 scrollLength = 0;
+
+    bool hasChanges() const
+    {
+        return fullFrame || !dirtyRows.isEmpty() || colorsChanged
+            || cursorChanged || scrollbarChanged;
+    }
+};
+
+// Applies an update without exposing terminal handles to the UI. Validation
+// happens before mutation so a malformed or incomplete delta cannot leave the
+// retained frame half-updated. Returns false for an invalid update or a
+// partial update whose dimensions do not match the retained frame.
+inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &update)
+{
+    if (frame == nullptr || update.columns <= 0 || update.rows <= 0) {
+        return false;
+    }
+
+    QVector<bool> seen(update.rows, false);
+    for (const TerminalRowUpdate &row : update.dirtyRows) {
+        if (row.row < 0 || row.row >= update.rows || seen.at(row.row)
+            || row.cells.size() != update.columns) {
+            return false;
+        }
+        seen[row.row] = true;
+    }
+    if (update.fullFrame) {
+        if (update.dirtyRows.size() != update.rows) {
+            return false;
+        }
+    } else if (frame->columns != update.columns || frame->rows != update.rows
+               || frame->cells.size() != update.columns * update.rows) {
+        return false;
+    }
+
+    if (update.fullFrame) {
+        frame->columns = update.columns;
+        frame->rows = update.rows;
+        frame->cells.resize(update.columns * update.rows);
+    }
+    for (const TerminalRowUpdate &row : update.dirtyRows) {
+        const qsizetype destination = static_cast<qsizetype>(row.row) * update.columns;
+        std::copy(row.cells.cbegin(), row.cells.cend(), frame->cells.begin() + destination);
+    }
+
+    if (update.fullFrame || update.colorsChanged) {
+        frame->foreground = update.foreground;
+        frame->background = update.background;
+        frame->cursorColor = update.cursorColor;
+    }
+    if (update.fullFrame || update.cursorChanged) {
+        frame->cursorVisible = update.cursorVisible;
+        frame->cursorBlinking = update.cursorBlinking;
+        frame->cursorColumn = update.cursorColumn;
+        frame->cursorRow = update.cursorRow;
+        frame->cursorStyle = update.cursorStyle;
+        frame->cursorColumnSpan = update.cursorColumnSpan;
+    }
+    if (update.fullFrame || update.scrollbarChanged) {
+        frame->scrollTotal = update.scrollTotal;
+        frame->scrollOffset = update.scrollOffset;
+        frame->scrollLength = update.scrollLength;
+    }
+    return true;
+}
+
 struct TerminalKeyInput {
     int key = 0;
     int modifiers = 0;
     QString text;
+    // Qt Wayland/X11 expose XKB keycodes here (Linux evdev code + 8).
+    quint32 nativeScanCode = 0;
     bool pressed = true;
     bool autoRepeat = false;
     bool composing = false;
@@ -67,5 +170,6 @@ struct TerminalMouseInput {
 };
 
 Q_DECLARE_METATYPE(TerminalFrame)
+Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalMouseInput)

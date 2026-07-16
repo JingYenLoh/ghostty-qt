@@ -4,7 +4,7 @@ qt_add_executable(test-launch-options
     ../src/launch_options.h
 )
 target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Test)
+target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
 qt_add_executable(test-ghostty-smoke
@@ -15,8 +15,11 @@ add_test(NAME ghostty-smoke COMMAND test-ghostty-smoke)
 
 qt_add_executable(test-session-worker
     test_session_worker.cpp
+    ../src/ghostty_vt_adapter.cpp
+    ../src/ghostty_vt_adapter.h
     ../src/session_worker.cpp
     ../src/session_worker.h
+    ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/terminal_types.h
 )
@@ -37,12 +40,19 @@ add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
     test_terminal_pane.cpp
+    ../src/ghostty_action_catalog.cpp
+    ../src/ghostty_action_catalog.h
+    ../src/ghostty_keybind_set.cpp
+    ../src/ghostty_keybind_set.h
+    ../src/ghostty_vt_adapter.cpp
+    ../src/ghostty_vt_adapter.h
     ../src/session_worker.cpp
     ../src/session_worker.h
     ../src/terminal_controller.cpp
     ../src/terminal_controller.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
+    ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/terminal_types.h
 )
@@ -67,14 +77,231 @@ set_tests_properties(terminal-pane-render PROPERTIES
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
 )
 
+qt_add_executable(test-terminal-workspace
+    test_terminal_workspace.cpp
+    ../src/ghostty_action_catalog.cpp
+    ../src/ghostty_action_catalog.h
+    ../src/ghostty_keybind_set.cpp
+    ../src/ghostty_keybind_set.h
+    ../src/ghostty_vt_adapter.cpp
+    ../src/ghostty_vt_adapter.h
+    ../src/launch_options.cpp
+    ../src/launch_options.h
+    ../src/session_worker.cpp
+    ../src/session_worker.h
+    ../src/tab_list_model.cpp
+    ../src/tab_list_model.h
+    ../src/terminal_controller.cpp
+    ../src/terminal_controller.h
+    ../src/terminal_pane.cpp
+    ../src/terminal_pane.h
+    ../src/terminal_workspace.cpp
+    ../src/terminal_workspace.h
+    ../src/terminal_types.h
+    ../src/workspace_action.h
+    ../src/workspace_ids.h
+)
+target_include_directories(test-terminal-workspace PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-terminal-workspace PRIVATE
+    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+)
+target_link_libraries(test-terminal-workspace PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-runtime-paths
+    ghostty-vt-static
+    util
+)
+add_dependencies(test-terminal-workspace ghostty-qt-terminfo)
+add_test(NAME terminal-workspace COMMAND test-terminal-workspace)
+set_tests_properties(terminal-workspace PROPERTIES
+    TIMEOUT 15
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+)
+
+qt_add_executable(test-ghostty-vt-adapter
+    test_ghostty_vt_adapter.cpp
+    ../src/ghostty_vt_adapter.cpp
+    ../src/ghostty_vt_adapter.h
+    ../src/terminal_types.h
+)
+target_include_directories(test-ghostty-vt-adapter PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-vt-adapter PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-vt-static
+)
+add_test(NAME ghostty-vt-adapter COMMAND test-ghostty-vt-adapter)
+set_tests_properties(ghostty-vt-adapter PROPERTIES TIMEOUT 20)
+
+qt_add_executable(test-workspace-foundation
+    test_workspace_foundation.cpp
+    ../src/tab_list_model.cpp
+    ../src/tab_list_model.h
+    ../src/workspace_action.h
+    ../src/workspace_ids.h
+)
+target_include_directories(test-workspace-foundation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-workspace-foundation PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME workspace-foundation COMMAND test-workspace-foundation)
+set_tests_properties(workspace-foundation PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-ghostty-action-catalog
+    test_ghostty_action_catalog.cpp
+    ../src/ghostty_action_catalog.cpp
+    ../src/ghostty_action_catalog.h
+    ../src/workspace_action.h
+    ../src/workspace_ids.h
+)
+target_include_directories(test-ghostty-action-catalog PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-action-catalog PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME ghostty-action-catalog COMMAND test-ghostty-action-catalog)
+set_tests_properties(ghostty-action-catalog PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-ghostty-keybind-set
+    test_ghostty_keybind_set.cpp
+    ../src/ghostty_keybind_set.cpp
+    ../src/ghostty_keybind_set.h
+)
+target_include_directories(test-ghostty-keybind-set PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-keybind-set PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME ghostty-keybind-set COMMAND test-ghostty-keybind-set)
+set_tests_properties(ghostty-keybind-set PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-ghostty-config-service
+    test_ghostty_config_service.cpp
+    ../src/ghostty_config_loader.h
+    ../src/ghostty_config_service.cpp
+    ../src/ghostty_config_service.h
+    ../src/ghostty_config_snapshot.h
+)
+target_include_directories(test-ghostty-config-service PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-config-service PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME ghostty-config-service COMMAND test-ghostty-config-service)
+set_tests_properties(ghostty-config-service PROPERTIES TIMEOUT 10)
+
+add_executable(fake-ghostty-config-helper
+    fake_ghostty_config_helper.cpp
+)
+target_compile_options(fake-ghostty-config-helper PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+qt_add_executable(test-ghostty-config-process-loader
+    test_ghostty_config_process_loader.cpp
+    ../src/ghostty_action_catalog.cpp
+    ../src/ghostty_action_catalog.h
+    ../src/ghostty_keybind_set.cpp
+    ../src/ghostty_keybind_set.h
+    ../src/ghostty_config_loader.h
+    ../src/ghostty_config_process_loader.cpp
+    ../src/ghostty_config_process_loader.h
+    ../src/ghostty_config_snapshot.h
+)
+target_include_directories(test-ghostty-config-process-loader PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-ghostty-config-process-loader PRIVATE
+    GHOSTTY_QT_FAKE_CONFIG_HELPER_PATH="$<TARGET_FILE:fake-ghostty-config-helper>"
+)
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    target_compile_definitions(test-ghostty-config-process-loader PRIVATE
+        GHOSTTY_QT_REAL_CONFIG_HELPER_PATH="$<TARGET_FILE:ghostty-qt-config-helper>"
+    )
+    add_dependencies(test-ghostty-config-process-loader
+        ghostty-qt-config-helper)
+else()
+    target_compile_definitions(test-ghostty-config-process-loader PRIVATE
+        GHOSTTY_QT_REAL_CONFIG_HELPER_PATH=""
+    )
+endif()
+target_link_libraries(test-ghostty-config-process-loader PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_dependencies(test-ghostty-config-process-loader
+    fake-ghostty-config-helper)
+add_test(NAME ghostty-config-process-loader
+    COMMAND test-ghostty-config-process-loader)
+set_tests_properties(ghostty-config-process-loader PROPERTIES TIMEOUT 15)
+
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    set(_ghostty_qt_helper_test_home
+        "${CMAKE_CURRENT_BINARY_DIR}/ghostty-config-helper-home")
+    file(MAKE_DIRECTORY "${_ghostty_qt_helper_test_home}")
+    add_test(NAME ghostty-config-helper-smoke
+        COMMAND $<TARGET_FILE:ghostty-qt-config-helper> +validate-config)
+    set_tests_properties(ghostty-config-helper-smoke PROPERTIES
+        TIMEOUT 15
+        ENVIRONMENT "XDG_CONFIG_HOME=${_ghostty_qt_helper_test_home}")
+endif()
+
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+add_test(
+    NAME ghostty-parity-manifest
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test_parity_manifest.py"
+)
+set_tests_properties(ghostty-parity-manifest PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "GHOSTTY_QT_TEST_GHOSTTY_SOURCE_DIR=${GHOSTTY_SOURCE_DIR}"
+)
+
 add_test(
     NAME application-lifecycle
     COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/true
 )
+set(_ghostty_qt_lifecycle_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-lifecycle-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_lifecycle_config_home}")
 set_tests_properties(application-lifecycle PROPERTIES
     TIMEOUT 5
     ENVIRONMENT
-        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1"
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_lifecycle_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
+add_test(
+    NAME application-close-dialog
+    COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/sleep 5
+)
+set(_ghostty_qt_dialog_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-close-dialog-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_dialog_config_home}")
+set_tests_properties(application-close-dialog PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_dialog_config_home}"
     FAIL_REGULAR_EXPRESSION
         "Binding loop detected;QQmlApplicationEngine failed"
 )
@@ -96,6 +323,11 @@ target_link_libraries(test-terminfo-path-probe PRIVATE
 
 if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
    AND NOT IS_ABSOLUTE "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
+    set(_ghostty_qt_relocation_config_helper_name "")
+    if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+        set(_ghostty_qt_relocation_config_helper_name
+            "$<TARGET_FILE_NAME:ghostty-qt-config-helper>")
+    endif()
     add_test(
         NAME terminfo-relocatable-install
         COMMAND "${CMAKE_COMMAND}"
@@ -104,6 +336,7 @@ if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
             "-DINSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
             "-DINSTALL_TERMINFO_DIR=${GHOSTTY_QT_INSTALL_TERMINFO_DIR}"
             "-DPROBE=$<TARGET_FILE:test-terminfo-path-probe>"
+            "-DCONFIG_HELPER_NAME=${_ghostty_qt_relocation_config_helper_name}"
             "-DCONFIG=$<CONFIG>"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/RunTerminfoRelocationTest.cmake"
     )

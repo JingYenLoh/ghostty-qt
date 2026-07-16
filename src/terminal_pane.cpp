@@ -1,5 +1,6 @@
 #include "terminal_pane.h"
 
+#include "ghostty_action_catalog.h"
 #include "terminal_controller.h"
 
 #include <QClipboard>
@@ -12,6 +13,7 @@
 #include <QInputMethod>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QLatin1StringView>
 #include <QMouseEvent>
 #include <QMutexLocker>
 #include <QSGGeometryNode>
@@ -26,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 
@@ -186,12 +189,23 @@ uint32_t unshiftedCodepoint(int key)
     }
 }
 
+quint64 keyEventIdentity(const QKeyEvent *event)
+{
+    const quint64 physical = static_cast<quint64>(event->nativeScanCode());
+    const quint64 logical = static_cast<quint64>(
+        static_cast<quint32>(event->key()));
+    // Press/release logical keys can differ as modifiers change (notably
+    // Backtab versus Tab). A native location is the stable identity.
+    return physical != 0 ? (quint64{1} << 63U) | physical : logical;
+}
+
 } // namespace
 
 TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     : QQuickItem(parent)
     , options_(options)
     , defaultFontPointSize_(options.fontSize)
+    , manuallyZoomed_(options.fontSizeManuallyAdjusted)
 {
     setFlag(QQuickItem::ItemHasContents, true);
     setClip(true);
@@ -207,6 +221,14 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     font_.setPointSizeF(options.fontSize);
     font_.setFixedPitch(true);
     font_.setStyleHint(QFont::Monospace);
+    frame_.foreground = options.foregroundColor;
+    frame_.background = options.backgroundColor;
+    frame_.cursorColor = options.cursorColor.isValid()
+        ? options.cursorColor
+        : options.foregroundColor;
+    if (options.keybindingsConfigured) {
+        (void) keybinds_.load(options.keybindings);
+    }
     updateMetrics();
 
     cursorTimer_ = new QTimer(this);
@@ -218,19 +240,28 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     cursorTimer_->start();
 
     controller_ = new TerminalController(options, this);
-    connect(controller_, &TerminalController::frameReady, this,
-            [this](const TerminalFrame &frame) {
+    connect(controller_, &TerminalController::terminalUpdated, this,
+            [this](const TerminalUpdate &terminalUpdate) {
+                bool applied = false;
                 {
                     QMutexLocker locker(&renderMutex_);
-                    frame_ = frame;
-                    hasFrame_ = true;
+                    if (hasFrame_ || terminalUpdate.fullFrame) {
+                        applied = applyTerminalUpdate(&frame_, terminalUpdate);
+                        hasFrame_ = hasFrame_ || applied;
+                    }
                 }
-                update();
+                if (applied) {
+                    update();
+                }
             });
     connect(controller_, &TerminalController::titleChanged,
             this, &TerminalPane::titleChanged);
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
+    connect(controller_, &TerminalController::runningChanged,
+            this, &TerminalPane::processStateChanged);
+    connect(controller_, &TerminalController::activeProcessChanged,
+            this, &TerminalPane::processStateChanged);
     connect(controller_, &TerminalController::errorOccurred, this,
             [this](const QString &message) {
                 {
@@ -289,6 +320,11 @@ bool TerminalPane::isRunning() const
     return controller_->running();
 }
 
+bool TerminalPane::hasActiveProcess() const
+{
+    return controller_->activeProcess();
+}
+
 LaunchOptions TerminalPane::splitLaunchOptions() const
 {
     LaunchOptions result = options_;
@@ -301,9 +337,82 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
         result.fontFamily = font_.family();
         result.fontSize = font_.pointSizeF();
     }
+    result.fontSizeManuallyAdjusted = manuallyZoomed_;
     result.program.clear();
     result.hold = false;
     return result;
+}
+
+void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
+{
+    LaunchOptions updated = options_;
+    updated.fontFamily = options.fontFamily;
+    updated.fontSize = options.fontSize;
+    updated.fontFamilyExplicit = options.fontFamilyExplicit;
+    updated.fontSizeExplicit = options.fontSizeExplicit;
+    updated.foregroundColor = options.foregroundColor;
+    updated.backgroundColor = options.backgroundColor;
+    updated.cursorColor = options.cursorColor;
+    updated.scrollbackLimit = options.scrollbackLimit;
+    updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
+    updated.confirmCloseMode = options.confirmCloseMode;
+    updated.keybindings = options.keybindings;
+    updated.keybindingsConfigured = options.keybindingsConfigured;
+
+    const QString family = updated.fontFamily.isEmpty()
+        ? QFontDatabase::systemFont(QFontDatabase::FixedFont).family()
+        : updated.fontFamily;
+    bool metricsChanged = false;
+    bool pointSizeChanged = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        if (font_.family() != family) {
+            font_.setFamily(family);
+            metricsChanged = true;
+        }
+        defaultFontPointSize_ = updated.fontSize;
+        if (!manuallyZoomed_
+            && !qFuzzyCompare(font_.pointSizeF(), updated.fontSize)) {
+            font_.setPointSizeF(updated.fontSize);
+            metricsChanged = true;
+            pointSizeChanged = true;
+        }
+        if (!hasFrame_) {
+            frame_.foreground = updated.foregroundColor;
+            frame_.background = updated.backgroundColor;
+            frame_.cursorColor = updated.cursorColor.isValid()
+                ? updated.cursorColor
+                : updated.foregroundColor;
+        }
+    }
+    options_ = updated;
+    options_.fontSizeManuallyAdjusted = manuallyZoomed_;
+    if (options_.keybindingsConfigured) {
+        (void) keybinds_.load(options_.keybindings);
+    } else {
+        keybinds_.clear();
+    }
+    controller_->applyRuntimeOptions(options_);
+
+    if (metricsChanged) {
+        updateMetrics();
+        updateTerminalSize();
+    }
+    update();
+    if (pointSizeChanged) {
+        Q_EMIT fontPointSizeChanged();
+    }
+}
+
+void TerminalPane::setWorkspaceActionHandler(
+    std::function<bool(WorkspaceActionRequest)> handler)
+{
+    workspaceActionHandler_ = std::move(handler);
+}
+
+void TerminalPane::beginShutdown()
+{
+    controller_->beginShutdown();
 }
 
 QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
@@ -596,7 +705,7 @@ void TerminalPane::updateTerminalSize()
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
     if (handleShortcut(event)) {
-        consumedKeys_.insert(event->key());
+        consumedKeys_.insert(keyEventIdentity(event));
         event->accept();
         return;
     }
@@ -605,6 +714,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     input.key = event->key();
     input.modifiers = static_cast<int>(event->modifiers());
     input.text = event->text();
+    input.nativeScanCode = event->nativeScanCode();
     input.pressed = true;
     input.autoRepeat = event->isAutoRepeat();
     input.unshiftedCodepoint = unshiftedCodepoint(event->key());
@@ -614,7 +724,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
 
 void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 {
-    if (consumedKeys_.remove(event->key())) {
+    if (consumedKeys_.remove(keyEventIdentity(event))) {
         event->accept();
         return;
     }
@@ -622,6 +732,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     input.key = event->key();
     input.modifiers = static_cast<int>(event->modifiers());
     input.text = event->text();
+    input.nativeScanCode = event->nativeScanCode();
     input.pressed = false;
     input.autoRepeat = event->isAutoRepeat();
     input.unshiftedCodepoint = unshiftedCodepoint(event->key());
@@ -631,10 +742,13 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 
 bool TerminalPane::handleShortcut(QKeyEvent *event)
 {
+    if (options_.keybindingsConfigured) {
+        return handleConfiguredShortcut(event);
+    }
+
     const Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
     const bool control = modifiers.testFlag(Qt::ControlModifier);
     const bool shift = modifiers.testFlag(Qt::ShiftModifier);
-    const bool alt = modifiers.testFlag(Qt::AltModifier);
     const int key = event->key();
 
     if (control && shift && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
@@ -649,41 +763,54 @@ bool TerminalPane::handleShortcut(QKeyEvent *event)
             return true;
         }
         case Qt::Key_T: Q_EMIT requestNewTab(); return true;
-        case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal)); return true;
-        case Qt::Key_O: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return true;
-        case Qt::Key_W: Q_EMIT requestClose(); return true;
+        case Qt::Key_O: Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal)); return true;
+        case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return true;
+        case Qt::Key_W: Q_EMIT requestCloseTab(); return true;
         case Qt::Key_Q: Q_EMIT requestQuit(); return true;
         default: break;
         }
     }
 
-    if (control && !alt && (key == Qt::Key_Plus || key == Qt::Key_Equal)) {
+    if ((modifiers == Qt::ControlModifier && key == Qt::Key_Equal)
+        || ((modifiers == Qt::ControlModifier
+             || modifiers == (Qt::ControlModifier | Qt::ShiftModifier))
+            && key == Qt::Key_Plus)) {
         zoomIn();
         return true;
     }
-    if (control && !alt && key == Qt::Key_Minus) {
+    if (modifiers == Qt::ControlModifier && key == Qt::Key_Minus) {
         zoomOut();
         return true;
     }
-    if (control && !alt && key == Qt::Key_0) {
+    if (modifiers == Qt::ControlModifier && key == Qt::Key_0) {
         resetZoom();
         return true;
     }
-    if (control && !shift && !alt && key == Qt::Key_PageUp) {
+    if (modifiers == Qt::ControlModifier && key == Qt::Key_PageUp) {
         Q_EMIT requestTabChange(-1);
         return true;
     }
-    if (control && !shift && !alt && key == Qt::Key_PageDown) {
+    if (modifiers == Qt::ControlModifier && key == Qt::Key_PageDown) {
         Q_EMIT requestTabChange(1);
         return true;
     }
-    if (alt && !control && !shift
+    if ((key == Qt::Key_Backtab || key == Qt::Key_Tab)
+        && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
+        Q_EMIT requestTabChange(-1);
+        return true;
+    }
+    if (key == Qt::Key_Tab && modifiers == Qt::ControlModifier) {
+        Q_EMIT requestTabChange(1);
+        return true;
+    }
+    if (modifiers == (Qt::ControlModifier | Qt::AltModifier)
         && (key == Qt::Key_Left || key == Qt::Key_Right
             || key == Qt::Key_Up || key == Qt::Key_Down)) {
         Q_EMIT requestNavigate(key);
         return true;
     }
-    if (shift && !control && !alt && (key == Qt::Key_PageUp || key == Qt::Key_PageDown)) {
+    if (modifiers == Qt::ShiftModifier
+        && (key == Qt::Key_PageUp || key == Qt::Key_PageDown)) {
         int pageRows = 20;
         {
             QMutexLocker locker(&renderMutex_);
@@ -691,6 +818,211 @@ bool TerminalPane::handleShortcut(QKeyEvent *event)
         }
         controller_->scrollViewport(key == Qt::Key_PageUp ? -pageRows : pageRows);
         return true;
+    }
+    return false;
+}
+
+bool TerminalPane::handleConfiguredShortcut(QKeyEvent *event)
+{
+    const auto match = keybinds_.match(GhosttyKeybindEvent{
+        .qtKey = event->key(),
+        .modifiers = event->modifiers(),
+        .text = event->text(),
+        .nativeScanCode = event->nativeScanCode(),
+        .unshiftedCodepoint = unshiftedCodepoint(event->key()),
+    });
+    if (!match.has_value()) {
+        return false;
+    }
+
+    bool performed = false;
+    bool ignored = false;
+    for (const QString &action : match->actions) {
+        if (canExecuteConfiguredAction(action)) {
+            const bool actionPerformed = executeConfiguredAction(action);
+            performed = actionPerformed || performed;
+            const qsizetype colon = action.indexOf(u':');
+            const QStringView name = colon < 0
+                ? QStringView(action)
+                : QStringView(action).first(colon);
+            if (actionPerformed && name == QLatin1StringView("ignore")) {
+                ignored = true;
+            }
+            if (actionPerformed
+                && (name == QLatin1StringView("close_surface")
+                    || name == QLatin1StringView("close_tab")
+                    || name == QLatin1StringView("close_window")
+                    || name == QLatin1StringView("quit"))) {
+                // The signal may synchronously schedule destruction of this
+                // pane. Ghostty stops a chain and consumes after a closing
+                // action regardless of the unconsumed flag.
+                return true;
+            }
+        }
+    }
+    // Ghostty's ignore action suppresses encoding even on an unconsumed
+    // binding. A performable binding with no effective action acts as though
+    // it did not exist; every other match follows the binding's consume flag,
+    // independently of whether an action happened to change state.
+    if (ignored) {
+        return true;
+    }
+    if (match->performable && !performed) {
+        return false;
+    }
+    return match->consumed;
+}
+
+bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
+{
+    const qsizetype colon = action.indexOf(u':');
+    const QStringView name = colon < 0 ? action : action.first(colon);
+    const std::optional<QStringView> parameter = colon < 0
+        ? std::nullopt
+        : std::optional<QStringView>(action.sliced(colon + 1));
+
+    if (name == QLatin1StringView("copy_to_clipboard")) {
+        const bool validParameter = !parameter.has_value()
+            || *parameter == QLatin1StringView("plain")
+            || *parameter == QLatin1StringView("mixed");
+        if (!validParameter) {
+            return false;
+        }
+        return controller_->selectionAvailable();
+    }
+    if (name == QLatin1StringView("paste_from_clipboard")) {
+        return !parameter.has_value()
+            && !QGuiApplication::clipboard()->text().isEmpty();
+    }
+    if (name == QLatin1StringView("paste_from_selection")) {
+        return !parameter.has_value()
+            && !QGuiApplication::clipboard()->text(QClipboard::Selection).isEmpty();
+    }
+    if (name == QLatin1StringView("reset_font_size")
+        || name == QLatin1StringView("scroll_page_up")
+        || name == QLatin1StringView("scroll_page_down")
+        || name == QLatin1StringView("reload_config")
+        || name == QLatin1StringView("close_window")
+        || name == QLatin1StringView("ignore")) {
+        return !parameter.has_value();
+    }
+    if (name == QLatin1StringView("increase_font_size")
+        || name == QLatin1StringView("decrease_font_size")) {
+        if (!parameter.has_value()) {
+            return true;
+        }
+        bool valid = false;
+        const qreal amount = parameter->toString().toDouble(&valid);
+        return valid && std::isfinite(amount) && amount > 0.0;
+    }
+
+    return GhosttyActionCatalog::translate(action).accepted();
+}
+
+bool TerminalPane::executeConfiguredAction(QStringView action)
+{
+    const qsizetype colon = action.indexOf(u':');
+    const QStringView name = colon < 0 ? action : action.first(colon);
+    const QStringView parameter = colon < 0 ? QStringView{} : action.sliced(colon + 1);
+
+    if (name == QLatin1StringView("copy_to_clipboard")) {
+        copySelection();
+        return true;
+    }
+    if (name == QLatin1StringView("paste_from_clipboard")) {
+        const QString text = QGuiApplication::clipboard()->text();
+        if (text.isEmpty()) return false;
+        if (TerminalController::isPasteSafe(text)) pasteText(text);
+        else Q_EMIT unsafePasteRequested(text, this);
+        return true;
+    }
+    if (name == QLatin1StringView("paste_from_selection")) {
+        const QString text =
+            QGuiApplication::clipboard()->text(QClipboard::Selection);
+        if (text.isEmpty()) return false;
+        if (TerminalController::isPasteSafe(text)) pasteText(text);
+        else Q_EMIT unsafePasteRequested(text, this);
+        return true;
+    }
+    if (name == QLatin1StringView("increase_font_size")
+        || name == QLatin1StringView("decrease_font_size")) {
+        bool valid = false;
+        qreal amount = parameter.isEmpty()
+            ? 1.0
+            : parameter.toString().toDouble(&valid);
+        if (parameter.isEmpty()) valid = true;
+        if (!valid || !std::isfinite(amount) || amount <= 0.0) return false;
+        adjustZoom(name == QLatin1StringView("increase_font_size")
+                       ? amount
+                       : -amount);
+        return true;
+    }
+    if (name == QLatin1StringView("reset_font_size")) {
+        resetZoom();
+        return true;
+    }
+    if (name == QLatin1StringView("scroll_page_up")
+        || name == QLatin1StringView("scroll_page_down")) {
+        int pageRows = 20;
+        {
+            QMutexLocker locker(&renderMutex_);
+            if (hasFrame_) pageRows = std::max(1, frame_.rows - 1);
+        }
+        controller_->scrollViewport(
+            name == QLatin1StringView("scroll_page_up") ? -pageRows : pageRows);
+        return true;
+    }
+    if (name == QLatin1StringView("reload_config")) {
+        Q_EMIT requestConfigReload();
+        return true;
+    }
+    if (name == QLatin1StringView("close_window")) {
+        // ghostty-qt currently has exactly one window, so closing that window
+        // follows the same confirmed shutdown path as application quit.
+        Q_EMIT requestQuit();
+        return true;
+    }
+    if (name == QLatin1StringView("ignore")) {
+        return true;
+    }
+
+    const GhosttyActionTranslation translated =
+        GhosttyActionCatalog::translate(action);
+    if (!translated.accepted()) {
+        return false;
+    }
+    const WorkspaceActionRequest &request = *translated.request;
+    if (workspaceActionHandler_) {
+        return workspaceActionHandler_(request);
+    }
+    switch (request.action) {
+    case WorkspaceAction::NewTab:
+        Q_EMIT requestNewTab();
+        return true;
+    case WorkspaceAction::CloseTab:
+        Q_EMIT requestCloseTab();
+        return true;
+    case WorkspaceAction::ClosePane:
+        Q_EMIT requestClose();
+        return true;
+    case WorkspaceAction::SplitRight:
+        Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal));
+        return true;
+    case WorkspaceAction::SplitDown:
+        Q_EMIT requestSplit(static_cast<int>(Qt::Vertical));
+        return true;
+    case WorkspaceAction::NavigatePane:
+        Q_EMIT requestNavigate(request.context.value);
+        return true;
+    case WorkspaceAction::ChangeTabRelative:
+        Q_EMIT requestTabChange(request.context.value);
+        return true;
+    case WorkspaceAction::RequestQuit:
+        Q_EMIT requestQuit();
+        return true;
+    case WorkspaceAction::ActivateTab:
+    case WorkspaceAction::ActivatePane:
+        return false;
     }
     return false;
 }
@@ -930,15 +1262,24 @@ void TerminalPane::setFontPointSize(qreal points)
 
 void TerminalPane::zoomIn()
 {
-    setFontPointSize(fontPointSize() + 1.0);
+    adjustZoom(1.0);
 }
 
 void TerminalPane::zoomOut()
 {
-    setFontPointSize(fontPointSize() - 1.0);
+    adjustZoom(-1.0);
+}
+
+void TerminalPane::adjustZoom(qreal delta)
+{
+    manuallyZoomed_ = true;
+    options_.fontSizeManuallyAdjusted = true;
+    setFontPointSize(fontPointSize() + delta);
 }
 
 void TerminalPane::resetZoom()
 {
+    manuallyZoomed_ = false;
+    options_.fontSizeManuallyAdjusted = false;
     setFontPointSize(defaultFontPointSize_);
 }

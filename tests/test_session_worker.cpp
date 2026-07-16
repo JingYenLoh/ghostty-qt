@@ -6,6 +6,8 @@
 #include <QSignalSpy>
 #include <QTest>
 
+#include <algorithm>
+
 namespace {
 
 QString frameText(const TerminalFrame &frame)
@@ -18,14 +20,26 @@ QString frameText(const TerminalFrame &frame)
     return text;
 }
 
-bool framesContain(const QSignalSpy &spy, const QString &needle)
+TerminalFrame accumulatedFrame(const QSignalSpy &spy)
 {
+    TerminalFrame frame;
     for (const QList<QVariant> &arguments : spy) {
-        if (frameText(qvariant_cast<TerminalFrame>(arguments.constFirst())).contains(needle)) {
-            return true;
-        }
+        applyTerminalUpdate(
+            &frame, qvariant_cast<TerminalUpdate>(arguments.constFirst()));
     }
-    return false;
+    return frame;
+}
+
+bool updatesContain(const QSignalSpy &spy, const QString &needle)
+{
+    return frameText(accumulatedFrame(spy)).contains(needle);
+}
+
+bool spyContainsBool(const QSignalSpy &spy, bool expected)
+{
+    return std::any_of(spy.cbegin(), spy.cend(), [expected](const QList<QVariant> &args) {
+        return !args.isEmpty() && args.constFirst().toBool() == expected;
+    });
 }
 
 } // namespace
@@ -35,14 +49,19 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
+    void appliesReloadedColorsToExistingTerminal();
+    void retainsSelectionAvailabilityOutsideViewport();
+    void explicitProgramIsActiveForItsLifetime();
+    void interactiveShellTracksForegroundJobs();
 };
 
 void SessionWorkerTest::runsCommandThroughPty()
 {
-    qRegisterMetaType<TerminalFrame>();
+    qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
-    QSignalSpy frameSpy(&worker, &SessionWorker::frameReady);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -63,13 +82,12 @@ void SessionWorkerTest::runsCommandThroughPty()
     worker.initialize(options);
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(frameSpy.count() > 0, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(updateSpy.count() > 0, 5000);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? "" : qPrintable(errorSpy.constFirst().constFirst().toString()));
 
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
-    const TerminalFrame finalFrame =
-        qvariant_cast<TerminalFrame>(frameSpy.constLast().constFirst());
+    const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(
                  QStringLiteral("device-response:1b5b3f36323b323263")),
@@ -79,11 +97,42 @@ void SessionWorkerTest::runsCommandThroughPty()
     worker.shutdown();
 }
 
+void SessionWorkerTest::drainsLargeFinalOutputBeforeClosingPty()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "yes 0123456789abcdef | head -c 1500000; "
+            "printf '\\nlarge-output-final\\n'"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 8000);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(QStringLiteral("large-output-final")),
+             qPrintable(finalContents));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
 void SessionWorkerTest::sendsBracketedPasteThroughPty()
 {
-    qRegisterMetaType<TerminalFrame>();
+    qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
-    QSignalSpy frameSpy(&worker, &SessionWorker::frameReady);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -104,19 +153,170 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     worker.initialize(options);
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        framesContain(frameSpy, QStringLiteral("paste-ready")), 5000);
+        updatesContain(updateSpy, QStringLiteral("paste-ready")), 5000);
     worker.paste(QStringLiteral("one\ntwo"));
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? "" : qPrintable(errorSpy.constFirst().constFirst().toString()));
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
-    const TerminalFrame finalFrame =
-        qvariant_cast<TerminalFrame>(frameSpy.constLast().constFirst());
+    const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(QStringLiteral(
                  "paste-bytes:1b5b3230307e6f6e650a74776f1b5b3230317e")),
              qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesReloadedColorsToExistingTerminal()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'color-reload-ready'; sleep 5"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("color-reload-ready")), 5000);
+
+    options.foregroundColor = QColor(QStringLiteral("#abcdef"));
+    options.backgroundColor = QColor(QStringLiteral("#102030"));
+    options.cursorColor = QColor(QStringLiteral("#fedcba"));
+    worker.applyRuntimeOptions(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updateSpy).foreground == options.foregroundColor, 2000);
+    const TerminalFrame frame = accumulatedFrame(updateSpy);
+    QCOMPARE(frame.background, options.backgroundColor);
+    QCOMPARE(frame.cursorColor, options.cursorColor);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty() ? ""
+                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "i=0; while [ $i -lt 100 ]; do printf 'row-%03d\\n' $i; "
+            "i=$((i + 1)); done; sleep 5"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("row-099")), 5000);
+
+    worker.beginSelection(0, 20, 1, false);
+    worker.updateSelection(6, 20, false);
+    worker.endSelection(6, 20);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+
+    selectionSpy.clear();
+    worker.scrollViewport(-50);
+    QTest::qWait(100);
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+
+    worker.clearSelection();
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::explicitProgramIsActiveForItsLifetime()
+{
+    SessionWorker worker;
+    QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 0.5"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activitySpy, true), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 3000);
+    QVERIFY(spyContainsBool(activitySpy, false));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::interactiveShellTracksForegroundJobs()
+{
+    const bool shellWasSet = qEnvironmentVariableIsSet("SHELL");
+    const QByteArray previousShell = qgetenv("SHELL");
+    struct ShellEnvironmentRestore {
+        bool wasSet;
+        QByteArray value;
+        ~ShellEnvironmentRestore()
+        {
+            if (wasSet) {
+                qputenv("SHELL", value);
+            } else {
+                qunsetenv("SHELL");
+            }
+        }
+    } restore{shellWasSet, previousShell};
+    qputenv("SHELL", QByteArrayLiteral("/bin/sh"));
+
+    SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1000);
+
+    // Give the shell time to take the foreground group and settle at its
+    // prompt. Its live child alone is not close-confirmation-worthy.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1000);
+    activitySpy.clear();
+
+    const QString command = QStringLiteral("sleep 1");
+    for (const QChar character : command) {
+        worker.sendText(QString(character));
+    }
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.pressed = true;
+    worker.sendKey(enter);
+    // The activity hint is synchronous, closing in the interval before the
+    // next tcgetpgrp poll cannot lose the foreground-job confirmation.
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        3000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty() ? ""
+                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

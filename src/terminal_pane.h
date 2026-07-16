@@ -1,13 +1,17 @@
 #pragma once
 
+#include "ghostty_keybind_set.h"
 #include "launch_options.h"
 #include "terminal_types.h"
+#include "workspace_action.h"
 
 #include <QFont>
 #include <QMutex>
 #include <QQuickItem>
 #include <QSet>
 #include <QString>
+
+#include <functional>
 
 class QFocusEvent;
 class QHoverEvent;
@@ -33,7 +37,12 @@ public:
     QString currentDirectory() const;
     qreal fontPointSize() const;
     bool isRunning() const;
+    bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions() const;
+    void applyRuntimeOptions(const LaunchOptions &options);
+    void beginShutdown();
+    void setWorkspaceActionHandler(
+        std::function<bool(WorkspaceActionRequest)> handler);
 
     void focusTerminal();
     void copySelection();
@@ -47,12 +56,15 @@ Q_SIGNALS:
     void titleChanged();
     void currentDirectoryChanged();
     void fontPointSizeChanged();
+    void processStateChanged();
     void requestNewTab();
     void requestSplit(int orientation);
     void requestClose();
+    void requestCloseTab();
     void requestNavigate(int direction);
     void requestTabChange(int delta);
     void requestQuit();
+    void requestConfigReload();
     void unsafePasteRequested(const QString &text, TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 
@@ -78,6 +90,10 @@ private:
     void updateTerminalSize();
     void setFontPointSize(qreal points);
     bool handleShortcut(QKeyEvent *event);
+    bool handleConfiguredShortcut(QKeyEvent *event);
+    bool canExecuteConfiguredAction(QStringView action) const;
+    bool executeConfiguredAction(QStringView action);
+    void adjustZoom(qreal delta);
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
@@ -87,6 +103,7 @@ private:
     int normalizedMouseButton(Qt::MouseButton button) const;
 
     LaunchOptions options_;
+    GhosttyKeybindSet keybinds_;
     TerminalController *controller_ = nullptr;
     QFont font_;
     qreal cellWidth_ = 8.0;
@@ -99,7 +116,9 @@ private:
     QString preedit_;
     QString statusMessage_;
     bool selecting_ = false;
+    bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
-    QSet<int> consumedKeys_;
+    QSet<quint64> consumedKeys_;
+    std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
 };

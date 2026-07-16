@@ -3,14 +3,16 @@
 #include "launch_options.h"
 #include "terminal_types.h"
 
-#include <ghostty/vt.h>
-
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QString>
 
+#include <memory>
+
 class QSocketNotifier;
 class QTimer;
+class GhosttyVtAdapter;
 
 class SessionWorker final : public QObject {
     Q_OBJECT
@@ -21,6 +23,10 @@ public:
 
 public Q_SLOTS:
     void initialize(const LaunchOptions &options);
+    // Font rendering is owned by TerminalPane. This applies live terminal
+    // colors; scrollback remains fixed for this libghostty terminal and the
+    // reloaded limit is used only when a new pane is constructed.
+    void applyRuntimeOptions(const LaunchOptions &options);
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
@@ -38,13 +44,17 @@ public Q_SLOTS:
     void shutdown();
 
 Q_SIGNALS:
-    void frameReady(const TerminalFrame &frame);
+    void terminalUpdated(const TerminalUpdate &update);
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
     void mouseTrackingChanged(bool enabled);
     void clipboardTextReady(const QString &text);
     void bell();
     void started(qint64 processId);
+    // True means closing this surface would interrupt active work. An idle
+    // interactive shell remains running but reports false here.
+    void activeProcessChanged(bool active);
+    void selectionAvailableChanged(bool available);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 
@@ -64,46 +74,19 @@ private:
     void scheduleFrame();
     void noteCompressionActivity();
     void syncMouseEncoder();
+    void syncSelectionAvailability();
     void processDeferredEffects();
+    void drainPty(bool finalDrain);
+    void notePotentialActivity();
+    void updateProcessActivity();
+    void setActiveProcess(bool active);
     void handleChildStatus(int status);
     QByteArray encodeKey(const TerminalKeyInput &input);
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QString selectedText() const;
-    bool pointToGridRef(int column, int row, GhosttyGridRef *out) const;
-    void installSelection(const GhosttySelection &selection);
-
-    static GhosttyKey mapQtKey(int key);
-    static GhosttyMods mapQtModifiers(int modifiers);
-    static GhosttyMouseButton mapQtMouseButton(int button);
-
-    static void writePtyCallback(GhosttyTerminal terminal, void *userdata,
-                                 const uint8_t *data, size_t length);
-    static void bellCallback(GhosttyTerminal terminal, void *userdata);
-    static void titleCallback(GhosttyTerminal terminal, void *userdata);
-    static void pwdCallback(GhosttyTerminal terminal, void *userdata);
-    static bool sizeCallback(GhosttyTerminal terminal, void *userdata,
-                             GhosttySizeReportSize *size);
-    static bool colorSchemeCallback(GhosttyTerminal terminal, void *userdata,
-                                    GhosttyColorScheme *scheme);
-    static bool deviceAttributesCallback(GhosttyTerminal terminal, void *userdata,
-                                         GhosttyDeviceAttributes *attributes);
-    static GhosttyClipboardWriteResult clipboardWriteCallback(
-        GhosttyTerminal terminal, void *userdata,
-        const GhosttyClipboardWrite *write);
 
     LaunchOptions options_;
-    GhosttyTerminal terminal_ = nullptr;
-    GhosttyRenderState renderState_ = nullptr;
-    GhosttyRenderStateRowIterator rowIterator_ = nullptr;
-    GhosttyRenderStateRowCells rowCells_ = nullptr;
-    GhosttyKeyEncoder keyEncoder_ = nullptr;
-    GhosttyKeyEvent keyEvent_ = nullptr;
-    GhosttyMouseEncoder mouseEncoder_ = nullptr;
-    GhosttyMouseEvent mouseEvent_ = nullptr;
-    GhosttySelectionGesture selectionGesture_ = nullptr;
-    GhosttySelectionGestureEvent selectionPressEvent_ = nullptr;
-    GhosttySelectionGestureEvent selectionDragEvent_ = nullptr;
-    GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
+    std::unique_ptr<GhosttyVtAdapter> vt_;
 
     int masterFd_ = -1;
     qint64 childPid_ = -1;
@@ -121,13 +104,12 @@ private:
     int surfaceWidthPixels_ = 640;
     int surfaceHeightPixels_ = 384;
     bool running_ = false;
+    bool interactiveShell_ = false;
+    bool activeProcess_ = false;
+    bool selectionAvailable_ = false;
+    QElapsedTimer potentialActivityTimer_;
     bool shuttingDown_ = false;
     bool hold_ = false;
     bool mouseTracking_ = false;
-    bool titleDirty_ = false;
-    bool pwdDirty_ = false;
-    bool bellPending_ = false;
     uint64_t compressionActivity_ = 0;
-    uint32_t mouseModeFingerprint_ = 0;
-    bool mouseEncoderConfigured_ = false;
 };

@@ -12,8 +12,8 @@ ApplicationWindow {
     minimumWidth: 480
     minimumHeight: 320
     visible: true
-    title: workspace.tabTitles.length > 0
-           ? workspace.tabTitles[workspace.currentIndex] + " — ghostty-qt"
+    title: workspace.currentTitle.length > 0
+           ? workspace.currentTitle + " — ghostty-qt"
            : "ghostty-qt"
     color: "#1e222a"
 
@@ -40,11 +40,11 @@ ApplicationWindow {
                 currentIndex: workspace.currentIndex
 
                 Repeater {
-                    model: workspace.tabTitles
+                    model: workspace.tabModel
                     TabButton {
                         required property int index
-                        required property string modelData
-                        text: modelData
+                        required property string title
+                        text: title
                         width: Math.min(Math.max(130, implicitWidth), 240)
                         focusPolicy: Qt.NoFocus
                         onClicked: workspace.setCurrentIndex(index)
@@ -65,7 +65,7 @@ ApplicationWindow {
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Split right"
                 ToolTip.visible: hovered
-                ToolTip.text: "Split right (Ctrl+Shift+E)"
+                ToolTip.text: "Split right (Ctrl+Shift+O)"
                 onClicked: workspace.splitRight()
             }
             ToolButton {
@@ -73,7 +73,7 @@ ApplicationWindow {
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Split down"
                 ToolTip.visible: hovered
-                ToolTip.text: "Split down (Ctrl+Shift+O)"
+                ToolTip.text: "Split down (Ctrl+Shift+E)"
                 onClicked: workspace.splitDown()
             }
             ToolButton {
@@ -81,7 +81,7 @@ ApplicationWindow {
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Close pane"
                 ToolTip.visible: hovered
-                ToolTip.text: "Close pane (Ctrl+Shift+W)"
+                ToolTip.text: "Close pane"
                 onClicked: workspace.closeActivePane()
             }
         }
@@ -100,7 +100,7 @@ ApplicationWindow {
     Dialog {
         id: closeDialog
         anchors.centerIn: parent
-        implicitWidth: Math.max(280, Math.min(460, window.width - 32))
+        width: Math.max(280, Math.min(460, window.width - 32))
         modal: true
         title: "Confirm close"
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -117,7 +117,7 @@ ApplicationWindow {
     Dialog {
         id: pasteDialog
         anchors.centerIn: parent
-        implicitWidth: Math.max(320, Math.min(560, window.width - 32))
+        width: Math.max(320, Math.min(560, window.width - 32))
         modal: true
         title: "Paste text containing a command break?"
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -149,6 +149,9 @@ ApplicationWindow {
         function onCloseConfirmationRequested(message) {
             closeMessage.text = message
             closeDialog.open()
+        }
+        function onCloseConfirmationResolved() {
+            closeDialog.close()
         }
         function onUnsafePasteConfirmationRequested(preview) {
             pastePreview.text = preview

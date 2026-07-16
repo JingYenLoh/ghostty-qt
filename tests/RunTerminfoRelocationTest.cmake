@@ -1,5 +1,6 @@
 foreach(required_variable
-        BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_TERMINFO_DIR PROBE CONFIG)
+        BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_TERMINFO_DIR PROBE
+        CONFIG_HELPER_NAME CONFIG)
     if(NOT DEFINED ${required_variable})
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -30,6 +31,31 @@ get_filename_component(probe_name "${PROBE}" NAME)
 file(RENAME "${original_prefix}" "${relocated_prefix}" RESULT rename_result)
 if(rename_result)
     message(FATAL_ERROR "Unable to relocate staged prefix: ${rename_result}")
+endif()
+
+if(CONFIG_HELPER_NAME)
+    set(relocated_config_helper
+        "${relocated_prefix}/${INSTALL_BINDIR}/${CONFIG_HELPER_NAME}")
+    if(NOT EXISTS "${relocated_config_helper}")
+        message(FATAL_ERROR
+            "Installed config helper is missing: ${relocated_config_helper}")
+    endif()
+
+    set(relocated_config_home "${STAGE_DIR}/config-helper-home")
+    file(MAKE_DIRECTORY "${relocated_config_home}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_config_helper}" +validate-config
+        RESULT_VARIABLE config_helper_result
+        OUTPUT_VARIABLE config_helper_output
+        ERROR_VARIABLE config_helper_error)
+    if(NOT config_helper_result EQUAL 0)
+        message(FATAL_ERROR
+            "Relocated config helper failed (${config_helper_result})\n"
+            "${config_helper_output}\n${config_helper_error}")
+    endif()
 endif()
 
 set(relocated_probe "${relocated_prefix}/${INSTALL_BINDIR}/${probe_name}")

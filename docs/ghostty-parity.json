@@ -1,0 +1,734 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "project": "ghostty",
+    "revision": "c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3",
+    "source_directory": "ghostty"
+  },
+  "scope": {
+    "host_os": [
+      "linux"
+    ],
+    "display_servers": [
+      "wayland"
+    ],
+    "toolkit": "qt-quick",
+    "shared_config": {
+      "enabled": true,
+      "format": "ghostty",
+      "policy": "Portable and Linux Ghostty keys retain upstream names and semantics."
+    },
+    "toolkit_mapping_policy": "Meaningful GTK frontend behavior maps to Qt; GTK presentation and debugging internals are not applicable.",
+    "excluded_platforms": [
+      "freebsd",
+      "ios",
+      "macos",
+      "x11"
+    ]
+  },
+  "status_definitions": {
+    "supported": "Upstream-compatible behavior is implemented and tested.",
+    "partial": "Some behavior exists, but the upstream interface or semantics are incomplete.",
+    "planned": "The item is in scope but is not implemented yet.",
+    "blocked_upstream": "Implementation requires a missing stable libghostty-vt capability.",
+    "not_applicable": "The item is outside the Linux/Wayland/Qt parity target."
+  },
+  "scope_definitions": {
+    "portable": "Platform-neutral Ghostty behavior.",
+    "linux": "Linux behavior independent of the display server.",
+    "wayland": "Linux Wayland behavior.",
+    "qt_mapping": "GTK-facing behavior with a meaningful Qt equivalent.",
+    "gtk_only": "GTK implementation detail without a Qt parity requirement.",
+    "macos": "macOS-only behavior.",
+    "x11": "X11-only behavior."
+  },
+  "inventories": {
+    "config_keys": {
+      "source": "src/config/Config.zig",
+      "default": {
+        "status": "planned",
+        "scope": "portable"
+      },
+      "entries": [
+        "abnormal-command-exit-runtime",
+        "adjust-box-thickness",
+        "adjust-cell-height",
+        "adjust-cell-width",
+        "adjust-cursor-height",
+        "adjust-cursor-thickness",
+        "adjust-font-baseline",
+        "adjust-icon-height",
+        "adjust-overline-position",
+        "adjust-overline-thickness",
+        "adjust-strikethrough-position",
+        "adjust-strikethrough-thickness",
+        "adjust-underline-position",
+        "adjust-underline-thickness",
+        "alpha-blending",
+        "app-notifications",
+        "async-backend",
+        "auto-update",
+        "auto-update-channel",
+        "background",
+        "background-blur",
+        "background-image",
+        "background-image-fit",
+        "background-image-opacity",
+        "background-image-position",
+        "background-image-repeat",
+        "background-opacity",
+        "background-opacity-cells",
+        "bell-audio-path",
+        "bell-audio-volume",
+        "bell-features",
+        "bold-color",
+        "class",
+        "click-repeat-interval",
+        "clipboard-codepoint-map",
+        "clipboard-paste-bracketed-safe",
+        "clipboard-paste-protection",
+        "clipboard-read",
+        "clipboard-trim-trailing-spaces",
+        "clipboard-write",
+        "command",
+        "command-palette-entry",
+        "config-default-files",
+        "config-file",
+        "confirm-close-surface",
+        "copy-on-select",
+        "cursor-click-to-move",
+        "cursor-color",
+        "cursor-opacity",
+        "cursor-style",
+        "cursor-style-blink",
+        "cursor-text",
+        "custom-shader",
+        "custom-shader-animation",
+        "desktop-notifications",
+        "enquiry-response",
+        "env",
+        "faint-opacity",
+        "focus-follows-mouse",
+        "font-codepoint-map",
+        "font-family",
+        "font-family-bold",
+        "font-family-bold-italic",
+        "font-family-italic",
+        "font-feature",
+        "font-shaping-break",
+        "font-size",
+        "font-style",
+        "font-style-bold",
+        "font-style-bold-italic",
+        "font-style-italic",
+        "font-synthetic-style",
+        "font-thicken",
+        "font-thicken-strength",
+        "font-variation",
+        "font-variation-bold",
+        "font-variation-bold-italic",
+        "font-variation-italic",
+        "foreground",
+        "freetype-load-flags",
+        "fullscreen",
+        "grapheme-width-method",
+        "gtk-custom-css",
+        "gtk-horizontal-tab-scroll",
+        "gtk-opengl-debug",
+        "gtk-quick-terminal-layer",
+        "gtk-quick-terminal-namespace",
+        "gtk-single-instance",
+        "gtk-tabs-location",
+        "gtk-titlebar",
+        "gtk-titlebar-hide-when-maximized",
+        "gtk-titlebar-style",
+        "gtk-toolbar-style",
+        "gtk-wide-tabs",
+        "image-storage-limit",
+        "initial-command",
+        "initial-window",
+        "input",
+        "key-remap",
+        "keybind",
+        "language",
+        "link",
+        "link-previews",
+        "link-url",
+        "linux-cgroup",
+        "linux-cgroup-hard-fail",
+        "linux-cgroup-memory-limit",
+        "linux-cgroup-processes-limit",
+        "macos-applescript",
+        "macos-auto-secure-input",
+        "macos-custom-icon",
+        "macos-dock-drop-behavior",
+        "macos-hidden",
+        "macos-icon",
+        "macos-icon-frame",
+        "macos-icon-ghost-color",
+        "macos-icon-screen-color",
+        "macos-non-native-fullscreen",
+        "macos-option-as-alt",
+        "macos-secure-input-indication",
+        "macos-shortcuts",
+        "macos-titlebar-proxy-icon",
+        "macos-titlebar-style",
+        "macos-window-buttons",
+        "macos-window-shadow",
+        "maximize",
+        "middle-click-action",
+        "minimum-contrast",
+        "mouse-hide-while-typing",
+        "mouse-reporting",
+        "mouse-scroll-multiplier",
+        "mouse-shift-capture",
+        "notify-on-command-finish",
+        "notify-on-command-finish-action",
+        "notify-on-command-finish-after",
+        "osc-color-report-format",
+        "palette",
+        "palette-generate",
+        "palette-harmonious",
+        "progress-style",
+        "quick-terminal-animation-duration",
+        "quick-terminal-autohide",
+        "quick-terminal-keyboard-interactivity",
+        "quick-terminal-position",
+        "quick-terminal-screen",
+        "quick-terminal-size",
+        "quick-terminal-space-behavior",
+        "quit-after-last-window-closed",
+        "quit-after-last-window-closed-delay",
+        "resize-overlay",
+        "resize-overlay-duration",
+        "resize-overlay-position",
+        "right-click-action",
+        "scroll-to-bottom",
+        "scrollback-compression",
+        "scrollback-limit",
+        "scrollbar",
+        "search-background",
+        "search-foreground",
+        "search-selected-background",
+        "search-selected-foreground",
+        "selection-background",
+        "selection-clear-on-copy",
+        "selection-clear-on-typing",
+        "selection-foreground",
+        "selection-word-chars",
+        "shell-integration",
+        "shell-integration-features",
+        "split-divider-color",
+        "split-inherit-working-directory",
+        "split-preserve-zoom",
+        "tab-inherit-working-directory",
+        "term",
+        "theme",
+        "title",
+        "title-report",
+        "undo-timeout",
+        "unfocused-split-fill",
+        "unfocused-split-opacity",
+        "vt-kam-allowed",
+        "wait-after-command",
+        "window-colorspace",
+        "window-decoration",
+        "window-height",
+        "window-inherit-font-size",
+        "window-inherit-working-directory",
+        "window-new-tab-position",
+        "window-padding-balance",
+        "window-padding-color",
+        "window-padding-x",
+        "window-padding-y",
+        "window-position-x",
+        "window-position-y",
+        "window-save-state",
+        "window-show-tab-bar",
+        "window-step-resize",
+        "window-subtitle",
+        "window-theme",
+        "window-title-font-family",
+        "window-titlebar-background",
+        "window-titlebar-foreground",
+        "window-vsync",
+        "window-width",
+        "working-directory",
+        "x11-instance-name"
+      ],
+      "overrides": {
+        "auto-update": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+    "auto-update-channel": {
+      "status": "not_applicable",
+      "scope": "macos"
+    },
+    "background": {
+      "status": "supported",
+      "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
+    },
+    "background-blur": {
+      "scope": "wayland"
+    },
+    "command": {
+      "status": "partial",
+      "note": "An initial positional command exists, but Ghostty config and initial-command semantics do not."
+    },
+    "config-file": {
+      "status": "partial",
+      "note": "The pinned parser loads includes; existing include files and directories for missing optional includes participate in asynchronous live reload, and failed loads retry to discover newly created required includes."
+    },
+    "confirm-close-surface": {
+      "status": "partial",
+      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups plus a command-submission latch detect external jobs, but long-running shell builtins remain indistinguishable from an idle shell until Ghostty semantic prompt metadata and shell integration are wired."
+    },
+    "cursor-color": {
+      "status": "supported",
+      "note": "The exact pinned parser supplies explicit colors and cell foreground/background aliases; the libghostty adapter applies them to new and existing panes."
+    },
+    "font-family": {
+      "status": "partial",
+      "note": "Pinned config parsing, CLI precedence, and live reload are implemented, but Qt currently renders only the first family in Ghostty's fallback list."
+    },
+    "font-size": {
+      "status": "partial",
+      "note": "Pinned config parsing, CLI precedence, and live reload are implemented; manually zoomed panes intentionally retain their local size."
+    },
+    "foreground": {
+      "status": "supported",
+      "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
+    },
+    "keybind": {
+      "status": "partial",
+      "note": "Ghostty's flattened effective local single-key bindings route the implemented action subset before VT encoding, using Linux native scan codes for physical locations. Sequences, tables, catch-all, global/all-surface bindings, and flags omitted by the pinned text formatter require later structured extraction."
+    },
+        "gtk-custom-css": {
+          "status": "not_applicable",
+          "scope": "gtk_only"
+        },
+        "gtk-horizontal-tab-scroll": {
+          "scope": "qt_mapping"
+        },
+        "gtk-opengl-debug": {
+          "status": "not_applicable",
+          "scope": "gtk_only"
+        },
+        "gtk-quick-terminal-layer": {
+          "scope": "qt_mapping"
+        },
+        "gtk-quick-terminal-namespace": {
+          "scope": "qt_mapping"
+        },
+        "gtk-single-instance": {
+          "scope": "qt_mapping"
+        },
+        "gtk-tabs-location": {
+          "scope": "qt_mapping"
+        },
+        "gtk-titlebar": {
+          "scope": "qt_mapping"
+        },
+        "gtk-titlebar-hide-when-maximized": {
+          "scope": "qt_mapping"
+        },
+        "gtk-titlebar-style": {
+          "scope": "qt_mapping"
+        },
+        "gtk-toolbar-style": {
+          "scope": "qt_mapping"
+        },
+        "gtk-wide-tabs": {
+          "scope": "qt_mapping"
+        },
+        "language": {
+          "scope": "qt_mapping"
+        },
+        "linux-cgroup": {
+          "scope": "linux"
+        },
+        "linux-cgroup-hard-fail": {
+          "scope": "linux"
+        },
+        "linux-cgroup-memory-limit": {
+          "scope": "linux"
+        },
+        "linux-cgroup-processes-limit": {
+          "scope": "linux"
+        },
+        "macos-applescript": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-auto-secure-input": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-custom-icon": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-dock-drop-behavior": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-hidden": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-icon": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-icon-frame": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-icon-ghost-color": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-icon-screen-color": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-non-native-fullscreen": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-option-as-alt": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-secure-input-indication": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-shortcuts": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-titlebar-proxy-icon": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-titlebar-style": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-window-buttons": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "macos-window-shadow": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "quick-terminal-animation-duration": {
+          "scope": "wayland"
+        },
+        "quick-terminal-autohide": {
+          "scope": "wayland"
+        },
+        "quick-terminal-keyboard-interactivity": {
+          "scope": "wayland"
+        },
+        "quick-terminal-position": {
+          "scope": "wayland"
+        },
+        "quick-terminal-screen": {
+          "scope": "wayland"
+        },
+        "quick-terminal-size": {
+          "scope": "wayland"
+        },
+        "quick-terminal-space-behavior": {
+          "scope": "wayland"
+        },
+    "scrollback-limit": {
+      "status": "partial",
+      "note": "Ghostty's byte-valued config limit is preserved for pane creation, but libghostty-vt cannot resize the history allocation of an existing pane during live reload."
+    },
+        "wait-after-command": {
+          "status": "partial",
+          "note": "The --hold launch flag implements one subset of the behavior."
+        },
+        "window-position-x": {
+          "status": "not_applicable",
+          "scope": "x11"
+        },
+        "window-position-y": {
+          "status": "not_applicable",
+          "scope": "x11"
+        },
+        "working-directory": {
+          "status": "partial",
+          "note": "Launch-time working directory exists without shared-config semantics."
+        },
+        "x11-instance-name": {
+          "status": "not_applicable",
+          "scope": "x11"
+        }
+      }
+    },
+    "keybinding_actions": {
+      "source": "src/input/Binding.zig",
+      "default": {
+        "status": "planned",
+        "scope": "portable"
+      },
+      "entries": [
+        "activate_key_table",
+        "activate_key_table_once",
+        "adjust_selection",
+        "check_for_updates",
+        "clear_screen",
+        "close_all_windows",
+        "close_surface",
+        "close_tab",
+        "close_window",
+        "copy_title_to_clipboard",
+        "copy_to_clipboard",
+        "copy_url_to_clipboard",
+        "crash",
+        "csi",
+        "cursor_key",
+        "deactivate_all_key_tables",
+        "deactivate_key_table",
+        "decrease_font_size",
+        "end_key_sequence",
+        "end_search",
+        "equalize_splits",
+        "esc",
+        "goto_split",
+        "goto_tab",
+        "goto_window",
+        "ignore",
+        "increase_font_size",
+        "inspector",
+        "jump_to_prompt",
+        "last_tab",
+        "move_tab",
+        "navigate_search",
+        "new_split",
+        "new_tab",
+        "new_window",
+        "next_tab",
+        "open_config",
+        "paste_from_clipboard",
+        "paste_from_selection",
+        "previous_tab",
+        "prompt_surface_title",
+        "prompt_tab_title",
+        "quit",
+        "redo",
+        "reload_config",
+        "reset",
+        "reset_font_size",
+        "reset_window_size",
+        "resize_split",
+        "scroll_page_down",
+        "scroll_page_fractional",
+        "scroll_page_lines",
+        "scroll_page_up",
+        "scroll_to_bottom",
+        "scroll_to_row",
+        "scroll_to_selection",
+        "scroll_to_top",
+        "search",
+        "search_selection",
+        "select_all",
+        "set_font_size",
+        "set_surface_title",
+        "set_tab_title",
+        "show_gtk_inspector",
+        "show_on_screen_keyboard",
+        "start_search",
+        "text",
+        "toggle_background_opacity",
+        "toggle_command_palette",
+        "toggle_fullscreen",
+        "toggle_maximize",
+        "toggle_mouse_reporting",
+        "toggle_quick_terminal",
+        "toggle_readonly",
+        "toggle_secure_input",
+        "toggle_split_zoom",
+        "toggle_tab_overview",
+        "toggle_visibility",
+        "toggle_window_decorations",
+        "toggle_window_float_on_top",
+        "unbind",
+        "undo",
+        "write_screen_file",
+        "write_scrollback_file",
+        "write_selection_file"
+      ],
+      "overrides": {
+        "check_for_updates": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "close_all_windows": {
+          "status": "not_applicable",
+          "scope": "linux",
+          "note": "Deprecated upstream and intentionally a no-op on Linux."
+        },
+        "close_surface": {
+          "status": "partial",
+          "note": "Local single-key triggers route pane close through the typed workspace dispatcher and Ghostty action catalog."
+        },
+        "close_tab": {
+          "status": "partial",
+          "note": "Local single-key triggers support the default/this mode; other/right tab modes remain planned."
+        },
+        "close_window": {
+          "status": "partial",
+          "note": "The current single-window application maps this action to its confirmed quit path; multiwindow semantics remain planned."
+        },
+        "copy_to_clipboard": {
+          "status": "partial",
+          "note": "Configured plain/mixed copy routes to selection copy; styled VT and HTML formats remain absent."
+        },
+        "decrease_font_size": {
+          "status": "partial"
+        },
+        "goto_split": {
+          "status": "partial",
+          "note": "Local single-key triggers and the action catalog support cardinal directions and legacy top/bottom aliases; previous/next remain absent."
+        },
+        "increase_font_size": {
+          "status": "partial"
+        },
+        "ignore": {
+          "status": "partial",
+          "note": "Local single-key bindings suppress VT encoding with Ghostty consume semantics; unsupported trigger forms remain planned."
+        },
+        "inspector": {
+          "scope": "qt_mapping"
+        },
+        "new_split": {
+          "status": "partial",
+          "note": "Local single-key triggers, the catalog, and workspace support right/down; left/up/auto remain absent."
+        },
+        "new_tab": {
+          "status": "partial",
+          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+        },
+        "next_tab": {
+          "status": "partial",
+          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+        },
+        "paste_from_clipboard": {
+          "status": "partial",
+          "note": "Local single-key bindings paste through the existing safety and bracketed-paste path."
+        },
+        "paste_from_selection": {
+          "status": "partial",
+          "scope": "linux"
+        },
+        "previous_tab": {
+          "status": "partial",
+          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+        },
+        "quit": {
+          "status": "partial",
+          "note": "Local single-key triggers route application quit; multiwindow semantics are absent."
+        },
+        "reload_config": {
+          "status": "partial",
+          "note": "A configured local trigger requests debounced asynchronous reload through the exact pinned parser; frontend notifications remain absent."
+        },
+        "reset_font_size": {
+          "status": "partial"
+        },
+        "reset_window_size": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "scroll_page_down": {
+          "status": "partial"
+        },
+        "scroll_page_up": {
+          "status": "partial"
+        },
+        "show_gtk_inspector": {
+          "status": "not_applicable",
+          "scope": "gtk_only"
+        },
+        "show_on_screen_keyboard": {
+          "scope": "qt_mapping"
+        },
+        "toggle_background_opacity": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "toggle_command_palette": {
+          "scope": "qt_mapping"
+        },
+        "toggle_quick_terminal": {
+          "scope": "wayland"
+        },
+        "toggle_secure_input": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "toggle_tab_overview": {
+          "scope": "qt_mapping"
+        },
+        "toggle_visibility": {
+          "status": "not_applicable",
+          "scope": "macos"
+        },
+        "toggle_window_float_on_top": {
+          "status": "not_applicable",
+          "scope": "macos"
+        }
+      }
+    },
+    "cli_actions": {
+      "source": "src/cli/ghostty.zig",
+      "default": {
+        "status": "planned",
+        "scope": "portable"
+      },
+      "entries": [
+        "boo",
+        "crash-report",
+        "edit-config",
+        "explain-config",
+        "help",
+        "list-actions",
+        "list-colors",
+        "list-fonts",
+        "list-keybinds",
+        "list-themes",
+        "new-window",
+        "show-config",
+        "show-face",
+        "ssh",
+        "ssh-cache",
+        "toggle-quick-terminal",
+        "validate-config",
+        "version"
+      ],
+      "overrides": {
+        "help": {
+          "status": "partial",
+          "note": "--help exists; Ghostty +help behavior does not."
+        },
+        "new-window": {
+          "scope": "linux"
+        },
+        "toggle-quick-terminal": {
+          "scope": "wayland"
+        },
+        "version": {
+          "status": "partial",
+          "note": "--version exists; Ghostty +version details do not."
+        }
+      }
+    }
+  }
+}

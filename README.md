@@ -2,7 +2,8 @@
 
 `ghostty-qt` is a Linux, Wayland-only terminal emulator MVP built with Qt Quick,
 C++20, and Ghostty's `libghostty-vt` C API. Ghostty supplies terminal parsing,
-screen state, selection, and input encoding; Qt supplies the window, controls,
+screen state, selection, and input encoding; a separate helper uses the pinned
+Ghostty application parser for configuration; Qt supplies the window, controls,
 scene-graph rendering, clipboard, and input-method integration.
 
 This is an early developer build, not a drop-in replacement for the Ghostty
@@ -23,10 +24,20 @@ the host-language comparison and remaining engineering risks.
 - Mouse selection, double-click word selection, rectangular selection with
   `Alt`, clipboard copy, primary-selection paste, and an unsafe-paste review
   dialog.
-- Tabs, recursively nested right/down splits, pane navigation, and confirmation
-  before terminating running processes.
+- Tabs, recursively nested right/down splits, pane navigation, and close
+  confirmation that distinguishes an idle interactive shell from a foreground
+  job on its PTY.
+- Stable tab/pane identities, a QML tab list model, and typed workspace actions;
+  a catalog translates the currently implemented subset of Ghostty action
+  strings into that action layer.
 - OSC title and working-directory updates, used for tab titles and as the
   starting directory of a new split.
+- Standard Ghostty configuration-file discovery, exact parsing and validation
+  by the pinned Ghostty code, watched-file reload, and a deliberately small set
+  of applied appearance/session keys.
+- Ghostty's effective single-key bindings for the supported pane/workspace
+  actions, matched before terminal input encoding rather than through Qt's
+  application-shortcut layer.
 
 ## Requirements
 
@@ -34,12 +45,15 @@ the host-language comparison and remaining engineering risks.
 - Qt 6.8 or newer with Core, Gui, Qml, Quick, Quick Controls 2, and Qt Test
   development components.
 - A C++20 compiler, CMake 3.24 or newer, and Ninja.
+- Python 3.10 or newer for the parity-ledger test.
 - Zig **exactly 0.15.2**. `zig version` must print `0.15.2`.
 - Git and `tic` (normally supplied by ncurses development/tools packages).
 - Linux PTY headers and `libutil`.
 
 The first Ghostty build may download its Zig dependencies and can take several
-minutes.
+minutes. The default build also produces a private Ghostty configuration-parser
+library and helper, so its first build is substantially larger than rebuilding
+the Qt application alone.
 
 ## Project-local Zig
 
@@ -77,6 +91,27 @@ Configuration rejects a different revision when Git metadata is available.
 `GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY=ON` exists for intentional upgrade work, not
 for normal builds. An external checkout can instead be selected with
 `-DGHOSTTY_SOURCE_DIR=/path/to/ghostty`.
+
+## Parity tracking
+
+[The Ghostty parity manifest](docs/ghostty-parity.json) records the supported
+Linux/Wayland/Qt scope and inventories the pinned upstream configuration keys,
+keybinding actions, and CLI actions. Most entries are intentionally still
+marked as planned; the manifest is a coverage ledger, not a claim of current
+feature parity.
+
+Run its source-drift check directly with:
+
+```sh
+python3 scripts/check-ghostty-parity.py
+```
+
+Pass `--source /path/to/ghostty` when auditing an external checkout selected
+with `GHOSTTY_SOURCE_DIR`; CTest receives the configured source automatically.
+
+The check verifies the manifest, CMake pin, and Ghostty checkout agree on the
+same revision, then extracts the three inventories again from the pinned
+Ghostty source. It is also part of CTest as `ghostty-parity-manifest`.
 
 ## Build
 
@@ -123,6 +158,43 @@ back to `/bin/sh`. To run a specific command, put it after `--`:
 on the command line applies to the initial pane only; later tabs and splits start
 the default shell.
 
+## Ghostty configuration
+
+At startup the application loads the standard Linux Ghostty files, in upstream
+order:
+
+```text
+$XDG_CONFIG_HOME/ghostty/config
+$XDG_CONFIG_HOME/ghostty/config.ghostty
+```
+
+If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
+`ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` and
+`+show-config` actions, so syntax, file precedence, `config-file` includes, and
+canonical values come from the exact pinned Ghostty parser rather than a Qt-side
+reimplementation. The main process receives only a typed value snapshot.
+
+The current compatibility slice applies these keys:
+
+| Key | Current behavior |
+| --- | --- |
+| `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
+| `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. Explicit `--font-size` wins. |
+| `foreground`, `background`, `cursor-color` | Set terminal colors for new panes and apply live to existing terminals. Cursor color also accepts Ghostty's cell foreground/background aliases. |
+| `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
+| `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
+| `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
+| `keybind` | Loads Ghostty's flattened effective set and applies supported local single-key actions. See the limits below. |
+
+The service watches the two standard paths, their containing directories, and
+included-file paths. Changes are debounced and parsed away from the GUI thread.
+It validates before and after extracting values, retries failures so a newly
+created required include can recover without touching the root file, and logs
+successful helper warnings. A validation or helper failure leaves the last
+valid snapshot active when one exists; otherwise the built-in/CLI options
+remain in use. Most Ghostty keys are still tracked as planned in the parity
+manifest and are not silently treated as implemented.
+
 ### Command-line options
 
 | Option | Meaning |
@@ -132,7 +204,7 @@ the default shell.
 | `--working-directory DIR` | Start the initial command in `DIR`; the directory must exist. |
 | `--font-family FAMILY` | Select the terminal font family. |
 | `--font-size POINTS` | Set the initial point size; the default is 12. |
-| `--scrollback-lines LINES` | Set scrollback from 0 to 10,000,000 lines; the default is 10,000. |
+| `--scrollback-lines LINES` | Estimate capacity for 0 to 10,000,000 rows; the default is 10,000. The legacy value is converted to libghostty's byte cap. |
 | `--hold` | Keep the initial pane after its child exits. |
 | `-- program arguments...` | Run a command instead of the default shell. |
 
@@ -142,11 +214,11 @@ the default shell.
 | --- | --- |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy the selection / paste the clipboard. |
 | `Ctrl+Shift+T` | Open a tab. |
-| `Ctrl+Shift+E` / `Ctrl+Shift+O` | Split right / split down. |
-| `Ctrl+Shift+W` | Close the active pane; closing the last pane closes its tab. |
+| `Ctrl+Shift+O` / `Ctrl+Shift+E` | Split right / split down. |
+| `Ctrl+Shift+W` | Close the active tab. |
 | `Ctrl+Shift+Q` | Quit. |
-| `Ctrl+PageUp` / `Ctrl+PageDown` | Select the previous / next tab. |
-| `Alt+Arrow` | Focus the nearest pane in that direction. |
+| `Ctrl+Shift+Tab` / `Ctrl+Tab` | Select the previous / next tab. |
+| `Ctrl+Alt+Arrow` | Focus the nearest pane in that direction. |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Increase, decrease, or reset the active pane's font size. |
 | `Shift+PageUp` / `Shift+PageDown` | Scroll by one terminal page. |
 
@@ -185,11 +257,18 @@ error rather than falling back silently to another database.
 ctest --preset dev
 ```
 
-The suite covers option parsing, core `libghostty-vt` parse/render/input APIs,
-a PTY-backed worker session, replacement of rendered terminal frames, the
-complete application's short-lived process/window lifecycle, and staged
-install relocation of the private terminfo database. Interactive tab, split,
-selection, and dialog input are not yet fully automated.
+The suite covers option and config-overlay parsing, core `libghostty-vt`
+parse/render/input APIs, the C++ VT adapter contract, a PTY-backed worker
+session (including idle-shell/foreground-job transitions), stable workspace IDs
+and typed action dispatch, Ghostty action-string translation, full and
+dirty-row terminal updates, config watching and generation-safe last-good
+asynchronous reload behavior, flattened keybinding parsing/matching with Linux
+physical-key locations, helper-process protocol/error handling, real-parser
+`clear`/`unbind` resolution, the machine-checked parity manifest, the complete
+application's short-lived process/window lifecycle, and staged relocation of
+both terminfo and the private config helper. The real QML close dialog is also
+exercised headlessly; interactive tab, split, selection, and unsafe-paste
+dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -206,21 +285,34 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
 
 ## Current limitations
 
-- Renderer-v1 repopulates the scene-graph root from a full frame snapshot and
-  lays out text per cell. This preserves exact terminal-grid placement, but
-  retains CPU and allocation overhead that dirty-row reuse and run batching
-  could reduce.
+- Renderer-v1 sends only dirty rows across the worker/UI boundary after its
+  initial frame, but it still rebuilds scene-graph children and text layouts
+  for each presented update. Persistent row nodes and run batching remain
+  CPU/allocation optimizations.
 - Splits are fixed at 50/50; there are no draggable dividers.
-- No X11 backend, multi-window support, configuration files, theme editor,
-  search UI, session persistence, or production package metadata yet.
+- No X11 backend, multi-window support, theme editor, search UI, session
+  persistence, or production package metadata yet. Configuration support is
+  limited to the documented compatibility slice; most Ghostty keys remain
+  planned.
+- Configured bindings currently support local single-key triggers and the
+  documented action subset. Sequences, named key tables, `catch_all`,
+  all-surface/global shortcuts, and portal registration are not implemented.
+  The pinned `+show-config` formatter also omits `unconsumed`, `performable`,
+  `all`, and `global` flags, so an upstream-pinned structured binding dump is
+  required before those semantics can be preserved exactly.
+- Linux/Wayland native scan codes preserve physical-key identity for bindings
+  and terminal input. Shifted-punctuation fallback matching is currently
+  US-layout-oriented because public `QKeyEvent` data does not include the
+  compositor keymap's unmodified layout level.
 - No Kitty graphics/inline images, color-emoji pipeline, or terminal-cell
   ligature shaping. Per-cell text rendering prioritizes correctness of the MVP
   architecture over advanced typography.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported.
-- The palette and core appearance are currently built in. Ghostty application
-  configuration is not loaded; this project embeds `libghostty-vt`, not the
-  complete Ghostty frontend.
+- Only base foreground/background/cursor-color configuration is currently
+  applied. Themes, the full palette, cursor shape/blink/opacity, font fallback
+  lists, and the rest of
+  Ghostty's appearance model remain planned.
 - Automated startup testing uses Qt's software scene-graph backend. The GPU/RHI
   renderer still needs interactive visual qualification on real Wayland
   compositors and driver combinations.

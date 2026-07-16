@@ -15,6 +15,8 @@ class TerminalController final : public QObject {
     Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
     Q_PROPERTY(bool mouseTracking READ mouseTracking NOTIFY mouseTrackingChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
+    Q_PROPERTY(bool activeProcess READ activeProcess NOTIFY activeProcessChanged)
+    Q_PROPERTY(bool selectionAvailable READ selectionAvailable NOTIFY selectionAvailableChanged)
 
 public:
     explicit TerminalController(const LaunchOptions &options, QObject *parent = nullptr);
@@ -24,11 +26,17 @@ public:
     QString currentDirectory() const { return currentDirectory_; }
     bool mouseTracking() const { return mouseTracking_; }
     bool running() const { return running_; }
+    bool activeProcess() const { return activeProcess_; }
+    bool selectionAvailable() const { return selectionAvailable_; }
     bool hold() const { return options_.hold; }
 
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
+    void applyRuntimeOptions(const LaunchOptions &options);
+    // Queue graceful teardown without blocking the UI. Workspace-wide closes
+    // call this for every pane first so their grace periods run concurrently.
+    void beginShutdown();
     void sendKey(const TerminalKeyInput &input);
     void sendText(const QString &text);
     void sendMouse(const TerminalMouseInput &input);
@@ -44,11 +52,13 @@ public:
     static bool isPasteSafe(const QString &text);
 
 Q_SIGNALS:
-    void frameReady(const TerminalFrame &frame);
+    void terminalUpdated(const TerminalUpdate &update);
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
     void mouseTrackingChanged(bool enabled);
     void runningChanged(bool running);
+    void activeProcessChanged(bool active);
+    void selectionAvailableChanged(bool available);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
     void bell();
@@ -68,8 +78,12 @@ Q_SIGNALS:
     void updateSelectionRequested(int column, int row, bool rectangular);
     void endSelectionRequested(int column, int row);
     void scrollRequested(int rows);
+    void runtimeOptionsRequested(const LaunchOptions &options);
+    void shutdownRequested();
 
 private:
+    void notePotentialActivity();
+
     LaunchOptions options_;
     QThread *thread_ = nullptr;
     SessionWorker *worker_ = nullptr;
@@ -77,5 +91,7 @@ private:
     QString currentDirectory_;
     bool mouseTracking_ = false;
     bool running_ = true;
+    bool activeProcess_ = false;
+    bool selectionAvailable_ = false;
     bool closing_ = false;
 };
