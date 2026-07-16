@@ -306,12 +306,16 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
     return result;
 }
 
-QSGNode *TerminalPane::updatePaintNode(QSGNode *, UpdatePaintNodeData *)
+QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
-    // This MVP rebuilds a value-only scene snapshot. QSG resources are created
-    // exclusively on the render thread; Qt retires the previously returned
-    // root on that thread when this replacement is installed.
-    auto *root = new QSGNode;
+    // Keep the root that Qt already parented into the item scene graph. Returning
+    // a different root on every content update leaves the previous root in the
+    // child container, so stale frames remain visible and nodes accumulate.
+    QSGNode *root = oldNode != nullptr ? oldNode : new QSGNode;
+    while (QSGNode *child = root->firstChild()) {
+        root->removeChildNode(child);
+        delete child;
+    }
 
     TerminalFrame frame;
     QFont baseFont;

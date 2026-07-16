@@ -60,7 +60,7 @@ uses `SIGKILL` if the group does not exit.
 5. A queued Qt signal copies the frame across the thread boundary. The pane
    replaces its latest snapshot under a mutex and schedules a scene-graph
    update.
-6. `TerminalPane::updatePaintNode()` rebuilds the render-node root. Public
+6. `TerminalPane::updatePaintNode()` repopulates its retained render-node root. Public
    `QSGTextNode` objects use `QtRendering`, which stores distance-field glyphs
    in GPU atlases on hardware RHI backends. Batched colored geometry draws cell
    backgrounds, selections, cursor shapes, text decorations, overlays, and the
@@ -76,9 +76,10 @@ copying a full grid for each published frame.
 Renderer-v1 uses Qt's public scene-graph API throughout: text nodes supply the
 GPU glyph path and colored `QSGGeometryNode` batches supply solid primitives.
 No intermediate raster-image upload sits between the frame and the scene
-graph. The current implementation still recreates the root for each update and
-performs a `QTextLayout` per rendered cell, so shaping, node construction, and
-full-frame snapshot copying remain CPU-side performance targets.
+graph. The current implementation retains the root but recreates its children
+for each update and performs a `QTextLayout` per rendered cell, so shaping,
+node construction, and full-frame snapshot copying remain CPU-side performance
+targets.
 
 ## Input path
 
@@ -157,7 +158,7 @@ API legitimately contains struct fields named `emit`.
 
 ## Test boundaries
 
-The CTest suite has three layers:
+The CTest suite has five layers:
 
 - `launch-options` validates defaults, accepted values, and invalid CLI input.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
@@ -165,17 +166,23 @@ The CTest suite has three layers:
   callbacks directly through the C API.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, final output draining, and process exit.
+- `terminal-pane-render` renders a delayed PTY frame offscreen and verifies the
+  initial placeholder contents were replaced rather than retained across
+  updates.
+- `application-lifecycle` starts the complete QML application on Qt's offscreen
+  software backend, verifies a short-lived child closes the window cleanly,
+  and fails on QML binding-loop diagnostics.
 
-The QML window and interactive selection/tab/split behavior are not automated
-yet. An offscreen software-backend smoke command can validate QML startup and
-scene-graph construction in a headless environment, but it does not validate
-the hardware RHI path. `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch
-rather than a supported runtime configuration; GPU output must also be checked
-interactively in a real Wayland session.
+Interactive selection/tab/split and confirmation-button behavior are not fully
+automated yet. The offscreen tests validate QML startup and scene-graph frame
+replacement in a headless environment, but they do not validate the hardware
+RHI path. `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
+supported runtime configuration; GPU output must also be checked interactively
+in a real Wayland session.
 
 ## Deliberate renderer-v1 limits
 
-- Full-grid value snapshots, root-node rebuilding, and per-cell `QTextLayout`
+- Full-grid value snapshots, child-node rebuilding, and per-cell `QTextLayout`
   calls trade CPU performance for a simple, auditable thread boundary and exact
   grid placement. Dirty-row reuse and larger compatible text runs remain future
   optimizations.

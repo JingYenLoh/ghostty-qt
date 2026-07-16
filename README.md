@@ -177,7 +177,9 @@ ctest --preset dev
 ```
 
 The suite covers option parsing, core `libghostty-vt` parse/render/input APIs,
-and a PTY-backed worker session. It does not yet automate the full Qt Quick UI.
+a PTY-backed worker session, replacement of rendered terminal frames, and the
+complete application's short-lived process/window lifecycle. Interactive tab,
+split, selection, and dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -194,10 +196,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
 
 ## Current limitations
 
-- Renderer-v1 rebuilds the scene-graph root from a full frame snapshot and lays
-  out text per cell. This preserves exact terminal-grid placement, but retains
-  CPU and allocation overhead that dirty-row reuse and run batching could
-  reduce.
+- Renderer-v1 repopulates the scene-graph root from a full frame snapshot and
+  lays out text per cell. This preserves exact terminal-grid placement, but
+  retains CPU and allocation overhead that dirty-row reuse and run batching
+  could reduce.
 - Splits are fixed at 50/50; there are no draggable dividers.
 - No X11 backend, multi-window support, configuration files, theme editor,
   search UI, session persistence, or relocatable production package yet.

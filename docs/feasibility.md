@@ -58,9 +58,9 @@ effort. The main risks are renderer performance, the evolving libghostty API,
 advanced text/graphics support, and distribution:
 
 - Renderer-v1 has the intended QSG/GPU glyph path, but still consumes a full
-  value snapshot, rebuilds its root nodes, and lays out text per cell. Dirty-row
-  reuse, persistent nodes, and larger compatible runs will be needed to reduce
-  CPU overhead in high-throughput workloads.
+  value snapshot, rebuilds the retained root's child nodes, and lays out text
+  per cell. Dirty-row reuse, persistent child nodes, and larger compatible runs
+  will be needed to reduce CPU overhead in high-throughput workloads.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji, ligatures across cells, Kitty graphics, hyperlinks, and search

@@ -5,6 +5,8 @@ import GhosttyQt 1.0
 
 ApplicationWindow {
     id: window
+    property bool closeApproved: false
+
     width: 1100
     height: 720
     minimumWidth: 480
@@ -16,6 +18,10 @@ ApplicationWindow {
     color: "#1e222a"
 
     onClosing: function(close) {
+        if (closeApproved) {
+            close.accepted = true
+            return
+        }
         close.accepted = false
         workspace.requestQuit()
     }
@@ -105,6 +111,7 @@ ApplicationWindow {
     Dialog {
         id: closeDialog
         anchors.centerIn: parent
+        implicitWidth: Math.max(280, Math.min(460, window.width - 32))
         modal: true
         title: "Confirm close"
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -113,7 +120,7 @@ ApplicationWindow {
 
         Label {
             id: closeMessage
-            width: Math.min(420, window.width - 80)
+            width: closeDialog.availableWidth
             wrapMode: Text.WordWrap
         }
     }
@@ -121,6 +128,7 @@ ApplicationWindow {
     Dialog {
         id: pasteDialog
         anchors.centerIn: parent
+        implicitWidth: Math.max(320, Math.min(560, window.width - 32))
         modal: true
         title: "Paste text containing a command break?"
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -128,7 +136,7 @@ ApplicationWindow {
         onRejected: workspace.cancelPaste()
 
         ColumnLayout {
-            width: Math.min(520, window.width - 80)
+            width: pasteDialog.availableWidth
             Label {
                 Layout.fillWidth: true
                 text: "The clipboard contains a newline or terminal control sequence. Review it before pasting."
@@ -158,7 +166,8 @@ ApplicationWindow {
             pasteDialog.open()
         }
         function onQuitApproved() {
-            Qt.quit()
+            window.closeApproved = true
+            Qt.callLater(window.close)
         }
     }
 }

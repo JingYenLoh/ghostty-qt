@@ -330,8 +330,13 @@ void TerminalWorkspace::removeTab(int index)
 
 void TerminalWorkspace::requestQuit()
 {
+    if (pendingClose_ == PendingClose::Quit) {
+        return;
+    }
     if (hasRunningProcesses()) {
         pendingClose_ = PendingClose::Quit;
+        pendingPane_.clear();
+        pendingTabIndex_ = -1;
         Q_EMIT closeConfirmationRequested(
             QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
         return;
