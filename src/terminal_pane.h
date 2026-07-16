@@ -10,6 +10,7 @@
 #include <QQuickItem>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 
@@ -28,6 +29,7 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
     Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
     Q_PROPERTY(qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
+    Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY activeKeyTablesChanged)
 
 public:
     explicit TerminalPane(const LaunchOptions &options, QQuickItem *parent = nullptr);
@@ -36,6 +38,7 @@ public:
     QString title() const;
     QString currentDirectory() const;
     qreal fontPointSize() const;
+    QStringList activeKeyTables() const;
     bool isRunning() const;
     bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions() const;
@@ -50,12 +53,16 @@ public:
     void zoomIn();
     void zoomOut();
     void resetZoom();
+    // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
+    // implementation as a focused local binding.
+    bool executeConfiguredAction(QStringView action);
 
 Q_SIGNALS:
     void activated(TerminalPane *pane);
     void titleChanged();
     void currentDirectoryChanged();
     void fontPointSizeChanged();
+    void activeKeyTablesChanged();
     void processStateChanged();
     void requestNewTab();
     void requestSplit(int orientation);
@@ -65,6 +72,7 @@ Q_SIGNALS:
     void requestTabChange(int delta);
     void requestQuit();
     void requestConfigReload();
+    void broadActionsRequested(const QStringList &actions);
     void unsafePasteRequested(const QString &text, TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 
@@ -99,7 +107,6 @@ private:
     KeyHandling handleShortcut(QKeyEvent *event);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event);
     bool canExecuteConfiguredAction(QStringView action) const;
-    bool executeConfiguredAction(QStringView action);
     void adjustZoom(qreal delta);
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);

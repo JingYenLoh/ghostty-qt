@@ -2,6 +2,7 @@
 
 #include "ghostty_keybind_config.h"
 
+#include <QHash>
 #include <QString>
 #include <QStringList>
 #include <QStringView>
@@ -53,6 +54,8 @@ struct GhosttyKeybindMatch {
     // translated into workspace actions at this layer.
     QStringList actions;
     bool consumed = true;
+    bool all = false;
+    bool global = false;
     bool performable = false;
     bool physical = false;
 
@@ -94,26 +97,29 @@ struct GhosttyKeybindStep {
     bool operator==(const GhosttyKeybindStep &) const = default;
 };
 
-// The compatibility set implements Ghostty's finalized local root trie.
-// Unsupported frontend-wide features are recorded and skipped instead of
-// being approximated with subtly different Qt behavior.
+// The compatibility set implements Ghostty's finalized binding tries and the
+// per-surface named-table stack. Frontend-wide delivery of `all` and `global`
+// matches is deliberately left to the caller.
 class GhosttyKeybindSet final {
 public:
+    static constexpr qsizetype MaximumActiveTables = 8;
+
     // Replaces the current set with the flattened values emitted by the pinned
     // `ghostty +show-config`. Later duplicate triggers replace earlier ones,
     // matching Ghostty's config semantics.
     [[nodiscard]] GhosttyKeybindLoadReport load(const QStringList &values);
 
     // Production configuration uses the versioned, value-only dump of
-    // Ghostty's finalized binding trie. Named tables and non-local leaves are
-    // retained by the transport but deliberately reported/skipped here until
-    // their frontend semantics are implemented.
+    // Ghostty's finalized binding tries. Named tables and non-local leaves are
+    // installed; matches expose the non-local flags to the frontend.
     [[nodiscard]] GhosttyKeybindLoadReport load(
         const GhosttyKeybindConfig &config);
 
-    // qtKey is QKeyEvent::key(), modifiers is QKeyEvent::modifiers(), and text
-    // is QKeyEvent::text(). Physical named triggers are checked before Unicode
-    // triggers regardless of config order, as they are in Ghostty.
+    // Stateless matching always checks the root set; use advance() for a
+    // pane's active table stack and sequences. qtKey is QKeyEvent::key(),
+    // modifiers is QKeyEvent::modifiers(), and text is QKeyEvent::text().
+    // Physical named triggers are checked before Unicode triggers regardless
+    // of config order, as they are in Ghostty.
     [[nodiscard]] std::optional<GhosttyKeybindMatch> match(
         int qtKey,
         Qt::KeyboardModifiers modifiers,
@@ -125,9 +131,10 @@ public:
     [[nodiscard]] std::optional<GhosttyKeybindMatch> match(
         const GhosttyKeybindEvent &event) const;
 
-    // Advances the root-table sequence state. Leader sequences have no
-    // timeout, matching Ghostty. Invalid non-modifier continuations either
-    // request replay or are dropped by a bare root catch_all=ignore binding.
+    // Advances the active sequence or performs a newest-table-to-root lookup.
+    // Leader sequences have no timeout, matching Ghostty. Invalid
+    // non-modifier continuations either request replay or are dropped by the
+    // first bare catch_all=ignore entry in the active lookup order.
     [[nodiscard]] GhosttyKeybindStep advance(
         const GhosttyKeybindEvent &event);
     void resetSequence() noexcept;
@@ -135,6 +142,16 @@ public:
     {
         return activeNode_.has_value();
     }
+
+    // Named key tables are surface-local stack state. Activation fails for an
+    // unknown table, a duplicate top entry, or Ghostty's maximum depth of 8.
+    // The same table may otherwise occur repeatedly in the stack.
+    [[nodiscard]] bool hasTable(QStringView name) const;
+    [[nodiscard]] bool canActivateTable(QStringView name) const;
+    [[nodiscard]] bool activateTable(QStringView name, bool oneShot = false);
+    [[nodiscard]] bool deactivateTable() noexcept;
+    [[nodiscard]] bool deactivateAllTables() noexcept;
+    [[nodiscard]] QStringList activeTableNames() const;
 
     [[nodiscard]] qsizetype size() const noexcept { return bindingCount_; }
     [[nodiscard]] bool isEmpty() const noexcept { return bindingCount_ == 0; }
@@ -168,6 +185,8 @@ private:
         quint32 child = 0;
         QStringList actions;
         bool consumed = true;
+        bool all = false;
+        bool global = false;
         bool performable = false;
     };
 
@@ -180,11 +199,20 @@ private:
         bool physical = false;
     };
 
+    struct ActiveTable {
+        QString name;
+        quint32 root = 0;
+        bool oneShot = false;
+    };
+
     [[nodiscard]] Lookup lookup(quint32 node,
                                 const GhosttyKeybindEvent &event) const;
-    [[nodiscard]] bool rootCatchAllIgnores() const;
+    [[nodiscard]] const Entry *bareCatchAll(quint32 root) const;
+    [[nodiscard]] bool activeCatchAllIgnores() const;
 
     QVector<Node> nodes_{Node{}};
+    QHash<QString, quint32> tableRoots_;
+    QVector<ActiveTable> activeTables_;
     qsizetype bindingCount_ = 0;
     std::optional<quint32> activeNode_;
     QVector<GhosttyKeybindEvent> queuedEvents_;

@@ -52,7 +52,9 @@ if(Git_FOUND AND EXISTS "${GHOSTTY_SOURCE_DIR}/.git")
     endif()
 endif()
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Qml Quick QuickControls2)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 qt_standard_project_setup(REQUIRES 6.8)
 
 # Keep the Zig-built engine identical between Debug and Release C++ builds.
@@ -283,6 +285,8 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
 
 qt_add_executable(ghostty-qt
     src/main.cpp
+    src/ghostty_application_keybindings.cpp
+    src/ghostty_application_keybindings.h
     src/ghostty_action_catalog.cpp
     src/ghostty_action_catalog.h
     src/ghostty_config_loader.h
@@ -294,6 +298,8 @@ qt_add_executable(ghostty-qt
     src/ghostty_keybind_config.h
     src/ghostty_keybind_set.cpp
     src/ghostty_keybind_set.h
+    src/ghostty_global_shortcut_portal.cpp
+    src/ghostty_global_shortcut_portal.h
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
     src/launch_options.cpp
@@ -323,10 +329,12 @@ qt_add_qml_module(ghostty-qt
 
 target_link_libraries(ghostty-qt PRIVATE
     Qt6::Core
+    Qt6::DBus
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    PkgConfig::XKBCommon
     ghostty-qt-runtime-paths
     ghostty-vt-static
     util

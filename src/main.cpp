@@ -1,4 +1,5 @@
 #include "launch_options.h"
+#include "ghostty_application_keybindings.h"
 #include "terminal_workspace.h"
 
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -135,12 +136,33 @@ int main(int argc, char *argv[])
         qCritical() << "QML root does not contain a TerminalWorkspace";
         return 1;
     }
+
+    LaunchOptions effectiveApplicationOptions = options;
 #if GHOSTTY_QT_CONFIG_ENABLED
     if (configService.hasSnapshot()) {
         workspace->applyConfigSnapshot(configService.snapshot());
+        effectiveApplicationOptions = applyGhosttyConfigSnapshot(
+            options, configService.snapshot());
     }
+#endif
+
+    // Declared after the QML engine so the process-level portal and event
+    // filter are torn down before any registered workspace objects.
+    GhosttyApplicationKeybindings applicationKeybindings(
+        effectiveApplicationOptions);
+    applicationKeybindings.registerWorkspace(workspace);
+
+#if GHOSTTY_QT_CONFIG_ENABLED
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      workspace, &TerminalWorkspace::applyConfigSnapshot);
+    QObject::connect(
+        &configService, &GhosttyConfigService::changed,
+        &applicationKeybindings,
+        [&applicationKeybindings, options](
+            const GhosttyConfigSnapshot &snapshot) {
+            applicationKeybindings.applyLaunchOptions(
+                applyGhosttyConfigSnapshot(options, snapshot));
+        });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
     QObject::connect(workspace, &TerminalWorkspace::configReloadRequested,

@@ -15,6 +15,8 @@ private Q_SLOTS:
     void rejectsValidButUnsupportedParameters();
     void rejectsMalformedAndUnsupportedStrings_data();
     void rejectsMalformedAndUnsupportedStrings();
+    void classifiesPinnedActionScopes();
+    void recognizesKeyTableActions();
 };
 
 void GhosttyActionCatalogTest::translatesParameterlessActions()
@@ -197,6 +199,39 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings()
     QCOMPARE(second.error, first.error);
     QCOMPARE(second.actionName, first.actionName);
     QCOMPARE(second.parameter, first.parameter);
+}
+
+void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
+{
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("quit")),
+             GhosttyActionScope::Application);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("reload_config")),
+             GhosttyActionScope::Application);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_window")),
+             GhosttyActionScope::Application);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_tab")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:this")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("activate_key_table:copy")),
+             GhosttyActionScope::Surface);
+}
+
+void GhosttyActionCatalogTest::recognizesKeyTableActions()
+{
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("activate_key_table:copy")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("activate_key_table_once:")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("deactivate_key_table")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("deactivate_all_key_tables")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("activate_key_table")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("deactivate_key_table:copy")));
 }
 
 QTEST_APPLESS_MAIN(GhosttyActionCatalogTest)

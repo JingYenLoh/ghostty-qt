@@ -62,6 +62,32 @@ bool isCatalogAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("goto_split"));
 }
 
+QStringView actionName(QStringView serializedAction)
+{
+    const qsizetype colon = serializedAction.indexOf(u':');
+    return colon < 0 ? serializedAction : serializedAction.first(colon);
+}
+
+bool isApplicationAction(QStringView name)
+{
+    // Keep this list synchronized with Binding.Action.scope(). `unbind` does
+    // not survive finalized configuration, but classifying it is harmless and
+    // makes the mapping complete.
+    return equals(name, QLatin1StringView("ignore"))
+        || equals(name, QLatin1StringView("unbind"))
+        || equals(name, QLatin1StringView("open_config"))
+        || equals(name, QLatin1StringView("reload_config"))
+        || equals(name, QLatin1StringView("close_all_windows"))
+        || equals(name, QLatin1StringView("quit"))
+        || equals(name, QLatin1StringView("toggle_quick_terminal"))
+        || equals(name, QLatin1StringView("toggle_visibility"))
+        || equals(name, QLatin1StringView("check_for_updates"))
+        || equals(name, QLatin1StringView("show_gtk_inspector"))
+        || equals(name, QLatin1StringView("new_window"))
+        || equals(name, QLatin1StringView("undo"))
+        || equals(name, QLatin1StringView("redo"));
+}
+
 } // namespace
 
 GhosttyActionTranslation GhosttyActionCatalog::translate(
@@ -221,6 +247,16 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         || name == QLatin1StringView("ignore")) {
         return !parameter.has_value();
     }
+    if (name == QLatin1StringView("activate_key_table")
+        || name == QLatin1StringView("activate_key_table_once")) {
+        // Binding.Action.parse accepts an empty string parameter. Whether the
+        // named table exists is a pane-state question handled at execution.
+        return parameter.has_value();
+    }
+    if (name == QLatin1StringView("deactivate_key_table")
+        || name == QLatin1StringView("deactivate_all_key_tables")) {
+        return !parameter.has_value();
+    }
     if (name == QLatin1StringView("increase_font_size")
         || name == QLatin1StringView("decrease_font_size")) {
         if (!parameter.has_value()) {
@@ -231,4 +267,12 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         return valid && std::isfinite(amount) && amount > 0.0;
     }
     return false;
+}
+
+GhosttyActionScope GhosttyActionCatalog::scope(
+    QStringView serializedAction)
+{
+    return isApplicationAction(actionName(serializedAction))
+        ? GhosttyActionScope::Application
+        : GhosttyActionScope::Surface;
 }

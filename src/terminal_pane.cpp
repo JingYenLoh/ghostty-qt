@@ -481,6 +481,11 @@ qreal TerminalPane::fontPointSize() const
     return font_.pointSizeF();
 }
 
+QStringList TerminalPane::activeKeyTables() const
+{
+    return keybinds_.activeTableNames();
+}
+
 bool TerminalPane::isRunning() const
 {
     return controller_->running();
@@ -561,6 +566,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
                                      TerminalSequenceResolution::Drop);
         activeSequenceToken_ = 0;
     }
+    const QStringList previousKeyTables = keybinds_.activeTableNames();
     if (options_.keybindingsConfigured) {
         GhosttyKeybindSet candidate;
         if (!options_.keybindings.isEmpty()) {
@@ -571,6 +577,9 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         keybinds_ = std::move(candidate);
     } else {
         keybinds_.clear();
+    }
+    if (previousKeyTables != keybinds_.activeTableNames()) {
+        Q_EMIT activeKeyTablesChanged();
     }
     controller_->applyRuntimeOptions(options_);
 
@@ -1095,7 +1104,11 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
     };
     const TerminalKeyInput currentInput = terminalKeyInput(event);
+    const QStringList previousKeyTables = keybinds_.activeTableNames();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
+    if (previousKeyTables != keybinds_.activeTableNames()) {
+        Q_EMIT activeKeyTablesChanged();
+    }
 
     switch (step.kind) {
     case GhosttyKeybindStepKind::Unmatched:
@@ -1128,6 +1141,29 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         break;
     }
 
+    // `global:` implies `all:` at runtime even though Ghostty retains the raw
+    // flags independently. Broad bindings ignore unconsumed/performable and
+    // always suppress terminal encoding. `ignore` retains Ghostty's special
+    // press-only handling, so a release is not marked as a consumed binding.
+    if (step.match.all || step.match.global) {
+        Q_EMIT broadActionsRequested(step.match.actions);
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Drop);
+            activeSequenceToken_ = 0;
+        }
+        const bool ignored = std::any_of(
+            step.match.actions.cbegin(), step.match.actions.cend(),
+            [](const QString &action) {
+                const qsizetype colon = action.indexOf(u':');
+                return (colon < 0 ? QStringView(action)
+                                  : QStringView(action).first(colon))
+                    == QLatin1StringView("ignore");
+            });
+        return ignored ? KeyHandling::ConsumePress
+                       : KeyHandling::ConsumePressAndRelease;
+    }
+
     bool performed = false;
     bool ignored = false;
     bool hasClosingAction = false;
@@ -1145,13 +1181,6 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
             performed = actionPerformed || performed;
             if (actionPerformed && name == QLatin1StringView("ignore")) {
                 ignored = true;
-            }
-            if (actionPerformed
-                && name == QLatin1StringView("end_key_sequence")
-                && activeSequenceToken_ != 0) {
-                controller_->resolveSequence(activeSequenceToken_,
-                                             TerminalSequenceResolution::Flush);
-                activeSequenceToken_ = 0;
             }
         }
     }
@@ -1226,6 +1255,17 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         }
         return controller_->selectionAvailable();
     }
+    if (name == QLatin1StringView("activate_key_table")
+        || name == QLatin1StringView("activate_key_table_once")) {
+        return parameter.has_value()
+            && keybinds_.canActivateTable(*parameter);
+    }
+    if (name == QLatin1StringView("deactivate_key_table")) {
+        return !parameter.has_value() && !keybinds_.activeTableNames().isEmpty();
+    }
+    if (name == QLatin1StringView("deactivate_all_key_tables")) {
+        return !parameter.has_value() && !keybinds_.activeTableNames().isEmpty();
+    }
     if (name == QLatin1StringView("paste_from_clipboard")) {
         return !parameter.has_value()
             && !QGuiApplication::clipboard()->text().isEmpty();
@@ -1261,6 +1301,28 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     const qsizetype colon = action.indexOf(u':');
     const QStringView name = colon < 0 ? action : action.first(colon);
     const QStringView parameter = colon < 0 ? QStringView{} : action.sliced(colon + 1);
+
+    if (name == QLatin1StringView("activate_key_table")
+        || name == QLatin1StringView("activate_key_table_once")) {
+        if (colon < 0) return false;
+        const bool changed = keybinds_.activateTable(
+            parameter,
+            name == QLatin1StringView("activate_key_table_once"));
+        if (changed) Q_EMIT activeKeyTablesChanged();
+        return changed;
+    }
+    if (name == QLatin1StringView("deactivate_key_table")) {
+        if (colon >= 0) return false;
+        const bool changed = keybinds_.deactivateTable();
+        if (changed) Q_EMIT activeKeyTablesChanged();
+        return changed;
+    }
+    if (name == QLatin1StringView("deactivate_all_key_tables")) {
+        if (colon >= 0) return false;
+        const bool changed = keybinds_.deactivateAllTables();
+        if (changed) Q_EMIT activeKeyTablesChanged();
+        return changed;
+    }
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
         copySelection();
@@ -1314,6 +1376,13 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         return true;
     }
     if (name == QLatin1StringView("end_key_sequence")) {
+        if (colon >= 0) return false;
+        keybinds_.resetSequence();
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Flush);
+            activeSequenceToken_ = 0;
+        }
         return true;
     }
     if (name == QLatin1StringView("close_window")) {

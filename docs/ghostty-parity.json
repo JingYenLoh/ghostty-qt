@@ -326,7 +326,7 @@
     },
     "keybind": {
       "status": "partial",
-      "note": "A private versioned export carries Ghostty's finalized bindings. The root trie supports physical/Unicode/catch-all triggers, shared-prefix sequences, chains, unconsumed/performable flags, stage-time VT encoding, invalid replay, and live-reload cancellation for the implemented action subset. Named tables and all/global dispatch remain planned."
+      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
     },
     "palette": {
       "status": "supported",
@@ -614,6 +614,14 @@
         "write_selection_file"
       ],
       "overrides": {
+        "activate_key_table": {
+          "status": "supported",
+          "note": "Activates a named table in the current pane with Ghostty's duplicate-top and maximum-depth rules."
+        },
+        "activate_key_table_once": {
+          "status": "supported",
+          "note": "Activates a pane-local one-shot table and pops it when the innermost table supplies a match."
+        },
         "check_for_updates": {
           "status": "not_applicable",
           "scope": "macos"
@@ -642,9 +650,15 @@
         "decrease_font_size": {
           "status": "partial"
         },
+        "deactivate_all_key_tables": {
+          "status": "supported"
+        },
+        "deactivate_key_table": {
+          "status": "supported"
+        },
         "end_key_sequence": {
           "status": "partial",
-          "note": "Root-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it. Named-table sequences remain planned."
+          "note": "Root and named-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it."
         },
         "goto_split": {
           "status": "partial",
@@ -655,7 +669,7 @@
         },
         "ignore": {
           "status": "partial",
-          "note": "Root bindings and sequences suppress VT encoding with Ghostty consume and catch-all invalid-sequence semantics; named/non-local forms remain planned."
+          "note": "Root and named-table bindings suppress VT encoding with Ghostty consume and catch-all invalid-sequence semantics; all/global dispatch ignores local consumption flags."
         },
         "inspector": {
           "scope": "qt_mapping"

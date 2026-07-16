@@ -14,6 +14,7 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | Ghostty adapter | C++20 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, and deferred-effect operations. |
 | Terminal engine | Zig-built static `libghostty-vt` through its C API | VT parsing, terminal state, render-state iteration, selection, and key/mouse/paste encoding. |
 | Configuration | Qt file-watching service plus a helper process | Uses the exact pinned Ghostty application parser, then exposes only selected typed values to the Qt application. |
+| Application keybindings | C++20 plus Qt D-Bus | Routes app-scoped and all-surface actions, and owns the Linux XDG Global Shortcuts portal session. |
 | Process boundary | Linux `forkpty`, nonblocking file descriptors, `QSocketNotifier` | Shell or command execution and byte transport. |
 | Build | CMake/Ninja plus Zig 0.15.2 | Qt application build, pinned Ghostty build, generated terminfo, and tests. |
 
@@ -40,6 +41,11 @@ Main.qml
 GhosttyConfigService (UI thread)
   -> ghostty-qt-config-helper (short-lived child process)
      -> pinned ghostty-internal configuration/CLI implementation
+
+GhosttyApplicationKeybindings (UI thread, process lifetime)
+  -> root application-action pre-pass
+  -> all/global action-major fanout -> registered TerminalWorkspace instances
+  -> XDG Global Shortcuts portal (session D-Bus)
 ```
 
 `TerminalWorkspace` is a C++ `QQuickItem` exposed to QML. QML owns only the
@@ -61,7 +67,8 @@ explicit tab/pane context. Keyboard, pane, and QML entry points can therefore
 converge on the same action vocabulary as more Ghostty keybindings are added.
 Pending close and unsafe-paste operations retain stable IDs, so a model row
 moving before confirmation cannot redirect the operation to another pane or
-tab.
+tab. Broad unsafe paste batches every stable target behind one confirmation;
+broad close converges on one confirmed shutdown request per workspace.
 
 Close policy tracks the live child separately from active foreground work. For
 an interactive shell, `tcgetpgrp` detects jobs in a separate foreground process
@@ -276,9 +283,12 @@ action chains, and every binding flag. The C++ parser is strict and
 transactional: an unknown schema or malformed dump rejects the reload without
 replacing the last-good snapshot.
 
-Each `TerminalPane` builds a node-indexed root trie from the generation's
-value snapshot and owns its traversal state. Sharing that immutable trie
-between panes is a later allocation optimization. Lookup prioritizes
+Each `TerminalPane` builds node-indexed tries for the generation's root and
+named tables and owns its traversal and table-stack state. Sharing those
+immutable tries between panes is a later allocation optimization. Outside an
+active sequence, lookup walks the newest active table outward and then the
+root. A one-shot top table is popped as soon as it supplies a match, including
+a leader, catch-all, or performable binding. Lookup prioritizes
 physical identity, then event Unicode, then the unshifted codepoint, then
 modifier-specific and bare catch-all entries at every depth. On
 Linux/Wayland, native XKB scan codes keep physical triggers and libghostty's
@@ -298,10 +308,21 @@ operations from leaking input. Supported actions then pass through
 workspace dispatcher used by QML controls; pane-local copy, paste, zoom,
 scroll, and reload actions use their terminal operations directly.
 
-This remains deliberately partial. Named table activation, `all` dispatch,
-`global` registration, and portal-backed Wayland global shortcuts are retained
-by the transport but recorded as unsupported by the root matcher rather than
-approximated through `QShortcut`.
+`GhosttyApplicationKeybindings` performs root app-scoped leaves before the
+focused pane lookup, matching Ghostty's app/surface split while leaving leaders
+and mixed-scope chains to the pane. A pane that matches `all` or `global`
+forwards the chain to that process controller. It executes app actions once and
+surface actions over a stable pane snapshot, action-major across the chain;
+`unconsumed` and `performable` do not alter broad-binding consumption.
+
+On Linux, eligible root `global` bindings are registered asynchronously through
+the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions
+are installed before calls, and config generations reject stale create/bind
+callbacks. Reload closes the previous session before registration. Matching the
+pinned GTK frontend, only direct root bindings with one action are portal
+eligible; sequences, catch-all triggers, table entries, and action chains are
+diagnosed and skipped. Portal failure is nonfatal and never falls back to a
+focus-only Qt shortcut.
 
 ## Build integration
 
@@ -364,7 +385,7 @@ partial or supported, while the other upstream keys stay explicitly planned.
 
 ## Test boundaries
 
-The default CTest suite has sixteen layers:
+The default CTest suite has seventeen layers:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
   typed config and appearance overlays, CLI font precedence, scrollback units,
@@ -390,8 +411,11 @@ The default CTest suite has sixteen layers:
   action-string parsing and deterministic malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
   locations, shifted/unshifted Unicode matching, shared-prefix sequences,
-  catch-all priority and recovery, local flags, action chains, independent pane
-  state, Linux defaults, and explicit rejection of deferred non-local forms.
+  catch-all priority and recovery, local/broad flags, action chains, named-table
+  precedence and one-shot state, independent pane state, and Linux defaults.
+- `ghostty-global-shortcut-portal` verifies XDG trigger conversion, registry
+  eligibility and collisions, response-before-reply races, activation routing,
+  reload cleanup, and stale callback rejection on a private D-Bus daemon.
 - `ghostty-config-service` verifies standard paths, file/directory and include
   watches, atomic replacement, debounce, and retention of the last good value.
 - `ghostty-config-process-loader` verifies canonical and structured snapshot
@@ -437,6 +461,6 @@ in a real Wayland session.
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
 - Split ratios are fixed; no divider interaction is implemented.
-- Configuration beyond the documented typed slice, named/non-local keybinding forms,
-  search, hyperlinks, multi-window operation, saved sessions, and production
-  packaging remain future work.
+- Configuration beyond the documented typed slice, unsupported keybinding
+  actions, search, hyperlinks, multi-window operation, saved sessions, and
+  production packaging remain future work.

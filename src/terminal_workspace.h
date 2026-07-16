@@ -6,6 +6,8 @@
 
 #include <QQuickItem>
 #include <QStringList>
+#include <QStringView>
+#include <QVector>
 
 #include <memory>
 #include <vector>
@@ -34,6 +36,8 @@ public:
     int tabCount() const { return static_cast<int>(tabs_.size()); }
 
     bool dispatchAction(const WorkspaceActionRequest &request);
+    bool executeApplicationConfiguredAction(QStringView action);
+    bool executeSurfaceActionOnAllPanes(QStringView action);
 
     Q_INVOKABLE void setCurrentIndex(int index);
     Q_INVOKABLE void newTab();
@@ -55,6 +59,7 @@ Q_SIGNALS:
     void closeConfirmationResolved();
     void unsafePasteConfirmationRequested(const QString &preview);
     void configReloadRequested();
+    void broadActionsRequested(const QStringList &actions);
     void quitApproved();
 
 protected:
@@ -126,5 +131,5 @@ private:
     PaneId pendingPaneId_;
     TabId pendingTabId_;
     QString pendingPaste_;
-    PaneId pendingPastePaneId_;
+    QVector<PaneId> pendingPastePaneIds_;
 };

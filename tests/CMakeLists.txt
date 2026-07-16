@@ -80,10 +80,14 @@ set_tests_properties(terminal-pane-render PROPERTIES
 
 qt_add_executable(test-terminal-workspace
     test_terminal_workspace.cpp
+    ../src/ghostty_application_keybindings.cpp
+    ../src/ghostty_application_keybindings.h
     ../src/ghostty_action_catalog.cpp
     ../src/ghostty_action_catalog.h
     ../src/ghostty_keybind_set.cpp
     ../src/ghostty_keybind_set.h
+    ../src/ghostty_global_shortcut_portal.cpp
+    ../src/ghostty_global_shortcut_portal.h
     ../src/ghostty_vt_adapter.cpp
     ../src/ghostty_vt_adapter.h
     ../src/launch_options.cpp
@@ -110,9 +114,11 @@ target_compile_definitions(test-terminal-workspace PRIVATE
 )
 target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Core
+    Qt6::DBus
     Qt6::Gui
     Qt6::Quick
     Qt6::Test
+    PkgConfig::XKBCommon
     ghostty-qt-runtime-paths
     ghostty-vt-static
     util
@@ -191,6 +197,24 @@ target_link_libraries(test-ghostty-keybind-set PRIVATE
 )
 add_test(NAME ghostty-keybind-set COMMAND test-ghostty-keybind-set)
 set_tests_properties(ghostty-keybind-set PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-ghostty-global-shortcut-portal
+    test_ghostty_global_shortcut_portal.cpp
+    ../src/ghostty_global_shortcut_portal.cpp
+    ../src/ghostty_global_shortcut_portal.h
+)
+target_include_directories(test-ghostty-global-shortcut-portal PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-global-shortcut-portal PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+    PkgConfig::XKBCommon
+)
+add_test(NAME ghostty-global-shortcut-portal
+    COMMAND test-ghostty-global-shortcut-portal)
+set_tests_properties(ghostty-global-shortcut-portal PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-config-service
     test_ghostty_config_service.cpp

@@ -35,13 +35,14 @@ ctest --preset dev
 The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
-matching and replay, terminal appearance rendering, and the config-helper process protocol,
+matching, named tables, all-surface dispatch, portal registration, and replay,
+terminal appearance rendering, and the config-helper process protocol,
 as well as PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -R 'ghostty-vt-adapter|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -R 'ghostty-vt-adapter|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -95,12 +96,14 @@ The three focused config tests have distinct boundaries:
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.
 
-`ghostty-keybind-set` covers the finalized root trie, including Linux native
-physical locations, shifted punctuation lookup, sequences, catch-all fallback,
-action chains, and exact local `unconsumed`/`performable` behavior. Session and
-pane tests cover byte staging, invalid-sequence replay, and reload cancellation.
-Named tables and global/all-surface behavior remain explicit later stages
-rather than being emulated with Qt shortcuts.
+`ghostty-keybind-set` covers finalized root and named-table tries, including
+Linux native physical locations, shifted punctuation lookup, sequences,
+catch-all fallback, table precedence/one-shot activation, action chains, and
+exact local `unconsumed`/`performable` behavior. Session and pane tests cover
+byte staging, invalid-sequence replay, table reset, and reload cancellation.
+Workspace tests cover application-action precedence and inactive-surface
+fanout. `ghostty-global-shortcut-portal` uses pure registry tests plus a private
+D-Bus daemon to exercise response races, reload, cleanup, and activation.
 The same boundary does not expose the post-derivation palette and explicit-entry
 mask required for exact `palette-generate`/`palette-harmonious` behavior. Also,
 the public terminal option for cursor blink is boolean rather than Ghostty's

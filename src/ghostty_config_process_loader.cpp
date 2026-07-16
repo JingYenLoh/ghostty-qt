@@ -224,9 +224,11 @@ QString unsupportedKeybindReason(GhosttyKeybindUnsupportedReason reason)
 {
     switch (reason) {
     case GhosttyKeybindUnsupportedReason::KeyTable:
-        return QStringLiteral("named key tables are not implemented yet");
+        return QStringLiteral(
+            "named key tables require the structured binding export");
     case GhosttyKeybindUnsupportedReason::NonLocal:
-        return QStringLiteral("all-surface/global triggers are not implemented yet");
+        return QStringLiteral(
+            "all-surface/global triggers require the structured binding export");
     case GhosttyKeybindUnsupportedReason::ClearDirective:
         return QStringLiteral("an unresolved clear directive reached the flattened set");
     case GhosttyKeybindUnsupportedReason::OrphanChain:
@@ -248,6 +250,14 @@ void appendKeybindCompatibilityDiagnostics(GhosttyConfigSnapshot *snapshot,
     for (const GhosttyKeybindParseRecord &record : report.records) {
         if (record.disposition != GhosttyKeybindEntryDisposition::Unsupported
             && record.disposition != GhosttyKeybindEntryDisposition::Invalid) {
+            continue;
+        }
+        // Production matching uses the authoritative structured export, which
+        // retains named tables and all:/global: flags. The flattened fallback
+        // parser intentionally remains smaller; do not turn that limitation
+        // into a false user-facing compatibility warning.
+        if (record.reason == GhosttyKeybindUnsupportedReason::KeyTable
+            || record.reason == GhosttyKeybindUnsupportedReason::NonLocal) {
             continue;
         }
         const QString reason = record.detail.isEmpty()

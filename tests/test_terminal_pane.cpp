@@ -61,6 +61,7 @@ private Q_SLOTS:
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesStructuredSequencesAndCancelsThemOnReload();
     void replaysInvalidStructuredSequenceThroughPty();
+    void routesNamedKeyTablesAndClearsThemOnReload();
 };
 
 void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
@@ -756,6 +757,108 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     const int beforeFormerLeaf = forwarded.count();
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(forwarded.count(), beforeFormerLeaf + 1);
+}
+
+void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
+{
+    const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = modifiers,
+        };
+    };
+    const auto binding = [&](QVector<GhosttyKeybindTrigger> sequence,
+                             QString action,
+                             GhosttyKeybindFlags flags = {}) {
+        return GhosttyKeybindDefinition{
+            .sequence = std::move(sequence),
+            .actions = {std::move(action)},
+            .flags = flags,
+        };
+    };
+    const GhosttyKeybindTrigger escape{
+        .kind = GhosttyKeybindKeyKind::Physical,
+        .physicalName = QStringLiteral("escape"),
+    };
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    options.keybindConfig.root = {
+        binding({unicode('m', GhosttyKeybindCtrl)},
+                QStringLiteral("activate_key_table:edit"),
+                GhosttyKeybindFlags{.performable = true}),
+        binding({unicode('o', GhosttyKeybindCtrl)},
+                QStringLiteral("activate_key_table_once:once")),
+    };
+    options.keybindConfig.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings = {
+                binding({unicode('n')}, QStringLiteral("new_tab")),
+                binding({escape},
+                        QStringLiteral("deactivate_key_table")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("once"),
+            .bindings = {
+                binding({unicode('x'), unicode('y')},
+                        QStringLiteral("new_tab")),
+            },
+        },
+    };
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(forwarded.count(), 1);
+
+    press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 1);
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(newTab.count(), 1);
+
+    // A performable activation of the already-innermost table behaves as an
+    // absent binding and reaches the terminal.
+    const int beforeDuplicate = forwarded.count();
+    press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
+    QCOMPARE(forwarded.count(), beforeDuplicate + 1);
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+
+    press(Qt::Key_Escape, Qt::NoModifier, QString{});
+    QVERIFY(pane.activeKeyTables().isEmpty());
+
+    // A one-shot table pops on the sequence leader, while the retained child
+    // trie still resolves the continuation.
+    press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(newTab.count(), 2);
+
+    press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    LaunchOptions reloaded = options;
+    reloaded.keybindConfig.tables.clear();
+    pane.applyRuntimeOptions(reloaded);
+    QVERIFY(pane.activeKeyTables().isEmpty());
 }
 
 void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()

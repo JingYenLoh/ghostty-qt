@@ -3,6 +3,7 @@
 #include "terminal_pane.h"
 
 #include <QKeyEvent>
+#include <QPointer>
 #include <QTimer>
 
 #include <algorithm>
@@ -99,6 +100,52 @@ QString TerminalWorkspace::currentTitle() const
 bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
 {
     return actionDispatcher_.dispatch(request);
+}
+
+bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
+{
+    const qsizetype colon = action.indexOf(u':');
+    const QStringView name = colon < 0 ? action : action.first(colon);
+    const bool hasParameter = colon >= 0;
+    if (hasParameter) {
+        return false;
+    }
+    if (name == QLatin1StringView("ignore")) {
+        return true;
+    }
+    if (name == QLatin1StringView("reload_config")) {
+        Q_EMIT configReloadRequested();
+        return true;
+    }
+    if (name == QLatin1StringView("quit")) {
+        requestQuitImpl();
+        return true;
+    }
+    return false;
+}
+
+bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
+{
+    // Actions may remove panes or tabs. QPointer keeps this stable snapshot
+    // safe while preserving Ghostty's action-major fanout order at the
+    // process-level caller.
+    std::vector<QPointer<TerminalPane>> panes;
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        std::vector<TerminalPane *> rawPanes;
+        collectPanes(tab->root.get(), &rawPanes);
+        panes.reserve(panes.size() + rawPanes.size());
+        for (TerminalPane *pane : rawPanes) {
+            panes.emplace_back(pane);
+        }
+    }
+
+    bool performed = false;
+    for (const QPointer<TerminalPane> &pane : panes) {
+        if (pane != nullptr) {
+            performed = pane->executeConfiguredAction(action) || performed;
+        }
+    }
+    return performed;
 }
 
 bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
@@ -259,6 +306,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     });
     connect(pane, &TerminalPane::requestConfigReload,
             this, &TerminalWorkspace::configReloadRequested);
+    connect(pane, &TerminalPane::broadActionsRequested,
+            this, &TerminalWorkspace::broadActionsRequested);
     connect(pane, &TerminalPane::unsafePasteRequested, this,
             [this, paneId](const QString &text, TerminalPane *) {
                 beginUnsafePaste(text, paneId);
@@ -688,8 +737,17 @@ void TerminalWorkspace::cancelClose()
 
 void TerminalWorkspace::beginUnsafePaste(const QString &text, PaneId paneId)
 {
+    // A broad paste can reach multiple surfaces during one action fanout. Use
+    // one confirmation for the identical clipboard payload and retain every
+    // target instead of repeatedly overwriting a single pending pane.
+    if (!pendingPaste_.isEmpty() && pendingPaste_ == text) {
+        if (!pendingPastePaneIds_.contains(paneId)) {
+            pendingPastePaneIds_.append(paneId);
+        }
+        return;
+    }
     pendingPaste_ = text;
-    pendingPastePaneId_ = paneId;
+    pendingPastePaneIds_ = {paneId};
     QString preview = text.left(240);
     preview.replace(QLatin1Char('\n'), QStringLiteral("↵\n"));
     if (text.size() > preview.size()) {
@@ -700,8 +758,12 @@ void TerminalWorkspace::beginUnsafePaste(const QString &text, PaneId paneId)
 
 void TerminalWorkspace::confirmPaste()
 {
-    if (TerminalPane *pane = paneForId(pendingPastePaneId_); pane != nullptr) {
-        pane->pasteText(pendingPaste_);
+    const QString text = pendingPaste_;
+    const QVector<PaneId> paneIds = pendingPastePaneIds_;
+    for (PaneId paneId : paneIds) {
+        if (TerminalPane *pane = paneForId(paneId); pane != nullptr) {
+            pane->pasteText(text);
+        }
     }
     cancelPaste();
 }
@@ -709,7 +771,7 @@ void TerminalWorkspace::confirmPaste()
 void TerminalWorkspace::cancelPaste()
 {
     pendingPaste_.clear();
-    pendingPastePaneId_ = {};
+    pendingPastePaneIds_.clear();
 }
 
 TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const

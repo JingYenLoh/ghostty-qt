@@ -17,6 +17,11 @@ enum class GhosttyActionTranslationError {
     UnsupportedParameter,
 };
 
+enum class GhosttyActionScope {
+    Application,
+    Surface,
+};
+
 struct GhosttyActionTranslation {
     std::optional<WorkspaceActionRequest> request;
     GhosttyActionTranslationError error =
@@ -49,6 +54,14 @@ public:
     // action, including parameter validation. This includes pane-local
     // clipboard/zoom/scroll/reload actions as well as typed workspace actions.
     [[nodiscard]] static bool isImplemented(QStringView serializedAction);
+
+    // Mirrors Binding.Action.scope() in the pinned Ghostty revision. This is
+    // intentionally independent of WorkspaceAction: actions such as new_tab
+    // are surface-scoped upstream even though Qt ultimately routes them
+    // through the workspace model.
+    [[nodiscard]] static GhosttyActionScope scope(
+        QStringView serializedAction);
 };
 
 Q_DECLARE_METATYPE(GhosttyActionTranslationError)
+Q_DECLARE_METATYPE(GhosttyActionScope)

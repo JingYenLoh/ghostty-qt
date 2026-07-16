@@ -602,6 +602,11 @@ QStringList GhosttyKeybindSet::serializedActions() const
         }
     };
     visit(visit, 0);
+    QStringList tableNames = tableRoots_.keys();
+    tableNames.sort();
+    for (const QString &tableName : tableNames) {
+        visit(visit, tableRoots_.value(tableName));
+    }
     return result;
 }
 
@@ -609,6 +614,8 @@ void GhosttyKeybindSet::clear() noexcept
 {
     nodes_.clear();
     nodes_.append(Node{});
+    tableRoots_.clear();
+    activeTables_.clear();
     bindingCount_ = 0;
     resetSequence();
 }
@@ -744,6 +751,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
 {
     GhosttyKeybindLoadReport report;
     QVector<Node> newNodes{Node{}};
+    QHash<QString, quint32> newTableRoots;
 
     if (config.schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
         report.records.append(record(
@@ -751,12 +759,6 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
             Reason::None, QStringLiteral("unsupported structured schema version")));
         clear();
         return report;
-    }
-
-    for (const GhosttyKeybindTable &table : config.tables) {
-        report.records.append(record(
-            table.name, Disposition::Unsupported, Reason::KeyTable,
-            QStringLiteral("named key table is retained but not active")));
     }
 
     const auto sameTrigger = [](const Binding &left, const Binding &right) {
@@ -776,127 +778,163 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
         return left.qtKey == right.qtKey && left.keypad == right.keypad;
     };
 
-    for (qsizetype definitionIndex = 0;
-         definitionIndex < config.root.size(); ++definitionIndex) {
-        const GhosttyKeybindDefinition &definition =
-            config.root.at(definitionIndex);
-        const QString label = QStringLiteral("root binding %1")
-                                  .arg(definitionIndex);
-        if (definition.sequence.isEmpty() || definition.actions.isEmpty()) {
-            report.records.append(record(
-                label, Disposition::Invalid, Reason::None,
-                QStringLiteral("binding sequence and actions must be non-empty")));
-            continue;
-        }
-        if (definition.flags.all || definition.flags.global) {
-            report.records.append(record(label, Disposition::Unsupported,
-                                         Reason::NonLocal));
-            continue;
-        }
+    const auto installDefinitions = [&newNodes, &report, &sameTrigger](
+                                        const QVector<GhosttyKeybindDefinition> &definitions,
+                                        quint32 root,
+                                        const QString &labelPrefix) {
+        for (qsizetype definitionIndex = 0;
+             definitionIndex < definitions.size(); ++definitionIndex) {
+            const GhosttyKeybindDefinition &definition =
+                definitions.at(definitionIndex);
+            const QString label = QStringLiteral("%1 binding %2")
+                                      .arg(labelPrefix)
+                                      .arg(definitionIndex);
+            if (definition.sequence.isEmpty() || definition.actions.isEmpty()) {
+                report.records.append(record(
+                    label, Disposition::Invalid, Reason::None,
+                    QStringLiteral("binding sequence and actions must be non-empty")));
+                continue;
+            }
+            if ((definition.flags.all || definition.flags.global)
+                && definition.sequence.size() != 1) {
+                report.records.append(record(
+                    label, Disposition::Invalid, Reason::None,
+                    QStringLiteral(
+                        "all-surface/global bindings cannot be key sequences")));
+                continue;
+            }
 
-        QVector<Binding> sequence;
-        sequence.reserve(definition.sequence.size());
-        QString error;
-        bool supported = true;
-        for (const GhosttyKeybindTrigger &source : definition.sequence) {
-            Binding trigger;
-            trigger.modifiers = normalizedModifiers(qtModifiers(source.modifiers));
-            switch (source.kind) {
-            case GhosttyKeybindKeyKind::Physical: {
-                const auto key = physicalKey(source.physicalName);
-                if (!key.has_value()) {
-                    error = QStringLiteral("unsupported physical key '%1'")
-                                .arg(source.physicalName);
-                    supported = false;
+            QVector<Binding> sequence;
+            sequence.reserve(definition.sequence.size());
+            QString error;
+            bool supported = true;
+            for (const GhosttyKeybindTrigger &source : definition.sequence) {
+                Binding trigger;
+                trigger.modifiers =
+                    normalizedModifiers(qtModifiers(source.modifiers));
+                switch (source.kind) {
+                case GhosttyKeybindKeyKind::Physical: {
+                    const auto key = physicalKey(source.physicalName);
+                    if (!key.has_value()) {
+                        error = QStringLiteral("unsupported physical key '%1'")
+                                    .arg(source.physicalName);
+                        supported = false;
+                        break;
+                    }
+                    trigger.keyKind = KeyKind::Physical;
+                    trigger.qtKey = key->qtKey;
+                    trigger.nativeScanCode = key->nativeScanCode;
+                    trigger.keypad = key->keypad;
                     break;
                 }
-                trigger.keyKind = KeyKind::Physical;
-                trigger.qtKey = key->qtKey;
-                trigger.nativeScanCode = key->nativeScanCode;
-                trigger.keypad = key->keypad;
-                break;
-            }
-            case GhosttyKeybindKeyKind::Unicode: {
-                if (!isUnicodeScalar(source.unicodeCodepoint)
-                    || source.unicodeCodepoint == 0U) {
-                    error = QStringLiteral("invalid Unicode trigger scalar");
-                    supported = false;
+                case GhosttyKeybindKeyKind::Unicode: {
+                    if (!isUnicodeScalar(source.unicodeCodepoint)
+                        || source.unicodeCodepoint == 0U) {
+                        error = QStringLiteral("invalid Unicode trigger scalar");
+                        supported = false;
+                        break;
+                    }
+                    trigger.keyKind = KeyKind::Unicode;
+                    const char32_t codepoint =
+                        static_cast<char32_t>(source.unicodeCodepoint);
+                    trigger.unicode = QString::fromUcs4(&codepoint, 1);
                     break;
                 }
-                trigger.keyKind = KeyKind::Unicode;
-                const char32_t codepoint =
-                    static_cast<char32_t>(source.unicodeCodepoint);
-                trigger.unicode = QString::fromUcs4(&codepoint, 1);
-                break;
-            }
-            case GhosttyKeybindKeyKind::CatchAll:
-                trigger.keyKind = KeyKind::CatchAll;
-                break;
+                case GhosttyKeybindKeyKind::CatchAll:
+                    trigger.keyKind = KeyKind::CatchAll;
+                    break;
+                }
+                if (!supported) {
+                    break;
+                }
+                sequence.append(std::move(trigger));
             }
             if (!supported) {
-                break;
+                report.records.append(record(label, Disposition::Unsupported,
+                                             Reason::None, std::move(error)));
+                continue;
             }
-            sequence.append(std::move(trigger));
+
+            quint32 node = root;
+            for (qsizetype index = 0; index < sequence.size(); ++index) {
+                const bool final = index + 1 == sequence.size();
+                const Binding &trigger = sequence.at(index);
+                QVector<Entry> &entries =
+                    newNodes[static_cast<qsizetype>(node)].entries;
+                qsizetype entryIndex = -1;
+                for (qsizetype candidate = 0;
+                     candidate < entries.size(); ++candidate) {
+                    if (sameTrigger(entries.at(candidate).trigger, trigger)) {
+                        entryIndex = candidate;
+                        break;
+                    }
+                }
+
+                if (final) {
+                    Entry leaf;
+                    leaf.trigger = trigger;
+                    leaf.kind = EntryKind::Leaf;
+                    leaf.actions = definition.actions;
+                    leaf.consumed = definition.flags.consumed;
+                    leaf.all = definition.flags.all;
+                    leaf.global = definition.flags.global;
+                    leaf.performable = definition.flags.performable;
+                    if (entryIndex < 0) {
+                        entries.append(std::move(leaf));
+                    } else {
+                        entries[entryIndex] = std::move(leaf);
+                    }
+                    continue;
+                }
+
+                if (entryIndex >= 0
+                    && entries.at(entryIndex).kind == EntryKind::Leader) {
+                    node = entries.at(entryIndex).child;
+                    continue;
+                }
+
+                const quint32 child = static_cast<quint32>(newNodes.size());
+                // Appending a node may reallocate newNodes, so never retain a
+                // reference to its parent's entries across this operation.
+                newNodes.append(Node{});
+                Entry leader;
+                leader.trigger = trigger;
+                leader.kind = EntryKind::Leader;
+                leader.child = child;
+                QVector<Entry> &parentEntries =
+                    newNodes[static_cast<qsizetype>(node)].entries;
+                if (entryIndex < 0) {
+                    parentEntries.append(std::move(leader));
+                } else {
+                    parentEntries[entryIndex] = std::move(leader);
+                }
+                node = child;
+            }
+            report.records.append(record(label, Disposition::Installed));
         }
-        if (!supported) {
-            report.records.append(record(label, Disposition::Unsupported,
-                                         Reason::None, std::move(error)));
+    };
+
+    installDefinitions(config.root, 0, QStringLiteral("root"));
+    for (const GhosttyKeybindTable &table : config.tables) {
+        if (table.name.isEmpty()) {
+            report.records.append(record(
+                QStringLiteral("named key table"), Disposition::Invalid,
+                Reason::None, QStringLiteral("table name must be non-empty")));
+            continue;
+        }
+        if (newTableRoots.contains(table.name)) {
+            report.records.append(record(
+                table.name, Disposition::Invalid, Reason::None,
+                QStringLiteral("duplicate named key table")));
             continue;
         }
 
-        quint32 node = 0;
-        for (qsizetype index = 0; index < sequence.size(); ++index) {
-            const bool final = index + 1 == sequence.size();
-            const Binding &trigger = sequence.at(index);
-            QVector<Entry> &entries =
-                newNodes[static_cast<qsizetype>(node)].entries;
-            qsizetype entryIndex = -1;
-            for (qsizetype candidate = 0; candidate < entries.size(); ++candidate) {
-                if (sameTrigger(entries.at(candidate).trigger, trigger)) {
-                    entryIndex = candidate;
-                    break;
-                }
-            }
-
-            if (final) {
-                Entry leaf;
-                leaf.trigger = trigger;
-                leaf.kind = EntryKind::Leaf;
-                leaf.actions = definition.actions;
-                leaf.consumed = definition.flags.consumed;
-                leaf.performable = definition.flags.performable;
-                if (entryIndex < 0) {
-                    entries.append(std::move(leaf));
-                } else {
-                    entries[entryIndex] = std::move(leaf);
-                }
-                continue;
-            }
-
-            if (entryIndex >= 0
-                && entries.at(entryIndex).kind == EntryKind::Leader) {
-                node = entries.at(entryIndex).child;
-                continue;
-            }
-
-            const quint32 child = static_cast<quint32>(newNodes.size());
-            // Appending a node may reallocate newNodes, so never retain a
-            // reference to its parent's entries across this operation.
-            newNodes.append(Node{});
-            Entry leader;
-            leader.trigger = trigger;
-            leader.kind = EntryKind::Leader;
-            leader.child = child;
-            QVector<Entry> &parentEntries =
-                newNodes[static_cast<qsizetype>(node)].entries;
-            if (entryIndex < 0) {
-                parentEntries.append(std::move(leader));
-            } else {
-                parentEntries[entryIndex] = std::move(leader);
-            }
-            node = child;
-        }
-        report.records.append(record(label, Disposition::Installed));
+        const quint32 tableRoot = static_cast<quint32>(newNodes.size());
+        newNodes.append(Node{});
+        newTableRoots.insert(table.name, tableRoot);
+        installDefinitions(
+            table.bindings, tableRoot,
+            QStringLiteral("table '%1'").arg(table.name));
     }
 
     qsizetype count = 0;
@@ -912,8 +950,13 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
         }
     };
     countLeaves(countLeaves, 0);
+    for (quint32 tableRoot : newTableRoots) {
+        countLeaves(countLeaves, tableRoot);
+    }
 
     nodes_ = std::move(newNodes);
+    tableRoots_ = std::move(newTableRoots);
+    activeTables_.clear();
     bindingCount_ = count;
     resetSequence();
     return report;
@@ -995,21 +1038,40 @@ GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
     return {};
 }
 
-bool GhosttyKeybindSet::rootCatchAllIgnores() const
+const GhosttyKeybindSet::Entry *GhosttyKeybindSet::bareCatchAll(
+    quint32 root) const
 {
-    if (nodes_.isEmpty()) {
-        return false;
+    if (root >= static_cast<quint32>(nodes_.size())) {
+        return nullptr;
     }
-    for (const Entry &entry : nodes_.constFirst().entries) {
-        if (entry.kind != EntryKind::Leaf
-            || entry.trigger.keyKind != KeyKind::CatchAll
-            || entry.trigger.modifiers != Qt::NoModifier) {
-            continue;
+    for (const Entry &entry :
+         nodes_.at(static_cast<qsizetype>(root)).entries) {
+        if (entry.trigger.keyKind == KeyKind::CatchAll
+            && entry.trigger.modifiers == Qt::NoModifier) {
+            return &entry;
         }
-        return std::any_of(entry.actions.cbegin(), entry.actions.cend(),
+    }
+    return nullptr;
+}
+
+bool GhosttyKeybindSet::activeCatchAllIgnores() const
+{
+    const auto ignores = [](const Entry &entry) {
+        return entry.kind == EntryKind::Leaf
+            && std::any_of(entry.actions.cbegin(), entry.actions.cend(),
                            [](const QString &action) {
                                return isIgnoreAction(action);
                            });
+    };
+
+    for (auto table = activeTables_.crbegin();
+         table != activeTables_.crend(); ++table) {
+        if (const Entry *entry = bareCatchAll(table->root)) {
+            return ignores(*entry);
+        }
+    }
+    if (const Entry *entry = bareCatchAll(0)) {
+        return ignores(*entry);
     }
     return false;
 }
@@ -1036,6 +1098,8 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
     return GhosttyKeybindMatch{
         .actions = found.entry->actions,
         .consumed = found.entry->consumed,
+        .all = found.entry->all,
+        .global = found.entry->global,
         .performable = found.entry->performable,
         .physical = found.physical,
     };
@@ -1045,20 +1109,41 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
     const GhosttyKeybindEvent &event)
 {
     const bool continuing = activeNode_.has_value();
-    const quint32 node = activeNode_.value_or(0);
-    const Lookup found = lookup(node, event);
+    Lookup found;
+    qsizetype matchedTable = -1;
+    if (continuing) {
+        found = lookup(*activeNode_, event);
+    } else {
+        for (qsizetype index = activeTables_.size(); index > 0; --index) {
+            const qsizetype candidate = index - 1;
+            found = lookup(activeTables_.at(candidate).root, event);
+            if (found.entry != nullptr) {
+                matchedTable = candidate;
+                break;
+            }
+        }
+        if (found.entry == nullptr) {
+            found = lookup(0, event);
+        }
+    }
     if (found.entry == nullptr) {
         if (!continuing || isModifierKey(event.qtKey)) {
             return {};
         }
 
         GhosttyKeybindStep result;
-        result.kind = rootCatchAllIgnores()
+        result.kind = activeCatchAllIgnores()
             ? GhosttyKeybindStepKind::IgnoredSequence
             : GhosttyKeybindStepKind::InvalidSequence;
         result.queuedEvents = queuedEvents_;
         resetSequence();
         return result;
+    }
+
+    if (!continuing && matchedTable >= 0
+        && matchedTable == activeTables_.size() - 1
+        && activeTables_.at(matchedTable).oneShot) {
+        activeTables_.removeLast();
     }
 
     if (found.entry->kind == EntryKind::Leader) {
@@ -1079,12 +1164,75 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
         .match = {
             .actions = found.entry->actions,
             .consumed = found.entry->consumed,
+            .all = found.entry->all,
+            .global = found.entry->global,
             .performable = found.entry->performable,
             .physical = found.physical,
         },
         .queuedEvents = queuedEvents_,
     };
     resetSequence();
+    return result;
+}
+
+bool GhosttyKeybindSet::hasTable(QStringView name) const
+{
+    return tableRoots_.contains(name.toString());
+}
+
+bool GhosttyKeybindSet::canActivateTable(QStringView name) const
+{
+    const auto found = tableRoots_.constFind(name.toString());
+    if (found == tableRoots_.cend()
+        || activeTables_.size() >= MaximumActiveTables) {
+        return false;
+    }
+    return activeTables_.isEmpty() || activeTables_.constLast().root != *found;
+}
+
+bool GhosttyKeybindSet::activateTable(QStringView name, bool oneShot)
+{
+    const QString tableName = name.toString();
+    const auto found = tableRoots_.constFind(tableName);
+    if (found == tableRoots_.cend()
+        || activeTables_.size() >= MaximumActiveTables
+        || (!activeTables_.isEmpty()
+            && activeTables_.constLast().root == *found)) {
+        return false;
+    }
+    activeTables_.append(ActiveTable{
+        .name = tableName,
+        .root = *found,
+        .oneShot = oneShot,
+    });
+    return true;
+}
+
+bool GhosttyKeybindSet::deactivateTable() noexcept
+{
+    if (activeTables_.isEmpty()) {
+        return false;
+    }
+    activeTables_.removeLast();
+    return true;
+}
+
+bool GhosttyKeybindSet::deactivateAllTables() noexcept
+{
+    if (activeTables_.isEmpty()) {
+        return false;
+    }
+    activeTables_.clear();
+    return true;
+}
+
+QStringList GhosttyKeybindSet::activeTableNames() const
+{
+    QStringList result;
+    result.reserve(activeTables_.size());
+    for (const ActiveTable &table : activeTables_) {
+        result.append(table.name);
+    }
     return result;
 }
 

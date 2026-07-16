@@ -39,17 +39,19 @@ the host-language comparison and remaining engineering risks.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
   by the pinned Ghostty code, watched-file reload, and a deliberately small set
   of applied appearance/session keys.
-- Ghostty's finalized root keybindings—including sequences, catch-all fallback,
-  action chains, and local flags—for the supported pane/workspace actions,
-  matched before terminal input encoding rather than through Qt's
+- Ghostty's finalized keybindings—including named key tables, sequences,
+  catch-all fallback, action chains, and local/`all`/`global` flags—for the
+  supported pane/workspace actions. Linux global shortcuts use the XDG portal;
+  focused input is matched before terminal encoding rather than through Qt's
   application-shortcut layer.
 
 ## Requirements
 
 - Linux with a Wayland session and the Qt Wayland platform plugin.
-- Qt 6.8 or newer with Core, Gui, Qml, Quick, Quick Controls 2, and Qt Test
-  development components.
+- Qt 6.8 or newer with Core, D-Bus, Gui, Qml, Quick, Quick Controls 2, and Qt
+  Test development components.
 - A C++20 compiler, CMake 3.24 or newer, and Ninja.
+- `pkg-config` and the libxkbcommon development package.
 - Python 3.10 or newer for the parity-ledger test.
 - Zig **exactly 0.15.2**. `zig version` must print `0.15.2`.
 - Git and `tic` (normally supplied by ncurses development/tools packages).
@@ -196,7 +198,7 @@ The current compatibility slice applies these keys:
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
 | `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
-| `keybind` | Loads Ghostty's finalized structured root set. Local single keys, shared-prefix sequences, physical/Unicode/catch-all lookup, action chains, `unconsumed`/`performable`, byte-exact invalid-sequence replay, and `end_key_sequence` are supported for the implemented action subset. Named tables and non-local flags remain deferred. |
+| `keybind` | Loads Ghostty's finalized structured root and named-table sets. Per-pane table stacks and one-shot tables, shared-prefix sequences, physical/Unicode/catch-all lookup, action chains, `unconsumed`/`performable`, byte-exact invalid-sequence replay, `end_key_sequence`, and process-wide `all`/`global` dispatch are supported for the implemented action subset. Root, direct, single-action `global` bindings are also registered through the Linux XDG Global Shortcuts portal. |
 
 The service watches the two standard paths, their containing directories, and
 included-file paths. Changes are debounced and parsed away from the GUI thread.
@@ -206,6 +208,29 @@ successful helper warnings. A validation or helper failure leaves the last
 valid snapshot active when one exists; otherwise the built-in/CLI options
 remain in use. Most Ghostty keys are still tracked as planned in the parity
 manifest and are not silently treated as implemented.
+
+Named tables use Ghostty's normal configuration syntax and remain local to
+each pane. For example:
+
+```ini
+keybind = ctrl+shift+m=activate_key_table:modal
+keybind = modal/r=reload_config
+keybind = modal/escape=deactivate_key_table
+```
+
+`all:` runs an action over every surface in the process; app-scoped actions
+such as `reload_config` run once. `global:` has the same fanout semantics and,
+for eligible root bindings, additionally registers with the desktop portal:
+
+```ini
+keybind = all:ctrl+shift+f=increase_font_size:1
+keybind = global:super+shift+r=reload_config
+```
+
+Portal support depends on the compositor/desktop implementation. Registration
+failure is nonfatal and has no fake `QShortcut` fallback. Matching the pinned
+Linux frontend, portal registration accepts only direct root bindings with one
+trigger and one action; focused in-app dispatch still handles action chains.
 
 ### Command-line options
 
@@ -275,7 +300,8 @@ session (including idle-shell/foreground-job transitions), stable workspace IDs
 and typed action dispatch, Ghostty action-string translation, full and
 dirty-row terminal updates, config watching and generation-safe last-good
 asynchronous reload behavior, structured keybinding trie matching with Linux
-physical-key locations and PTY-backed sequence replay, helper-process
+physical-key locations, named-table stacks, process-wide fanout, portal
+race/reload coverage, and PTY-backed sequence replay, helper-process
 protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
 application's short-lived process/window lifecycle, and staged relocation of
@@ -307,11 +333,12 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   persistence, or production package metadata yet. Configuration support is
   limited to the documented compatibility slice; most Ghostty keys remain
   planned.
-- Configured bindings support the finalized root table, including sequences,
-  catch-all triggers, chains, and local consume/performability semantics for
-  the documented action subset. Named key tables, `all`/`global` dispatch, and
-  Wayland portal registration are not implemented; those definitions remain
-  typed and are skipped rather than approximated.
+- Configured bindings support finalized root and named tables, including
+  sequences, catch-all triggers, chains, local consume/performability,
+  `all` fanout, and XDG-portal-backed `global` registration for the documented
+  action subset. Remaining gaps are primarily unimplemented actions; the
+  portal also intentionally shares the pinned Linux frontend's single-action
+  root-binding restriction.
 - Linux/Wayland native scan codes preserve physical-key identity for bindings
   and terminal input. Shifted-punctuation fallback matching is currently
   US-layout-oriented because public `QKeyEvent` data does not include the

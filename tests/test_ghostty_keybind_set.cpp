@@ -25,6 +25,36 @@ constexpr quint32 xkbKeycode(unsigned int evdevCode)
     return static_cast<quint32>(evdevCode + 8U);
 }
 
+GhosttyKeybindTrigger unicodeTrigger(quint32 codepoint,
+                                     quint8 modifiers = 0)
+{
+    return {
+        .kind = GhosttyKeybindKeyKind::Unicode,
+        .unicodeCodepoint = codepoint,
+        .modifiers = modifiers,
+    };
+}
+
+GhosttyKeybindTrigger catchAllTrigger(quint8 modifiers = 0)
+{
+    return {
+        .kind = GhosttyKeybindKeyKind::CatchAll,
+        .modifiers = modifiers,
+    };
+}
+
+GhosttyKeybindDefinition binding(
+    QVector<GhosttyKeybindTrigger> sequence,
+    QString action,
+    GhosttyKeybindFlags flags = {})
+{
+    return {
+        .sequence = std::move(sequence),
+        .actions = {std::move(action)},
+        .flags = flags,
+    };
+}
+
 } // namespace
 
 class GhosttyKeybindSetTest : public QObject {
@@ -44,7 +74,13 @@ private Q_SLOTS:
     void recoversInvalidSequencesAndHonorsCatchAll();
     void preservesLookupPriorityInsideSequences();
     void keepsSequenceStatePerMatcherInstance();
-    void loadsStructuredDefinitionsAndRetainsDeferredMetadata();
+    void loadsStructuredDefinitionsAndRetainsFlags();
+    void rejectsBroadStructuredSequences();
+    void routesNamedTablesNewestToOldestAndRoot();
+    void enforcesTableStackAndActivationRules();
+    void handlesOneShotTablesExactly();
+    void keepsTableSequenceAndCatchAllSemantics();
+    void reloadClearsTablesAndSequences();
     void rejectsMalformedBindings();
     void replacesDuplicateTriggers();
     void matchesLinuxDefaultLikeBindings();
@@ -524,7 +560,7 @@ void GhosttyKeybindSetTest::keepsSequenceStatePerMatcherInstance()
     QVERIFY(!first.sequenceActive());
 }
 
-void GhosttyKeybindSetTest::loadsStructuredDefinitionsAndRetainsDeferredMetadata()
+void GhosttyKeybindSetTest::loadsStructuredDefinitionsAndRetainsFlags()
 {
     GhosttyKeybindConfig config;
     config.root = {
@@ -567,14 +603,21 @@ void GhosttyKeybindSetTest::loadsStructuredDefinitionsAndRetainsDeferredMetadata
                 .unicodeCodepoint = 'c',
             }},
             .actions = {QStringLiteral("copy_to_clipboard:mixed")},
+            .flags = {.global = true},
         }},
     }};
 
     GhosttyKeybindSet set;
     const GhosttyKeybindLoadReport report = set.load(config);
-    QCOMPARE(report.count(Disposition::Installed), 2);
-    QCOMPARE(report.count(Disposition::Unsupported), 2);
-    QCOMPARE(set.size(), 2);
+    QCOMPARE(report.count(Disposition::Installed), 4);
+    QCOMPARE(report.count(Disposition::Unsupported), 0);
+    QCOMPARE(set.size(), 4);
+    QVERIFY(set.hasTable(QStringLiteral("copy-mode")));
+
+    const GhosttyKeybindMatch all = requireMatch(
+        set.match(Qt::Key_G, Qt::NoModifier, QStringLiteral("g")));
+    QVERIFY(all.all);
+    QVERIFY(!all.global);
 
     QCOMPARE(set.advance({
                  .qtKey = Qt::Key_X,
@@ -593,6 +636,336 @@ void GhosttyKeybindSetTest::loadsStructuredDefinitionsAndRetainsDeferredMetadata
                           QStringLiteral("goto_split:left")}));
     QVERIFY(!step.match.consumed);
     QVERIFY(step.match.performable);
+
+    QVERIFY(set.activateTable(QStringLiteral("copy-mode")));
+    const GhosttyKeybindStep table = set.advance({
+        .qtKey = Qt::Key_C,
+        .text = QStringLiteral("c"),
+    });
+    QCOMPARE(table.kind, GhosttyKeybindStepKind::Binding);
+    QCOMPARE(table.match.actions,
+             QStringList({QStringLiteral("copy_to_clipboard:mixed")}));
+    QVERIFY(!table.match.all);
+    QVERIFY(table.match.global);
+
+    const QStringList actions = set.serializedActions();
+    QVERIFY(actions.contains(QStringLiteral("toggle_quick_terminal")));
+    QVERIFY(actions.contains(QStringLiteral("copy_to_clipboard:mixed")));
+}
+
+void GhosttyKeybindSetTest::rejectsBroadStructuredSequences()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        binding({unicodeTrigger('a'), unicodeTrigger('b')},
+                QStringLiteral("new_tab"), {.all = true}),
+        binding({unicodeTrigger('g'), unicodeTrigger('h')},
+                QStringLiteral("toggle_visibility"), {.global = true}),
+        binding({unicodeTrigger('v')}, QStringLiteral("new_tab"),
+                {.all = true}),
+    };
+
+    GhosttyKeybindSet set;
+    const GhosttyKeybindLoadReport report = set.load(config);
+    QCOMPARE(report.count(Disposition::Invalid), 2);
+    QCOMPARE(report.count(Disposition::Installed), 1);
+    QCOMPARE(set.size(), 1);
+
+    const GhosttyKeybindMatch match = requireMatch(
+        set.match(Qt::Key_V, Qt::NoModifier, QStringLiteral("v")));
+    QVERIFY(match.all);
+}
+
+void GhosttyKeybindSetTest::routesNamedTablesNewestToOldestAndRoot()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        binding({unicodeTrigger('q')}, QStringLiteral("root_q")),
+        binding({unicodeTrigger('r')}, QStringLiteral("root_r")),
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("A"),
+            .bindings = {
+                binding({unicodeTrigger('q')}, QStringLiteral("table_a_q")),
+                binding({unicodeTrigger('a')}, QStringLiteral("table_a_a")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("B"),
+            .bindings = {
+                binding({unicodeTrigger('b')}, QStringLiteral("table_b_b")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("C"),
+            .bindings = {
+                binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
+            },
+        },
+    };
+
+    GhosttyKeybindSet set;
+    QCOMPARE(set.load(config).count(Disposition::Installed), 6);
+    QVERIFY(set.activateTable(QStringLiteral("A")));
+    QVERIFY(set.activateTable(QStringLiteral("B")));
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("A"), QStringLiteral("B")}));
+
+    GhosttyKeybindStep step = set.advance({
+        .qtKey = Qt::Key_Q,
+        .text = QStringLiteral("q"),
+    });
+    QCOMPARE(step.match.actions,
+             QStringList({QStringLiteral("table_a_q")}));
+
+    step = set.advance({.qtKey = Qt::Key_B, .text = QStringLiteral("b")});
+    QCOMPARE(step.match.actions,
+             QStringList({QStringLiteral("table_b_b")}));
+
+    step = set.advance({.qtKey = Qt::Key_R, .text = QStringLiteral("r")});
+    QCOMPARE(step.match.actions, QStringList({QStringLiteral("root_r")}));
+
+    QVERIFY(set.activateTable(QStringLiteral("C")));
+    step = set.advance({.qtKey = Qt::Key_Q, .text = QStringLiteral("q")});
+    QCOMPARE(step.match.actions,
+             QStringList({QStringLiteral("table_c_any")}));
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("A"), QStringLiteral("B"),
+                          QStringLiteral("C")}));
+}
+
+void GhosttyKeybindSetTest::enforcesTableStackAndActivationRules()
+{
+    GhosttyKeybindConfig config;
+    config.tables = {
+        GhosttyKeybindTable{.name = QStringLiteral("A")},
+        GhosttyKeybindTable{.name = QStringLiteral("B")},
+    };
+
+    GhosttyKeybindSet set;
+    (void) set.load(config);
+    QVERIFY(set.hasTable(QStringLiteral("A")));
+    QVERIFY(!set.hasTable(QStringLiteral("missing")));
+    QVERIFY(!set.activateTable(QStringLiteral("missing")));
+    QVERIFY(set.canActivateTable(QStringLiteral("A")));
+    QVERIFY(set.activateTable(QStringLiteral("A")));
+    QVERIFY(!set.canActivateTable(QStringLiteral("A")));
+    QVERIFY(!set.activateTable(QStringLiteral("A")));
+    QVERIFY(set.activateTable(QStringLiteral("B")));
+    QVERIFY(set.activateTable(QStringLiteral("A")));
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("A"), QStringLiteral("B"),
+                          QStringLiteral("A")}));
+    QVERIFY(set.deactivateTable());
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("A"), QStringLiteral("B")}));
+    QVERIFY(set.deactivateAllTables());
+    QVERIFY(!set.deactivateAllTables());
+    QVERIFY(!set.deactivateTable());
+
+    for (qsizetype index = 0;
+         index < GhosttyKeybindSet::MaximumActiveTables; ++index) {
+        const QString name = index % 2 == 0
+            ? QStringLiteral("A") : QStringLiteral("B");
+        QVERIFY(set.activateTable(name));
+    }
+    QCOMPARE(set.activeTableNames().size(),
+             GhosttyKeybindSet::MaximumActiveTables);
+    QVERIFY(!set.canActivateTable(QStringLiteral("A")));
+    QVERIFY(!set.activateTable(QStringLiteral("A")));
+}
+
+void GhosttyKeybindSetTest::handlesOneShotTablesExactly()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        binding({unicodeTrigger('r')}, QStringLiteral("root")),
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("A"),
+            .bindings = {
+                binding({unicodeTrigger('a')}, QStringLiteral("table_a")),
+                binding({unicodeTrigger('p')}, QStringLiteral("performable"),
+                        GhosttyKeybindFlags{.performable = true}),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("B"),
+            .bindings = {
+                binding({unicodeTrigger('b')}, QStringLiteral("table_b")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("C"),
+            .bindings = {
+                binding({catchAllTrigger()}, QStringLiteral("table_c_any")),
+            },
+        },
+    };
+
+    GhosttyKeybindSet set;
+    (void) set.load(config);
+    QVERIFY(set.activateTable(QStringLiteral("A"), true));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_R, .text = QStringLiteral("r")})
+                 .match.actions,
+             QStringList({QStringLiteral("root")}));
+    QCOMPARE(set.activeTableNames(), QStringList({QStringLiteral("A")}));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")})
+                 .match.actions,
+             QStringList({QStringLiteral("table_a")}));
+    QVERIFY(set.activeTableNames().isEmpty());
+
+    QVERIFY(set.activateTable(QStringLiteral("C"), true));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_Q, .text = QStringLiteral("q")})
+                 .match.actions,
+             QStringList({QStringLiteral("table_c_any")}));
+    QVERIFY(set.activeTableNames().isEmpty());
+
+    QVERIFY(set.activateTable(QStringLiteral("A"), true));
+    QVERIFY(set.activateTable(QStringLiteral("B")));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")})
+                 .match.actions,
+             QStringList({QStringLiteral("table_a")}));
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("A"), QStringLiteral("B")}));
+    QVERIFY(set.deactivateTable());
+    QCOMPARE(set.advance({.qtKey = Qt::Key_A, .text = QStringLiteral("a")})
+                 .match.actions,
+             QStringList({QStringLiteral("table_a")}));
+    QVERIFY(set.activeTableNames().isEmpty());
+
+    QVERIFY(set.activateTable(QStringLiteral("A"), true));
+    const GhosttyKeybindStep performable = set.advance({
+        .qtKey = Qt::Key_P,
+        .text = QStringLiteral("p"),
+    });
+    QCOMPARE(performable.kind, GhosttyKeybindStepKind::Binding);
+    QVERIFY(performable.match.performable);
+    QVERIFY(set.activeTableNames().isEmpty());
+}
+
+void GhosttyKeybindSetTest::keepsTableSequenceAndCatchAllSemantics()
+{
+    const GhosttyKeybindFlags flags{
+        .consumed = false,
+        .performable = true,
+    };
+    GhosttyKeybindConfig config;
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("persistent"),
+            .bindings = {
+                binding({unicodeTrigger('x'), unicodeTrigger('n')},
+                        QStringLiteral("persistent_sequence"), flags),
+                binding({catchAllTrigger()}, QStringLiteral("ignore")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("shadow"),
+            .bindings = {
+                binding({catchAllTrigger()}, QStringLiteral("reload_config")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("one-shot"),
+            .bindings = {
+                binding({unicodeTrigger('x'), unicodeTrigger('n')},
+                        QStringLiteral("one_shot_sequence")),
+                binding({catchAllTrigger()}, QStringLiteral("ignore")),
+            },
+        },
+    };
+
+    GhosttyKeybindSet set;
+    (void) set.load(config);
+    QVERIFY(set.activateTable(QStringLiteral("persistent")));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QVERIFY(set.activateTable(QStringLiteral("shadow")));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
+                 .kind,
+             GhosttyKeybindStepKind::InvalidSequence);
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("persistent"),
+                          QStringLiteral("shadow")}));
+
+    QVERIFY(set.deactivateTable());
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
+                 .kind,
+             GhosttyKeybindStepKind::IgnoredSequence);
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("persistent")}));
+
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    const GhosttyKeybindStep leaf = set.advance({
+        .qtKey = Qt::Key_N,
+        .text = QStringLiteral("n"),
+    });
+    QCOMPARE(leaf.kind, GhosttyKeybindStepKind::Binding);
+    QVERIFY(!leaf.match.consumed);
+    QVERIFY(!leaf.match.all);
+    QVERIFY(!leaf.match.global);
+    QVERIFY(leaf.match.performable);
+    QCOMPARE(set.activeTableNames(),
+             QStringList({QStringLiteral("persistent")}));
+
+    QVERIFY(set.deactivateTable());
+    QVERIFY(set.activateTable(QStringLiteral("one-shot"), true));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QVERIFY(set.activeTableNames().isEmpty());
+    QVERIFY(set.sequenceActive());
+    QCOMPARE(set.advance({.qtKey = Qt::Key_N, .text = QStringLiteral("n")})
+                 .match.actions,
+             QStringList({QStringLiteral("one_shot_sequence")}));
+
+    QVERIFY(set.activateTable(QStringLiteral("one-shot"), true));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QVERIFY(set.activeTableNames().isEmpty());
+    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")})
+                 .kind,
+             GhosttyKeybindStepKind::InvalidSequence);
+}
+
+void GhosttyKeybindSetTest::reloadClearsTablesAndSequences()
+{
+    GhosttyKeybindConfig initial;
+    initial.tables = {GhosttyKeybindTable{
+        .name = QStringLiteral("A"),
+        .bindings = {
+            binding({unicodeTrigger('x'), unicodeTrigger('n')},
+                    QStringLiteral("sequence")),
+        },
+    }};
+
+    GhosttyKeybindSet set;
+    (void) set.load(initial);
+    QVERIFY(set.activateTable(QStringLiteral("A")));
+    QCOMPARE(set.advance({.qtKey = Qt::Key_X, .text = QStringLiteral("x")})
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QVERIFY(set.sequenceActive());
+
+    GhosttyKeybindConfig replacement;
+    replacement.tables = {
+        GhosttyKeybindTable{.name = QStringLiteral("B")},
+    };
+    (void) set.load(replacement);
+    QVERIFY(!set.sequenceActive());
+    QVERIFY(set.activeTableNames().isEmpty());
+    QVERIFY(!set.hasTable(QStringLiteral("A")));
+    QVERIFY(set.hasTable(QStringLiteral("B")));
 }
 
 void GhosttyKeybindSetTest::rejectsMalformedBindings()

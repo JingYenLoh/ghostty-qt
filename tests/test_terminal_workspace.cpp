@@ -1,3 +1,4 @@
+#include "ghostty_application_keybindings.h"
 #include "launch_options.h"
 #include "terminal_controller.h"
 #include "terminal_pane.h"
@@ -59,6 +60,8 @@ private Q_SLOTS:
     void performableTabChangeRequiresDifferentTarget();
     void alwaysModePromptsForIdleShell();
     void multiPaneShutdownGracePeriodsOverlap();
+    void rootApplicationBindingPrecedesActiveTable();
+    void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
 };
 
 void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
@@ -256,6 +259,194 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
              "signal-resistant children did not exercise the shutdown grace period");
     QVERIFY2(shutdownMilliseconds < 4'500,
              "pane shutdown grace periods ran serially instead of concurrently");
+}
+
+void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = modifiers,
+        };
+    };
+    options.keybindConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('m', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("activate_key_table:modal")},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('r', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("reload_config")},
+        },
+    };
+    options.keybindConfig.tables = {GhosttyKeybindTable{
+        .name = QStringLiteral("modal"),
+        .bindings = {GhosttyKeybindDefinition{
+            .sequence = {unicode('r', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("new_tab")},
+        }},
+    }};
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    GhosttyApplicationKeybindings applicationBindings(options, false);
+    applicationBindings.registerWorkspace(&workspace);
+    QSignalSpy reload(&workspace,
+                      &TerminalWorkspace::configReloadRequested);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QKeyEvent activate(QEvent::KeyPress, Qt::Key_M,
+                       Qt::ControlModifier, QString(QChar(0x0d)));
+    QCoreApplication::sendEvent(pane, &activate);
+    QCOMPARE(pane->activeKeyTables(),
+             QStringList({QStringLiteral("modal")}));
+
+    QKeyEvent rootApp(QEvent::KeyPress, Qt::Key_R,
+                      Qt::ControlModifier, QString(QChar(0x12)));
+    QCoreApplication::sendEvent(pane, &rootApp);
+    QKeyEvent rootAppRelease(QEvent::KeyRelease, Qt::Key_R,
+                             Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &rootAppRelease);
+    QCOMPARE(reload.count(), 1);
+    QCOMPARE(forwarded.count(), 0);
+    QCOMPARE(workspace.tabCount(), 1);
+    QCOMPARE(pane->activeKeyTables(),
+             QStringList({QStringLiteral("modal")}));
+}
+
+void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = modifiers,
+        };
+    };
+    options.keybindConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('g', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("increase_font_size:2")},
+            .flags = GhosttyKeybindFlags{
+                .consumed = false,
+                .global = true,
+                .performable = true,
+            },
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('r', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("reload_config")},
+            .flags = GhosttyKeybindFlags{.all = true},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('x', GhosttyKeybindCtrl), unicode('n')},
+            .actions = {QStringLiteral("new_tab")},
+        },
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    GhosttyApplicationKeybindings applicationBindings(options, false);
+    applicationBindings.registerWorkspace(&workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    TerminalPane *activePane = nullptr;
+    TerminalPane *inactivePane = nullptr;
+    for (TerminalPane *pane : panes) {
+        if (pane->isVisible()) activePane = pane;
+        else inactivePane = pane;
+    }
+    QVERIFY(activePane != nullptr);
+    QVERIFY(inactivePane != nullptr);
+    QCOMPARE(activePane->fontPointSize(), 12.0);
+    QCOMPARE(inactivePane->fontPointSize(), 12.0);
+    TerminalController *controller =
+        activePane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    TerminalController *inactiveController =
+        inactivePane->findChild<TerminalController *>();
+    QVERIFY(inactiveController != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy activeSequenceResolution(
+        controller, &TerminalController::sequenceResolutionRequested);
+    QSignalSpy inactiveSequenceResolution(
+        inactiveController, &TerminalController::sequenceResolutionRequested);
+
+    // An external all/global action can end sequences staged in panes that no
+    // longer have focus. It must reset both the matcher and worker token.
+    QKeyEvent activeLeader(QEvent::KeyPress, Qt::Key_X,
+                           Qt::ControlModifier, QString(QChar(0x18)));
+    QKeyEvent inactiveLeader(QEvent::KeyPress, Qt::Key_X,
+                             Qt::ControlModifier, QString(QChar(0x18)));
+    QCoreApplication::sendEvent(activePane, &activeLeader);
+    QCoreApplication::sendEvent(inactivePane, &inactiveLeader);
+    QCOMPARE(activeSequenceResolution.count(), 0);
+    QCOMPARE(inactiveSequenceResolution.count(), 0);
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("end_key_sequence")});
+    QCOMPARE(activeSequenceResolution.count(), 1);
+    QCOMPARE(inactiveSequenceResolution.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 activeSequenceResolution.front().at(1)),
+             TerminalSequenceResolution::Flush);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 inactiveSequenceResolution.front().at(1)),
+             TerminalSequenceResolution::Flush);
+
+    // global implies all. The local unconsumed/performable flags have no
+    // effect, and the inactive tab's surface receives the action too.
+    QKeyEvent global(QEvent::KeyPress, Qt::Key_G,
+                     Qt::ControlModifier, QString(QChar(0x07)));
+    QCoreApplication::sendEvent(activePane, &global);
+    QKeyEvent globalRelease(QEvent::KeyRelease, Qt::Key_G,
+                            Qt::ControlModifier);
+    QCoreApplication::sendEvent(activePane, &globalRelease);
+    QCOMPARE(activePane->fontPointSize(), 14.0);
+    QCOMPARE(inactivePane->fontPointSize(), 14.0);
+    QCOMPARE(forwarded.count(), 0);
+
+    // An app-scoped all: action runs once in the root pre-pass rather than
+    // once per surface.
+    QSignalSpy reload(&workspace,
+                      &TerminalWorkspace::configReloadRequested);
+    QKeyEvent allReload(QEvent::KeyPress, Qt::Key_R,
+                        Qt::ControlModifier, QString(QChar(0x12)));
+    QCoreApplication::sendEvent(activePane, &allReload);
+    QKeyEvent allReloadRelease(QEvent::KeyRelease, Qt::Key_R,
+                               Qt::ControlModifier);
+    QCoreApplication::sendEvent(activePane, &allReloadRelease);
+    QCOMPARE(reload.count(), 1);
+    QCOMPARE(forwarded.count(), 0);
+
+    // Valid-but-unimplemented close modes must remain no-ops, not be widened
+    // into the current single-window quit path.
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("close_tab:other")});
+    QCOMPARE(quit.count(), 0);
+    QCOMPARE(workspace.tabCount(), 2);
 }
 
 QTEST_MAIN(TerminalWorkspaceTest)
