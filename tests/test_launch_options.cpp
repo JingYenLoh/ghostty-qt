@@ -7,6 +7,20 @@
 
 #include <limits>
 
+namespace {
+
+QVariantList testPalette()
+{
+    QVariantList palette;
+    palette.reserve(256);
+    for (int index = 0; index < 256; ++index) {
+        palette.append(QColor::fromRgb(index, 255 - index, index / 2));
+    }
+    return palette;
+}
+
+} // namespace
+
 class LaunchOptionsTest : public QObject {
     Q_OBJECT
 
@@ -22,6 +36,7 @@ private Q_SLOTS:
     void rejectsUnknownOption();
     void preservesOutputOnFailure();
     void overlaysGhosttySnapshotAndPreservesCliFonts();
+    void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
@@ -39,9 +54,16 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.fontSize, 12.0);
     QVERIFY(!options.fontFamilyExplicit);
     QVERIFY(!options.fontSizeExplicit);
-    QCOMPARE(options.foregroundColor, QColor(QStringLiteral("#d8dee9")));
-    QCOMPARE(options.backgroundColor, QColor(QStringLiteral("#1e222a")));
-    QVERIFY(!options.cursorColor.isValid());
+    QCOMPARE(options.appearance.foregroundColor,
+             QColor(QStringLiteral("#d8dee9")));
+    QCOMPARE(options.appearance.backgroundColor,
+             QColor(QStringLiteral("#1e222a")));
+    QVERIFY(options.appearance.palette.isEmpty());
+    QCOMPARE(options.appearance.cursorColor.kind, TerminalColorKind::Unset);
+    QCOMPARE(options.appearance.cursorStyle, TerminalCursorStyle::Block);
+    QVERIFY(!options.appearance.cursorBlink.has_value());
+    QCOMPARE(options.appearance.cursorOpacity, 1.0);
+    QCOMPARE(options.appearance.faintOpacity, 0.5);
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
@@ -205,8 +227,22 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("font-size"), 14.5);
     snapshot.values.insert(QStringLiteral("foreground"), QColor(QStringLiteral("#112233")));
     snapshot.values.insert(QStringLiteral("background"), QColor(QStringLiteral("#445566")));
+    snapshot.values.insert(QStringLiteral("palette"), testPalette());
+    snapshot.values.insert(QStringLiteral("selection-foreground"),
+                           QStringLiteral("cell-foreground"));
+    snapshot.values.insert(QStringLiteral("selection-background"),
+                           QColor(QStringLiteral("#223344")));
     snapshot.values.insert(QStringLiteral("cursor-color"),
                            QStringLiteral("cell-background"));
+    snapshot.values.insert(QStringLiteral("cursor-opacity"), 0.625);
+    snapshot.values.insert(QStringLiteral("cursor-style"),
+                           QStringLiteral("block_hollow"));
+    snapshot.values.insert(QStringLiteral("cursor-style-blink"), false);
+    snapshot.values.insert(QStringLiteral("cursor-text"),
+                           QStringLiteral("cell-foreground"));
+    snapshot.values.insert(QStringLiteral("bold-color"),
+                           QColor(QStringLiteral("#abcdef")));
+    snapshot.values.insert(QStringLiteral("faint-opacity"), 0.375);
     snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(50'000'000));
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("always"));
@@ -217,9 +253,32 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     const LaunchOptions cliResult = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(cliResult.fontFamily, QStringLiteral("CLI Family"));
     QCOMPARE(cliResult.fontSize, 17.0);
-    QCOMPARE(cliResult.foregroundColor, QColor(QStringLiteral("#112233")));
-    QCOMPARE(cliResult.backgroundColor, QColor(QStringLiteral("#445566")));
-    QCOMPARE(cliResult.cursorColor, QColor(QStringLiteral("#445566")));
+    QCOMPARE(cliResult.appearance.foregroundColor,
+             QColor(QStringLiteral("#112233")));
+    QCOMPARE(cliResult.appearance.backgroundColor,
+             QColor(QStringLiteral("#445566")));
+    QCOMPARE(cliResult.appearance.palette.size(), 256);
+    QCOMPARE(cliResult.appearance.palette.at(42),
+             QColor::fromRgb(42, 213, 21));
+    QCOMPARE(cliResult.appearance.selectionForeground.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(cliResult.appearance.selectionBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(cliResult.appearance.selectionBackground.color,
+             QColor(QStringLiteral("#223344")));
+    QCOMPARE(cliResult.appearance.cursorColor.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(cliResult.appearance.cursorStyle,
+             TerminalCursorStyle::BlockHollow);
+    QCOMPARE(cliResult.appearance.cursorBlink, std::optional<bool>(false));
+    QCOMPARE(cliResult.appearance.cursorOpacity, 0.625);
+    QCOMPARE(cliResult.appearance.cursorTextColor.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(cliResult.appearance.boldColor.kind,
+             TerminalBoldColorKind::Color);
+    QCOMPARE(cliResult.appearance.boldColor.color,
+             QColor(QStringLiteral("#abcdef")));
+    QCOMPARE(cliResult.appearance.faintOpacity, 0.375);
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
@@ -237,6 +296,43 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
 }
 
+void LaunchOptionsTest::restoresNullableAppearanceDefaults()
+{
+    LaunchOptions base;
+    base.appearance.selectionForeground =
+        TerminalColorValue::fromColor(QColor(Qt::red));
+    base.appearance.selectionBackground = {
+        .kind = TerminalColorKind::CellForeground,
+    };
+    base.appearance.cursorColor =
+        TerminalColorValue::fromColor(QColor(Qt::green));
+    base.appearance.cursorBlink = true;
+    base.appearance.cursorTextColor = {
+        .kind = TerminalColorKind::CellBackground,
+    };
+    base.appearance.boldColor = {
+        .kind = TerminalBoldColorKind::Bright,
+    };
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("selection-foreground"), QString());
+    snapshot.values.insert(QStringLiteral("selection-background"), QString());
+    snapshot.values.insert(QStringLiteral("cursor-color"), QString());
+    snapshot.values.insert(QStringLiteral("cursor-style-blink"), QString());
+    snapshot.values.insert(QStringLiteral("cursor-text"), QString());
+    snapshot.values.insert(QStringLiteral("bold-color"), QString());
+
+    const TerminalAppearance appearance =
+        applyGhosttyConfigSnapshot(base, snapshot).appearance;
+    QCOMPARE(appearance.selectionForeground.kind, TerminalColorKind::Unset);
+    QCOMPARE(appearance.selectionBackground.kind, TerminalColorKind::Unset);
+    QCOMPARE(appearance.cursorColor.kind, TerminalColorKind::Unset);
+    QVERIFY(!appearance.cursorBlink.has_value());
+    QCOMPARE(appearance.cursorTextColor.kind, TerminalColorKind::Unset);
+    QCOMPARE(appearance.boldColor.kind, TerminalBoldColorKind::Unset);
+}
+
 void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
 {
     LaunchOptions base;
@@ -247,6 +343,17 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     GhosttyConfigSnapshot snapshot;
     snapshot.values.insert(QStringLiteral("font-size"), -2.0);
     snapshot.values.insert(QStringLiteral("foreground"), QStringLiteral("not-a-color"));
+    snapshot.values.insert(QStringLiteral("palette"), QVariantList{QColor(Qt::red)});
+    snapshot.values.insert(QStringLiteral("selection-background"),
+                           QStringLiteral("not-an-alias"));
+    snapshot.values.insert(QStringLiteral("cursor-opacity"), 2.0);
+    snapshot.values.insert(QStringLiteral("cursor-style"),
+                           QStringLiteral("beam"));
+    snapshot.values.insert(QStringLiteral("cursor-style-blink"),
+                           QStringLiteral("sometimes"));
+    snapshot.values.insert(QStringLiteral("bold-color"),
+                           QStringLiteral("dim"));
+    snapshot.values.insert(QStringLiteral("faint-opacity"), -0.5);
     snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(-1));
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("sometimes"));
@@ -255,7 +362,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.availability = GhosttyConfigAvailability::Available;
     const LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.fontSize, base.fontSize);
-    QCOMPARE(result.foregroundColor, base.foregroundColor);
+    QCOMPARE(result.appearance, base.appearance);
     QCOMPARE(result.scrollbackLimit, base.scrollbackLimit);
     QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
 }

@@ -28,6 +28,21 @@ GhosttyColorRgb toGhosttyColor(const QColor &color)
     };
 }
 
+GhosttyTerminalCursorStyle toGhosttyCursorStyle(TerminalCursorStyle style)
+{
+    switch (style) {
+    case TerminalCursorStyle::Block:
+        return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK;
+    case TerminalCursorStyle::Bar:
+        return GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
+    case TerminalCursorStyle::Underline:
+        return GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE;
+    case TerminalCursorStyle::BlockHollow:
+        return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK_HOLLOW;
+    }
+    return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK;
+}
+
 GhosttyColorRgb resolveStyleColor(const GhosttyStyleColor &color,
                                   const GhosttyRenderStateColors &colors,
                                   GhosttyColorRgb fallback)
@@ -311,9 +326,7 @@ public:
             return false;
         }
 
-        if (!setColors(adapterOptions.foregroundColor,
-                       adapterOptions.backgroundColor,
-                       adapterOptions.cursorColor)) {
+        if (!setAppearance(adapterOptions.appearance)) {
             return false;
         }
 
@@ -364,17 +377,52 @@ public:
         return true;
     }
 
-    bool setColors(const QColor &foregroundColor,
-                   const QColor &backgroundColor,
-                   const QColor &cursorColor)
+    bool setAppearance(const TerminalAppearance &appearance)
     {
-        if (!foregroundColor.isValid() || !backgroundColor.isValid()) {
+        if (!appearance.foregroundColor.isValid()
+            || !appearance.backgroundColor.isValid()
+            || (!appearance.palette.isEmpty()
+                && appearance.palette.size() != 256)) {
             return false;
         }
-        const GhosttyColorRgb foreground = toGhosttyColor(foregroundColor);
-        const GhosttyColorRgb background = toGhosttyColor(backgroundColor);
-        const GhosttyColorRgb cursor = toGhosttyColor(
-            cursorColor.isValid() ? cursorColor : foregroundColor);
+
+        std::array<GhosttyColorRgb, 256> palette{};
+        for (qsizetype index = 0; index < appearance.palette.size(); ++index) {
+            if (!appearance.palette.at(index).isValid()) {
+                return false;
+            }
+            palette[static_cast<size_t>(index)] =
+                toGhosttyColor(appearance.palette.at(index));
+        }
+        if (appearance.cursorColor.kind == TerminalColorKind::Color
+            && !appearance.cursorColor.color.isValid()) {
+            return false;
+        }
+
+        const GhosttyColorRgb foreground =
+            toGhosttyColor(appearance.foregroundColor);
+        const GhosttyColorRgb background =
+            toGhosttyColor(appearance.backgroundColor);
+        const GhosttyColorRgb cursor = appearance.cursorColor.kind
+                == TerminalColorKind::Color
+            ? toGhosttyColor(appearance.cursorColor.color)
+            : GhosttyColorRgb{};
+        const GhosttyTerminalCursorStyle cursorStyle =
+            toGhosttyCursorStyle(appearance.cursorStyle);
+        // Ghostty's application default for a null cursor-style-blink is true.
+        // The pinned libghostty-vt C surface only accepts a bool, so it cannot
+        // reproduce the application's distinction where an explicit value
+        // also suppresses DEC mode 12. Preserve the visual default here and
+        // track the semantic limitation in the parity ledger.
+        const bool cursorBlink = appearance.cursorBlink.value_or(true);
+
+        const void *paletteValue = appearance.palette.isEmpty()
+            ? nullptr
+            : static_cast<const void *>(palette.data());
+        const void *cursorValue = appearance.cursorColor.kind
+                == TerminalColorKind::Color
+            ? static_cast<const void *>(&cursor)
+            : nullptr;
         return ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground)
                 == GHOSTTY_SUCCESS
@@ -382,7 +430,18 @@ public:
                    terminal_, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background)
                 == GHOSTTY_SUCCESS
             && ghostty_terminal_set(
-                   terminal_, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &cursor)
+                   terminal_, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, paletteValue)
+                == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, cursorValue)
+                == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE,
+                   &cursorStyle)
+                == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(
+                   terminal_, GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK,
+                   &cursorBlink)
                 == GHOSTTY_SUCCESS;
     }
 
@@ -857,6 +916,11 @@ public:
         }
         metadata.foreground = toQColor(colors.foreground);
         metadata.background = toQColor(colors.background);
+        metadata.palette.reserve(256);
+        for (const GhosttyColorRgb &color : colors.palette) {
+            metadata.palette.append(toQColor(color));
+        }
+        metadata.cursorColorExplicit = colors.cursor_has_value;
         metadata.cursorColor = colors.cursor_has_value
             ? toQColor(colors.cursor)
             : metadata.foreground;
@@ -1068,10 +1132,47 @@ public:
                     cell.background = toQColor(background);
                     cell.underlineColor = toQColor(resolveStyleColor(
                         style.underline_color, colors, foreground));
+                    switch (style.fg_color.tag) {
+                    case GHOSTTY_STYLE_COLOR_PALETTE:
+                        cell.styleForegroundSource = TerminalColorSource::Palette;
+                        cell.styleForegroundPaletteIndex =
+                            static_cast<int>(style.fg_color.value.palette);
+                        break;
+                    case GHOSTTY_STYLE_COLOR_RGB:
+                        cell.styleForegroundSource = TerminalColorSource::Rgb;
+                        break;
+                    default:
+                        cell.styleForegroundSource = TerminalColorSource::Default;
+                        break;
+                    }
                     cell.bold = style.bold;
                     cell.italic = style.italic;
                     cell.faint = style.faint;
-                    cell.underline = style.underline != GHOSTTY_SGR_UNDERLINE_NONE;
+                    cell.textBlink = style.blink;
+                    cell.inverse = style.inverse;
+                    cell.invisible = style.invisible;
+                    cell.underlineUsesForeground =
+                        style.underline_color.tag == GHOSTTY_STYLE_COLOR_NONE;
+                    switch (style.underline) {
+                    case GHOSTTY_SGR_UNDERLINE_SINGLE:
+                        cell.underlineStyle = TerminalUnderlineStyle::Single;
+                        break;
+                    case GHOSTTY_SGR_UNDERLINE_DOUBLE:
+                        cell.underlineStyle = TerminalUnderlineStyle::Double;
+                        break;
+                    case GHOSTTY_SGR_UNDERLINE_CURLY:
+                        cell.underlineStyle = TerminalUnderlineStyle::Curly;
+                        break;
+                    case GHOSTTY_SGR_UNDERLINE_DOTTED:
+                        cell.underlineStyle = TerminalUnderlineStyle::Dotted;
+                        break;
+                    case GHOSTTY_SGR_UNDERLINE_DASHED:
+                        cell.underlineStyle = TerminalUnderlineStyle::Dashed;
+                        break;
+                    default:
+                        cell.underlineStyle = TerminalUnderlineStyle::None;
+                        break;
+                    }
                     cell.strikeThrough = style.strikethrough;
                     cell.overline = style.overline;
                     cell.selected = hasSelection
@@ -1099,10 +1200,15 @@ public:
         update.colorsChanged = fullFrame || !hasPublishedFrame_
             || metadata.foreground != publishedMetadata_.foreground
             || metadata.background != publishedMetadata_.background
-            || metadata.cursorColor != publishedMetadata_.cursorColor;
+            || metadata.cursorColor != publishedMetadata_.cursorColor
+            || metadata.palette != publishedMetadata_.palette
+            || metadata.cursorColorExplicit
+                != publishedMetadata_.cursorColorExplicit;
         update.foreground = metadata.foreground;
         update.background = metadata.background;
         update.cursorColor = metadata.cursorColor;
+        update.palette = metadata.palette;
+        update.cursorColorExplicit = metadata.cursorColorExplicit;
 
         update.cursorChanged = fullFrame || !hasPublishedFrame_
             || metadata.cursorVisible != publishedMetadata_.cursorVisible
@@ -1333,11 +1439,9 @@ bool GhosttyVtAdapter::resize(const Geometry &geometry)
     return impl_->resize(geometry);
 }
 
-bool GhosttyVtAdapter::setColors(const QColor &foreground,
-                                 const QColor &background,
-                                 const QColor &cursor)
+bool GhosttyVtAdapter::setAppearance(const TerminalAppearance &appearance)
 {
-    return impl_->setColors(foreground, background, cursor);
+    return impl_->setAppearance(appearance);
 }
 
 void GhosttyVtAdapter::writeVt(QByteArrayView data)

@@ -87,16 +87,20 @@ pane shutdowns first so grace periods overlap.
 4. Screen updates are coalesced on an 8 ms single-shot timer. First frames,
    resize, viewport scroll, and Ghostty full-dirty states produce a value-only
    full-grid update. Ordinary output copies only Ghostty's indexed dirty rows;
-   colors, cursor state, and scrollbar metadata carry independent change flags.
+   colors, the effective 256-entry palette, cursor state, and scrollbar
+   metadata carry independent change flags.
 5. A queued Qt signal copies the update across the thread boundary. The pane
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
 6. `TerminalPane::updatePaintNode()` repopulates its retained render-node root. Public
    `QSGTextNode` objects use `QtRendering`, which stores distance-field glyphs
-   in GPU atlases on hardware RHI backends. Batched colored geometry draws cell
+   in GPU atlases on hardware RHI backends. Color-batched solid geometry draws cell
    backgrounds, selections, cursor shapes, text decorations, overlays, and the
-   scrollbar.
+   scrollbar. Cell values retain foreground provenance and bold, faint,
+   inverse, invisible, underline, strike-through, overline, and text-blink
+   attributes so frontend-only appearance rules do not have to be flattened at
+   the worker boundary.
 7. Each nonempty cell is shaped with `QTextLayout` and placed at an explicit
    grid coordinate before its glyph data is added to a text node. This avoids
    fallback-font and wide-cell advances shifting later cells.
@@ -110,12 +114,24 @@ fallback keeps resize and viewport changes simple while ordinary output avoids
 copying unchanged rows between threads.
 
 Renderer-v1 uses Qt's public scene-graph API throughout: text nodes supply the
-GPU glyph path and colored `QSGGeometryNode` batches supply solid primitives.
+GPU glyph path and one vertex-colored `QSGGeometryNode` per painter layer
+supplies solid primitives on RHI backends. Qt's software adaptation does not
+render that public vertex-color material, so the test/fallback path uses
+`QSGSimpleRectNode` groups for correctness.
 No intermediate raster-image upload sits between the frame and the scene
 graph. The current implementation retains the root but recreates its children
 for each update and performs a `QTextLayout` per rendered cell, so shaping,
 node construction, and full-frame snapshot copying remain CPU-side performance
 targets.
+
+The renderer resolves configured selection and cursor cell-relative aliases
+against each cell's visual colors, applies Ghostty's bold palette/direct-color
+rules before inverse presentation, and applies faint opacity to glyphs and
+decorations without dimming the cell background. It draws block, bar,
+underline, and hollow cursors plus single, double, curly, dotted, and dashed
+underlines. Text-blink state is retained in the value model but intentionally
+does not drive an animation because the pinned Ghostty generic renderer also
+leaves blinking text visible; cursor blink remains an independent animation.
 
 ## Input path
 
@@ -202,16 +218,38 @@ to discover newly created required includes. Failure still leaves the last
 good snapshot active when one exists; a successful changed snapshot is applied
 to the workspace.
 
-The current typed compatibility slice contains `font-family`, `font-size`,
-`foreground`, `background`, `cursor-color`, `scrollback-limit`,
-`confirm-close-surface`, `config-file`, and flattened `keybind` entries. Only
-the first configured font family is rendered. Explicit font and scrollback CLI
-options retain precedence. Live reload updates font and base colors on
-existing panes, without overriding a pane's manual font zoom, and updates close
-confirmation policy. Because the pinned terminal API cannot resize an existing
-scrollback allocation, the byte-valued Ghostty limit applies when a pane is
-created; a reload affects later panes. `config-file` contributes parser input
-and watcher paths rather than a direct renderer setting.
+The current typed compatibility slice contains `font-family`, `font-size`, the
+appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
+`config-file`, and flattened `keybind` entries. Appearance crosses threads as a
+value-only `TerminalAppearance`: terminal foreground/background, all 256
+palette defaults, selection colors, cursor color/style/blink/opacity/text,
+bold-color, and faint-opacity. Fixed colors and Ghostty's cell-foreground and
+cell-background aliases remain distinct until the renderer has the target
+cell. Only the first configured font family is rendered. Explicit font and
+scrollback CLI options retain precedence.
+
+Live reload updates font and appearance on existing panes without overriding a
+pane's manual font zoom. Palette and fixed cursor defaults are updated through
+`libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
+OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
+DECSCUSR cursor style survives a config reload and its reset selects the newest
+configured style. Selection, cursor aliases/opacity/text, bold-color, and
+faint-opacity are frontend render policy and therefore update without mutating
+terminal-originated state. Close confirmation policy also updates live.
+
+Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
+Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
+only a boolean; it cannot represent the upstream tri-state in which explicit
+true/false ignores DEC mode 12. The pinned `+show-config` text output also
+precedes derived palette generation and loses Ghostty's explicit-entry mask,
+so `palette-generate` and `palette-harmonious` remain planned rather than being
+approximated. Static themes can contribute canonical appearance values through
+the pinned parser, while dynamic light/dark theme selection is not implemented.
+
+Because the pinned terminal API cannot resize an existing scrollback
+allocation, the byte-valued Ghostty limit applies when a pane is created; a
+reload affects later panes. `config-file` contributes parser input and watcher
+paths rather than a direct renderer setting.
 
 The pinned terminal allocation limit is byte-valued. Ghostty's
 `scrollback-limit` therefore passes through exactly. The older
@@ -307,13 +345,16 @@ partial or supported, while the other upstream keys stay explicitly planned.
 The default CTest suite has sixteen layers:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
-  typed config overlays, CLI font precedence, scrollback units, and close modes.
+  typed config and appearance overlays, CLI font precedence, scrollback units,
+  and close modes.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
 - `ghostty-vt-adapter` verifies the application-facing boundary renders value
-  snapshots, reports title/directory/bell effects, handles terminal callbacks,
-  and encodes paste, focus, and key input using terminal modes.
+  snapshots, carries style provenance and effective palette state, preserves
+  OSC and DECSCUSR overrides across appearance reloads, reports
+  title/directory/bell effects, handles terminal callbacks, and encodes paste,
+  focus, and key input using terminal modes.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, final output draining, process exit, explicit-program
   activity, and an interactive shell's idle/job/idle foreground transitions.
@@ -335,9 +376,9 @@ The default CTest suite has sixteen layers:
   resolution.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
-- `terminal-pane-render` renders a delayed PTY frame offscreen and verifies the
-  initial placeholder contents were replaced rather than retained across
-  updates.
+- `terminal-pane-render` renders frames offscreen and verifies the initial
+  placeholder is replaced plus selection, cursor, bold, faint, invisible, and
+  underline/decorations appearance behavior.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -366,6 +407,10 @@ in a real Wayland session.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends, but
   there is no ligature shaping across terminal cells, color-emoji pipeline, or
   Kitty graphics/inline-image renderer.
+- Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
+  precedence over DEC mode 12, and the text config dump cannot expose the
+  post-generation palette mask. Those cases remain explicitly partial/planned
+  in the parity ledger.
 - Split ratios are fixed; no divider interaction is implemented.
 - Configuration beyond the documented typed slice, advanced keybinding forms,
   search, hyperlinks, multi-window operation, saved sessions, and production

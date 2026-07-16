@@ -108,6 +108,8 @@ private:
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     QElapsedTimer potentialActivityTimer_;
+    QElapsedTimer cursorBlinkResetTimer_;
+    bool cursorBlinkResetPending_ = false;
     bool shuttingDown_ = false;
     bool hold_ = false;
     bool mouseTracking_ = false;

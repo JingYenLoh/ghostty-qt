@@ -17,6 +17,7 @@
 #include <QMouseEvent>
 #include <QMutexLocker>
 #include <QSGGeometryNode>
+#include <QSGSimpleRectNode>
 #include <QSGTextNode>
 #include <QSGVertexColorMaterial>
 #include <QQuickWindow>
@@ -47,10 +48,152 @@ void appendRect(QVector<ColoredRect> &rects, const QRectF &rect, const QColor &c
     }
 }
 
-QSGGeometryNode *createRectNode(const QVector<ColoredRect> &rects)
+QColor withOpacity(QColor color, double opacity)
+{
+    if (!color.isValid()) {
+        return color;
+    }
+    color.setAlpha(std::clamp(
+        static_cast<int>(std::ceil(std::clamp(opacity, 0.0, 1.0) * 255.0)),
+        0, 255));
+    return color;
+}
+
+QColor resolveRelativeColor(const TerminalColorValue &configured,
+                            const QColor &cellForeground,
+                            const QColor &cellBackground,
+                            const QColor &fallback)
+{
+    switch (configured.kind) {
+    case TerminalColorKind::Color:
+        return configured.color.isValid() ? configured.color : fallback;
+    case TerminalColorKind::CellForeground:
+        return cellForeground;
+    case TerminalColorKind::CellBackground:
+        return cellBackground;
+    case TerminalColorKind::Unset:
+        return fallback;
+    }
+    return fallback;
+}
+
+void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
+                    const TerminalAppearance &appearance,
+                    QColor *foreground, QColor *background)
+{
+    if (!cell.bold || foreground == nullptr || background == nullptr
+        || appearance.boldColor.kind == TerminalBoldColorKind::Unset) {
+        return;
+    }
+
+    // The source is the logical SGR foreground. Inverse is applied after
+    // Ghostty resolves bold-color, so its rendered destination is the cell
+    // background when SGR inverse is active.
+    QColor *styleForeground = cell.inverse ? background : foreground;
+    switch (cell.styleForegroundSource) {
+    case TerminalColorSource::Default:
+        if (appearance.boldColor.kind == TerminalBoldColorKind::Color
+            && appearance.boldColor.color.isValid()) {
+            *styleForeground = appearance.boldColor.color;
+        }
+        break;
+    case TerminalColorSource::Palette:
+        if (cell.styleForegroundPaletteIndex >= 0
+            && cell.styleForegroundPaletteIndex < 8
+            && frame.palette.size() > cell.styleForegroundPaletteIndex + 8) {
+            const QColor bright = frame.palette.at(
+                cell.styleForegroundPaletteIndex + 8);
+            if (bright.isValid()) {
+                *styleForeground = bright;
+            }
+        }
+        break;
+    case TerminalColorSource::Rgb:
+        if (appearance.boldColor.kind == TerminalBoldColorKind::Color
+            && appearance.boldColor.color.isValid()
+            && *styleForeground == frame.foreground) {
+            *styleForeground = appearance.boldColor.color;
+        }
+        break;
+    }
+}
+
+void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
+                     qreal baseline, TerminalUnderlineStyle style,
+                     const QColor &color)
+{
+    if (style == TerminalUnderlineStyle::None) {
+        return;
+    }
+
+    const qreal left = cellRect.left();
+    const qreal right = cellRect.right();
+    const qreal width = cellRect.width();
+    const qreal bottom = cellRect.bottom();
+    const qreal lineY = std::clamp(
+        cellRect.top() + baseline + 1.0, cellRect.top(), bottom - 1.0);
+    const auto appendSegments = [&](qreal segmentWidth, qreal gap) {
+        for (qreal x = left; x < right; x += segmentWidth + gap) {
+            appendRect(rects,
+                       QRectF(x, lineY, std::min(segmentWidth, right - x), 1.0),
+                       color);
+        }
+    };
+
+    switch (style) {
+    case TerminalUnderlineStyle::None:
+        break;
+    case TerminalUnderlineStyle::Single:
+        appendRect(rects, QRectF(left, lineY, width, 1.0), color);
+        break;
+    case TerminalUnderlineStyle::Double: {
+        const qreal firstY = std::max(cellRect.top(), lineY - 1.0);
+        const qreal secondY = std::min(bottom - 1.0, lineY + 1.0);
+        appendRect(rects, QRectF(left, firstY, width, 1.0), color);
+        appendRect(rects, QRectF(left, secondY, width, 1.0), color);
+        break;
+    }
+    case TerminalUnderlineStyle::Curly: {
+        // A compact two-pixel wave stays legible at small terminal sizes and
+        // joins cleanly across adjacent cells.
+        constexpr qreal segment = 2.0;
+        int phase = 0;
+        for (qreal x = left; x < right; x += segment, ++phase) {
+            const qreal offset = (phase % 4 == 1 || phase % 4 == 2) ? 1.0 : 0.0;
+            appendRect(rects,
+                       QRectF(x, std::min(bottom - 1.0, lineY + offset),
+                              std::min(segment, right - x), 1.0),
+                       color);
+        }
+        break;
+    }
+    case TerminalUnderlineStyle::Dotted:
+        appendSegments(1.0, 2.0);
+        break;
+    case TerminalUnderlineStyle::Dashed:
+        appendSegments(std::max<qreal>(2.0, std::min<qreal>(4.0, width / 3.0)),
+                       2.0);
+        break;
+    }
+}
+
+QSGNode *createRectNode(const QVector<ColoredRect> &rects,
+                        bool softwareRenderer)
 {
     if (rects.isEmpty()) {
         return nullptr;
+    }
+
+    if (softwareRenderer) {
+        // Qt's software scene-graph adaptation does not render the public
+        // vertex-color material. Keep its deterministic CI/fallback path on
+        // the public rectangle node that it supports.
+        auto *group = new QSGNode;
+        for (const ColoredRect &coloredRect : rects) {
+            group->appendChildNode(new QSGSimpleRectNode(
+                coloredRect.rect.normalized(), coloredRect.color));
+        }
+        return group;
     }
 
     auto *geometry = new QSGGeometry(
@@ -58,8 +201,8 @@ QSGGeometryNode *createRectNode(const QVector<ColoredRect> &rects)
         static_cast<int>(rects.size()) * 6);
     geometry->setDrawingMode(QSGGeometry::DrawTriangles);
     geometry->setVertexDataPattern(QSGGeometry::StaticPattern);
-    auto *vertices = geometry->vertexDataAsColoredPoint2D();
-
+    QSGGeometry::ColoredPoint2D *vertices =
+        geometry->vertexDataAsColoredPoint2D();
     int vertex = 0;
     for (const ColoredRect &coloredRect : rects) {
         const QRectF rect = coloredRect.rect.normalized();
@@ -76,7 +219,6 @@ QSGGeometryNode *createRectNode(const QVector<ColoredRect> &rects)
         const float top = static_cast<float>(rect.top());
         const float right = static_cast<float>(rect.right());
         const float bottom = static_cast<float>(rect.bottom());
-
         vertices[vertex++].set(left, top, red, green, blue, opacity);
         vertices[vertex++].set(right, top, red, green, blue, opacity);
         vertices[vertex++].set(left, bottom, red, green, blue, opacity);
@@ -204,6 +346,7 @@ quint64 keyEventIdentity(const QKeyEvent *event)
 TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     : QQuickItem(parent)
     , options_(options)
+    , appearance_(options.appearance)
     , defaultFontPointSize_(options.fontSize)
     , manuallyZoomed_(options.fontSizeManuallyAdjusted)
 {
@@ -221,23 +364,25 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     font_.setPointSizeF(options.fontSize);
     font_.setFixedPitch(true);
     font_.setStyleHint(QFont::Monospace);
-    frame_.foreground = options.foregroundColor;
-    frame_.background = options.backgroundColor;
-    frame_.cursorColor = options.cursorColor.isValid()
-        ? options.cursorColor
-        : options.foregroundColor;
+    frame_.foreground = options.appearance.foregroundColor;
+    frame_.background = options.appearance.backgroundColor;
+    frame_.palette = options.appearance.palette;
+    frame_.cursorColor = options.appearance.cursorColor.kind
+            == TerminalColorKind::Color
+        && options.appearance.cursorColor.color.isValid()
+        ? options.appearance.cursorColor.color
+        : options.appearance.foregroundColor;
     if (options.keybindingsConfigured) {
         (void) keybinds_.load(options.keybindings);
     }
     updateMetrics();
 
     cursorTimer_ = new QTimer(this);
-    cursorTimer_->setInterval(500);
+    cursorTimer_->setInterval(600);
     connect(cursorTimer_, &QTimer::timeout, this, [this] {
         cursorBlinkOn_ = !cursorBlinkOn_;
         update();
     });
-    cursorTimer_->start();
 
     controller_ = new TerminalController(options, this);
     connect(controller_, &TerminalController::terminalUpdated, this,
@@ -251,7 +396,11 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     }
                 }
                 if (applied) {
-                    update();
+                    if (terminalUpdate.resetCursorBlink && hasActiveFocus()) {
+                        resetCursorBlink();
+                    } else {
+                        update();
+                    }
                 }
             });
     connect(controller_, &TerminalController::titleChanged,
@@ -350,9 +499,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.fontSize = options.fontSize;
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
-    updated.foregroundColor = options.foregroundColor;
-    updated.backgroundColor = options.backgroundColor;
-    updated.cursorColor = options.cursorColor;
+    updated.appearance = options.appearance;
     updated.scrollbackLimit = options.scrollbackLimit;
     updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
     updated.confirmCloseMode = options.confirmCloseMode;
@@ -378,12 +525,16 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
             pointSizeChanged = true;
         }
         if (!hasFrame_) {
-            frame_.foreground = updated.foregroundColor;
-            frame_.background = updated.backgroundColor;
-            frame_.cursorColor = updated.cursorColor.isValid()
-                ? updated.cursorColor
-                : updated.foregroundColor;
+            frame_.foreground = updated.appearance.foregroundColor;
+            frame_.background = updated.appearance.backgroundColor;
+            frame_.palette = updated.appearance.palette;
+            frame_.cursorColor = updated.appearance.cursorColor.kind
+                    == TerminalColorKind::Color
+                && updated.appearance.cursorColor.color.isValid()
+                ? updated.appearance.cursorColor.color
+                : updated.appearance.foregroundColor;
         }
+        appearance_ = updated.appearance;
     }
     options_ = updated;
     options_.fontSizeManuallyAdjusted = manuallyZoomed_;
@@ -427,6 +578,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
 
     TerminalFrame frame;
+    TerminalAppearance appearance;
     QFont baseFont;
     QString preedit;
     QString status;
@@ -437,6 +589,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     {
         QMutexLocker locker(&renderMutex_);
         frame = frame_;
+        appearance = appearance_;
         baseFont = font_;
         preedit = preedit_;
         status = statusMessage_;
@@ -447,12 +600,23 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
 
     const QRectF viewport = boundingRect();
+    const QSGRendererInterface *rendererInterface = window() != nullptr
+        ? window()->rendererInterface() : nullptr;
+    const bool softwareRenderer = rendererInterface == nullptr
+        || rendererInterface->graphicsApi() == QSGRendererInterface::Software;
     const QColor background = hasFrame ? frame.background : QColor(QStringLiteral("#1e222a"));
+    QVector<ColoredRect> baseBackgrounds;
     QVector<ColoredRect> backgrounds;
-    QVector<ColoredRect> decorations;
+    QVector<ColoredRect> cursorBackgrounds;
+    QVector<ColoredRect> decorationsBeforeText;
+    QVector<ColoredRect> decorationsAfterText;
+    QVector<ColoredRect> cursorDecorations;
+    QVector<ColoredRect> scrollbarDecorations;
     QVector<ColoredRect> overlayBackgrounds;
     QVector<ColoredRect> overlayDecorations;
-    appendRect(backgrounds, viewport, background);
+    // Keep base, cell, and cursor fills in explicit scene-graph layers so
+    // their painter order is identical across Qt render backends.
+    appendRect(baseBackgrounds, viewport, background);
 
     QSGTextNode *mainText = createTextNode(window(), viewport,
                                            hasFrame ? frame.foreground
@@ -475,19 +639,36 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         italic.setItalic(true);
         QFont boldItalic = bold;
         boldItalic.setItalic(true);
-        const QColor selectionBackground(QStringLiteral("#4c566a"));
-        const QColor selectionForeground(QStringLiteral("#eceff4"));
 
         const int visibleRows = std::min(frame.rows,
             static_cast<int>(std::ceil(height() / cellHeight)));
         const int visibleColumns = std::min(frame.columns,
             static_cast<int>(std::ceil(width() / cellWidth)));
+        const bool focused = hasActiveFocus();
         const bool cursorActive = frame.cursorVisible
-            && (!frame.cursorBlinking || cursorBlinkOn_)
+            && (!focused || !frame.cursorBlinking || cursorBlinkOn_)
             && frame.cursorColumn >= 0 && frame.cursorColumn < visibleColumns
             && frame.cursorRow >= 0 && frame.cursorRow < visibleRows;
+        const int cursorStyle = focused ? frame.cursorStyle : 3;
         const bool blockCursorActive = cursorActive
-            && frame.cursorStyle != 0 && frame.cursorStyle != 2 && frame.cursorStyle != 3;
+            && cursorStyle == 1;
+        QColor cursorCellForeground = frame.foreground;
+        QColor cursorCellBackground = frame.background;
+        const int cursorCellIndex = frame.cursorRow * frame.columns
+            + frame.cursorColumn;
+        if (cursorActive && cursorCellIndex >= 0
+            && cursorCellIndex < frame.cells.size()) {
+            const TerminalCell &cursorCell = frame.cells.at(cursorCellIndex);
+            cursorCellForeground = cursorCell.foreground;
+            cursorCellBackground = cursorCell.background;
+            applyBoldColor(cursorCell, frame, appearance,
+                           &cursorCellForeground, &cursorCellBackground);
+        }
+        QColor blockCursorTextColor = resolveRelativeColor(
+            appearance.cursorTextColor,
+            cursorCellForeground, cursorCellBackground,
+            frame.background);
+        blockCursorTextColor.setAlpha(255);
 
         for (int row = 0; row < visibleRows; ++row) {
             const qreal top = static_cast<qreal>(row) * cellHeight;
@@ -500,24 +681,47 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 const qreal left = static_cast<qreal>(column) * cellWidth;
                 const qreal drawWidth = cellWidth
                     * static_cast<qreal>(std::max(1, cell.columnSpan));
+                QColor styledForeground = cell.foreground;
+                QColor styledBackground = cell.background;
+                applyBoldColor(cell, frame, appearance,
+                               &styledForeground, &styledBackground);
+
                 const QColor cellBackground = cell.selected
-                    ? selectionBackground : cell.background;
+                    ? resolveRelativeColor(appearance.selectionBackground,
+                                           styledForeground, styledBackground,
+                                           frame.foreground)
+                    : styledBackground;
                 if (cellBackground != background) {
-                    appendRect(backgrounds, QRectF(left, top, drawWidth, cellHeight),
+                    // Background is grid-cell state, even when the glyph in
+                    // this cell spans multiple columns. Drawing one column at
+                    // a time keeps adjacent/spacer backgrounds non-overlapping
+                    // so they can be safely color-batched.
+                    appendRect(backgrounds, QRectF(left, top, cellWidth, cellHeight),
                                cellBackground);
                 }
 
                 QColor foreground = cell.selected
-                    ? selectionForeground : cell.foreground;
-                if (cell.faint) {
-                    foreground.setAlpha(150);
+                    ? resolveRelativeColor(appearance.selectionForeground,
+                                           styledForeground, styledBackground,
+                                           frame.background)
+                    : styledForeground;
+                const bool insideBlockCursor = blockCursorActive
+                    && row == frame.cursorRow
+                    && column >= frame.cursorColumn
+                    && column < frame.cursorColumn
+                        + std::max(1, frame.cursorColumnSpan);
+                if (cell.faint && !insideBlockCursor) {
+                    foreground = withOpacity(foreground, appearance.faintOpacity);
                 }
-                if (blockCursorActive && row == frame.cursorRow
-                    && column == frame.cursorColumn) {
-                    foreground = frame.background;
+                // Ghostty applies the block-cursor text uniform last to all
+                // foreground primitives in every column covered by a wide
+                // cursor. It is intentionally opaque and overrides faint and
+                // explicit decoration colors.
+                if (insideBlockCursor) {
+                    foreground = blockCursorTextColor;
                 }
 
-                if (!cell.text.isEmpty() && !cell.spacer) {
+                if (!cell.invisible && !cell.text.isEmpty() && !cell.spacer) {
                     const QFont *drawFont = &normal;
                     if (cell.bold && cell.italic) drawFont = &boldItalic;
                     else if (cell.bold) drawFont = &bold;
@@ -527,19 +731,30 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     hasMainText = mainText != nullptr;
                 }
 
-                if (cell.underline) {
-                    appendRect(decorations,
-                               QRectF(left, top + baseline + 1.0, drawWidth, 1.0),
-                               cell.selected ? selectionForeground
-                                             : cell.underlineColor);
+                if (cell.invisible) {
+                    continue;
                 }
+
+                QColor underlineColor = insideBlockCursor
+                    ? blockCursorTextColor
+                    : (cell.underlineUsesForeground
+                        ? foreground : cell.underlineColor);
+                if (!insideBlockCursor && !cell.underlineUsesForeground
+                    && cell.faint) {
+                    underlineColor = withOpacity(underlineColor,
+                                                  appearance.faintOpacity);
+                }
+                appendUnderline(decorationsBeforeText,
+                                QRectF(left, top, drawWidth, cellHeight),
+                                baseline, cell.underlineStyle, underlineColor);
                 if (cell.strikeThrough) {
-                    appendRect(decorations,
+                    appendRect(decorationsAfterText,
                                QRectF(left, top + cellHeight * 0.52, drawWidth, 1.0),
                                foreground);
                 }
                 if (cell.overline) {
-                    appendRect(decorations, QRectF(left, top + 1.0, drawWidth, 1.0),
+                    appendRect(decorationsBeforeText,
+                               QRectF(left, top + 1.0, drawWidth, 1.0),
                                foreground);
                 }
             }
@@ -551,39 +766,48 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             const qreal cursorWidth = cellWidth
                 * static_cast<qreal>(std::max(1, frame.cursorColumnSpan));
             const QRectF cursorRect(left, top, cursorWidth, cellHeight);
-            switch (frame.cursorStyle) {
+            QColor cursorColor = frame.cursorColor;
+            if (!frame.cursorColorExplicit) {
+                cursorColor = resolveRelativeColor(
+                    appearance.cursorColor,
+                    cursorCellForeground, cursorCellBackground,
+                    frame.foreground);
+            }
+            cursorColor = withOpacity(
+                cursorColor, focused ? appearance.cursorOpacity : 1.0);
+            switch (cursorStyle) {
             case 0:
-                appendRect(decorations,
+                appendRect(cursorDecorations,
                            QRectF(left, top, std::max(1.0, cellWidth * 0.14), cellHeight),
-                           frame.cursorColor);
+                           cursorColor);
                 break;
             case 2:
-                appendRect(decorations,
+                appendRect(cursorDecorations,
                            QRectF(left, top + cellHeight - 2.0, cursorWidth, 2.0),
-                           frame.cursorColor);
+                           cursorColor);
                 break;
             case 3: {
                 constexpr qreal thickness = 1.0;
-                appendRect(decorations,
-                           QRectF(left, top, cursorWidth, thickness), frame.cursorColor);
-                appendRect(decorations,
+                appendRect(cursorDecorations,
+                           QRectF(left, top, cursorWidth, thickness), cursorColor);
+                appendRect(cursorDecorations,
                            QRectF(left, top + cellHeight - thickness,
-                                  cursorWidth, thickness), frame.cursorColor);
-                appendRect(decorations,
+                                  cursorWidth, thickness), cursorColor);
+                appendRect(cursorDecorations,
                            QRectF(left, top + thickness, thickness,
                                   std::max(0.0, cellHeight - 2.0 * thickness)),
-                           frame.cursorColor);
-                appendRect(decorations,
+                           cursorColor);
+                appendRect(cursorDecorations,
                            QRectF(left + cursorWidth - thickness, top + thickness,
                                   thickness,
                                   std::max(0.0, cellHeight - 2.0 * thickness)),
-                           frame.cursorColor);
+                           cursorColor);
                 break;
             }
             default:
                 // Appended after cell backgrounds so a wide block cursor is
                 // not overwritten by the spacer cell's background.
-                appendRect(backgrounds, cursorRect, frame.cursorColor);
+                appendRect(cursorBackgrounds, cursorRect, cursorColor);
                 break;
             }
         }
@@ -598,7 +822,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             const qreal barTop = movable == 0 ? 0.0
                 : (trackHeight - barHeight) * static_cast<qreal>(frame.scrollOffset)
                     / static_cast<qreal>(movable);
-            appendRect(decorations,
+            appendRect(scrollbarDecorations,
                        QRectF(width() - barWidth, barTop, barWidth, barHeight),
                        QColor(216, 222, 233, 100));
         }
@@ -636,7 +860,16 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         }
     }
 
-    if (QSGGeometryNode *node = createRectNode(backgrounds)) {
+    if (QSGNode *node = createRectNode(baseBackgrounds, softwareRenderer)) {
+        root->appendChildNode(node);
+    }
+    if (QSGNode *node = createRectNode(backgrounds, softwareRenderer)) {
+        root->appendChildNode(node);
+    }
+    if (QSGNode *node = createRectNode(cursorBackgrounds, softwareRenderer)) {
+        root->appendChildNode(node);
+    }
+    if (QSGNode *node = createRectNode(decorationsBeforeText, softwareRenderer)) {
         root->appendChildNode(node);
     }
     if (hasMainText) {
@@ -644,10 +877,16 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     } else {
         delete mainText;
     }
-    if (QSGGeometryNode *node = createRectNode(decorations)) {
+    if (QSGNode *node = createRectNode(decorationsAfterText, softwareRenderer)) {
         root->appendChildNode(node);
     }
-    if (QSGGeometryNode *node = createRectNode(overlayBackgrounds)) {
+    if (QSGNode *node = createRectNode(cursorDecorations, softwareRenderer)) {
+        root->appendChildNode(node);
+    }
+    if (QSGNode *node = createRectNode(scrollbarDecorations, softwareRenderer)) {
+        root->appendChildNode(node);
+    }
+    if (QSGNode *node = createRectNode(overlayBackgrounds, softwareRenderer)) {
         root->appendChildNode(node);
     }
     if (hasOverlayText) {
@@ -655,7 +894,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     } else {
         delete overlayText;
     }
-    if (QSGGeometryNode *node = createRectNode(overlayDecorations)) {
+    if (QSGNode *node = createRectNode(overlayDecorations, softwareRenderer)) {
         root->appendChildNode(node);
     }
     return root;
@@ -677,6 +916,13 @@ void TerminalPane::updateMetrics()
     cellWidth_ = std::max(1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
     cellHeight_ = std::max(1.0, std::ceil(metrics.height()));
     baseline_ = std::ceil(metrics.ascent() + (cellHeight_ - metrics.height()) / 2.0);
+}
+
+void TerminalPane::resetCursorBlink()
+{
+    cursorBlinkOn_ = true;
+    cursorTimer_->start();
+    update();
 }
 
 void TerminalPane::updateTerminalSize()
@@ -1219,14 +1465,18 @@ QPoint TerminalPane::cellAt(const QPointF &position) const
 void TerminalPane::focusInEvent(QFocusEvent *event)
 {
     QQuickItem::focusInEvent(event);
+    resetCursorBlink();
     controller_->setFocused(true);
     Q_EMIT activated(this);
 }
 
 void TerminalPane::focusOutEvent(QFocusEvent *event)
 {
+    cursorTimer_->stop();
+    cursorBlinkOn_ = true;
     controller_->setFocused(false);
     QQuickItem::focusOutEvent(event);
+    update();
 }
 
 void TerminalPane::focusTerminal()

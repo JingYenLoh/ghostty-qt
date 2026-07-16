@@ -1,0 +1,79 @@
+#pragma once
+
+#include <QColor>
+#include <QMetaType>
+#include <QVector>
+
+#include <optional>
+
+enum class TerminalColorKind {
+    Unset,
+    Color,
+    CellForeground,
+    CellBackground,
+};
+
+// A configured color may be a fixed RGB value or one of Ghostty's
+// cell-relative aliases. Keeping the alias intact is important for selection
+// and cursor text, whose effective color can differ for every rendered cell.
+struct TerminalColorValue {
+    TerminalColorKind kind = TerminalColorKind::Unset;
+    QColor color;
+
+    static TerminalColorValue fromColor(const QColor &value)
+    {
+        return {.kind = TerminalColorKind::Color, .color = value};
+    }
+
+    bool operator==(const TerminalColorValue &) const = default;
+};
+
+enum class TerminalCursorStyle {
+    Block,
+    Bar,
+    Underline,
+    BlockHollow,
+};
+
+enum class TerminalBoldColorKind {
+    Unset,
+    Bright,
+    Color,
+};
+
+struct TerminalBoldColor {
+    TerminalBoldColorKind kind = TerminalBoldColorKind::Unset;
+    QColor color;
+
+    bool operator==(const TerminalBoldColor &) const = default;
+};
+
+// Value-only, Qt-thread-safe effective appearance. An empty palette means the
+// config backend is unavailable and libghostty should retain its built-in
+// palette. An available Ghostty snapshot supplies all 256 entries.
+struct TerminalAppearance {
+    QColor foregroundColor = QColor(QStringLiteral("#d8dee9"));
+    QColor backgroundColor = QColor(QStringLiteral("#1e222a"));
+    QVector<QColor> palette;
+
+    TerminalColorValue selectionForeground;
+    TerminalColorValue selectionBackground;
+
+    TerminalColorValue cursorColor;
+    TerminalCursorStyle cursorStyle = TerminalCursorStyle::Block;
+    std::optional<bool> cursorBlink;
+    double cursorOpacity = 1.0;
+    TerminalColorValue cursorTextColor;
+
+    TerminalBoldColor boldColor;
+    double faintOpacity = 0.5;
+
+    bool operator==(const TerminalAppearance &) const = default;
+};
+
+Q_DECLARE_METATYPE(TerminalColorKind)
+Q_DECLARE_METATYPE(TerminalColorValue)
+Q_DECLARE_METATYPE(TerminalCursorStyle)
+Q_DECLARE_METATYPE(TerminalBoldColorKind)
+Q_DECLARE_METATYPE(TerminalBoldColor)
+Q_DECLARE_METATYPE(TerminalAppearance)

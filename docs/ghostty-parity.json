@@ -272,6 +272,10 @@
     "background-blur": {
       "scope": "wayland"
     },
+    "bold-color": {
+      "status": "supported",
+      "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
+    },
     "command": {
       "status": "partial",
       "note": "An initial positional command exists, but Ghostty config and initial-command semantics do not."
@@ -286,7 +290,27 @@
     },
     "cursor-color": {
       "status": "supported",
-      "note": "The exact pinned parser supplies explicit colors and cell foreground/background aliases; the libghostty adapter applies them to new and existing panes."
+      "note": "The exact pinned parser supplies explicit colors and cell foreground/background aliases; live default updates preserve terminal OSC 12 overrides and OSC 112 reveals the newest configured default."
+    },
+    "cursor-opacity": {
+      "status": "supported",
+      "note": "Configured cursor opacity is clamped and applied to the focused cursor; an unfocused cursor becomes Ghostty's opaque hollow outline."
+    },
+    "cursor-style": {
+      "status": "supported",
+      "note": "Block, bar, underline, and hollow-block defaults apply to new and existing panes while terminal DECSCUSR state survives reload until reset."
+    },
+    "cursor-style-blink": {
+      "status": "partial",
+      "note": "The configured default is applied, but public libghostty-vt exposes only a boolean setter and cannot preserve Ghostty's explicit true/false precedence over DEC mode 12."
+    },
+    "cursor-text": {
+      "status": "supported",
+      "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
+    },
+    "faint-opacity": {
+      "status": "supported",
+      "note": "Configured faint opacity applies to glyphs and text decorations without dimming cell backgrounds."
     },
     "font-family": {
       "status": "partial",
@@ -303,6 +327,30 @@
     "keybind": {
       "status": "partial",
       "note": "Ghostty's flattened effective local single-key bindings route the implemented action subset before VT encoding, using Linux native scan codes for physical locations. Sequences, tables, catch-all, global/all-surface bindings, and flags omitted by the pinned text formatter require later structured extraction."
+    },
+    "palette": {
+      "status": "supported",
+      "note": "All 256 canonical defaults are applied. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured defaults."
+    },
+    "palette-generate": {
+      "status": "planned",
+      "note": "The pinned +show-config text output occurs before derived palette generation and loses the explicit-entry mask required for exact behavior."
+    },
+    "palette-harmonious": {
+      "status": "planned",
+      "note": "The pinned +show-config text output does not expose the derived palette and explicit-entry mask required for exact harmonization."
+    },
+    "selection-background": {
+      "status": "supported",
+      "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal foreground."
+    },
+    "selection-foreground": {
+      "status": "supported",
+      "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."
+    },
+    "theme": {
+      "status": "partial",
+      "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."
     },
         "gtk-custom-css": {
           "status": "not_applicable",

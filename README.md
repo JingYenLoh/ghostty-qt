@@ -18,8 +18,12 @@ the host-language comparison and remaining engineering risks.
 - Ghostty VT parsing, true-color terminal state, styled text, cursor state,
   scrollback, and resize propagation.
 - Hardware-accelerated Qt scene-graph text through public `QSGTextNode` nodes,
-  with distance-field glyph atlases on hardware RHI backends. Batched colored
-  geometry draws cell backgrounds, selections, cursors, and decorations.
+  with distance-field glyph atlases on hardware RHI backends. Color-batched
+  scene-graph geometry draws cell backgrounds, selections, cursor shapes, and single,
+  double, curly, dotted, and dashed underlines plus strike-through and overline
+  decorations. Bold, faint, inverse, and invisible cell styles are retained;
+  text blink is retained but deliberately not animated, matching the pinned
+  Ghostty generic renderer.
 - Keyboard, focus, mouse-reporting, bracketed-paste, and IME input paths.
 - Mouse selection, double-click word selection, rectangular selection with
   `Alt`, clipboard copy, primary-selection paste, and an unsafe-paste review
@@ -180,7 +184,13 @@ The current compatibility slice applies these keys:
 | --- | --- |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. Explicit `--font-size` wins. |
-| `foreground`, `background`, `cursor-color` | Set terminal colors for new panes and apply live to existing terminals. Cursor color also accepts Ghostty's cell foreground/background aliases. |
+| `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
+| `palette` | Applies Ghostty's complete 256-color default palette. Terminal OSC 4 overrides survive a config reload; OSC 104 resets an entry to the newest configured default. |
+| `selection-foreground`, `selection-background` | Apply fixed colors or Ghostty's cell foreground/background aliases. Unset values retain Ghostty's default terminal-foreground/terminal-background selection pairing. |
+| `cursor-color`, `cursor-style`, `cursor-opacity`, `cursor-text` | Apply live cursor appearance, including fixed and cell-relative colors. Terminal OSC 12 and DECSCUSR overrides survive reload; their reset sequences reveal the newest configured defaults. |
+| `cursor-style-blink` | Applies the configured default, but is not yet exact: the public `libghostty-vt` setter accepts only a boolean, so it cannot retain Ghostty's explicit true/false-versus-DEC-mode-12 distinction. |
+| `bold-color`, `faint-opacity` | Apply Ghostty's bold foreground transformation and faint glyph/decorations opacity. |
+| `theme` | A static theme's appearance values can flow through the canonical fields above when the pinned parser resolves them. Dynamic light/dark theme switching is not implemented. |
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
 | `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
@@ -309,10 +319,13 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   architecture over advanced typography.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported.
-- Only base foreground/background/cursor-color configuration is currently
-  applied. Themes, the full palette, cursor shape/blink/opacity, font fallback
-  lists, and the rest of
-  Ghostty's appearance model remain planned.
+- The first appearance slice covers the full palette, selection, cursor,
+  bold, and faint settings documented above. Dynamic light/dark theme
+  switching, font fallback lists, palette generation/harmonization, and the
+  rest of Ghostty's appearance model remain planned. The pinned
+  `+show-config` text boundary does not expose the derived palette and explicit
+  entry mask needed to reproduce `palette-generate` or `palette-harmonious`
+  exactly.
 - Automated startup testing uses Qt's software scene-graph backend. The GPU/RHI
   renderer still needs interactive visual qualification on real Wayland
   compositors and driver combinations.

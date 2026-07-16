@@ -20,16 +20,34 @@
 
 namespace {
 
-constexpr auto DefaultOutput =
-    "font-family = \n"
-    "font-size = 13\n"
-    "foreground = #ffffff\n"
-    "background = #282c34\n"
-    "cursor-color = \n"
-    "scrollback-limit = 50000000\n"
-    "confirm-close-surface = true\n"
-    "keybind = ctrl+shift+t=new_tab\n"
-    "config-file = \n";
+QByteArray defaultOutput()
+{
+    QByteArray output =
+        QByteArrayLiteral("font-family = \n"
+                          "font-size = 13\n"
+                          "foreground = #ffffff\n"
+                          "background = #282c34\n"
+                          "selection-foreground = \n"
+                          "selection-background = \n"
+                          "cursor-color = \n"
+                          "cursor-opacity = 1\n"
+                          "cursor-style = block\n"
+                          "cursor-style-blink = \n"
+                          "cursor-text = \n"
+                          "bold-color = \n"
+                          "faint-opacity = 0.5\n"
+                          "scrollback-limit = 50000000\n"
+                          "confirm-close-surface = true\n"
+                          "keybind = ctrl+shift+t=new_tab\n"
+                          "config-file = \n");
+    for (int index = 0; index < 256; ++index) {
+        output.append(QStringLiteral("palette = %1=#%2%2%2\n")
+                          .arg(index)
+                          .arg(index, 2, 16, QLatin1Char('0'))
+                          .toLatin1());
+    }
+    return output;
+}
 
 struct ConfigFixture {
     QTemporaryDir temporary;
@@ -69,7 +87,7 @@ GhosttyConfigProcessLoaderOptions fakeOptions(const ConfigFixture &fixture,
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_EXPECT_XDG_CONFIG_HOME"),
                        fixture.xdgHome);
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_DEFAULT_OUTPUT"),
-                       QString::fromLatin1(DefaultOutput));
+                       QString::fromLatin1(defaultOutput()));
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_CHANGES_OUTPUT"),
                        QStringLiteral("font-size = 17.25\n"));
     if (!mode.isEmpty()) {
@@ -95,7 +113,7 @@ private Q_SLOTS:
     void invokesValidationThenDefaultAndCurrentQueries();
     void rejectsConfigThatBecomesInvalidDuringQueries();
     void preservesSuccessfulHelperWarnings();
-    void realHelperPreservesEffectiveClearAndUnbindSemantics();
+    void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
     void reportsValidationFailureDeterministically();
     void reportsTimeoutCrashAndStartFailureDeterministically();
 };
@@ -134,7 +152,17 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "font-family = Noto Color Emoji\r\n"
             "font-size = 15.5\r\n"
             "foreground = #102030\r\n"
+            "palette = 1=#123456\r\n"
+            "palette = 255=#fedcba\r\n"
+            "selection-foreground = cell-background\r\n"
+            "selection-background = #334455\r\n"
             "cursor-color = cell-background\r\n"
+            "cursor-opacity = 0.375\r\n"
+            "cursor-style = block_hollow\r\n"
+            "cursor-style-blink = false\r\n"
+            "cursor-text = cell-foreground\r\n"
+            "bold-color = bright\r\n"
+            "faint-opacity = 0.25\r\n"
             "scrollback-limit = 123456\r\n"
             "confirm-close-surface = always\r\n"
             "keybind = alt+n=new_tab\r\n"
@@ -147,7 +175,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
                                    .toUtf8();
 
     const GhosttyConfigLoadResult result =
-        parseGhosttyConfigShowOutputs(DefaultOutput, changes,
+        parseGhosttyConfigShowOutputs(defaultOutput(), changes,
                                       fixture.candidates());
     QVERIFY2(result.succeeded(), qPrintable(result.errorMessage));
     const GhosttyConfigSnapshot &snapshot = *result.snapshot;
@@ -160,8 +188,33 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QColor(QStringLiteral("#102030")));
     QCOMPARE(snapshot.values.value(QStringLiteral("background")).value<QColor>(),
              QColor(QStringLiteral("#282c34")));
+    const QVariantList palette =
+        snapshot.values.value(QStringLiteral("palette")).toList();
+    QCOMPARE(palette.size(), 256);
+    QCOMPARE(palette.at(0).value<QColor>(), QColor(QStringLiteral("#000000")));
+    QCOMPARE(palette.at(1).value<QColor>(), QColor(QStringLiteral("#123456")));
+    QCOMPARE(palette.at(2).value<QColor>(), QColor(QStringLiteral("#020202")));
+    QCOMPARE(palette.at(255).value<QColor>(), QColor(QStringLiteral("#fedcba")));
+    QCOMPARE(snapshot.values.value(QStringLiteral("selection-foreground"))
+                 .toString(),
+             QStringLiteral("cell-background"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("selection-background"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#334455")));
     QCOMPARE(snapshot.values.value(QStringLiteral("cursor-color")).toString(),
              QStringLiteral("cell-background"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("cursor-opacity")).toDouble(),
+             0.375);
+    QCOMPARE(snapshot.values.value(QStringLiteral("cursor-style")).toString(),
+             QStringLiteral("block_hollow"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("cursor-style-blink")).toBool(),
+             false);
+    QCOMPARE(snapshot.values.value(QStringLiteral("cursor-text")).toString(),
+             QStringLiteral("cell-foreground"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("bold-color")).toString(),
+             QStringLiteral("bright"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("faint-opacity")).toDouble(),
+             0.25);
     QCOMPARE(snapshot.values.value(QStringLiteral("scrollback-limit")).toULongLong(),
              quint64(123456));
     QCOMPARE(snapshot.values.value(QStringLiteral("confirm-close-surface")).toString(),
@@ -194,7 +247,7 @@ void GhosttyConfigProcessLoaderTest::emptyRepeatableChangesResetDefaults()
 {
     ConfigFixture fixture;
     const QByteArray defaults =
-        QByteArrayLiteral("font-family = Monospace\n") + DefaultOutput;
+        QByteArrayLiteral("font-family = Monospace\n") + defaultOutput();
     const QByteArray changes =
         QByteArrayLiteral("font-family = \nkeybind = \nconfig-file = \n");
 
@@ -216,11 +269,47 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
 {
     ConfigFixture fixture;
     const GhosttyConfigLoadResult malformed = parseGhosttyConfigShowOutputs(
-        DefaultOutput, QByteArrayLiteral("foreground = not-a-color\n"),
+        defaultOutput(), QByteArrayLiteral("foreground = not-a-color\n"),
         fixture.candidates());
     QVERIFY(!malformed.succeeded());
     QCOMPARE(malformed.errorMessage,
              QStringLiteral("Invalid foreground in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedPalette =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("palette = 256=#abcdef\n"),
+            fixture.candidates());
+    QVERIFY(!malformedPalette.succeeded());
+    QCOMPARE(malformedPalette.errorMessage,
+             QStringLiteral("Invalid palette in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedCursor =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("cursor-style = beam\n"),
+            fixture.candidates());
+    QVERIFY(!malformedCursor.succeeded());
+    QCOMPARE(malformedCursor.errorMessage,
+             QStringLiteral("Invalid cursor-style in Ghostty config output at line 1"));
+
+    // Ghostty accepts cursor opacity outside the nominal interval and clamps
+    // it in the renderer rather than the config finalizer. Preserve that
+    // canonical value here; LaunchOptions performs the renderer-side clamp.
+    const GhosttyConfigLoadResult unboundedCursorOpacity =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("cursor-opacity = 2\n"),
+            fixture.candidates());
+    QVERIFY(unboundedCursorOpacity.succeeded());
+    QCOMPARE(unboundedCursorOpacity.snapshot->values
+                 .value(QStringLiteral("cursor-opacity")).toDouble(),
+             2.0);
+
+    const GhosttyConfigLoadResult malformedOpacity =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("faint-opacity = 1.1\n"),
+            fixture.candidates());
+    QVERIFY(!malformedOpacity.succeeded());
+    QCOMPARE(malformedOpacity.errorMessage,
+             QStringLiteral("Invalid faint-opacity in Ghostty config output at line 1"));
 
     const GhosttyConfigLoadResult missing = parseGhosttyConfigShowOutputs(
         QByteArrayLiteral("font-size = 13\n"), {}, fixture.candidates());
@@ -229,7 +318,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
              QStringLiteral("Ghostty default config output is missing a required compatibility key"));
 
     const GhosttyConfigLoadResult maximum = parseGhosttyConfigShowOutputs(
-        DefaultOutput,
+        defaultOutput(),
         QByteArrayLiteral("scrollback-limit = 18446744073709551615\n"),
         fixture.candidates());
     QVERIFY(maximum.succeeded());
@@ -301,7 +390,7 @@ void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
                  "Ghostty config helper current query: both standard files exist"));
 }
 
-void GhosttyConfigProcessLoaderTest::realHelperPreservesEffectiveClearAndUnbindSemantics()
+void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUnbindSemantics()
 {
     const QString helperPath =
         QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
@@ -314,6 +403,16 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesEffectiveClearAndUnbindS
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral(
+            "palette = 42=#123456\n"
+            "selection-foreground = cell-background\n"
+            "selection-background = #334455\n"
+            "cursor-color = #abcdef\n"
+            "cursor-opacity = 0.4\n"
+            "cursor-style = block_hollow\n"
+            "cursor-style-blink = false\n"
+            "cursor-text = cell-foreground\n"
+            "bold-color = bright\n"
+            "faint-opacity = 0.25\n"
             "keybind = clear\n"
             "keybind = ctrl+a=ignore\n"
             "keybind = ctrl+a=unbind\n"
@@ -330,6 +429,37 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesEffectiveClearAndUnbindS
     const QStringList keybinds =
         result.snapshot->values.value(QStringLiteral("keybind")).toStringList();
     QCOMPARE(keybinds, QStringList({QStringLiteral("ctrl+b=new_tab")}));
+    const QVariantList palette =
+        result.snapshot->values.value(QStringLiteral("palette")).toList();
+    QCOMPARE(palette.size(), 256);
+    QCOMPARE(palette.at(42).value<QColor>(), QColor(QStringLiteral("#123456")));
+    QCOMPARE(result.snapshot->values.value(
+                 QStringLiteral("selection-foreground")).toString(),
+             QStringLiteral("cell-background"));
+    QCOMPARE(result.snapshot->values.value(
+                 QStringLiteral("selection-background")).value<QColor>(),
+             QColor(QStringLiteral("#334455")));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-color"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#abcdef")));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-opacity"))
+                 .toDouble(),
+             0.4);
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-style"))
+                 .toString(),
+             QStringLiteral("block_hollow"));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-style-blink"))
+                 .toBool(),
+             false);
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-text"))
+                 .toString(),
+             QStringLiteral("cell-foreground"));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("bold-color"))
+                 .toString(),
+             QStringLiteral("bright"));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("faint-opacity"))
+                 .toDouble(),
+             0.25);
 }
 
 void GhosttyConfigProcessLoaderTest::reportsValidationFailureDeterministically()

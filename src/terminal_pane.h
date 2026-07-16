@@ -88,6 +88,7 @@ protected:
 private:
     void updateMetrics();
     void updateTerminalSize();
+    void resetCursorBlink();
     void setFontPointSize(qreal points);
     bool handleShortcut(QKeyEvent *event);
     bool handleConfiguredShortcut(QKeyEvent *event);
@@ -103,6 +104,9 @@ private:
     int normalizedMouseButton(Qt::MouseButton button) const;
 
     LaunchOptions options_;
+    // Mirrored separately so the render thread can take a value-only snapshot
+    // under renderMutex_ while live configuration updates options_.
+    TerminalAppearance appearance_;
     GhosttyKeybindSet keybinds_;
     TerminalController *controller_ = nullptr;
     QFont font_;

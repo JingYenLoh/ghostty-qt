@@ -9,6 +9,7 @@
 #include <QMetaType>
 #include <QVariant>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -26,27 +27,118 @@ bool fail(QString *errorMessage, const QString &message)
 }
 
 std::optional<QColor> configColor(const GhosttyConfigSnapshot &snapshot,
-                                  const QString &key,
-                                  const QColor &foreground,
-                                  const QColor &background)
+                                  const QString &key)
 {
     const auto it = snapshot.values.constFind(key);
     if (it == snapshot.values.cend() || !it->isValid()) {
         return std::nullopt;
     }
 
-    if (it->metaType() == QMetaType::fromType<QString>()) {
-        const QString value = it->toString();
-        if (value == QStringLiteral("cell-foreground")) {
-            return foreground;
-        }
-        if (value == QStringLiteral("cell-background")) {
-            return background;
-        }
-    }
-
     const QColor color = it->value<QColor>();
     return color.isValid() ? std::optional<QColor>(color) : std::nullopt;
+}
+
+std::optional<TerminalColorValue> configTerminalColor(
+    const GhosttyConfigSnapshot &snapshot, const QString &key)
+{
+    const auto it = snapshot.values.constFind(key);
+    if (it == snapshot.values.cend() || !it->isValid()) {
+        return std::nullopt;
+    }
+    if (it->metaType() == QMetaType::fromType<QString>()) {
+        const QString value = it->toString();
+        if (value.isEmpty()) {
+            return TerminalColorValue{};
+        }
+        if (value == QStringLiteral("cell-foreground")) {
+            return TerminalColorValue{
+                .kind = TerminalColorKind::CellForeground,
+                .color = {},
+            };
+        }
+        if (value == QStringLiteral("cell-background")) {
+            return TerminalColorValue{
+                .kind = TerminalColorKind::CellBackground,
+                .color = {},
+            };
+        }
+        return std::nullopt;
+    }
+    const QColor color = it->value<QColor>();
+    if (!color.isValid()) {
+        return std::nullopt;
+    }
+    return TerminalColorValue::fromColor(color);
+}
+
+std::optional<TerminalCursorStyle> configCursorStyle(const QVariant &value)
+{
+    if (value.metaType() != QMetaType::fromType<QString>()) {
+        return std::nullopt;
+    }
+    const QString style = value.toString();
+    if (style == QStringLiteral("block")) return TerminalCursorStyle::Block;
+    if (style == QStringLiteral("bar")) return TerminalCursorStyle::Bar;
+    if (style == QStringLiteral("underline")) return TerminalCursorStyle::Underline;
+    if (style == QStringLiteral("block_hollow")) {
+        return TerminalCursorStyle::BlockHollow;
+    }
+    return std::nullopt;
+}
+
+std::optional<TerminalBoldColor> configBoldColor(const QVariant &value)
+{
+    if (value.metaType() == QMetaType::fromType<QString>()) {
+        const QString bold = value.toString();
+        if (bold.isEmpty()) return TerminalBoldColor{};
+        if (bold == QStringLiteral("bright")) {
+            return TerminalBoldColor{
+                .kind = TerminalBoldColorKind::Bright,
+                .color = {},
+            };
+        }
+        return std::nullopt;
+    }
+    const QColor color = value.value<QColor>();
+    if (!color.isValid()) return std::nullopt;
+    return TerminalBoldColor{
+        .kind = TerminalBoldColorKind::Color,
+        .color = color,
+    };
+}
+
+std::optional<QVector<QColor>> configPalette(const QVariant &value)
+{
+    const QVariantList entries = value.toList();
+    if (entries.size() != 256) return std::nullopt;
+    QVector<QColor> palette;
+    palette.reserve(entries.size());
+    for (const QVariant &entry : entries) {
+        const QColor color = entry.value<QColor>();
+        if (!color.isValid()) return std::nullopt;
+        palette.append(color);
+    }
+    return palette;
+}
+
+std::optional<double> configUnitInterval(const QVariant &value)
+{
+    bool valid = false;
+    const double result = value.toDouble(&valid);
+    if (!valid || !std::isfinite(result) || result < 0.0 || result > 1.0) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+std::optional<double> configClampedUnitInterval(const QVariant &value)
+{
+    bool valid = false;
+    const double result = value.toDouble(&valid);
+    if (!valid || !std::isfinite(result)) {
+        return std::nullopt;
+    }
+    return std::clamp(result, 0.0, 1.0);
 }
 
 } // namespace
@@ -91,19 +183,56 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     }
 
     if (const auto foreground = configColor(
-            snapshot, QStringLiteral("foreground"),
-            result.foregroundColor, result.backgroundColor)) {
-        result.foregroundColor = *foreground;
+            snapshot, QStringLiteral("foreground"))) {
+        result.appearance.foregroundColor = *foreground;
     }
     if (const auto background = configColor(
-            snapshot, QStringLiteral("background"),
-            result.foregroundColor, result.backgroundColor)) {
-        result.backgroundColor = *background;
+            snapshot, QStringLiteral("background"))) {
+        result.appearance.backgroundColor = *background;
     }
-    if (const auto cursor = configColor(
-            snapshot, QStringLiteral("cursor-color"),
-            result.foregroundColor, result.backgroundColor)) {
-        result.cursorColor = *cursor;
+    if (const auto palette = configPalette(
+            snapshot.values.value(QStringLiteral("palette")))) {
+        result.appearance.palette = *palette;
+    }
+    if (const auto selectionForeground = configTerminalColor(
+            snapshot, QStringLiteral("selection-foreground"))) {
+        result.appearance.selectionForeground = *selectionForeground;
+    }
+    if (const auto selectionBackground = configTerminalColor(
+            snapshot, QStringLiteral("selection-background"))) {
+        result.appearance.selectionBackground = *selectionBackground;
+    }
+    if (const auto cursor = configTerminalColor(
+            snapshot, QStringLiteral("cursor-color"))) {
+        result.appearance.cursorColor = *cursor;
+    }
+    if (const auto cursorStyle = configCursorStyle(
+            snapshot.values.value(QStringLiteral("cursor-style")))) {
+        result.appearance.cursorStyle = *cursorStyle;
+    }
+    const QVariant cursorBlink =
+        snapshot.values.value(QStringLiteral("cursor-style-blink"));
+    if (cursorBlink.metaType() == QMetaType::fromType<bool>()) {
+        result.appearance.cursorBlink = cursorBlink.toBool();
+    } else if (cursorBlink.metaType() == QMetaType::fromType<QString>()
+               && cursorBlink.toString().isEmpty()) {
+        result.appearance.cursorBlink.reset();
+    }
+    if (const auto cursorOpacity = configClampedUnitInterval(
+            snapshot.values.value(QStringLiteral("cursor-opacity")))) {
+        result.appearance.cursorOpacity = *cursorOpacity;
+    }
+    if (const auto cursorText = configTerminalColor(
+            snapshot, QStringLiteral("cursor-text"))) {
+        result.appearance.cursorTextColor = *cursorText;
+    }
+    if (const auto boldColor = configBoldColor(
+            snapshot.values.value(QStringLiteral("bold-color")))) {
+        result.appearance.boldColor = *boldColor;
+    }
+    if (const auto faintOpacity = configUnitInterval(
+            snapshot.values.value(QStringLiteral("faint-opacity")))) {
+        result.appearance.faintOpacity = *faintOpacity;
     }
 
     const auto scrollback = snapshot.values.constFind(

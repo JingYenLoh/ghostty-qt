@@ -254,6 +254,7 @@ qt_add_executable(ghostty-qt
     src/session_worker.h
     src/tab_list_model.cpp
     src/tab_list_model.h
+    src/terminal_appearance.h
     src/terminal_controller.cpp
     src/terminal_controller.h
     src/terminal_pane.cpp

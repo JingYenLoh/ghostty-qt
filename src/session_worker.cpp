@@ -18,6 +18,7 @@
 #include <climits>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 #include <fcntl.h>
 #include <pty.h>
@@ -34,6 +35,7 @@ constexpr qsizetype kMaximumReadPerActivation = 1024 * 1024;
 constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
 constexpr int kFrameCoalesceMilliseconds = 8;
 constexpr int kCompressionIdleMilliseconds = 500;
+constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
 
@@ -64,6 +66,8 @@ void SessionWorker::initialize(const LaunchOptions &options)
     hold_ = options.hold;
     shuttingDown_ = false;
     potentialActivityTimer_.invalidate();
+    cursorBlinkResetTimer_.invalidate();
+    cursorBlinkResetPending_ = false;
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setSingleShot(true);
@@ -105,9 +109,7 @@ bool SessionWorker::createTerminal()
         },
         .scrollbackBytes = scrollbackLimitInBytes(
             options_.scrollbackLimit, columns_),
-        .foregroundColor = options_.foregroundColor,
-        .backgroundColor = options_.backgroundColor,
-        .cursorColor = options_.cursorColor,
+        .appearance = options_.appearance,
     };
     GhosttyVtAdapter::Callbacks callbacks;
     callbacks.writePty = [this](const QByteArray &data) { queuePtyWrite(data); };
@@ -120,21 +122,17 @@ bool SessionWorker::createTerminal()
 
 void SessionWorker::applyRuntimeOptions(const LaunchOptions &options)
 {
-    const bool colorsChanged = options_.foregroundColor != options.foregroundColor
-        || options_.backgroundColor != options.backgroundColor
-        || options_.cursorColor != options.cursorColor;
+    const bool appearanceChanged = options_.appearance != options.appearance;
     options_ = options;
     hold_ = options.hold;
 
     // libghostty-vt has no API for resizing an existing scrollback allocation.
     // options_.scrollbackLimit therefore records the desired value for
     // consistency only; TerminalWorkspace applies it when creating new panes.
-    if (vt_ != nullptr && colorsChanged) {
-        if (!vt_->setColors(options.foregroundColor,
-                            options.backgroundColor,
-                            options.cursorColor)) {
+    if (vt_ != nullptr && appearanceChanged) {
+        if (!vt_->setAppearance(options.appearance)) {
             Q_EMIT errorOccurred(
-                QStringLiteral("Failed to apply terminal colors to libghostty-vt."));
+                QStringLiteral("Failed to apply terminal appearance to libghostty-vt."));
             return;
         }
         scheduleFrame();
@@ -374,6 +372,12 @@ void SessionWorker::drainPty(bool finalDrain)
         syncSelectionAvailability();
         processDeferredEffects();
         noteCompressionActivity();
+        if (!cursorBlinkResetTimer_.isValid()
+            || cursorBlinkResetTimer_.elapsed()
+                > kCursorBlinkResetThrottleMilliseconds) {
+            cursorBlinkResetTimer_.restart();
+            cursorBlinkResetPending_ = true;
+        }
         scheduleFrame();
     }
     if (!finalDrain && totalRead >= kMaximumReadPerActivation) {
@@ -594,8 +598,11 @@ void SessionWorker::publishFrame()
         mouseTracking_ = snapshot.mouseTracking;
         Q_EMIT mouseTrackingChanged(mouseTracking_);
     }
-    if (snapshot.update.hasChanges()) {
-        Q_EMIT terminalUpdated(snapshot.update);
+    TerminalUpdate update = std::move(snapshot.update);
+    update.resetCursorBlink = cursorBlinkResetPending_;
+    if (update.hasChanges()) {
+        cursorBlinkResetPending_ = false;
+        Q_EMIT terminalUpdated(update);
     }
 }
 

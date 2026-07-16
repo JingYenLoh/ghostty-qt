@@ -34,14 +34,14 @@ ctest --preset dev
 
 The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
-typed config overlays, watched reload, flattened keybinding matching, and the
-config-helper process protocol,
+typed config/appearance overlays, watched reload, flattened keybinding
+matching, terminal appearance rendering, and the config-helper process protocol,
 as well as PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -R 'ghostty-vt-adapter|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -R 'ghostty-vt-adapter|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-config|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -53,6 +53,15 @@ parser is outside `libghostty-vt`, the build produces a private
 `ghostty-qt-config-helper`. The main process talks to that helper through
 Ghostty's `+validate-config` and `+show-config` CLI actions and converts only the
 documented compatibility keys into value snapshots.
+
+The appearance snapshot includes the complete canonical 256-entry palette,
+selection colors, cursor color/style/blink/opacity/text, bold-color, and
+faint-opacity. The process-loader tests verify default/current merging and
+malformed canonical values; launch-option tests verify their value-only overlay;
+adapter tests verify that config-default changes preserve OSC/DECSCUSR terminal
+overrides; and `terminal-pane-render` verifies the frontend-only color/style
+rules with deterministic pixel samples. This division keeps parser, terminal
+state, and renderer responsibilities independently testable.
 
 The additional Zig outputs and global package/artifact cache live under:
 
@@ -88,6 +97,11 @@ including Linux native physical locations and shifted punctuation lookup.
 The helper's formatted output does not preserve Ghostty's binding flags, so
 sequences, tables, global/all-surface behavior, and exact flag semantics must
 remain explicit later stages rather than being emulated with Qt shortcuts.
+The same boundary does not expose the post-derivation palette and explicit-entry
+mask required for exact `palette-generate`/`palette-harmonious` behavior. Also,
+the public terminal option for cursor blink is boolean rather than Ghostty's
+configuration tri-state. The parity ledger keeps those limitations planned and
+partial, respectively.
 
 ## Ghostty parity manifest
 

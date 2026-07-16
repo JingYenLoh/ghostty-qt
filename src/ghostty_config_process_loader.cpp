@@ -11,8 +11,10 @@
 #include <QVariant>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -29,8 +31,26 @@ struct ParsedConfig {
     QColor foreground;
     bool hasBackground = false;
     QColor background;
+    bool hasPalette = false;
+    std::array<std::optional<QColor>, 256> palette;
+    bool hasSelectionForeground = false;
+    QVariant selectionForeground;
+    bool hasSelectionBackground = false;
+    QVariant selectionBackground;
     bool hasCursorColor = false;
     QVariant cursorColor;
+    bool hasCursorOpacity = false;
+    double cursorOpacity = 1.0;
+    bool hasCursorStyle = false;
+    QString cursorStyle;
+    bool hasCursorStyleBlink = false;
+    QVariant cursorStyleBlink;
+    bool hasCursorText = false;
+    QVariant cursorText;
+    bool hasBoldColor = false;
+    QVariant boldColor;
+    bool hasFaintOpacity = false;
+    double faintOpacity = 0.5;
     bool hasScrollbackLimit = false;
     quint64 scrollbackLimit = 0;
     bool hasConfirmCloseSurface = false;
@@ -270,6 +290,72 @@ bool parseColor(const QString &value, QColor *destination)
     return true;
 }
 
+bool parseTerminalColor(const QString &value, QVariant *destination)
+{
+    if (value.isEmpty()
+        || value == QStringLiteral("cell-foreground")
+        || value == QStringLiteral("cell-background")) {
+        *destination = value;
+        return true;
+    }
+    QColor color;
+    if (!parseColor(value, &color)) return false;
+    *destination = color;
+    return true;
+}
+
+bool parsePaletteEntry(const QString &value, int *index, QColor *color)
+{
+    const qsizetype separator = value.indexOf(u'=');
+    if (separator <= 0) return false;
+    bool validIndex = false;
+    const uint parsedIndex = value.left(separator).trimmed().toUInt(
+        &validIndex, 10);
+    if (!validIndex || parsedIndex >= 256) return false;
+    if (!parseColor(value.mid(separator + 1).trimmed(), color)) return false;
+    *index = static_cast<int>(parsedIndex);
+    return true;
+}
+
+bool parseOptionalBool(const QString &value, QVariant *destination)
+{
+    if (value.isEmpty()) {
+        *destination = value;
+        return true;
+    }
+    if (value == QStringLiteral("true")) {
+        *destination = true;
+        return true;
+    }
+    if (value == QStringLiteral("false")) {
+        *destination = false;
+        return true;
+    }
+    return false;
+}
+
+bool parseUnitInterval(const QString &value, double *destination)
+{
+    bool valid = false;
+    const double parsed = value.toDouble(&valid);
+    if (!valid || !std::isfinite(parsed) || parsed < 0.0 || parsed > 1.0) {
+        return false;
+    }
+    *destination = parsed;
+    return true;
+}
+
+bool parseFiniteDouble(const QString &value, double *destination)
+{
+    bool valid = false;
+    const double parsed = value.toDouble(&valid);
+    if (!valid || !std::isfinite(parsed)) {
+        return false;
+    }
+    *destination = parsed;
+    return true;
+}
+
 bool parseDump(const QByteArray &dump,
                ParsedConfig *parsed,
                QString *errorMessage)
@@ -334,22 +420,99 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->hasBackground = true;
+        } else if (key == QStringLiteral("palette")) {
+            int index = 0;
+            QColor color;
+            if (!parsePaletteEntry(value, &index, &color)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid palette in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasPalette = true;
+            parsed->palette[static_cast<std::size_t>(index)] = color;
+        } else if (key == QStringLiteral("selection-foreground")) {
+            if (!parseTerminalColor(value, &parsed->selectionForeground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid selection-foreground in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSelectionForeground = true;
+        } else if (key == QStringLiteral("selection-background")) {
+            if (!parseTerminalColor(value, &parsed->selectionBackground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid selection-background in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSelectionBackground = true;
         } else if (key == QStringLiteral("cursor-color")) {
             parsed->hasCursorColor = true;
-            if (value.isEmpty()
-                || value == QStringLiteral("cell-foreground")
-                || value == QStringLiteral("cell-background")) {
-                parsed->cursorColor = value;
+            if (!parseTerminalColor(value, &parsed->cursorColor)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid cursor-color in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+        } else if (key == QStringLiteral("cursor-opacity")) {
+            if (!parseFiniteDouble(value, &parsed->cursorOpacity)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid cursor-opacity in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasCursorOpacity = true;
+        } else if (key == QStringLiteral("cursor-style")) {
+            if (value != QStringLiteral("block")
+                && value != QStringLiteral("bar")
+                && value != QStringLiteral("underline")
+                && value != QStringLiteral("block_hollow")) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid cursor-style in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasCursorStyle = true;
+            parsed->cursorStyle = value;
+        } else if (key == QStringLiteral("cursor-style-blink")) {
+            if (!parseOptionalBool(value, &parsed->cursorStyleBlink)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid cursor-style-blink in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasCursorStyleBlink = true;
+        } else if (key == QStringLiteral("cursor-text")) {
+            if (!parseTerminalColor(value, &parsed->cursorText)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid cursor-text in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasCursorText = true;
+        } else if (key == QStringLiteral("bold-color")) {
+            parsed->hasBoldColor = true;
+            if (value.isEmpty() || value == QStringLiteral("bright")) {
+                parsed->boldColor = value;
             } else {
                 QColor color;
                 if (!parseColor(value, &color)) {
                     setError(errorMessage,
-                             QStringLiteral("Invalid cursor-color in Ghostty config output at line %1")
+                             QStringLiteral("Invalid bold-color in Ghostty config output at line %1")
                                  .arg(displayLine));
                     return false;
                 }
-                parsed->cursorColor = color;
+                parsed->boldColor = color;
             }
+        } else if (key == QStringLiteral("faint-opacity")) {
+            if (!parseUnitInterval(value, &parsed->faintOpacity)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid faint-opacity in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasFaintOpacity = true;
         } else if (key == QStringLiteral("scrollback-limit")) {
             bool valid = false;
             const quint64 scrollbackLimit = value.toULongLong(&valid);
@@ -480,7 +643,13 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
 
     if (!defaults.hasFontFamilies || !defaults.hasFontSize
         || !defaults.hasForeground || !defaults.hasBackground
-        || !defaults.hasCursorColor
+        || !defaults.hasPalette
+        || !defaults.hasSelectionForeground
+        || !defaults.hasSelectionBackground
+        || !defaults.hasCursorColor || !defaults.hasCursorOpacity
+        || !defaults.hasCursorStyle || !defaults.hasCursorStyleBlink
+        || !defaults.hasCursorText || !defaults.hasBoldColor
+        || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
         || !defaults.hasKeybinds || !defaults.hasConfigFiles) {
         return GhosttyConfigLoadResult::failed(
@@ -503,9 +672,53 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const QColor background =
         mergedValue(changes.hasBackground, changes.background,
                     defaults.background);
+    std::array<std::optional<QColor>, 256> palette = defaults.palette;
+    if (changes.hasPalette) {
+        for (std::size_t index = 0; index < palette.size(); ++index) {
+            if (changes.palette[index].has_value()) {
+                palette[index] = changes.palette[index];
+            }
+        }
+    }
+    QVariantList paletteValues;
+    paletteValues.reserve(static_cast<qsizetype>(palette.size()));
+    for (const std::optional<QColor> &color : palette) {
+        if (!color.has_value()) {
+            return GhosttyConfigLoadResult::failed(
+                QStringLiteral("Ghostty default config output is missing a required compatibility key"));
+        }
+        paletteValues.append(*color);
+    }
+    const QVariant selectionForeground =
+        mergedValue(changes.hasSelectionForeground,
+                    changes.selectionForeground,
+                    defaults.selectionForeground);
+    const QVariant selectionBackground =
+        mergedValue(changes.hasSelectionBackground,
+                    changes.selectionBackground,
+                    defaults.selectionBackground);
     const QVariant cursorColor =
         mergedValue(changes.hasCursorColor, changes.cursorColor,
                     defaults.cursorColor);
+    const double cursorOpacity =
+        mergedValue(changes.hasCursorOpacity, changes.cursorOpacity,
+                    defaults.cursorOpacity);
+    const QString cursorStyle =
+        mergedValue(changes.hasCursorStyle, changes.cursorStyle,
+                    defaults.cursorStyle);
+    const QVariant cursorStyleBlink =
+        mergedValue(changes.hasCursorStyleBlink,
+                    changes.cursorStyleBlink,
+                    defaults.cursorStyleBlink);
+    const QVariant cursorText =
+        mergedValue(changes.hasCursorText, changes.cursorText,
+                    defaults.cursorText);
+    const QVariant boldColor =
+        mergedValue(changes.hasBoldColor, changes.boldColor,
+                    defaults.boldColor);
+    const double faintOpacity =
+        mergedValue(changes.hasFaintOpacity, changes.faintOpacity,
+                    defaults.faintOpacity);
     const quint64 scrollbackLimit =
         mergedValue(changes.hasScrollbackLimit, changes.scrollbackLimit,
                     defaults.scrollbackLimit);
@@ -526,7 +739,19 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("font-size"), fontSize);
     snapshot.values.insert(QStringLiteral("foreground"), foreground);
     snapshot.values.insert(QStringLiteral("background"), background);
+    snapshot.values.insert(QStringLiteral("palette"), paletteValues);
+    snapshot.values.insert(QStringLiteral("selection-foreground"),
+                           selectionForeground);
+    snapshot.values.insert(QStringLiteral("selection-background"),
+                           selectionBackground);
     snapshot.values.insert(QStringLiteral("cursor-color"), cursorColor);
+    snapshot.values.insert(QStringLiteral("cursor-opacity"), cursorOpacity);
+    snapshot.values.insert(QStringLiteral("cursor-style"), cursorStyle);
+    snapshot.values.insert(QStringLiteral("cursor-style-blink"),
+                           cursorStyleBlink);
+    snapshot.values.insert(QStringLiteral("cursor-text"), cursorText);
+    snapshot.values.insert(QStringLiteral("bold-color"), boldColor);
+    snapshot.values.insert(QStringLiteral("faint-opacity"), faintOpacity);
     snapshot.values.insert(QStringLiteral("scrollback-limit"), scrollbackLimit);
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            confirmCloseSurface);

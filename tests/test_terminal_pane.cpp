@@ -5,13 +5,18 @@
 
 #include <QColor>
 #include <QDir>
+#include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QKeyEvent>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTest>
 
 #include <algorithm>
+#include <array>
+#include <utility>
 
 namespace {
 
@@ -51,6 +56,7 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
+    void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
 };
@@ -148,6 +154,300 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     pane.resetZoom();
     QCOMPARE(pane.fontPointSize(), 10.0);
     QVERIFY(!pane.splitLaunchOptions().fontSizeManuallyAdjusted);
+}
+
+void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    options.fontFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+    options.appearance.palette.fill(Qt::black, 256);
+    options.appearance.palette[8] = QColor(QStringLiteral("#00ff00"));
+    options.appearance.boldColor.kind = TerminalBoldColorKind::Bright;
+    options.appearance.faintOpacity = 0.25;
+    options.appearance.selectionBackground.kind = TerminalColorKind::CellForeground;
+    options.appearance.selectionForeground.kind = TerminalColorKind::CellBackground;
+    options.appearance.cursorColor = TerminalColorValue::fromColor(
+        QColor(QStringLiteral("#ff00ff")));
+    options.appearance.cursorTextColor = TerminalColorValue::fromColor(
+        QColor(QStringLiteral("#00ffff")));
+    options.appearance.cursorOpacity = 0.5;
+
+    QFont testFont(options.fontFamily);
+    testFont.setPointSizeF(options.fontSize);
+    testFont.setFixedPitch(true);
+    testFont.setStyleHint(QFont::Monospace);
+    const QFontMetricsF metrics(testFont);
+    const qreal cellWidth = std::max(
+        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
+    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+
+    constexpr int columns = 12;
+    // Leave enough room for a possible process-status overlay at the bottom;
+    // appearance samples stay in the first two rows.
+    constexpr int rows = 4;
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(qCeil(cellWidth * columns), qCeil(cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+    QTest::qWait(150);
+
+    TerminalUpdate update;
+    update.columns = columns;
+    update.rows = rows;
+    update.fullFrame = true;
+    update.colorsChanged = true;
+    update.foreground = Qt::white;
+    update.background = Qt::black;
+    update.cursorColor = QColor(QStringLiteral("#ff00ff"));
+    update.cursorColorExplicit = true;
+    update.palette = options.appearance.palette;
+    update.cursorChanged = true;
+    update.cursorVisible = true;
+    update.cursorBlinking = true;
+    update.cursorColumn = 3;
+    update.cursorRow = 0;
+    update.cursorStyle = 1;
+    update.cursorColumnSpan = 2;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.foreground = Qt::white;
+            cell.background = Qt::black;
+            cell.underlineColor = Qt::white;
+        }
+        update.dirtyRows.append(std::move(rowUpdate));
+    }
+
+    TerminalCell &selection = update.dirtyRows[0].cells[0];
+    selection.foreground = QColor(QStringLiteral("#ff0000"));
+    selection.background = QColor(QStringLiteral("#0000ff"));
+    selection.selected = true;
+
+    TerminalCell &bold = update.dirtyRows[0].cells[1];
+    bold.text = QString(QChar(0x2588));
+    bold.foreground = QColor(QStringLiteral("#800000"));
+    bold.bold = true;
+    bold.styleForegroundSource = TerminalColorSource::Palette;
+    bold.styleForegroundPaletteIndex = 0;
+
+    TerminalCell &faint = update.dirtyRows[0].cells[2];
+    faint.text = QString(QChar(0x2588));
+    faint.faint = true;
+
+    TerminalCell &cursorHead = update.dirtyRows[0].cells[3];
+    cursorHead.text = QStringLiteral("I");
+    cursorHead.columnSpan = 2;
+    cursorHead.faint = true;
+    cursorHead.underlineStyle = TerminalUnderlineStyle::Single;
+    cursorHead.underlineUsesForeground = false;
+    cursorHead.underlineColor = Qt::red;
+    cursorHead.strikeThrough = true;
+    cursorHead.overline = true;
+    TerminalCell &cursorTail = update.dirtyRows[0].cells[4];
+    cursorTail.spacer = true;
+    cursorTail.underlineStyle = TerminalUnderlineStyle::Single;
+    cursorTail.underlineUsesForeground = false;
+    cursorTail.underlineColor = Qt::red;
+    cursorTail.strikeThrough = true;
+    cursorTail.overline = true;
+
+    const std::array<TerminalUnderlineStyle, 6> underlines{
+        TerminalUnderlineStyle::None,
+        TerminalUnderlineStyle::Single,
+        TerminalUnderlineStyle::Double,
+        TerminalUnderlineStyle::Curly,
+        TerminalUnderlineStyle::Dotted,
+        TerminalUnderlineStyle::Dashed,
+    };
+    for (int i = 0; i < static_cast<int>(underlines.size()); ++i) {
+        TerminalCell &cell = update.dirtyRows[0].cells[6 + i];
+        cell.underlineStyle = underlines[static_cast<size_t>(i)];
+        cell.underlineUsesForeground = false;
+    }
+
+    TerminalCell &invisible = update.dirtyRows[1].cells[0];
+    invisible.underlineStyle = TerminalUnderlineStyle::Single;
+    invisible.underlineUsesForeground = false;
+    invisible.invisible = true;
+    TerminalCell &retainedBlink = update.dirtyRows[1].cells[1];
+    retainedBlink.text = QString(QChar(0x2588));
+    retainedBlink.foreground = QColor(QStringLiteral("#ffff00"));
+    retainedBlink.textBlink = true;
+
+    controller->terminalUpdated(update);
+    // The synthetic frame was delivered synchronously. Keep a later PTY
+    // readiness update from replacing it while the software scene graph is
+    // being sampled.
+    QObject::disconnect(controller, &TerminalController::terminalUpdated,
+                        pane, nullptr);
+    QTest::qWait(100);
+    const QImage image = window.grabWindow();
+    QVERIFY(!image.isNull());
+
+    const qreal xScale = static_cast<qreal>(image.width()) / window.width();
+    const qreal yScale = static_cast<qreal>(image.height()) / window.height();
+    const auto centerColor = [&](int column) {
+        return image.pixelColor(
+            qBound(0, qRound((column + 0.5) * cellWidth * xScale), image.width() - 1),
+            qBound(0, qRound(0.5 * cellHeight * yScale), image.height() - 1));
+    };
+
+    const QColor selectionPixel = centerColor(0);
+    QVERIFY2(approximatelyEqual(selectionPixel, QColor(QStringLiteral("#ff0000"))),
+             qPrintable(QStringLiteral("selection pixel=%1 image=%2x%3 cell=%4x%5")
+                            .arg(selectionPixel.name(QColor::HexArgb))
+                            .arg(image.width()).arg(image.height())
+                            .arg(cellWidth).arg(cellHeight)));
+    QVERIFY(approximatelyEqual(centerColor(1), QColor(QStringLiteral("#00ff00"))));
+    const QColor faintPixel = centerColor(2);
+    QVERIFY(faintPixel.red() >= 55 && faintPixel.red() <= 75);
+    QVERIFY(faintPixel.green() >= 55 && faintPixel.green() <= 75);
+    QVERIFY(faintPixel.blue() >= 55 && faintPixel.blue() <= 75);
+    bool foundCursorBackground = false;
+    bool foundCursorText = false;
+    const int cursorLeft = qRound(3.0 * cellWidth * xScale);
+    const int cursorRight = qRound(5.0 * cellWidth * xScale);
+    for (int y = 0; y < qRound(cellHeight * yScale); ++y) {
+        for (int x = cursorLeft; x < cursorRight; ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            foundCursorBackground = foundCursorBackground
+                || (pixel.red() >= 120 && pixel.red() <= 140
+                    && pixel.green() <= 10
+                    && pixel.blue() >= 120 && pixel.blue() <= 140);
+            foundCursorText = foundCursorText
+                || (pixel.red() <= 10 && pixel.green() >= 245
+                    && pixel.blue() >= 245);
+        }
+    }
+    QVERIFY(foundCursorBackground);
+    QVERIFY(foundCursorText);
+    bool foundWideCursorDecoration = false;
+    for (int y = 0; y < qRound(cellHeight * yScale); ++y) {
+        for (int x = qRound(4.0 * cellWidth * xScale);
+             x < cursorRight; ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            foundWideCursorDecoration = foundWideCursorDecoration
+                || (pixel.red() <= 10 && pixel.green() >= 245
+                    && pixel.blue() >= 245);
+            QVERIFY(!(pixel.red() >= 245 && pixel.green() <= 10
+                      && pixel.blue() <= 10));
+        }
+    }
+    QVERIFY(foundWideCursorDecoration);
+
+    std::array<int, 6> decorationPixels{};
+    std::array<QSet<int>, 6> decorationRows;
+    for (int style = 0; style < 6; ++style) {
+        const int left = qRound((6 + style) * cellWidth * xScale);
+        const int right = qRound((7 + style) * cellWidth * xScale);
+        for (int y = 0; y < qRound(cellHeight * yScale); ++y) {
+            for (int x = left; x < right; ++x) {
+                if (!approximatelyEqual(image.pixelColor(x, y), Qt::black)) {
+                    ++decorationPixels[static_cast<size_t>(style)];
+                    decorationRows[static_cast<size_t>(style)].insert(y);
+                }
+            }
+        }
+    }
+    QCOMPARE(decorationPixels[0], 0);
+    QVERIFY(decorationPixels[1] > 0);
+    QVERIFY(decorationPixels[2] > decorationPixels[1]);
+    QVERIFY(decorationRows[3].size() >= 2);
+    QVERIFY(decorationPixels[4] > 0);
+    QVERIFY(decorationPixels[4] < decorationPixels[1]);
+    QVERIFY(decorationPixels[5] > decorationPixels[4]);
+    QVERIFY(decorationPixels[5] < decorationPixels[1]);
+
+    const auto secondRowCenterColor = [&](int column, const QImage &source) {
+        return source.pixelColor(
+            qBound(0, qRound((column + 0.5) * cellWidth * xScale),
+                   source.width() - 1),
+            qBound(0, qRound(1.5 * cellHeight * yScale),
+                   source.height() - 1));
+    };
+    int invisiblePixels = 0;
+    for (int y = qRound(cellHeight * yScale);
+         y < qRound(2.0 * cellHeight * yScale); ++y) {
+        for (int x = 0; x < qRound(cellWidth * xScale); ++x) {
+            if (!approximatelyEqual(image.pixelColor(x, y), Qt::black)) {
+                ++invisiblePixels;
+            }
+        }
+    }
+    QCOMPARE(invisiblePixels, 0);
+    QVERIFY(approximatelyEqual(secondRowCenterColor(1, image),
+                               QColor(QStringLiteral("#ffff00"))));
+    // Cross the 600 ms cursor-blink cadence: SGR text blink remains stable,
+    // matching the pinned Ghostty renderer rather than sharing that timer.
+    QTest::qWait(650);
+    const QImage laterImage = window.grabWindow();
+    QVERIFY(!laterImage.isNull());
+    QVERIFY(approximatelyEqual(secondRowCenterColor(1, laterImage),
+                               QColor(QStringLiteral("#ffff00"))));
+
+    const auto cursorContains = [&](const QImage &source,
+                                    const auto &predicate) {
+        for (int y = 0; y < qRound(cellHeight * yScale); ++y) {
+            for (int x = cursorLeft; x < cursorRight; ++x) {
+                if (predicate(source.pixelColor(x, y))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    QVERIFY(!cursorContains(laterImage, [](const QColor &pixel) {
+        return pixel.red() >= 110 && pixel.green() <= 20
+            && pixel.blue() >= 110;
+    }));
+
+    // Losing focus stops the blink timer and immediately presents Ghostty's
+    // opaque hollow cursor. Regaining focus shows the configured cursor at
+    // once and restarts its interval.
+    QQuickItem focusTarget(window.contentItem());
+    focusTarget.setFocusPolicy(Qt::StrongFocus);
+    focusTarget.forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->hasActiveFocus(), 1000);
+    QTest::qWait(50);
+    const QImage unfocusedImage = window.grabWindow();
+    QVERIFY(cursorContains(unfocusedImage, [](const QColor &pixel) {
+        return pixel.red() >= 245 && pixel.green() <= 10
+            && pixel.blue() >= 245;
+    }));
+
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+    QTest::qWait(50);
+    const QImage refocusedImage = window.grabWindow();
+    QVERIFY(cursorContains(refocusedImage, [](const QColor &pixel) {
+        return pixel.red() >= 120 && pixel.red() <= 140
+            && pixel.green() <= 10
+            && pixel.blue() >= 120 && pixel.blue() <= 140;
+    }));
+
+    window.close();
+    delete pane;
 }
 
 void TerminalPaneTest::routesEmergencyTabShortcuts()

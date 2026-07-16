@@ -1,5 +1,6 @@
 #pragma once
 
+#include "terminal_appearance.h"
 #include "terminal_types.h"
 
 #include <QByteArray>
@@ -28,10 +29,7 @@ public:
         Geometry geometry;
         // libghostty's max_scrollback initialization option is byte-valued.
         quint64 scrollbackBytes = 10'000'000;
-        QColor foregroundColor = QColor(QStringLiteral("#d8dee9"));
-        QColor backgroundColor = QColor(QStringLiteral("#1e222a"));
-        // Invalid follows foreground.
-        QColor cursorColor;
+        TerminalAppearance appearance;
     };
 
     struct Callbacks {
@@ -68,8 +66,7 @@ public:
     GhosttyVtAdapter &operator=(GhosttyVtAdapter &&) = delete;
 
     bool resize(const Geometry &geometry);
-    bool setColors(const QColor &foreground, const QColor &background,
-                   const QColor &cursor = {});
+    bool setAppearance(const TerminalAppearance &appearance);
     void writeVt(QByteArrayView data);
     void synchronizeInputModes();
 

@@ -35,6 +35,14 @@ bool updatesContain(const QSignalSpy &spy, const QString &needle)
     return frameText(accumulatedFrame(spy)).contains(needle);
 }
 
+bool containsCursorBlinkReset(const QSignalSpy &spy)
+{
+    return std::any_of(spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
+        return !args.isEmpty()
+            && qvariant_cast<TerminalUpdate>(args.constFirst()).resetCursorBlink;
+    });
+}
+
 bool spyContainsBool(const QSignalSpy &spy, bool expected)
 {
     return std::any_of(spy.cbegin(), spy.cend(), [expected](const QList<QVariant> &args) {
@@ -51,7 +59,7 @@ private Q_SLOTS:
     void runsCommandThroughPty();
     void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
-    void appliesReloadedColorsToExistingTerminal();
+    void appliesReloadedAppearanceToExistingTerminal();
     void retainsSelectionAvailabilityOutsideViewport();
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
@@ -94,6 +102,7 @@ void SessionWorkerTest::runsCommandThroughPty()
              qPrintable(finalContents));
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
+    QVERIFY(containsCursorBlinkReset(updateSpy));
     worker.shutdown();
 }
 
@@ -168,7 +177,7 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     worker.shutdown();
 }
 
-void SessionWorkerTest::appliesReloadedColorsToExistingTerminal()
+void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
 {
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
@@ -186,17 +195,34 @@ void SessionWorkerTest::appliesReloadedColorsToExistingTerminal()
     worker.initialize(options);
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("color-reload-ready")), 5000);
+    updateSpy.clear();
 
-    options.foregroundColor = QColor(QStringLiteral("#abcdef"));
-    options.backgroundColor = QColor(QStringLiteral("#102030"));
-    options.cursorColor = QColor(QStringLiteral("#fedcba"));
+    options.appearance.foregroundColor = QColor(QStringLiteral("#abcdef"));
+    options.appearance.backgroundColor = QColor(QStringLiteral("#102030"));
+    options.appearance.cursorColor = TerminalColorValue::fromColor(
+        QColor(QStringLiteral("#fedcba")));
+    options.appearance.palette.resize(256);
+    for (int index = 0; index < options.appearance.palette.size(); ++index) {
+        options.appearance.palette[index] =
+            QColor::fromRgb(index, 255 - index, index / 2);
+    }
+    options.appearance.cursorStyle = TerminalCursorStyle::Underline;
+    options.appearance.cursorBlink = false;
     worker.applyRuntimeOptions(options);
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).foreground == options.foregroundColor, 2000);
+        accumulatedFrame(updateSpy).foreground
+            == options.appearance.foregroundColor
+            && accumulatedFrame(updateSpy).palette.size() == 256,
+        2000);
     const TerminalFrame frame = accumulatedFrame(updateSpy);
-    QCOMPARE(frame.background, options.backgroundColor);
-    QCOMPARE(frame.cursorColor, options.cursorColor);
+    QCOMPARE(frame.background, options.appearance.backgroundColor);
+    QCOMPARE(frame.cursorColor, options.appearance.cursorColor.color);
+    QVERIFY(frame.cursorColorExplicit);
+    QCOMPARE(frame.palette.at(42), QColor::fromRgb(42, 213, 21));
+    QCOMPARE(frame.cursorStyle, 2);
+    QVERIFY(!frame.cursorBlinking);
+    QVERIFY(!containsCursorBlinkReset(updateSpy));
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "ghostty_config_snapshot.h"
+#include "terminal_appearance.h"
 
-#include <QColor>
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
@@ -38,10 +38,7 @@ struct LaunchOptions {
     bool fontSizeExplicit = false;
     // Carries pane-local zoom state when a split inherits its parent's font.
     bool fontSizeManuallyAdjusted = false;
-    QColor foregroundColor = QColor(QStringLiteral("#d8dee9"));
-    QColor backgroundColor = QColor(QStringLiteral("#1e222a"));
-    // Invalid means "follow the foreground", matching libghostty's default.
-    QColor cursorColor;
+    TerminalAppearance appearance;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;

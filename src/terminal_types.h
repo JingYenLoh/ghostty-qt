@@ -8,15 +8,42 @@
 #include <algorithm>
 #include <cstdint>
 
+// The renderer needs the original SGR foreground source in addition to the
+// resolved RGB value. Ghostty's bold-color=bright behavior only promotes the
+// first eight palette entries; direct RGB and the remaining palette entries
+// must retain their color.
+enum class TerminalColorSource : quint8 {
+    Default,
+    Palette,
+    Rgb,
+};
+
+enum class TerminalUnderlineStyle : quint8 {
+    None,
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+};
+
 struct TerminalCell {
     QString text;
     QColor foreground;
     QColor background;
     QColor underlineColor;
+    TerminalColorSource styleForegroundSource = TerminalColorSource::Default;
+    int styleForegroundPaletteIndex = -1;
     bool bold = false;
     bool italic = false;
     bool faint = false;
-    bool underline = false;
+    // Retained for semantic parity. The pinned Ghostty renderer currently
+    // records SGR blink but deliberately does not animate text with it.
+    bool textBlink = false;
+    bool inverse = false;
+    bool invisible = false;
+    bool underlineUsesForeground = true;
+    TerminalUnderlineStyle underlineStyle = TerminalUnderlineStyle::None;
     bool strikeThrough = false;
     bool overline = false;
     bool selected = false;
@@ -31,6 +58,8 @@ struct TerminalFrame {
     QColor foreground = QColor(QStringLiteral("#d8dee9"));
     QColor background = QColor(QStringLiteral("#1e222a"));
     QColor cursorColor = QColor(QStringLiteral("#d8dee9"));
+    QVector<QColor> palette;
+    bool cursorColorExplicit = false;
     bool cursorVisible = false;
     bool cursorBlinking = false;
     int cursorColumn = 0;
@@ -63,6 +92,8 @@ struct TerminalUpdate {
     QColor foreground = QColor(QStringLiteral("#d8dee9"));
     QColor background = QColor(QStringLiteral("#1e222a"));
     QColor cursorColor = QColor(QStringLiteral("#d8dee9"));
+    QVector<QColor> palette;
+    bool cursorColorExplicit = false;
 
     bool cursorChanged = false;
     bool cursorVisible = false;
@@ -77,10 +108,15 @@ struct TerminalUpdate {
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
 
+    // SessionWorker sets this only for PTY output activity. It is transport
+    // metadata rather than terminal state and therefore is not retained in
+    // TerminalFrame.
+    bool resetCursorBlink = false;
+
     bool hasChanges() const
     {
         return fullFrame || !dirtyRows.isEmpty() || colorsChanged
-            || cursorChanged || scrollbarChanged;
+            || cursorChanged || scrollbarChanged || resetCursorBlink;
     }
 };
 
@@ -125,6 +161,8 @@ inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &upda
         frame->foreground = update.foreground;
         frame->background = update.background;
         frame->cursorColor = update.cursorColor;
+        frame->palette = update.palette;
+        frame->cursorColorExplicit = update.cursorColorExplicit;
     }
     if (update.fullFrame || update.cursorChanged) {
         frame->cursorVisible = update.cursorVisible;
