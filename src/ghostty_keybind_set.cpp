@@ -29,6 +29,7 @@ struct ParsedTrigger {
     int qtKey = Qt::Key_unknown;
     quint32 nativeScanCode = 0;
     bool keypad = false;
+    QString physicalName;
     QString unicode;
     Qt::KeyboardModifiers modifiers = Qt::NoModifier;
 };
@@ -416,6 +417,10 @@ bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
             trigger->qtKey = key->qtKey;
             trigger->nativeScanCode = key->nativeScanCode;
             trigger->keypad = key->keypad;
+            trigger->physicalName =
+                part.contains(u'_') || part == part.toString().toLower()
+                ? part.toString().toLower()
+                : w3cToSnake(part);
             continue;
         }
         if (isSingleCodepoint(part)) {
@@ -526,6 +531,46 @@ Qt::KeyboardModifiers withoutTriggeredModifier(
     }
 }
 
+quint8 configModifiers(Qt::KeyboardModifiers modifiers)
+{
+    quint8 result = 0;
+    if (modifiers.testFlag(Qt::ShiftModifier)) result |= GhosttyKeybindShift;
+    if (modifiers.testFlag(Qt::ControlModifier)) result |= GhosttyKeybindCtrl;
+    if (modifiers.testFlag(Qt::AltModifier)) result |= GhosttyKeybindAlt;
+    if (modifiers.testFlag(Qt::MetaModifier)) result |= GhosttyKeybindSuper;
+    return result;
+}
+
+Qt::KeyboardModifiers qtModifiers(quint8 modifiers)
+{
+    Qt::KeyboardModifiers result = Qt::NoModifier;
+    if ((modifiers & GhosttyKeybindShift) != 0U) result |= Qt::ShiftModifier;
+    if ((modifiers & GhosttyKeybindCtrl) != 0U) result |= Qt::ControlModifier;
+    if ((modifiers & GhosttyKeybindAlt) != 0U) result |= Qt::AltModifier;
+    if ((modifiers & GhosttyKeybindSuper) != 0U) result |= Qt::MetaModifier;
+    return result;
+}
+
+bool isUnicodeScalar(quint32 codepoint)
+{
+    return codepoint <= 0x10ffffU
+        && !(codepoint >= 0xd800U && codepoint <= 0xdfffU);
+}
+
+bool isModifierKey(int key)
+{
+    return key == Qt::Key_Control || key == Qt::Key_Shift
+        || key == Qt::Key_Alt || key == Qt::Key_AltGr
+        || key == Qt::Key_Meta;
+}
+
+bool isIgnoreAction(QStringView action)
+{
+    const qsizetype colon = action.indexOf(u':');
+    return (colon < 0 ? action : action.first(colon))
+        == QLatin1StringView("ignore");
+}
+
 } // namespace
 
 int GhosttyKeybindLoadReport::count(
@@ -540,19 +585,39 @@ int GhosttyKeybindLoadReport::count(
 QStringList GhosttyKeybindSet::serializedActions() const
 {
     QStringList result;
-    for (const Binding &binding : bindings_) {
-        result.append(binding.actions);
+    if (nodes_.isEmpty()) {
+        return result;
     }
+
+    const auto visit = [this, &result](auto &&self, quint32 node) -> void {
+        if (node >= static_cast<quint32>(nodes_.size())) {
+            return;
+        }
+        for (const Entry &entry : nodes_.at(static_cast<qsizetype>(node)).entries) {
+            if (entry.kind == EntryKind::Leader) {
+                self(self, entry.child);
+            } else {
+                result.append(entry.actions);
+            }
+        }
+    };
+    visit(visit, 0);
     return result;
+}
+
+void GhosttyKeybindSet::clear() noexcept
+{
+    nodes_.clear();
+    nodes_.append(Node{});
+    bindingCount_ = 0;
+    resetSequence();
 }
 
 GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
 {
-    bindings_.clear();
     GhosttyKeybindLoadReport report;
     report.records.reserve(values.size());
-
-    // Chains must be immediately adjacent to the binding they extend.
+    GhosttyKeybindConfig config;
     qsizetype chainTarget = -1;
 
     for (const QString &value : values) {
@@ -595,14 +660,13 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
             chainTarget = -1;
             continue;
         }
-
         if (left == QLatin1StringView("chain")) {
-            if (chainTarget < 0 || chainTarget >= bindings_.size()) {
+            if (chainTarget < 0 || chainTarget >= config.root.size()) {
                 report.records.append(record(input, Disposition::Unsupported,
                                              Reason::OrphanChain,
                                              QStringLiteral("chain has no adjacent supported binding")));
             } else {
-                bindings_[chainTarget].actions.append(action);
+                config.root[chainTarget].actions.append(action);
                 report.records.append(record(input, Disposition::Chained));
             }
             continue;
@@ -617,71 +681,337 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
                                          Reason::None, std::move(error)));
             continue;
         }
-
-        const QStringView triggerText = left.sliced(triggerStart);
-        if (triggerText.contains(u'>')) {
-            report.records.append(record(input, Disposition::Unsupported,
-                                         Reason::Sequence));
-            continue;
-        }
         if (flags.nonLocal) {
             report.records.append(record(input, Disposition::Unsupported,
                                          Reason::NonLocal));
             continue;
         }
 
-        ParsedTrigger trigger;
-        if (!parseTrigger(triggerText, &trigger, &error)) {
+        const QString triggerText = left.sliced(triggerStart).toString();
+        const QStringList parts = triggerText.split(u'>', Qt::KeepEmptyParts);
+        GhosttyKeybindDefinition definition;
+        definition.actions.append(action);
+        definition.flags.consumed = flags.consumed;
+        definition.flags.performable = flags.performable;
+        bool valid = !parts.isEmpty();
+        for (const QString &part : parts) {
+            ParsedTrigger parsed;
+            if (!parseTrigger(part, &parsed, &error)) {
+                valid = false;
+                break;
+            }
+            GhosttyKeybindTrigger trigger;
+            trigger.modifiers = configModifiers(parsed.modifiers);
+            if (parsed.catchAll) {
+                trigger.kind = GhosttyKeybindKeyKind::CatchAll;
+            } else if (parsed.physical) {
+                trigger.kind = GhosttyKeybindKeyKind::Physical;
+                trigger.physicalName = parsed.physicalName;
+            } else {
+                const QList<uint> codepoints = parsed.unicode.toUcs4();
+                if (codepoints.size() != 1) {
+                    error = QStringLiteral("Unicode trigger is not one scalar");
+                    valid = false;
+                    break;
+                }
+                trigger.kind = GhosttyKeybindKeyKind::Unicode;
+                trigger.unicodeCodepoint = codepoints.constFirst();
+            }
+            definition.sequence.append(std::move(trigger));
+        }
+        if (!valid || definition.sequence.isEmpty()) {
             report.records.append(record(input, Disposition::Invalid,
-                                         Reason::None, std::move(error)));
-            continue;
-        }
-        if (trigger.catchAll) {
-            report.records.append(record(input, Disposition::Unsupported,
-                                         Reason::CatchAll));
+                                         Reason::None,
+                                         error.isEmpty()
+                                             ? QStringLiteral("empty sequence")
+                                             : std::move(error)));
             continue;
         }
 
-        Binding binding{
-            .keyKind = trigger.physical ? KeyKind::Physical : KeyKind::Unicode,
-            .qtKey = trigger.qtKey,
-            .nativeScanCode = trigger.nativeScanCode,
-            .keypad = trigger.keypad,
-            .unicode = trigger.unicode,
-            .modifiers = normalizedModifiers(trigger.modifiers),
-            .actions = {action},
-            .consumed = flags.consumed,
-            .performable = flags.performable,
-        };
-
-        const auto duplicate = std::find_if(
-            bindings_.begin(), bindings_.end(),
-            [&binding](const Binding &existing) {
-                if (existing.keyKind != binding.keyKind
-                    || existing.modifiers != binding.modifiers) {
-                    return false;
-                }
-                if (binding.keyKind == KeyKind::Unicode) {
-                    return sameUnicode(existing.unicode, binding.unicode);
-                }
-                if (existing.nativeScanCode != 0
-                    && binding.nativeScanCode != 0) {
-                    return existing.nativeScanCode == binding.nativeScanCode;
-                }
-                return existing.qtKey == binding.qtKey
-                    && existing.keypad == binding.keypad;
-            });
-        if (duplicate == bindings_.end()) {
-            bindings_.append(std::move(binding));
-            chainTarget = bindings_.size() - 1;
-        } else {
-            *duplicate = std::move(binding);
-            chainTarget = std::distance(bindings_.begin(), duplicate);
-        }
+        config.root.append(std::move(definition));
+        chainTarget = config.root.size() - 1;
         report.records.append(record(input, Disposition::Installed));
     }
 
+    GhosttyKeybindSet candidate;
+    (void) candidate.load(config);
+    *this = std::move(candidate);
     return report;
+}
+
+GhosttyKeybindLoadReport GhosttyKeybindSet::load(
+    const GhosttyKeybindConfig &config)
+{
+    GhosttyKeybindLoadReport report;
+    QVector<Node> newNodes{Node{}};
+
+    if (config.schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
+        report.records.append(record(
+            QStringLiteral("structured keybindings"), Disposition::Invalid,
+            Reason::None, QStringLiteral("unsupported structured schema version")));
+        clear();
+        return report;
+    }
+
+    for (const GhosttyKeybindTable &table : config.tables) {
+        report.records.append(record(
+            table.name, Disposition::Unsupported, Reason::KeyTable,
+            QStringLiteral("named key table is retained but not active")));
+    }
+
+    const auto sameTrigger = [](const Binding &left, const Binding &right) {
+        if (left.keyKind != right.keyKind
+            || left.modifiers != right.modifiers) {
+            return false;
+        }
+        if (left.keyKind == KeyKind::CatchAll) {
+            return true;
+        }
+        if (left.keyKind == KeyKind::Unicode) {
+            return sameUnicode(left.unicode, right.unicode);
+        }
+        if (left.nativeScanCode != 0 && right.nativeScanCode != 0) {
+            return left.nativeScanCode == right.nativeScanCode;
+        }
+        return left.qtKey == right.qtKey && left.keypad == right.keypad;
+    };
+
+    for (qsizetype definitionIndex = 0;
+         definitionIndex < config.root.size(); ++definitionIndex) {
+        const GhosttyKeybindDefinition &definition =
+            config.root.at(definitionIndex);
+        const QString label = QStringLiteral("root binding %1")
+                                  .arg(definitionIndex);
+        if (definition.sequence.isEmpty() || definition.actions.isEmpty()) {
+            report.records.append(record(
+                label, Disposition::Invalid, Reason::None,
+                QStringLiteral("binding sequence and actions must be non-empty")));
+            continue;
+        }
+        if (definition.flags.all || definition.flags.global) {
+            report.records.append(record(label, Disposition::Unsupported,
+                                         Reason::NonLocal));
+            continue;
+        }
+
+        QVector<Binding> sequence;
+        sequence.reserve(definition.sequence.size());
+        QString error;
+        bool supported = true;
+        for (const GhosttyKeybindTrigger &source : definition.sequence) {
+            Binding trigger;
+            trigger.modifiers = normalizedModifiers(qtModifiers(source.modifiers));
+            switch (source.kind) {
+            case GhosttyKeybindKeyKind::Physical: {
+                const auto key = physicalKey(source.physicalName);
+                if (!key.has_value()) {
+                    error = QStringLiteral("unsupported physical key '%1'")
+                                .arg(source.physicalName);
+                    supported = false;
+                    break;
+                }
+                trigger.keyKind = KeyKind::Physical;
+                trigger.qtKey = key->qtKey;
+                trigger.nativeScanCode = key->nativeScanCode;
+                trigger.keypad = key->keypad;
+                break;
+            }
+            case GhosttyKeybindKeyKind::Unicode: {
+                if (!isUnicodeScalar(source.unicodeCodepoint)
+                    || source.unicodeCodepoint == 0U) {
+                    error = QStringLiteral("invalid Unicode trigger scalar");
+                    supported = false;
+                    break;
+                }
+                trigger.keyKind = KeyKind::Unicode;
+                const char32_t codepoint =
+                    static_cast<char32_t>(source.unicodeCodepoint);
+                trigger.unicode = QString::fromUcs4(&codepoint, 1);
+                break;
+            }
+            case GhosttyKeybindKeyKind::CatchAll:
+                trigger.keyKind = KeyKind::CatchAll;
+                break;
+            }
+            if (!supported) {
+                break;
+            }
+            sequence.append(std::move(trigger));
+        }
+        if (!supported) {
+            report.records.append(record(label, Disposition::Unsupported,
+                                         Reason::None, std::move(error)));
+            continue;
+        }
+
+        quint32 node = 0;
+        for (qsizetype index = 0; index < sequence.size(); ++index) {
+            const bool final = index + 1 == sequence.size();
+            const Binding &trigger = sequence.at(index);
+            QVector<Entry> &entries =
+                newNodes[static_cast<qsizetype>(node)].entries;
+            qsizetype entryIndex = -1;
+            for (qsizetype candidate = 0; candidate < entries.size(); ++candidate) {
+                if (sameTrigger(entries.at(candidate).trigger, trigger)) {
+                    entryIndex = candidate;
+                    break;
+                }
+            }
+
+            if (final) {
+                Entry leaf;
+                leaf.trigger = trigger;
+                leaf.kind = EntryKind::Leaf;
+                leaf.actions = definition.actions;
+                leaf.consumed = definition.flags.consumed;
+                leaf.performable = definition.flags.performable;
+                if (entryIndex < 0) {
+                    entries.append(std::move(leaf));
+                } else {
+                    entries[entryIndex] = std::move(leaf);
+                }
+                continue;
+            }
+
+            if (entryIndex >= 0
+                && entries.at(entryIndex).kind == EntryKind::Leader) {
+                node = entries.at(entryIndex).child;
+                continue;
+            }
+
+            const quint32 child = static_cast<quint32>(newNodes.size());
+            // Appending a node may reallocate newNodes, so never retain a
+            // reference to its parent's entries across this operation.
+            newNodes.append(Node{});
+            Entry leader;
+            leader.trigger = trigger;
+            leader.kind = EntryKind::Leader;
+            leader.child = child;
+            QVector<Entry> &parentEntries =
+                newNodes[static_cast<qsizetype>(node)].entries;
+            if (entryIndex < 0) {
+                parentEntries.append(std::move(leader));
+            } else {
+                parentEntries[entryIndex] = std::move(leader);
+            }
+            node = child;
+        }
+        report.records.append(record(label, Disposition::Installed));
+    }
+
+    qsizetype count = 0;
+    const auto countLeaves = [&newNodes, &count](auto &&self,
+                                                 quint32 node) -> void {
+        if (node >= static_cast<quint32>(newNodes.size())) {
+            return;
+        }
+        for (const Entry &entry :
+             newNodes.at(static_cast<qsizetype>(node)).entries) {
+            if (entry.kind == EntryKind::Leader) self(self, entry.child);
+            else ++count;
+        }
+    };
+    countLeaves(countLeaves, 0);
+
+    nodes_ = std::move(newNodes);
+    bindingCount_ = count;
+    resetSequence();
+    return report;
+}
+
+GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
+    quint32 node,
+    const GhosttyKeybindEvent &event) const
+{
+    if (node >= static_cast<quint32>(nodes_.size())) {
+        return {};
+    }
+    const QVector<Entry> &entries =
+        nodes_.at(static_cast<qsizetype>(node)).entries;
+    const Qt::KeyboardModifiers normalized =
+        normalizedModifiers(event.modifiers);
+
+    // Ghostty prioritizes physical identity at every trie level.
+    for (const Entry &entry : entries) {
+        const Binding &trigger = entry.trigger;
+        const Qt::KeyboardModifiers withoutSelf =
+            withoutTriggeredModifier(trigger.qtKey, normalized);
+        if (trigger.keyKind == KeyKind::Physical
+            && (trigger.modifiers == normalized
+                || trigger.modifiers == withoutSelf)
+            && physicalMatches(trigger.qtKey, trigger.nativeScanCode,
+                               trigger.keypad, event.qtKey,
+                               event.nativeScanCode, event.modifiers)) {
+            return {&entry, true};
+        }
+    }
+
+    QVector<QString> unicodeCandidates;
+    const auto appendCandidate = [&unicodeCandidates](QString candidate) {
+        if (candidate.isEmpty()) return;
+        const bool duplicate = std::any_of(
+            unicodeCandidates.cbegin(), unicodeCandidates.cend(),
+            [&candidate](const QString &existing) {
+                return sameUnicode(existing, candidate);
+            });
+        if (!duplicate) unicodeCandidates.append(std::move(candidate));
+    };
+    appendCandidate(unicodeFromQtEvent(event.qtKey, event.text));
+    if (event.unshiftedCodepoint != 0
+        && isUnicodeScalar(event.unshiftedCodepoint)) {
+        const char32_t codepoint =
+            static_cast<char32_t>(event.unshiftedCodepoint);
+        appendCandidate(QString::fromUcs4(&codepoint, 1));
+    }
+    for (const QString &candidate : unicodeCandidates) {
+        for (const Entry &entry : entries) {
+            const Binding &trigger = entry.trigger;
+            if (trigger.keyKind == KeyKind::Unicode
+                && trigger.modifiers == normalized
+                && sameUnicode(trigger.unicode, candidate)) {
+                return {&entry, false};
+            }
+        }
+    }
+
+    const auto findCatchAll = [&entries](Qt::KeyboardModifiers modifiers)
+        -> const Entry * {
+        for (const Entry &entry : entries) {
+            if (entry.trigger.keyKind == KeyKind::CatchAll
+                && entry.trigger.modifiers == modifiers) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    };
+    if (const Entry *entry = findCatchAll(normalized)) {
+        return {entry, false};
+    }
+    if (normalized != Qt::NoModifier) {
+        if (const Entry *entry = findCatchAll(Qt::NoModifier)) {
+            return {entry, false};
+        }
+    }
+    return {};
+}
+
+bool GhosttyKeybindSet::rootCatchAllIgnores() const
+{
+    if (nodes_.isEmpty()) {
+        return false;
+    }
+    for (const Entry &entry : nodes_.constFirst().entries) {
+        if (entry.kind != EntryKind::Leaf
+            || entry.trigger.keyKind != KeyKind::CatchAll
+            || entry.trigger.modifiers != Qt::NoModifier) {
+            continue;
+        }
+        return std::any_of(entry.actions.cbegin(), entry.actions.cend(),
+                           [](const QString &action) {
+                               return isIgnoreAction(action);
+                           });
+    }
+    return false;
 }
 
 std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
@@ -699,83 +1029,67 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
 std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
     const GhosttyKeybindEvent &event) const
 {
-    const Qt::KeyboardModifiers normalized =
-        normalizedModifiers(event.modifiers);
-
-    const auto makeMatch = [](const Binding &binding) {
-        return GhosttyKeybindMatch{
-            .actions = binding.actions,
-            .consumed = binding.consumed,
-            .performable = binding.performable,
-            .physical = binding.keyKind == KeyKind::Physical,
-        };
-    };
-
-    // Ghostty's Binding.Set::getEvent explicitly prioritizes the physical
-    // key before UTF-8/unshifted Unicode lookup.
-    for (const Binding &binding : bindings_) {
-        // Depending on the QPA backend and event direction, modifiers() can
-        // describe the state immediately before or after the event. Permit a
-        // physical modifier trigger to ignore its own bit while preserving
-        // every other configured modifier.
-        const Qt::KeyboardModifiers withoutSelf =
-            withoutTriggeredModifier(binding.qtKey, normalized);
-        if (binding.keyKind == KeyKind::Physical
-            && (binding.modifiers == normalized
-                || binding.modifiers == withoutSelf)
-            && physicalMatches(binding.qtKey,
-                               binding.nativeScanCode,
-                               binding.keypad,
-                               event.qtKey,
-                               event.nativeScanCode,
-                               event.modifiers)) {
-            return makeMatch(binding);
-        }
-    }
-
-    QVector<QString> unicodeCandidates;
-    const auto appendCandidate = [&unicodeCandidates](QString candidate) {
-        if (candidate.isEmpty()) {
-            return;
-        }
-        const bool duplicate = std::any_of(
-            unicodeCandidates.cbegin(), unicodeCandidates.cend(),
-            [&candidate](const QString &existing) {
-                return sameUnicode(existing, candidate);
-            });
-        if (!duplicate) {
-            unicodeCandidates.append(std::move(candidate));
-        }
-    };
-
-    appendCandidate(unicodeFromQtEvent(event.qtKey, event.text));
-    if (event.unshiftedCodepoint != 0
-        && event.unshiftedCodepoint <= 0x10ffffU
-        && !(event.unshiftedCodepoint >= 0xd800U
-             && event.unshiftedCodepoint <= 0xdfffU)) {
-        const char32_t codepoint =
-            static_cast<char32_t>(event.unshiftedCodepoint);
-        appendCandidate(QString::fromUcs4(&codepoint, 1));
-    }
-
-    const auto findUnicode = [this, &makeMatch](
-                                 const QVector<QString> &candidates,
-                                 Qt::KeyboardModifiers candidateModifiers)
-        -> std::optional<GhosttyKeybindMatch> {
-        for (const QString &unicode : candidates) {
-            for (const Binding &binding : bindings_) {
-                if (binding.keyKind == KeyKind::Unicode
-                    && binding.modifiers == candidateModifiers
-                    && sameUnicode(binding.unicode, unicode)) {
-                    return makeMatch(binding);
-                }
-            }
-        }
+    const Lookup found = lookup(0, event);
+    if (found.entry == nullptr || found.entry->kind != EntryKind::Leaf) {
         return std::nullopt;
-    };
-
-    if (const auto exact = findUnicode(unicodeCandidates, normalized)) {
-        return exact;
     }
-    return std::nullopt;
+    return GhosttyKeybindMatch{
+        .actions = found.entry->actions,
+        .consumed = found.entry->consumed,
+        .performable = found.entry->performable,
+        .physical = found.physical,
+    };
+}
+
+GhosttyKeybindStep GhosttyKeybindSet::advance(
+    const GhosttyKeybindEvent &event)
+{
+    const bool continuing = activeNode_.has_value();
+    const quint32 node = activeNode_.value_or(0);
+    const Lookup found = lookup(node, event);
+    if (found.entry == nullptr) {
+        if (!continuing || isModifierKey(event.qtKey)) {
+            return {};
+        }
+
+        GhosttyKeybindStep result;
+        result.kind = rootCatchAllIgnores()
+            ? GhosttyKeybindStepKind::IgnoredSequence
+            : GhosttyKeybindStepKind::InvalidSequence;
+        result.queuedEvents = queuedEvents_;
+        resetSequence();
+        return result;
+    }
+
+    if (found.entry->kind == EntryKind::Leader) {
+        if (!continuing) {
+            queuedEvents_.clear();
+        }
+        queuedEvents_.append(event);
+        activeNode_ = found.entry->child;
+        return {
+            .kind = GhosttyKeybindStepKind::Leader,
+            .match = {},
+            .queuedEvents = queuedEvents_,
+        };
+    }
+
+    GhosttyKeybindStep result{
+        .kind = GhosttyKeybindStepKind::Binding,
+        .match = {
+            .actions = found.entry->actions,
+            .consumed = found.entry->consumed,
+            .performable = found.entry->performable,
+            .physical = found.physical,
+        },
+        .queuedEvents = queuedEvents_,
+    };
+    resetSequence();
+    return result;
+}
+
+void GhosttyKeybindSet::resetSequence() noexcept
+{
+    activeNode_.reset();
+    queuedEvents_.clear();
 }

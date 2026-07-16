@@ -49,6 +49,11 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QCOMPARE(result.actionName, serialized);
         QVERIFY(!result.parameter.has_value());
     }
+
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("end_key_sequence")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("end_key_sequence:now")));
 }
 
 void GhosttyActionCatalogTest::translatesParameterizedActions_data()

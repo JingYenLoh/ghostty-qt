@@ -39,6 +39,29 @@ constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
 
+bool keyMayStartProcess(const TerminalKeyInput &input)
+{
+    return input.pressed
+        && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
+            || input.text.contains(u'\n') || input.text.contains(u'\r'));
+}
+
+bool sequenceTokenIsNewer(quint64 candidate, quint64 current)
+{
+    if (candidate == 0 || candidate == current) {
+        return false;
+    }
+    if (current == 0) {
+        return true;
+    }
+
+    // Tokens are controller-local unsigned counters. Compare them in modular
+    // space so an eventual wrap from UINT64_MAX to one remains newer while a
+    // delayed token from the previous half of the range remains stale.
+    const quint64 distance = candidate - current;
+    return distance < (quint64{1} << 63U);
+}
+
 uint16_t boundedU16(int value)
 {
     return static_cast<uint16_t>(std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
@@ -68,6 +91,10 @@ void SessionWorker::initialize(const LaunchOptions &options)
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
+    stagedSequenceBytes_.clear();
+    newestSequenceToken_ = 0;
+    activeSequenceToken_ = 0;
+    stagedSequencePotentialActivity_ = false;
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setSingleShot(true);
@@ -432,6 +459,74 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
     queuePtyWrite(encodeKey(input));
 }
 
+void SessionWorker::stageSequenceKey(quint64 token,
+                                     const TerminalKeyInput &input)
+{
+    if (token == 0) {
+        return;
+    }
+    if (token != activeSequenceToken_) {
+        if (!sequenceTokenIsNewer(token, newestSequenceToken_)) {
+            return;
+        }
+        // A newer sequence supersedes an unresolved one. Its held bytes must
+        // not leak into the new match attempt.
+        newestSequenceToken_ = token;
+        activeSequenceToken_ = token;
+        stagedSequenceBytes_.clear();
+        stagedSequencePotentialActivity_ = false;
+    }
+
+    const QByteArray encoded = encodeKey(input);
+    if (encoded.isEmpty()) {
+        return;
+    }
+    stagedSequenceBytes_.append(encoded);
+    stagedSequencePotentialActivity_ =
+        stagedSequencePotentialActivity_ || keyMayStartProcess(input);
+}
+
+void SessionWorker::resolveSequence(quint64 token,
+                                    TerminalSequenceResolution resolution,
+                                    bool hasCurrent,
+                                    const TerminalKeyInput &current)
+{
+    if (token == 0 || token != activeSequenceToken_) {
+        return;
+    }
+
+    QByteArray bytes;
+    bool potentialActivity = false;
+    if (resolution == TerminalSequenceResolution::Flush
+        || resolution == TerminalSequenceResolution::FlushAndSendCurrent) {
+        bytes = std::move(stagedSequenceBytes_);
+        potentialActivity = stagedSequencePotentialActivity_
+            && !bytes.isEmpty();
+    }
+    if (resolution == TerminalSequenceResolution::FlushAndSendCurrent
+        && hasCurrent) {
+        const QByteArray encodedCurrent = encodeKey(current);
+        if (!encodedCurrent.isEmpty()) {
+            bytes.append(encodedCurrent);
+            potentialActivity = potentialActivity
+                || keyMayStartProcess(current);
+        }
+    }
+
+    activeSequenceToken_ = 0;
+    stagedSequenceBytes_.clear();
+    stagedSequencePotentialActivity_ = false;
+
+    // Append once so the staged leaders and the resolving key cannot be
+    // interleaved by another queued operation on this worker thread.
+    if (!bytes.isEmpty() && masterFd_ >= 0) {
+        if (potentialActivity) {
+            notePotentialActivity();
+        }
+        queuePtyWrite(bytes);
+    }
+}
+
 void SessionWorker::sendText(const QString &text)
 {
     if (text.isEmpty()) {
@@ -752,6 +847,9 @@ void SessionWorker::closePty()
         masterFd_ = -1;
     }
     pendingWrites_.clear();
+    stagedSequenceBytes_.clear();
+    activeSequenceToken_ = 0;
+    stagedSequencePotentialActivity_ = false;
 }
 
 void SessionWorker::shutdown()

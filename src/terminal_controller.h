@@ -6,6 +6,8 @@
 #include <QObject>
 #include <QString>
 
+#include <optional>
+
 class QThread;
 class SessionWorker;
 
@@ -38,6 +40,15 @@ public:
     // call this for every pane first so their grace periods run concurrently.
     void beginShutdown();
     void sendKey(const TerminalKeyInput &input);
+    // Sequence leaders cross to SessionWorker immediately for mode-sensitive
+    // VT encoding, but their bytes remain staged until the UI resolves the
+    // sequence. The first overload allocates a non-zero monotonic token; the
+    // second appends another leader to that same sequence.
+    [[nodiscard]] quint64 stageSequenceKey(const TerminalKeyInput &input);
+    void stageSequenceKey(quint64 token, const TerminalKeyInput &input);
+    void resolveSequence(
+        quint64 token, TerminalSequenceResolution resolution,
+        const std::optional<TerminalKeyInput> &current = std::nullopt);
     void sendText(const QString &text);
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
@@ -67,6 +78,14 @@ Q_SIGNALS:
                          int cellHeightPixels, int surfaceWidthPixels,
                          int surfaceHeightPixels);
     void keyRequested(const TerminalKeyInput &input);
+    void sequenceKeyStagingRequested(quint64 token,
+                                     const TerminalKeyInput &input);
+    // std::optional is deliberately lowered at the queued Qt boundary. This
+    // keeps the metatype contract value-only and usable from moc connections.
+    void sequenceResolutionRequested(quint64 token,
+                                     TerminalSequenceResolution resolution,
+                                     bool hasCurrent,
+                                     const TerminalKeyInput &current);
     void textRequested(const QString &text);
     void mouseRequested(const TerminalMouseInput &input);
     void focusRequested(bool focused);
@@ -94,4 +113,7 @@ private:
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     bool closing_ = false;
+    quint64 nextSequenceToken_ = 0;
+    quint64 activeSequenceToken_ = 0;
+    bool stagedSequencePotentialActivity_ = false;
 };

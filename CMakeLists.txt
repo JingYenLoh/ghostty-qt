@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
+if(POLICY CMP0205)
+    cmake_policy(SET CMP0205 NEW)
+endif()
+
 project(ghostty-qt VERSION 0.1.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -107,6 +111,12 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         "${GHOSTTY_QT_CONFIG_REVISION_DIR}/prefix")
     set(GHOSTTY_QT_CONFIG_CACHE_DIR
         "${GHOSTTY_QT_CONFIG_REVISION_DIR}/cache")
+    # The private Qt integration needs one config export that isn't part of
+    # Ghostty's public C API. Build the config library from a source shadow so
+    # the pinned submodule remains pristine. Only src/ is copied; the larger
+    # upstream dependency and resource directories are referenced by symlink.
+    set(GHOSTTY_QT_CONFIG_SHADOW_DIR
+        "${GHOSTTY_QT_CONFIG_REVISION_DIR}/source")
     set(GHOSTTY_QT_CONFIG_LIBRARY
         "${GHOSTTY_QT_CONFIG_PREFIX}/lib/ghostty-internal${CMAKE_SHARED_LIBRARY_SUFFIX}")
     # The pinned build emits ghostty-internal.so but records libghostty.so as
@@ -121,33 +131,70 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         "${GHOSTTY_QT_CONFIG_CACHE_DIR}"
         "${GHOSTTY_QT_CONFIG_PREFIX}/include")
 
+    # Multiple CMake build trees share this revision-scoped parser output.
+    # Serialize the one-time shadow copy so a release reconfigure cannot
+    # replace files under an active developer build (or vice versa).
+    file(LOCK "${GHOSTTY_QT_CONFIG_REVISION_DIR}/source.lock"
+        GUARD FILE TIMEOUT 120)
+    set(GHOSTTY_QT_CONFIG_SHADOW_STAMP
+        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/.ghostty-qt-shadow-v1")
+    if(NOT EXISTS "${GHOSTTY_QT_CONFIG_SHADOW_STAMP}")
+        file(REMOVE_RECURSE "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
+        file(MAKE_DIRECTORY "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
+        file(COPY "${GHOSTTY_SOURCE_DIR}/src"
+            DESTINATION "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
+        configure_file("${GHOSTTY_SOURCE_DIR}/build.zig"
+            "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig" COPYONLY)
+        configure_file("${GHOSTTY_SOURCE_DIR}/build.zig.zon"
+            "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig.zon" COPYONLY)
+        foreach(_ghostty_qt_shadow_entry IN ITEMS
+                dist example images include macos pkg po test vendor valgrind.supp)
+            file(CREATE_LINK
+                "${GHOSTTY_SOURCE_DIR}/${_ghostty_qt_shadow_entry}"
+                "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/${_ghostty_qt_shadow_entry}"
+                SYMBOLIC COPY_ON_ERROR)
+        endforeach()
+        configure_file("${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"
+            "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/src/config/CApi_upstream.zig" COPYONLY)
+
+        # Retain the pinned checkout's version metadata when Git is available.
+        # The generated gitfile points at metadata only; Git's configured
+        # worktree remains the real, unmodified Ghostty submodule.
+        if(Git_FOUND AND EXISTS "${GHOSTTY_SOURCE_DIR}/.git")
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --absolute-git-dir
+                WORKING_DIRECTORY "${GHOSTTY_SOURCE_DIR}"
+                OUTPUT_VARIABLE GHOSTTY_QT_GHOSTTY_GIT_DIR
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                RESULT_VARIABLE GHOSTTY_QT_GHOSTTY_GIT_DIR_RESULT)
+            if(GHOSTTY_QT_GHOSTTY_GIT_DIR_RESULT EQUAL 0)
+                file(WRITE "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/.git"
+                    "gitdir: ${GHOSTTY_QT_GHOSTTY_GIT_DIR}\n")
+            endif()
+        endif()
+        file(WRITE "${GHOSTTY_QT_CONFIG_SHADOW_STAMP}" "ready\n")
+    endif()
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/zig/ghostty_config_capi_overlay.zig"
+        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/src/config/CApi.zig" COPYONLY)
+
     add_custom_command(
         OUTPUT
             "${GHOSTTY_QT_CONFIG_LIBRARY}"
             "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
             "${GHOSTTY_QT_CONFIG_HEADER}"
-        COMMAND "${GHOSTTY_QT_ZIG_EXECUTABLE}" build -j2
-            --cache-dir "${GHOSTTY_QT_CONFIG_CACHE_DIR}"
-            --global-cache-dir "${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
-            -Dapp-runtime=none
-            -Demit-exe=false
-            -Demit-lib-vt=false
-            -Demit-docs=false
-            -Demit-themes=false
-            -Demit-terminfo=false
-            -Demit-xcframework=false
-            -Dsentry=false
-            -Di18n=false
-            -Dsimd=false
-            -Dfont-backend=freetype
-            -Doptimize=ReleaseFast
-            --prefix "${GHOSTTY_QT_CONFIG_PREFIX}"
-            --summary failures
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "${GHOSTTY_QT_CONFIG_LIBRARY}"
-            "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
-        WORKING_DIRECTORY "${GHOSTTY_SOURCE_DIR}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DZIG_EXECUTABLE=${GHOSTTY_QT_ZIG_EXECUTABLE}"
+            "-DSOURCE_DIR=${GHOSTTY_QT_CONFIG_SHADOW_DIR}"
+            "-DCACHE_DIR=${GHOSTTY_QT_CONFIG_CACHE_DIR}"
+            "-DGLOBAL_CACHE_DIR=${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
+            "-DPREFIX=${GHOSTTY_QT_CONFIG_PREFIX}"
+            "-DLIBRARY=${GHOSTTY_QT_CONFIG_LIBRARY}"
+            "-DRUNTIME_LIBRARY=${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+            "-DLOCK_FILE=${GHOSTTY_QT_CONFIG_REVISION_DIR}/build.lock"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildGhosttyConfig.cmake"
         DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/zig/ghostty_config_capi_overlay.zig"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildGhosttyConfig.cmake"
             "${GHOSTTY_SOURCE_DIR}/build.zig"
             "${GHOSTTY_SOURCE_DIR}/build.zig.zon"
             "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
@@ -244,6 +291,7 @@ qt_add_executable(ghostty-qt
     src/ghostty_config_service.cpp
     src/ghostty_config_service.h
     src/ghostty_config_snapshot.h
+    src/ghostty_keybind_config.h
     src/ghostty_keybind_set.cpp
     src/ghostty_keybind_set.h
     src/ghostty_vt_adapter.cpp
@@ -316,17 +364,32 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         OUTPUT_VARIABLE _ghostty_qt_config_install_relative_dir)
     set_target_properties(ghostty-qt-config-helper PROPERTIES
         BUILD_RPATH "${GHOSTTY_QT_CONFIG_PREFIX}/lib"
-        INSTALL_RPATH "\$ORIGIN/${_ghostty_qt_config_install_relative_dir}")
+        # Keep the build-tree RUNPATH exact rather than letting CMake append an
+        # empty padding component (which the dynamic loader treats as cwd).
+        # The install step rewrites this absolute path to the relative one.
+        INSTALL_RPATH "${GHOSTTY_QT_CONFIG_PREFIX}/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE)
 
     target_compile_definitions(ghostty-qt PRIVATE
         GHOSTTY_QT_CONFIG_ENABLED=1
         GHOSTTY_QT_CONFIG_HELPER_NAME="ghostty-qt-config-helper")
     add_dependencies(ghostty-qt ghostty-qt-config-helper)
 
+    set(_ghostty_qt_installed_helper
+        "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ghostty-qt-config-helper")
+    # Force a fresh source binary on repeated installs before applying the
+    # explicit RPATH rewrite below.
+    install(CODE "file(REMOVE \"${_ghostty_qt_installed_helper}\")")
     install(TARGETS ghostty-qt-config-helper
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
     install(FILES "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
         DESTINATION "${_ghostty_qt_config_install_dir}")
+    string(CONCAT _ghostty_qt_install_rpath_code
+        "file(RPATH_CHANGE\n"
+        "  FILE \"${_ghostty_qt_installed_helper}\"\n"
+        "  OLD_RPATH \"${GHOSTTY_QT_CONFIG_PREFIX}/lib\"\n"
+        "  NEW_RPATH \"$ORIGIN/${_ghostty_qt_config_install_relative_dir}\")")
+    install(CODE "${_ghostty_qt_install_rpath_code}")
 endif()
 
 install(TARGETS ghostty-qt RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")

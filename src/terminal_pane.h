@@ -86,12 +86,18 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    enum class KeyHandling {
+        PassThrough,
+        ConsumePress,
+        ConsumePressAndRelease,
+    };
+
     void updateMetrics();
     void updateTerminalSize();
     void resetCursorBlink();
     void setFontPointSize(qreal points);
-    bool handleShortcut(QKeyEvent *event);
-    bool handleConfiguredShortcut(QKeyEvent *event);
+    KeyHandling handleShortcut(QKeyEvent *event);
+    KeyHandling handleConfiguredShortcut(QKeyEvent *event);
     bool canExecuteConfiguredAction(QStringView action) const;
     bool executeConfiguredAction(QStringView action);
     void adjustZoom(qreal delta);
@@ -124,5 +130,6 @@ private:
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
     QSet<quint64> consumedKeys_;
+    quint64 activeSequenceToken_ = 0;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
 };

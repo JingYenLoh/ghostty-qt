@@ -56,6 +56,28 @@ if(CONFIG_HELPER_NAME)
             "Relocated config helper failed (${config_helper_result})\n"
             "${config_helper_output}\n${config_helper_error}")
     endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_config_helper}" +show-keybinds-json
+        RESULT_VARIABLE keybind_helper_result
+        OUTPUT_VARIABLE keybind_helper_output
+        ERROR_VARIABLE keybind_helper_error)
+    if(NOT keybind_helper_result EQUAL 0)
+        message(FATAL_ERROR
+            "Relocated structured keybinding export failed "
+            "(${keybind_helper_result})\n${keybind_helper_output}\n"
+            "${keybind_helper_error}")
+    endif()
+    string(JSON keybind_schema ERROR_VARIABLE keybind_json_error
+        GET "${keybind_helper_output}" version)
+    if(keybind_json_error OR NOT keybind_schema EQUAL 1)
+        message(FATAL_ERROR
+            "Relocated helper returned invalid keybinding JSON: "
+            "${keybind_json_error}\n${keybind_helper_output}")
+    endif()
 endif()
 
 set(relocated_probe "${relocated_prefix}/${INSTALL_BINDIR}/${probe_name}")

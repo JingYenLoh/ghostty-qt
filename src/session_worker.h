@@ -31,6 +31,11 @@ public Q_SLOTS:
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
     void sendKey(const TerminalKeyInput &input);
+    void stageSequenceKey(quint64 token, const TerminalKeyInput &input);
+    void resolveSequence(quint64 token,
+                         TerminalSequenceResolution resolution,
+                         bool hasCurrent,
+                         const TerminalKeyInput &current);
     void sendText(const QString &text);
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
@@ -96,6 +101,10 @@ private:
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
     QByteArray pendingWrites_;
+    QByteArray stagedSequenceBytes_;
+    quint64 newestSequenceToken_ = 0;
+    quint64 activeSequenceToken_ = 0;
+    bool stagedSequencePotentialActivity_ = false;
 
     int columns_ = 80;
     int rows_ = 24;

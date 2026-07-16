@@ -59,6 +59,8 @@ private Q_SLOTS:
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
+    void routesStructuredSequencesAndCancelsThemOnReload();
+    void replaysInvalidStructuredSequenceThroughPty();
 };
 
 void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
@@ -496,6 +498,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("chain=new_tab"),
         QStringLiteral("ctrl+k=close_tab:this"),
         QStringLiteral("chain=new_tab"),
+        QStringLiteral("ctrl+o=quit"),
+        QStringLiteral("chain=ignore"),
         QStringLiteral("performable:ctrl+c=copy_to_clipboard:mixed"),
     };
 
@@ -578,13 +582,26 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCoreApplication::sendEvent(&pane, &partialChain);
     QCOMPARE(newTab.count(), 2);
 
-    // Closing actions terminate their chain because the originating pane or
-    // tab may no longer be usable by a following action.
+    // Ghostty executes the complete chain before reporting a surface-closing
+    // outcome. Workspace removal is deferred, so the later action is safe.
     QKeyEvent closingChain(QEvent::KeyPress, Qt::Key_K,
                            Qt::ControlModifier, QString(QChar(0x0b)));
     QCoreApplication::sendEvent(&pane, &closingChain);
     QCOMPARE(closeTab.count(), 2);
-    QCOMPARE(newTab.count(), 2);
+    QCOMPARE(newTab.count(), 3);
+
+    // `quit` is not one of Ghostty's closing-surface actions. A following
+    // ignore still runs and therefore leaves the release unsuppressed.
+    const int beforeQuitChain = forwarded.count();
+    QKeyEvent quitChain(QEvent::KeyPress, Qt::Key_O,
+                        Qt::ControlModifier, QString(QChar(0x0f)));
+    QCoreApplication::sendEvent(&pane, &quitChain);
+    QCOMPARE(quit.count(), 2);
+    QCOMPARE(forwarded.count(), beforeQuitChain);
+    QKeyEvent quitRelease(QEvent::KeyRelease, Qt::Key_O,
+                          Qt::ControlModifier, QString(QChar(0x0f)));
+    QCoreApplication::sendEvent(&pane, &quitRelease);
+    QCOMPARE(forwarded.count(), beforeQuitChain + 1);
 
     // A performable copy without a selection is not performed and therefore
     // falls through to terminal input.
@@ -605,6 +622,206 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                     Qt::ControlModifier, QString(QChar(0x07)));
     QCoreApplication::sendEvent(&pane, &unavailableNavigation);
     QCOMPARE(forwarded.count(), beforeUnavailableNavigation + 1);
+}
+
+void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
+{
+    qRegisterMetaType<TerminalSequenceResolution>();
+
+    const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = modifiers,
+        };
+    };
+    const auto sequence = [&](quint32 leaf, QString action,
+                              GhosttyKeybindFlags flags = {}) {
+        return GhosttyKeybindDefinition{
+            .sequence = {unicode('x', GhosttyKeybindCtrl), unicode(leaf)},
+            .actions = {std::move(action)},
+            .flags = flags,
+        };
+    };
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    options.keybindConfig.root = {
+        sequence('n', QStringLiteral("new_tab")),
+        sequence('u', QStringLiteral("reload_config"),
+                 GhosttyKeybindFlags{.consumed = false}),
+        sequence('p', QStringLiteral("goto_split:left"),
+                 GhosttyKeybindFlags{.performable = true}),
+        sequence('e', QStringLiteral("end_key_sequence")),
+        sequence('f', QStringLiteral("end_key_sequence"),
+                 GhosttyKeybindFlags{.consumed = false}),
+    };
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    const auto release = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                                 QString text) {
+        QKeyEvent event(QEvent::KeyRelease, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    const auto leader = [&] {
+        press(Qt::Key_X, Qt::ControlModifier, QString(QChar(0x18)));
+    };
+    const auto resolution = [&]() {
+        return qvariant_cast<TerminalSequenceResolution>(
+            resolved.constLast().at(1));
+    };
+
+    // Leaders hold only their press. Their release remains visible to the
+    // terminal, while a consumed leaf suppresses both its press and release.
+    leader();
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(forwarded.count(), 0);
+    release(Qt::Key_X, Qt::ControlModifier, QString(QChar(0x18)));
+    QCOMPARE(forwarded.count(), 1);
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolution(), TerminalSequenceResolution::Drop);
+    release(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(forwarded.count(), 1);
+
+    // An invalid continuation atomically flushes the encoded prefix and the
+    // current press; it must not also travel through the ordinary key signal.
+    leader();
+    press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    QCOMPARE(resolution(),
+             TerminalSequenceResolution::FlushAndSendCurrent);
+    QCOMPARE(forwarded.count(), 1);
+
+    // Unconsumed leaves run their action and replay the entire sequence.
+    leader();
+    press(Qt::Key_U, Qt::NoModifier, QStringLiteral("u"));
+    QCOMPARE(reload.count(), 1);
+    QCOMPARE(resolution(),
+             TerminalSequenceResolution::FlushAndSendCurrent);
+
+    // A performable action that the workspace rejects behaves as absent.
+    pane.setWorkspaceActionHandler([](WorkspaceActionRequest request) {
+        return request.action != WorkspaceAction::NavigatePane;
+    });
+    leader();
+    press(Qt::Key_P, Qt::NoModifier, QStringLiteral("p"));
+    QCOMPARE(resolution(),
+             TerminalSequenceResolution::FlushAndSendCurrent);
+
+    // end_key_sequence flushes leaders but consumes the terminating key.
+    leader();
+    press(Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
+    QCOMPARE(resolution(), TerminalSequenceResolution::Flush);
+
+    // The action itself still flushes only the leaders when the binding is
+    // unconsumed, but ordinary handling then encodes its terminating key.
+    const int beforeUnconsumedEnd = forwarded.count();
+    leader();
+    press(Qt::Key_F, Qt::NoModifier, QStringLiteral("f"));
+    QCOMPARE(resolution(), TerminalSequenceResolution::Flush);
+    QCOMPARE(forwarded.count(), beforeUnconsumedEnd + 1);
+
+    // Live reload is transactional at pane level: pending bytes are dropped
+    // before the replacement trie becomes visible.
+    leader();
+    const int resolutionsBeforeReload = resolved.count();
+    LaunchOptions reloaded = options;
+    reloaded.keybindConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('q', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("new_tab")},
+        },
+    };
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(resolved.count(), resolutionsBeforeReload + 1);
+    QCOMPARE(resolution(), TerminalSequenceResolution::Drop);
+    const int beforeFormerLeaf = forwarded.count();
+    press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(forwarded.count(), beforeFormerLeaf + 1);
+}
+
+void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf 'keybind-ready'; "
+            "payload=$(dd bs=1 count=2 2>/dev/null); "
+            "stty sane; "
+            "printf 'keybind-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+            "printf '\\n'")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    options.keybindConfig.root = {GhosttyKeybindDefinition{
+        .sequence = {
+            GhosttyKeybindTrigger{
+                .kind = GhosttyKeybindKeyKind::Unicode,
+                .unicodeCodepoint = 'x',
+                .modifiers = GhosttyKeybindCtrl,
+            },
+            GhosttyKeybindTrigger{
+                .kind = GhosttyKeybindKeyKind::Unicode,
+                .unicodeCodepoint = 'n',
+            },
+        },
+        .actions = {QStringLiteral("new_tab")},
+    }};
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("keybind-ready")), 5000);
+
+    const auto send = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                              const QString &text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+
+    // This valid sequence is consumed and must contribute no PTY bytes.
+    send(Qt::Key_X, Qt::ControlModifier, QString(QChar(0x18)));
+    send(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
+    QCOMPARE(newTab.count(), 1);
+
+    // The same leader followed by an invalid key replays byte-exact input in
+    // order: Ctrl-X (0x18), then z (0x7a).
+    send(Qt::Key_X, Qt::ControlModifier, QString(QChar(0x18)));
+    send(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("keybind-bytes:187a")), 5000);
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
 }
 
 QTEST_MAIN(TerminalPaneTest)

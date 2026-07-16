@@ -6,6 +6,10 @@
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QProcess>
 #include <QSet>
 #include <QVariant>
@@ -13,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -218,12 +223,8 @@ void appendProcessDiagnostics(GhosttyConfigSnapshot *snapshot,
 QString unsupportedKeybindReason(GhosttyKeybindUnsupportedReason reason)
 {
     switch (reason) {
-    case GhosttyKeybindUnsupportedReason::Sequence:
-        return QStringLiteral("key sequences are not implemented yet");
     case GhosttyKeybindUnsupportedReason::KeyTable:
         return QStringLiteral("named key tables are not implemented yet");
-    case GhosttyKeybindUnsupportedReason::CatchAll:
-        return QStringLiteral("catch-all triggers are not implemented yet");
     case GhosttyKeybindUnsupportedReason::NonLocal:
         return QStringLiteral("all-surface/global triggers are not implemented yet");
     case GhosttyKeybindUnsupportedReason::ClearDirective:
@@ -599,7 +600,385 @@ QString candidateNamed(const QStringList &candidatePaths, const QString &name)
     return {};
 }
 
+bool exactObjectKeys(const QJsonObject &object,
+                     std::initializer_list<QLatin1StringView> expected,
+                     const QString &context,
+                     QString *errorMessage)
+{
+    QSet<QString> expectedKeys;
+    QStringList expectedOrder;
+    expectedOrder.reserve(static_cast<qsizetype>(expected.size()));
+    for (const QLatin1StringView key : expected) {
+        const QString name = key.toString();
+        expectedKeys.insert(name);
+        expectedOrder.append(name);
+    }
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
+        if (!expectedKeys.contains(it.key())) {
+            setError(errorMessage,
+                     QStringLiteral("%1 has unexpected field '%2'")
+                         .arg(context, it.key()));
+            return false;
+        }
+    }
+    for (const QString &key : expectedOrder) {
+        if (!object.contains(key)) {
+            setError(errorMessage,
+                     QStringLiteral("%1 is missing field '%2'")
+                         .arg(context, key));
+            return false;
+        }
+    }
+    return true;
+}
+
+bool unsignedJsonInteger(const QJsonValue &value,
+                         quint64 maximum,
+                         quint64 *destination)
+{
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || number < 0.0
+        || std::trunc(number) != number
+        || number > static_cast<double>(maximum)) {
+        return false;
+    }
+    *destination = static_cast<quint64>(number);
+    return true;
+}
+
+bool parseKeybindTrigger(const QJsonValue &value,
+                         const QString &context,
+                         GhosttyKeybindTrigger *destination,
+                         QString *errorMessage)
+{
+    if (!value.isObject()) {
+        setError(errorMessage,
+                 QStringLiteral("%1 must be an object").arg(context));
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    const QJsonValue kindValue = object.value(QStringLiteral("kind"));
+    if (!kindValue.isString()) {
+        setError(errorMessage,
+                 QStringLiteral("%1.kind must be a string").arg(context));
+        return false;
+    }
+
+    const QString kind = kindValue.toString();
+    bool keysValid = false;
+    if (kind == QStringLiteral("physical")) {
+        keysValid = exactObjectKeys(
+            object,
+            {QLatin1StringView("kind"), QLatin1StringView("key"),
+             QLatin1StringView("mods")},
+            context, errorMessage);
+    } else if (kind == QStringLiteral("unicode")) {
+        keysValid = exactObjectKeys(
+            object,
+            {QLatin1StringView("kind"), QLatin1StringView("codepoint"),
+             QLatin1StringView("mods")},
+            context, errorMessage);
+    } else if (kind == QStringLiteral("catch_all")) {
+        keysValid = exactObjectKeys(
+            object,
+            {QLatin1StringView("kind"), QLatin1StringView("mods")},
+            context, errorMessage);
+    } else {
+        setError(errorMessage,
+                 QStringLiteral("%1.kind has unsupported value '%2'")
+                     .arg(context, kind));
+        return false;
+    }
+    if (!keysValid) return false;
+
+    quint64 modifiers = 0;
+    if (!unsignedJsonInteger(object.value(QStringLiteral("mods")),
+                             GhosttyKeybindShift | GhosttyKeybindCtrl
+                                 | GhosttyKeybindAlt | GhosttyKeybindSuper,
+                             &modifiers)) {
+        setError(errorMessage,
+                 QStringLiteral("%1.mods must be an integer in [0, 15]")
+                     .arg(context));
+        return false;
+    }
+
+    GhosttyKeybindTrigger parsed;
+    parsed.modifiers = static_cast<quint8>(modifiers);
+    if (kind == QStringLiteral("physical")) {
+        const QJsonValue key = object.value(QStringLiteral("key"));
+        if (!key.isString() || key.toString().isEmpty()) {
+            setError(errorMessage,
+                     QStringLiteral("%1.key must be a non-empty string")
+                         .arg(context));
+            return false;
+        }
+        parsed.kind = GhosttyKeybindKeyKind::Physical;
+        parsed.physicalName = key.toString();
+    } else if (kind == QStringLiteral("unicode")) {
+        quint64 codepoint = 0;
+        if (!unsignedJsonInteger(object.value(QStringLiteral("codepoint")),
+                                 0x10ffffU, &codepoint)
+            || (codepoint >= 0xd800U && codepoint <= 0xdfffU)) {
+            setError(errorMessage,
+                     QStringLiteral("%1.codepoint must be a Unicode scalar")
+                         .arg(context));
+            return false;
+        }
+        parsed.kind = GhosttyKeybindKeyKind::Unicode;
+        parsed.unicodeCodepoint = static_cast<quint32>(codepoint);
+    } else {
+        parsed.kind = GhosttyKeybindKeyKind::CatchAll;
+    }
+
+    *destination = std::move(parsed);
+    return true;
+}
+
+bool parseKeybindFlags(const QJsonValue &value,
+                       const QString &context,
+                       GhosttyKeybindFlags *destination,
+                       QString *errorMessage)
+{
+    if (!value.isObject()) {
+        setError(errorMessage,
+                 QStringLiteral("%1 must be an object").arg(context));
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    if (!exactObjectKeys(object,
+                         {QLatin1StringView("consumed"),
+                          QLatin1StringView("all"),
+                          QLatin1StringView("global"),
+                          QLatin1StringView("performable")},
+                         context, errorMessage)) {
+        return false;
+    }
+
+    const std::array<QString, 4> names{
+        QStringLiteral("consumed"), QStringLiteral("all"),
+        QStringLiteral("global"), QStringLiteral("performable")};
+    for (const QString &name : names) {
+        if (!object.value(name).isBool()) {
+            setError(errorMessage,
+                     QStringLiteral("%1.%2 must be a boolean")
+                         .arg(context, name));
+            return false;
+        }
+    }
+    *destination = {
+        .consumed = object.value(QStringLiteral("consumed")).toBool(),
+        .all = object.value(QStringLiteral("all")).toBool(),
+        .global = object.value(QStringLiteral("global")).toBool(),
+        .performable = object.value(QStringLiteral("performable")).toBool(),
+    };
+    return true;
+}
+
+bool parseKeybindDefinition(const QJsonValue &value,
+                            const QString &context,
+                            GhosttyKeybindDefinition *destination,
+                            QString *errorMessage)
+{
+    if (!value.isObject()) {
+        setError(errorMessage,
+                 QStringLiteral("%1 must be an object").arg(context));
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    if (!exactObjectKeys(object,
+                         {QLatin1StringView("sequence"),
+                          QLatin1StringView("actions"),
+                          QLatin1StringView("flags")},
+                         context, errorMessage)) {
+        return false;
+    }
+    const QJsonValue sequenceValue = object.value(QStringLiteral("sequence"));
+    if (!sequenceValue.isArray() || sequenceValue.toArray().isEmpty()) {
+        setError(errorMessage,
+                 QStringLiteral("%1.sequence must be a non-empty array")
+                     .arg(context));
+        return false;
+    }
+    const QJsonValue actionsValue = object.value(QStringLiteral("actions"));
+    if (!actionsValue.isArray() || actionsValue.toArray().isEmpty()) {
+        setError(errorMessage,
+                 QStringLiteral("%1.actions must be a non-empty array")
+                     .arg(context));
+        return false;
+    }
+
+    GhosttyKeybindDefinition parsed;
+    const QJsonArray sequence = sequenceValue.toArray();
+    parsed.sequence.reserve(sequence.size());
+    for (qsizetype index = 0; index < sequence.size(); ++index) {
+        GhosttyKeybindTrigger trigger;
+        if (!parseKeybindTrigger(
+                sequence.at(index),
+                QStringLiteral("%1.sequence[%2]").arg(context).arg(index),
+                &trigger, errorMessage)) {
+            return false;
+        }
+        parsed.sequence.append(std::move(trigger));
+    }
+
+    const QJsonArray actions = actionsValue.toArray();
+    parsed.actions.reserve(actions.size());
+    for (qsizetype index = 0; index < actions.size(); ++index) {
+        const QJsonValue action = actions.at(index);
+        if (!action.isString() || action.toString().isEmpty()) {
+            setError(errorMessage,
+                     QStringLiteral("%1.actions[%2] must be a non-empty string")
+                         .arg(context)
+                         .arg(index));
+            return false;
+        }
+        parsed.actions.append(action.toString());
+    }
+    if (!parseKeybindFlags(object.value(QStringLiteral("flags")),
+                           context + QStringLiteral(".flags"), &parsed.flags,
+                           errorMessage)) {
+        return false;
+    }
+    *destination = std::move(parsed);
+    return true;
+}
+
+bool parseKeybindDefinitions(const QJsonValue &value,
+                             const QString &context,
+                             QVector<GhosttyKeybindDefinition> *destination,
+                             QString *errorMessage)
+{
+    if (!value.isArray()) {
+        setError(errorMessage,
+                 QStringLiteral("%1 must be an array").arg(context));
+        return false;
+    }
+    const QJsonArray array = value.toArray();
+    QVector<GhosttyKeybindDefinition> parsed;
+    parsed.reserve(array.size());
+    for (qsizetype index = 0; index < array.size(); ++index) {
+        GhosttyKeybindDefinition definition;
+        if (!parseKeybindDefinition(
+                array.at(index),
+                QStringLiteral("%1[%2]").arg(context).arg(index),
+                &definition, errorMessage)) {
+            return false;
+        }
+        parsed.append(std::move(definition));
+    }
+    *destination = std::move(parsed);
+    return true;
+}
+
 } // namespace
+
+bool parseGhosttyKeybindConfigJson(const QByteArray &json,
+                                   GhosttyKeybindConfig *output,
+                                   QString *errorMessage)
+{
+    if (errorMessage) errorMessage->clear();
+    if (output == nullptr) {
+        setError(errorMessage,
+                 QStringLiteral("No keybinding config output object was provided"));
+        return false;
+    }
+
+    QJsonParseError jsonError;
+    const QJsonDocument document = QJsonDocument::fromJson(json, &jsonError);
+    if (jsonError.error != QJsonParseError::NoError) {
+        setError(errorMessage,
+                 QStringLiteral("Invalid Ghostty keybinding JSON at offset %1: %2")
+                     .arg(jsonError.offset)
+                     .arg(jsonError.errorString()));
+        return false;
+    }
+    if (!document.isObject()) {
+        setError(errorMessage,
+                 QStringLiteral("Ghostty keybinding JSON root must be an object"));
+        return false;
+    }
+
+    const QJsonObject object = document.object();
+    if (!exactObjectKeys(object,
+                         {QLatin1StringView("version"),
+                          QLatin1StringView("root"),
+                          QLatin1StringView("tables")},
+                         QStringLiteral("Ghostty keybinding JSON root"),
+                         errorMessage)) {
+        return false;
+    }
+    quint64 schemaVersion = 0;
+    if (!unsignedJsonInteger(object.value(QStringLiteral("version")),
+                             std::numeric_limits<int>::max(),
+                             &schemaVersion)
+        || schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
+        setError(errorMessage,
+                 QStringLiteral("Unsupported Ghostty keybinding JSON schema version"));
+        return false;
+    }
+
+    GhosttyKeybindConfig parsed;
+    parsed.schemaVersion = static_cast<int>(schemaVersion);
+    if (!parseKeybindDefinitions(object.value(QStringLiteral("root")),
+                                 QStringLiteral("root"), &parsed.root,
+                                 errorMessage)) {
+        return false;
+    }
+
+    const QJsonValue tablesValue = object.value(QStringLiteral("tables"));
+    if (!tablesValue.isArray()) {
+        setError(errorMessage,
+                 QStringLiteral("tables must be an array"));
+        return false;
+    }
+    const QJsonArray tables = tablesValue.toArray();
+    parsed.tables.reserve(tables.size());
+    QSet<QString> tableNames;
+    for (qsizetype index = 0; index < tables.size(); ++index) {
+        const QString context = QStringLiteral("tables[%1]").arg(index);
+        if (!tables.at(index).isObject()) {
+            setError(errorMessage,
+                     QStringLiteral("%1 must be an object").arg(context));
+            return false;
+        }
+        const QJsonObject table = tables.at(index).toObject();
+        if (!exactObjectKeys(table,
+                             {QLatin1StringView("name"),
+                              QLatin1StringView("bindings")},
+                             context, errorMessage)) {
+            return false;
+        }
+        const QJsonValue nameValue = table.value(QStringLiteral("name"));
+        if (!nameValue.isString() || nameValue.toString().isEmpty()) {
+            setError(errorMessage,
+                     QStringLiteral("%1.name must be a non-empty string")
+                         .arg(context));
+            return false;
+        }
+        const QString name = nameValue.toString();
+        if (tableNames.contains(name)) {
+            setError(errorMessage,
+                     QStringLiteral("Duplicate Ghostty keybinding table '%1'")
+                         .arg(name));
+            return false;
+        }
+        tableNames.insert(name);
+        GhosttyKeybindTable parsedTable{
+            .name = name,
+            .bindings = {},
+        };
+        if (!parseKeybindDefinitions(table.value(QStringLiteral("bindings")),
+                                     context + QStringLiteral(".bindings"),
+                                     &parsedTable.bindings, errorMessage)) {
+            return false;
+        }
+        parsed.tables.append(std::move(parsedTable));
+    }
+
+    *output = std::move(parsed);
+    return true;
+}
 
 QString ghosttyConfigXdgHome(const QStringList &candidatePaths,
                              QString *errorMessage)
@@ -838,8 +1217,18 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                                   operationTimeout);
         }
 
+        // Unlike +show-config's lossy formatter, this application-specific
+        // action exports the complete effective root set and named tables.
+        const ProcessResult keybinds =
+            run({QStringLiteral("+show-keybinds-json")});
+        if (keybinds.status != ProcessResult::Status::Completed
+            || keybinds.exitCode != 0) {
+            return processFailure(QStringLiteral("keybinding query"), keybinds,
+                                  operationTimeout);
+        }
+
         // `+show-config` deliberately prints even when its independently
-        // loaded config contains diagnostics. Validate again after both
+        // loaded config contains diagnostics. Validate again after all three
         // queries so a concurrently edited invalid file cannot replace the
         // last-good application snapshot.
         const ProcessResult postQueryValidation =
@@ -851,11 +1240,48 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                                   operationTimeout);
         }
 
+        // Validation alone cannot detect a valid A -> valid B edit between
+        // the independent helper processes. Re-read both config-dependent
+        // representations and accept only a stable pair. A later filesystem
+        // notification (or the service retry after this failure) will load the
+        // new generation without ever publishing a mixed snapshot.
+        const ProcessResult verifiedChanges =
+            run({QStringLiteral("+show-config")});
+        if (verifiedChanges.status != ProcessResult::Status::Completed
+            || verifiedChanges.exitCode != 0) {
+            return processFailure(
+                QStringLiteral("config consistency query"), verifiedChanges,
+                operationTimeout);
+        }
+        const ProcessResult verifiedKeybinds =
+            run({QStringLiteral("+show-keybinds-json")});
+        if (verifiedKeybinds.status != ProcessResult::Status::Completed
+            || verifiedKeybinds.exitCode != 0) {
+            return processFailure(
+                QStringLiteral("keybinding consistency query"),
+                verifiedKeybinds, operationTimeout);
+        }
+        if (changes.standardOutput != verifiedChanges.standardOutput
+            || keybinds.standardOutput != verifiedKeybinds.standardOutput) {
+            return GhosttyConfigLoadResult::failed(QStringLiteral(
+                "Ghostty config changed while it was being queried; reload will retry"));
+        }
+
         GhosttyConfigLoadResult parsed = parseGhosttyConfigShowOutputs(
             defaults.standardOutput, changes.standardOutput, candidatePaths);
         if (!parsed.succeeded()) {
             return parsed;
         }
+        GhosttyKeybindConfig keybindConfig;
+        QString keybindParseError;
+        if (!parseGhosttyKeybindConfigJson(keybinds.standardOutput,
+                                           &keybindConfig,
+                                           &keybindParseError)) {
+            return GhosttyConfigLoadResult::failed(
+                QStringLiteral("Ghostty keybinding query returned malformed data: %1")
+                    .arg(keybindParseError));
+        }
+        parsed.snapshot->keybindConfig = std::move(keybindConfig);
 
         // Config values belong on stdout; any successful stderr and validator
         // stdout are warnings from the pinned parser and must remain visible
@@ -872,6 +1298,9 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         appendProcessDiagnostics(&*parsed.snapshot,
                                  QStringLiteral("current query"),
                                  changes.standardError);
+        appendProcessDiagnostics(&*parsed.snapshot,
+                                 QStringLiteral("keybinding query"),
+                                 keybinds.standardError);
         appendProcessDiagnostics(&*parsed.snapshot,
                                  QStringLiteral("post-query validation"),
                                  postQueryValidation.standardOutput);

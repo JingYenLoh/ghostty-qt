@@ -90,6 +90,10 @@ GhosttyConfigProcessLoaderOptions fakeOptions(const ConfigFixture &fixture,
                        QString::fromLatin1(defaultOutput()));
     environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_CHANGES_OUTPUT"),
                        QStringLiteral("font-size = 17.25\n"));
+    environment.insert(
+        QStringLiteral("GHOSTTY_QT_FAKE_KEYBIND_OUTPUT"),
+        QStringLiteral(
+            R"json({"version":1,"root":[{"sequence":[{"kind":"unicode","codepoint":116,"mods":3}],"actions":["new_tab"],"flags":{"consumed":true,"all":false,"global":false,"performable":false}}],"tables":[]})json"));
     if (!mode.isEmpty()) {
         environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_MODE"), mode);
     }
@@ -107,16 +111,110 @@ class GhosttyConfigProcessLoaderTest : public QObject {
 
 private Q_SLOTS:
     void derivesXdgHomeFromEitherCandidateOrder();
+    void parsesStructuredKeybindJsonTransactionally();
+    void rejectsMalformedStructuredKeybindJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
     void emptyRepeatableChangesResetDefaults();
     void rejectsMalformedCanonicalValues();
     void invokesValidationThenDefaultAndCurrentQueries();
+    void rejectsFailedOrMalformedStructuredQuery();
     void rejectsConfigThatBecomesInvalidDuringQueries();
+    void rejectsConfigThatChangesValidlyDuringQueries();
     void preservesSuccessfulHelperWarnings();
     void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
+    void realHelperExportsFinalizedStructuredKeybindings();
     void reportsValidationFailureDeterministically();
     void reportsTimeoutCrashAndStartFailureDeterministically();
 };
+
+void GhosttyConfigProcessLoaderTest::parsesStructuredKeybindJsonTransactionally()
+{
+    const QByteArray json = QByteArrayLiteral(R"json({
+        "version": 1,
+        "root": [{
+            "sequence": [
+                {"kind":"physical","key":"key_a","mods":3},
+                {"kind":"unicode","codepoint":128578,"mods":4},
+                {"kind":"catch_all","mods":0}
+            ],
+            "actions": ["new_tab", "goto_tab:2"],
+            "flags": {
+                "consumed": false,
+                "all": true,
+                "global": false,
+                "performable": true
+            }
+        }],
+        "tables": [{
+            "name":"resize",
+            "bindings":[{
+                "sequence":[{"kind":"unicode","codepoint":104,"mods":2}],
+                "actions":["resize_split:left,10"],
+                "flags": {
+                    "consumed":true,
+                    "all":false,
+                    "global":false,
+                    "performable":false
+                }
+            }]
+        }]
+    })json");
+
+    GhosttyKeybindConfig config;
+    QString error;
+    QVERIFY2(parseGhosttyKeybindConfigJson(json, &config, &error),
+             qPrintable(error));
+    QVERIFY(error.isEmpty());
+    QCOMPARE(config.schemaVersion, 1);
+    QCOMPARE(config.root.size(), 1);
+    QCOMPARE(config.root.constFirst().sequence.size(), 3);
+    QCOMPARE(config.root.constFirst().sequence.at(0).kind,
+             GhosttyKeybindKeyKind::Physical);
+    QCOMPARE(config.root.constFirst().sequence.at(0).physicalName,
+             QStringLiteral("key_a"));
+    QCOMPARE(config.root.constFirst().sequence.at(0).modifiers, quint8(3));
+    QCOMPARE(config.root.constFirst().sequence.at(1).kind,
+             GhosttyKeybindKeyKind::Unicode);
+    QCOMPARE(config.root.constFirst().sequence.at(1).unicodeCodepoint,
+             quint32(128578));
+    QCOMPARE(config.root.constFirst().sequence.at(2).kind,
+             GhosttyKeybindKeyKind::CatchAll);
+    QCOMPARE(config.root.constFirst().actions,
+             QStringList({QStringLiteral("new_tab"),
+                          QStringLiteral("goto_tab:2")}));
+    QVERIFY(!config.root.constFirst().flags.consumed);
+    QVERIFY(config.root.constFirst().flags.all);
+    QVERIFY(config.root.constFirst().flags.performable);
+    QCOMPARE(config.tables.size(), 1);
+    QCOMPARE(config.tables.constFirst().name, QStringLiteral("resize"));
+    QCOMPARE(config.tables.constFirst().bindings.size(), 1);
+}
+
+void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredKeybindJson()
+{
+    GhosttyKeybindConfig config;
+    config.schemaVersion = 77;
+    QString error;
+    QVERIFY(!parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral(R"json({
+            "version":1,
+            "root":[{
+                "sequence":[{"kind":"unicode","codepoint":55296,"mods":0}],
+                "actions":["ignore"],
+                "flags":{"consumed":true,"all":false,"global":false,"performable":false}
+            }],
+            "tables":[]
+        })json"),
+        &config, &error));
+    QVERIFY(error.contains(QStringLiteral("Unicode scalar")));
+    QCOMPARE(config.schemaVersion, 77);
+
+    QVERIFY(!parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral("{\"version\":2,\"root\":[],\"tables\":[]}"),
+        &config, &error));
+    QVERIFY(error.contains(QStringLiteral("schema version")));
+    QCOMPARE(config.schemaVersion, 77);
+}
 
 void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
 {
@@ -224,13 +322,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
                           QStringLiteral("chain=next_tab"),
                           QStringLiteral("ctrl+x>ctrl+y=new_tab"),
                           QStringLiteral("ctrl+f=toggle_fullscreen")}));
-    QCOMPARE(snapshot.diagnostics.size(), 2);
-    QVERIFY(std::any_of(
-        snapshot.diagnostics.cbegin(), snapshot.diagnostics.cend(),
-        [](const GhosttyConfigDiagnostic &diagnostic) {
-            return diagnostic.message.contains(
-                QStringLiteral("key sequences are not implemented yet"));
-        }));
+    QCOMPARE(snapshot.diagnostics.size(), 1);
     QVERIFY(std::any_of(
         snapshot.diagnostics.cbegin(), snapshot.diagnostics.cend(),
         [](const GhosttyConfigDiagnostic &diagnostic) {
@@ -343,6 +435,10 @@ void GhosttyConfigProcessLoaderTest::invokesValidationThenDefaultAndCurrentQueri
     QVERIFY2(result.succeeded(), qPrintable(result.errorMessage));
     QCOMPARE(result.snapshot->values.value(QStringLiteral("font-size")).toDouble(),
              17.25);
+    QVERIFY(result.snapshot->keybindConfig.has_value());
+    QCOMPARE(result.snapshot->keybindConfig->root.size(), 1);
+    QCOMPARE(result.snapshot->keybindConfig->root.constFirst().actions,
+             QStringList({QStringLiteral("new_tab")}));
 
     QFile log(invocationLog);
     QVERIFY(log.open(QIODevice::ReadOnly));
@@ -350,7 +446,30 @@ void GhosttyConfigProcessLoaderTest::invokesValidationThenDefaultAndCurrentQueri
              QByteArrayLiteral("+validate-config\n"
                                "+show-config --default\n"
                                "+show-config\n"
-                               "+validate-config\n"));
+                               "+show-keybinds-json\n"
+                               "+validate-config\n"
+                               "+show-config\n"
+                               "+show-keybinds-json\n"));
+}
+
+void GhosttyConfigProcessLoaderTest::rejectsFailedOrMalformedStructuredQuery()
+{
+    ConfigFixture fixture;
+    GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
+        fakeOptions(fixture, QStringLiteral("keybinding-query-failure")))(
+        fixture.candidates());
+    QVERIFY(!result.succeeded());
+    QCOMPARE(result.errorMessage,
+             QStringLiteral(
+                 "Ghostty config helper failed during keybinding query with exit code 8: "
+                 "stderr: keybinding query failed"));
+
+    result = makeGhosttyConfigProcessLoader(
+        fakeOptions(fixture, QStringLiteral("keybinding-query-malformed")))(
+        fixture.candidates());
+    QVERIFY(!result.succeeded());
+    QVERIFY(result.errorMessage.startsWith(
+        QStringLiteral("Ghostty keybinding query returned malformed data:")));
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsConfigThatBecomesInvalidDuringQueries()
@@ -370,6 +489,24 @@ void GhosttyConfigProcessLoaderTest::rejectsConfigThatBecomesInvalidDuringQuerie
              QStringLiteral(
                  "Ghostty config helper failed during post-query validation with exit code 1: "
                  "stdout: config changed during query"));
+}
+
+void GhosttyConfigProcessLoaderTest::rejectsConfigThatChangesValidlyDuringQueries()
+{
+    ConfigFixture fixture;
+    const QString invocationLog =
+        QDir(fixture.temporary.path()).filePath(QStringLiteral("invocations"));
+    GhosttyConfigProcessLoaderOptions options =
+        fakeOptions(fixture, QStringLiteral("query-consistency-mismatch"));
+    options.environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
+                               invocationLog);
+
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader(options)(fixture.candidates());
+    QVERIFY(!result.succeeded());
+    QCOMPARE(result.errorMessage,
+             QStringLiteral(
+                 "Ghostty config changed while it was being queried; reload will retry"));
 }
 
 void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
@@ -460,6 +597,90 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
     QCOMPARE(result.snapshot->values.value(QStringLiteral("faint-opacity"))
                  .toDouble(),
              0.25);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybindings()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "keybind = clear\n"
+            "keybind = unconsumed:performable:ctrl+x>key_y=new_tab\n"
+            "keybind = chain=goto_split:left\n"
+            "keybind = catch_all=ignore\n"
+            "keybind = all:ctrl+g=new_tab\n"
+            "keybind = global:ctrl+j=new_tab\n"
+            "keybind = resize/ctrl+h=resize_split:left,10\n"));
+
+    GhosttyConfigProcessLoaderOptions options{
+        .helperPath = helperPath,
+        .timeoutMilliseconds = 10'000,
+        .environment = QProcessEnvironment::systemEnvironment(),
+    };
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader(options)(fixture.candidates());
+    QVERIFY2(result.succeeded(), qPrintable(result.errorMessage));
+    QVERIFY(result.snapshot->keybindConfig.has_value());
+    const GhosttyKeybindConfig &config = *result.snapshot->keybindConfig;
+    QCOMPARE(config.schemaVersion, 1);
+    QCOMPARE(config.root.size(), 4);
+    QCOMPARE(config.tables.size(), 1);
+
+    const auto chained = std::find_if(
+        config.root.cbegin(), config.root.cend(),
+        [](const GhosttyKeybindDefinition &definition) {
+            return definition.sequence.size() == 2;
+        });
+    QVERIFY(chained != config.root.cend());
+    QCOMPARE(chained->sequence.at(0).kind,
+             GhosttyKeybindKeyKind::Unicode);
+    QCOMPARE(chained->sequence.at(0).unicodeCodepoint, quint32('x'));
+    QCOMPARE(chained->sequence.at(0).modifiers, quint8(GhosttyKeybindCtrl));
+    QCOMPARE(chained->sequence.at(1).kind,
+             GhosttyKeybindKeyKind::Physical);
+    QCOMPARE(chained->sequence.at(1).physicalName,
+             QStringLiteral("key_y"));
+    QCOMPARE(chained->actions,
+             QStringList({QStringLiteral("new_tab"),
+                          QStringLiteral("goto_split:left")}));
+    QVERIFY(!chained->flags.consumed);
+    QVERIFY(chained->flags.performable);
+
+    const auto catchAll = std::find_if(
+        config.root.cbegin(), config.root.cend(),
+        [](const GhosttyKeybindDefinition &definition) {
+            return definition.sequence.size() == 1
+                && definition.sequence.constFirst().kind
+                    == GhosttyKeybindKeyKind::CatchAll;
+        });
+    QVERIFY(catchAll != config.root.cend());
+    QCOMPARE(catchAll->actions, QStringList({QStringLiteral("ignore")}));
+
+    const auto all = std::find_if(
+        config.root.cbegin(), config.root.cend(),
+        [](const GhosttyKeybindDefinition &definition) {
+            return definition.flags.all;
+        });
+    const auto global = std::find_if(
+        config.root.cbegin(), config.root.cend(),
+        [](const GhosttyKeybindDefinition &definition) {
+            return definition.flags.global;
+        });
+    QVERIFY(all != config.root.cend());
+    QVERIFY(global != config.root.cend());
+
+    QCOMPARE(config.tables.constFirst().name, QStringLiteral("resize"));
+    QCOMPARE(config.tables.constFirst().bindings.size(), 1);
+    QCOMPARE(config.tables.constFirst().bindings.constFirst().actions,
+             QStringList({QStringLiteral("resize_split:left,10")}));
 }
 
 void GhosttyConfigProcessLoaderTest::reportsValidationFailureDeterministically()

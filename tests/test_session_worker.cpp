@@ -59,6 +59,8 @@ private Q_SLOTS:
     void runsCommandThroughPty();
     void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
+    void stagesAndResolvesSequenceBytes();
+    void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void retainsSelectionAvailabilityOutsideViewport();
     void explicitProgramIsActiveForItsLifetime();
@@ -173,6 +175,122 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(QStringLiteral(
                  "paste-bytes:1b5b3230307e6f6e650a74776f1b5b3230317e")),
+             qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::stagesAndResolvesSequenceBytes()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf 'sequence-ready'; "
+            "payload=$(dd bs=1 count=4 2>/dev/null); "
+            "stty sane; "
+            "printf 'sequence-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+            "printf '\\n'")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("sequence-ready")), 5000);
+
+    const auto key = [](QChar character) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.pressed = true;
+        return input;
+    };
+
+    // Dropped bytes never reach the child. A newer token supersedes an
+    // unresolved sequence, and operations from either older token are stale.
+    worker.stageSequenceKey(1, key(u'x'));
+    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    worker.sendKey(key(u'y'));
+    worker.stageSequenceKey(2, key(u'x'));
+    worker.stageSequenceKey(3, key(u'a'));
+    worker.stageSequenceKey(2, key(u'q'));
+    worker.stageSequenceKey(3, key(u'b'));
+    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    QTest::qWait(50);
+    QVERIFY(exitSpy.isEmpty());
+    worker.resolveSequence(3,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, key(u'c'));
+
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(
+                 QStringLiteral("sequence-bytes:79616263")),
+             qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::stagesSequenceKeysUsingModesAtStageTime()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf 'normal-ready'; "
+            "sleep 1; "
+            "printf '\\033[?1happlication-ready'; "
+            "payload=$(dd bs=1 count=3 2>/dev/null); "
+            "stty sane; "
+            "printf 'staged-mode-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
+            "printf '\\n'")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("normal-ready")), 5000);
+    TerminalKeyInput up;
+    up.key = Qt::Key_Up;
+    up.pressed = true;
+    worker.stageSequenceKey(1, up);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("application-ready")), 5000);
+    worker.resolveSequence(1, TerminalSequenceResolution::Flush, false, {});
+
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    // Normal cursor mode is ESC [ A. Encoding only at resolution would have
+    // observed DECCKM and incorrectly emitted ESC O A instead.
+    QVERIFY2(finalContents.contains(
+                 QStringLiteral("staged-mode-bytes:1b5b41")),
              qPrintable(finalContents));
     worker.shutdown();
 }
@@ -332,9 +450,29 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     TerminalKeyInput enter;
     enter.key = Qt::Key_Return;
     enter.pressed = true;
+    worker.stageSequenceKey(1, enter);
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    QVERIFY(!spyContainsBool(activitySpy, true));
+
+    worker.stageSequenceKey(2, enter);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    // The activity hint is synchronous at flush, closing in the interval
+    // before the next tcgetpgrp poll cannot lose foreground-job confirmation.
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        3000);
+
+    // Keep the direct-key path covered independently of sequence staging.
+    activitySpy.clear();
+    for (const QChar character : command) {
+        worker.sendText(QString(character));
+    }
     worker.sendKey(enter);
-    // The activity hint is synchronous, closing in the interval before the
-    // next tcgetpgrp poll cannot lose the foreground-job confirmation.
     QVERIFY(spyContainsBool(activitySpy, true));
     QTRY_VERIFY_WITH_TIMEOUT(
         !activitySpy.isEmpty()

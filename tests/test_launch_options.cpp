@@ -249,6 +249,17 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(
         QStringLiteral("keybind"),
         QStringList({QStringLiteral("alt+n=new_tab")}));
+    snapshot.keybindConfig = GhosttyKeybindConfig{
+        .schemaVersion = 1,
+        .root = {GhosttyKeybindDefinition{
+            .sequence = {GhosttyKeybindTrigger{
+                .kind = GhosttyKeybindKeyKind::Unicode,
+                .unicodeCodepoint = quint32('n'),
+                .modifiers = GhosttyKeybindAlt,
+            }},
+            .actions = {QStringLiteral("new_tab")},
+        }},
+    };
 
     const LaunchOptions cliResult = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(cliResult.fontFamily, QStringLiteral("CLI Family"));
@@ -282,9 +293,9 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
-    QCOMPARE(cliResult.keybindings,
-             QStringList({QStringLiteral("alt+n=new_tab")}));
+    QVERIFY(cliResult.keybindings.isEmpty());
     QVERIFY(cliResult.keybindingsConfigured);
+    QCOMPARE(cliResult.keybindConfig, *snapshot.keybindConfig);
 
     base.fontFamilyExplicit = false;
     base.fontSizeExplicit = false;

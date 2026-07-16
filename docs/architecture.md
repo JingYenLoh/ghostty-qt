@@ -187,19 +187,25 @@ pane remains visible with a status message.
 Ghostty's application configuration API is not part of the stable
 `libghostty-vt` surface. The Qt executable therefore does not link or retain
 handles from that API. Instead, `ghostty-qt-config-helper` links the pinned
-`ghostty-internal` shared library and exposes Ghostty's existing command-line
-actions. For each load the Qt-side process adapter invokes, in order:
+`ghostty-internal` shared library. It preserves Ghostty's existing command-line
+actions and adds one project-private structured binding export. For each load
+the Qt-side process adapter invokes, in order:
 
 ```text
 +validate-config
 +show-config --default
 +show-config
++show-keybinds-json
 +validate-config
++show-config
++show-keybinds-json
 ```
 
 The helper runs with the selected `XDG_CONFIG_HOME`, so Ghostty itself owns
 standard-file discovery, legacy/preferred-file precedence, include handling,
-validation, defaults, and canonical formatting. The adapter merges the default
+validation, defaults, and canonical formatting. The final two queries must
+byte-match the first current-config and binding outputs, preventing a valid
+A-to-B edit from publishing a mixed snapshot. The adapter merges the default
 and changed-value output into a value-only `GhosttyConfigSnapshot`. This keeps
 the unstable application API and all of its state outside the long-lived Qt
 process while avoiding a second parser.
@@ -211,8 +217,9 @@ coalesces file and atomic-replacement notifications. The initial load is
 synchronous before the UI exists; watched and action-requested reloads run on a
 dedicated one-thread pool so helper timeouts cannot freeze the GUI thread or
 hold Qt's global pool open at shutdown. Load generations prevent an older async
-result from replacing a newer synchronous load. The post-query validation
-rejects a file that became invalid during extraction, successful helper
+result from replacing a newer synchronous load. Post-query validation rejects
+a file that became invalid during extraction, consistency queries reject a
+valid concurrent edit, successful helper
 warnings enter the typed diagnostic list, and failed loads retry periodically
 to discover newly created required includes. Failure still leaves the last
 good snapshot active when one exists; a successful changed snapshot is applied
@@ -220,7 +227,8 @@ to the workspace.
 
 The current typed compatibility slice contains `font-family`, `font-size`, the
 appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
-`config-file`, and flattened `keybind` entries. Appearance crosses threads as a
+`config-file`, and a versioned dump of the finalized keybinding sets.
+Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection colors, cursor color/style/blink/opacity/text,
 bold-color, and faint-opacity. Fixed colors and Ghostty's cell-foreground and
@@ -260,29 +268,40 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper's canonical output supplies Ghostty's flattened effective
-binding set, after defaults, includes, `clear`, overrides, and `unbind` have
-been resolved by Ghostty. `GhosttyKeybindSet` parses local single-key triggers,
-preserves adjacent action chains, prioritizes physical names over Unicode
-matches, and matches `QKeyEvent` before the event reaches libghostty-vt. On
+The config helper exposes a project-private JSON v1 dump of Ghostty's finalized
+binding sets, after defaults, includes, `clear`, overrides, chains, and
+`unbind` have been resolved by the pinned Zig implementation. It retains full
+root sequences, named tables, physical/Unicode/catch-all triggers, canonical
+action chains, and every binding flag. The C++ parser is strict and
+transactional: an unknown schema or malformed dump rejects the reload without
+replacing the last-good snapshot.
+
+Each `TerminalPane` builds a node-indexed root trie from the generation's
+value snapshot and owns its traversal state. Sharing that immutable trie
+between panes is a later allocation optimization. Lookup prioritizes
+physical identity, then event Unicode, then the unshifted codepoint, then
+modifier-specific and bare catch-all entries at every depth. On
 Linux/Wayland, native XKB scan codes keep physical triggers and libghostty's
 physical-key encoding layout-independent, while distinguishing top-row/keypad
 and left/right modifier locations. Qt does not expose the compositor keymap's
 unmodified layout level through `QKeyEvent`, so the fallback unshifted
 codepoint remains US-layout-oriented for shifted punctuation. Reading Wayland
 keymap state directly is a later input-compatibility slice.
-Supported actions then pass through `GhosttyActionCatalog` and the same typed
+
+Sequence leader presses are encoded immediately on the session thread and held
+as bytes under a generation token. A consumed match drops them; an invalid,
+unconsumed, or unavailable performable match flushes the prefix and current key
+atomically; `end_key_sequence` flushes only the leaders. This preserves the VT
+mode that existed at each leader press and prevents reload or stale queued
+operations from leaking input. Supported actions then pass through
+`GhosttyActionCatalog` and the same typed
 workspace dispatcher used by QML controls; pane-local copy, paste, zoom,
 scroll, and reload actions use their terminal operations directly.
 
-This is deliberately partial. Sequences, named tables, `catch_all`, all-surface
-and global triggers, and portal-backed Wayland global shortcuts are recorded as
-unsupported rather than approximated through `QShortcut`. More importantly,
-the pinned Ghostty text formatter drops the `unconsumed`, `performable`, `all`,
-and `global` flags even though Ghostty's internal binding set retains them. The
-next binding-compatibility slice needs a pinned structured Zig-side dump of the
-binding trie; reparsing source files in C++ would duplicate Ghostty's merge and
-mutation semantics.
+This remains deliberately partial. Named table activation, `all` dispatch,
+`global` registration, and portal-backed Wayland global shortcuts are retained
+by the transport but recorded as unsupported by the root matcher rather than
+approximated through `QShortcut`.
 
 ## Build integration
 
@@ -298,7 +317,10 @@ pinned Ghostty source. The C++ executable links that static target and Linux
 
 With `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON` (the default), CMake also asks the
 pinned Ghostty build for `ghostty-internal.so` with its application runtime
-disabled. Its Zig artifacts live in ignored project-local
+disabled. A revision-scoped source shadow overlays the one private structured
+binding export without modifying the pinned submodule; shadow creation and the
+shared Zig install transaction are lock-protected across build trees. Its Zig
+artifacts live in ignored project-local
 `.cache/ghostty-internal` and `.cache/zig-global` directories. Only the small
 config helper links this private shared library. The installed helper is beside
 the main executable and resolves the library from a relative private
@@ -356,8 +378,9 @@ The default CTest suite has sixteen layers:
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
   focus, and key input using terminal modes.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
-  paste fence bytes, final output draining, process exit, explicit-program
-  activity, and an interactive shell's idle/job/idle foreground transitions.
+  paste fence bytes, staged sequence ordering and stage-time VT modes, final
+  output draining, process exit, explicit-program activity, and an interactive
+  shell's idle/job/idle foreground transitions.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, and approval is emitted once.
@@ -366,19 +389,21 @@ The default CTest suite has sixteen layers:
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
   action-string parsing and deterministic malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
-  locations, shifted/unshifted Unicode matching, local flags, action chains,
-  Linux defaults, and explicit rejection of forms outside the current slice.
+  locations, shifted/unshifted Unicode matching, shared-prefix sequences,
+  catch-all priority and recovery, local flags, action chains, independent pane
+  state, Linux defaults, and explicit rejection of deferred non-local forms.
 - `ghostty-config-service` verifies standard paths, file/directory and include
   watches, atomic replacement, debounce, and retention of the last good value.
-- `ghostty-config-process-loader` verifies canonical snapshot parsing, the
-  validation/default/current/post-validation protocol, deterministic process
-  failure paths, warning preservation, and real-parser `clear`/`unbind`
-  resolution.
+- `ghostty-config-process-loader` verifies canonical and structured snapshot
+  parsing, the validation/default/current/keybinding/post-validation protocol,
+  deterministic process failure paths, warning preservation, and real-parser
+  `clear`/`unbind` resolution.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
-- `terminal-pane-render` renders frames offscreen and verifies the initial
-  placeholder is replaced plus selection, cursor, bold, faint, invisible, and
-  underline/decorations appearance behavior.
+- `terminal-pane-render` renders frames offscreen, verifies the initial
+  placeholder is replaced plus selection/cursor/text appearance, and exercises
+  sequence consume/replay, performability, release suppression, and reload
+  cancellation through a real PTY-backed pane.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -412,6 +437,6 @@ in a real Wayland session.
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
 - Split ratios are fixed; no divider interaction is implemented.
-- Configuration beyond the documented typed slice, advanced keybinding forms,
+- Configuration beyond the documented typed slice, named/non-local keybinding forms,
   search, hyperlinks, multi-window operation, saved sessions, and production
   packaging remain future work.

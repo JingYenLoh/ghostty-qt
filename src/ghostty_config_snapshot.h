@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ghostty_keybind_config.h"
+
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
@@ -39,6 +41,9 @@ struct GhosttyConfigDiagnostic {
 struct GhosttyConfigSnapshot {
     GhosttyConfigAvailability availability = GhosttyConfigAvailability::Unavailable;
     QVariantMap values;
+    // The structured helper export is authoritative for keybindings. Keep it
+    // outside QVariant so schema fidelity is checked at the process boundary.
+    std::optional<GhosttyKeybindConfig> keybindConfig;
     QVector<GhosttyConfigDiagnostic> diagnostics;
     QStringList sourcePaths;
 

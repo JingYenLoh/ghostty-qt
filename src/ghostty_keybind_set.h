@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ghostty_keybind_config.h"
+
 #include <QString>
 #include <QStringList>
 #include <QStringView>
@@ -22,9 +24,7 @@ enum class GhosttyKeybindEntryDisposition {
 
 enum class GhosttyKeybindUnsupportedReason {
     None,
-    Sequence,
     KeyTable,
-    CatchAll,
     NonLocal,
     ClearDirective,
     OrphanChain,
@@ -70,17 +70,46 @@ struct GhosttyKeybindEvent {
     QString text;
     quint32 nativeScanCode = 0;
     std::uint32_t unshiftedCodepoint = 0;
+
+    bool operator==(const GhosttyKeybindEvent &) const = default;
 };
 
-// The compatibility set intentionally implements one local trigger at a time.
-// Unsupported Ghostty features are recorded and skipped instead of being
-// approximated with subtly different Qt behavior.
+enum class GhosttyKeybindStepKind {
+    Unmatched,
+    Leader,
+    Binding,
+    InvalidSequence,
+    IgnoredSequence,
+};
+
+// Stateful lookup result used by a pane. queuedEvents contains the leader
+// presses that preceded this step. The terminal bytes for those events are
+// staged independently on the session thread; retaining the value events here
+// keeps the state machine directly testable without exposing terminal handles.
+struct GhosttyKeybindStep {
+    GhosttyKeybindStepKind kind = GhosttyKeybindStepKind::Unmatched;
+    GhosttyKeybindMatch match;
+    QVector<GhosttyKeybindEvent> queuedEvents;
+
+    bool operator==(const GhosttyKeybindStep &) const = default;
+};
+
+// The compatibility set implements Ghostty's finalized local root trie.
+// Unsupported frontend-wide features are recorded and skipped instead of
+// being approximated with subtly different Qt behavior.
 class GhosttyKeybindSet final {
 public:
     // Replaces the current set with the flattened values emitted by the pinned
     // `ghostty +show-config`. Later duplicate triggers replace earlier ones,
     // matching Ghostty's config semantics.
     [[nodiscard]] GhosttyKeybindLoadReport load(const QStringList &values);
+
+    // Production configuration uses the versioned, value-only dump of
+    // Ghostty's finalized binding trie. Named tables and non-local leaves are
+    // retained by the transport but deliberately reported/skipped here until
+    // their frontend semantics are implemented.
+    [[nodiscard]] GhosttyKeybindLoadReport load(
+        const GhosttyKeybindConfig &config);
 
     // qtKey is QKeyEvent::key(), modifiers is QKeyEvent::modifiers(), and text
     // is QKeyEvent::text(). Physical named triggers are checked before Unicode
@@ -96,15 +125,27 @@ public:
     [[nodiscard]] std::optional<GhosttyKeybindMatch> match(
         const GhosttyKeybindEvent &event) const;
 
-    [[nodiscard]] qsizetype size() const noexcept { return bindings_.size(); }
-    [[nodiscard]] bool isEmpty() const noexcept { return bindings_.isEmpty(); }
+    // Advances the root-table sequence state. Leader sequences have no
+    // timeout, matching Ghostty. Invalid non-modifier continuations either
+    // request replay or are dropped by a bare root catch_all=ignore binding.
+    [[nodiscard]] GhosttyKeybindStep advance(
+        const GhosttyKeybindEvent &event);
+    void resetSequence() noexcept;
+    [[nodiscard]] bool sequenceActive() const noexcept
+    {
+        return activeNode_.has_value();
+    }
+
+    [[nodiscard]] qsizetype size() const noexcept { return bindingCount_; }
+    [[nodiscard]] bool isEmpty() const noexcept { return bindingCount_ == 0; }
     [[nodiscard]] QStringList serializedActions() const;
-    void clear() noexcept { bindings_.clear(); }
+    void clear() noexcept;
 
 private:
     enum class KeyKind {
         Physical,
         Unicode,
+        CatchAll,
     };
 
     struct Binding {
@@ -114,10 +155,37 @@ private:
         bool keypad = false;
         QString unicode;
         Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+    };
+
+    enum class EntryKind {
+        Leader,
+        Leaf,
+    };
+
+    struct Entry {
+        Binding trigger;
+        EntryKind kind = EntryKind::Leaf;
+        quint32 child = 0;
         QStringList actions;
         bool consumed = true;
         bool performable = false;
     };
 
-    QVector<Binding> bindings_;
+    struct Node {
+        QVector<Entry> entries;
+    };
+
+    struct Lookup {
+        const Entry *entry = nullptr;
+        bool physical = false;
+    };
+
+    [[nodiscard]] Lookup lookup(quint32 node,
+                                const GhosttyKeybindEvent &event) const;
+    [[nodiscard]] bool rootCatchAllIgnores() const;
+
+    QVector<Node> nodes_{Node{}};
+    qsizetype bindingCount_ = 0;
+    std::optional<quint32> activeNode_;
+    QVector<GhosttyKeybindEvent> queuedEvents_;
 };

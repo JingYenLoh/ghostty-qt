@@ -10,9 +10,9 @@
 struct GhosttyConfigProcessLoaderOptions {
     QString helperPath;
     int timeoutMilliseconds = 5'000;
-    // One load runs validation, two queries, and post-query validation. Bound
-    // the whole transaction so application shutdown cannot inherit four
-    // independent per-process timeouts.
+    // One load runs validation, three extraction queries, post-query
+    // validation, and two consistency queries. Bound the whole transaction so
+    // application shutdown cannot inherit seven independent timeouts.
     int overallTimeoutMilliseconds = 6'000;
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
 };

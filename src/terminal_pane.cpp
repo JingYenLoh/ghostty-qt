@@ -341,6 +341,19 @@ quint64 keyEventIdentity(const QKeyEvent *event)
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
+TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
+{
+    return {
+        .key = event->key(),
+        .modifiers = static_cast<int>(event->modifiers()),
+        .text = event->text(),
+        .nativeScanCode = event->nativeScanCode(),
+        .pressed = pressed,
+        .autoRepeat = event->isAutoRepeat(),
+        .unshiftedCodepoint = unshiftedCodepoint(event->key()),
+    };
+}
+
 } // namespace
 
 TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
@@ -373,7 +386,11 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
         ? options.appearance.cursorColor.color
         : options.appearance.foregroundColor;
     if (options.keybindingsConfigured) {
-        (void) keybinds_.load(options.keybindings);
+        if (!options.keybindings.isEmpty()) {
+            (void) keybinds_.load(options.keybindings);
+        } else {
+            (void) keybinds_.load(options.keybindConfig);
+        }
     }
     updateMetrics();
 
@@ -503,6 +520,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.scrollbackLimit = options.scrollbackLimit;
     updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
     updated.confirmCloseMode = options.confirmCloseMode;
+    updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
 
@@ -538,8 +556,19 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     }
     options_ = updated;
     options_.fontSizeManuallyAdjusted = manuallyZoomed_;
+    if (activeSequenceToken_ != 0) {
+        controller_->resolveSequence(activeSequenceToken_,
+                                     TerminalSequenceResolution::Drop);
+        activeSequenceToken_ = 0;
+    }
     if (options_.keybindingsConfigured) {
-        (void) keybinds_.load(options_.keybindings);
+        GhosttyKeybindSet candidate;
+        if (!options_.keybindings.isEmpty()) {
+            (void) candidate.load(options_.keybindings);
+        } else {
+            (void) candidate.load(options_.keybindConfig);
+        }
+        keybinds_ = std::move(candidate);
     } else {
         keybinds_.clear();
     }
@@ -950,21 +979,16 @@ void TerminalPane::updateTerminalSize()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
-    if (handleShortcut(event)) {
-        consumedKeys_.insert(keyEventIdentity(event));
+    const KeyHandling handling = handleShortcut(event);
+    if (handling != KeyHandling::PassThrough) {
+        if (handling == KeyHandling::ConsumePressAndRelease) {
+            consumedKeys_.insert(keyEventIdentity(event));
+        }
         event->accept();
         return;
     }
 
-    TerminalKeyInput input;
-    input.key = event->key();
-    input.modifiers = static_cast<int>(event->modifiers());
-    input.text = event->text();
-    input.nativeScanCode = event->nativeScanCode();
-    input.pressed = true;
-    input.autoRepeat = event->isAutoRepeat();
-    input.unshiftedCodepoint = unshiftedCodepoint(event->key());
-    controller_->sendKey(input);
+    controller_->sendKey(terminalKeyInput(event));
     event->accept();
 }
 
@@ -974,19 +998,11 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    TerminalKeyInput input;
-    input.key = event->key();
-    input.modifiers = static_cast<int>(event->modifiers());
-    input.text = event->text();
-    input.nativeScanCode = event->nativeScanCode();
-    input.pressed = false;
-    input.autoRepeat = event->isAutoRepeat();
-    input.unshiftedCodepoint = unshiftedCodepoint(event->key());
-    controller_->sendKey(input);
+    controller_->sendKey(terminalKeyInput(event, false));
     event->accept();
 }
 
-bool TerminalPane::handleShortcut(QKeyEvent *event)
+TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
 {
     if (options_.keybindingsConfigured) {
         return handleConfiguredShortcut(event);
@@ -999,20 +1015,20 @@ bool TerminalPane::handleShortcut(QKeyEvent *event)
 
     if (control && shift && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
         switch (key) {
-        case Qt::Key_C: copySelection(); return true;
+        case Qt::Key_C: copySelection(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_V: {
             const QString text = QGuiApplication::clipboard()->text();
             if (!text.isEmpty()) {
                 if (TerminalController::isPasteSafe(text)) pasteText(text);
                 else Q_EMIT unsafePasteRequested(text, this);
             }
-            return true;
+            return KeyHandling::ConsumePressAndRelease;
         }
-        case Qt::Key_T: Q_EMIT requestNewTab(); return true;
-        case Qt::Key_O: Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal)); return true;
-        case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return true;
-        case Qt::Key_W: Q_EMIT requestCloseTab(); return true;
-        case Qt::Key_Q: Q_EMIT requestQuit(); return true;
+        case Qt::Key_T: Q_EMIT requestNewTab(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_O: Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal)); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_W: Q_EMIT requestCloseTab(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_Q: Q_EMIT requestQuit(); return KeyHandling::ConsumePressAndRelease;
         default: break;
         }
     }
@@ -1022,38 +1038,38 @@ bool TerminalPane::handleShortcut(QKeyEvent *event)
              || modifiers == (Qt::ControlModifier | Qt::ShiftModifier))
             && key == Qt::Key_Plus)) {
         zoomIn();
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == Qt::ControlModifier && key == Qt::Key_Minus) {
         zoomOut();
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == Qt::ControlModifier && key == Qt::Key_0) {
         resetZoom();
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == Qt::ControlModifier && key == Qt::Key_PageUp) {
         Q_EMIT requestTabChange(-1);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == Qt::ControlModifier && key == Qt::Key_PageDown) {
         Q_EMIT requestTabChange(1);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if ((key == Qt::Key_Backtab || key == Qt::Key_Tab)
         && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
         Q_EMIT requestTabChange(-1);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (key == Qt::Key_Tab && modifiers == Qt::ControlModifier) {
         Q_EMIT requestTabChange(1);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == (Qt::ControlModifier | Qt::AltModifier)
         && (key == Qt::Key_Left || key == Qt::Key_Right
             || key == Qt::Key_Up || key == Qt::Key_Down)) {
         Q_EMIT requestNavigate(key);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == Qt::ShiftModifier
         && (key == Qt::Key_PageUp || key == Qt::Key_PageDown)) {
@@ -1063,60 +1079,134 @@ bool TerminalPane::handleShortcut(QKeyEvent *event)
             if (hasFrame_) pageRows = std::max(1, frame_.rows - 1);
         }
         controller_->scrollViewport(key == Qt::Key_PageUp ? -pageRows : pageRows);
-        return true;
+        return KeyHandling::ConsumePressAndRelease;
     }
-    return false;
+    return KeyHandling::PassThrough;
 }
 
-bool TerminalPane::handleConfiguredShortcut(QKeyEvent *event)
+TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
+    QKeyEvent *event)
 {
-    const auto match = keybinds_.match(GhosttyKeybindEvent{
+    const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
         .modifiers = event->modifiers(),
         .text = event->text(),
         .nativeScanCode = event->nativeScanCode(),
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
-    });
-    if (!match.has_value()) {
-        return false;
+    };
+    const TerminalKeyInput currentInput = terminalKeyInput(event);
+    const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
+
+    switch (step.kind) {
+    case GhosttyKeybindStepKind::Unmatched:
+        return KeyHandling::PassThrough;
+    case GhosttyKeybindStepKind::Leader:
+        if (activeSequenceToken_ == 0) {
+            activeSequenceToken_ = controller_->stageSequenceKey(currentInput);
+        } else {
+            controller_->stageSequenceKey(activeSequenceToken_, currentInput);
+        }
+        return KeyHandling::ConsumePress;
+    case GhosttyKeybindStepKind::InvalidSequence:
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(
+                activeSequenceToken_,
+                TerminalSequenceResolution::FlushAndSendCurrent,
+                currentInput);
+            activeSequenceToken_ = 0;
+            return KeyHandling::ConsumePress;
+        }
+        return KeyHandling::PassThrough;
+    case GhosttyKeybindStepKind::IgnoredSequence:
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Drop);
+            activeSequenceToken_ = 0;
+        }
+        return KeyHandling::ConsumePress;
+    case GhosttyKeybindStepKind::Binding:
+        break;
     }
 
     bool performed = false;
     bool ignored = false;
-    for (const QString &action : match->actions) {
+    bool hasClosingAction = false;
+    for (const QString &action : step.match.actions) {
+        const qsizetype colon = action.indexOf(u':');
+        const QStringView name = colon < 0
+            ? QStringView(action)
+            : QStringView(action).first(colon);
+        hasClosingAction = hasClosingAction
+            || name == QLatin1StringView("close_surface")
+            || name == QLatin1StringView("close_tab")
+            || name == QLatin1StringView("close_window");
         if (canExecuteConfiguredAction(action)) {
             const bool actionPerformed = executeConfiguredAction(action);
             performed = actionPerformed || performed;
-            const qsizetype colon = action.indexOf(u':');
-            const QStringView name = colon < 0
-                ? QStringView(action)
-                : QStringView(action).first(colon);
             if (actionPerformed && name == QLatin1StringView("ignore")) {
                 ignored = true;
             }
             if (actionPerformed
-                && (name == QLatin1StringView("close_surface")
-                    || name == QLatin1StringView("close_tab")
-                    || name == QLatin1StringView("close_window")
-                    || name == QLatin1StringView("quit"))) {
-                // The signal may synchronously schedule destruction of this
-                // pane. Ghostty stops a chain and consumes after a closing
-                // action regardless of the unconsumed flag.
-                return true;
+                && name == QLatin1StringView("end_key_sequence")
+                && activeSequenceToken_ != 0) {
+                controller_->resolveSequence(activeSequenceToken_,
+                                             TerminalSequenceResolution::Flush);
+                activeSequenceToken_ = 0;
             }
         }
+    }
+    // Ghostty executes the complete chain, then treats surface/tab/window
+    // closure as terminal for this event. TerminalWorkspace uses deleteLater,
+    // so chained actions remain safe until this callback returns. `quit` is
+    // deliberately not a closing surface action in the pinned implementation.
+    if (performed && hasClosingAction) {
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Drop);
+            activeSequenceToken_ = 0;
+        }
+        return KeyHandling::ConsumePressAndRelease;
     }
     // Ghostty's ignore action suppresses encoding even on an unconsumed
     // binding. A performable binding with no effective action acts as though
     // it did not exist; every other match follows the binding's consume flag,
     // independently of whether an action happened to change state.
     if (ignored) {
-        return true;
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Drop);
+            activeSequenceToken_ = 0;
+        }
+        return KeyHandling::ConsumePress;
     }
-    if (match->performable && !performed) {
-        return false;
+    if (step.match.performable && !performed) {
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(
+                activeSequenceToken_,
+                TerminalSequenceResolution::FlushAndSendCurrent,
+                currentInput);
+            activeSequenceToken_ = 0;
+            return KeyHandling::ConsumePress;
+        }
+        return KeyHandling::PassThrough;
     }
-    return match->consumed;
+    if (step.match.consumed) {
+        if (activeSequenceToken_ != 0) {
+            controller_->resolveSequence(activeSequenceToken_,
+                                         TerminalSequenceResolution::Drop);
+            activeSequenceToken_ = 0;
+        }
+        return KeyHandling::ConsumePressAndRelease;
+    }
+    if (activeSequenceToken_ != 0) {
+        controller_->resolveSequence(
+            activeSequenceToken_,
+            TerminalSequenceResolution::FlushAndSendCurrent,
+            currentInput);
+        activeSequenceToken_ = 0;
+        return KeyHandling::ConsumePress;
+    }
+    return KeyHandling::PassThrough;
 }
 
 bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
@@ -1149,6 +1239,7 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         || name == QLatin1StringView("scroll_page_down")
         || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("close_window")
+        || name == QLatin1StringView("end_key_sequence")
         || name == QLatin1StringView("ignore")) {
         return !parameter.has_value();
     }
@@ -1220,6 +1311,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     }
     if (name == QLatin1StringView("reload_config")) {
         Q_EMIT requestConfigReload();
+        return true;
+    }
+    if (name == QLatin1StringView("end_key_sequence")) {
         return true;
     }
     if (name == QLatin1StringView("close_window")) {

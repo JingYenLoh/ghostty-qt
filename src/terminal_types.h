@@ -192,6 +192,15 @@ struct TerminalKeyInput {
     uint32_t unshiftedCodepoint = 0;
 };
 
+// Resolves terminal input held while the UI decides whether a key sequence
+// matches. Leaders are encoded on the session thread when staged so later VT
+// mode changes cannot alter the bytes they would originally have produced.
+enum class TerminalSequenceResolution : quint8 {
+    Drop,
+    Flush,
+    FlushAndSendCurrent,
+};
+
 struct TerminalMouseInput {
     enum Action {
         Press,
@@ -210,4 +219,5 @@ struct TerminalMouseInput {
 Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalKeyInput)
+Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

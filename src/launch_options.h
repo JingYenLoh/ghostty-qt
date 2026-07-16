@@ -42,9 +42,12 @@ struct LaunchOptions {
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
-    // The helper publishes Ghostty's flattened effective set. The explicit
-    // bit distinguishes an intentionally empty set from the built-in
+    // The helper publishes Ghostty's finalized structured sets. The explicit
+    // bit distinguishes an intentionally empty root from the built-in
     // emergency shortcuts used when configuration is unavailable.
+    GhosttyKeybindConfig keybindConfig;
+    // Text fallback used by config-disabled builds and direct compatibility
+    // tests. A structured snapshot clears this list before reaching a pane.
     QStringList keybindings;
     bool keybindingsConfigured = false;
     bool hold = false;
@@ -59,7 +62,7 @@ struct LaunchOptions {
 // Bytes and passed unchanged to the pinned libghostty max_scrollback field:
 // despite that C field's legacy "lines" wording, the pinned implementation
 // forwards it to PageList's byte-sized logical history cap. The legacy
-// The legacy --scrollback-lines option is converted through the documented
+// --scrollback-lines option is converted through the documented
 // column-aware capacity estimate in scrollbackLimitInBytes().
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot);

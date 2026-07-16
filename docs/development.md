@@ -34,8 +34,8 @@ ctest --preset dev
 
 The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
-typed config/appearance overlays, watched reload, flattened keybinding
-matching, terminal appearance rendering, and the config-helper process protocol,
+typed config/appearance overlays, watched reload, structured keybinding trie
+matching and replay, terminal appearance rendering, and the config-helper process protocol,
 as well as PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:
 
@@ -51,8 +51,9 @@ Configuration is enabled by default with
 parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
 `ghostty-qt-config-helper`. The main process talks to that helper through
-Ghostty's `+validate-config` and `+show-config` CLI actions and converts only the
-documented compatibility keys into value snapshots.
+Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
+`+show-keybinds-json` action, and converts only the documented compatibility
+keys into value snapshots.
 
 The appearance snapshot includes the complete canonical 256-entry palette,
 selection colors, cursor color/style/blink/opacity/text, bold-color, and
@@ -70,9 +71,10 @@ The additional Zig outputs and global package/artifact cache live under:
 .cache/zig-global/
 ```
 
-Both paths are project-local and ignored by Git. They are shared by the CMake
-presets, so do not configure or build presets concurrently. A cold config-parser
-build is much larger and slower than an ordinary incremental C++ rebuild. To
+Both paths are project-local and ignored by Git. Revision-shadow creation and
+the config-parser install transaction are serialized across presets. The main
+Ghostty VT build still shares source-tree outputs, so presets must not build concurrently. A
+cold config-parser build is much larger and slower than an ordinary incremental C++ rebuild. To
 work on the application without this integration, configure manually with
 `-DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that is a development option, not the
 normal feature set.
@@ -85,18 +87,20 @@ The three focused config tests have distinct boundaries:
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, canonical output parsing, warnings, timeouts, crashes,
   and failures deterministic; one case joins the loader to the real helper to
-  verify Ghostty's effective `clear`/`unbind` result.
+  verify Ghostty's effective `clear`/`unbind` result and structured sequences,
+  chains, catch-all triggers, flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.
 
-`ghostty-keybind-set` covers the current local single-key compatibility layer,
-including Linux native physical locations and shifted punctuation lookup.
-The helper's formatted output does not preserve Ghostty's binding flags, so
-sequences, tables, global/all-surface behavior, and exact flag semantics must
-remain explicit later stages rather than being emulated with Qt shortcuts.
+`ghostty-keybind-set` covers the finalized root trie, including Linux native
+physical locations, shifted punctuation lookup, sequences, catch-all fallback,
+action chains, and exact local `unconsumed`/`performable` behavior. Session and
+pane tests cover byte staging, invalid-sequence replay, and reload cancellation.
+Named tables and global/all-surface behavior remain explicit later stages
+rather than being emulated with Qt shortcuts.
 The same boundary does not expose the post-derivation palette and explicit-entry
 mask required for exact `palette-generate`/`palette-harmonious` behavior. Also,
 the public terminal option for cursor blink is boolean rather than Ghostty's

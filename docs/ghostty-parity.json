@@ -326,7 +326,7 @@
     },
     "keybind": {
       "status": "partial",
-      "note": "Ghostty's flattened effective local single-key bindings route the implemented action subset before VT encoding, using Linux native scan codes for physical locations. Sequences, tables, catch-all, global/all-surface bindings, and flags omitted by the pinned text formatter require later structured extraction."
+      "note": "A private versioned export carries Ghostty's finalized bindings. The root trie supports physical/Unicode/catch-all triggers, shared-prefix sequences, chains, unconsumed/performable flags, stage-time VT encoding, invalid replay, and live-reload cancellation for the implemented action subset. Named tables and all/global dispatch remain planned."
     },
     "palette": {
       "status": "supported",
@@ -625,11 +625,11 @@
         },
         "close_surface": {
           "status": "partial",
-          "note": "Local single-key triggers route pane close through the typed workspace dispatcher and Ghostty action catalog."
+          "note": "Local root triggers route pane close through the typed workspace dispatcher and Ghostty action catalog."
         },
         "close_tab": {
           "status": "partial",
-          "note": "Local single-key triggers support the default/this mode; other/right tab modes remain planned."
+          "note": "Local root triggers support the default/this mode; other/right tab modes remain planned."
         },
         "close_window": {
           "status": "partial",
@@ -642,35 +642,39 @@
         "decrease_font_size": {
           "status": "partial"
         },
+        "end_key_sequence": {
+          "status": "partial",
+          "note": "Root-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it. Named-table sequences remain planned."
+        },
         "goto_split": {
           "status": "partial",
-          "note": "Local single-key triggers and the action catalog support cardinal directions and legacy top/bottom aliases; previous/next remain absent."
+          "note": "Local root triggers and the action catalog support cardinal directions and legacy top/bottom aliases; previous/next remain absent."
         },
         "increase_font_size": {
           "status": "partial"
         },
         "ignore": {
           "status": "partial",
-          "note": "Local single-key bindings suppress VT encoding with Ghostty consume semantics; unsupported trigger forms remain planned."
+          "note": "Root bindings and sequences suppress VT encoding with Ghostty consume and catch-all invalid-sequence semantics; named/non-local forms remain planned."
         },
         "inspector": {
           "scope": "qt_mapping"
         },
         "new_split": {
           "status": "partial",
-          "note": "Local single-key triggers, the catalog, and workspace support right/down; left/up/auto remain absent."
+          "note": "Local root triggers, the catalog, and workspace support right/down; left/up/auto remain absent."
         },
         "new_tab": {
           "status": "partial",
-          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+          "note": "Local root triggers route the action through the typed catalog and workspace."
         },
         "next_tab": {
           "status": "partial",
-          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+          "note": "Local root triggers route the action through the typed catalog and workspace."
         },
         "paste_from_clipboard": {
           "status": "partial",
-          "note": "Local single-key bindings paste through the existing safety and bracketed-paste path."
+          "note": "Local root bindings paste through the existing safety and bracketed-paste path."
         },
         "paste_from_selection": {
           "status": "partial",
@@ -678,11 +682,11 @@
         },
         "previous_tab": {
           "status": "partial",
-          "note": "Local single-key triggers route the action through the typed catalog and workspace."
+          "note": "Local root triggers route the action through the typed catalog and workspace."
         },
         "quit": {
           "status": "partial",
-          "note": "Local single-key triggers route application quit; multiwindow semantics are absent."
+          "note": "Local root triggers route application quit; multiwindow semantics are absent."
         },
         "reload_config": {
           "status": "partial",

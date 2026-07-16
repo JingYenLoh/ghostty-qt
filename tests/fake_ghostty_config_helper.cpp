@@ -41,7 +41,7 @@ bool hasArgument(int argc, char **argv, const std::string &wanted)
     return false;
 }
 
-int validationInvocationCount()
+int actionInvocationCount(const std::string &action)
 {
     const std::string logPath =
         environmentValue("GHOSTTY_QT_FAKE_INVOCATION_LOG");
@@ -52,7 +52,7 @@ int validationInvocationCount()
     int count = 0;
     std::string line;
     while (std::getline(log, line)) {
-        if (line == "+validate-config") {
+        if (line == action) {
             ++count;
         }
     }
@@ -91,10 +91,23 @@ int main(int argc, char **argv)
             std::cout << "config.ghostty:2:1: invalid value\n";
             return 1;
         } else if (mode == "post-validation-failure"
-                   && validationInvocationCount() >= 2) {
+                   && actionInvocationCount("+validate-config") >= 2) {
             std::cout << "config changed during query\n";
             return 1;
         }
+        return 0;
+    }
+
+    if (action == "+show-keybinds-json") {
+        if (mode == "keybinding-query-failure") {
+            std::cerr << "keybinding query failed";
+            return 8;
+        }
+        if (mode == "keybinding-query-malformed") {
+            std::cout << "{not-json";
+            return 0;
+        }
+        std::cout << environmentValue("GHOSTTY_QT_FAKE_KEYBIND_OUTPUT");
         return 0;
     }
 
@@ -116,5 +129,9 @@ int main(int argc, char **argv)
         std::cerr << environmentValue("GHOSTTY_QT_FAKE_SUCCESS_WARNING");
     }
     std::cout << environmentValue(variable);
+    if (!defaults && mode == "query-consistency-mismatch"
+        && actionInvocationCount("+show-config") >= 2) {
+        std::cout << "font-size = 18\n";
+    }
     return 0;
 }

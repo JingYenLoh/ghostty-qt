@@ -267,6 +267,15 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.keybindings = *keybindings;
         result.keybindingsConfigured = true;
     }
+    if (snapshot.keybindConfig.has_value()) {
+        result.keybindConfig = *snapshot.keybindConfig;
+        // The structured dump is the authoritative, fully finalized Ghostty
+        // set. The text formatter remains in the snapshot for diagnostics and
+        // config-disabled compatibility, but must not shadow sequences,
+        // chains, unbinds, or binding flags in production.
+        result.keybindings.clear();
+        result.keybindingsConfigured = true;
+    }
 
     return result;
 }

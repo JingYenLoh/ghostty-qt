@@ -216,6 +216,7 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         || name == QLatin1StringView("scroll_page_up")
         || name == QLatin1StringView("scroll_page_down")
         || name == QLatin1StringView("reload_config")
+        || name == QLatin1StringView("end_key_sequence")
         || name == QLatin1StringView("close_window")
         || name == QLatin1StringView("ignore")) {
         return !parameter.has_value();

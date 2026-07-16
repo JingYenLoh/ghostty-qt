@@ -8,6 +8,17 @@
 #include <QMetaObject>
 #include <QThread>
 
+namespace {
+
+bool keyMayStartProcess(const TerminalKeyInput &input)
+{
+    return input.pressed
+        && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
+            || input.text.contains(u'\n') || input.text.contains(u'\r'));
+}
+
+} // namespace
+
 TerminalController::TerminalController(const LaunchOptions &options, QObject *parent)
     : QObject(parent)
     , options_(options)
@@ -18,6 +29,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalKeyInput>();
+    qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
     qRegisterMetaType<LaunchOptions>();
 
@@ -30,6 +42,10 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::resizeTerminal, Qt::QueuedConnection);
     connect(this, &TerminalController::keyRequested,
             worker_, &SessionWorker::sendKey, Qt::QueuedConnection);
+    connect(this, &TerminalController::sequenceKeyStagingRequested,
+            worker_, &SessionWorker::stageSequenceKey, Qt::QueuedConnection);
+    connect(this, &TerminalController::sequenceResolutionRequested,
+            worker_, &SessionWorker::resolveSequence, Qt::QueuedConnection);
     connect(this, &TerminalController::textRequested,
             worker_, &SessionWorker::sendText, Qt::QueuedConnection);
     connect(this, &TerminalController::mouseRequested,
@@ -157,6 +173,57 @@ void TerminalController::sendKey(const TerminalKeyInput &input)
         notePotentialActivity();
     }
     Q_EMIT keyRequested(input);
+}
+
+quint64 TerminalController::stageSequenceKey(const TerminalKeyInput &input)
+{
+    // Zero is reserved for "no active sequence". Unsigned wraparound retains
+    // monotonic modular ordering for the worker's stale-token guard.
+    do {
+        ++nextSequenceToken_;
+    } while (nextSequenceToken_ == 0);
+
+    activeSequenceToken_ = nextSequenceToken_;
+    stagedSequencePotentialActivity_ = keyMayStartProcess(input);
+    Q_EMIT sequenceKeyStagingRequested(activeSequenceToken_, input);
+    return activeSequenceToken_;
+}
+
+void TerminalController::stageSequenceKey(quint64 token,
+                                          const TerminalKeyInput &input)
+{
+    if (token == 0 || token != activeSequenceToken_) {
+        return;
+    }
+    stagedSequencePotentialActivity_ =
+        stagedSequencePotentialActivity_ || keyMayStartProcess(input);
+    Q_EMIT sequenceKeyStagingRequested(token, input);
+}
+
+void TerminalController::resolveSequence(
+    quint64 token, TerminalSequenceResolution resolution,
+    const std::optional<TerminalKeyInput> &current)
+{
+    if (token == 0 || token != activeSequenceToken_) {
+        return;
+    }
+
+    const bool flushStaged = resolution == TerminalSequenceResolution::Flush
+        || resolution == TerminalSequenceResolution::FlushAndSendCurrent;
+    const bool sendCurrent =
+        resolution == TerminalSequenceResolution::FlushAndSendCurrent
+        && current.has_value();
+    const bool potentialActivity =
+        (flushStaged && stagedSequencePotentialActivity_)
+        || (sendCurrent && keyMayStartProcess(*current));
+
+    activeSequenceToken_ = 0;
+    stagedSequencePotentialActivity_ = false;
+    Q_EMIT sequenceResolutionRequested(
+        token, resolution, current.has_value(), current.value_or(TerminalKeyInput{}));
+    if (potentialActivity) {
+        notePotentialActivity();
+    }
 }
 
 void TerminalController::sendText(const QString &text)
