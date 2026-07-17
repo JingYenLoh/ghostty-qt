@@ -703,6 +703,7 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
     }
     if (name == QLatin1StringView("paste_from_clipboard")
         || name == QLatin1StringView("paste_from_selection")
+        || name == QLatin1StringView("copy_url_to_clipboard")
         || name == QLatin1StringView("reset_font_size")
         || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("end_key_sequence")

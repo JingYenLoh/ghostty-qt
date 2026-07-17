@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTest>
 
 #include <algorithm>
@@ -74,6 +75,7 @@ private Q_SLOTS:
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
     void resetsTerminalStateAndWorkerCaches();
+    void resolvesCorrelatedHyperlinkQueries();
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
@@ -116,6 +118,100 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<QVector<QPoint>>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    const QByteArray uri = QStringLiteral(
+        "https://example.test/worker-👻").toUtf8();
+    QByteArray output = QByteArrayLiteral("\033]8;id=worker;");
+    output += uri;
+    output += QByteArrayLiteral("\033\\LINK\033]8;;\033\\ plain\r\n");
+    for (int row = 0; row < 40; ++row) {
+        output += QByteArrayLiteral("worker-row-");
+        output += QByteArray::number(row).rightJustified(2, '0');
+        output += QByteArrayLiteral("\r\n");
+    }
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY(errorSpy.isEmpty());
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        frameText(accumulatedFrame(updateSpy)).contains(QStringLiteral("LINK")),
+        1000);
+    const TerminalFrame frame = accumulatedFrame(updateSpy);
+    QVector<QPoint> candidates;
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            candidates.append(QPoint(index % frame.columns,
+                                     index / frame.columns));
+        }
+    }
+    QCOMPARE(candidates.size(), 4);
+    QVERIFY(frame.contentRevision != 0);
+
+    worker.queryHyperlink(41, frame.contentRevision,
+                          candidates.constFirst().x(),
+                          candidates.constFirst().y(), candidates);
+    QCOMPARE(hyperlinkSpy.count(), 1);
+    QCOMPARE(hyperlinkSpy.at(0).at(0).toULongLong(), quint64(41));
+    QCOMPARE(hyperlinkSpy.at(0).at(1).toULongLong(), frame.contentRevision);
+    QCOMPARE(hyperlinkSpy.at(0).at(2).toByteArray(), uri);
+    QCOMPARE(qvariant_cast<QVector<QPoint>>(hyperlinkSpy.at(0).at(3)),
+             candidates);
+
+    worker.queryHyperlink(42, frame.contentRevision, 11, 0, candidates);
+    QCOMPARE(hyperlinkSpy.count(), 2);
+    QCOMPARE(hyperlinkSpy.at(1).at(0).toULongLong(), quint64(42));
+    QVERIFY(hyperlinkSpy.at(1).at(2).toByteArray().isEmpty());
+
+    worker.queryHyperlink(43, frame.contentRevision - 1,
+                          candidates.constFirst().x(),
+                          candidates.constFirst().y(), candidates);
+    QCOMPARE(hyperlinkSpy.count(), 3);
+    QCOMPARE(hyperlinkSpy.at(2).at(0).toULongLong(), quint64(43));
+    QCOMPARE(hyperlinkSpy.at(2).at(1).toULongLong(), frame.contentRevision);
+    QVERIFY(hyperlinkSpy.at(2).at(2).toByteArray().isEmpty());
+
+    // A valid raw action follows the viewport back to the live screen even
+    // when its decoded payload is empty. That viewport mutation advances the
+    // revision, so a query using the old scrollback coordinates is rejected.
+    worker.sendRawText(QByteArray{});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updateSpy).contentRevision > frame.contentRevision,
+        1000);
+    const TerminalFrame liveFrame = accumulatedFrame(updateSpy);
+    QVERIFY(liveFrame.scrollOffset > 0);
+    worker.queryHyperlink(44, frame.contentRevision,
+                          candidates.constFirst().x(),
+                          candidates.constFirst().y(), candidates);
+    QCOMPARE(hyperlinkSpy.count(), 4);
+    QCOMPARE(hyperlinkSpy.at(3).at(0).toULongLong(), quint64(44));
+    QCOMPARE(hyperlinkSpy.at(3).at(1).toULongLong(),
+             liveFrame.contentRevision);
+    QVERIFY(hyperlinkSpy.at(3).at(2).toByteArray().isEmpty());
+
     worker.shutdown();
 }
 

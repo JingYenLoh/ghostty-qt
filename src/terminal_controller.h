@@ -5,7 +5,9 @@
 
 #include <QByteArray>
 #include <QObject>
+#include <QPoint>
 #include <QString>
+#include <QVector>
 
 #include <optional>
 
@@ -76,6 +78,11 @@ public:
     void selectAll();
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    void requestHyperlink(int column, int row, quint64 contentRevision,
+                          const QVector<QPoint> &candidateCells);
+    void cancelHyperlinkRequest();
+    void requestHyperlinkActivation(int column, int row,
+                                    quint64 contentRevision);
 
     static bool isPasteSafe(const QString &text);
 
@@ -90,6 +97,10 @@ Q_SIGNALS:
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
     void bell();
+    void hyperlinkResolved(quint64 contentRevision, const QByteArray &uri,
+                           const QVector<QPoint> &matchingCells);
+    void hyperlinkActivationResolved(quint64 contentRevision,
+                                     const QByteArray &uri);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -120,11 +131,15 @@ Q_SIGNALS:
     void selectAllRequested();
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
+    void hyperlinkQueryRequested(quint64 requestId, quint64 contentRevision,
+                                 int column, int row,
+                                 const QVector<QPoint> &candidateCells);
     void runtimeOptionsRequested(const LaunchOptions &options);
     void shutdownRequested();
 
 private:
     void notePotentialActivity();
+    quint64 nextHyperlinkRequestId();
 
     LaunchOptions options_;
     QThread *thread_ = nullptr;
@@ -140,4 +155,7 @@ private:
     quint64 nextSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;
+    quint64 nextHyperlinkRequestId_ = 0;
+    quint64 activeHyperlinkRequestId_ = 0;
+    quint64 activeHyperlinkActivationId_ = 0;
 };

@@ -36,9 +36,10 @@ The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
-terminal appearance rendering, and the config-helper process protocol,
-as well as PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
-relocatable-install coverage. List or run individual tests with:
+terminal appearance and OSC 8 interaction rendering, and the config-helper
+process protocol, as well as PTY, renderer, application-lifecycle, parity,
+exact-parser smoke, and relocatable-install coverage. List or run individual
+tests with:
 
 ```sh
 ctest --preset dev --show-only
@@ -103,7 +104,9 @@ exact local `unconsumed`/`performable` behavior. Session and pane tests cover
 byte staging, invalid-sequence replay, table reset, reload cancellation,
 full/fractional/line/absolute viewport movement, selection-target scrolling,
 select-all, endpoint adjustment/autoscroll, byte-exact CSI/ESC/text actions,
-and full-reset cache synchronization.
+full-reset cache synchronization, long OSC 8 URI extraction across viewport
+and alternate-screen state, revision-correlated lookup, stale-result rejection,
+hover decoration, raw-destination copy, and release-only activation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
 stable tab reordering/index selection, wrapped split traversal, mutable and
 equalized layouts, and split zoom lifecycle. `ghostty-global-shortcut-portal`

@@ -328,6 +328,18 @@
       "status": "partial",
       "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Immediate select-all chains preserve worker order, but a separate selection-dependent performable key can race asynchronously reconciled worker state. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
     },
+    "link": {
+      "status": "planned",
+      "note": "Regex-configured link matching and arbitrary link actions are not implemented; the current frontend interaction is limited to explicit OSC 8 destinations."
+    },
+    "link-previews": {
+      "status": "planned",
+      "note": "No link preview UI is implemented for OSC 8 or regex-matched destinations."
+    },
+    "link-url": {
+      "status": "planned",
+      "note": "Ghostty's default regex URL matcher is not implemented. Explicit OSC 8 destinations remain interactive independently of this setting."
+    },
     "palette": {
       "status": "supported",
       "note": "All 256 canonical defaults are applied. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured defaults."
@@ -650,6 +662,10 @@
         "copy_to_clipboard": {
           "status": "partial",
           "note": "Configured plain/mixed copy routes to selection copy; styled VT and HTML formats remain absent."
+        },
+        "copy_url_to_clipboard": {
+          "status": "partial",
+          "note": "Keeps the hovered OSC 8 destination byte-exact through lookup and copies it directly as the text/plain MIME payload without QUrl normalization. Regex-configured links remain unavailable, and malformed destinations can be copied but are rejected before Qt desktop-service activation."
         },
         "csi": {
           "status": "supported",

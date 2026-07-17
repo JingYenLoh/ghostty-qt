@@ -5,11 +5,14 @@
 
 #include <QByteArray>
 #include <QByteArrayView>
+#include <QPoint>
 #include <QString>
+#include <QVector>
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 
 // The libghostty-vt API is intentionally contained by this class. Its public
 // surface consists only of project and Qt value types so that an upstream C
@@ -55,6 +58,13 @@ public:
         bool bell = false;
     };
 
+    struct HyperlinkMatch {
+        // OSC 8 destinations are byte strings. Keep the original bytes for
+        // exact clipboard output and defer QUrl conversion to the GUI thread.
+        QByteArray uri;
+        QVector<QPoint> cells;
+    };
+
     static std::unique_ptr<GhosttyVtAdapter> create(
         const Options &options, Callbacks callbacks = {});
     static bool isPasteSafe(QByteArrayView text);
@@ -85,6 +95,11 @@ public:
     bool selectAll();
     bool adjustSelection(TerminalSelectionAdjustment adjustment);
     bool scrollViewport(const TerminalViewportRequest &request);
+    // Resolve a viewport-relative cell and, for hover rendering, every
+    // candidate visible cell with the same URI. Public libghostty-vt does not
+    // expose OSC 8 identity, so equal-URI links cannot be distinguished here.
+    std::optional<HyperlinkMatch> hyperlinkAt(
+        int column, int row, const QVector<QPoint> &candidateCells) const;
 
     std::uint64_t compressionActivity() const;
     bool compressScrollback();

@@ -66,6 +66,10 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QStringLiteral("end_key_sequence")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("end_key_sequence:now")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("copy_url_to_clipboard")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("copy_url_to_clipboard:")));
 }
 
 void GhosttyActionCatalogTest::translatesParameterizedActions_data()

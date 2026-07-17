@@ -5,14 +5,18 @@
 #include "terminal_types.h"
 #include "workspace_action.h"
 
+#include <QByteArray>
 #include <QFont>
 #include <QMutex>
+#include <QPoint>
 #include <QQuickItem>
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QUrl>
 
 #include <functional>
+#include <optional>
 
 class QFocusEvent;
 class QHoverEvent;
@@ -46,6 +50,9 @@ public:
     void beginShutdown();
     void setWorkspaceActionHandler(
         std::function<bool(WorkspaceActionRequest)> handler);
+    // Dependency injection keeps external URL launches out of automated
+    // tests while production defaults to QDesktopServices::openUrl.
+    void setUrlOpener(std::function<bool(const QUrl &)> opener);
 
     void focusTerminal();
     void copySelection();
@@ -89,6 +96,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void hoverMoveEvent(QHoverEvent *event) override;
+    void hoverLeaveEvent(QHoverEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
@@ -115,7 +123,25 @@ private:
                    Qt::MouseButton button, Qt::MouseButtons buttons,
                    Qt::KeyboardModifiers modifiers);
     QPoint cellAt(const QPointF &position) const;
+    std::optional<QPoint> hoverCellAt(const QPointF &position) const;
     int normalizedMouseButton(Qt::MouseButton button) const;
+    Qt::KeyboardModifiers effectivePointerModifiers(
+        Qt::KeyboardModifiers modifiers) const;
+    bool hyperlinkModifiersMatch(Qt::KeyboardModifiers modifiers) const;
+    void updateHyperlinkHover(const QPointF &position,
+                              Qt::KeyboardModifiers modifiers);
+    void updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers);
+    void recomputeHyperlinkHover();
+    void refreshHyperlinkHover();
+    void clearHyperlinkHover();
+    bool hyperlinkCellCandidate(const QPoint &cell,
+                                quint64 *contentRevision = nullptr) const;
+    void handleHyperlinkResult(quint64 contentRevision,
+                               const QByteArray &uri,
+                               const QVector<QPoint> &matchingCells);
+    void handleHyperlinkActivation(quint64 contentRevision,
+                                   const QByteArray &uri);
+    QUrl hyperlinkUrl(const QByteArray &uri) const;
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -143,5 +169,26 @@ private:
     QTimer *cursorTimer_ = nullptr;
     QSet<quint64> consumedKeys_;
     quint64 activeSequenceToken_ = 0;
+    bool hoverInside_ = false;
+    QPointF hoverPosition_;
+    QPoint hoverCell_{-1, -1};
+    Qt::KeyboardModifiers keyboardModifiers_ = Qt::NoModifier;
+    Qt::KeyboardModifiers hoverModifiers_ = Qt::NoModifier;
+    QPoint hyperlinkQueryCell_{-1, -1};
+    quint64 hyperlinkQueryRevision_ = 0;
+    bool hyperlinkQueryPending_ = false;
+    QByteArray hoveredHyperlinkUri_;
+    QPoint hoveredHyperlinkCell_{-1, -1};
+    quint64 hoveredHyperlinkRevision_ = 0;
+    QSet<int> hoveredHyperlinkCellIndexes_;
+    bool hyperlinkPressArmed_ = false;
+    bool hyperlinkPressDragged_ = false;
+    QPointF hyperlinkPressPosition_;
+    QPoint hyperlinkPressCell_{-1, -1};
+    QByteArray hyperlinkPressUri_;
+    quint64 hyperlinkPressRevision_ = 0;
+    QByteArray pendingActivationUri_;
+    quint64 pendingActivationRevision_ = 0;
+    std::function<bool(const QUrl &)> urlOpener_;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
 };

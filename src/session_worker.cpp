@@ -247,6 +247,8 @@ void SessionWorker::initialize(const LaunchOptions &options)
     newestSequenceToken_ = 0;
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;
+    terminalContentRevision_ = 1;
+    publishedContentRevision_ = 0;
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setSingleShot(true);
@@ -469,6 +471,7 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
             Q_EMIT errorOccurred(QStringLiteral("libghostty rejected the terminal resize."));
             return;
         }
+        markTerminalContentChanged();
         processDeferredEffects();
         noteCompressionActivity();
         scheduleFrame();
@@ -544,6 +547,7 @@ void SessionWorker::drainPty(bool finalDrain)
     }
 
     if (receivedData) {
+        markTerminalContentChanged();
         // VT input may change mouse tracking or encoding modes. Synchronize
         // once per output batch without resetting motion deduplication for
         // every individual pointer event.
@@ -750,6 +754,10 @@ void SessionWorker::sendRawAction(const QByteArray &data)
         && vt_->scrollViewport({
             .kind = TerminalViewportRequest::Kind::Bottom,
         })) {
+        // Custom terminal-control actions follow Ghostty back to the live
+        // viewport. This changes viewport-relative OSC 8 coordinates even
+        // before the child produces more output.
+        markTerminalContentChanged();
         scheduleFrame();
     }
 }
@@ -761,6 +769,7 @@ void SessionWorker::resetTerminal()
     }
 
     vt_->reset();
+    markTerminalContentChanged();
     syncMouseEncoder();
     syncSelectionAvailability();
     processDeferredEffects();
@@ -834,6 +843,9 @@ void SessionWorker::beginSelection(int column, int row, int clickCount, bool rec
 void SessionWorker::updateSelection(int column, int row, bool rectangular)
 {
     if (vt_ != nullptr && vt_->updateSelection(column, row, rectangular)) {
+        // Selection dragging may scroll the viewport atomically inside
+        // libghostty, invalidating viewport-relative hyperlink coordinates.
+        markTerminalContentChanged();
         syncSelectionAvailability();
         scheduleFrame();
     }
@@ -860,6 +872,7 @@ void SessionWorker::selectAll()
 void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)
 {
     if (vt_ != nullptr && vt_->adjustSelection(adjustment)) {
+        markTerminalContentChanged();
         syncSelectionAvailability();
         scheduleFrame();
     }
@@ -875,11 +888,38 @@ void SessionWorker::syncSelectionAvailability()
     Q_EMIT selectionAvailableChanged(selectionAvailable_);
 }
 
+void SessionWorker::markTerminalContentChanged()
+{
+    do {
+        ++terminalContentRevision_;
+    } while (terminalContentRevision_ == 0);
+}
+
 void SessionWorker::scrollViewport(const TerminalViewportRequest &request)
 {
     if (vt_ != nullptr && vt_->scrollViewport(request)) {
+        markTerminalContentChanged();
         scheduleFrame();
     }
+}
+
+void SessionWorker::queryHyperlink(
+    quint64 requestId, quint64 contentRevision, int column, int row,
+    const QVector<QPoint> &candidateCells)
+{
+    QByteArray uri;
+    QVector<QPoint> matchingCells;
+    if (requestId != 0 && vt_ != nullptr
+        && contentRevision == terminalContentRevision_) {
+        const std::optional<GhosttyVtAdapter::HyperlinkMatch> match =
+            vt_->hyperlinkAt(column, row, candidateCells);
+        if (match.has_value()) {
+            uri = match->uri;
+            matchingCells = match->cells;
+        }
+    }
+    Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_,
+                             uri, matchingCells);
 }
 
 void SessionWorker::scheduleFrame()
@@ -936,9 +976,13 @@ void SessionWorker::publishFrame()
         Q_EMIT mouseTrackingChanged(mouseTracking_);
     }
     TerminalUpdate update = std::move(snapshot.update);
+    update.contentRevision = terminalContentRevision_;
     update.resetCursorBlink = cursorBlinkResetPending_;
-    if (update.hasChanges()) {
+    const bool revisionChanged =
+        publishedContentRevision_ != terminalContentRevision_;
+    if (update.hasChanges() || revisionChanged) {
         cursorBlinkResetPending_ = false;
+        publishedContentRevision_ = terminalContentRevision_;
         Q_EMIT terminalUpdated(update);
     }
 }

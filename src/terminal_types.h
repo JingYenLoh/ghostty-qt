@@ -49,6 +49,9 @@ struct TerminalCell {
     bool strikeThrough = false;
     bool overline = false;
     bool selected = false;
+    // The URI remains worker-owned and is resolved only for an active hover.
+    // This cheap bit lets the UI avoid querying ordinary cells.
+    bool hasHyperlink = false;
     bool spacer = false;
     int columnSpan = 1;
 };
@@ -71,6 +74,10 @@ struct TerminalFrame {
     quint64 scrollTotal = 0;
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
+    // Monotonic worker-owned revision for terminal content and viewport
+    // mutations. Hyperlink replies are accepted only against the exact frame
+    // revision that supplied their viewport coordinates.
+    quint64 contentRevision = 0;
 };
 
 // A row is the smallest cell payload that crosses the worker/UI thread
@@ -109,6 +116,8 @@ struct TerminalUpdate {
     quint64 scrollTotal = 0;
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
+
+    quint64 contentRevision = 0;
 
     // SessionWorker sets this only for PTY output activity. It is transport
     // metadata rather than terminal state and therefore is not retained in
@@ -179,6 +188,7 @@ inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &upda
         frame->scrollOffset = update.scrollOffset;
         frame->scrollLength = update.scrollLength;
     }
+    frame->contentRevision = update.contentRevision;
     return true;
 }
 

@@ -4,6 +4,7 @@
 #include "terminal_controller.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontDatabase>
@@ -14,6 +15,7 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLatin1StringView>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QMutexLocker>
 #include <QSGGeometryNode>
@@ -21,6 +23,7 @@
 #include <QSGTextNode>
 #include <QSGVertexColorMaterial>
 #include <QQuickWindow>
+#include <QStyleHints>
 #include <QTextCharFormat>
 #include <QTextLayout>
 #include <QTextOption>
@@ -297,6 +300,24 @@ Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
     return modifiers & ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
 }
 
+Qt::KeyboardModifiers modifiersAfterKeyEvent(const QKeyEvent *event,
+                                              bool pressed)
+{
+    Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
+    const auto apply = [pressed, &modifiers](Qt::KeyboardModifier modifier) {
+        if (pressed) modifiers |= modifier;
+        else modifiers &= ~modifier;
+    };
+    switch (event->key()) {
+    case Qt::Key_Control: apply(Qt::ControlModifier); break;
+    case Qt::Key_Shift: apply(Qt::ShiftModifier); break;
+    case Qt::Key_Alt: apply(Qt::AltModifier); break;
+    case Qt::Key_Meta: apply(Qt::MetaModifier); break;
+    default: break;
+    }
+    return modifiers;
+}
+
 uint32_t unshiftedCodepoint(int key)
 {
     if (key >= Qt::Key_A && key <= Qt::Key_Z) {
@@ -390,6 +411,9 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     setAcceptHoverEvents(true);
     setFlag(QQuickItem::ItemAcceptsInputMethod, true);
     setFocusPolicy(Qt::StrongFocus);
+    urlOpener_ = [](const QUrl &url) {
+        return QDesktopServices::openUrl(url);
+    };
 
     const QString family = options.fontFamily.isEmpty()
         ? QFontDatabase::systemFont(QFontDatabase::FixedFont).family()
@@ -426,10 +450,14 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
                 bool applied = false;
+                bool contentRevisionChanged = false;
                 {
                     QMutexLocker locker(&renderMutex_);
                     if (hasFrame_ || terminalUpdate.fullFrame) {
+                        const quint64 previousRevision = frame_.contentRevision;
                         applied = applyTerminalUpdate(&frame_, terminalUpdate);
+                        contentRevisionChanged = applied
+                            && previousRevision != frame_.contentRevision;
                         hasFrame_ = hasFrame_ || applied;
                         if (applied && frame_.rows > 0
                             && (!terminalResizePending_
@@ -440,6 +468,10 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     }
                 }
                 if (applied) {
+                    if (contentRevisionChanged) {
+                        clearHyperlinkHover();
+                        recomputeHyperlinkHover();
+                    }
                     if (terminalUpdate.resetCursorBlink && hasActiveFocus()) {
                         resetCursorBlink();
                     } else {
@@ -447,10 +479,19 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     }
                 }
             });
+    connect(controller_, &TerminalController::hyperlinkResolved, this,
+            &TerminalPane::handleHyperlinkResult);
+    connect(controller_, &TerminalController::hyperlinkActivationResolved,
+            this, &TerminalPane::handleHyperlinkActivation);
     connect(controller_, &TerminalController::titleChanged,
             this, &TerminalPane::titleChanged);
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
+    connect(controller_, &TerminalController::mouseTrackingChanged, this,
+            [this] {
+                clearHyperlinkHover();
+                recomputeHyperlinkHover();
+            });
     connect(controller_, &TerminalController::runningChanged,
             this, &TerminalPane::processStateChanged);
     connect(controller_, &TerminalController::activeProcessChanged,
@@ -465,6 +506,8 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
             });
     connect(controller_, &TerminalController::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
+                clearHyperlinkHover();
+                hyperlinkPressDragged_ = false;
                 bool hasError = false;
                 {
                     QMutexLocker locker(&renderMutex_);
@@ -626,6 +669,11 @@ void TerminalPane::setWorkspaceActionHandler(
     workspaceActionHandler_ = std::move(handler);
 }
 
+void TerminalPane::setUrlOpener(std::function<bool(const QUrl &)> opener)
+{
+    urlOpener_ = std::move(opener);
+}
+
 void TerminalPane::beginShutdown()
 {
     controller_->beginShutdown();
@@ -647,6 +695,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QFont baseFont;
     QString preedit;
     QString status;
+    QSet<int> hoveredHyperlinkCells;
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     qreal baseline = 0.0;
@@ -658,6 +707,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         baseFont = font_;
         preedit = preedit_;
         status = statusMessage_;
+        hoveredHyperlinkCells = hoveredHyperlinkCellIndexes_;
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
         baseline = baseline_;
@@ -809,9 +859,19 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     underlineColor = withOpacity(underlineColor,
                                                   appearance.faintOpacity);
                 }
+                TerminalUnderlineStyle underlineStyle = cell.underlineStyle;
+                if (hoveredHyperlinkCells.contains(index)) {
+                    // Ghostty renders a hovered link as single-underlined,
+                    // except an existing single underline becomes double so
+                    // the hover remains visually distinguishable.
+                    underlineStyle = cell.underlineStyle
+                            == TerminalUnderlineStyle::Single
+                        ? TerminalUnderlineStyle::Double
+                        : TerminalUnderlineStyle::Single;
+                }
                 appendUnderline(decorationsBeforeText,
                                 QRectF(left, top, drawWidth, cellHeight),
-                                baseline, cell.underlineStyle, underlineColor);
+                                baseline, underlineStyle, underlineColor);
                 if (cell.strikeThrough) {
                     appendRect(decorationsAfterText,
                                QRectF(left, top + cellHeight * 0.52, drawWidth, 1.0),
@@ -992,6 +1052,12 @@ void TerminalPane::resetCursorBlink()
 
 void TerminalPane::updateTerminalSize()
 {
+    if (controller_ != nullptr) {
+        // Drop viewport-relative state immediately. If the item is too small
+        // to send a resize, a later hover can resolve again without waiting
+        // for a frame that will never arrive.
+        clearHyperlinkHover();
+    }
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     {
@@ -1023,6 +1089,10 @@ void TerminalPane::updateTerminalSize()
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
     const KeyHandling handling = handleShortcut(event);
+    // Run configured actions against the previously accepted hover before a
+    // chord's non-modifier key refreshes link eligibility. This keeps
+    // copy_url_to_clipboard synchronous within Ghostty action chains.
+    updateHyperlinkModifiers(modifiersAfterKeyEvent(event, true));
     if (handling != KeyHandling::PassThrough) {
         if (handling == KeyHandling::ConsumePressAndRelease) {
             consumedKeys_.insert(keyEventIdentity(event));
@@ -1037,6 +1107,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
 
 void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 {
+    updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
     if (consumedKeys_.remove(keyEventIdentity(event))) {
         event->accept();
         return;
@@ -1300,6 +1371,17 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         }
         return controller_->selectionExpected();
     }
+    if (name == QLatin1StringView("copy_url_to_clipboard")) {
+        quint64 contentRevision = 0;
+        {
+            QMutexLocker locker(&renderMutex_);
+            contentRevision = frame_.contentRevision;
+        }
+        return !parameter.has_value() && !hoveredHyperlinkUri_.isEmpty()
+            && hoveredHyperlinkCell_ == hoverCell_
+            && hoveredHyperlinkRevision_ == contentRevision
+            && hyperlinkModifiersMatch(hoverModifiers_);
+    }
     if (name == QLatin1StringView("activate_key_table")
         || name == QLatin1StringView("activate_key_table_once")) {
         return parameter.has_value()
@@ -1383,6 +1465,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
                 && !controller_->selectionExpected()) {
                 return false;
             }
+            clearHyperlinkHover();
             controller_->scrollViewport(paneAction->viewport);
             return true;
         case GhosttyPaneActionKind::ScrollPageUp:
@@ -1393,6 +1476,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             request.delta = paneAction->kind
                     == GhosttyPaneActionKind::ScrollPageUp
                 ? -rows : rows;
+            clearHyperlinkHover();
             controller_->scrollViewport(request);
             return true;
         }
@@ -1403,6 +1487,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             TerminalViewportRequest request;
             request.kind = TerminalViewportRequest::Kind::Delta;
             request.delta = *delta;
+            clearHyperlinkHover();
             controller_->scrollViewport(request);
             return true;
         }
@@ -1411,21 +1496,26 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             return true;
         case GhosttyPaneActionKind::AdjustSelection:
             if (!controller_->selectionExpected()) return false;
+            clearHyperlinkHover();
             controller_->adjustSelection(paneAction->selectionAdjustment);
             return true;
         case GhosttyPaneActionKind::Csi:
+            clearHyperlinkHover();
             controller_->sendCsi(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Esc:
+            clearHyperlinkHover();
             controller_->sendEscape(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Text:
             // Ghostty validates Zig string escapes only when performing the
             // action. Keep the serialized bytes intact until the worker so a
             // malformed binding is still consumed without writing to the PTY.
+            clearHyperlinkHover();
             controller_->sendRawText(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Reset:
+            clearHyperlinkHover();
             controller_->resetTerminal();
             return true;
         }
@@ -1433,6 +1523,19 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
         copySelection();
+        return true;
+    }
+    if (name == QLatin1StringView("copy_url_to_clipboard")) {
+        // Broad (`all:`/`global:`) bindings execute without the normal
+        // performability preflight, so validate again at this public boundary.
+        if (!canExecuteConfiguredAction(action)
+            || QGuiApplication::clipboard() == nullptr) {
+            return false;
+        }
+        auto *mimeData = new QMimeData;
+        mimeData->setData(QStringLiteral("text/plain"),
+                          hoveredHyperlinkUri_);
+        QGuiApplication::clipboard()->setMimeData(mimeData);
         return true;
     }
     if (name == QLatin1StringView("paste_from_clipboard")) {
@@ -1573,13 +1676,32 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
 {
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
+    updateHyperlinkHover(event->position(), event->modifiers());
+    if (event->button() == Qt::LeftButton) {
+        hyperlinkPressDragged_ = false;
+        hyperlinkPressPosition_ = event->position();
+        quint64 contentRevision = 0;
+        hyperlinkPressArmed_ = hyperlinkModifiersMatch(hoverModifiers_)
+            && hyperlinkCellCandidate(hoverCell_, &contentRevision);
+        if (hyperlinkPressArmed_) {
+            hyperlinkPressCell_ = hoverCell_;
+            hyperlinkPressRevision_ = contentRevision;
+            hyperlinkPressUri_ = hoveredHyperlinkCell_ == hoverCell_
+                    && hoveredHyperlinkRevision_ == contentRevision
+                ? hoveredHyperlinkUri_ : QByteArray{};
+        }
+    }
+    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
-        && !event->modifiers().testFlag(Qt::ShiftModifier);
+        && !modifiers.testFlag(Qt::ShiftModifier);
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  event->buttons(), event->modifiers());
+                  event->buttons(), modifiers);
     } else if (event->button() == Qt::LeftButton) {
-        beginLocalSelection(event->position(), 1, event->modifiers());
+        // Ghostty starts its normal selection gesture even for a potential
+        // link click. A release may activate the link, while a drag naturally
+        // continues as selection instead.
+        beginLocalSelection(event->position(), 1, modifiers);
     } else if (event->button() == Qt::MiddleButton) {
         const QString text = QGuiApplication::clipboard()->text(QClipboard::Selection);
         if (!text.isEmpty()) {
@@ -1594,11 +1716,14 @@ void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
 {
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
-    if (!controller_->mouseTracking() || event->modifiers().testFlag(Qt::ShiftModifier)) {
-        beginLocalSelection(event->position(), 2, event->modifiers());
+    updateHyperlinkHover(event->position(), event->modifiers());
+    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
+    if (!controller_->mouseTracking()
+        || modifiers.testFlag(Qt::ShiftModifier)) {
+        beginLocalSelection(event->position(), 2, modifiers);
     } else {
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  event->buttons(), event->modifiers());
+                  event->buttons(), modifiers);
     }
     event->accept();
 }
@@ -1614,41 +1739,86 @@ void TerminalPane::beginLocalSelection(const QPointF &position, int clickCount,
 
 void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 {
+    if (hyperlinkPressArmed_
+        && (event->position() - hyperlinkPressPosition_).manhattanLength()
+            >= QGuiApplication::styleHints()->startDragDistance()) {
+        hyperlinkPressDragged_ = true;
+    }
+    updateHyperlinkHover(event->position(), event->modifiers());
+    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
-        && !event->modifiers().testFlag(Qt::ShiftModifier);
+        && !modifiers.testFlag(Qt::ShiftModifier);
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
-                  event->buttons(), event->modifiers());
+                  event->buttons(), modifiers);
     } else if (selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint cell = cellAt(event->position());
         controller_->updateSelection(cell.x(), cell.y(),
-                                     event->modifiers().testFlag(Qt::AltModifier));
+                                     modifiers.testFlag(Qt::AltModifier));
     }
     event->accept();
 }
 
 void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
 {
-    const bool report = controller_->mouseTracking()
-        && !event->modifiers().testFlag(Qt::ShiftModifier);
-    if (report) {
-        sendMouse(event->position(), TerminalMouseInput::Release, event->button(),
-                  event->buttons(), event->modifiers());
+    if (hyperlinkPressArmed_
+        && (event->position() - hyperlinkPressPosition_).manhattanLength()
+            >= QGuiApplication::styleHints()->startDragDistance()) {
+        hyperlinkPressDragged_ = true;
     }
+    updateHyperlinkHover(event->position(), event->modifiers());
+    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
+    const bool report = controller_->mouseTracking()
+        && !modifiers.testFlag(Qt::ShiftModifier);
     if (event->button() == Qt::LeftButton && selecting_) {
         const QPoint cell = cellAt(event->position());
         controller_->endSelection(cell.x(), cell.y());
         selecting_ = false;
     }
+    quint64 releaseRevision = 0;
+    const bool activateHyperlink = event->button() == Qt::LeftButton
+        && hyperlinkPressArmed_ && !hyperlinkPressDragged_
+        && hyperlinkModifiersMatch(hoverModifiers_)
+        && hoverCell_ == hyperlinkPressCell_
+        && hyperlinkCellCandidate(hyperlinkPressCell_, &releaseRevision)
+        && releaseRevision == hyperlinkPressRevision_;
+    if (activateHyperlink) {
+        pendingActivationUri_ = hyperlinkPressUri_;
+        pendingActivationRevision_ = hyperlinkPressRevision_;
+        controller_->requestHyperlinkActivation(
+            hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
+            hyperlinkPressRevision_);
+    } else if (report) {
+        sendMouse(event->position(), TerminalMouseInput::Release, event->button(),
+                  event->buttons(), modifiers);
+    }
+    hyperlinkPressArmed_ = false;
+    hyperlinkPressDragged_ = false;
+    hyperlinkPressCell_ = QPoint(-1, -1);
+    hyperlinkPressUri_.clear();
+    hyperlinkPressRevision_ = 0;
     event->accept();
 }
 
 void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
-    if (controller_->mouseTracking()) {
+    updateHyperlinkHover(event->position(), event->modifiers());
+    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
+    if (controller_->mouseTracking()
+        && !modifiers.testFlag(Qt::ShiftModifier)) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
-                  Qt::NoButton, event->modifiers());
+                  Qt::NoButton, modifiers);
     }
+    event->accept();
+}
+
+void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
+{
+    hoverInside_ = false;
+    hoverCell_ = QPoint(-1, -1);
+    clearHyperlinkHover();
+    hyperlinkPressDragged_ = false;
+    QQuickItem::hoverLeaveEvent(event);
     event->accept();
 }
 
@@ -1659,12 +1829,14 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         event->ignore();
         return;
     }
+    const Qt::KeyboardModifiers modifiers =
+        effectivePointerModifiers(event->modifiers());
     if (controller_->mouseTracking()
-        && !event->modifiers().testFlag(Qt::ShiftModifier)) {
+        && !modifiers.testFlag(Qt::ShiftModifier)) {
         TerminalMouseInput input;
         input.action = TerminalMouseInput::Press;
         input.button = steps > 0 ? 4 : 5;
-        input.modifiers = static_cast<int>(event->modifiers());
+        input.modifiers = static_cast<int>(modifiers);
         const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
         input.x = static_cast<float>(event->position().x() * devicePixelRatio);
         input.y = static_cast<float>(event->position().y() * devicePixelRatio);
@@ -1675,6 +1847,7 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         TerminalViewportRequest request;
         request.kind = TerminalViewportRequest::Kind::Delta;
         request.delta = -static_cast<qint64>(steps) * 3;
+        clearHyperlinkHover();
         controller_->scrollViewport(request);
     }
     event->accept();
@@ -1719,6 +1892,285 @@ int TerminalPane::normalizedMouseButton(Qt::MouseButton button) const
     }
 }
 
+Qt::KeyboardModifiers TerminalPane::effectivePointerModifiers(
+    Qt::KeyboardModifiers modifiers) const
+{
+    return normalizedModifiers(modifiers) | keyboardModifiers_;
+}
+
+bool TerminalPane::hyperlinkModifiersMatch(
+    Qt::KeyboardModifiers modifiers) const
+{
+    modifiers = normalizedModifiers(modifiers);
+    if (controller_->mouseTracking()) {
+        // Shift is Ghostty's Linux escape hatch from application mouse
+        // capture. Once it releases capture, it is removed before matching
+        // the exact Ctrl-only OSC 8 modifier.
+        if (!modifiers.testFlag(Qt::ShiftModifier)) {
+            return false;
+        }
+        modifiers &= ~Qt::ShiftModifier;
+    }
+    return modifiers == Qt::ControlModifier;
+}
+
+std::optional<QPoint> TerminalPane::hoverCellAt(
+    const QPointF &position) const
+{
+    QMutexLocker locker(&renderMutex_);
+    if (!hasFrame_ || frame_.columns <= 0 || frame_.rows <= 0
+        || position.x() < 0.0 || position.y() < 0.0) {
+        return std::nullopt;
+    }
+    const int column = static_cast<int>(std::floor(position.x() / cellWidth_));
+    const int row = static_cast<int>(std::floor(position.y() / cellHeight_));
+    if (column < 0 || column >= frame_.columns
+        || row < 0 || row >= frame_.rows) {
+        return std::nullopt;
+    }
+    return QPoint(column, row);
+}
+
+void TerminalPane::updateHyperlinkHover(
+    const QPointF &position, Qt::KeyboardModifiers modifiers)
+{
+    hoverInside_ = true;
+    hoverPosition_ = position;
+    hoverModifiers_ = effectivePointerModifiers(modifiers);
+    const std::optional<QPoint> cell = hoverCellAt(position);
+    const QPoint nextCell = cell.value_or(QPoint(-1, -1));
+    if (nextCell != hoverCell_) {
+        if (hyperlinkPressArmed_) {
+            hyperlinkPressDragged_ = true;
+        }
+        bool remainsOnResolvedLink = false;
+        {
+            QMutexLocker locker(&renderMutex_);
+            const int index = nextCell.y() * frame_.columns + nextCell.x();
+            remainsOnResolvedLink = nextCell.x() >= 0
+                && nextCell.x() < frame_.columns
+                && nextCell.y() >= 0 && nextCell.y() < frame_.rows
+                && hoveredHyperlinkRevision_ == frame_.contentRevision
+                && hoveredHyperlinkCellIndexes_.contains(index)
+                && !hyperlinkPressDragged_
+                && hyperlinkModifiersMatch(hoverModifiers_);
+        }
+        hoverCell_ = nextCell;
+        if (remainsOnResolvedLink) {
+            hyperlinkQueryCell_ = nextCell;
+            hoveredHyperlinkCell_ = nextCell;
+        } else {
+            clearHyperlinkHover();
+        }
+    }
+    if (!hyperlinkModifiersMatch(hoverModifiers_)) {
+        clearHyperlinkHover();
+        return;
+    }
+    refreshHyperlinkHover();
+}
+
+void TerminalPane::recomputeHyperlinkHover()
+{
+    if (hoverInside_) {
+        updateHyperlinkHover(hoverPosition_, hoverModifiers_);
+    }
+}
+
+void TerminalPane::updateHyperlinkModifiers(
+    Qt::KeyboardModifiers modifiers)
+{
+    keyboardModifiers_ = normalizedModifiers(modifiers);
+    hoverModifiers_ = keyboardModifiers_;
+    if (!hyperlinkModifiersMatch(hoverModifiers_)) {
+        clearHyperlinkHover();
+        return;
+    }
+    refreshHyperlinkHover();
+}
+
+void TerminalPane::refreshHyperlinkHover()
+{
+    if (!hoverInside_
+        || hoverCell_.x() < 0 || hoverCell_.y() < 0
+        || hyperlinkPressDragged_
+        || !hyperlinkModifiersMatch(hoverModifiers_)) {
+        return;
+    }
+
+    quint64 contentRevision = 0;
+    QVector<QPoint> candidates;
+    bool targetHasHyperlink = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        if (!hasFrame_ || hoverCell_.x() >= frame_.columns
+            || hoverCell_.y() >= frame_.rows) {
+            return;
+        }
+        contentRevision = frame_.contentRevision;
+        const int targetIndex = hoverCell_.y() * frame_.columns
+            + hoverCell_.x();
+        targetHasHyperlink = targetIndex >= 0
+            && targetIndex < frame_.cells.size()
+            && frame_.cells.at(targetIndex).hasHyperlink;
+        if (targetHasHyperlink) {
+            candidates.reserve(frame_.cells.size());
+            for (int index = 0; index < frame_.cells.size(); ++index) {
+                if (frame_.cells.at(index).hasHyperlink) {
+                    candidates.append(QPoint(index % frame_.columns,
+                                             index / frame_.columns));
+                }
+            }
+        }
+    }
+
+    if (!targetHasHyperlink) {
+        clearHyperlinkHover();
+        return;
+    }
+    if (hyperlinkQueryCell_ == hoverCell_
+        && hyperlinkQueryRevision_ == contentRevision) {
+        return;
+    }
+
+    clearHyperlinkHover();
+    hyperlinkQueryCell_ = hoverCell_;
+    hyperlinkQueryRevision_ = contentRevision;
+    hyperlinkQueryPending_ = true;
+    controller_->requestHyperlink(hoverCell_.x(), hoverCell_.y(),
+                                  contentRevision, candidates);
+}
+
+void TerminalPane::clearHyperlinkHover()
+{
+    controller_->cancelHyperlinkRequest();
+    hyperlinkQueryCell_ = QPoint(-1, -1);
+    hyperlinkQueryRevision_ = 0;
+    hyperlinkQueryPending_ = false;
+    hoveredHyperlinkUri_.clear();
+    hoveredHyperlinkCell_ = QPoint(-1, -1);
+    hoveredHyperlinkRevision_ = 0;
+    if (hyperlinkPressArmed_) {
+        hyperlinkPressDragged_ = true;
+    }
+    hyperlinkPressArmed_ = false;
+    hyperlinkPressUri_.clear();
+    hyperlinkPressRevision_ = 0;
+
+    bool hadHighlight = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        hadHighlight = !hoveredHyperlinkCellIndexes_.isEmpty();
+        hoveredHyperlinkCellIndexes_.clear();
+    }
+    unsetCursor();
+    if (hadHighlight) {
+        update();
+    }
+}
+
+bool TerminalPane::hyperlinkCellCandidate(
+    const QPoint &cell, quint64 *contentRevision) const
+{
+    QMutexLocker locker(&renderMutex_);
+    if (!hasFrame_ || cell.x() < 0 || cell.x() >= frame_.columns
+        || cell.y() < 0 || cell.y() >= frame_.rows) {
+        return false;
+    }
+    const int index = cell.y() * frame_.columns + cell.x();
+    if (index < 0 || index >= frame_.cells.size()
+        || !frame_.cells.at(index).hasHyperlink) {
+        return false;
+    }
+    if (contentRevision != nullptr) {
+        *contentRevision = frame_.contentRevision;
+    }
+    return true;
+}
+
+void TerminalPane::handleHyperlinkResult(
+    quint64 contentRevision, const QByteArray &uri,
+    const QVector<QPoint> &matchingCells)
+{
+    if (!hyperlinkQueryPending_) {
+        return;
+    }
+    hyperlinkQueryPending_ = false;
+
+    quint64 currentRevision = 0;
+    int columns = 0;
+    int rows = 0;
+    {
+        QMutexLocker locker(&renderMutex_);
+        currentRevision = frame_.contentRevision;
+        columns = frame_.columns;
+        rows = frame_.rows;
+    }
+    if (contentRevision != hyperlinkQueryRevision_
+        || contentRevision != currentRevision
+        || hyperlinkQueryCell_ != hoverCell_
+        || !hoverInside_ || !hyperlinkModifiersMatch(hoverModifiers_)) {
+        clearHyperlinkHover();
+        return;
+    }
+
+    if (uri.isEmpty()) {
+        hoveredHyperlinkUri_.clear();
+        hoveredHyperlinkCell_ = QPoint(-1, -1);
+        hoveredHyperlinkRevision_ = 0;
+        unsetCursor();
+        return;
+    }
+
+    QSet<int> indexes;
+    for (const QPoint &cell : matchingCells) {
+        if (cell.x() >= 0 && cell.x() < columns
+            && cell.y() >= 0 && cell.y() < rows) {
+            indexes.insert(cell.y() * columns + cell.x());
+        }
+    }
+    if (indexes.isEmpty()) {
+        indexes.insert(hoverCell_.y() * columns + hoverCell_.x());
+    }
+
+    hoveredHyperlinkUri_ = uri;
+    hoveredHyperlinkCell_ = hoverCell_;
+    hoveredHyperlinkRevision_ = contentRevision;
+    {
+        QMutexLocker locker(&renderMutex_);
+        hoveredHyperlinkCellIndexes_ = std::move(indexes);
+    }
+    setCursor(Qt::PointingHandCursor);
+    update();
+}
+
+QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri) const
+{
+    if (uri.isEmpty() || uri.contains('\0')) {
+        return {};
+    }
+    const QUrl url = uri.startsWith('/')
+        ? QUrl::fromLocalFile(QString::fromUtf8(uri))
+        : QUrl::fromEncoded(uri, QUrl::StrictMode);
+    return url.isValid() && !url.isEmpty() ? url : QUrl{};
+}
+
+void TerminalPane::handleHyperlinkActivation(
+    quint64 contentRevision, const QByteArray &uri)
+{
+    const QByteArray expectedUri = std::exchange(pendingActivationUri_, {});
+    const quint64 expectedRevision =
+        std::exchange(pendingActivationRevision_, 0);
+    if (contentRevision != expectedRevision || uri.isEmpty()
+        || (!expectedUri.isEmpty() && uri != expectedUri) || !urlOpener_) {
+        return;
+    }
+    const QUrl url = hyperlinkUrl(uri);
+    if (url.isValid() && !url.isEmpty()) {
+        static_cast<void>(urlOpener_(url));
+    }
+}
+
 QPoint TerminalPane::cellAt(const QPointF &position) const
 {
     QMutexLocker locker(&renderMutex_);
@@ -1743,6 +2195,12 @@ void TerminalPane::focusOutEvent(QFocusEvent *event)
 {
     cursorTimer_->stop();
     cursorBlinkOn_ = true;
+    hoverInside_ = false;
+    hoverCell_ = QPoint(-1, -1);
+    keyboardModifiers_ = Qt::NoModifier;
+    hoverModifiers_ = Qt::NoModifier;
+    clearHyperlinkHover();
+    hyperlinkPressDragged_ = false;
     controller_->setFocused(false);
     QQuickItem::focusOutEvent(event);
     update();

@@ -98,8 +98,9 @@ pane shutdowns first so grace periods overlap.
 4. Screen updates are coalesced on an 8 ms single-shot timer. First frames,
    resize, viewport scroll, and Ghostty full-dirty states produce a value-only
    full-grid update. Ordinary output copies only Ghostty's indexed dirty rows;
-   colors, the effective 256-entry palette, cursor state, and scrollbar
-   metadata carry independent change flags.
+   colors, the effective 256-entry palette, cursor state, scrollbar metadata,
+   and each cell's OSC 8 presence bit cross as values. Each published update
+   also carries the worker's current terminal-content revision.
 5. A queued Qt signal copies the update across the thread boundary. The pane
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
@@ -156,6 +157,11 @@ signals:
   overlay until committed.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
+- OSC 8 hover requires exactly `Ctrl` on Linux. A matching result changes the
+  pointer and underlines the visible matching cells; an already single-underlined
+  cell becomes double-underlined while hovered. With application mouse capture,
+  `Shift` first bypasses capture and is removed before modifier matching, so
+  the equivalent gesture is `Ctrl+Shift`.
 - Focus changes are encoded only when the terminal requests focus reporting.
 - Paste uses Ghostty's safe-paste check and bracketed-paste encoder. Unsafe text
   is held in `TerminalWorkspace` until the QML dialog confirms it.
@@ -169,6 +175,32 @@ signals:
   untracked Ghostty grid references, so fetch, adjustment, coordinate
   conversion, installation, and endpoint autoscroll are deliberately one
   transaction with no queued boundary between them.
+
+The render update exposes only whether a cell has an OSC 8 hyperlink. URI
+lookup remains beside the terminal on the session thread: a hover request sends
+the viewport-relative cell, the retained content revision, and the visible
+candidate hyperlink cells. The adapter creates fresh grid references and uses
+libghostty's two-pass URI query to return the original destination bytes. The
+worker tags the reply with its current revision, and both the controller and
+pane reject canceled or stale results before changing the pointer or underline
+mask. Resizes, output batches, reset, viewport movement, and selection
+operations that can move the viewport all advance the revision. This global
+revision is deliberately conservative; continuous output can make a stationary
+hover re-resolve even when the linked row itself is unchanged.
+
+Public `libghostty-vt` exposes the destination URI but not the OSC 8 hyperlink
+ID. Hover grouping therefore compares the URI of every visible candidate: two
+separate IDs with the same URI can be underlined together. Activation remains
+cell-specific. A left press on a cell carrying the raw hyperlink bit arms the
+gesture even if the hover lookup is still pending. Only a release in that same
+cell below Qt's drag threshold starts a second worker lookup; when the hover
+URI was already known, the reply must also match it exactly. The value used by
+`copy_url_to_clipboard` remains byte-exact through the worker lookup and is put
+directly in the clipboard's `text/plain` MIME payload, never round-tripped
+through `QString` or `QUrl`. For opening, the GUI converts absolute paths with
+`QUrl::fromLocalFile`, parses other byte strings using `QUrl` strict encoded
+mode, rejects malformed or NUL-containing results, and delegates valid URLs to
+Qt's desktop services.
 
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
@@ -440,12 +472,15 @@ The default CTest suite has seventeen layers:
   focus, and key input using terminal modes. It also verifies tagged viewport
   scrolling, selection-target alignment, select-all, and endpoint adjustment
   with exact autoscroll, plus primary/alternate-screen reset, mode clearing,
-  selection invalidation, history removal, and forced full-frame publication.
+  selection invalidation, history removal, forced full-frame publication, and
+  long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
+  state.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, byte-exact terminal-control action writes, reset cache
   synchronization, process exit, explicit-program activity, and an interactive
-  shell's idle/job/idle foreground transitions.
+  shell's idle/job/idle foreground transitions. It also verifies
+  revision-correlated OSC 8 queries and stale-revision rejection.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
@@ -472,7 +507,8 @@ The default CTest suite has seventeen layers:
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,
-  release suppression, and reload cancellation through a real PTY-backed pane.
+  release suppression, reload cancellation, and OSC 8 hover/copy/release-only
+  activation through a real PTY-backed pane.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -509,5 +545,7 @@ in a real Wayland session.
 - Split ratios support keybinding resize/equalization, but draggable divider
   interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, search, hyperlinks, multi-window operation, saved sessions, and
-  production packaging remain future work.
+  actions, search, regex-configured links and link previews, multi-window
+  operation, saved sessions, and production packaging remain future work. OSC
+  8 interaction is implemented, with URI-based visible grouping until the
+  public C API exposes hyperlink identity.

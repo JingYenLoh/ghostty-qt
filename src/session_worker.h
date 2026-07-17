@@ -6,7 +6,9 @@
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QObject>
+#include <QPoint>
 #include <QString>
+#include <QVector>
 
 #include <memory>
 
@@ -60,6 +62,9 @@ public Q_SLOTS:
     void selectAll();
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    void queryHyperlink(quint64 requestId, quint64 contentRevision,
+                        int column, int row,
+                        const QVector<QPoint> &candidateCells);
     void shutdown();
 
 Q_SIGNALS:
@@ -78,6 +83,9 @@ Q_SIGNALS:
     // selection availability remains false. This reconciles the UI's queued
     // selection intent without relying on a state-change-only signal.
     void selectAllCompleted(bool selectionAvailable);
+    void hyperlinkResolved(quint64 requestId, quint64 contentRevision,
+                           const QByteArray &uri,
+                           const QVector<QPoint> &matchingCells);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 
@@ -99,6 +107,7 @@ private:
     void noteCompressionActivity();
     void syncMouseEncoder();
     void syncSelectionAvailability();
+    void markTerminalContentChanged();
     void processDeferredEffects();
     void drainPty(bool finalDrain);
     void notePotentialActivity();
@@ -141,5 +150,7 @@ private:
     bool shuttingDown_ = false;
     bool hold_ = false;
     bool mouseTracking_ = false;
+    quint64 terminalContentRevision_ = 1;
+    quint64 publishedContentRevision_ = 0;
     uint64_t compressionActivity_ = 0;
 };

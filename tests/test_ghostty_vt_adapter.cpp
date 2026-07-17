@@ -8,6 +8,7 @@
 
 #include <linux/input-event-codes.h>
 
+#include <algorithm>
 #include <optional>
 
 namespace {
@@ -58,6 +59,7 @@ private Q_SLOTS:
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
     void resetsAllTerminalStateAndPublishesFullFrame();
+    void resolvesOsc8HyperlinksAcrossViewportState();
     void selectsAndNavigatesViewportAtomically();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
@@ -141,6 +143,120 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray uri = QByteArrayLiteral("https://example.test/")
+        + QStringLiteral("ghost-👻-").toUtf8() + QByteArray(160, 'x');
+    QByteArray linked;
+    linked += QByteArrayLiteral("\033]8;id=primary;");
+    linked += uri;
+    linked += QByteArrayLiteral("\033\\LINK\033]8;;\033\\ plain");
+    adapter->writeVt(linked);
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QVector<QPoint> candidates;
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            candidates.append(QPoint(index % frame.columns,
+                                     index / frame.columns));
+        }
+    }
+    QCOMPARE(candidates.size(), 4);
+    const auto match = adapter->hyperlinkAt(1, 0, candidates);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, uri);
+    QCOMPARE(match->cells, candidates);
+    QVERIFY(!adapter->hyperlinkAt(5, 0, candidates).has_value());
+    QVERIFY(!adapter->hyperlinkAt(-1, 0, candidates).has_value());
+    QVERIFY(!adapter->hyperlinkAt(12, 0, candidates).has_value());
+    QVERIFY(!adapter->hyperlinkAt(0, 2, candidates).has_value());
+
+    // Push the primary link into history. Viewport-relative lookup follows
+    // the displayed scrollback rather than retaining a stale active-area ref.
+    adapter->writeVt(QByteArrayLiteral("\r\nrow-2\r\nrow-3"));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(std::none_of(frame.cells.cbegin(), frame.cells.cend(),
+                         [](const TerminalCell &cell) {
+                             return cell.hasHyperlink;
+                         }));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    candidates.clear();
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            candidates.append(QPoint(index % frame.columns,
+                                     index / frame.columns));
+        }
+    }
+    QVERIFY(!candidates.isEmpty());
+    const auto historyMatch = adapter->hyperlinkAt(
+        candidates.constFirst().x(), candidates.constFirst().y(), candidates);
+    QVERIFY(historyMatch.has_value());
+    QCOMPARE(historyMatch->uri, uri);
+
+    // Alternate-screen links are isolated, and leaving it restores the
+    // primary screen's viewport-relative destination.
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    const QByteArray alternateUri("file:///tmp/alternate-link");
+    QByteArray alternate;
+    alternate += QByteArrayLiteral("\033]8;;");
+    alternate += alternateUri;
+    alternate += QByteArrayLiteral("\033\\ALT\033]8;;\033\\");
+    adapter->writeVt(alternate);
+    renderInto(adapter.get(), &frame);
+    QVector<QPoint> alternateCandidates;
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            alternateCandidates.append(QPoint(index % frame.columns,
+                                              index / frame.columns));
+        }
+    }
+    QCOMPARE(alternateCandidates.size(), 3);
+    const auto alternateMatch = adapter->hyperlinkAt(
+        alternateCandidates.constFirst().x(),
+        alternateCandidates.constFirst().y(), alternateCandidates);
+    QVERIFY(alternateMatch.has_value());
+    QCOMPARE(alternateMatch->uri, alternateUri);
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    const auto restored = adapter->hyperlinkAt(
+        candidates.constFirst().x(), candidates.constFirst().y(), candidates);
+    QVERIFY(restored.has_value());
+    QCOMPARE(restored->uri, uri);
+
+    adapter->reset();
+    QVERIFY(!adapter->hyperlinkAt(0, 0, {QPoint(0, 0)}).has_value());
+
+    // The C API contract is bytes, not QString. Preserve a non-UTF-8
+    // destination exactly so clipboard export never depends on QUrl or a
+    // lossy Unicode round trip.
+    QByteArray byteUri = QByteArrayLiteral("https://example.test/raw-");
+    byteUri.append(static_cast<char>(0xff));
+    QByteArray byteLink = QByteArrayLiteral("\033]8;;");
+    byteLink += byteUri;
+    byteLink += QByteArrayLiteral("\033\\R\033]8;;\033\\");
+    adapter->writeVt(byteLink);
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.cells.constFirst().hasHyperlink);
+    const auto byteMatch = adapter->hyperlinkAt(0, 0, {QPoint(0, 0)});
+    QVERIFY(byteMatch.has_value());
+    QCOMPARE(byteMatch->uri, byteUri);
 }
 
 void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()

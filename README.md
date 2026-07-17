@@ -28,6 +28,11 @@ the host-language comparison and remaining engineering risks.
 - Mouse selection, double-click word selection, rectangular selection with
   `Alt`, keyboard select-all/endpoint adjustment, clipboard copy,
   primary-selection paste, and an unsafe-paste review dialog.
+- OSC 8 hyperlinks with `Ctrl`-hover pointer/underline feedback,
+  release-validated `Ctrl`-click opening through the desktop URL handler, and
+  the `copy_url_to_clipboard` keybinding action. The copy path uses the
+  original OSC 8 byte sequence as the clipboard's `text/plain` payload rather
+  than the Qt URL adapted for opening.
 - Full-height, fractional, line, absolute-row, top/bottom, and
   selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
@@ -276,13 +281,19 @@ directly. Viewport/selection bindings additionally support `scroll_to_top`,
 `scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`, `scroll_page_down`,
 `scroll_page_fractional`, `scroll_page_lines`, `scroll_to_selection`,
 `select_all`, and `adjust_selection`. Terminal-control bindings support `csi`,
-`esc`, `text`, and `reset`; raw-write actions return the viewport to the active
-area, while reset clears emulator state without sending bytes to the child.
+`esc`, `text`, and `reset`; `copy_url_to_clipboard` copies the OSC 8
+destination currently accepted under the pointer. Raw-write actions return the
+viewport to the active area, while reset clears emulator state without sending
+bytes to the child.
 
 Drag with the left mouse button to select; double-click to select a word and
 hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
 application's mouse-reporting mode so local selection and scrolling remain
-available. Middle-click pastes the Wayland primary selection.
+available. Hold `Ctrl` over an OSC 8 hyperlink to show its pointer and
+underline, then release the left button in the same cell without dragging to
+open it. When an application has captured the mouse, use `Ctrl+Shift`: `Shift`
+releases the capture before the exact `Ctrl` link modifier is matched.
+Middle-click pastes the Wayland primary selection.
 
 ## Terminfo
 
@@ -330,9 +341,11 @@ exercised headlessly; workspace tab ordering, split layout, navigation, and
 zoom are covered through typed actions. Adapter/session tests cover absolute,
 relative, and selection-driven viewport movement plus select-all and endpoint
 adjustment. They also verify byte-exact CSI, ESC, and Zig-literal text writes,
-screen/history/mode reset semantics, and the helper's canonical byte-payload
-boundary, while interactive pointer selection and unsafe-paste dialog input
-are not yet fully automated.
+screen/history/mode reset semantics, OSC 8 extraction across viewport and
+alternate-screen state, revision-correlated hyperlink lookup, hover rendering,
+raw-destination copy, release-only activation, and the helper's canonical
+byte-payload boundary, while interactive pointer selection and unsafe-paste
+dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -372,6 +385,19 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
 - No Kitty graphics/inline images, color-emoji pipeline, or terminal-cell
   ligature shaping. Per-cell text rendering prioritizes correctness of the MVP
   architecture over advanced typography.
+- Hyperlink interaction currently covers explicit OSC 8 destinations. Ghostty
+  regex links configured through `link`/`link-url` and link previews remain
+  planned. Public `libghostty-vt` exposes a hyperlink URI but not its OSC 8 ID,
+  so visible links with the same destination can be underlined as one group
+  even when their IDs differ.
+- Hyperlink opening adapts absolute paths to local-file `QUrl` values and parses
+  other destinations in Qt's strict encoded mode. Malformed or NUL-containing
+  destinations remain available to `copy_url_to_clipboard` but are not sent to
+  the desktop opener. URI-scheme handling after that validation belongs to Qt
+  and the configured desktop services.
+- Hyperlink lookup uses a pane-wide content revision for stale-result safety.
+  Any terminal output advances that revision, so a stationary hover is cleared
+  and resolved again during continuous output even when its row did not change.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported.
 - `select_all` installs the same terminal selection as Ghostty, but the

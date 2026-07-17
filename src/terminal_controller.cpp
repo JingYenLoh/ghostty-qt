@@ -35,6 +35,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     qRegisterMetaType<TerminalKeyInput>();
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<LaunchOptions>();
 
     thread_ = new QThread(this);
@@ -82,6 +83,8 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::adjustSelection, Qt::QueuedConnection);
     connect(this, &TerminalController::scrollRequested,
             worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
+    connect(this, &TerminalController::hyperlinkQueryRequested,
+            worker_, &SessionWorker::queryHyperlink, Qt::QueuedConnection);
     connect(this, &TerminalController::runtimeOptionsRequested,
             worker_, &SessionWorker::applyRuntimeOptions, Qt::QueuedConnection);
     connect(this, &TerminalController::shutdownRequested,
@@ -126,6 +129,21 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
                 if (selectionAvailable_ == available) return;
                 selectionAvailable_ = available;
                 Q_EMIT selectionAvailableChanged(selectionAvailable_);
+            }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::hyperlinkResolved, this,
+            [this](quint64 requestId, quint64 contentRevision,
+                   const QByteArray &uri,
+                   const QVector<QPoint> &matchingCells) {
+                if (requestId == activeHyperlinkRequestId_) {
+                    activeHyperlinkRequestId_ = 0;
+                    Q_EMIT hyperlinkResolved(contentRevision, uri,
+                                             matchingCells);
+                    return;
+                }
+                if (requestId == activeHyperlinkActivationId_) {
+                    activeHyperlinkActivationId_ = 0;
+                    Q_EMIT hyperlinkActivationResolved(contentRevision, uri);
+                }
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
             [](const QString &text) {
@@ -354,6 +372,36 @@ void TerminalController::adjustSelection(TerminalSelectionAdjustment adjustment)
 void TerminalController::scrollViewport(const TerminalViewportRequest &request)
 {
     Q_EMIT scrollRequested(request);
+}
+
+quint64 TerminalController::nextHyperlinkRequestId()
+{
+    do {
+        ++nextHyperlinkRequestId_;
+    } while (nextHyperlinkRequestId_ == 0);
+    return nextHyperlinkRequestId_;
+}
+
+void TerminalController::requestHyperlink(
+    int column, int row, quint64 contentRevision,
+    const QVector<QPoint> &candidateCells)
+{
+    activeHyperlinkRequestId_ = nextHyperlinkRequestId();
+    Q_EMIT hyperlinkQueryRequested(activeHyperlinkRequestId_, contentRevision,
+                                   column, row, candidateCells);
+}
+
+void TerminalController::cancelHyperlinkRequest()
+{
+    activeHyperlinkRequestId_ = 0;
+}
+
+void TerminalController::requestHyperlinkActivation(
+    int column, int row, quint64 contentRevision)
+{
+    activeHyperlinkActivationId_ = nextHyperlinkRequestId();
+    Q_EMIT hyperlinkQueryRequested(activeHyperlinkActivationId_,
+                                   contentRevision, column, row, {});
 }
 
 bool TerminalController::isPasteSafe(const QString &text)

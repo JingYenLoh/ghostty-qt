@@ -816,18 +816,83 @@ public:
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
     {
+        return pointToGridRefExact(
+            std::clamp(column, 0, geometry_.columns - 1),
+            std::clamp(row, 0, geometry_.rows - 1), out);
+    }
+
+    bool pointToGridRefExact(int column, int row, GhosttyGridRef *out) const
+    {
         if (out == nullptr) {
+            return false;
+        }
+        if (column < 0 || column >= geometry_.columns
+            || row < 0 || row >= geometry_.rows) {
             return false;
         }
         GhosttyPoint point{};
         point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
-        point.value.coordinate.x = static_cast<uint16_t>(
-            std::clamp(column, 0, geometry_.columns - 1));
-        point.value.coordinate.y = static_cast<uint32_t>(
-            std::clamp(row, 0, geometry_.rows - 1));
+        point.value.coordinate.x = static_cast<uint16_t>(column);
+        point.value.coordinate.y = static_cast<uint32_t>(row);
         *out = GhosttyGridRef{};
         out->size = sizeof(*out);
         return ghostty_terminal_grid_ref(terminal_, point, out) == GHOSTTY_SUCCESS;
+    }
+
+    std::optional<QByteArray> hyperlinkUriAt(int column, int row) const
+    {
+        GhosttyGridRef reference{};
+        if (!pointToGridRefExact(column, row, &reference)) {
+            return std::nullopt;
+        }
+
+        size_t required = 0;
+        GhosttyResult result = ghostty_grid_ref_hyperlink_uri(
+            &reference, nullptr, 0, &required);
+        if (result == GHOSTTY_SUCCESS && required == 0) {
+            return QByteArray{};
+        }
+        if ((result != GHOSTTY_OUT_OF_SPACE && result != GHOSTTY_SUCCESS)
+            || required == 0
+            || required > static_cast<size_t>(
+                   std::numeric_limits<qsizetype>::max())) {
+            return std::nullopt;
+        }
+
+        QByteArray uri(static_cast<qsizetype>(required), Qt::Uninitialized);
+        size_t written = 0;
+        result = ghostty_grid_ref_hyperlink_uri(
+            &reference, reinterpret_cast<uint8_t *>(uri.data()),
+            static_cast<size_t>(uri.size()), &written);
+        if (result != GHOSTTY_SUCCESS || written > required) {
+            return std::nullopt;
+        }
+        uri.resize(static_cast<qsizetype>(written));
+        return uri;
+    }
+
+    std::optional<HyperlinkMatch> hyperlinkAt(
+        int column, int row, const QVector<QPoint> &candidateCells) const
+    {
+        const std::optional<QByteArray> uri = hyperlinkUriAt(column, row);
+        if (!uri.has_value() || uri->isEmpty()) {
+            return std::nullopt;
+        }
+
+        HyperlinkMatch match;
+        match.uri = *uri;
+        match.cells.reserve(candidateCells.size());
+        for (const QPoint &candidate : candidateCells) {
+            const std::optional<QByteArray> candidateUri = hyperlinkUriAt(
+                candidate.x(), candidate.y());
+            if (candidateUri.has_value() && *candidateUri == match.uri) {
+                match.cells.append(candidate);
+            }
+        }
+        if (!match.cells.contains(QPoint(column, row))) {
+            match.cells.append(QPoint(column, row));
+        }
+        return match;
     }
 
     bool beginSelection(int column, int row, int clickCount, bool rectangular)
@@ -1205,11 +1270,16 @@ public:
                        && ghostty_render_state_row_cells_next(rowCells_)) {
                     GhosttyCell rawCell = 0;
                     GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                    bool hasHyperlink = false;
                     if (ghostty_render_state_row_cells_get(
                             rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
                             &rawCell)
                             != GHOSTTY_SUCCESS
                         || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+                            != GHOSTTY_SUCCESS
+                        || ghostty_cell_get(rawCell,
+                                           GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+                                           &hasHyperlink)
                             != GHOSTTY_SUCCESS) {
                         return RenderResult::Retry;
                     }
@@ -1225,6 +1295,7 @@ public:
 
                     TerminalCell &cell = rowUpdate.cells[columnIndex];
                     cell.columnSpan = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+                    cell.hasHyperlink = hasHyperlink;
                     cell.spacer = wide == GHOSTTY_CELL_WIDE_SPACER_TAIL
                         || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD;
 
@@ -1719,6 +1790,13 @@ bool GhosttyVtAdapter::adjustSelection(TerminalSelectionAdjustment adjustment)
 bool GhosttyVtAdapter::scrollViewport(const TerminalViewportRequest &request)
 {
     return impl_->scrollViewport(request);
+}
+
+std::optional<GhosttyVtAdapter::HyperlinkMatch>
+GhosttyVtAdapter::hyperlinkAt(
+    int column, int row, const QVector<QPoint> &candidateCells) const
+{
+    return impl_->hyperlinkAt(column, row, candidateCells);
 }
 
 std::uint64_t GhosttyVtAdapter::compressionActivity() const
