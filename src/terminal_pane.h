@@ -107,6 +107,7 @@ private:
     KeyHandling handleShortcut(QKeyEvent *event);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event);
     bool canExecuteConfiguredAction(QStringView action) const;
+    int viewportPageRows() const;
     void adjustZoom(qreal delta);
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);
@@ -130,6 +131,10 @@ private:
     mutable QMutex renderMutex_;
     TerminalFrame frame_;
     bool hasFrame_ = false;
+    // Mirrors the row count requested from the worker. While a resize is in
+    // flight, stale frames must not make page actions use the previous height.
+    int terminalRows_ = 24;
+    bool terminalResizePending_ = false;
     QString preedit_;
     QString statusMessage_;
     bool selecting_ = false;

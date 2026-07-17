@@ -15,6 +15,7 @@
 
 #include <limits>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -64,6 +65,7 @@ private Q_SLOTS:
     void multiPaneShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
+    void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void splitNavigationWrapsInTreeAndSpatialOrder();
     void splitResizeAndEqualizeRespectTreeAxes();
@@ -455,6 +457,74 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         {QStringLiteral("close_tab:other")});
     QCOMPARE(quit.count(), 0);
     QCOMPARE(workspace.tabCount(), 2);
+}
+
+void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTab = workspace.tabModel()->idAt(0);
+    const PaneId firstPane = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTab, firstPane, 0},
+    }));
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+
+    std::vector<std::unique_ptr<QSignalSpy>> scrollSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> selectAllSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> adjustmentSpies;
+    for (TerminalPane *pane : panes) {
+        TerminalController *controller =
+            pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QVERIFY(!controller->selectionAvailable());
+        scrollSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::scrollRequested));
+        selectAllSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::selectAllRequested));
+        adjustmentSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::selectionAdjustmentRequested));
+    }
+
+    // Selection-dependent actions are not performable on any blank surface,
+    // and broad dispatch must not manufacture a worker request for them.
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("adjust_selection:left")));
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("scroll_to_selection")));
+    for (qsizetype i = 0; i < panes.size(); ++i) {
+        QCOMPARE(adjustmentSpies.at(static_cast<std::size_t>(i))->count(), 0);
+        QCOMPARE(scrollSpies.at(static_cast<std::size_t>(i))->count(), 0);
+    }
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("scroll_page_lines:3")));
+    for (const std::unique_ptr<QSignalSpy> &spy : scrollSpies) {
+        QCOMPARE(spy->count(), 1);
+        const TerminalViewportRequest request =
+            qvariant_cast<TerminalViewportRequest>(spy->front().at(0));
+        QCOMPARE(request.kind, TerminalViewportRequest::Kind::Delta);
+        QCOMPARE(request.delta, 3);
+    }
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("select_all")));
+    for (const std::unique_ptr<QSignalSpy> &spy : selectAllSpies) {
+        QCOMPARE(spy->count(), 1);
+    }
 }
 
 void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()

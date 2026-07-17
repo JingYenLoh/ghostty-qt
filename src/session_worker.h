@@ -45,7 +45,9 @@ public Q_SLOTS:
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);
-    void scrollViewport(int rows);
+    void selectAll();
+    void adjustSelection(TerminalSelectionAdjustment adjustment);
+    void scrollViewport(const TerminalViewportRequest &request);
     void shutdown();
 
 Q_SIGNALS:
@@ -60,6 +62,10 @@ Q_SIGNALS:
     // interactive shell remains running but reports false here.
     void activeProcessChanged(bool active);
     void selectionAvailableChanged(bool available);
+    // Emitted for every select-all request, including a blank terminal where
+    // selection availability remains false. This reconciles the UI's queued
+    // selection intent without relying on a state-change-only signal.
+    void selectAllCompleted(bool selectionAvailable);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 

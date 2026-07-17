@@ -29,6 +29,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -341,6 +343,25 @@ quint64 keyEventIdentity(const QKeyEvent *event)
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
+std::optional<qint64> fractionalPageDelta(float fraction, int pageRows)
+{
+    if (!std::isfinite(fraction) || pageRows <= 0) return std::nullopt;
+
+    const float product = fraction * static_cast<float>(pageRows);
+    if (!std::isfinite(product)) return std::nullopt;
+    const float truncated = std::trunc(product);
+
+    // Ghostty converts this f32 result to isize. Converting intptr max to f32
+    // rounds up on supported Linux targets, so step down to the greatest
+    // representable f32 whose integer conversion remains in range.
+    const float minimum =
+        static_cast<float>(std::numeric_limits<qintptr>::min());
+    const float maximum = std::nextafter(
+        static_cast<float>(std::numeric_limits<qintptr>::max()), 0.0F);
+    if (truncated < minimum || truncated > maximum) return std::nullopt;
+    return static_cast<qint64>(truncated);
+}
+
 TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
 {
     return {
@@ -410,6 +431,12 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     if (hasFrame_ || terminalUpdate.fullFrame) {
                         applied = applyTerminalUpdate(&frame_, terminalUpdate);
                         hasFrame_ = hasFrame_ || applied;
+                        if (applied && frame_.rows > 0
+                            && (!terminalResizePending_
+                                || frame_.rows == terminalRows_)) {
+                            terminalRows_ = frame_.rows;
+                            terminalResizePending_ = false;
+                        }
                     }
                 }
                 if (applied) {
@@ -977,7 +1004,14 @@ void TerminalPane::updateTerminalSize()
     }
     const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
     const int columns = std::max(1, static_cast<int>(std::floor(width() / cellWidth)));
-    const int rows = std::max(1, static_cast<int>(std::floor(height() / cellHeight)));
+    const int rows = std::clamp(
+        static_cast<int>(std::floor(height() / cellHeight)),
+        1, static_cast<int>(std::numeric_limits<quint16>::max()));
+    {
+        QMutexLocker locker(&renderMutex_);
+        terminalRows_ = rows;
+        terminalResizePending_ = true;
+    }
     controller_->resizeTerminal(
         columns, rows,
         std::max(1, qRound(cellWidth * devicePixelRatio)),
@@ -1082,12 +1116,12 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
     }
     if (modifiers == Qt::ShiftModifier
         && (key == Qt::Key_PageUp || key == Qt::Key_PageDown)) {
-        int pageRows = 20;
-        {
-            QMutexLocker locker(&renderMutex_);
-            if (hasFrame_) pageRows = std::max(1, frame_.rows - 1);
-        }
-        controller_->scrollViewport(key == Qt::Key_PageUp ? -pageRows : pageRows);
+        TerminalViewportRequest request;
+        request.kind = TerminalViewportRequest::Kind::Delta;
+        request.delta = key == Qt::Key_PageUp
+            ? -static_cast<qint64>(viewportPageRows())
+            : static_cast<qint64>(viewportPageRows());
+        controller_->scrollViewport(request);
         return KeyHandling::ConsumePressAndRelease;
     }
     return KeyHandling::PassThrough;
@@ -1246,6 +1280,17 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         ? std::nullopt
         : std::optional<QStringView>(action.sliced(colon + 1));
 
+    if (const std::optional<GhosttyPaneAction> paneAction =
+            GhosttyActionCatalog::parsePaneAction(action);
+        paneAction.has_value()) {
+        const bool needsSelection =
+            paneAction->kind == GhosttyPaneActionKind::AdjustSelection
+            || (paneAction->kind == GhosttyPaneActionKind::ScrollViewport
+                && paneAction->viewport.kind
+                    == TerminalViewportRequest::Kind::Selection);
+        return !needsSelection || controller_->selectionExpected();
+    }
+
     if (name == QLatin1StringView("copy_to_clipboard")) {
         const bool validParameter = !parameter.has_value()
             || *parameter == QLatin1StringView("plain")
@@ -1253,7 +1298,7 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         if (!validParameter) {
             return false;
         }
-        return controller_->selectionAvailable();
+        return controller_->selectionExpected();
     }
     if (name == QLatin1StringView("activate_key_table")
         || name == QLatin1StringView("activate_key_table_once")) {
@@ -1275,8 +1320,6 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
             && !QGuiApplication::clipboard()->text(QClipboard::Selection).isEmpty();
     }
     if (name == QLatin1StringView("reset_font_size")
-        || name == QLatin1StringView("scroll_page_up")
-        || name == QLatin1StringView("scroll_page_down")
         || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("close_window")
         || name == QLatin1StringView("end_key_sequence")
@@ -1294,6 +1337,12 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
     }
 
     return GhosttyActionCatalog::translate(action).accepted();
+}
+
+int TerminalPane::viewportPageRows() const
+{
+    QMutexLocker locker(&renderMutex_);
+    return std::max(1, terminalRows_);
 }
 
 bool TerminalPane::executeConfiguredAction(QStringView action)
@@ -1322,6 +1371,49 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         const bool changed = keybinds_.deactivateAllTables();
         if (changed) Q_EMIT activeKeyTablesChanged();
         return changed;
+    }
+
+    if (const std::optional<GhosttyPaneAction> paneAction =
+            GhosttyActionCatalog::parsePaneAction(action);
+        paneAction.has_value()) {
+        switch (paneAction->kind) {
+        case GhosttyPaneActionKind::ScrollViewport:
+            if (paneAction->viewport.kind
+                    == TerminalViewportRequest::Kind::Selection
+                && !controller_->selectionExpected()) {
+                return false;
+            }
+            controller_->scrollViewport(paneAction->viewport);
+            return true;
+        case GhosttyPaneActionKind::ScrollPageUp:
+        case GhosttyPaneActionKind::ScrollPageDown: {
+            TerminalViewportRequest request;
+            request.kind = TerminalViewportRequest::Kind::Delta;
+            const qint64 rows = viewportPageRows();
+            request.delta = paneAction->kind
+                    == GhosttyPaneActionKind::ScrollPageUp
+                ? -rows : rows;
+            controller_->scrollViewport(request);
+            return true;
+        }
+        case GhosttyPaneActionKind::ScrollPageFractional: {
+            const std::optional<qint64> delta = fractionalPageDelta(
+                paneAction->pageFraction, viewportPageRows());
+            if (!delta.has_value()) return false;
+            TerminalViewportRequest request;
+            request.kind = TerminalViewportRequest::Kind::Delta;
+            request.delta = *delta;
+            controller_->scrollViewport(request);
+            return true;
+        }
+        case GhosttyPaneActionKind::SelectAll:
+            controller_->selectAll();
+            return true;
+        case GhosttyPaneActionKind::AdjustSelection:
+            if (!controller_->selectionExpected()) return false;
+            controller_->adjustSelection(paneAction->selectionAdjustment);
+            return true;
+        }
     }
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
@@ -1358,17 +1450,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     }
     if (name == QLatin1StringView("reset_font_size")) {
         resetZoom();
-        return true;
-    }
-    if (name == QLatin1StringView("scroll_page_up")
-        || name == QLatin1StringView("scroll_page_down")) {
-        int pageRows = 20;
-        {
-            QMutexLocker locker(&renderMutex_);
-            if (hasFrame_) pageRows = std::max(1, frame_.rows - 1);
-        }
-        controller_->scrollViewport(
-            name == QLatin1StringView("scroll_page_up") ? -pageRows : pageRows);
         return true;
     }
     if (name == QLatin1StringView("reload_config")) {
@@ -1576,7 +1657,10 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
             controller_->sendMouse(input);
         }
     } else {
-        controller_->scrollViewport(-steps * 3);
+        TerminalViewportRequest request;
+        request.kind = TerminalViewportRequest::Kind::Delta;
+        request.delta = -static_cast<qint64>(steps) * 3;
+        controller_->scrollViewport(request);
     }
     event->accept();
 }

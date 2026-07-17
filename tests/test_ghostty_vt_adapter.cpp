@@ -8,6 +8,8 @@
 
 #include <linux/input-event-codes.h>
 
+#include <optional>
+
 namespace {
 
 QString frameText(const TerminalFrame &frame)
@@ -27,6 +29,24 @@ TerminalFrame applyUpdate(const TerminalUpdate &update)
     return frame;
 }
 
+void renderInto(GhosttyVtAdapter *adapter, TerminalFrame *frame)
+{
+    GhosttyVtAdapter::RenderSnapshot snapshot;
+    const auto result = adapter->renderFrame(&snapshot);
+    QVERIFY(result == GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
+}
+
+QString frameRowText(const TerminalFrame &frame, int row)
+{
+    QString result;
+    const int offset = row * frame.columns;
+    for (int column = 0; column < frame.columns; ++column) {
+        result.append(frame.cells.at(offset + column).text);
+    }
+    return result.trimmed();
+}
+
 } // namespace
 
 class GhosttyVtAdapterTest : public QObject {
@@ -37,6 +57,9 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
+    void selectsAndNavigatesViewportAtomically();
+    void adjustsSelectionAndScrollsLogicalEndpointIntoView();
+    void mapsEverySelectionAdjustment();
 };
 
 void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
@@ -299,6 +322,228 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     keypad.key = Qt::Key_Left;
     keypad.nativeScanCode = KEY_KP1 + 8U;
     QCOMPARE(adapter->encodeKey(keypad), QByteArrayLiteral("\033[57400u"));
+}
+
+void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    auto blank = GhosttyVtAdapter::create(options);
+    QVERIFY(blank != nullptr);
+    QVERIFY(!blank->selectAll());
+    QVERIFY(!blank->hasSelection());
+
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral(
+        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollLength, quint64{3});
+    QVERIFY(frame.scrollOffset > 0);
+    QCOMPARE(frameRowText(frame, 2), QStringLiteral("row-7"));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-0"));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = 2,
+    }));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{2});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-2"));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Delta,
+        .delta = -1,
+    }));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{1});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-1"));
+
+    adapter->beginSelection(0, 0, 1, false);
+    QVERIFY(adapter->updateSelection(5, 0, false));
+    adapter->endSelection(5, 0);
+    QCOMPARE(adapter->selectedText(), QStringLiteral("row-1"));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Bottom,
+    }));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.scrollOffset > 1);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Selection,
+    }));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{1});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-1"));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    adapter->beginSelection(4, 2, 1, false);
+    QVERIFY(adapter->updateSelection(1, 0, false));
+    adapter->endSelection(1, 0);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Bottom,
+    }));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Selection,
+    }));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-0"));
+
+    adapter->clearSelection();
+    QVERIFY(!adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Selection,
+    }));
+    QVERIFY(adapter->selectAll());
+    QVERIFY(adapter->hasSelection());
+    const QString all = adapter->selectedText();
+    QVERIFY(all.startsWith(QStringLiteral("row-0")));
+    QVERIFY(all.endsWith(QStringLiteral("row-7")));
+}
+
+void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral(
+        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+
+    QVERIFY(!adapter->adjustSelection(TerminalSelectionAdjustment::Left));
+    QVERIFY(adapter->selectAll());
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    QVERIFY(adapter->adjustSelection(TerminalSelectionAdjustment::Left));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, frame.scrollTotal - frame.scrollLength);
+    QVERIFY(adapter->selectedText().endsWith(QStringLiteral("row-")));
+
+    // A reversed selection keeps its logical end at the top. Adjusting that
+    // endpoint while scrolled to the bottom must reveal the top, rather than
+    // following the visually lower start endpoint.
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    adapter->beginSelection(4, 2, 1, false);
+    QVERIFY(adapter->updateSelection(4, 0, false));
+    adapter->endSelection(4, 0);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Bottom,
+    }));
+    QVERIFY(adapter->adjustSelection(TerminalSelectionAdjustment::Left));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+
+}
+
+void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
+{
+    struct Case {
+        TerminalSelectionAdjustment adjustment;
+        const char *expected;
+    };
+    const Case cases[] = {
+        {TerminalSelectionAdjustment::Left, "f"},
+        {TerminalSelectionAdjustment::Right, "fgh"},
+        {TerminalSelectionAdjustment::Up, "bcde\nf"},
+        {TerminalSelectionAdjustment::Down, "fghij\nkl"},
+        {TerminalSelectionAdjustment::PageUp, "abcde\nf"},
+        {TerminalSelectionAdjustment::PageDown, "fghij\nklmno"},
+        {TerminalSelectionAdjustment::Home, "abcde\nf"},
+        {TerminalSelectionAdjustment::End, "fghij\nklmno"},
+        {TerminalSelectionAdjustment::BeginningOfLine, "f"},
+        {TerminalSelectionAdjustment::EndOfLine, "fghij"},
+    };
+
+    for (const Case &testCase : cases) {
+        GhosttyVtAdapter::Options options;
+        options.geometry.columns = 7;
+        options.geometry.rows = 3;
+        auto adapter = GhosttyVtAdapter::create(options);
+        QVERIFY(adapter != nullptr);
+        adapter->writeVt(QByteArrayLiteral("abcde\r\nfghij\r\nklmno"));
+
+        adapter->beginSelection(0, 1, 1, false);
+        QVERIFY(adapter->updateSelection(2, 1, false));
+        adapter->endSelection(2, 1);
+        QCOMPARE(adapter->selectedText(), QStringLiteral("fg"));
+        QVERIFY(adapter->adjustSelection(testCase.adjustment));
+        QCOMPARE(adapter->selectedText(), QString::fromLatin1(testCase.expected));
+    }
+
+    // With scrollback on both sides of the endpoint, page movement must stay
+    // distinct from document home/end. The compact fixture above reaches a
+    // boundary for both pairs and therefore cannot catch swapped enum values.
+    const auto adjustInHistory = [](TerminalSelectionAdjustment adjustment) {
+        GhosttyVtAdapter::Options options;
+        options.geometry.columns = 8;
+        options.geometry.rows = 2;
+        auto adapter = GhosttyVtAdapter::create(options);
+        if (adapter == nullptr) return std::optional<QString>{};
+        adapter->writeVt(QByteArrayLiteral(
+            "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\nrow-4\r\n"
+            "row-5\r\nrow-6\r\nrow-7\r\nrow-8\r\nrow-9"));
+        TerminalFrame frame;
+        renderInto(adapter.get(), &frame);
+        if (!adapter->scrollViewport({
+                .kind = TerminalViewportRequest::Kind::Top,
+            })) {
+            return std::optional<QString>{};
+        }
+        renderInto(adapter.get(), &frame);
+        if (!adapter->scrollViewport({
+                .kind = TerminalViewportRequest::Kind::Row,
+                .row = 3,
+            })) {
+            return std::optional<QString>{};
+        }
+        renderInto(adapter.get(), &frame);
+        adapter->beginSelection(0, 0, 1, false);
+        if (!adapter->updateSelection(2, 0, false)) {
+            return std::optional<QString>{};
+        }
+        adapter->endSelection(2, 0);
+        if (!adapter->adjustSelection(adjustment)) {
+            return std::optional<QString>{};
+        }
+        return std::optional<QString>{adapter->selectedText()};
+    };
+
+    const std::optional<QString> pageUp =
+        adjustInHistory(TerminalSelectionAdjustment::PageUp);
+    const std::optional<QString> home =
+        adjustInHistory(TerminalSelectionAdjustment::Home);
+    const std::optional<QString> pageDown =
+        adjustInHistory(TerminalSelectionAdjustment::PageDown);
+    const std::optional<QString> end =
+        adjustInHistory(TerminalSelectionAdjustment::End);
+    QVERIFY(pageUp.has_value());
+    QVERIFY(home.has_value());
+    QVERIFY(pageDown.has_value());
+    QVERIFY(end.has_value());
+    QCOMPARE(*pageUp, QStringLiteral("ow-1\nrow-2\nr"));
+    QCOMPARE(*home, QStringLiteral("row-0\nrow-1\nrow-2\nr"));
+    QCOMPARE(*pageDown, QStringLiteral("row-3\nrow-4\nro"));
+    QCOMPARE(*end, QStringLiteral(
+        "row-3\nrow-4\nrow-5\nrow-6\nrow-7\nrow-8\nrow-9"));
 }
 
 QTEST_GUILESS_MAIN(GhosttyVtAdapterTest)

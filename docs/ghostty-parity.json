@@ -326,7 +326,7 @@
     },
     "keybind": {
       "status": "partial",
-      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
+      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Immediate select-all chains preserve worker order, but a separate selection-dependent performable key can race asynchronously reconciled worker state. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
     },
     "palette": {
       "status": "supported",
@@ -622,6 +622,10 @@
           "status": "supported",
           "note": "Activates a pane-local one-shot table and pops it when the innermost table supplies a match."
         },
+        "adjust_selection": {
+          "status": "supported",
+          "note": "Adjusts the logical selection endpoint in every pinned direction and scrolls an endpoint outside the viewport back into view within one session-thread transaction."
+        },
         "check_for_updates": {
           "status": "not_applicable",
           "scope": "macos"
@@ -734,10 +738,40 @@
           "note": "Moves the nearest matching-axis ancestor divider by the requested pixel amount, clamps its ratio, and preserves focus and zoom."
         },
         "scroll_page_down": {
-          "status": "partial"
+          "status": "supported",
+          "note": "Scrolls down by exactly the pane's full terminal row count."
+        },
+        "scroll_page_fractional": {
+          "status": "supported",
+          "note": "Uses the pane's full row count with f32 multiplication and truncation toward zero; non-finite or unsafe values are rejected instead of reproducing the pinned frontend's conversion crash."
+        },
+        "scroll_page_lines": {
+          "status": "supported",
+          "note": "Scrolls by the signed i16 line count with Ghostty's boundary clamping."
         },
         "scroll_page_up": {
-          "status": "partial"
+          "status": "supported",
+          "note": "Scrolls up by exactly the pane's full terminal row count."
+        },
+        "scroll_to_bottom": {
+          "status": "supported",
+          "note": "Pins the viewport to the active area through libghostty's tagged viewport API."
+        },
+        "scroll_to_row": {
+          "status": "supported",
+          "note": "Scrolls to a usize absolute row in libghostty's full-screen/scrollbar coordinate space with terminal-side clamping."
+        },
+        "scroll_to_selection": {
+          "status": "supported",
+          "note": "Normalizes the current selection to its visual top-left row and aligns that row to the viewport; absence remains non-performable."
+        },
+        "scroll_to_top": {
+          "status": "supported",
+          "note": "Pins the viewport to the top of scrollback through libghostty's tagged viewport API."
+        },
+        "select_all": {
+          "status": "partial",
+          "note": "Installs Ghostty's full selectable-content range and exposes it for copy; copy-on-select configuration and its automatic clipboard side effect remain planned."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",

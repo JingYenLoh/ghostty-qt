@@ -59,6 +59,7 @@ private Q_SLOTS:
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
+    void routesViewportAndSelectionActions();
     void routesStructuredSequencesAndCancelsThemOnReload();
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
@@ -623,6 +624,179 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                     Qt::ControlModifier, QString(QChar(0x07)));
     QCoreApplication::sendEvent(&pane, &unavailableNavigation);
     QCOMPARE(forwarded.count(), beforeUnavailableNavigation + 1);
+}
+
+void TerminalPaneTest::routesViewportAndSelectionActions()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalViewportRequest>();
+    qRegisterMetaType<TerminalSelectionAdjustment>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'pane-action-selection'; sleep 5"),
+    };
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    options.keybindings = {
+        QStringLiteral("performable:alt+u=scroll_to_selection"),
+        QStringLiteral("performable:alt+i=adjust_selection:left"),
+        QStringLiteral("alt+y=select_all"),
+        QStringLiteral("chain=adjust_selection:right"),
+        QStringLiteral("chain=scroll_to_selection"),
+    };
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy scrolls(controller, &TerminalController::scrollRequested);
+    QSignalSpy selectAll(controller, &TerminalController::selectAllRequested);
+    QSignalSpy adjustments(
+        controller, &TerminalController::selectionAdjustmentRequested);
+
+    // Before the first worker frame, page actions use the worker's actual
+    // 24-row startup geometry rather than the legacy 20-row fallback.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("scroll_page_down")));
+    QCOMPARE(scrolls.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalViewportRequest>(
+                 scrolls.constFirst().constFirst()).delta,
+             qint64(24));
+    scrolls.clear();
+
+    // A resize request becomes the page basis immediately. An older worker
+    // frame may still be queued back to the UI at this point.
+    QSignalSpy resizes(controller, &TerminalController::resizeRequested);
+    pane.setSize(QSizeF(640.0, 320.0));
+    QVERIFY(!resizes.isEmpty());
+    const int requestedRows = resizes.constLast().at(1).toInt();
+    QVERIFY(requestedRows > 0);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("scroll_page_down")));
+    QCOMPARE(qvariant_cast<TerminalViewportRequest>(
+                 scrolls.constFirst().constFirst()).delta,
+             qint64(requestedRows));
+    scrolls.clear();
+
+    // Selection-dependent performable bindings act as absent until the
+    // worker's cached selection state says they can run.
+    QKeyEvent missingScrollSelection(
+        QEvent::KeyPress, Qt::Key_U, Qt::AltModifier, QStringLiteral("u"));
+    QCoreApplication::sendEvent(&pane, &missingScrollSelection);
+    QCOMPARE(forwarded.count(), 1);
+    QCOMPARE(scrolls.count(), 0);
+    QKeyEvent missingAdjustment(
+        QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
+    QCoreApplication::sendEvent(&pane, &missingAdjustment);
+    QCOMPARE(forwarded.count(), 2);
+    QCOMPARE(adjustments.count(), 0);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("pane-action-selection")), 5000);
+
+    // Install a deterministic retained frame matching the queued resize. Page
+    // actions must use all requested rows, specifically guarding against the
+    // former rows-minus-one behavior.
+    TerminalUpdate frame;
+    frame.columns = 4;
+    frame.rows = requestedRows;
+    frame.fullFrame = true;
+    for (int row = 0; row < frame.rows; ++row) {
+        TerminalRowUpdate update;
+        update.row = row;
+        update.cells.resize(frame.columns);
+        frame.dirtyRows.append(std::move(update));
+    }
+    controller->terminalUpdated(frame);
+
+    const auto requestAt = [&scrolls](int index) {
+        return qvariant_cast<TerminalViewportRequest>(
+            scrolls.at(index).constFirst());
+    };
+    const auto executeScroll = [&pane, &scrolls](QStringView action) {
+        const int before = scrolls.count();
+        const bool performed = pane.executeConfiguredAction(action);
+        return performed && scrolls.count() == before + 1;
+    };
+
+    QVERIFY(executeScroll(QStringLiteral("scroll_to_top")));
+    QCOMPARE(requestAt(0).kind, TerminalViewportRequest::Kind::Top);
+    QVERIFY(executeScroll(QStringLiteral("scroll_to_bottom")));
+    QCOMPARE(requestAt(1).kind, TerminalViewportRequest::Kind::Bottom);
+    QVERIFY(executeScroll(QStringLiteral("scroll_to_row:+1__2")));
+    QCOMPARE(requestAt(2).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(2).row, quint64(12));
+    QVERIFY(executeScroll(QStringLiteral("scroll_page_lines:-7")));
+    QCOMPARE(requestAt(3).delta, qint64(-7));
+    QVERIFY(executeScroll(QStringLiteral("scroll_page_up")));
+    QCOMPARE(requestAt(4).delta, -qint64(requestedRows));
+    QVERIFY(executeScroll(QStringLiteral("scroll_page_down")));
+    QCOMPARE(requestAt(5).delta, qint64(requestedRows));
+    QVERIFY(executeScroll(QStringLiteral("scroll_page_fractional:+0.5")));
+    QCOMPARE(requestAt(6).delta,
+             static_cast<qint64>(0.5F * static_cast<float>(requestedRows)));
+    QVERIFY(executeScroll(QStringLiteral("scroll_page_fractional:-0.2")));
+    // Binary32 multiplication happens before truncation toward zero.
+    QCOMPARE(requestAt(7).delta,
+             static_cast<qint64>(-0.2F * static_cast<float>(requestedRows)));
+
+    const int beforeUnsafe = scrolls.count();
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("scroll_page_fractional:2e18")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("scroll_page_fractional:inf")));
+    QCOMPARE(scrolls.count(), beforeUnsafe);
+
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("scroll_to_selection")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("adjust_selection:right")));
+    QCOMPARE(scrolls.count(), beforeUnsafe);
+    QCOMPARE(adjustments.count(), 0);
+
+    // Select-all intent makes its immediately following dependent actions
+    // performable while all three requests retain their worker queue order.
+    // This preserves Ghostty action chains without a UI round trip.
+    QKeyEvent chainedSelection(
+        QEvent::KeyPress, Qt::Key_Y, Qt::AltModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&pane, &chainedSelection);
+    QCOMPARE(selectAll.count(), 1);
+    QCOMPARE(adjustments.count(), 1);
+    QCOMPARE(scrolls.count(), beforeUnsafe + 1);
+    QCOMPARE(requestAt(beforeUnsafe).kind,
+             TerminalViewportRequest::Kind::Selection);
+    QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
+                 adjustments.constFirst().constFirst()),
+             TerminalSelectionAdjustment::Right);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 3000);
+
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("scroll_to_selection")));
+    QCOMPARE(scrolls.count(), beforeUnsafe + 2);
+    QCOMPARE(requestAt(beforeUnsafe + 1).kind,
+             TerminalViewportRequest::Kind::Selection);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("adjust_selection:right")));
+    QCOMPARE(adjustments.count(), 2);
+    QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
+                 adjustments.at(1).constFirst()),
+             TerminalSelectionAdjustment::Right);
+
+    const int beforeBoundActions = forwarded.count();
+    QKeyEvent availableScrollSelection(
+        QEvent::KeyPress, Qt::Key_U, Qt::AltModifier, QStringLiteral("u"));
+    QCoreApplication::sendEvent(&pane, &availableScrollSelection);
+    QKeyEvent availableAdjustment(
+        QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
+    QCoreApplication::sendEvent(&pane, &availableAdjustment);
+    QCOMPARE(forwarded.count(), beforeBoundActions);
+    QCOMPARE(scrolls.count(), beforeUnsafe + 3);
+    QCOMPARE(adjustments.count(), 3);
 }
 
 void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()

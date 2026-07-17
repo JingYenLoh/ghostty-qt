@@ -30,6 +30,13 @@ public:
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
     bool selectionAvailable() const { return selectionAvailable_; }
+    // True while an earlier queued select-all may establish a selection.
+    // This lets a Ghostty action chain enqueue its dependent actions in order
+    // without exposing speculative state through the Q_PROPERTY.
+    bool selectionExpected() const
+    {
+        return selectionAvailable_ || pendingSelectAllRequests_ > 0;
+    }
     bool hold() const { return options_.hold; }
 
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
@@ -58,7 +65,9 @@ public:
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);
-    void scrollViewport(int rows);
+    void selectAll();
+    void adjustSelection(TerminalSelectionAdjustment adjustment);
+    void scrollViewport(const TerminalViewportRequest &request);
 
     static bool isPasteSafe(const QString &text);
 
@@ -96,7 +105,9 @@ Q_SIGNALS:
                                  bool rectangular);
     void updateSelectionRequested(int column, int row, bool rectangular);
     void endSelectionRequested(int column, int row);
-    void scrollRequested(int rows);
+    void selectAllRequested();
+    void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
+    void scrollRequested(const TerminalViewportRequest &request);
     void runtimeOptionsRequested(const LaunchOptions &options);
     void shutdownRequested();
 
@@ -112,6 +123,7 @@ private:
     bool running_ = true;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
+    int pendingSelectAllRequests_ = 0;
     bool closing_ = false;
     quint64 nextSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;

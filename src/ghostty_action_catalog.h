@@ -1,5 +1,6 @@
 #pragma once
 
+#include "terminal_actions.h"
 #include "workspace_action.h"
 
 #include <QMetaType>
@@ -20,6 +21,26 @@ enum class GhosttyActionTranslationError {
 enum class GhosttyActionScope {
     Application,
     Surface,
+};
+
+// Pane-local actions have state-dependent execution that cannot be represented
+// by WorkspaceActionRequest. Keep their parsed values typed so TerminalPane
+// never has to reinterpret Ghostty's serialized numeric or enum parameters.
+enum class GhosttyPaneActionKind {
+    ScrollViewport,
+    ScrollPageUp,
+    ScrollPageDown,
+    ScrollPageFractional,
+    SelectAll,
+    AdjustSelection,
+};
+
+struct GhosttyPaneAction {
+    GhosttyPaneActionKind kind = GhosttyPaneActionKind::ScrollViewport;
+    TerminalViewportRequest viewport;
+    float pageFraction = 0.0F;
+    TerminalSelectionAdjustment selectionAdjustment =
+        TerminalSelectionAdjustment::Left;
 };
 
 struct GhosttyActionTranslation {
@@ -55,6 +76,14 @@ public:
     // clipboard/zoom/scroll/reload actions as well as typed workspace actions.
     [[nodiscard]] static bool isImplemented(QStringView serializedAction);
 
+    // Parse the implemented pane-local viewport and selection actions. Integer
+    // syntax and f32 rounding follow Binding.Action.parse at the pinned
+    // revision. Unlike upstream, non-finite or intrinsically out-of-range
+    // fractional values are rejected so execution cannot reach Zig's
+    // safety-checked illegal float-to-isize conversion.
+    [[nodiscard]] static std::optional<GhosttyPaneAction> parsePaneAction(
+        QStringView serializedAction);
+
     // Mirrors Binding.Action.scope() in the pinned Ghostty revision. This is
     // intentionally independent of WorkspaceAction: actions such as new_tab
     // are surface-scoped upstream even though Qt ultimately routes them
@@ -65,3 +94,4 @@ public:
 
 Q_DECLARE_METATYPE(GhosttyActionTranslationError)
 Q_DECLARE_METATYPE(GhosttyActionScope)
+Q_DECLARE_METATYPE(GhosttyPaneActionKind)

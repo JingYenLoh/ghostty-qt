@@ -100,7 +100,9 @@ developer's real Ghostty configuration.
 Linux native physical locations, shifted punctuation lookup, sequences,
 catch-all fallback, table precedence/one-shot activation, action chains, and
 exact local `unconsumed`/`performable` behavior. Session and pane tests cover
-byte staging, invalid-sequence replay, table reset, and reload cancellation.
+byte staging, invalid-sequence replay, table reset, reload cancellation,
+full/fractional/line/absolute viewport movement, selection-target scrolling,
+select-all, and endpoint adjustment/autoscroll.
 Workspace tests cover application-action precedence, inactive-surface fanout,
 stable tab reordering/index selection, wrapped split traversal, mutable and
 equalized layouts, and split zoom lifecycle. `ghostty-global-shortcut-portal`

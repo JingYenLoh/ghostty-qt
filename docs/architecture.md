@@ -163,6 +163,12 @@ signals:
   clipboard copy. Libghostty's tracked selection-gesture state keeps the drag
   anchor stable across output, scrolling, and resize. OSC-driven clipboard
   writes from terminal applications are denied by the host callback.
+- Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
+  and the current selection. Select-all and endpoint-adjustment operations run
+  as single adapter calls on the session thread. Selection snapshots contain
+  untracked Ghostty grid references, so fetch, adjustment, coordinate
+  conversion, installation, and endpoint autoscroll are deliberately one
+  transaction with no queued boundary between them.
 
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
@@ -310,7 +316,20 @@ mode that existed at each leader press and prevents reload or stale queued
 operations from leaking input. Supported actions then pass through
 `GhosttyActionCatalog` and the same typed
 workspace dispatcher used by QML controls; pane-local copy, paste, font zoom,
-scroll, and reload actions use their terminal operations directly.
+scroll, selection, and reload actions use their terminal operations directly.
+Page actions use the full terminal height; fractional pages multiply in f32
+and truncate toward zero, while line and absolute-row parameters retain their
+pinned i16 and usize bounds. Non-finite or unsafe fractional values are
+rejected instead of reproducing the pinned frontend's float-to-integer crash.
+The pane tracks the latest queued resize height so a page action cannot regress
+to a stale rendered frame while resize is in flight. The controller likewise
+tracks queued select-all intent for action-chain performability; the worker
+reports completion even on a blank terminal, reconciling that intent with the
+authoritative selection state without exposing speculative QML state.
+This closes deterministic action-chain ordering; a separate key event during
+the reconciliation window can still observe pending or cached state. Moving
+the performability decision into worker-side input dispatch is the remaining
+boundary for exact selection-dependent timing.
 
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
 focused pane lookup, matching Ghostty's app/surface split while leaving leaders
@@ -403,7 +422,9 @@ The default CTest suite has seventeen layers:
   snapshots, carries style provenance and effective palette state, preserves
   OSC and DECSCUSR overrides across appearance reloads, reports
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
-  focus, and key input using terminal modes.
+  focus, and key input using terminal modes. It also verifies tagged viewport
+  scrolling, selection-target alignment, select-all, and endpoint adjustment
+  with exact autoscroll.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, process exit, explicit-program activity, and an interactive
@@ -433,8 +454,8 @@ The default CTest suite has seventeen layers:
   exact pinned Ghostty parser built for the application.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
-  sequence consume/replay, performability, release suppression, and reload
-  cancellation through a real PTY-backed pane.
+  sequence consume/replay, performability, viewport/selection action routing,
+  release suppression, and reload cancellation through a real PTY-backed pane.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.

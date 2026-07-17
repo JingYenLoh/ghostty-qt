@@ -26,8 +26,10 @@ the host-language comparison and remaining engineering risks.
   Ghostty generic renderer.
 - Keyboard, focus, mouse-reporting, bracketed-paste, and IME input paths.
 - Mouse selection, double-click word selection, rectangular selection with
-  `Alt`, clipboard copy, primary-selection paste, and an unsafe-paste review
-  dialog.
+  `Alt`, keyboard select-all/endpoint adjustment, clipboard copy,
+  primary-selection paste, and an unsafe-paste review dialog.
+- Full-height, fractional, line, absolute-row, top/bottom, and
+  selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
   right/down splits with wrapped spatial/tree-order navigation, keybinding
   resize/equalize, split zoom, and close confirmation that distinguishes an
@@ -251,6 +253,7 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy the selection / paste the clipboard. |
+| `Ctrl+Shift+A` | Select all terminal content. |
 | `Ctrl+Shift+T` | Open a tab. |
 | `Ctrl+Shift+O` / `Ctrl+Shift+E` | Split right / split down. |
 | `Ctrl+Shift+W` | Close the active tab. |
@@ -264,11 +267,15 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | `Ctrl+Shift+Enter` | Toggle zoom for the active split. |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Increase, decrease, or reset the active pane's font size. |
 | `Shift+PageUp` / `Shift+PageDown` | Scroll by one terminal page. |
+| `Shift+Arrow` | Adjust an existing selection endpoint. |
 
 These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `goto_split`, `resize_split`, `equalize_splits`, and `toggle_split_zoom`
-directly.
+directly. Viewport/selection bindings additionally support `scroll_to_top`,
+`scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`, `scroll_page_down`,
+`scroll_page_fractional`, `scroll_page_lines`, `scroll_to_selection`,
+`select_all`, and `adjust_selection`.
 
 Drag with the left mouse button to select; double-click to select a word and
 hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
@@ -318,8 +325,10 @@ machine-checked parity manifest, the complete
 application's short-lived process/window lifecycle, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
 exercised headlessly; workspace tab ordering, split layout, navigation, and
-zoom are covered through typed actions, while interactive selection and
-unsafe-paste dialog input are not yet fully automated.
+zoom are covered through typed actions. Adapter/session tests cover absolute,
+relative, and selection-driven viewport movement plus select-all and endpoint
+adjustment, while interactive pointer selection and unsafe-paste dialog input
+are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -361,6 +370,13 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   architecture over advanced typography.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported.
+- `select_all` installs the same terminal selection as Ghostty, but the
+  separate `copy-on-select` configuration and automatic clipboard side effect
+  remain planned, so that action is tracked as partial rather than supported.
+- Selection-dependent `performable` bindings use asynchronously reconciled UI
+  state. Immediate select-all chains retain worker order, but a separate key
+  event can still race a blank select-all completion or terminal-driven
+  selection change; worker-authoritative performability remains planned.
 - The first appearance slice covers the full palette, selection, cursor,
   bold, and faint settings documented above. Dynamic light/dark theme
   switching, font fallback lists, palette generation/harmonization, and the

@@ -63,6 +63,7 @@ private Q_SLOTS:
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void retainsSelectionAvailabilityOutsideViewport();
+    void routesTypedViewportAndSelectionOperations();
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
@@ -375,12 +376,80 @@ void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
 
     selectionSpy.clear();
-    worker.scrollViewport(-50);
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Delta,
+        .delta = -50,
+    });
     QTest::qWait(100);
     QVERIFY(!spyContainsBool(selectionSpy, false));
 
     worker.clearSelection();
     QVERIFY(spyContainsBool(selectionSpy, false));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectAllCompletedSpy(&worker,
+                                     &SessionWorker::selectAllCompleted);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "i=0; while [ $i -lt 40 ]; do printf 'typed-row-%03d\\n' $i; "
+            "i=$((i + 1)); done; sleep 5"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("typed-row-039")), 5000);
+
+    worker.selectAll();
+    QCOMPARE(selectAllCompletedSpy.count(), 1);
+    QCOMPARE(selectAllCompletedSpy.constFirst().constFirst().toBool(), true);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = 10,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 10, 1000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Delta,
+        .delta = -3,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 7, 1000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Bottom,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Selection,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+
+    worker.adjustSelection(TerminalSelectionAdjustment::Left);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty() ? ""
+                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

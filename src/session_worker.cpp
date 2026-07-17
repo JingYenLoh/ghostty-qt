@@ -621,6 +621,24 @@ void SessionWorker::endSelection(int column, int row)
     }
 }
 
+void SessionWorker::selectAll()
+{
+    const bool selected = vt_ != nullptr && vt_->selectAll();
+    syncSelectionAvailability();
+    Q_EMIT selectAllCompleted(selectionAvailable_);
+    if (selected) {
+        scheduleFrame();
+    }
+}
+
+void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)
+{
+    if (vt_ != nullptr && vt_->adjustSelection(adjustment)) {
+        syncSelectionAvailability();
+        scheduleFrame();
+    }
+}
+
 void SessionWorker::syncSelectionAvailability()
 {
     const bool available = vt_ != nullptr && vt_->hasSelection();
@@ -631,13 +649,11 @@ void SessionWorker::syncSelectionAvailability()
     Q_EMIT selectionAvailableChanged(selectionAvailable_);
 }
 
-void SessionWorker::scrollViewport(int rows)
+void SessionWorker::scrollViewport(const TerminalViewportRequest &request)
 {
-    if (vt_ == nullptr || rows == 0) {
-        return;
+    if (vt_ != nullptr && vt_->scrollViewport(request)) {
+        scheduleFrame();
     }
-    vt_->scrollViewport(rows);
-    scheduleFrame();
 }
 
 void SessionWorker::scheduleFrame()

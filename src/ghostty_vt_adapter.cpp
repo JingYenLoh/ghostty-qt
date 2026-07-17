@@ -43,6 +43,46 @@ GhosttyTerminalCursorStyle toGhosttyCursorStyle(TerminalCursorStyle style)
     return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK;
 }
 
+bool toGhosttySelectionAdjustment(TerminalSelectionAdjustment adjustment,
+                                  GhosttySelectionAdjust *out)
+{
+    if (out == nullptr) return false;
+
+    switch (adjustment) {
+    case TerminalSelectionAdjustment::Left:
+        *out = GHOSTTY_SELECTION_ADJUST_LEFT;
+        return true;
+    case TerminalSelectionAdjustment::Right:
+        *out = GHOSTTY_SELECTION_ADJUST_RIGHT;
+        return true;
+    case TerminalSelectionAdjustment::Up:
+        *out = GHOSTTY_SELECTION_ADJUST_UP;
+        return true;
+    case TerminalSelectionAdjustment::Down:
+        *out = GHOSTTY_SELECTION_ADJUST_DOWN;
+        return true;
+    case TerminalSelectionAdjustment::PageUp:
+        *out = GHOSTTY_SELECTION_ADJUST_PAGE_UP;
+        return true;
+    case TerminalSelectionAdjustment::PageDown:
+        *out = GHOSTTY_SELECTION_ADJUST_PAGE_DOWN;
+        return true;
+    case TerminalSelectionAdjustment::Home:
+        *out = GHOSTTY_SELECTION_ADJUST_HOME;
+        return true;
+    case TerminalSelectionAdjustment::End:
+        *out = GHOSTTY_SELECTION_ADJUST_END;
+        return true;
+    case TerminalSelectionAdjustment::BeginningOfLine:
+        *out = GHOSTTY_SELECTION_ADJUST_BEGINNING_OF_LINE;
+        return true;
+    case TerminalSelectionAdjustment::EndOfLine:
+        *out = GHOSTTY_SELECTION_ADJUST_END_OF_LINE;
+        return true;
+    }
+    return false;
+}
+
 GhosttyColorRgb resolveStyleColor(const GhosttyStyleColor &color,
                                   const GhosttyRenderStateColors &colors,
                                   GhosttyColorRgb fallback)
@@ -852,12 +892,106 @@ public:
             == GHOSTTY_SUCCESS;
     }
 
-    void scrollViewport(int rows)
+    bool selectAll()
+    {
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        const GhosttyResult result = ghostty_terminal_select_all(terminal_, &selection);
+        if (result != GHOSTTY_SUCCESS) {
+            return false;
+        }
+        return installSelection(selection);
+    }
+
+    bool adjustSelection(TerminalSelectionAdjustment adjustment)
+    {
+        GhosttySelectionAdjust ghosttyAdjustment = GHOSTTY_SELECTION_ADJUST_LEFT;
+        if (!toGhosttySelectionAdjustment(adjustment, &ghosttyAdjustment)) {
+            return false;
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_selection_adjust(
+                   terminal_, &selection, ghosttyAdjustment)
+                != GHOSTTY_SUCCESS) {
+            return false;
+        }
+
+        // Capture the adjusted logical endpoint before installation. Installing
+        // the snapshot mutates the terminal and invalidates its untracked refs.
+        GhosttyPointCoordinate endpoint{};
+        if (ghostty_terminal_point_from_grid_ref(
+                terminal_, &selection.end, GHOSTTY_POINT_TAG_SCREEN, &endpoint)
+                != GHOSTTY_SUCCESS
+            || !installSelection(selection)) {
+            return false;
+        }
+
+        scrollEndpointIntoView(endpoint.y);
+        return true;
+    }
+
+    bool scrollViewport(const TerminalViewportRequest &request)
     {
         GhosttyTerminalScrollViewport scroll{};
-        scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
-        scroll.value.delta = static_cast<intptr_t>(rows);
+        switch (request.kind) {
+        case TerminalViewportRequest::Kind::Top:
+            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_TOP;
+            break;
+        case TerminalViewportRequest::Kind::Bottom:
+            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM;
+            break;
+        case TerminalViewportRequest::Kind::Delta:
+            if (request.delta == 0) return false;
+            if (request.delta
+                    < static_cast<qint64>(
+                        std::numeric_limits<intptr_t>::min())
+                || request.delta
+                    > static_cast<qint64>(
+                        std::numeric_limits<intptr_t>::max())) {
+                return false;
+            }
+            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+            scroll.value.delta = static_cast<intptr_t>(request.delta);
+            break;
+        case TerminalViewportRequest::Kind::Row:
+            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
+            scroll.value.row = boundedRow(request.row);
+            break;
+        case TerminalViewportRequest::Kind::Selection: {
+            GhosttySelection selection{};
+            selection.size = sizeof(selection);
+            GhosttySelection ordered{};
+            ordered.size = sizeof(ordered);
+            if (ghostty_terminal_get(
+                    terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection)
+                    != GHOSTTY_SUCCESS
+                || ghostty_terminal_selection_ordered(
+                       terminal_, &selection, GHOSTTY_SELECTION_ORDER_FORWARD,
+                       &ordered)
+                    != GHOSTTY_SUCCESS) {
+                return false;
+            }
+
+            GhosttyPointCoordinate topLeft{};
+            if (ghostty_terminal_point_from_grid_ref(
+                    terminal_, &ordered.start, GHOSTTY_POINT_TAG_SCREEN, &topLeft)
+                != GHOSTTY_SUCCESS) {
+                return false;
+            }
+            scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
+            scroll.value.row = static_cast<size_t>(topLeft.y);
+            break;
+        }
+        default:
+            return false;
+        }
+
         ghostty_terminal_scroll_viewport(terminal_, scroll);
+        return true;
     }
 
     std::uint64_t compressionActivity() const
@@ -1316,6 +1450,41 @@ public:
     }
 
 private:
+    static size_t boundedRow(quint64 row)
+    {
+        const quint64 maximum = static_cast<quint64>(
+            std::numeric_limits<size_t>::max());
+        return static_cast<size_t>(std::min(row, maximum));
+    }
+
+    void scrollEndpointIntoView(uint32_t endpointRow)
+    {
+        GhosttyTerminalScrollbar scrollbar{};
+        if (ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+                != GHOSTTY_SUCCESS
+            || scrollbar.len == 0) {
+            return;
+        }
+
+        const uint64_t row = endpointRow;
+        uint64_t target = row;
+        if (row >= scrollbar.offset) {
+            const uint64_t viewportRow = row - scrollbar.offset;
+            if (viewportRow < scrollbar.len) {
+                return;
+            }
+            // Put a logical endpoint below the viewport on its final row,
+            // matching Ghostty's pin-up-by-(rows-1) adjustment.
+            target = row - (scrollbar.len - 1);
+        }
+
+        GhosttyTerminalScrollViewport scroll{};
+        scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
+        scroll.value.row = boundedRow(target);
+        ghostty_terminal_scroll_viewport(terminal_, scroll);
+    }
+
     static void writePtyCallback(GhosttyTerminal, void *userdata,
                                  const uint8_t *data, size_t length)
     {
@@ -1504,11 +1673,19 @@ void GhosttyVtAdapter::endSelection(int column, int row)
     impl_->endSelection(column, row);
 }
 
-void GhosttyVtAdapter::scrollViewport(int rows)
+bool GhosttyVtAdapter::selectAll()
 {
-    if (rows != 0) {
-        impl_->scrollViewport(rows);
-    }
+    return impl_->selectAll();
+}
+
+bool GhosttyVtAdapter::adjustSelection(TerminalSelectionAdjustment adjustment)
+{
+    return impl_->adjustSelection(adjustment);
+}
+
+bool GhosttyVtAdapter::scrollViewport(const TerminalViewportRequest &request)
+{
+    return impl_->scrollViewport(request);
 }
 
 std::uint64_t GhosttyVtAdapter::compressionActivity() const

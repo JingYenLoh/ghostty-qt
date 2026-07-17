@@ -5,7 +5,10 @@
 #include <QtCore/qnamespace.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <locale.h>
+#include <string>
 #include <utility>
 
 namespace {
@@ -90,6 +93,138 @@ std::optional<qint64> parseSignedInteger(QStringView value)
         return std::numeric_limits<qint64>::min();
     }
     return -static_cast<qint64>(magnitude);
+}
+
+bool isDigitForBase(QChar character, int base)
+{
+    if (character >= u'0' && character <= u'9') {
+        return character.unicode() - u'0' < base;
+    }
+    if (base == 16) {
+        const QChar lower = character.toLower();
+        return lower >= u'a' && lower <= u'f';
+    }
+    return false;
+}
+
+bool consumeFloatDigits(QStringView value, qsizetype *index, int base,
+                        std::string *normalized, bool *consumedAny)
+{
+    if (index == nullptr || normalized == nullptr || consumedAny == nullptr) {
+        return false;
+    }
+
+    while (*index < value.size()) {
+        const QChar character = value.at(*index);
+        if (isDigitForBase(character, base)) {
+            normalized->push_back(static_cast<char>(character.unicode()));
+            *consumedAny = true;
+            ++*index;
+            continue;
+        }
+        if (character != u'_') break;
+
+        // Zig's float parser permits underscores only when both neighbors are
+        // digits in the active mantissa/exponent base. In particular, unlike
+        // parseInt, consecutive underscores are invalid.
+        if (*index == 0 || *index + 1 >= value.size()
+            || !isDigitForBase(value.at(*index - 1), base)
+            || !isDigitForBase(value.at(*index + 1), base)) {
+            return false;
+        }
+        ++*index;
+    }
+    return true;
+}
+
+std::optional<float> parseFiniteFloat32(QStringView value)
+{
+    if (value.isEmpty()) return std::nullopt;
+
+    qsizetype index = 0;
+    bool negative = false;
+    if (value.front() == u'+' || value.front() == u'-') {
+        negative = value.front() == u'-';
+        ++index;
+    }
+    if (index >= value.size()) return std::nullopt;
+
+    const bool hexadecimal = index + 1 < value.size()
+        && value.at(index) == u'0'
+        && (value.at(index + 1) == u'x' || value.at(index + 1) == u'X');
+    const int mantissaBase = hexadecimal ? 16 : 10;
+
+    std::string normalized;
+    normalized.reserve(static_cast<size_t>(value.size()));
+    if (negative) normalized.push_back('-');
+    if (hexadecimal) {
+        normalized.append("0x");
+        index += 2;
+    }
+
+    bool hasMantissaDigit = false;
+    if (!consumeFloatDigits(value, &index, mantissaBase,
+                            &normalized, &hasMantissaDigit)) {
+        return std::nullopt;
+    }
+    if (index < value.size() && value.at(index) == u'.') {
+        normalized.push_back('.');
+        ++index;
+        if (!consumeFloatDigits(value, &index, mantissaBase,
+                                &normalized, &hasMantissaDigit)) {
+            return std::nullopt;
+        }
+    }
+    if (!hasMantissaDigit) return std::nullopt;
+
+    const QChar exponentMarker = hexadecimal ? u'p' : u'e';
+    if (index < value.size()
+        && value.at(index).toLower() == exponentMarker) {
+        normalized.push_back(static_cast<char>(value.at(index).unicode()));
+        ++index;
+        if (index < value.size()
+            && (value.at(index) == u'+' || value.at(index) == u'-')) {
+            normalized.push_back(static_cast<char>(value.at(index).unicode()));
+            ++index;
+        }
+        bool hasExponentDigit = false;
+        if (!consumeFloatDigits(value, &index, 10,
+                                &normalized, &hasExponentDigit)
+            || !hasExponentDigit) {
+            return std::nullopt;
+        }
+    }
+    if (index != value.size()) return std::nullopt;
+
+    // The project is Linux-only, so use the POSIX locale-specific conversion
+    // to obtain the same binary32 rounding independent of the process locale.
+    // A strict lexer above prevents strtof_l's whitespace and NaN-payload
+    // extensions from widening the accepted action grammar.
+    locale_t numericLocale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    if (numericLocale == nullptr) return std::nullopt;
+    char *end = nullptr;
+    const float result = strtof_l(normalized.c_str(), &end, numericLocale);
+    freelocale(numericLocale);
+    if (end != normalized.data() + normalized.size()
+        || !std::isfinite(result)) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+bool fitsSignedPointer(float value)
+{
+    if (!std::isfinite(value)) return false;
+    value = std::trunc(value);
+
+    // Converting intptr max to f32 rounds up to the next power of two on the
+    // supported 32/64-bit targets. Step down once to obtain the largest f32
+    // value whose integer conversion is representable.
+    const float minimum =
+        static_cast<float>(std::numeric_limits<qintptr>::min());
+    const float maximum = std::nextafter(
+        static_cast<float>(std::numeric_limits<qintptr>::max()), 0.0F);
+    return value >= minimum && value <= maximum;
 }
 
 GhosttyActionTranslation reject(Error error,
@@ -396,9 +531,132 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                   parameter);
 }
 
+std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
+    QStringView serializedAction)
+{
+    const qsizetype colon = serializedAction.indexOf(u':');
+    const QStringView name = colon < 0
+        ? serializedAction
+        : serializedAction.first(colon);
+    const OptionalView parameter = colon < 0
+        ? OptionalView{}
+        : OptionalView{serializedAction.sliced(colon + 1)};
+
+    const auto viewportAction = [](TerminalViewportRequest::Kind kind) {
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::ScrollViewport;
+        action.viewport.kind = kind;
+        return action;
+    };
+
+    if (name == QLatin1StringView("scroll_to_top")
+        || name == QLatin1StringView("scroll_to_bottom")
+        || name == QLatin1StringView("scroll_to_selection")) {
+        if (parameter.has_value()) return std::nullopt;
+        if (name == QLatin1StringView("scroll_to_top")) {
+            return viewportAction(TerminalViewportRequest::Kind::Top);
+        }
+        if (name == QLatin1StringView("scroll_to_bottom")) {
+            return viewportAction(TerminalViewportRequest::Kind::Bottom);
+        }
+        return viewportAction(TerminalViewportRequest::Kind::Selection);
+    }
+
+    if (name == QLatin1StringView("scroll_to_row")) {
+        if (!parameter.has_value()) return std::nullopt;
+        const std::optional<quint64> row = parseUnsignedInteger(*parameter);
+        if (!row.has_value()) return std::nullopt;
+        GhosttyPaneAction action =
+            viewportAction(TerminalViewportRequest::Kind::Row);
+        action.viewport.row = *row;
+        return action;
+    }
+
+    if (name == QLatin1StringView("scroll_page_up")
+        || name == QLatin1StringView("scroll_page_down")) {
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = name == QLatin1StringView("scroll_page_up")
+            ? GhosttyPaneActionKind::ScrollPageUp
+            : GhosttyPaneActionKind::ScrollPageDown;
+        return action;
+    }
+
+    if (name == QLatin1StringView("scroll_page_fractional")) {
+        if (!parameter.has_value()) return std::nullopt;
+        const std::optional<float> fraction = parseFiniteFloat32(*parameter);
+        // The terminal always has at least one row. A fraction that cannot be
+        // converted safely even at that minimum can never be executable.
+        if (!fraction.has_value() || !fitsSignedPointer(*fraction)) {
+            return std::nullopt;
+        }
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::ScrollPageFractional;
+        action.pageFraction = *fraction;
+        return action;
+    }
+
+    if (name == QLatin1StringView("scroll_page_lines")) {
+        if (!parameter.has_value()) return std::nullopt;
+        const std::optional<qint64> lines = parseSignedInteger(*parameter);
+        if (!lines.has_value()
+            || *lines < std::numeric_limits<qint16>::min()
+            || *lines > std::numeric_limits<qint16>::max()) {
+            return std::nullopt;
+        }
+        GhosttyPaneAction action =
+            viewportAction(TerminalViewportRequest::Kind::Delta);
+        action.viewport.delta = *lines;
+        return action;
+    }
+
+    if (name == QLatin1StringView("select_all")) {
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::SelectAll;
+        return action;
+    }
+
+    if (name != QLatin1StringView("adjust_selection")) {
+        return std::nullopt;
+    }
+    if (!parameter.has_value()) return std::nullopt;
+
+    GhosttyPaneAction action;
+    action.kind = GhosttyPaneActionKind::AdjustSelection;
+    if (*parameter == QLatin1StringView("left")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::Left;
+    } else if (*parameter == QLatin1StringView("right")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::Right;
+    } else if (*parameter == QLatin1StringView("up")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::Up;
+    } else if (*parameter == QLatin1StringView("down")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::Down;
+    } else if (*parameter == QLatin1StringView("page_up")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::PageUp;
+    } else if (*parameter == QLatin1StringView("page_down")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::PageDown;
+    } else if (*parameter == QLatin1StringView("home")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::Home;
+    } else if (*parameter == QLatin1StringView("end")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::End;
+    } else if (*parameter == QLatin1StringView("beginning_of_line")) {
+        action.selectionAdjustment =
+            TerminalSelectionAdjustment::BeginningOfLine;
+    } else if (*parameter == QLatin1StringView("end_of_line")) {
+        action.selectionAdjustment = TerminalSelectionAdjustment::EndOfLine;
+    } else {
+        return std::nullopt;
+    }
+    return action;
+}
+
 bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
 {
     if (translate(serializedAction).accepted()) {
+        return true;
+    }
+    if (parsePaneAction(serializedAction).has_value()) {
         return true;
     }
 
@@ -418,8 +676,6 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
     if (name == QLatin1StringView("paste_from_clipboard")
         || name == QLatin1StringView("paste_from_selection")
         || name == QLatin1StringView("reset_font_size")
-        || name == QLatin1StringView("scroll_page_up")
-        || name == QLatin1StringView("scroll_page_down")
         || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("end_key_sequence")
         || name == QLatin1StringView("close_window")

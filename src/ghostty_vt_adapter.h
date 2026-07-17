@@ -81,7 +81,9 @@ public:
     bool beginSelection(int column, int row, int clickCount, bool rectangular);
     bool updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);
-    void scrollViewport(int rows);
+    bool selectAll();
+    bool adjustSelection(TerminalSelectionAdjustment adjustment);
+    bool scrollViewport(const TerminalViewportRequest &request);
 
     std::uint64_t compressionActivity() const;
     bool compressScrollback();

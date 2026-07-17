@@ -8,6 +8,8 @@
 #include <QMetaObject>
 #include <QThread>
 
+#include <algorithm>
+
 namespace {
 
 bool keyMayStartProcess(const TerminalKeyInput &input)
@@ -28,6 +30,8 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     , activeProcess_(true)
 {
     qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalViewportRequest>();
+    qRegisterMetaType<TerminalSelectionAdjustment>();
     qRegisterMetaType<TerminalKeyInput>();
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
@@ -64,6 +68,10 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::updateSelection, Qt::QueuedConnection);
     connect(this, &TerminalController::endSelectionRequested,
             worker_, &SessionWorker::endSelection, Qt::QueuedConnection);
+    connect(this, &TerminalController::selectAllRequested,
+            worker_, &SessionWorker::selectAll, Qt::QueuedConnection);
+    connect(this, &TerminalController::selectionAdjustmentRequested,
+            worker_, &SessionWorker::adjustSelection, Qt::QueuedConnection);
     connect(this, &TerminalController::scrollRequested,
             worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
     connect(this, &TerminalController::runtimeOptionsRequested,
@@ -99,6 +107,14 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::selectionAvailableChanged, this,
             [this](bool available) {
+                if (selectionAvailable_ == available) return;
+                selectionAvailable_ = available;
+                Q_EMIT selectionAvailableChanged(selectionAvailable_);
+            }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::selectAllCompleted, this,
+            [this](bool available) {
+                pendingSelectAllRequests_ = std::max(
+                    0, pendingSelectAllRequests_ - 1);
                 if (selectionAvailable_ == available) return;
                 selectionAvailable_ = available;
                 Q_EMIT selectionAvailableChanged(selectionAvailable_);
@@ -287,9 +303,20 @@ void TerminalController::endSelection(int column, int row)
     Q_EMIT endSelectionRequested(column, row);
 }
 
-void TerminalController::scrollViewport(int rows)
+void TerminalController::selectAll()
 {
-    Q_EMIT scrollRequested(rows);
+    ++pendingSelectAllRequests_;
+    Q_EMIT selectAllRequested();
+}
+
+void TerminalController::adjustSelection(TerminalSelectionAdjustment adjustment)
+{
+    Q_EMIT selectionAdjustmentRequested(adjustment);
+}
+
+void TerminalController::scrollViewport(const TerminalViewportRequest &request)
+{
+    Q_EMIT scrollRequested(request);
 }
 
 bool TerminalController::isPasteSafe(const QString &text)

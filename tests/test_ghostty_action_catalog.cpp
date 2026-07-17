@@ -19,6 +19,8 @@ private Q_SLOTS:
     void rejectsMalformedAndUnsupportedStrings();
     void matchesPinnedIntegerParsing_data();
     void matchesPinnedIntegerParsing();
+    void parsesPaneActions();
+    void rejectsMalformedPaneActions();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
 };
@@ -327,6 +329,113 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings()
     QCOMPARE(second.error, first.error);
     QCOMPARE(second.actionName, first.actionName);
     QCOMPARE(second.parameter, first.parameter);
+}
+
+void GhosttyActionCatalogTest::parsesPaneActions()
+{
+    const auto parse = [](const char *serialized) {
+        const QString action = QString::fromLatin1(serialized);
+        const std::optional<GhosttyPaneAction> parsed =
+            GhosttyActionCatalog::parsePaneAction(action);
+        return parsed.value();
+    };
+
+    QCOMPARE(parse("scroll_to_top").viewport.kind,
+             TerminalViewportRequest::Kind::Top);
+    QCOMPARE(parse("scroll_to_bottom").viewport.kind,
+             TerminalViewportRequest::Kind::Bottom);
+    QCOMPARE(parse("scroll_to_selection").viewport.kind,
+             TerminalViewportRequest::Kind::Selection);
+
+    const GhosttyPaneAction row = parse("scroll_to_row:+1__2");
+    QCOMPARE(row.kind, GhosttyPaneActionKind::ScrollViewport);
+    QCOMPARE(row.viewport.kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(row.viewport.row, quint64(12));
+    QCOMPARE(parse("scroll_to_row:-0").viewport.row, quint64(0));
+
+    QCOMPARE(parse("scroll_page_up").kind,
+             GhosttyPaneActionKind::ScrollPageUp);
+    QCOMPARE(parse("scroll_page_down").kind,
+             GhosttyPaneActionKind::ScrollPageDown);
+
+    const GhosttyPaneAction fraction =
+        parse("scroll_page_fractional:+0.5");
+    QCOMPARE(fraction.kind,
+             GhosttyPaneActionKind::ScrollPageFractional);
+    QCOMPARE(fraction.pageFraction, 0.5F);
+    QCOMPARE(parse("scroll_page_fractional:0x1p-1").pageFraction, 0.5F);
+    QCOMPARE(parse("scroll_page_fractional:1e-1000").pageFraction, 0.0F);
+
+    const GhosttyPaneAction lines = parse("scroll_page_lines:-32_768");
+    QCOMPARE(lines.kind, GhosttyPaneActionKind::ScrollViewport);
+    QCOMPARE(lines.viewport.kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(lines.viewport.delta, qint64(-32768));
+    QCOMPARE(parse("scroll_page_lines:+32_767").viewport.delta,
+             qint64(32767));
+
+    QCOMPARE(parse("select_all").kind, GhosttyPaneActionKind::SelectAll);
+    const struct {
+        const char *parameter;
+        TerminalSelectionAdjustment adjustment;
+    } adjustments[] = {
+        {"left", TerminalSelectionAdjustment::Left},
+        {"right", TerminalSelectionAdjustment::Right},
+        {"up", TerminalSelectionAdjustment::Up},
+        {"down", TerminalSelectionAdjustment::Down},
+        {"page_up", TerminalSelectionAdjustment::PageUp},
+        {"page_down", TerminalSelectionAdjustment::PageDown},
+        {"home", TerminalSelectionAdjustment::Home},
+        {"end", TerminalSelectionAdjustment::End},
+        {"beginning_of_line", TerminalSelectionAdjustment::BeginningOfLine},
+        {"end_of_line", TerminalSelectionAdjustment::EndOfLine},
+    };
+    for (const auto &testCase : adjustments) {
+        const QByteArray serialized = QByteArrayLiteral("adjust_selection:")
+            + testCase.parameter;
+        const GhosttyPaneAction action = parse(serialized.constData());
+        QCOMPARE(action.kind, GhosttyPaneActionKind::AdjustSelection);
+        QCOMPARE(action.selectionAdjustment, testCase.adjustment);
+    }
+
+    QVERIFY(!GhosttyActionCatalog::parsePaneAction(
+        QStringLiteral("new_tab")).has_value());
+}
+
+void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
+{
+    const QStringList invalid{
+        QStringLiteral("scroll_to_top:"),
+        QStringLiteral("scroll_to_bottom:now"),
+        QStringLiteral("scroll_to_selection:"),
+        QStringLiteral("scroll_to_row"),
+        QStringLiteral("scroll_to_row:-1"),
+        QStringLiteral("scroll_to_row:0x2"),
+        QStringLiteral("scroll_to_row:18446744073709551616"),
+        QStringLiteral("scroll_page_up:"),
+        QStringLiteral("scroll_page_down:1"),
+        QStringLiteral("scroll_page_fractional"),
+        QStringLiteral("scroll_page_fractional:"),
+        QStringLiteral("scroll_page_fractional: 0.5"),
+        QStringLiteral("scroll_page_fractional:1__0"),
+        QStringLiteral("scroll_page_fractional:nan"),
+        QStringLiteral("scroll_page_fractional:-infinity"),
+        QStringLiteral("scroll_page_fractional:1e20"),
+        QStringLiteral("scroll_page_lines"),
+        QStringLiteral("scroll_page_lines:-32769"),
+        QStringLiteral("scroll_page_lines:32768"),
+        QStringLiteral("select_all:"),
+        QStringLiteral("adjust_selection"),
+        QStringLiteral("adjust_selection:"),
+        QStringLiteral("adjust_selection:LEFT"),
+        QStringLiteral("adjust_selection:word"),
+    };
+
+    for (const QString &serialized : invalid) {
+        QVERIFY2(!GhosttyActionCatalog::parsePaneAction(serialized).has_value(),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
 }
 
 void GhosttyActionCatalogTest::classifiesPinnedActionScopes()

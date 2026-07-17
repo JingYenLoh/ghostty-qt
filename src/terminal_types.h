@@ -1,5 +1,7 @@
 #pragma once
 
+#include "terminal_actions.h"
+
 #include <QColor>
 #include <QMetaType>
 #include <QString>
