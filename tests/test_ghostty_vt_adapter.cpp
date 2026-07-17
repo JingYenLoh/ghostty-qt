@@ -57,6 +57,7 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
+    void resetsAllTerminalStateAndPublishesFullFrame();
     void selectsAndNavigatesViewportAtomically();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
@@ -322,6 +323,77 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     keypad.key = Qt::Key_Left;
     keypad.nativeScanCode = KEY_KP1 + 8U;
     QCOMPARE(adapter->encodeKey(keypad), QByteArrayLiteral("\033[57400u"));
+}
+
+void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
+{
+    QByteArray ptyWrites;
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+            ptyWrites.append(data);
+        }});
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral(
+        "primary-0\r\nprimary-1\r\nprimary-2\r\nprimary-3\r\n"
+        "primary-4\r\nprimary-5\033[?1049halternate"
+        "\033[?1003h\033[?2004h\033[?1004h"
+        "\033]0;reset-title\a\033]7;file:///tmp/reset-cwd\a\033[c"));
+    adapter->synchronizeInputModes();
+    QVERIFY(adapter->selectAll());
+    QVERIFY(adapter->hasSelection());
+
+    TerminalFrame frame;
+    GhosttyVtAdapter::RenderSnapshot before;
+    QCOMPARE(adapter->renderFrame(&before),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(applyTerminalUpdate(&frame, before.update));
+    QVERIFY(before.mouseTracking);
+    QCOMPARE(adapter->encodePaste(QStringLiteral("paste")),
+             QByteArrayLiteral("\033[200~paste\033[201~"));
+    QCOMPARE(adapter->encodeFocus(true), QByteArrayLiteral("\033[I"));
+    QVERIFY(frameText(frame).contains(QStringLiteral("alternate")));
+    QVERIFY(!ptyWrites.isEmpty());
+    const GhosttyVtAdapter::DeferredEffects beforeEffects =
+        adapter->takeDeferredEffects();
+    QCOMPARE(beforeEffects.title, QStringLiteral("reset-title"));
+    QCOMPARE(beforeEffects.currentDirectory,
+             QStringLiteral("/tmp/reset-cwd"));
+
+    // Reset is a local emulator mutation: it must neither synthesize input
+    // for the child nor leave refs and mode caches tied to the old grids.
+    ptyWrites.clear();
+    adapter->reset();
+    QCOMPARE(ptyWrites, QByteArray{});
+    QVERIFY(!adapter->hasSelection());
+    const GhosttyVtAdapter::DeferredEffects resetEffects =
+        adapter->takeDeferredEffects();
+    QVERIFY(!resetEffects.title.isNull());
+    QVERIFY(resetEffects.title.isEmpty());
+    QVERIFY(!resetEffects.currentDirectory.isNull());
+    QVERIFY(resetEffects.currentDirectory.isEmpty());
+
+    GhosttyVtAdapter::RenderSnapshot after;
+    QCOMPARE(adapter->renderFrame(&after),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(after.update.fullFrame);
+    QCOMPARE(after.update.dirtyRows.size(), options.geometry.rows);
+    QVERIFY(!after.mouseTracking);
+    QCOMPARE(adapter->encodePaste(QStringLiteral("paste")),
+             QByteArrayLiteral("paste"));
+    QCOMPARE(adapter->encodeFocus(true), QByteArray{});
+    QVERIFY(applyTerminalUpdate(&frame, after.update));
+    QCOMPARE(frame.columns, options.geometry.columns);
+    QCOMPARE(frame.rows, options.geometry.rows);
+    QCOMPARE(frame.cursorColumn, 0);
+    QCOMPARE(frame.cursorRow, 0);
+    QVERIFY(!frameText(frame).contains(QStringLiteral("primary")));
+    QVERIFY(!frameText(frame).contains(QStringLiteral("alternate")));
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    QCOMPARE(frame.scrollTotal, frame.scrollLength);
 }
 
 void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()

@@ -331,6 +331,21 @@ the reconciliation window can still observe pending or cached state. Moving
 the performability decision into worker-side input dispatch is the remaining
 boundary for exact selection-dependent timing.
 
+Terminal-control actions follow the same catalog-to-pane-to-controller route
+but mutate the session only on `SessionWorker`. The structured Ghostty helper
+formats every byte-string action with `std.zig.stringEscape`; the worker first
+inverts that canonical transport encoding. `csi` and `esc` then prepend their
+introducer and enqueue the complete byte sequence once, while `text` applies
+Ghostty's separate config-string escape parser before writing. This two-stage
+decode preserves Unicode, control bytes, and embedded NUL without confusing
+transport escaping with text-action semantics. A malformed text literal is
+still consumed but writes nothing. `reset` calls the public libghostty full
+reset, invalidates the retained frame, and synchronizes mouse, selection,
+title, and working-directory caches before publishing a complete replacement.
+The controller also performs a pure decode preview for newline-bearing actions
+so an immediate close request cannot outrun the worker's active-process signal;
+the actual terminal mutation remains worker-owned.
+
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
 focused pane lookup, matching Ghostty's app/surface split while leaving leaders
 and mixed-scope chains to the pane. A pane that matches `all` or `global`
@@ -424,10 +439,12 @@ The default CTest suite has seventeen layers:
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
   focus, and key input using terminal modes. It also verifies tagged viewport
   scrolling, selection-target alignment, select-all, and endpoint adjustment
-  with exact autoscroll.
+  with exact autoscroll, plus primary/alternate-screen reset, mode clearing,
+  selection invalidation, history removal, and forced full-frame publication.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
-  output draining, process exit, explicit-program activity, and an interactive
+  output draining, byte-exact terminal-control action writes, reset cache
+  synchronization, process exit, explicit-program activity, and an interactive
   shell's idle/job/idle foreground transitions.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
@@ -449,7 +466,7 @@ The default CTest suite has seventeen layers:
 - `ghostty-config-process-loader` verifies canonical and structured snapshot
   parsing, the validation/default/current/keybinding/post-validation protocol,
   deterministic process failure paths, warning preservation, and real-parser
-  `clear`/`unbind` resolution.
+  `clear`/`unbind` resolution, including canonical byte-string action export.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
 - `terminal-pane-render` renders frames offscreen, verifies the initial

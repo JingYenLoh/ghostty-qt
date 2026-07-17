@@ -374,6 +374,56 @@ void GhosttyActionCatalogTest::parsesPaneActions()
              qint64(32767));
 
     QCOMPARE(parse("select_all").kind, GhosttyPaneActionKind::SelectAll);
+
+    const GhosttyPaneAction csi = parse("csi:38:2:255:0:0m");
+    QCOMPARE(csi.kind, GhosttyPaneActionKind::Csi);
+    QCOMPARE(csi.payload, QStringLiteral("38:2:255:0:0m"));
+    QCOMPARE(parse("csi:").payload, QString{});
+
+    const GhosttyPaneAction esc = parse("esc:]0:title:detail\a");
+    QCOMPARE(esc.kind, GhosttyPaneActionKind::Esc);
+    QCOMPARE(esc.payload, QStringLiteral("]0:title:detail\a"));
+    QCOMPARE(parse("esc:").payload, QString{});
+
+    const GhosttyPaneAction text = parse(R"(text:hello\n\x00world)");
+    QCOMPARE(text.kind, GhosttyPaneActionKind::Text);
+    QCOMPARE(text.payload, QStringLiteral(R"(hello\n\x00world)"));
+    QCOMPARE(parse("text:").payload, QString{});
+
+    // Binding.Action.parse intentionally defers Zig-literal validation until
+    // action execution, where a malformed literal is consumed but writes no
+    // bytes.
+    QCOMPARE(parse(R"(text:\q)").payload, QStringLiteral(R"(\q)"));
+    QCOMPARE(parse("reset").kind, GhosttyPaneActionKind::Reset);
+
+    const QStringList implementedControls{
+        QStringLiteral("csi:"),
+        QStringLiteral("csi:0m"),
+        QStringLiteral("esc:"),
+        QStringLiteral("esc:]0:title"),
+        QStringLiteral("text:"),
+        QStringLiteral(R"(text:\q)"),
+        QStringLiteral("reset"),
+    };
+    for (const QString &serialized : implementedControls) {
+        QVERIFY2(GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+
+    // The pinned Binding.Action.parse rejects CursorKey before considering
+    // whether its parameter could otherwise be parsed.
+    const QStringList rejectedCursorKeys{
+        QStringLiteral("cursor_key"),
+        QStringLiteral("cursor_key:"),
+        QStringLiteral("cursor_key:normal,application"),
+    };
+    for (const QString &serialized : rejectedCursorKeys) {
+        QVERIFY2(!GhosttyActionCatalog::parsePaneAction(serialized).has_value(),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+
     const struct {
         const char *parameter;
         TerminalSelectionAdjustment adjustment;
@@ -424,6 +474,11 @@ void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
         QStringLiteral("scroll_page_lines:-32769"),
         QStringLiteral("scroll_page_lines:32768"),
         QStringLiteral("select_all:"),
+        QStringLiteral("csi"),
+        QStringLiteral("esc"),
+        QStringLiteral("text"),
+        QStringLiteral("reset:"),
+        QStringLiteral("reset:now"),
         QStringLiteral("adjust_selection"),
         QStringLiteral("adjust_selection:"),
         QStringLiteral("adjust_selection:LEFT"),

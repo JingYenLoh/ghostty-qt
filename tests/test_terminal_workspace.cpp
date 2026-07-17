@@ -60,6 +60,7 @@ private Q_SLOTS:
     void runningProgramPromptsThenResolvesOnceOnExit();
     void idleShellDoesNotPromptInRunningProcessesMode();
     void submittedCommandPromptsBeforeForegroundPoll();
+    void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
     void performableTabChangeRequiresDifferentTarget();
     void alwaysModePromptsForIdleShell();
     void multiPaneShutdownGracePeriodsOverlap();
@@ -152,6 +153,40 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTrip()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    QTest::qWait(350);
+
+    TerminalPane *pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(!controller->activeProcess());
+
+    // Malformed text remains consumed/no-op and must not manufacture active
+    // work. A valid canonical newline, however, latches activity on the UI
+    // side before its queued worker invocation can run.
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\q)")));
+    QVERIFY(!controller->activeProcess());
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\n)")));
+    QVERIFY(controller->activeProcess());
+
+    workspace.requestQuit();
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(quit.count(), 0);
+    workspace.cancelClose();
 }
 
 void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
@@ -486,7 +521,11 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     std::vector<std::unique_ptr<QSignalSpy>> scrollSpies;
     std::vector<std::unique_ptr<QSignalSpy>> selectAllSpies;
     std::vector<std::unique_ptr<QSignalSpy>> adjustmentSpies;
-    for (TerminalPane *pane : panes) {
+    std::vector<std::unique_ptr<QSignalSpy>> csiSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> resetSpies;
+    QStringList controlFanoutOrder;
+    for (qsizetype paneIndex = 0; paneIndex < panes.size(); ++paneIndex) {
+        TerminalPane *pane = panes.at(paneIndex);
         TerminalController *controller =
             pane->findChild<TerminalController *>();
         QVERIFY(controller != nullptr);
@@ -497,6 +536,20 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
             controller, &TerminalController::selectAllRequested));
         adjustmentSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::selectionAdjustmentRequested));
+        csiSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::csiRequested));
+        resetSpies.emplace_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::resetTerminalRequested));
+        connect(controller, &TerminalController::csiRequested,
+                this, [&controlFanoutOrder, paneIndex](const QByteArray &) {
+                    controlFanoutOrder.append(
+                        QStringLiteral("csi:%1").arg(paneIndex));
+                });
+        connect(controller, &TerminalController::resetTerminalRequested,
+                this, [&controlFanoutOrder, paneIndex] {
+                    controlFanoutOrder.append(
+                        QStringLiteral("reset:%1").arg(paneIndex));
+                });
     }
 
     // Selection-dependent actions are not performable on any blank surface,
@@ -524,6 +577,27 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
         QStringLiteral("select_all")));
     for (const std::unique_ptr<QSignalSpy> &spy : selectAllSpies) {
         QCOMPARE(spy->count(), 1);
+    }
+
+    // Broad action chains are action-major: every pane receives the complete
+    // CSI action exactly once before any pane receives the following reset.
+    GhosttyApplicationKeybindings applicationBindings(options, false);
+    applicationBindings.registerWorkspace(&workspace);
+    applicationBindings.dispatchBroadActions({
+        QStringLiteral("csi:9:detail"),
+        QStringLiteral("reset"),
+    });
+    QCOMPARE(controlFanoutOrder.size(), 2 * panes.size());
+    for (qsizetype index = 0; index < panes.size(); ++index) {
+        QVERIFY(controlFanoutOrder.at(index).startsWith(
+            QLatin1StringView("csi:")));
+        QVERIFY(controlFanoutOrder.at(index + panes.size()).startsWith(
+            QLatin1StringView("reset:")));
+        QCOMPARE(csiSpies.at(static_cast<std::size_t>(index))->count(), 1);
+        QCOMPARE(csiSpies.at(static_cast<std::size_t>(index))
+                     ->constFirst().constFirst().toByteArray(),
+                 QByteArrayLiteral("9:detail"));
+        QCOMPARE(resetSpies.at(static_cast<std::size_t>(index))->count(), 1);
     }
 }
 

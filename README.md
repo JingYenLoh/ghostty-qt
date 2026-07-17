@@ -275,7 +275,9 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 directly. Viewport/selection bindings additionally support `scroll_to_top`,
 `scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`, `scroll_page_down`,
 `scroll_page_fractional`, `scroll_page_lines`, `scroll_to_selection`,
-`select_all`, and `adjust_selection`.
+`select_all`, and `adjust_selection`. Terminal-control bindings support `csi`,
+`esc`, `text`, and `reset`; raw-write actions return the viewport to the active
+area, while reset clears emulator state without sending bytes to the child.
 
 Drag with the left mouse button to select; double-click to select a word and
 hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
@@ -327,7 +329,9 @@ both terminfo and the private config helper. The real QML close dialog is also
 exercised headlessly; workspace tab ordering, split layout, navigation, and
 zoom are covered through typed actions. Adapter/session tests cover absolute,
 relative, and selection-driven viewport movement plus select-all and endpoint
-adjustment, while interactive pointer selection and unsafe-paste dialog input
+adjustment. They also verify byte-exact CSI, ESC, and Zig-literal text writes,
+screen/history/mode reset semantics, and the helper's canonical byte-payload
+boundary, while interactive pointer selection and unsafe-paste dialog input
 are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend

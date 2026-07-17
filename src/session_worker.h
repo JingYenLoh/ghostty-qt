@@ -21,6 +21,12 @@ public:
     explicit SessionWorker(QObject *parent = nullptr);
     ~SessionWorker() override;
 
+    // Pure previews used by TerminalController to close the UI/worker race
+    // around an immediately submitted command and close request. Execution
+    // still decodes and writes only on the worker thread.
+    static bool canonicalBytesMayStartProcess(const QByteArray &payload);
+    static bool canonicalTextMayStartProcess(const QByteArray &payload);
+
 public Q_SLOTS:
     void initialize(const LaunchOptions &options);
     // Font rendering is owned by TerminalPane. This applies live terminal
@@ -37,6 +43,12 @@ public Q_SLOTS:
                          bool hasCurrent,
                          const TerminalKeyInput &current);
     void sendText(const QString &text);
+    void sendCsi(const QByteArray &payload);
+    void sendEscape(const QByteArray &payload);
+    // Decode Ghostty's Zig string-literal payload on the worker thread before
+    // writing the resulting bytes directly to the PTY.
+    void sendRawText(const QByteArray &serializedText);
+    void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);
@@ -82,6 +94,7 @@ private:
     void destroyTerminal();
     void closePty();
     void queuePtyWrite(const QByteArray &data);
+    void sendRawAction(const QByteArray &data);
     void scheduleFrame();
     void noteCompressionActivity();
     void syncMouseEncoder();

@@ -559,6 +559,30 @@ public:
         }
     }
 
+    void reset()
+    {
+        ghostty_terminal_reset(terminal_);
+
+        // A full terminal reset invalidates selection grid references and
+        // resets the modes mirrored by the input encoders. Keep every piece
+        // of adapter-side state synchronized with that single mutation.
+        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
+        ghostty_mouse_encoder_reset(mouseEncoder_);
+        mouseEncoderConfigured_ = false;
+        synchronizeInputModes();
+
+        // fullReset clears terminal-owned title and pwd without going through
+        // their OSC callbacks. Publish explicit empty effects so frontend
+        // caches and working-directory inheritance cannot retain stale state.
+        titleDirty_ = true;
+        pwdDirty_ = true;
+
+        // Do not rely on the C API's dirty-state implementation detail. A
+        // reset discards screen and scrollback contents, so the next update
+        // must replace the complete frame held by TerminalPane.
+        hasPublishedFrame_ = false;
+    }
+
     void synchronizeInputModes()
     {
         const std::array<GhosttyMode, 8> modes{
@@ -1426,9 +1450,11 @@ public:
             GhosttyString title{};
             if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_TITLE, &title)
                 == GHOSTTY_SUCCESS) {
-                effects.title = QString::fromUtf8(
-                    reinterpret_cast<const char *>(title.ptr),
-                    static_cast<qsizetype>(title.len));
+                effects.title = title.len == 0
+                    ? QStringLiteral("")
+                    : QString::fromUtf8(
+                          reinterpret_cast<const char *>(title.ptr),
+                          static_cast<qsizetype>(title.len));
             }
         }
         if (pwdDirty_) {
@@ -1436,9 +1462,11 @@ public:
             GhosttyString pwd{};
             if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_PWD, &pwd)
                 == GHOSTTY_SUCCESS) {
-                effects.currentDirectory = QString::fromUtf8(
-                    reinterpret_cast<const char *>(pwd.ptr),
-                    static_cast<qsizetype>(pwd.len));
+                effects.currentDirectory = pwd.len == 0
+                    ? QStringLiteral("")
+                    : QString::fromUtf8(
+                          reinterpret_cast<const char *>(pwd.ptr),
+                          static_cast<qsizetype>(pwd.len));
                 const QUrl url(effects.currentDirectory);
                 if (url.isLocalFile()) {
                     effects.currentDirectory = url.toLocalFile();
@@ -1616,6 +1644,11 @@ bool GhosttyVtAdapter::setAppearance(const TerminalAppearance &appearance)
 void GhosttyVtAdapter::writeVt(QByteArrayView data)
 {
     impl_->writeVt(data);
+}
+
+void GhosttyVtAdapter::reset()
+{
+    impl_->reset();
 }
 
 void GhosttyVtAdapter::synchronizeInputModes()

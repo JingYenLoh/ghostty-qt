@@ -1413,6 +1413,21 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             if (!controller_->selectionExpected()) return false;
             controller_->adjustSelection(paneAction->selectionAdjustment);
             return true;
+        case GhosttyPaneActionKind::Csi:
+            controller_->sendCsi(paneAction->payload.toUtf8());
+            return true;
+        case GhosttyPaneActionKind::Esc:
+            controller_->sendEscape(paneAction->payload.toUtf8());
+            return true;
+        case GhosttyPaneActionKind::Text:
+            // Ghostty validates Zig string escapes only when performing the
+            // action. Keep the serialized bytes intact until the worker so a
+            // malformed binding is still consumed without writing to the PTY.
+            controller_->sendRawText(paneAction->payload.toUtf8());
+            return true;
+        case GhosttyPaneActionKind::Reset:
+            controller_->resetTerminal();
+            return true;
         }
     }
 

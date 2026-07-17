@@ -123,6 +123,7 @@ private Q_SLOTS:
     void preservesSuccessfulHelperWarnings();
     void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
     void realHelperExportsFinalizedStructuredKeybindings();
+    void realHelperCanonicalizesTerminalControlActionPayloads();
     void reportsValidationFailureDeterministically();
     void reportsTimeoutCrashAndStartFailureDeterministically();
 };
@@ -681,6 +682,76 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     QCOMPARE(config.tables.constFirst().bindings.size(), 1);
     QCOMPARE(config.tables.constFirst().bindings.constFirst().actions,
              QStringList({QStringLiteral("resize_split:left,10")}));
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperCanonicalizesTerminalControlActionPayloads()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    QByteArray config = QByteArrayLiteral(
+        "keybind = clear\n"
+        "keybind = ctrl+a=text:\\x15\n"
+        "keybind = ctrl+b=text:");
+    config.append(QByteArray::fromHex("f09f91bb"));
+    config.append(QByteArrayLiteral(
+        "\n"
+        "keybind = ctrl+c=csi:"));
+    config.append(QByteArray::fromHex("c3a9"));
+    config.append(QByteArrayLiteral(
+        "\n"
+        "keybind = ctrl+d=esc:\\x7f\n"
+        "keybind = ctrl+e=text:\\q\n"));
+    ConfigFixture::writeFile(fixture.preferredPath, config);
+
+    GhosttyConfigProcessLoaderOptions options{
+        .helperPath = helperPath,
+        .timeoutMilliseconds = 10'000,
+        .environment = QProcessEnvironment::systemEnvironment(),
+    };
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader(options)(fixture.candidates());
+    QVERIFY2(result.succeeded(), qPrintable(result.errorMessage));
+    QVERIFY(result.snapshot->keybindConfig.has_value());
+    const GhosttyKeybindConfig &keybinds = *result.snapshot->keybindConfig;
+    QCOMPARE(keybinds.root.size(), 5);
+
+    const auto actionFor = [&keybinds](quint32 codepoint) -> QStringList {
+        const auto found = std::find_if(
+            keybinds.root.cbegin(), keybinds.root.cend(),
+            [codepoint](const GhosttyKeybindDefinition &definition) {
+                return definition.sequence.size() == 1
+                    && definition.sequence.constFirst().kind
+                        == GhosttyKeybindKeyKind::Unicode
+                    && definition.sequence.constFirst().unicodeCodepoint
+                        == codepoint;
+            });
+        return found == keybinds.root.cend() ? QStringList{} : found->actions;
+    };
+
+    // Binding.Action.format applies std.zig.stringEscape to []const u8
+    // fields. The structured JSON boundary therefore contains canonical
+    // escaped bytes, not the original action payload. Execution must invert
+    // this layer before applying text's separate config-string decoding.
+    QCOMPARE(actionFor('a'),
+             QStringList({QStringLiteral(R"(text:\\x15)")}));
+    QCOMPARE(actionFor('b'),
+             QStringList({QStringLiteral(R"(text:\xf0\x9f\x91\xbb)")}));
+    QCOMPARE(actionFor('c'),
+             QStringList({QStringLiteral(R"(csi:\xc3\xa9)")}));
+    QCOMPARE(actionFor('d'),
+             QStringList({QStringLiteral(R"(esc:\\x7f)")}));
+
+    // Text escape validation is intentionally deferred until the action is
+    // performed, so even a malformed source literal survives the helper as a
+    // valid, canonically escaped binding payload.
+    QCOMPARE(actionFor('e'),
+             QStringList({QStringLiteral(R"(text:\\q)")}));
 }
 
 void GhosttyConfigProcessLoaderTest::reportsValidationFailureDeterministically()

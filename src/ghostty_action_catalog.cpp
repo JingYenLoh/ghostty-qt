@@ -617,6 +617,34 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("csi")
+        || name == QLatin1StringView("esc")
+        || name == QLatin1StringView("text")) {
+        // All three fields are []const u8 in Binding.Action, so the colon is
+        // required but the byte string after it may be empty. Split only at
+        // the first colon; later colons are part of the payload.
+        if (!parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        if (name == QLatin1StringView("csi")) {
+            action.kind = GhosttyPaneActionKind::Csi;
+        } else if (name == QLatin1StringView("esc")) {
+            action.kind = GhosttyPaneActionKind::Esc;
+        } else {
+            action.kind = GhosttyPaneActionKind::Text;
+        }
+        action.payload = parameter->toString();
+        return action;
+    }
+
+    if (name == QLatin1StringView("reset")) {
+        // Reset is a void Binding.Action field, therefore even `reset:` is
+        // invalid rather than an empty-parameter spelling of reset.
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::Reset;
+        return action;
+    }
+
     if (name != QLatin1StringView("adjust_selection")) {
         return std::nullopt;
     }

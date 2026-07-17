@@ -3,6 +3,7 @@
 #include "launch_options.h"
 #include "terminal_types.h"
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 
@@ -57,6 +58,13 @@ public:
         quint64 token, TerminalSequenceResolution resolution,
         const std::optional<TerminalKeyInput> &current = std::nullopt);
     void sendText(const QString &text);
+    // Ghostty terminal-control actions are byte-oriented. Keeping their
+    // payloads as QByteArray preserves embedded NUL and queues each complete
+    // control sequence as one worker operation.
+    void sendCsi(const QByteArray &payload);
+    void sendEscape(const QByteArray &payload);
+    void sendRawText(const QByteArray &serializedText);
+    void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);
@@ -96,6 +104,10 @@ Q_SIGNALS:
                                      bool hasCurrent,
                                      const TerminalKeyInput &current);
     void textRequested(const QString &text);
+    void csiRequested(const QByteArray &payload);
+    void escapeRequested(const QByteArray &payload);
+    void rawTextRequested(const QByteArray &serializedText);
+    void resetTerminalRequested();
     void mouseRequested(const TerminalMouseInput &input);
     void focusRequested(bool focused);
     void pasteRequested(const QString &text);

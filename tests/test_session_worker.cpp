@@ -43,6 +43,14 @@ bool containsCursorBlinkReset(const QSignalSpy &spy)
     });
 }
 
+bool containsFullFrame(const QSignalSpy &spy)
+{
+    return std::any_of(spy.cbegin(), spy.cend(), [](const QList<QVariant> &args) {
+        return !args.isEmpty()
+            && qvariant_cast<TerminalUpdate>(args.constFirst()).fullFrame;
+    });
+}
+
 bool spyContainsBool(const QSignalSpy &spy, bool expected)
 {
     return std::any_of(spy.cbegin(), spy.cend(), [expected](const QList<QVariant> &args) {
@@ -59,11 +67,13 @@ private Q_SLOTS:
     void runsCommandThroughPty();
     void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
+    void sendsTerminalControlActionsThroughPty();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
+    void resetsTerminalStateAndWorkerCaches();
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
@@ -177,6 +187,84 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral(
                  "paste-bytes:1b5b3230307e6f6e650a74776f1b5b3230317e")),
              qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "i=0; while [ $i -lt 40 ]; do "
+            "printf 'control-row-%03d\\r\\n' \"$i\"; i=$((i + 1)); done; "
+            "printf 'control-ready\\r\\n'; "
+            "printf 'control-bytes:'; "
+            "dd bs=1 count=36 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\ncontrol-done\\r\\n'")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("control-ready")), 5000);
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{0}, 1000);
+
+    // The malformed text action is performed but contributes no bytes and
+    // does not disturb the exact ordering of the valid actions that follow.
+    worker.sendRawText(QByteArrayLiteral(R"(\\q)"));
+    QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{0});
+    worker.sendCsi(QByteArrayLiteral("31m"));
+    worker.sendEscape(QByteArrayLiteral("7"));
+    worker.sendCsi(QByteArray{});
+    worker.sendEscape(QByteArray{});
+    worker.sendCsi(QByteArrayLiteral(R"(\xc3\xa9)"));
+    // ESC payloads only undo Action.format; they do not apply text's second
+    // config decode. This therefore sends the literal four-byte string \x7f.
+    worker.sendEscape(QByteArrayLiteral(R"(\\x7f)"));
+    worker.sendCsi(QByteArrayLiteral(R"(\x00)"));
+
+    // These are canonical Binding.Action.format payloads. The first decode
+    // restores the action's original bytes; text then applies Ghostty's
+    // config string decoder, including NUL and Unicode escapes.
+    worker.sendRawText(QByteArrayLiteral(R"(A\\n\\x00\\u{1F601}B)"));
+    worker.sendRawText(QByteArrayLiteral(R"(\xf0\x9f\x91\xbb)"));
+    worker.sendRawText(QByteArrayLiteral(R"(\\x80)"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updateSpy,
+            QStringLiteral(
+                "control-bytes:1b5b33316d1b371b5b1b1b5bc3a9"
+                "1b5c7837661b5b00410a00"
+                "f09f988142f09f91bbc280")),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updateSpy).scrollOffset > 0, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
+
+    // Ghostty scrolls for a valid empty text action even though it writes no
+    // bytes. This remains useful after the held child has exited.
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{0}, 1000);
+    worker.sendRawText(QByteArray{});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updateSpy).scrollOffset > 0, 1000);
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty() ? ""
+                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -447,6 +535,89 @@ void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
 
     worker.adjustSelection(TerminalSelectionAdjustment::Left);
     QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty() ? ""
+                                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy titleSpy(&worker, &SessionWorker::titleChanged);
+    QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "i=0; while [ $i -lt 40 ]; do "
+            "printf 'reset-row-%03d\\r\\n' \"$i\"; i=$((i + 1)); done; "
+            "printf '\\033]0;reset-worker-title\\007"
+            "\\033]7;file:///tmp/reset-worker-cwd\\007"
+            "\\033[?1049h\\033[?1003hreset-alt-ready\\r\\n'; "
+            "reset_byte=$(dd bs=1 count=1 2>/dev/null | "
+            "od -An -v -tx1 | tr -d ' \\n'); "
+            "stty sane; printf '\\r\\nreset-input:%s\\r\\n' \"$reset_byte\"; "
+            "sleep 5")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("reset-alt-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, true), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !titleSpy.isEmpty()
+            && titleSpy.constLast().constFirst().toString()
+                == QStringLiteral("reset-worker-title"),
+        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !directorySpy.isEmpty()
+            && directorySpy.constLast().constFirst().toString()
+                == QStringLiteral("/tmp/reset-worker-cwd"),
+        1000);
+    worker.selectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+
+    updateSpy.clear();
+    mouseSpy.clear();
+    selectionSpy.clear();
+    titleSpy.clear();
+    directorySpy.clear();
+    worker.resetTerminal();
+
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, false), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, false), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(containsFullFrame(updateSpy), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !titleSpy.isEmpty()
+            && titleSpy.constLast().constFirst().toString().isEmpty(),
+        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !directorySpy.isEmpty()
+            && directorySpy.constLast().constFirst().toString().isEmpty(),
+        1000);
+    const TerminalFrame resetFrame = accumulatedFrame(updateSpy);
+    QVERIFY(!frameText(resetFrame).contains(QStringLiteral("reset-row")));
+    QVERIFY(!frameText(resetFrame).contains(QStringLiteral("reset-alt-ready")));
+    QCOMPARE(resetFrame.scrollOffset, quint64{0});
+    QCOMPARE(resetFrame.scrollTotal, resetFrame.scrollLength);
+
+    // A reset is an emulator-only mutation. A sentinel sent afterwards must
+    // be the first byte observed by the child; any synthesized reset input
+    // would displace it from this one-byte read.
+    worker.sendRawText(QByteArrayLiteral("Z"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("reset-input:5a")), 1000);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));

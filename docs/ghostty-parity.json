@@ -651,6 +651,10 @@
           "status": "partial",
           "note": "Configured plain/mixed copy routes to selection copy; styled VT and HTML formats remain absent."
         },
+        "csi": {
+          "status": "supported",
+          "note": "Restores the configured byte payload from Ghostty's canonical action format, queues it with the CSI introducer as one contiguous sequence on the worker thread, and scrolls the viewport to the active area."
+        },
         "decrease_font_size": {
           "status": "partial"
         },
@@ -667,6 +671,10 @@
         "equalize_splits": {
           "status": "supported",
           "note": "Equalizes the source tab with Ghostty's same-axis subtree weighting while preserving focus and split zoom."
+        },
+        "esc": {
+          "status": "supported",
+          "note": "Restores the configured byte payload from Ghostty's canonical action format, queues it with the ESC introducer as one contiguous sequence on the worker thread, and scrolls the viewport to the active area."
         },
         "goto_split": {
           "status": "supported",
@@ -726,6 +734,10 @@
           "status": "partial",
           "note": "A configured local trigger requests debounced asynchronous reload through the exact pinned parser; frontend notifications remain absent."
         },
+        "reset": {
+          "status": "supported",
+          "note": "Performs libghostty's full terminal reset on the session thread, resynchronizes cached mouse-input, selection, title, and working-directory state, and publishes a complete replacement frame without writing to the PTY."
+        },
         "reset_font_size": {
           "status": "partial"
         },
@@ -779,6 +791,10 @@
         },
         "show_on_screen_keyboard": {
           "scope": "qt_mapping"
+        },
+        "text": {
+          "status": "supported",
+          "note": "Decodes the pinned Zig string-literal escape grammar on the session thread, preserves Unicode and embedded NUL bytes, writes without key encoding, and consumes malformed literals without PTY output."
         },
         "toggle_background_opacity": {
           "status": "not_applicable",

@@ -52,6 +52,14 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::resolveSequence, Qt::QueuedConnection);
     connect(this, &TerminalController::textRequested,
             worker_, &SessionWorker::sendText, Qt::QueuedConnection);
+    connect(this, &TerminalController::csiRequested,
+            worker_, &SessionWorker::sendCsi, Qt::QueuedConnection);
+    connect(this, &TerminalController::escapeRequested,
+            worker_, &SessionWorker::sendEscape, Qt::QueuedConnection);
+    connect(this, &TerminalController::rawTextRequested,
+            worker_, &SessionWorker::sendRawText, Qt::QueuedConnection);
+    connect(this, &TerminalController::resetTerminalRequested,
+            worker_, &SessionWorker::resetTerminal, Qt::QueuedConnection);
     connect(this, &TerminalController::mouseRequested,
             worker_, &SessionWorker::sendMouse, Qt::QueuedConnection);
     connect(this, &TerminalController::focusRequested,
@@ -89,7 +97,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::currentDirectoryChanged, this,
             [this](const QString &directory) {
-                if (directory.isEmpty() || currentDirectory_ == directory) return;
+                if (currentDirectory_ == directory) return;
                 currentDirectory_ = directory;
                 Q_EMIT currentDirectoryChanged(currentDirectory_);
             }, Qt::QueuedConnection);
@@ -248,6 +256,35 @@ void TerminalController::sendText(const QString &text)
         notePotentialActivity();
     }
     Q_EMIT textRequested(text);
+}
+
+void TerminalController::sendCsi(const QByteArray &payload)
+{
+    if (SessionWorker::canonicalBytesMayStartProcess(payload)) {
+        notePotentialActivity();
+    }
+    Q_EMIT csiRequested(payload);
+}
+
+void TerminalController::sendEscape(const QByteArray &payload)
+{
+    if (SessionWorker::canonicalBytesMayStartProcess(payload)) {
+        notePotentialActivity();
+    }
+    Q_EMIT escapeRequested(payload);
+}
+
+void TerminalController::sendRawText(const QByteArray &serializedText)
+{
+    if (SessionWorker::canonicalTextMayStartProcess(serializedText)) {
+        notePotentialActivity();
+    }
+    Q_EMIT rawTextRequested(serializedText);
+}
+
+void TerminalController::resetTerminal()
+{
+    Q_EMIT resetTerminalRequested();
 }
 
 void TerminalController::sendMouse(const TerminalMouseInput &input)

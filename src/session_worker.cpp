@@ -18,6 +18,7 @@
 #include <climits>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 
 #include <fcntl.h>
@@ -44,6 +45,138 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
     return input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'));
+}
+
+bool bytesMayStartProcess(const QByteArray &data)
+{
+    return data.contains('\n') || data.contains('\r');
+}
+
+int hexDigitValue(char value)
+{
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+bool appendUtf8(QByteArray *output, quint32 codepoint)
+{
+    if (codepoint <= 0x7fU) {
+        output->append(static_cast<char>(codepoint));
+        return true;
+    }
+    if (codepoint <= 0x7ffU) {
+        output->append(static_cast<char>(0xc0U | (codepoint >> 6U)));
+        output->append(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+        return true;
+    }
+    if (codepoint >= 0xd800U && codepoint <= 0xdfffU) {
+        return false;
+    }
+    if (codepoint <= 0xffffU) {
+        output->append(static_cast<char>(0xe0U | (codepoint >> 12U)));
+        output->append(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU)));
+        output->append(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+        return true;
+    }
+    if (codepoint <= 0x10ffffU) {
+        output->append(static_cast<char>(0xf0U | (codepoint >> 18U)));
+        output->append(static_cast<char>(0x80U | ((codepoint >> 12U) & 0x3fU)));
+        output->append(static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU)));
+        output->append(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+        return true;
+    }
+    return false;
+}
+
+enum class HexEscapeEncoding {
+    RawByte,
+    Utf8Codepoint,
+};
+
+std::optional<QByteArray> decodeZigEscapes(
+    const QByteArray &serialized, HexEscapeEncoding hexEscapeEncoding)
+{
+    QByteArray decoded;
+    decoded.reserve(serialized.size());
+    qsizetype index = 0;
+    while (index < serialized.size()) {
+        const char value = serialized.at(index++);
+        if (value != '\\') {
+            decoded.append(value);
+            continue;
+        }
+        if (index >= serialized.size()) {
+            return std::nullopt;
+        }
+
+        const char escaped = serialized.at(index++);
+        quint32 codepoint = 0;
+        switch (escaped) {
+        case 'n': codepoint = '\n'; break;
+        case 'r': codepoint = '\r'; break;
+        case 't': codepoint = '\t'; break;
+        case '\\': codepoint = '\\'; break;
+        case '\'': codepoint = '\''; break;
+        case '"': codepoint = '"'; break;
+        case 'x': {
+            if (index + 2 > serialized.size()) {
+                return std::nullopt;
+            }
+            const int high = hexDigitValue(serialized.at(index));
+            const int low = hexDigitValue(serialized.at(index + 1));
+            if (high < 0 || low < 0) {
+                return std::nullopt;
+            }
+            codepoint = static_cast<quint32>((high << 4) | low);
+            index += 2;
+            if (hexEscapeEncoding == HexEscapeEncoding::RawByte) {
+                decoded.append(static_cast<char>(codepoint));
+                continue;
+            }
+            break;
+        }
+        case 'u': {
+            if (index >= serialized.size() || serialized.at(index++) != '{'
+                || index >= serialized.size()
+                || serialized.at(index) == '}') {
+                return std::nullopt;
+            }
+            bool closed = false;
+            while (index < serialized.size()) {
+                const char digit = serialized.at(index++);
+                if (digit == '}') {
+                    closed = true;
+                    break;
+                }
+                const int nibble = hexDigitValue(digit);
+                if (nibble < 0) {
+                    return std::nullopt;
+                }
+                codepoint = codepoint * 16U + static_cast<quint32>(nibble);
+                if (codepoint > 0x10ffffU) {
+                    return std::nullopt;
+                }
+            }
+            if (!closed) {
+                return std::nullopt;
+            }
+            break;
+        }
+        default:
+            return std::nullopt;
+        }
+
+        // Ghostty's config string parser treats every escape as a Unicode
+        // codepoint and UTF-8 encodes it. The Action.format boundary is the
+        // one exception: std.zig.stringEscape uses \xNN to preserve each raw
+        // byte, so its inverse appends those bytes in the branch above.
+        if (!appendUtf8(&decoded, codepoint)) {
+            return std::nullopt;
+        }
+    }
+    return decoded;
 }
 
 bool sequenceTokenIsNewer(quint64 candidate, quint64 current)
@@ -77,6 +210,25 @@ SessionWorker::SessionWorker(QObject *parent)
 SessionWorker::~SessionWorker()
 {
     shutdown();
+}
+
+bool SessionWorker::canonicalBytesMayStartProcess(const QByteArray &payload)
+{
+    const std::optional<QByteArray> decoded = decodeZigEscapes(
+        payload, HexEscapeEncoding::RawByte);
+    return decoded.has_value() && bytesMayStartProcess(*decoded);
+}
+
+bool SessionWorker::canonicalTextMayStartProcess(const QByteArray &payload)
+{
+    const std::optional<QByteArray> actionPayload = decodeZigEscapes(
+        payload, HexEscapeEncoding::RawByte);
+    if (!actionPayload.has_value()) {
+        return false;
+    }
+    const std::optional<QByteArray> text = decodeZigEscapes(
+        *actionPayload, HexEscapeEncoding::Utf8Codepoint);
+    return text.has_value() && bytesMayStartProcess(*text);
 }
 
 void SessionWorker::initialize(const LaunchOptions &options)
@@ -540,6 +692,80 @@ void SessionWorker::sendText(const QString &text)
     input.text = text;
     input.pressed = true;
     queuePtyWrite(encodeKey(input));
+}
+
+void SessionWorker::sendCsi(const QByteArray &payload)
+{
+    const std::optional<QByteArray> decoded = decodeZigEscapes(
+        payload, HexEscapeEncoding::RawByte);
+    if (!decoded.has_value()) {
+        return;
+    }
+    QByteArray sequence;
+    sequence.reserve(decoded->size() + 2);
+    sequence.append('\x1b');
+    sequence.append('[');
+    sequence.append(*decoded);
+    sendRawAction(sequence);
+}
+
+void SessionWorker::sendEscape(const QByteArray &payload)
+{
+    const std::optional<QByteArray> decoded = decodeZigEscapes(
+        payload, HexEscapeEncoding::RawByte);
+    if (!decoded.has_value()) {
+        return;
+    }
+    QByteArray sequence;
+    sequence.reserve(decoded->size() + 1);
+    sequence.append('\x1b');
+    sequence.append(*decoded);
+    sendRawAction(sequence);
+}
+
+void SessionWorker::sendRawText(const QByteArray &serializedText)
+{
+    // Structured config exports Action.format output. Undo that byte escape
+    // first, then apply the text action's config string-literal semantics.
+    const std::optional<QByteArray> actionPayload = decodeZigEscapes(
+        serializedText, HexEscapeEncoding::RawByte);
+    if (!actionPayload.has_value()) {
+        return;
+    }
+    const std::optional<QByteArray> text = decodeZigEscapes(
+        *actionPayload, HexEscapeEncoding::Utf8Codepoint);
+    if (!text.has_value()) {
+        return;
+    }
+    sendRawAction(*text);
+}
+
+void SessionWorker::sendRawAction(const QByteArray &data)
+{
+    if (bytesMayStartProcess(data)) {
+        notePotentialActivity();
+    }
+    queuePtyWrite(data);
+    if (vt_ != nullptr
+        && vt_->scrollViewport({
+            .kind = TerminalViewportRequest::Kind::Bottom,
+        })) {
+        scheduleFrame();
+    }
+}
+
+void SessionWorker::resetTerminal()
+{
+    if (vt_ == nullptr) {
+        return;
+    }
+
+    vt_->reset();
+    syncMouseEncoder();
+    syncSelectionAvailability();
+    processDeferredEffects();
+    noteCompressionActivity();
+    scheduleFrame();
 }
 
 QByteArray SessionWorker::encodeKey(const TerminalKeyInput &input)

@@ -68,6 +68,7 @@ public:
     bool resize(const Geometry &geometry);
     bool setAppearance(const TerminalAppearance &appearance);
     void writeVt(QByteArrayView data);
+    void reset();
     void synchronizeInputModes();
 
     QByteArray encodeKey(const TerminalKeyInput &input);

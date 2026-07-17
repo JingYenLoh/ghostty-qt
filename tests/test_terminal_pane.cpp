@@ -60,6 +60,8 @@ private Q_SLOTS:
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesViewportAndSelectionActions();
+    void routesTerminalControlActions();
+    void resetClearsTerminalMetadataAndSplitInheritance();
     void routesStructuredSequencesAndCancelsThemOnReload();
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
@@ -797,6 +799,99 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QCOMPARE(forwarded.count(), beforeBoundActions);
     QCOMPARE(scrolls.count(), beforeUnsafe + 3);
     QCOMPARE(adjustments.count(), 3);
+}
+
+void TerminalPaneTest::routesTerminalControlActions()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    options.keybindings = {
+        QStringLiteral("alt+c=csi:31m"),
+        QStringLiteral("chain=esc:7"),
+        QStringLiteral(R"(chain=text:\\x00\\n\\u{1f47b})"),
+        QStringLiteral("chain=reset"),
+    };
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QSignalSpy csi(controller, &TerminalController::csiRequested);
+    QSignalSpy escape(controller, &TerminalController::escapeRequested);
+    QSignalSpy rawText(controller, &TerminalController::rawTextRequested);
+    QSignalSpy reset(controller, &TerminalController::resetTerminalRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QStringList order;
+    connect(controller, &TerminalController::csiRequested,
+            this, [&order](const QByteArray &) { order.append(QStringLiteral("csi")); });
+    connect(controller, &TerminalController::escapeRequested,
+            this, [&order](const QByteArray &) { order.append(QStringLiteral("esc")); });
+    connect(controller, &TerminalController::rawTextRequested,
+            this, [&order](const QByteArray &) { order.append(QStringLiteral("text")); });
+    connect(controller, &TerminalController::resetTerminalRequested,
+            this, [&order] { order.append(QStringLiteral("reset")); });
+
+    QKeyEvent trigger(QEvent::KeyPress, Qt::Key_C,
+                      Qt::AltModifier, QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &trigger);
+
+    QCOMPARE(order, QStringList({QStringLiteral("csi"), QStringLiteral("esc"),
+                                 QStringLiteral("text"), QStringLiteral("reset")}));
+    QCOMPARE(csi.count(), 1);
+    QCOMPARE(csi.constFirst().constFirst().toByteArray(), QByteArrayLiteral("31m"));
+    QCOMPARE(escape.count(), 1);
+    QCOMPARE(escape.constFirst().constFirst().toByteArray(), QByteArrayLiteral("7"));
+    QCOMPARE(rawText.count(), 1);
+    QCOMPARE(rawText.constFirst().constFirst().toByteArray(),
+             QByteArrayLiteral(R"(\\x00\\n\\u{1f47b})"));
+    QCOMPARE(reset.count(), 1);
+    QCOMPARE(forwarded.count(), 0);
+
+    // Literal validation belongs to the worker: an invalid escape remains a
+    // performed/consumed action at the pane boundary, while invalid action
+    // grammar never emits a worker request.
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral(R"(text:\\q)")));
+    QCOMPARE(rawText.count(), 2);
+    QCOMPARE(rawText.constLast().constFirst().toByteArray(),
+             QByteArrayLiteral(R"(\\q)"));
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("csi")));
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("reset:")));
+    QCOMPARE(csi.count(), 1);
+    QCOMPARE(reset.count(), 1);
+}
+
+void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf '\\033]0;metadata-title\\007"
+            "\\033]7;file:///\\007metadata-ready\\n'; sleep 5"),
+    };
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("metadata-ready")), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.title(), QStringLiteral("metadata-title"),
+                              1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.currentDirectory(), QStringLiteral("/"),
+                              1000);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset")));
+    QTRY_VERIFY_WITH_TIMEOUT(pane.currentDirectory().isEmpty(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.title(), QStringLiteral("sh"), 1000);
+    QCOMPARE(pane.splitLaunchOptions().workingDirectory, QDir::tempPath());
 }
 
 void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()

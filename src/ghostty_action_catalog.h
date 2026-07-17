@@ -33,6 +33,10 @@ enum class GhosttyPaneActionKind {
     ScrollPageFractional,
     SelectAll,
     AdjustSelection,
+    Csi,
+    Esc,
+    Text,
+    Reset,
 };
 
 struct GhosttyPaneAction {
@@ -41,6 +45,11 @@ struct GhosttyPaneAction {
     float pageFraction = 0.0F;
     TerminalSelectionAdjustment selectionAdjustment =
         TerminalSelectionAdjustment::Left;
+    // Raw parameter spelling after the first colon. In particular, Text is
+    // deliberately not decoded here: Binding.Action.parse accepts invalid
+    // Zig string escapes and Ghostty only reports those when performing the
+    // action. CSI and ESC likewise preserve every subsequent colon verbatim.
+    QString payload;
 };
 
 struct GhosttyActionTranslation {
@@ -76,11 +85,12 @@ public:
     // clipboard/zoom/scroll/reload actions as well as typed workspace actions.
     [[nodiscard]] static bool isImplemented(QStringView serializedAction);
 
-    // Parse the implemented pane-local viewport and selection actions. Integer
-    // syntax and f32 rounding follow Binding.Action.parse at the pinned
-    // revision. Unlike upstream, non-finite or intrinsically out-of-range
-    // fractional values are rejected so execution cannot reach Zig's
-    // safety-checked illegal float-to-isize conversion.
+    // Parse the implemented pane-local viewport, selection, and terminal
+    // control actions. Integer syntax and f32 rounding follow
+    // Binding.Action.parse at the pinned revision. Unlike upstream,
+    // non-finite or intrinsically out-of-range fractional values are rejected
+    // so execution cannot reach Zig's safety-checked illegal float-to-isize
+    // conversion.
     [[nodiscard]] static std::optional<GhosttyPaneAction> parsePaneAction(
         QStringView serializedAction);
 
