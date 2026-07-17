@@ -49,6 +49,11 @@ scaffolding them:
   handles backgrounds, selection, cursors, and decorations.
 - Key, mouse, focus, paste, and tracked selection-gesture paths use Ghostty's
   encoders and terminal modes.
+- A narrow project-owned Zig/C matcher imports Ghostty's pinned default URL/path
+  expression and vendored Oniguruma engine without expanding libghostty-vt's
+  dependency surface. C++ receives only UTF-8 byte ranges, which the adapter
+  maps to tracked logical terminal cells across graphemes, soft wraps, and
+  reflow.
 - Compiled QML provides tabs, recursive splits, dialogs, and Wayland startup.
 - CTest covers direct libghostty behavior and an end-to-end PTY session.
 
@@ -65,12 +70,15 @@ advanced text/graphics support, and distribution:
   workloads.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
-- Color emoji, ligatures across cells, Kitty graphics, regex-detected links,
-  link previews, and search each require explicit UI/render policy beyond VT
-  parsing. The OSC 8 slice now provides tracked hover, copy, and open
-  interaction with sparse tracked references, stable live-output behavior, and
-  coalesced pointer queries; exact grouping by hyperlink ID remains limited by
-  the public C API, which currently exposes only the destination URI.
+- Color emoji, ligatures across cells, Kitty graphics, link previews, and search
+  each require explicit UI/render policy beyond VT parsing. OSC 8 and the
+  built-in `link-url` matcher now share tracked hover, copy, and open behavior,
+  stable live-output handling, coalesced pointer queries, and mutation-safe
+  activation. User-defined `link` expressions/actions remain separate work;
+  pathological logical lines and regex searches deliberately fail closed at
+  bounded cell/byte and Oniguruma retry limits. Exact OSC grouping by hyperlink
+  ID also remains limited by the public C API, which exposes only the
+  destination URI.
 - Runtime terminfo lookup is relocatable and covered by a staged-install test;
   desktop integration metadata and distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path

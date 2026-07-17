@@ -42,6 +42,9 @@ struct LaunchOptions {
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
+    // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
+    // available independently of this setting.
+    bool linkUrl = true;
     // The helper publishes Ghostty's finalized structured sets. The explicit
     // bit distinguishes an intentionally empty root from the built-in
     // emergency shortcuts used when configuration is unavailable.

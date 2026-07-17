@@ -7,6 +7,7 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QImage>
@@ -19,6 +20,7 @@
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStyleHints>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <algorithm>
@@ -79,6 +81,7 @@ private Q_SLOTS:
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
     void interactsWithOsc8Hyperlinks();
+    void interactsWithRegexLinksAndReloadsLinkUrl();
     void keepsOsc8InteractionStableAcrossUnrelatedOutput();
     void restoresOsc8HoverAcrossViewportScroll();
     void letsShiftBypassMouseCaptureForHyperlinks();
@@ -1014,7 +1017,7 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
         return std::any_of(
             resolved.cbegin(), resolved.cend(),
             [&uri](const QList<QVariant> &arguments) {
-                return arguments.at(2).toByteArray() == uri;
+                return arguments.at(3).toByteArray() == uri;
             });
     };
     QTRY_VERIFY_WITH_TIMEOUT(resolvedUri(validUri), 1000);
@@ -1135,7 +1138,7 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     const TerminalFrame invalidFrame = accumulatedFrame(updates);
     controller->hyperlinkResolved(
         invalidFrame.contentRevision, TerminalHyperlinkState::Visible,
-        invalidUri, QPoint(3, 0), {QPoint(3, 0)});
+        TerminalLinkKind::Osc8, invalidUri, QPoint(3, 0), {QPoint(3, 0)});
     QGuiApplication::clipboard()->setText(QStringLiteral("sentinel"));
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
@@ -1189,7 +1192,8 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     const TerminalFrame focusFrame = accumulatedFrame(updates);
     controller->hyperlinkResolved(
         focusFrame.contentRevision, TerminalHyperlinkState::Visible,
-        validUri, QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
+        TerminalLinkKind::Osc8, validUri, QPoint(0, 0),
+        {QPoint(0, 0), QPoint(1, 0)});
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     const int opensBeforeFocusLoss = openCount;
@@ -1204,12 +1208,13 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     controller->hyperlinkActivationResolved(
-        focusFrame.contentRevision, validUri);
+        focusFrame.contentRevision, TerminalLinkKind::Osc8, validUri);
     QTest::qWait(30);
     QCOMPARE(openCount, opensBeforeFocusLoss);
     controller->hyperlinkResolved(
         focusFrame.contentRevision, TerminalHyperlinkState::Visible,
-        validUri, QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
+        TerminalLinkKind::Osc8, validUri, QPoint(0, 0),
+        {QPoint(0, 0), QPoint(1, 0)});
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QVERIFY2(errors.isEmpty(),
@@ -1217,6 +1222,181 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
                  ? ""
                  : qPrintable(errors.constFirst().constFirst().toString()));
 
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString relativeName = QStringLiteral("relative-link.txt");
+    const QString relativePath = directory.filePath(relativeName);
+    QFile relativeFile(relativePath);
+    QVERIFY(relativeFile.open(QIODevice::WriteOnly));
+    QCOMPARE(relativeFile.write("regex-link-target\n"), qint64(18));
+    relativeFile.close();
+
+    const QByteArray regexText = QByteArrayLiteral("./relative-link.txt");
+    const QByteArray oscUri = QByteArrayLiteral(
+        "https://example.test/osc-still-enabled");
+    QByteArray output = regexText;
+    output += QByteArrayLiteral("\r\n\033]8;;");
+    output += oscUri;
+    output += QByteArrayLiteral("\033\\OSC\033]8;;\033\\");
+
+    LaunchOptions options;
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    options.hold = true;
+    options.linkUrl = false;
+    options.fontFamily =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    options.keybindingsConfigured = true;
+    options.keybindings = {
+        QStringLiteral("ctrl+y=copy_url_to_clipboard"),
+    };
+
+    QFont font(options.fontFamily);
+    font.setPointSizeF(options.fontSize);
+    font.setFixedPitch(true);
+    font.setStyleHint(QFont::Monospace);
+    const QFontMetricsF metrics(font);
+    const qreal cellWidth = std::max(
+        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
+    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+
+    QQuickWindow window;
+    window.resize(qCeil(cellWidth * 30.0), qCeil(cellHeight * 4.0));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy queries(
+        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
+    QSignalSpy activationResolved(
+        controller, &TerminalController::hyperlinkActivationResolved);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+    QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+
+    int openCount = 0;
+    QUrl openedUrl;
+    pane->setUrlOpener([&](const QUrl &url) {
+        ++openCount;
+        openedUrl = url;
+        return true;
+    });
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QString::fromUtf8(regexText)), 1000);
+
+    const QPointF regexPosition(cellWidth * 0.5, cellHeight * 0.5);
+    const QPointF oscPosition(cellWidth * 0.5, cellHeight * 1.5);
+    const auto sendHover = [&](const QPointF &position,
+                               const QPointF &oldPosition) {
+        QHoverEvent event(QEvent::HoverMove, position, position,
+                          oldPosition, Qt::ControlModifier);
+        QCoreApplication::sendEvent(pane, &event);
+    };
+    const auto sendMouse = [&](QEvent::Type type, const QPointF &position,
+                               Qt::MouseButton button,
+                               Qt::MouseButtons buttons) {
+        QMouseEvent event(type, position, position, position, button, buttons,
+                          Qt::ControlModifier);
+        QCoreApplication::sendEvent(pane, &event);
+    };
+
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &controlPress);
+    sendHover(regexPosition, regexPosition);
+    QTest::qWait(50);
+    QCOMPARE(queries.count(), 0);
+    QVERIFY(!pane->executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+
+    // link-url is live: enabling it must recompute a stationary hover, expose
+    // the exact matched bytes to copy, and resolve a relative path against the
+    // terminal's current directory before opening it.
+    LaunchOptions enabled = options;
+    enabled.linkUrl = true;
+    pane->applyRuntimeOptions(enabled);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Visible
+            && qvariant_cast<TerminalLinkKind>(
+                   resolved.constLast().at(2))
+                == TerminalLinkKind::Regex,
+        1000);
+    QCOMPARE(resolved.constLast().at(3).toByteArray(), regexText);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane->cursor().shape(), Qt::PointingHandCursor, 1000);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
+                 QStringLiteral("text/plain")),
+             regexText);
+
+    sendMouse(QEvent::MouseButtonPress, regexPosition, Qt::LeftButton,
+              Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, regexPosition, Qt::LeftButton,
+              Qt::NoButton);
+    QTRY_COMPARE_WITH_TIMEOUT(activationResolved.count(), 1, 1000);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(
+                 activationResolved.constLast().at(1)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(activationResolved.constLast().at(2).toByteArray(), regexText);
+    QCOMPARE(openCount, 1);
+    QCOMPARE(openedUrl, QUrl::fromLocalFile(relativePath));
+
+    const int queriesBeforeDisable = queries.count();
+    pane->applyRuntimeOptions(options);
+    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::ArrowCursor, 1000);
+    QVERIFY(!pane->executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    QTest::qWait(50);
+    QCOMPARE(queries.count(), queriesBeforeDisable);
+
+    // Explicit hyperlinks are not controlled by link-url.
+    QTest::mouseMove(&window, oscPosition.toPoint());
+    sendHover(oscPosition, regexPosition);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Visible
+            && qvariant_cast<TerminalLinkKind>(
+                   resolved.constLast().at(2))
+                == TerminalLinkKind::Osc8,
+        1000);
+    QCOMPARE(resolved.constLast().at(3).toByteArray(), oscUri);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
+                 QStringLiteral("text/plain")),
+             oscUri);
+    QCOMPARE(openCount, 1);
+    QVERIFY(errors.isEmpty());
+
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &controlRelease);
     window.close();
     delete pane;
 }
@@ -1292,11 +1472,15 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     QHoverEvent hover(QEvent::HoverMove, linkPosition, linkPosition,
                       linkPosition, Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &hover);
-    QTRY_VERIFY_WITH_TIMEOUT(!resolved.isEmpty(), 1000);
-    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
-                 resolved.constLast().at(1)),
-             TerminalHyperlinkState::Visible);
-    QCOMPARE(resolved.constLast().at(2).toByteArray(), uri);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Visible,
+        1000);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(resolved.constLast().at(2)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(resolved.constLast().at(3).toByteArray(), uri);
     QTRY_COMPARE_WITH_TIMEOUT(
         pane->cursor().shape(), Qt::PointingHandCursor, 1000);
     const int queryCount = queries.count();
@@ -1530,7 +1714,10 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCOMPARE(hyperlinkQueries.count(), 1);
     QCOMPARE(mouseRequests.count(), 1);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
-    QCOMPARE(hyperlinkResolved.constLast().at(2).toByteArray(), uri);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(
+                 hyperlinkResolved.constLast().at(2)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(hyperlinkResolved.constLast().at(3).toByteArray(), uri);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(

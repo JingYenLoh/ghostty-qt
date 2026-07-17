@@ -68,6 +68,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
+    QVERIFY(options.linkUrl);
     QVERIFY(!options.hold);
     QVERIFY(options.program.isEmpty());
     QVERIFY(error.isEmpty());
@@ -246,6 +247,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(50'000'000));
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("always"));
+    snapshot.values.insert(QStringLiteral("link-url"), false);
     snapshot.values.insert(
         QStringLiteral("keybind"),
         QStringList({QStringLiteral("alt+n=new_tab")}));
@@ -293,6 +295,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
+    QVERIFY(!cliResult.linkUrl);
     QVERIFY(cliResult.keybindings.isEmpty());
     QVERIFY(cliResult.keybindingsConfigured);
     QCOMPARE(cliResult.keybindConfig, *snapshot.keybindConfig);
@@ -368,6 +371,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(-1));
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("sometimes"));
+    snapshot.values.insert(QStringLiteral("link-url"),
+                           QStringLiteral("false"));
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
 
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -376,6 +381,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.appearance, base.appearance);
     QCOMPARE(result.scrollbackLimit, base.scrollbackLimit);
     QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
+    QCOMPARE(result.linkUrl, base.linkUrl);
 }
 
 void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()

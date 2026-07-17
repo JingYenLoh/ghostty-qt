@@ -2,6 +2,7 @@
 
 #include <ghostty/vt.h>
 
+#include <QSet>
 #include <QUrl>
 
 #include <algorithm>
@@ -15,6 +16,27 @@ namespace {
 
 struct AdapterOwnerToken final {
 };
+
+struct ScreenCell final {
+    uint16_t x = 0;
+    uint32_t y = 0;
+
+    friend bool operator==(const ScreenCell &, const ScreenCell &) = default;
+};
+
+bool screenCellBefore(const ScreenCell &left, const ScreenCell &right)
+{
+    return left.y < right.y
+        || (left.y == right.y && left.x < right.x);
+}
+
+struct TextMapData final {
+    QByteArray text;
+    QVector<ScreenCell> byteCells;
+};
+
+constexpr quint64 maximumLogicalLineCells = 131'072;
+constexpr qsizetype maximumLogicalLineBytes = 4 * 1024 * 1024;
 
 QColor toQColor(GhosttyColorRgb color)
 {
@@ -108,6 +130,22 @@ uint16_t boundedU16(int value)
 uint32_t boundedU32(int value)
 {
     return static_cast<uint32_t>(std::max(value, 1));
+}
+
+GhosttyVtAdapter::Geometry normalizedGeometry(
+    GhosttyVtAdapter::Geometry geometry)
+{
+    geometry.columns = boundedU16(geometry.columns);
+    geometry.rows = boundedU16(geometry.rows);
+    geometry.cellWidthPixels = static_cast<int>(
+        boundedU32(geometry.cellWidthPixels));
+    geometry.cellHeightPixels = static_cast<int>(
+        boundedU32(geometry.cellHeightPixels));
+    geometry.surfaceWidthPixels = static_cast<int>(
+        boundedU32(geometry.surfaceWidthPixels));
+    geometry.surfaceHeightPixels = static_cast<int>(
+        boundedU32(geometry.surfaceHeightPixels));
+    return geometry;
 }
 
 bool containsControlText(const QByteArray &text)
@@ -367,10 +405,89 @@ public:
     QByteArray uri_;
 };
 
+class GhosttyVtAdapter::LogicalLineSnapshot::Impl final {
+public:
+    Impl(std::shared_ptr<const AdapterOwnerToken> owner,
+         GhosttyTerminalScreen screen, TextMapData data,
+         qsizetype targetByteOffset, ScreenCell targetCell,
+         ScreenCell mappedTargetCell, bool targetIsSpacerHead)
+        : owner_(std::move(owner))
+        , screen_(screen)
+        , data_(std::move(data))
+        , targetByteOffset_(targetByteOffset)
+        , targetCell_(targetCell)
+        , mappedTargetCell_(mappedTargetCell)
+        , targetIsSpacerHead_(targetIsSpacerHead)
+    {
+    }
+
+    bool byteRangeContainsTarget(
+        qsizetype beginByte, qsizetype endByte) const
+    {
+        if (beginByte < 0 || endByte <= beginByte
+            || endByte > data_.byteCells.size()) {
+            return false;
+        }
+        const auto begin = data_.byteCells.cbegin() + beginByte;
+        const auto end = data_.byteCells.cbegin() + endByte;
+        if (std::find(begin, end, mappedTargetCell_) != end) {
+            return true;
+        }
+        if (!targetIsSpacerHead_) {
+            return false;
+        }
+
+        // A wide glyph wrapping at the right edge leaves a spacer-head cell
+        // between the preceding bytes and the glyph on the next row. Ghostty
+        // link activation uses the inclusive matched selection, so that cell
+        // belongs only to matches whose byte-mapped endpoints straddle it.
+        return screenCellBefore(*begin, targetCell_)
+            && screenCellBefore(targetCell_, *(end - 1));
+    }
+
+    std::shared_ptr<const AdapterOwnerToken> owner_;
+    GhosttyTerminalScreen screen_ = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    TextMapData data_;
+    qsizetype targetByteOffset_ = -1;
+    ScreenCell targetCell_;
+    ScreenCell mappedTargetCell_;
+    bool targetIsSpacerHead_ = false;
+};
+
+class GhosttyVtAdapter::TrackedTextRange::Impl final {
+public:
+    Impl(std::shared_ptr<const AdapterOwnerToken> owner,
+         GhosttyTerminalScreen screen)
+        : owner_(std::move(owner))
+        , screen_(screen)
+    {
+    }
+
+    ~Impl()
+    {
+        ghostty_tracked_grid_ref_free(start_);
+        ghostty_tracked_grid_ref_free(end_);
+        ghostty_tracked_grid_ref_free(target_);
+    }
+
+    Impl(const Impl &) = delete;
+    Impl &operator=(const Impl &) = delete;
+    Impl(Impl &&) = delete;
+    Impl &operator=(Impl &&) = delete;
+
+    std::shared_ptr<const AdapterOwnerToken> owner_;
+    GhosttyTrackedGridRef start_ = nullptr;
+    GhosttyTrackedGridRef end_ = nullptr;
+    GhosttyTrackedGridRef target_ = nullptr;
+    GhosttyTerminalScreen screen_ = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    QByteArray matchedText_;
+    QByteArray coveredText_;
+};
+
 class GhosttyVtAdapter::Impl final {
 public:
     Impl(Geometry geometry, Callbacks callbacks)
-        : geometry_(geometry)
+        : geometry_(normalizedGeometry(geometry))
         , callbacks_(std::move(callbacks))
         , ownerToken_(std::make_shared<AdapterOwnerToken>())
     {
@@ -568,14 +685,18 @@ public:
 
     bool resize(const Geometry &geometry)
     {
-        if (ghostty_terminal_resize(terminal_, boundedU16(geometry.columns),
-                                   boundedU16(geometry.rows),
-                                   boundedU32(geometry.cellWidthPixels),
-                                   boundedU32(geometry.cellHeightPixels))
+        const Geometry normalized = normalizedGeometry(geometry);
+        if (ghostty_terminal_resize(terminal_,
+                                   static_cast<uint16_t>(normalized.columns),
+                                   static_cast<uint16_t>(normalized.rows),
+                                   static_cast<uint32_t>(
+                                       normalized.cellWidthPixels),
+                                   static_cast<uint32_t>(
+                                       normalized.cellHeightPixels))
             != GHOSTTY_SUCCESS) {
             return false;
         }
-        geometry_ = geometry;
+        geometry_ = normalized;
         return true;
     }
 
@@ -1030,6 +1151,589 @@ public:
         }
         if (!match.cells.contains(targetCell)) {
             match.cells.append(targetCell);
+        }
+        return match;
+    }
+
+    bool gridRefAtScreen(const ScreenCell &cell, GhosttyGridRef *out) const
+    {
+        if (out == nullptr) {
+            return false;
+        }
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_SCREEN;
+        point.value.coordinate.x = cell.x;
+        point.value.coordinate.y = cell.y;
+        *out = GhosttyGridRef{};
+        out->size = sizeof(*out);
+        return ghostty_terminal_grid_ref(terminal_, point, out)
+            == GHOSTTY_SUCCESS;
+    }
+
+    static bool appendUtf8Codepoint(QByteArray *output, uint32_t codepoint)
+    {
+        if (output == nullptr || codepoint > 0x10ffffU
+            || (codepoint >= 0xd800U && codepoint <= 0xdfffU)) {
+            return false;
+        }
+
+        char encoded[4];
+        qsizetype length = 0;
+        if (codepoint <= 0x7fU) {
+            encoded[0] = static_cast<char>(codepoint);
+            length = 1;
+        } else if (codepoint <= 0x7ffU) {
+            encoded[0] = static_cast<char>(0xc0U | (codepoint >> 6U));
+            encoded[1] = static_cast<char>(0x80U | (codepoint & 0x3fU));
+            length = 2;
+        } else if (codepoint <= 0xffffU) {
+            encoded[0] = static_cast<char>(0xe0U | (codepoint >> 12U));
+            encoded[1] = static_cast<char>(
+                0x80U | ((codepoint >> 6U) & 0x3fU));
+            encoded[2] = static_cast<char>(0x80U | (codepoint & 0x3fU));
+            length = 3;
+        } else {
+            encoded[0] = static_cast<char>(0xf0U | (codepoint >> 18U));
+            encoded[1] = static_cast<char>(
+                0x80U | ((codepoint >> 12U) & 0x3fU));
+            encoded[2] = static_cast<char>(
+                0x80U | ((codepoint >> 6U) & 0x3fU));
+            encoded[3] = static_cast<char>(0x80U | (codepoint & 0x3fU));
+            length = 4;
+        }
+        if (output->size() > maximumLogicalLineBytes - length) {
+            return false;
+        }
+        output->append(encoded, length);
+        return true;
+    }
+
+    std::optional<QByteArray> graphemeUtf8(
+        const GhosttyGridRef &reference) const
+    {
+        std::array<uint32_t, 16> storage{};
+        size_t length = 0;
+        GhosttyResult result = ghostty_grid_ref_graphemes(
+            &reference, storage.data(), storage.size(), &length);
+
+        QVector<uint32_t> dynamic;
+        const uint32_t *codepoints = storage.data();
+        if (result == GHOSTTY_OUT_OF_SPACE) {
+            if (length > static_cast<size_t>(maximumLogicalLineBytes)
+                || length > static_cast<size_t>(
+                    std::numeric_limits<qsizetype>::max())) {
+                return std::nullopt;
+            }
+            dynamic.resize(static_cast<qsizetype>(length));
+            result = ghostty_grid_ref_graphemes(
+                &reference, dynamic.data(), static_cast<size_t>(dynamic.size()),
+                &length);
+            codepoints = dynamic.constData();
+        }
+        if (result != GHOSTTY_SUCCESS
+            || length > static_cast<size_t>(
+                std::numeric_limits<qsizetype>::max())) {
+            return std::nullopt;
+        }
+
+        QByteArray output;
+        output.reserve(static_cast<qsizetype>(
+            std::min<size_t>(length * 4U,
+                             static_cast<size_t>(maximumLogicalLineBytes))));
+        for (size_t index = 0; index < length; ++index) {
+            if (!appendUtf8Codepoint(&output, codepoints[index])) {
+                return std::nullopt;
+            }
+        }
+        return output;
+    }
+
+    std::optional<TextMapData> textMapBetween(
+        ScreenCell start, ScreenCell end,
+        bool includeTrailingEmptyStorage = false) const
+    {
+        if (screenCellBefore(end, start)) {
+            std::swap(start, end);
+        }
+
+        const quint64 rowCount = static_cast<quint64>(end.y) - start.y + 1U;
+        const quint64 columnCount = static_cast<quint64>(
+            std::max(geometry_.columns, 1));
+        if (rowCount > maximumLogicalLineCells
+            || rowCount * columnCount > maximumLogicalLineCells) {
+            return std::nullopt;
+        }
+
+        TextMapData data;
+        QVector<ScreenCell> pendingBlanks;
+        const auto appendMapped = [&data](QByteArrayView bytes,
+                                          const ScreenCell &cell) {
+            if (bytes.size() < 0
+                || data.text.size() > maximumLogicalLineBytes - bytes.size()) {
+                return false;
+            }
+            data.text.append(bytes.data(), bytes.size());
+            const qsizetype oldSize = data.byteCells.size();
+            if (oldSize > maximumLogicalLineBytes - bytes.size()) {
+                return false;
+            }
+            data.byteCells.resize(oldSize + bytes.size());
+            std::fill(data.byteCells.begin() + oldSize,
+                      data.byteCells.end(), cell);
+            return true;
+        };
+        const auto flushBlanks = [&pendingBlanks, &appendMapped]() {
+            for (const ScreenCell &blank : std::as_const(pendingBlanks)) {
+                if (!appendMapped(QByteArrayView(" ", 1), blank)) {
+                    return false;
+                }
+            }
+            pendingBlanks.clear();
+            return true;
+        };
+
+        uint32_t y = start.y;
+        for (;;) {
+            const int firstColumn = y == start.y ? start.x : 0;
+            const int lastColumn = y == end.y
+                ? end.x
+                : geometry_.columns - 1;
+            if (firstColumn < 0 || lastColumn < firstColumn
+                || lastColumn >= geometry_.columns) {
+                return std::nullopt;
+            }
+
+            for (int column = firstColumn; column <= lastColumn; ++column) {
+                const ScreenCell cell{
+                    .x = static_cast<uint16_t>(column),
+                    .y = y,
+                };
+                GhosttyGridRef reference{};
+                if (!gridRefAtScreen(cell, &reference)) {
+                    return std::nullopt;
+                }
+
+                GhosttyCell rawCell = 0;
+                GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                if (ghostty_grid_ref_cell(&reference, &rawCell)
+                        != GHOSTTY_SUCCESS
+                    || ghostty_cell_get(
+                           rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+                        != GHOSTTY_SUCCESS) {
+                    return std::nullopt;
+                }
+                if (wide == GHOSTTY_CELL_WIDE_SPACER_HEAD
+                    || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL) {
+                    continue;
+                }
+
+                const std::optional<QByteArray> grapheme =
+                    graphemeUtf8(reference);
+                if (!grapheme.has_value()) {
+                    return std::nullopt;
+                }
+                if (grapheme->isEmpty()) {
+                    if (pendingBlanks.size()
+                        >= static_cast<qsizetype>(maximumLogicalLineCells)) {
+                        return std::nullopt;
+                    }
+                    pendingBlanks.append(cell);
+                    continue;
+                }
+
+                if (!flushBlanks() || !appendMapped(*grapheme, cell)) {
+                    return std::nullopt;
+                }
+            }
+
+            if (y == end.y) {
+                break;
+            }
+            ++y;
+        }
+
+        // ScreenFormatter deliberately drops terminal storage cells that are
+        // empty after the final text cell. Do the same for a complete logical
+        // line. Endpoint-cell validation opts in to the pending spaces because
+        // its final cell may be an empty storage cell that was followed by text
+        // in the complete line snapshot.
+        if (includeTrailingEmptyStorage && !flushBlanks()) {
+            return std::nullopt;
+        }
+        if (data.byteCells.size() != data.text.size()) {
+            return std::nullopt;
+        }
+        return data;
+    }
+
+    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(
+        int column, int row) const
+    {
+        GhosttyGridRef targetReference{};
+        if (!pointToGridRefExact(column, row, &targetReference)) {
+            return std::nullopt;
+        }
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value()) {
+            return std::nullopt;
+        }
+
+        // A non-null pointer with a zero count is the C API's explicit empty
+        // whitespace set. This keeps literal spaces while avoiding Ghostty's
+        // default line-edge trimming; empty storage cells are never emitted by
+        // the plain formatter in either case.
+        const uint32_t noWhitespace = 0;
+        GhosttyTerminalSelectLineOptions options{};
+        options.size = sizeof(options);
+        options.ref = targetReference;
+        options.whitespace = &noWhitespace;
+        options.whitespace_len = 0;
+        options.semantic_prompt_boundary = true;
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        if (ghostty_terminal_select_line(
+                terminal_, &options, &selection)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        GhosttySelection ordered{};
+        ordered.size = sizeof(ordered);
+        if (ghostty_terminal_selection_ordered(
+                terminal_, &selection, GHOSTTY_SELECTION_ORDER_FORWARD,
+                &ordered)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        GhosttyPointCoordinate startCoordinate{};
+        GhosttyPointCoordinate endCoordinate{};
+        GhosttyPointCoordinate targetCoordinate{};
+        if (ghostty_terminal_point_from_grid_ref(
+                terminal_, &ordered.start, GHOSTTY_POINT_TAG_SCREEN,
+                &startCoordinate)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_point_from_grid_ref(
+                   terminal_, &ordered.end, GHOSTTY_POINT_TAG_SCREEN,
+                   &endCoordinate)
+                   != GHOSTTY_SUCCESS
+            || ghostty_terminal_point_from_grid_ref(
+                   terminal_, &targetReference, GHOSTTY_POINT_TAG_SCREEN,
+                   &targetCoordinate)
+                   != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        std::optional<TextMapData> data = textMapBetween(
+            ScreenCell{startCoordinate.x, startCoordinate.y},
+            ScreenCell{endCoordinate.x, endCoordinate.y});
+        if (!data.has_value()) {
+            return std::nullopt;
+        }
+
+        GhosttyCell targetCell = 0;
+        GhosttyCellWide targetWide = GHOSTTY_CELL_WIDE_NARROW;
+        if (ghostty_grid_ref_cell(&targetReference, &targetCell)
+                != GHOSTTY_SUCCESS
+            || ghostty_cell_get(
+                   targetCell, GHOSTTY_CELL_DATA_WIDE, &targetWide)
+                != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        ScreenCell mappedTarget{targetCoordinate.x, targetCoordinate.y};
+        if (targetWide == GHOSTTY_CELL_WIDE_SPACER_TAIL
+            && mappedTarget.x > 0) {
+            --mappedTarget.x;
+        }
+
+        qsizetype targetByteOffset = -1;
+        for (qsizetype index = 0; index < data->byteCells.size(); ++index) {
+            if (data->byteCells.at(index) == mappedTarget) {
+                targetByteOffset = index;
+                break;
+            }
+        }
+
+        auto impl = std::make_unique<LogicalLineSnapshot::Impl>(
+            ownerToken_, *screen, std::move(*data), targetByteOffset,
+            ScreenCell{targetCoordinate.x, targetCoordinate.y}, mappedTarget,
+            targetWide == GHOSTTY_CELL_WIDE_SPACER_HEAD);
+        return LogicalLineSnapshot(std::move(impl));
+    }
+
+    bool trackScreenCell(const ScreenCell &cell,
+                         GhosttyTrackedGridRef *out) const
+    {
+        if (out == nullptr) {
+            return false;
+        }
+        *out = nullptr;
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_SCREEN;
+        point.value.coordinate.x = cell.x;
+        point.value.coordinate.y = cell.y;
+        return ghostty_terminal_grid_ref_track(terminal_, point, out)
+                == GHOSTTY_SUCCESS
+            && *out != nullptr;
+    }
+
+    std::optional<TrackedTextRange> trackTextRange(
+        const LogicalLineSnapshot::Impl &line,
+        qsizetype beginByte, qsizetype endByte) const
+    {
+        if (line.owner_.get() != ownerToken_.get()
+            || beginByte < 0 || endByte <= beginByte
+            || endByte > line.data_.text.size()
+            || line.data_.byteCells.size() != line.data_.text.size()) {
+            return std::nullopt;
+        }
+        if (!line.byteRangeContainsTarget(beginByte, endByte)) {
+            return std::nullopt;
+        }
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value() || *screen != line.screen_) {
+            return std::nullopt;
+        }
+
+        const ScreenCell startCell = line.data_.byteCells.at(beginByte);
+        const ScreenCell endCell = line.data_.byteCells.at(endByte - 1);
+        auto tracked = std::make_unique<TrackedTextRange::Impl>(
+            ownerToken_, line.screen_);
+        if (!trackScreenCell(startCell, &tracked->start_)
+            || !trackScreenCell(endCell, &tracked->end_)
+            || !trackScreenCell(line.targetCell_, &tracked->target_)) {
+            return std::nullopt;
+        }
+
+        const std::optional<TextMapData> covered =
+            textMapBetween(startCell, endCell, true);
+        if (!covered.has_value() || covered->text.isEmpty()) {
+            return std::nullopt;
+        }
+        tracked->matchedText_ = line.data_.text.sliced(
+            beginByte, endByte - beginByte);
+        tracked->coveredText_ = covered->text;
+        return TrackedTextRange(std::move(tracked));
+    }
+
+    bool trackedTextRangeEndpointsValid(
+        const TrackedTextRange::Impl &range) const
+    {
+        return range.owner_.get() == ownerToken_.get()
+            && range.start_ != nullptr && range.end_ != nullptr
+            && range.target_ != nullptr
+            && ghostty_tracked_grid_ref_has_value(range.start_)
+            && ghostty_tracked_grid_ref_has_value(range.end_)
+            && ghostty_tracked_grid_ref_has_value(range.target_);
+    }
+
+    std::optional<TextMapData> currentTextRangeData(
+        const TrackedTextRange::Impl &range) const
+    {
+        if (!trackedTextRangeEndpointsValid(range)) {
+            return std::nullopt;
+        }
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value() || *screen != range.screen_) {
+            return std::nullopt;
+        }
+
+        GhosttyPointCoordinate start{};
+        GhosttyPointCoordinate end{};
+        if (ghostty_tracked_grid_ref_point(
+                range.start_, GHOSTTY_POINT_TAG_SCREEN, &start)
+                != GHOSTTY_SUCCESS
+            || ghostty_tracked_grid_ref_point(
+                   range.end_, GHOSTTY_POINT_TAG_SCREEN, &end)
+                   != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        return textMapBetween(ScreenCell{start.x, start.y},
+                              ScreenCell{end.x, end.y}, true);
+    }
+
+    bool trackedTextRangeValid(const TrackedTextRange::Impl &range) const
+    {
+        if (!trackedTextRangeEndpointsValid(range)) {
+            return false;
+        }
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value()) {
+            return false;
+        }
+        if (*screen != range.screen_) {
+            return true;
+        }
+        const std::optional<TextMapData> current =
+            currentTextRangeData(range);
+        return current.has_value()
+            && current->text == range.coveredText_;
+    }
+
+    std::optional<TextRangeMatch> resolveTextRange(
+        const TrackedTextRange::Impl &range) const
+    {
+        const std::optional<TextMapData> current = currentTextRangeData(range);
+        if (!current.has_value() || current->text != range.coveredText_) {
+            return std::nullopt;
+        }
+
+        TextRangeMatch match;
+        match.text = range.matchedText_;
+        GhosttyPointCoordinate targetViewport{};
+        if (ghostty_tracked_grid_ref_point(
+                range.target_, GHOSTTY_POINT_TAG_VIEWPORT, &targetViewport)
+                != GHOSTTY_SUCCESS
+            || static_cast<int>(targetViewport.x) >= geometry_.columns
+            || targetViewport.y >= static_cast<uint32_t>(geometry_.rows)) {
+            return std::nullopt;
+        }
+        match.targetCell = QPoint(targetViewport.x,
+                                  static_cast<int>(targetViewport.y));
+
+        GhosttyGridRef targetSnapshot{};
+        targetSnapshot.size = sizeof(targetSnapshot);
+        if (ghostty_tracked_grid_ref_snapshot(
+                range.target_, &targetSnapshot)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        const uint32_t noWhitespace = 0;
+        GhosttyTerminalSelectLineOptions lineOptions{};
+        lineOptions.size = sizeof(lineOptions);
+        lineOptions.ref = targetSnapshot;
+        lineOptions.whitespace = &noWhitespace;
+        lineOptions.whitespace_len = 0;
+        lineOptions.semantic_prompt_boundary = true;
+        GhosttySelection lineSelection{};
+        lineSelection.size = sizeof(lineSelection);
+        GhosttySelection orderedLine{};
+        orderedLine.size = sizeof(orderedLine);
+        if (ghostty_terminal_select_line(
+                terminal_, &lineOptions, &lineSelection)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_selection_ordered(
+                   terminal_, &lineSelection,
+                   GHOSTTY_SELECTION_ORDER_FORWARD, &orderedLine)
+                   != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        GhosttyPointCoordinate lineStart{};
+        GhosttyPointCoordinate lineEnd{};
+        if (ghostty_terminal_point_from_grid_ref(
+                terminal_, &orderedLine.start, GHOSTTY_POINT_TAG_SCREEN,
+                &lineStart)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_point_from_grid_ref(
+                   terminal_, &orderedLine.end, GHOSTTY_POINT_TAG_SCREEN,
+                   &lineEnd)
+                   != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        if (lineEnd.y < lineStart.y) {
+            return std::nullopt;
+        }
+        const quint64 logicalRowCount =
+            static_cast<quint64>(lineEnd.y) - lineStart.y + 1U;
+        const quint64 logicalColumnCount = static_cast<quint64>(
+            std::max(geometry_.columns, 1));
+        if (logicalRowCount > maximumLogicalLineCells
+            || logicalRowCount * logicalColumnCount
+                > maximumLogicalLineCells) {
+            return std::nullopt;
+        }
+        uint32_t lineY = lineStart.y;
+        for (;;) {
+            GhosttyGridRef rowReference{};
+            GhosttyPointCoordinate viewportRow{};
+            if (gridRefAtScreen(ScreenCell{0, lineY}, &rowReference)
+                && ghostty_terminal_point_from_grid_ref(
+                       terminal_, &rowReference,
+                       GHOSTTY_POINT_TAG_VIEWPORT, &viewportRow)
+                    == GHOSTTY_SUCCESS
+                && viewportRow.y < static_cast<uint32_t>(geometry_.rows)) {
+                const int visibleRow = static_cast<int>(viewportRow.y);
+                if (match.logicalLineRows.isEmpty()
+                    || match.logicalLineRows.constLast() != visibleRow) {
+                    match.logicalLineRows.append(visibleRow);
+                }
+            }
+            if (lineY == lineEnd.y) {
+                break;
+            }
+            ++lineY;
+        }
+
+        QSet<quint64> visitedScreenCells;
+        QSet<quint64> visitedViewportCells;
+        for (const ScreenCell &cell : current->byteCells) {
+            const quint64 screenKey = (static_cast<quint64>(cell.y) << 16U)
+                | cell.x;
+            if (visitedScreenCells.contains(screenKey)) {
+                continue;
+            }
+            visitedScreenCells.insert(screenKey);
+
+            GhosttyGridRef reference{};
+            GhosttyPointCoordinate viewport{};
+            if (!gridRefAtScreen(cell, &reference)
+                || ghostty_terminal_point_from_grid_ref(
+                       terminal_, &reference, GHOSTTY_POINT_TAG_VIEWPORT,
+                       &viewport)
+                    != GHOSTTY_SUCCESS
+                || static_cast<int>(viewport.x) >= geometry_.columns
+                || viewport.y >= static_cast<uint32_t>(geometry_.rows)) {
+                continue;
+            }
+
+            GhosttyCell rawCell = 0;
+            GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+            if (ghostty_grid_ref_cell(&reference, &rawCell)
+                    != GHOSTTY_SUCCESS
+                || ghostty_cell_get(
+                       rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+                    != GHOSTTY_SUCCESS) {
+                return std::nullopt;
+            }
+
+            const auto appendViewportCell = [&](int x, int y) {
+                const quint64 key = (static_cast<quint64>(y) << 32U)
+                    | static_cast<quint32>(x);
+                if (!visitedViewportCells.contains(key)) {
+                    visitedViewportCells.insert(key);
+                    match.cells.append(QPoint(x, y));
+                }
+            };
+            appendViewportCell(viewport.x, static_cast<int>(viewport.y));
+            if (wide == GHOSTTY_CELL_WIDE_WIDE
+                && static_cast<int>(viewport.x) + 1 < geometry_.columns) {
+                appendViewportCell(
+                    static_cast<int>(viewport.x) + 1,
+                    static_cast<int>(viewport.y));
+            }
+        }
+
+        // String formatting emits no byte for a right-edge spacer head, but
+        // Ghostty's link hit test treats it as part of a selection whose
+        // mapped endpoints straddle that cell. Preserve the queried target in
+        // the visible range so the GUI can keep pointer and decoration state
+        // coherent for that exact edge cell.
+        if (!match.cells.contains(match.targetCell)) {
+            qsizetype insertionIndex = 0;
+            while (insertionIndex < match.cells.size()) {
+                const QPoint &cell = match.cells.at(insertionIndex);
+                if (cell.y() > match.targetCell.y()
+                    || (cell.y() == match.targetCell.y()
+                        && cell.x() > match.targetCell.x())) {
+                    break;
+                }
+                ++insertionIndex;
+            }
+            match.cells.insert(insertionIndex, match.targetCell);
+        }
+
+        if (match.cells.isEmpty()) {
+            return std::nullopt;
         }
         return match;
     }
@@ -1860,6 +2564,54 @@ GhosttyVtAdapter::TrackedHyperlink::operator=(TrackedHyperlink &&) noexcept =
 
 GhosttyVtAdapter::TrackedHyperlink::~TrackedHyperlink() = default;
 
+GhosttyVtAdapter::LogicalLineSnapshot::LogicalLineSnapshot(
+    std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl))
+{
+}
+
+GhosttyVtAdapter::LogicalLineSnapshot::LogicalLineSnapshot(
+    LogicalLineSnapshot &&) noexcept = default;
+
+GhosttyVtAdapter::LogicalLineSnapshot &
+GhosttyVtAdapter::LogicalLineSnapshot::operator=(
+    LogicalLineSnapshot &&) noexcept = default;
+
+GhosttyVtAdapter::LogicalLineSnapshot::~LogicalLineSnapshot() = default;
+
+const QByteArray &GhosttyVtAdapter::LogicalLineSnapshot::text() const
+{
+    static const QByteArray empty;
+    return impl_ != nullptr ? impl_->data_.text : empty;
+}
+
+qsizetype GhosttyVtAdapter::LogicalLineSnapshot::targetByteOffset() const
+{
+    return impl_ != nullptr ? impl_->targetByteOffset_ : -1;
+}
+
+bool GhosttyVtAdapter::LogicalLineSnapshot::byteRangeContainsTarget(
+    qsizetype beginByte, qsizetype endByte) const
+{
+    return impl_ != nullptr
+        && impl_->byteRangeContainsTarget(beginByte, endByte);
+}
+
+GhosttyVtAdapter::TrackedTextRange::TrackedTextRange(
+    std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl))
+{
+}
+
+GhosttyVtAdapter::TrackedTextRange::TrackedTextRange(
+    TrackedTextRange &&) noexcept = default;
+
+GhosttyVtAdapter::TrackedTextRange &
+GhosttyVtAdapter::TrackedTextRange::operator=(
+    TrackedTextRange &&) noexcept = default;
+
+GhosttyVtAdapter::TrackedTextRange::~TrackedTextRange() = default;
+
 std::unique_ptr<GhosttyVtAdapter> GhosttyVtAdapter::create(
     const Options &options, Callbacks callbacks)
 {
@@ -2001,6 +2753,39 @@ GhosttyVtAdapter::resolveHyperlink(
         return std::nullopt;
     }
     return impl_->resolveHyperlink(*target.impl_, candidateCells);
+}
+
+std::optional<GhosttyVtAdapter::LogicalLineSnapshot>
+GhosttyVtAdapter::snapshotLogicalLineAt(int column, int row) const
+{
+    return impl_->snapshotLogicalLineAt(column, row);
+}
+
+std::optional<GhosttyVtAdapter::TrackedTextRange>
+GhosttyVtAdapter::trackTextRange(
+    const LogicalLineSnapshot &line,
+    qsizetype beginByte, qsizetype endByte) const
+{
+    if (line.impl_ == nullptr) {
+        return std::nullopt;
+    }
+    return impl_->trackTextRange(*line.impl_, beginByte, endByte);
+}
+
+bool GhosttyVtAdapter::trackedTextRangeValid(
+    const TrackedTextRange &range) const
+{
+    return range.impl_ != nullptr
+        && impl_->trackedTextRangeValid(*range.impl_);
+}
+
+std::optional<GhosttyVtAdapter::TextRangeMatch>
+GhosttyVtAdapter::resolveTextRange(const TrackedTextRange &range) const
+{
+    if (range.impl_ == nullptr) {
+        return std::nullopt;
+    }
+    return impl_->resolveTextRange(*range.impl_);
 }
 
 std::uint64_t GhosttyVtAdapter::compressionActivity() const

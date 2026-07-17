@@ -330,15 +330,15 @@
     },
     "link": {
       "status": "planned",
-      "note": "Regex-configured link matching and arbitrary link actions are not implemented; the current frontend interaction is limited to explicit OSC 8 destinations."
+      "note": "User-defined regular expressions and arbitrary link actions are not implemented. The built-in default matcher controlled by link-url is supported independently, alongside explicit OSC 8 destinations."
     },
     "link-previews": {
       "status": "planned",
-      "note": "No link preview UI is implemented for OSC 8 or regex-matched destinations."
+      "note": "No link preview UI is implemented for OSC 8 or default-regex destinations."
     },
     "link-url": {
-      "status": "planned",
-      "note": "Ghostty's default regex URL matcher is not implemented. Explicit OSC 8 destinations remain interactive independently of this setting."
+      "status": "supported",
+      "note": "The pinned default URL/path expression and vendored Oniguruma semantics run on complete semantic logical lines. The setting defaults true, reloads live, and controls only regex links; explicit OSC 8 destinations remain interactive when disabled."
     },
     "palette": {
       "status": "supported",
@@ -665,7 +665,7 @@
         },
         "copy_url_to_clipboard": {
           "status": "partial",
-          "note": "Keeps the hovered OSC 8 destination byte-exact through lookup and copies it directly as the text/plain MIME payload without QUrl normalization. Regex-configured links remain unavailable, and malformed destinations can be copied but are rejected before Qt desktop-service activation."
+          "note": "Copies either the hovered OSC 8 destination or pinned default-regex match byte-exact as the text/plain MIME payload without QUrl normalization. Custom link rules/actions remain unavailable; malformed explicit destinations can be copied but are rejected before Qt desktop-service activation."
         },
         "csi": {
           "status": "supported",

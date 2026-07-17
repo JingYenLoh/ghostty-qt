@@ -31,6 +31,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
     qRegisterMetaType<TerminalViewportRequest>();
     qRegisterMetaType<TerminalSelectionAdjustment>();
     qRegisterMetaType<TerminalKeyInput>();
@@ -147,7 +148,8 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::hyperlinkResolved, this,
             [this](quint64 requestId, quint64 contentRevision,
-                   TerminalHyperlinkState state, const QByteArray &uri,
+                   TerminalHyperlinkState state, TerminalLinkKind kind,
+                   const QByteArray &uri,
                    const QPoint &targetCell,
                    const QVector<QPoint> &matchingCells) {
                 if (requestId == activeHyperlinkRequestId_) {
@@ -158,18 +160,19 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
                         // be clobbered when this handler returns.
                         activeHyperlinkRequestId_ = 0;
                     }
-                    Q_EMIT hyperlinkResolved(contentRevision, state, uri,
+                    Q_EMIT hyperlinkResolved(contentRevision, state, kind, uri,
                                              targetCell, matchingCells);
                 }
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::hyperlinkActivationResolved, this,
             [this](quint64 requestId, quint64 contentRevision,
-                   const QByteArray &uri) {
+                   TerminalLinkKind kind, const QByteArray &uri) {
                 if (requestId != activeHyperlinkActivationId_) {
                     return;
                 }
                 activeHyperlinkActivationId_ = 0;
-                Q_EMIT hyperlinkActivationResolved(contentRevision, uri);
+                Q_EMIT hyperlinkActivationResolved(
+                    contentRevision, kind, uri);
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
             [](const QString &text) {

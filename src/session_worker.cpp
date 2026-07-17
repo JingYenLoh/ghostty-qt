@@ -1,4 +1,5 @@
 #include "session_worker.h"
+#include "ghostty_link_matcher.h"
 #include "ghostty_vt_adapter.h"
 #include "terminfo_paths.h"
 
@@ -20,6 +21,7 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include <fcntl.h>
 #include <pty.h>
@@ -200,6 +202,162 @@ uint16_t boundedU16(int value)
     return static_cast<uint16_t>(std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
 }
 
+using TrackedTerminalLink = std::variant<
+    GhosttyVtAdapter::TrackedHyperlink,
+    GhosttyVtAdapter::TrackedTextRange>;
+
+struct ResolvedTerminalLink {
+    TerminalLinkKind kind = TerminalLinkKind::Osc8;
+    QByteArray uri;
+    QPoint targetCell{-1, -1};
+    QVector<QPoint> cells;
+    QVector<int> relevantRows;
+};
+
+struct DetectedTerminalLink {
+    TrackedTerminalLink tracked;
+    ResolvedTerminalLink resolved;
+};
+
+QVector<QPoint> osc8Candidates(const TerminalFrame &frame)
+{
+    QVector<QPoint> result;
+    if (frame.columns <= 0) {
+        return result;
+    }
+    result.reserve(frame.cells.size());
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            result.append(QPoint(index % frame.columns, index / frame.columns));
+        }
+    }
+    return result;
+}
+
+std::optional<ResolvedTerminalLink> resolveTrackedTerminalLink(
+    GhosttyVtAdapter &adapter, const TrackedTerminalLink &tracked,
+    const TerminalFrame &frame)
+{
+    if (const auto *osc8 = std::get_if<
+            GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
+        const auto match = adapter.resolveHyperlink(
+            *osc8, osc8Candidates(frame));
+        if (!match.has_value()) {
+            return std::nullopt;
+        }
+        QVector<int> relevantRows;
+        relevantRows.reserve(match->cells.size());
+        for (const QPoint &cell : match->cells) {
+            if (!relevantRows.contains(cell.y())) {
+                relevantRows.append(cell.y());
+            }
+        }
+        return ResolvedTerminalLink{
+            .kind = TerminalLinkKind::Osc8,
+            .uri = match->uri,
+            .targetCell = match->targetCell,
+            .cells = match->cells,
+            .relevantRows = std::move(relevantRows),
+        };
+    }
+
+    const auto &range = std::get<GhosttyVtAdapter::TrackedTextRange>(tracked);
+    const auto match = adapter.resolveTextRange(range);
+    if (!match.has_value()) {
+        return std::nullopt;
+    }
+    return ResolvedTerminalLink{
+        .kind = TerminalLinkKind::Regex,
+        .uri = match->text,
+        .targetCell = match->targetCell,
+        .cells = match->cells,
+        .relevantRows = match->logicalLineRows,
+    };
+}
+
+bool trackedTerminalLinkValid(
+    GhosttyVtAdapter &adapter, const TrackedTerminalLink &tracked)
+{
+    if (const auto *osc8 = std::get_if<
+            GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
+        return adapter.trackedHyperlinkValid(*osc8);
+    }
+    return adapter.trackedTextRangeValid(
+        std::get<GhosttyVtAdapter::TrackedTextRange>(tracked));
+}
+
+std::optional<DetectedTerminalLink> detectTerminalLinkAt(
+    GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
+    bool linkUrl, const TerminalFrame &frame, int column, int row)
+{
+    if (column < 0 || column >= frame.columns
+        || row < 0 || row >= frame.rows) {
+        return std::nullopt;
+    }
+    const int index = row * frame.columns + column;
+    if (index < 0 || index >= frame.cells.size()) {
+        return std::nullopt;
+    }
+
+    // Ghostty gives explicit OSC 8 destinations priority over configured
+    // regex links at the same cell. If URI extraction fails, continue to the
+    // default matcher just as Surface.linkAtPos does.
+    auto trackedOsc8 = adapter.trackHyperlinkAt(column, row);
+    if (trackedOsc8.has_value()) {
+        TrackedTerminalLink target(std::in_place_type<
+            GhosttyVtAdapter::TrackedHyperlink>, std::move(*trackedOsc8));
+        auto resolved = resolveTrackedTerminalLink(adapter, target, frame);
+        if (resolved.has_value()) {
+            return DetectedTerminalLink{
+                .tracked = std::move(target),
+                .resolved = std::move(*resolved),
+            };
+        }
+    }
+
+    if (!linkUrl || matcher == nullptr || !matcher->isValid()) {
+        return std::nullopt;
+    }
+    auto line = adapter.snapshotLogicalLineAt(column, row);
+    if (!line.has_value()) {
+        return std::nullopt;
+    }
+    GhosttyLinkMatch byteMatch;
+    bool foundTargetMatch = false;
+    qsizetype searchOffset = 0;
+    while (searchOffset < line->text().size()) {
+        const GhosttyLinkMatchResult result = matcher->findNext(
+            line->text(), searchOffset, &byteMatch);
+        if (result != GhosttyLinkMatchResult::Match) {
+            break;
+        }
+        if (line->byteRangeContainsTarget(
+                byteMatch.beginByte, byteMatch.endByte)) {
+            foundTargetMatch = true;
+            break;
+        }
+        searchOffset = byteMatch.endByte;
+    }
+    if (!foundTargetMatch) {
+        return std::nullopt;
+    }
+    auto tracked = adapter.trackTextRange(
+        *line, byteMatch.beginByte, byteMatch.endByte);
+    if (!tracked.has_value()) {
+        return std::nullopt;
+    }
+    TrackedTerminalLink target(std::in_place_type<
+        GhosttyVtAdapter::TrackedTextRange>, std::move(*tracked));
+    auto resolved = resolveTrackedTerminalLink(adapter, target, frame);
+    if (!resolved.has_value()) {
+        return std::nullopt;
+    }
+    return DetectedTerminalLink{
+        .tracked = std::move(target),
+        .resolved = std::move(*resolved),
+    };
+}
+
 } // namespace
 
 struct SessionWorker::HyperlinkState {
@@ -213,16 +371,19 @@ struct SessionWorker::HyperlinkState {
     std::optional<PendingQuery> pendingQuery;
     bool queryDispatchScheduled = false;
     quint64 activeRequestId = 0;
-    std::optional<GhosttyVtAdapter::TrackedHyperlink> trackedHover;
+    std::optional<TrackedTerminalLink> trackedHover;
     TerminalHyperlinkState publishedState = TerminalHyperlinkState::Invalid;
+    TerminalLinkKind publishedKind = TerminalLinkKind::Osc8;
     QByteArray publishedUri;
     QPoint publishedTarget{-1, -1};
     QVector<QPoint> publishedCells;
+    QVector<int> publishedRelevantRows;
     int publishedColumns = 0;
     int publishedRows = 0;
 
     quint64 activationRequestId = 0;
-    std::optional<GhosttyVtAdapter::TrackedHyperlink> trackedActivation;
+    TerminalLinkKind activationKind = TerminalLinkKind::Osc8;
+    std::optional<TrackedTerminalLink> trackedActivation;
 
     TerminalFrame frame;
     bool hasFrame = false;
@@ -281,15 +442,20 @@ void SessionWorker::initialize(const LaunchOptions &options)
     hyperlinkState_->activeRequestId = 0;
     hyperlinkState_->trackedHover.reset();
     hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+    hyperlinkState_->publishedKind = TerminalLinkKind::Osc8;
     hyperlinkState_->publishedUri.clear();
     hyperlinkState_->publishedTarget = QPoint(-1, -1);
     hyperlinkState_->publishedCells.clear();
+    hyperlinkState_->publishedRelevantRows.clear();
     hyperlinkState_->publishedColumns = 0;
     hyperlinkState_->publishedRows = 0;
     hyperlinkState_->activationRequestId = 0;
+    hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
     hyperlinkState_->trackedActivation.reset();
     hyperlinkState_->frame = TerminalFrame{};
     hyperlinkState_->hasFrame = false;
+
+    linkMatcher_ = std::make_unique<GhosttyLinkMatcher>();
 
     frameTimer_ = new QTimer(this);
     frameTimer_->setSingleShot(true);
@@ -345,8 +511,40 @@ bool SessionWorker::createTerminal()
 void SessionWorker::applyRuntimeOptions(const LaunchOptions &options)
 {
     const bool appearanceChanged = options_.appearance != options.appearance;
+    const bool linkUrlChanged = options_.linkUrl != options.linkUrl;
     options_ = options;
     hold_ = options.hold;
+
+    if (linkUrlChanged && !options_.linkUrl) {
+        if (hyperlinkState_->trackedHover.has_value()
+            && std::holds_alternative<GhosttyVtAdapter::TrackedTextRange>(
+                *hyperlinkState_->trackedHover)) {
+            const quint64 requestId = hyperlinkState_->activeRequestId;
+            hyperlinkState_->activeRequestId = 0;
+            hyperlinkState_->trackedHover.reset();
+            hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+            hyperlinkState_->publishedKind = TerminalLinkKind::Regex;
+            hyperlinkState_->publishedUri.clear();
+            hyperlinkState_->publishedTarget = QPoint(-1, -1);
+            hyperlinkState_->publishedCells.clear();
+            hyperlinkState_->publishedRelevantRows.clear();
+            hyperlinkState_->publishedColumns = 0;
+            hyperlinkState_->publishedRows = 0;
+            if (requestId != 0) {
+                Q_EMIT hyperlinkResolved(
+                    requestId, terminalContentRevision_,
+                    TerminalHyperlinkState::Invalid,
+                    TerminalLinkKind::Regex, {}, QPoint(-1, -1), {});
+            }
+        }
+        if (hyperlinkState_->trackedActivation.has_value()
+            && std::holds_alternative<GhosttyVtAdapter::TrackedTextRange>(
+                *hyperlinkState_->trackedActivation)) {
+            hyperlinkState_->activationRequestId = 0;
+            hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
+            hyperlinkState_->trackedActivation.reset();
+        }
+    }
 
     // libghostty-vt has no API for resizing an existing scrollback allocation.
     // options_.scrollbackLimit therefore records the desired value for
@@ -958,9 +1156,11 @@ void SessionWorker::queryHyperlink(
     hyperlinkState_->activeRequestId = 0;
     hyperlinkState_->trackedHover.reset();
     hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+    hyperlinkState_->publishedKind = TerminalLinkKind::Osc8;
     hyperlinkState_->publishedUri.clear();
     hyperlinkState_->publishedTarget = QPoint(-1, -1);
     hyperlinkState_->publishedCells.clear();
+    hyperlinkState_->publishedRelevantRows.clear();
     hyperlinkState_->publishedColumns = 0;
     hyperlinkState_->publishedRows = 0;
     hyperlinkState_->pendingQuery = HyperlinkState::PendingQuery{
@@ -991,9 +1191,11 @@ void SessionWorker::cancelHyperlinkQuery(quint64 requestId)
     hyperlinkState_->activeRequestId = 0;
     hyperlinkState_->trackedHover.reset();
     hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+    hyperlinkState_->publishedKind = TerminalLinkKind::Osc8;
     hyperlinkState_->publishedUri.clear();
     hyperlinkState_->publishedTarget = QPoint(-1, -1);
     hyperlinkState_->publishedCells.clear();
+    hyperlinkState_->publishedRelevantRows.clear();
     hyperlinkState_->publishedColumns = 0;
     hyperlinkState_->publishedRows = 0;
 }
@@ -1008,10 +1210,12 @@ void SessionWorker::processPendingHyperlinkQuery()
         std::exchange(hyperlinkState_->pendingQuery, std::nullopt).value();
 
     TerminalHyperlinkState state = TerminalHyperlinkState::Invalid;
+    TerminalLinkKind kind = TerminalLinkKind::Osc8;
     QByteArray uri;
     QPoint targetCell(-1, -1);
     QVector<QPoint> matchingCells;
-    std::optional<GhosttyVtAdapter::TrackedHyperlink> tracked;
+    QVector<int> relevantRows;
+    std::optional<DetectedTerminalLink> detected;
     const bool coordinateIsStale = query.contentRevision
             != terminalContentRevision_
         || !hyperlinkState_->hasFrame
@@ -1019,97 +1223,113 @@ void SessionWorker::processPendingHyperlinkQuery()
             != terminalContentRevision_;
     if (coordinateIsStale) {
         state = TerminalHyperlinkState::Stale;
-    } else if (vt_ != nullptr
-        && query.column >= 0 && query.column < hyperlinkState_->frame.columns
-        && query.row >= 0 && query.row < hyperlinkState_->frame.rows) {
-        const int targetIndex = query.row * hyperlinkState_->frame.columns
-            + query.column;
-        if (targetIndex >= 0
-            && targetIndex < hyperlinkState_->frame.cells.size()
-            && hyperlinkState_->frame.cells.at(targetIndex).hasHyperlink) {
-            tracked = vt_->trackHyperlinkAt(query.column, query.row);
-        }
+    } else if (vt_ != nullptr) {
+        detected = detectTerminalLinkAt(
+            *vt_, linkMatcher_.get(), options_.linkUrl,
+            hyperlinkState_->frame, query.column, query.row);
     }
 
-    if (tracked.has_value()) {
-        QVector<QPoint> candidates;
-        candidates.reserve(hyperlinkState_->frame.cells.size());
-        for (int index = 0; index < hyperlinkState_->frame.cells.size(); ++index) {
-            if (hyperlinkState_->frame.cells.at(index).hasHyperlink) {
-                candidates.append(QPoint(
-                    index % hyperlinkState_->frame.columns,
-                    index / hyperlinkState_->frame.columns));
-            }
-        }
-        const std::optional<GhosttyVtAdapter::HyperlinkMatch> match =
-            vt_->resolveHyperlink(*tracked, candidates);
-        if (match.has_value()) {
-            state = TerminalHyperlinkState::Visible;
-            uri = match->uri;
-            targetCell = match->targetCell;
-            matchingCells = match->cells;
-            hyperlinkState_->activeRequestId = query.requestId;
-            hyperlinkState_->trackedHover = std::move(tracked);
-            hyperlinkState_->publishedState = state;
-            hyperlinkState_->publishedUri = uri;
-            hyperlinkState_->publishedTarget = targetCell;
-            hyperlinkState_->publishedCells = matchingCells;
-            hyperlinkState_->publishedColumns = hyperlinkState_->frame.columns;
-            hyperlinkState_->publishedRows = hyperlinkState_->frame.rows;
-        }
+    if (detected.has_value()) {
+        state = TerminalHyperlinkState::Visible;
+        kind = detected->resolved.kind;
+        uri = detected->resolved.uri;
+        targetCell = detected->resolved.targetCell;
+        matchingCells = detected->resolved.cells;
+        relevantRows = detected->resolved.relevantRows;
+        hyperlinkState_->activeRequestId = query.requestId;
+        hyperlinkState_->trackedHover = std::move(detected->tracked);
+        hyperlinkState_->publishedState = state;
+        hyperlinkState_->publishedKind = kind;
+        hyperlinkState_->publishedUri = uri;
+        hyperlinkState_->publishedTarget = targetCell;
+        hyperlinkState_->publishedCells = matchingCells;
+        hyperlinkState_->publishedRelevantRows = std::move(relevantRows);
+        hyperlinkState_->publishedColumns = hyperlinkState_->frame.columns;
+        hyperlinkState_->publishedRows = hyperlinkState_->frame.rows;
     }
 
     Q_EMIT hyperlinkResolved(query.requestId, terminalContentRevision_, state,
-                             uri, targetCell, matchingCells);
+                             kind, uri, targetCell, matchingCells);
 }
 
 void SessionWorker::prepareHyperlinkActivation(
     quint64 requestId, quint64 contentRevision, int column, int row)
 {
     hyperlinkState_->activationRequestId = requestId;
+    hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
     hyperlinkState_->trackedActivation.reset();
-    if (requestId == 0 || vt_ == nullptr) {
+    if (requestId == 0 || vt_ == nullptr
+        || !hyperlinkState_->hasFrame) {
         return;
     }
-    bool coordinateIsCurrent = contentRevision == terminalContentRevision_;
+    bool coordinateIsCurrent = contentRevision == terminalContentRevision_
+        && hyperlinkState_->frame.contentRevision
+            == terminalContentRevision_;
     if (!coordinateIsCurrent && hyperlinkState_->trackedHover.has_value()) {
         // An accepted hover already identifies the logical target on the
         // worker. It can safely bridge an unrelated frame revision between
         // the GUI press and this queued operation without trusting a stale
         // viewport coordinate on its own.
         const QPoint pressedCell(column, row);
-        const std::optional<GhosttyVtAdapter::HyperlinkMatch> hoverMatch =
-            vt_->resolveHyperlink(
-                *hyperlinkState_->trackedHover, {pressedCell});
+        const auto hoverMatch = resolveTrackedTerminalLink(
+            *vt_, *hyperlinkState_->trackedHover, hyperlinkState_->frame);
         coordinateIsCurrent = hoverMatch.has_value()
             && hoverMatch->cells.contains(pressedCell);
     }
     if (!coordinateIsCurrent) {
         return;
     }
-    hyperlinkState_->trackedActivation = vt_->trackHyperlinkAt(column, row);
+    auto detected = detectTerminalLinkAt(
+        *vt_, linkMatcher_.get(), options_.linkUrl,
+        hyperlinkState_->frame, column, row);
+    if (!detected.has_value()) {
+        return;
+    }
+    hyperlinkState_->activationKind = detected->resolved.kind;
+    hyperlinkState_->trackedActivation = std::move(detected->tracked);
 }
 
 void SessionWorker::commitHyperlinkActivation(
     quint64 requestId, int column, int row)
 {
     QByteArray uri;
+    const TerminalLinkKind kind = hyperlinkState_->activationKind;
     if (requestId != 0
         && requestId == hyperlinkState_->activationRequestId
         && hyperlinkState_->trackedActivation.has_value() && vt_ != nullptr) {
-        const std::optional<GhosttyVtAdapter::HyperlinkMatch> match =
-            vt_->resolveHyperlink(
-                *hyperlinkState_->trackedActivation, {QPoint(column, row)});
-        if (match.has_value() && match->targetCell == QPoint(column, row)) {
+        const QPoint releaseCell(column, row);
+        const auto match = resolveTrackedTerminalLink(
+            *vt_, *hyperlinkState_->trackedActivation,
+            hyperlinkState_->frame);
+        bool stillMatches = match.has_value()
+            && match->kind == kind
+            && match->targetCell == releaseCell
+            && match->cells.contains(releaseCell);
+
+        // A tracked text range detects edits within its endpoints. Re-run the
+        // configured matcher as well so text appended immediately beside the
+        // range cannot silently change the URL opened by this release.
+        if (stillMatches && kind == TerminalLinkKind::Regex) {
+            const auto current = detectTerminalLinkAt(
+                *vt_, linkMatcher_.get(), options_.linkUrl,
+                hyperlinkState_->frame, column, row);
+            stillMatches = current.has_value()
+                && current->resolved.kind == kind
+                && current->resolved.uri == match->uri
+                && current->resolved.targetCell == releaseCell
+                && current->resolved.cells == match->cells;
+        }
+        if (stillMatches) {
             uri = match->uri;
         }
     }
     if (requestId == hyperlinkState_->activationRequestId) {
         hyperlinkState_->activationRequestId = 0;
+        hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
         hyperlinkState_->trackedActivation.reset();
     }
     Q_EMIT hyperlinkActivationResolved(
-        requestId, terminalContentRevision_, uri);
+        requestId, terminalContentRevision_, kind, uri);
 }
 
 void SessionWorker::cancelHyperlinkActivation(quint64 requestId)
@@ -1119,6 +1339,7 @@ void SessionWorker::cancelHyperlinkActivation(quint64 requestId)
         return;
     }
     hyperlinkState_->activationRequestId = 0;
+    hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
     hyperlinkState_->trackedActivation.reset();
 }
 
@@ -1138,35 +1359,47 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
     }
 
     TerminalHyperlinkState state = TerminalHyperlinkState::Invalid;
+    TerminalLinkKind kind = hyperlinkState_->publishedKind;
     QByteArray uri;
     QPoint targetCell(-1, -1);
     QVector<QPoint> matchingCells;
-    QVector<QPoint> candidates;
-    candidates.reserve(hyperlinkState_->frame.cells.size());
-    for (int index = 0; index < hyperlinkState_->frame.cells.size(); ++index) {
-        if (hyperlinkState_->frame.cells.at(index).hasHyperlink) {
-            candidates.append(QPoint(index % hyperlinkState_->frame.columns,
-                                     index / hyperlinkState_->frame.columns));
-        }
-    }
+    QVector<int> relevantRows;
 
-    const std::optional<GhosttyVtAdapter::HyperlinkMatch> match =
-        vt_->resolveHyperlink(*hyperlinkState_->trackedHover, candidates);
+    const auto match = resolveTrackedTerminalLink(
+        *vt_, *hyperlinkState_->trackedHover, hyperlinkState_->frame);
     if (match.has_value()) {
-        state = TerminalHyperlinkState::Visible;
-        uri = match->uri;
-        targetCell = match->targetCell;
-        matchingCells = match->cells;
-    } else if (vt_->trackedHyperlinkValid(
-                   *hyperlinkState_->trackedHover)) {
+        bool stillMatches = true;
+        if (match->kind == TerminalLinkKind::Regex) {
+            const auto current = detectTerminalLinkAt(
+                *vt_, linkMatcher_.get(), options_.linkUrl,
+                hyperlinkState_->frame,
+                match->targetCell.x(), match->targetCell.y());
+            stillMatches = current.has_value()
+                && current->resolved.kind == match->kind
+                && current->resolved.uri == match->uri
+                && current->resolved.targetCell == match->targetCell
+                && current->resolved.cells == match->cells;
+        }
+        if (stillMatches) {
+            state = TerminalHyperlinkState::Visible;
+            kind = match->kind;
+            uri = match->uri;
+            targetCell = match->targetCell;
+            matchingCells = match->cells;
+            relevantRows = match->relevantRows;
+        }
+    } else if (trackedTerminalLinkValid(
+                   *vt_, *hyperlinkState_->trackedHover)) {
         state = TerminalHyperlinkState::Hidden;
         uri = hyperlinkState_->publishedUri;
     }
 
     const bool changed = force || state != hyperlinkState_->publishedState
+        || kind != hyperlinkState_->publishedKind
         || uri != hyperlinkState_->publishedUri
         || targetCell != hyperlinkState_->publishedTarget
         || matchingCells != hyperlinkState_->publishedCells
+        || relevantRows != hyperlinkState_->publishedRelevantRows
         || hyperlinkState_->publishedColumns
             != hyperlinkState_->frame.columns
         || hyperlinkState_->publishedRows != hyperlinkState_->frame.rows;
@@ -1175,9 +1408,11 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
     }
 
     hyperlinkState_->publishedState = state;
+    hyperlinkState_->publishedKind = kind;
     hyperlinkState_->publishedUri = uri;
     hyperlinkState_->publishedTarget = targetCell;
     hyperlinkState_->publishedCells = matchingCells;
+    hyperlinkState_->publishedRelevantRows = std::move(relevantRows);
     hyperlinkState_->publishedColumns = hyperlinkState_->frame.columns;
     hyperlinkState_->publishedRows = hyperlinkState_->frame.rows;
     const quint64 requestId = hyperlinkState_->activeRequestId;
@@ -1185,8 +1420,8 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         hyperlinkState_->activeRequestId = 0;
         hyperlinkState_->trackedHover.reset();
     }
-    Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_, state, uri,
-                             targetCell, matchingCells);
+    Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_, state,
+                             kind, uri, targetCell, matchingCells);
 }
 
 void SessionWorker::noteCompressionActivity()
@@ -1245,7 +1480,8 @@ void SessionWorker::publishFrame()
     if (!hyperlinkMayHaveChanged
         && hyperlinkState_->activeRequestId != 0) {
         for (const TerminalRowUpdate &row : update.dirtyRows) {
-            if (row.row == hyperlinkState_->publishedTarget.y()
+            if (hyperlinkState_->publishedRelevantRows.contains(row.row)
+                || row.row == hyperlinkState_->publishedTarget.y()
                 || std::any_of(
                     hyperlinkState_->publishedCells.cbegin(),
                     hyperlinkState_->publishedCells.cend(),
@@ -1488,14 +1724,18 @@ void SessionWorker::destroyTerminal()
     hyperlinkState_->activeRequestId = 0;
     hyperlinkState_->trackedHover.reset();
     hyperlinkState_->activationRequestId = 0;
+    hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
     hyperlinkState_->trackedActivation.reset();
     hyperlinkState_->publishedState = TerminalHyperlinkState::Invalid;
+    hyperlinkState_->publishedKind = TerminalLinkKind::Osc8;
     hyperlinkState_->publishedUri.clear();
     hyperlinkState_->publishedTarget = QPoint(-1, -1);
     hyperlinkState_->publishedCells.clear();
+    hyperlinkState_->publishedRelevantRows.clear();
     hyperlinkState_->publishedColumns = 0;
     hyperlinkState_->publishedRows = 0;
     hyperlinkState_->frame = TerminalFrame{};
     hyperlinkState_->hasFrame = false;
     vt_.reset();
+    linkMatcher_.reset();
 }

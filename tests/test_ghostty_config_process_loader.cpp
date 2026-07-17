@@ -38,6 +38,7 @@ QByteArray defaultOutput()
                           "faint-opacity = 0.5\n"
                           "scrollback-limit = 50000000\n"
                           "confirm-close-surface = true\n"
+                          "link-url = true\n"
                           "keybind = ctrl+shift+t=new_tab\n"
                           "config-file = \n");
     for (int index = 0; index < 256; ++index) {
@@ -264,6 +265,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "faint-opacity = 0.25\r\n"
             "scrollback-limit = 123456\r\n"
             "confirm-close-surface = always\r\n"
+            "link-url = false\r\n"
             "keybind = alt+n=new_tab\r\n"
             "keybind = chain=next_tab\r\n"
             "keybind = ctrl+x>ctrl+y=new_tab\r\n"
@@ -318,6 +320,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              quint64(123456));
     QCOMPARE(snapshot.values.value(QStringLiteral("confirm-close-surface")).toString(),
              QStringLiteral("always"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("link-url")).toBool(), false);
     QCOMPARE(snapshot.values.value(QStringLiteral("keybind")).toStringList(),
              QStringList({QStringLiteral("alt+n=new_tab"),
                           QStringLiteral("chain=next_tab"),
@@ -403,6 +406,14 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedOpacity.succeeded());
     QCOMPARE(malformedOpacity.errorMessage,
              QStringLiteral("Invalid faint-opacity in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedLinkUrl =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("link-url = yes\n"),
+            fixture.candidates());
+    QVERIFY(!malformedLinkUrl.succeeded());
+    QCOMPARE(malformedLinkUrl.errorMessage,
+             QStringLiteral("Invalid link-url in Ghostty config output at line 1"));
 
     const GhosttyConfigLoadResult missing = parseGhosttyConfigShowOutputs(
         QByteArrayLiteral("font-size = 13\n"), {}, fixture.candidates());

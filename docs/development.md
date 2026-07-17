@@ -36,14 +36,14 @@ The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
-terminal appearance and OSC 8 interaction rendering, and the config-helper
-process protocol, as well as PTY, renderer, application-lifecycle, parity,
-exact-parser smoke, and relocatable-install coverage. List or run individual
-tests with:
+terminal appearance, OSC 8/default-regex interaction rendering, the pinned
+Oniguruma matcher boundary, and the config-helper process protocol, as well as
+PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
+relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -R 'ghostty-vt-adapter|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -57,19 +57,20 @@ Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
 `+show-keybinds-json` action, and converts only the documented compatibility
 keys into value snapshots.
 
-The appearance snapshot includes the complete canonical 256-entry palette,
-selection colors, cursor color/style/blink/opacity/text, bold-color, and
-faint-opacity. The process-loader tests verify default/current merging and
-malformed canonical values; launch-option tests verify their value-only overlay;
-adapter tests verify that config-default changes preserve OSC/DECSCUSR terminal
-overrides; and `terminal-pane-render` verifies the frontend-only color/style
-rules with deterministic pixel samples. This division keeps parser, terminal
-state, and renderer responsibilities independently testable.
+The snapshot includes the complete canonical 256-entry palette, selection
+colors, cursor color/style/blink/opacity/text, bold-color, faint-opacity, and
+the boolean `link-url` setting. The process-loader tests verify default/current
+merging and malformed canonical values; launch-option tests verify their
+value-only overlay; adapter tests verify that config-default changes preserve
+OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies the
+frontend-only color/style and live link-matcher rules. This division keeps
+parser, terminal state, and renderer responsibilities independently testable.
 
 The additional Zig outputs and global package/artifact cache live under:
 
 ```text
 .cache/ghostty-internal/<ghostty-revision>/
+.cache/ghostty-link-matcher/<ghostty-revision>/<optimization>/
 .cache/zig-global/
 ```
 
@@ -80,6 +81,14 @@ cold config-parser build is much larger and slower than an ordinary incremental 
 work on the application without this integration, configure manually with
 `-DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that is a development option, not the
 normal feature set.
+
+The matcher cache is independent of the private configuration library.
+`libghostty-vt` intentionally disables Oniguruma, so CMake builds the small
+`zig/link_matcher` C ABI from Ghostty's pinned `src/config/url.zig` and vendored
+Oniguruma package. `ghostty-link-matcher` tests the C++ byte-range boundary;
+`ghostty-link-matcher-upstream-corpus` compiles and executes Ghostty's complete
+URL/path corpus against that same engine. Both searches and the application use
+Ghostty's 100,000-step retry budget.
 
 The three focused config tests have distinct boundaries:
 
@@ -107,7 +116,9 @@ select-all, endpoint adjustment/autoscroll, byte-exact CSI/ESC/text actions,
 full-reset cache synchronization, long OSC 8 URI extraction across viewport
 and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
 latest-request coalescing, stale-result rejection, stable live-output hover,
-raw-destination copy, and release-only tracked activation.
+logical-line UTF-8 mapping, default-regex matching across graphemes and soft
+wraps, OSC 8 precedence, live `link-url` reload, byte-exact copy, relative-path
+opening, range mutation invalidation, and release-only tracked activation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
 stable tab reordering/index selection, wrapped split traversal, mutable and
 equalized layouts, and split zoom lifecycle. `ghostty-global-shortcut-portal`
@@ -161,13 +172,14 @@ ctest --test-dir build/sanitize --output-on-failure
 
 The sanitizer preset instruments the project's C and C++ targets with ASan and
 UBSan, enables frame pointers, and stops on undefined behavior. It also changes
-the pinned Ghostty build from `ReleaseFast` to `ReleaseSafe`, retaining Zig's
-safety checks. The Ghostty static library is not ASan/UBSan-instrumented. A
-failure in upstream Zig code can still be visible at an instrumented API
-boundary, but this preset does not provide complete sanitizer coverage inside
-that library. The private config-parser build remains `ReleaseFast` and is also
-not sanitizer-instrumented; its process boundary is intentional containment,
-not a replacement for upstream testing.
+the pinned Ghostty and link-matcher builds from `ReleaseFast` to `ReleaseSafe`,
+retaining Zig's safety checks. The `libghostty-vt` archive, the Zig matcher,
+and its C Oniguruma archive are not Clang ASan/UBSan-instrumented. Failures can
+still be visible at an instrumented C++ API boundary, but this preset does not
+provide complete sanitizer coverage inside those archives. The private
+config-parser build remains `ReleaseFast` and is also not
+sanitizer-instrumented; its process boundary is intentional containment, not a
+replacement for upstream testing.
 
 The clean step is required when another preset has already populated the shared
 `ghostty/zig-out` directory. Ghostty's CMake wrapper does not encode Zig

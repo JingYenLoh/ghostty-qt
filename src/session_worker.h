@@ -14,6 +14,7 @@
 
 class QSocketNotifier;
 class QTimer;
+class GhosttyLinkMatcher;
 class GhosttyVtAdapter;
 
 class SessionWorker final : public QObject {
@@ -91,10 +92,12 @@ Q_SIGNALS:
     void selectAllCompleted(bool selectionAvailable);
     void hyperlinkResolved(quint64 requestId, quint64 contentRevision,
                            TerminalHyperlinkState state,
+                           TerminalLinkKind kind,
                            const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
     void hyperlinkActivationResolved(quint64 requestId,
                                      quint64 contentRevision,
+                                     TerminalLinkKind kind,
                                      const QByteArray &uri);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
@@ -132,6 +135,7 @@ private:
 
     LaunchOptions options_;
     std::unique_ptr<GhosttyVtAdapter> vt_;
+    std::unique_ptr<GhosttyLinkMatcher> linkMatcher_;
     struct HyperlinkState;
     std::unique_ptr<HyperlinkState> hyperlinkState_;
 

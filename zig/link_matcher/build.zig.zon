@@ -1,0 +1,12 @@
+.{
+    .name = .ghostty_qt_link_matcher,
+    .version = "0.1.0",
+    .fingerprint = 0xb228a331aeb9ded1,
+    .minimum_zig_version = "0.15.2",
+    .paths = .{""},
+    .dependencies = .{
+        // Keep the regex engine on the same package boundary as the pinned
+        // Ghostty checkout. This package, in turn, pins the Oniguruma source.
+        .oniguruma = .{ .path = "oniguruma" },
+    },
+}

@@ -262,6 +262,11 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.confirmCloseMode = ConfirmCloseMode::Always;
     }
 
+    const QVariant linkUrl = snapshot.values.value(QStringLiteral("link-url"));
+    if (linkUrl.metaType() == QMetaType::fromType<bool>()) {
+        result.linkUrl = linkUrl.toBool();
+    }
+
     const auto keybindings = snapshot.value<QStringList>(QStringLiteral("keybind"));
     if (keybindings.has_value()) {
         result.keybindings = *keybindings;

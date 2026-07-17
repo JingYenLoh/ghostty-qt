@@ -60,6 +60,8 @@ struct ParsedConfig {
     quint64 scrollbackLimit = 0;
     bool hasConfirmCloseSurface = false;
     QString confirmCloseSurface;
+    bool hasLinkUrl = false;
+    bool linkUrl = true;
     bool hasKeybinds = false;
     QStringList keybinds;
     bool hasConfigFiles = false;
@@ -345,6 +347,19 @@ bool parseOptionalBool(const QString &value, QVariant *destination)
     return false;
 }
 
+bool parseBool(const QString &value, bool *destination)
+{
+    if (value == QStringLiteral("true")) {
+        *destination = true;
+        return true;
+    }
+    if (value == QStringLiteral("false")) {
+        *destination = false;
+        return true;
+    }
+    return false;
+}
+
 bool parseUnitInterval(const QString &value, double *destination)
 {
     bool valid = false;
@@ -546,6 +561,14 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->hasConfirmCloseSurface = true;
             parsed->confirmCloseSurface = value;
+        } else if (key == QStringLiteral("link-url")) {
+            if (!parseBool(value, &parsed->linkUrl)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid link-url in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasLinkUrl = true;
         } else if (key == QStringLiteral("keybind")) {
             if (!parsed->hasKeybinds) {
                 parsed->keybinds.clear();
@@ -1040,6 +1063,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasCursorText || !defaults.hasBoldColor
         || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
+        || !defaults.hasLinkUrl
         || !defaults.hasKeybinds || !defaults.hasConfigFiles) {
         return GhosttyConfigLoadResult::failed(
             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
@@ -1115,6 +1139,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         mergedValue(changes.hasConfirmCloseSurface,
                     changes.confirmCloseSurface,
                     defaults.confirmCloseSurface);
+    const bool linkUrl =
+        mergedValue(changes.hasLinkUrl, changes.linkUrl, defaults.linkUrl);
     const QStringList keybinds =
         mergedValue(changes.hasKeybinds, changes.keybinds,
                     defaults.keybinds);
@@ -1144,6 +1170,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("scrollback-limit"), scrollbackLimit);
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            confirmCloseSurface);
+    snapshot.values.insert(QStringLiteral("link-url"), linkUrl);
     snapshot.values.insert(QStringLiteral("keybind"), keybinds);
     snapshot.values.insert(QStringLiteral("config-file"), configFiles);
     if (changes.hasKeybinds) {

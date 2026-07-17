@@ -157,11 +157,12 @@ signals:
   overlay until committed.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
-- OSC 8 hover requires exactly `Ctrl` on Linux. A matching result changes the
-  pointer and underlines the visible matching cells; an already single-underlined
-  cell becomes double-underlined while hovered. With application mouse capture,
-  `Shift` first bypasses capture and is removed before modifier matching, so
-  the equivalent gesture is `Ctrl+Shift`.
+- Link hover requires exactly `Ctrl` on Linux. Explicit OSC 8 destinations take
+  precedence over Ghostty's default regex-detected URL/path range. A matching
+  result changes the pointer and underlines the visible matching cells; an
+  already single-underlined cell becomes double-underlined while hovered. With
+  application mouse capture, `Shift` first bypasses capture and is removed
+  before modifier matching, so the equivalent gesture is `Ctrl+Shift`.
 - Focus changes are encoded only when the terminal requests focus reporting.
 - Paste uses Ghostty's safe-paste check and bracketed-paste encoder. Unsafe text
   is held in `TerminalWorkspace` until the QML dialog confirms it.
@@ -176,40 +177,68 @@ signals:
   conversion, installation, and endpoint autoscroll are deliberately one
   transaction with no queued boundary between them.
 
-The render update exposes only whether a cell has an OSC 8 hyperlink. URI
-lookup remains beside the terminal on the session thread: a hover request sends
-the viewport-relative cell and retained content revision. That revision is an
-initial-coordinate handshake only. The worker collapses queued pointer queries
-to the newest coordinate, derives candidates from its own retained frame, and
-creates one owned libghostty tracked grid reference for the accepted target.
-The adapter caches its original destination bytes and primary/alternate-screen
-owner. Each refresh snapshots the tracked cell, rejects URI replacement,
-treats an inactive screen or off-viewport point as temporarily hidden, and
-returns the target's current coordinate after scrolling or reflow. Reset and
-scrollback pruning permanently invalidate the anchor.
+The render update exposes only whether a cell has an OSC 8 hyperlink; regex
+text and matcher state never cross to the GUI. Lookup remains beside the
+terminal on the session thread: a hover request sends the viewport-relative
+cell and retained content revision. That revision is an initial-coordinate
+handshake only. The worker collapses queued pointer queries to the newest
+coordinate. It first probes the requested cell for an explicit OSC 8 target.
+When no explicit link owns the cell and `link-url` is enabled, the adapter
+snapshots the complete
+semantic logical line containing the cell and maps every emitted UTF-8 byte
+back to its Ghostty screen cell. Soft wraps are removed, semantic prompt-state
+boundaries are retained, spacer cells do not duplicate wide graphemes, and
+combining sequences keep their exact byte-to-cell mapping.
 
-The worker refreshes the sparse anchor only when a full/scrollbar update, a
-dirty tracked row, or a row containing hyperlink candidates can affect its
-visible mask. Unrelated output can therefore advance the pane-wide content
-revision without clearing the pointer, re-querying the URI, or rescanning all
-visible links. Cancellation crosses the queued boundary and frees the anchor
-on the session thread before terminal destruction.
+`libghostty-vt` deliberately compiles without Oniguruma, so the default matcher
+uses a separate project-owned Zig/C ABI. Its expression is imported directly
+from the pinned `src/config/url.zig`, its Oniguruma library comes from the same
+pinned Ghostty package, and each search uses Ghostty's 100,000-step retry
+limit. The narrow C++ owner returns only half-open UTF-8 byte ranges. This keeps
+regex semantics and the upstream corpus exact without adding a private matcher
+handle or an Oniguruma dependency to libghostty-vt.
+
+An accepted OSC 8 target owns one tracked grid reference and caches its original
+destination bytes and primary/alternate-screen owner. An accepted regex target
+owns tracked start, end, and queried-cell references plus the matched bytes and
+the formatter text covered by its inclusive endpoint cells. Resolving either
+target converts its anchors back to
+current viewport cells, so scrolling, primary-screen reflow, and wide-cell
+decoration remain stable. Regex resolution re-extracts the covered range and
+requires byte equality, while a relevant logical-line update reruns matcher
+precedence; replacement fails closed rather than transferring a hover or press
+to new text. An inactive screen or wholly off-viewport target is
+temporarily hidden, while reset, scrollback pruning, missing anchors, or changed
+covered text permanently invalidate it.
+
+The worker refreshes sparse anchors only when a full/scrollbar/geometry update
+or relevant dirty row can affect their visible range. Unrelated output can
+therefore advance the pane-wide content revision without clearing the pointer,
+re-running the matcher, or rescanning the viewport. Cancellation crosses the
+queued boundary and frees every anchor on the session thread before terminal
+destruction. Disabling `link-url` live cancels a regex lease and recomputes a
+stationary hover; explicit OSC 8 interaction is unaffected.
 
 Public `libghostty-vt` exposes the destination URI but not the OSC 8 hyperlink
-ID. Hover grouping therefore compares the URI of every visible candidate: two
-separate IDs with the same URI can be underlined together. Activation remains
-cell-specific. A left press on a cell carrying the raw hyperlink bit creates a
-separate tracked press anchor, even if the hover lookup is still pending. Drag,
-focus loss, or cancellation frees that lane independently. A release below
-Qt's drag threshold activates only when the tracked logical cell still resolves
-to the release coordinate with its original URI; unrelated output between
-press and release does not cancel the gesture. The value used by
-`copy_url_to_clipboard` remains byte-exact through the worker lookup and is put
-directly in the clipboard's `text/plain` MIME payload, never round-tripped
-through `QString` or `QUrl`. For opening, the GUI converts absolute paths with
-`QUrl::fromLocalFile`, parses other byte strings using `QUrl` strict encoded
-mode, rejects malformed or NUL-containing results, and delegates valid URLs to
-Qt's desktop services.
+ID. OSC 8 hover grouping therefore compares the URI of every visible candidate:
+two separate IDs with the same URI can be underlined together. Regex grouping
+is the tracked matched range itself. Activation remains cell-specific. The raw
+render bit lets an OSC 8 left press arm while its hover lookup is still pending.
+A regex press arms only over the pane's already-resolved regex hover mask. Once
+armed, the press creates a separate OSC or text-range lease. Drag, focus loss,
+or cancellation frees that lane independently.
+A release below Qt's drag threshold activates only when the tracked target still
+resolves to the release coordinate with its original URI or covered text;
+unrelated output between press and release does not cancel the gesture.
+
+The value used by `copy_url_to_clipboard` remains byte-exact through the worker
+lookup and is put directly in the clipboard's `text/plain` MIME payload, never
+round-tripped through `QString` or `QUrl`. For opening, the GUI converts
+absolute paths with `QUrl::fromLocalFile`. A regex-matched relative path is
+resolved against the terminal's current working directory when the resulting
+file exists. Other byte strings use `QUrl` strict encoded mode; malformed or
+NUL-containing values are rejected before valid URLs are delegated to Qt's
+desktop services.
 
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
@@ -285,7 +314,8 @@ to the workspace.
 
 The current typed compatibility slice contains `font-family`, `font-size`, the
 appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
-`config-file`, and a versioned dump of the finalized keybinding sets.
+`link-url`, `config-file`, and a versioned dump of the finalized keybinding
+sets.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection colors, cursor color/style/blink/opacity/text,
@@ -301,7 +331,8 @@ OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
 configured style. Selection, cursor aliases/opacity/text, bold-color, and
 faint-opacity are frontend render policy and therefore update without mutating
-terminal-originated state. Close confirmation policy also updates live.
+terminal-originated state. Close confirmation policy and the built-in regex
+link matcher also update live; toggling `link-url` never disables OSC 8.
 
 Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
@@ -417,6 +448,13 @@ checks `zig version` at configure time and accepts only `0.15.2`, matching the
 pinned Ghostty source. The C++ executable links that static target and Linux
 `libutil`.
 
+Ghostty's exported VT module intentionally disables Oniguruma. CMake therefore
+builds `zig/link_matcher` as a second, narrow static C ABI, importing the pinned
+default expression and vendored engine without modifying the Ghostty submodule.
+Revision/optimization-scoped outputs live under the ignored
+`.cache/ghostty-link-matcher` directory; an install lock lets CMake presets
+reuse them safely. The main executable sees only the Qt-valued C++ wrapper.
+
 With `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON` (the default), CMake also asks the
 pinned Ghostty build for `ghostty-internal.so` with its application runtime
 disabled. A revision-scoped source shadow overlays the one private structured
@@ -461,12 +499,13 @@ part of this frontend's parity target.
 `scripts/check-ghostty-parity.py` re-extracts those inventories from the pinned
 source and rejects revision, schema, ordering, or inventory drift. This keeps
 an upstream snapshot update from silently adding untracked parity work. The
-contract remains conservative: only the typed configuration slice is marked as
-partial or supported, while the other upstream keys stay explicitly planned.
+contract remains conservative: only the typed configuration slice, including
+`link-url`, is marked partial or supported, while custom `link` rules and other
+upstream keys stay explicitly planned.
 
 ## Test boundaries
 
-The default CTest suite has seventeen layers:
+The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
   typed config and appearance overlays, CLI font precedence, scrollback units,
@@ -485,14 +524,23 @@ The default CTest suite has seventeen layers:
   long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
   state. Tracked URI anchors are also exercised across unrelated output,
   reflow, viewport hiding/restoration, screen switches, replacement, reset,
-  and scrollback pruning.
+  and scrollback pruning. Logical-line snapshots additionally cover exact UTF-8
+  mapping across combining graphemes, wide cells, soft wraps, semantic prompt
+  boundaries, range reflow, text replacement, and scrollback pruning.
+- `ghostty-link-matcher` verifies the C++/C ABI, successive UTF-8 byte ranges,
+  scheme/path heuristics, punctuation, IPv6, and invalid-coordinate handling.
+- `ghostty-link-matcher-upstream-corpus` runs the complete pinned Ghostty
+  `src/config/url.zig` corpus against the vendored Oniguruma implementation.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, byte-exact terminal-control action writes, reset cache
   synchronization, process exit, explicit-program activity, and an interactive
   shell's idle/job/idle foreground transitions. It also verifies coalesced OSC
   8 hover queries, stale-coordinate retry signaling, tracked targets across
-  viewport hiding/restoration, and independent hover and activation leases.
+  viewport hiding/restoration, and independent hover and activation leases. It
+  also verifies regex lookup across UTF-8 graphemes and soft wraps, OSC 8
+  precedence, range reflow, viewport hiding/restoration, stable unrelated
+  output, and activation invalidation after covered-text replacement.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
@@ -522,7 +570,8 @@ The default CTest suite has seventeen layers:
   release suppression, reload cancellation, and tracked OSC 8 hover, copy, and
   release-only activation through a real PTY-backed pane, including live
   output, viewport hiding/restoration, resize-safe masks, and mouse-capture
-  modifier transitions.
+  modifier transitions. The same path covers live `link-url` enable/disable,
+  byte-exact regex copy, relative-path opening, and OSC 8 independence.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -559,7 +608,7 @@ in a real Wayland session.
 - Split ratios support keybinding resize/equalization, but draggable divider
   interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, search, regex-configured links and link previews, multi-window
-  operation, saved sessions, and production packaging remain future work. OSC
-  8 interaction is implemented, with URI-based visible grouping until the
-  public C API exposes hyperlink identity.
+  actions, search, user-defined `link` rules and link previews, multi-window
+  operation, saved sessions, and production packaging remain future work.
+  OSC 8 and the default `link-url` matcher are implemented; OSC grouping stays
+  URI-based until the public C API exposes hyperlink identity.

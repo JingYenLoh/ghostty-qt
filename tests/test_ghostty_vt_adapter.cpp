@@ -77,6 +77,9 @@ private Q_SLOTS:
     void tracksOsc8HyperlinksAcrossViewportAndScreenChanges();
     void invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset();
     void invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning();
+    void snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps();
+    void tracksTextRangesAcrossReflowViewportAndScreenChanges();
+    void invalidatesTrackedTextRangesAfterCoveredTextMutation();
     void selectsAndNavigatesViewportAtomically();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
@@ -509,6 +512,212 @@ void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterScrollbackPrunin
     QVERIFY(!adapter->resolveHyperlink(
         *tracked, hyperlinkCandidates(frame)).has_value());
     QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
+}
+
+void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 4;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    // The combining mark remains part of e's grapheme. The wide character
+    // cannot fit in the final column, so libghostty inserts a spacer head and
+    // soft-wraps it onto the next physical row.
+    const QByteArray line = QStringLiteral(
+        "abcde\u0301fg\u754c/path").toUtf8();
+    const QByteArray wide = QStringLiteral("\u754c").toUtf8();
+    const qsizetype wideBegin = line.indexOf(wide);
+    QVERIFY(wideBegin >= 0);
+    adapter->writeVt(line);
+
+    auto snapshot = adapter->snapshotLogicalLineAt(1, 1);
+    QVERIFY(snapshot.has_value());
+    QCOMPARE(snapshot->text(), line);
+    QCOMPARE(snapshot->targetByteOffset(), wideBegin);
+    QVERIFY(snapshot->byteRangeContainsTarget(wideBegin,
+                                              wideBegin + wide.size()));
+    QVERIFY(!snapshot->byteRangeContainsTarget(0, wideBegin));
+    QVERIFY(!snapshot->byteRangeContainsTarget(wideBegin, wideBegin));
+
+    // The right-edge spacer head has no formatter byte of its own. Ghostty's
+    // inclusive selection hit test includes it only when a match starts before
+    // the spacer and ends after the wrapped wide glyph.
+    auto spacerSnapshot = adapter->snapshotLogicalLineAt(7, 0);
+    QVERIFY(spacerSnapshot.has_value());
+    QCOMPARE(spacerSnapshot->text(), line);
+    QCOMPARE(spacerSnapshot->targetByteOffset(), qsizetype(-1));
+    QVERIFY(spacerSnapshot->byteRangeContainsTarget(0, line.size()));
+    QVERIFY(!spacerSnapshot->byteRangeContainsTarget(
+        wideBegin, line.size()));
+    auto spacerTracked = adapter->trackTextRange(
+        *spacerSnapshot, 0, line.size());
+    QVERIFY(spacerTracked.has_value());
+    auto spacerMatch = adapter->resolveTextRange(*spacerTracked);
+    QVERIFY(spacerMatch.has_value());
+    QCOMPARE(spacerMatch->text, line);
+    QCOMPARE(spacerMatch->targetCell, QPoint(7, 0));
+    QVERIFY(spacerMatch->cells.contains(QPoint(7, 0)));
+
+    auto tracked = adapter->trackTextRange(
+        *snapshot, wideBegin, line.size());
+    QVERIFY(tracked.has_value());
+    auto match = adapter->resolveTextRange(*tracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->text, line.sliced(wideBegin));
+    QCOMPARE(match->targetCell, QPoint(1, 1));
+    const QVector<QPoint> expectedCells{
+        QPoint(0, 1), QPoint(1, 1), QPoint(2, 1), QPoint(3, 1),
+        QPoint(4, 1), QPoint(5, 1), QPoint(6, 1),
+    };
+    QCOMPARE(match->cells, expectedCells);
+    QCOMPARE(match->logicalLineRows, QVector<int>({0, 1}));
+
+    // A regex can legally match only the combining codepoint. Every UTF-8
+    // byte still maps back to the owning terminal cell, so such a sub-
+    // grapheme match remains trackable without widening its returned text.
+    const qsizetype combiningBegin = line.indexOf(QByteArray("\xcc\x81", 2));
+    QCOMPARE(combiningBegin, qsizetype(5));
+    auto combiningSnapshot = adapter->snapshotLogicalLineAt(4, 0);
+    QVERIFY(combiningSnapshot.has_value());
+    QVERIFY(combiningSnapshot->byteRangeContainsTarget(
+        combiningBegin, combiningBegin + 2));
+    auto combiningTracked = adapter->trackTextRange(
+        *combiningSnapshot, combiningBegin, combiningBegin + 2);
+    QVERIFY(combiningTracked.has_value());
+    match = adapter->resolveTextRange(*combiningTracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->text, QByteArray("\xcc\x81", 2));
+    QCOMPARE(match->targetCell, QPoint(4, 0));
+    QCOMPARE(match->cells, QVector<QPoint>({QPoint(4, 0)}));
+
+    // Empty terminal storage cells between text are represented exactly as
+    // ASCII spaces, while empty storage after the final text remains trimmed.
+    GhosttyVtAdapter::Options gapOptions;
+    gapOptions.geometry.columns = 8;
+    gapOptions.geometry.rows = 2;
+    auto gapAdapter = GhosttyVtAdapter::create(gapOptions);
+    QVERIFY(gapAdapter != nullptr);
+    gapAdapter->writeVt(QByteArrayLiteral("A\033[4GB"));
+    auto gap = gapAdapter->snapshotLogicalLineAt(1, 0);
+    QVERIFY(gap.has_value());
+    QCOMPARE(gap->text(), QByteArrayLiteral("A  B"));
+    QCOMPARE(gap->targetByteOffset(), qsizetype(1));
+    auto gapTracked = gapAdapter->trackTextRange(*gap, 1, 2);
+    QVERIFY(gapTracked.has_value());
+    match = gapAdapter->resolveTextRange(*gapTracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->text, QByteArrayLiteral(" "));
+    QCOMPARE(match->targetCell, QPoint(1, 0));
+    QCOMPARE(match->cells, QVector<QPoint>({QPoint(1, 0)}));
+}
+
+void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 4;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray line = QStringLiteral(
+        "abcde\u0301fg\u754c/path").toUtf8();
+    const qsizetype matchBegin = line.indexOf(
+        QStringLiteral("\u754c").toUtf8());
+    QVERIFY(matchBegin >= 0);
+    adapter->writeVt(line);
+    auto snapshot = adapter->snapshotLogicalLineAt(1, 1);
+    QVERIFY(snapshot.has_value());
+    auto tracked = adapter->trackTextRange(
+        *snapshot, matchBegin, line.size());
+    QVERIFY(tracked.has_value());
+
+    // Mutating an unrelated row invalidates ordinary grid refs, but all three
+    // owned anchors (range endpoints and queried target) continue to resolve.
+    adapter->writeVt(QByteArrayLiteral("\0337\033[4;1HTICK\0338"));
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+    auto match = adapter->resolveTextRange(*tracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->targetCell, QPoint(1, 1));
+
+    GhosttyVtAdapter::Geometry resized = options.geometry;
+    resized.columns = 6;
+    resized.rows = 5;
+    QVERIFY(adapter->resize(resized));
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+    match = adapter->resolveTextRange(*tracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->text, line.sliced(matchBegin));
+    QCOMPARE(match->targetCell, QPoint(2, 1));
+    const QVector<QPoint> reflowedCells{
+        QPoint(1, 1), QPoint(2, 1), QPoint(3, 1), QPoint(4, 1),
+        QPoint(5, 1), QPoint(0, 2), QPoint(1, 2),
+    };
+    QCOMPARE(match->cells, reflowedCells);
+    QCOMPARE(match->logicalLineRows, QVector<int>({0, 1, 2}));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\r\none\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix"));
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    match = adapter->resolveTextRange(*tracked);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->targetCell, QPoint(2, 1));
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1049hALT"));
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
+    adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    match = adapter->resolveTextRange(*tracked);
+    QVERIFY(match.has_value());
+
+    GhosttyVtAdapter::TrackedTextRange moved = std::move(*tracked);
+    QVERIFY(!adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(adapter->trackedTextRangeValid(moved));
+    auto foreignAdapter = GhosttyVtAdapter::create(options);
+    QVERIFY(foreignAdapter != nullptr);
+    QVERIFY(!foreignAdapter->trackedTextRangeValid(moved));
+    QVERIFY(!foreignAdapter->resolveTextRange(moved).has_value());
+}
+
+void GhosttyVtAdapterTest::invalidatesTrackedTextRangesAfterCoveredTextMutation()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 20;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray line = QByteArrayLiteral("prefix /path suffix");
+    adapter->writeVt(line);
+    auto snapshot = adapter->snapshotLogicalLineAt(9, 0);
+    QVERIFY(snapshot.has_value());
+    const qsizetype begin = line.indexOf(QByteArrayLiteral("/path"));
+    auto tracked = adapter->trackTextRange(
+        *snapshot, begin, begin + qsizetype(5));
+    QVERIFY(tracked.has_value());
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+
+    // Changes outside the inclusive endpoint cells do not invalidate the
+    // lease. The worker will re-run whole-line regex precedence separately.
+    adapter->writeVt(QByteArrayLiteral("\033[1;1HQ"));
+    QVERIFY(adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(adapter->resolveTextRange(*tracked).has_value());
+
+    adapter->writeVt(QByteArrayLiteral("\033[1;9HX"));
+    QVERIFY(!adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
+
+    adapter->reset();
+    QVERIFY(!adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
 }
 
 void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()

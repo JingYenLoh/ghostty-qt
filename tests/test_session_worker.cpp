@@ -76,6 +76,9 @@ private Q_SLOTS:
     void routesTypedViewportAndSelectionOperations();
     void resetsTerminalStateAndWorkerCaches();
     void resolvesCorrelatedHyperlinkQueries();
+    void resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence();
+    void retainsRegexHoverAcrossViewportScrolling();
+    void revalidatesRegexActivationAcrossUnrelatedOutput();
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
@@ -125,6 +128,7 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
     qRegisterMetaType<QVector<QPoint>>();
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
@@ -183,9 +187,11 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
                  hyperlinkSpy.at(0).at(2)),
              TerminalHyperlinkState::Visible);
-    QCOMPARE(hyperlinkSpy.at(0).at(3).toByteArray(), uri);
-    QCOMPARE(hyperlinkSpy.at(0).at(4).toPoint(), candidates.constFirst());
-    QCOMPARE(qvariant_cast<QVector<QPoint>>(hyperlinkSpy.at(0).at(5)),
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.at(0).at(3)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(hyperlinkSpy.at(0).at(4).toByteArray(), uri);
+    QCOMPARE(hyperlinkSpy.at(0).at(5).toPoint(), candidates.constFirst());
+    QCOMPARE(qvariant_cast<QVector<QPoint>>(hyperlinkSpy.at(0).at(6)),
              candidates);
 
     // A tracked hover becomes hidden when its logical target leaves the
@@ -202,7 +208,9 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
                  hyperlinkSpy.at(2).at(2)),
              TerminalHyperlinkState::Visible);
-    QCOMPARE(hyperlinkSpy.at(2).at(3).toByteArray(), uri);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.at(2).at(3)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(hyperlinkSpy.at(2).at(4).toByteArray(), uri);
 
     worker.cancelHyperlinkQuery(41);
     const int cancelledCount = hyperlinkSpy.count();
@@ -220,7 +228,9 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QCOMPARE(invalidPosition.at(0).toULongLong(), quint64(42));
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(invalidPosition.at(2)),
              TerminalHyperlinkState::Invalid);
-    QVERIFY(invalidPosition.at(3).toByteArray().isEmpty());
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(invalidPosition.at(3)),
+             TerminalLinkKind::Osc8);
+    QVERIFY(invalidPosition.at(4).toByteArray().isEmpty());
 
     worker.queryHyperlink(43, restoredFrame.contentRevision - 1,
                           candidates.constFirst().x(),
@@ -268,7 +278,10 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
         301, candidates.constFirst().x(), candidates.constFirst().y());
     QCOMPARE(activationSpy.count(), 1);
     QCOMPARE(activationSpy.constFirst().at(0).toULongLong(), quint64(301));
-    QCOMPARE(activationSpy.constFirst().at(2).toByteArray(), uri);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(
+                 activationSpy.constFirst().at(2)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(activationSpy.constFirst().at(3).toByteArray(), uri);
 
     // A valid raw action follows the viewport back to the live screen even
     // when its decoded payload is empty. That viewport mutation advances the
@@ -292,6 +305,297 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
     QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
                  hyperlinkSpy.constLast().at(2)),
              TerminalHyperlinkState::Stale);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
+    qRegisterMetaType<QVector<QPoint>>();
+
+    SessionWorker worker;
+    worker.resizeTerminal(16, 8, 8, 16, 128, 128);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    const QByteArray regexUri = QByteArrayLiteral(
+        "https://example.test/wrapped");
+    const QByteArray oscUri = QByteArrayLiteral(
+        "https://example.test/osc-target");
+    QByteArray output = QStringLiteral("e\u0301界 ").toUtf8();
+    output += regexUri;
+    output += QByteArrayLiteral("\r\n\033]8;;");
+    output += oscUri;
+    output += QByteArrayLiteral(
+        "\033\\https://visible.test/regex-text\033]8;;\033\\");
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    options.hold = true;
+    options.linkUrl = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY(errorSpy.isEmpty());
+    TerminalFrame frame = accumulatedFrame(updateSpy);
+    QCOMPARE(frame.columns, 16);
+    QCOMPARE(frame.cells.at(4).text, QStringLiteral("h"));
+
+    // The regex byte offset follows a combining grapheme plus a wide cell,
+    // then the matched cells continue across the terminal's soft wrap.
+    worker.queryHyperlink(401, frame.contentRevision, 4, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
+    const QList<QVariant> wrapped = hyperlinkSpy.constLast();
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(wrapped.at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(wrapped.at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(wrapped.at(4).toByteArray(), regexUri);
+    const QVector<QPoint> wrappedCells =
+        qvariant_cast<QVector<QPoint>>(wrapped.at(6));
+    QVERIFY(wrappedCells.contains(QPoint(4, 0)));
+    QVERIFY(std::any_of(
+        wrappedCells.cbegin(), wrappedCells.cend(),
+        [](const QPoint &cell) { return cell.y() > 0; }));
+
+    // Both endpoints are logical anchors, so reflow changes the decoration
+    // coordinates without losing the exact matched bytes.
+    const int beforeReflow = hyperlinkSpy.count();
+    const quint64 beforeReflowRevision = frame.contentRevision;
+    worker.resizeTerminal(24, 8, 8, 16, 192, 128);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (frame = accumulatedFrame(updateSpy)).columns == 24
+            && frame.contentRevision > beforeReflowRevision,
+        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(hyperlinkSpy.count() > beforeReflow, 1000);
+    const QList<QVariant> reflowed = hyperlinkSpy.constLast();
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(reflowed.at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(reflowed.at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(reflowed.at(4).toByteArray(), regexUri);
+    QVERIFY(qvariant_cast<QVector<QPoint>>(reflowed.at(6)) != wrappedCells);
+    worker.cancelHyperlinkQuery(401);
+
+    // Disabling link-url suppresses regex candidates but leaves explicit OSC
+    // 8 destinations independently queryable. An OSC 8 label that itself
+    // looks like a URL must resolve to the explicit destination.
+    LaunchOptions disabled = options;
+    disabled.linkUrl = false;
+    worker.applyRuntimeOptions(disabled);
+    frame = accumulatedFrame(updateSpy);
+    const int beforeDisabledQuery = hyperlinkSpy.count();
+    worker.queryHyperlink(402, frame.contentRevision, 4, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        hyperlinkSpy.count(), beforeDisabledQuery + 1, 1000);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Invalid);
+
+    QPoint oscCell(-1, -1);
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            oscCell = QPoint(index % frame.columns, index / frame.columns);
+            break;
+        }
+    }
+    QVERIFY(oscCell.x() >= 0);
+    worker.queryHyperlink(
+        403, frame.contentRevision, oscCell.x(), oscCell.y());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        hyperlinkSpy.count(), beforeDisabledQuery + 2, 1000);
+    const QList<QVariant> explicitLink = hyperlinkSpy.constLast();
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(explicitLink.at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(explicitLink.at(3)),
+             TerminalLinkKind::Osc8);
+    QCOMPARE(explicitLink.at(4).toByteArray(), oscUri);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::retainsRegexHoverAcrossViewportScrolling()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
+    qRegisterMetaType<QVector<QPoint>>();
+
+    SessionWorker worker;
+    worker.resizeTerminal(40, 8, 8, 16, 320, 128);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    const QByteArray uri = QByteArrayLiteral(
+        "https://example.test/regex-scroll");
+    QByteArray output = uri + QByteArrayLiteral("\r\n");
+    for (int row = 0; row < 40; ++row) {
+        output += QByteArrayLiteral("regex-scroll-row-");
+        output += QByteArray::number(row).rightJustified(2, '0');
+        output += QByteArrayLiteral("\r\n");
+    }
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    options.hold = true;
+    options.linkUrl = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY(errorSpy.isEmpty());
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QString::fromUtf8(uri)), 1000);
+    TerminalFrame frame = accumulatedFrame(updateSpy);
+    QCOMPARE(frame.scrollOffset, 0);
+
+    constexpr quint64 requestId = 451;
+    worker.queryHyperlink(requestId, frame.contentRevision, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
+    const QList<QVariant> initial = hyperlinkSpy.constLast();
+    QCOMPARE(initial.at(0).toULongLong(), requestId);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(initial.at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(initial.at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(initial.at(4).toByteArray(), uri);
+
+    // The text-range lease, like an OSC 8 lease, survives leaving the
+    // viewport. No second query is issued: refreshes retain the original
+    // request ID and exact matched bytes while reporting Hidden then Visible.
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 2, 1000);
+    const QList<QVariant> hidden = hyperlinkSpy.constLast();
+    QCOMPARE(hidden.at(0).toULongLong(), requestId);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(hidden.at(2)),
+             TerminalHyperlinkState::Hidden);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(hidden.at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(hidden.at(4).toByteArray(), uri);
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 3, 1000);
+    const QList<QVariant> restored = hyperlinkSpy.constLast();
+    QCOMPARE(restored.at(0).toULongLong(), requestId);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(restored.at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(restored.at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(restored.at(4).toByteArray(), uri);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::revalidatesRegexActivationAcrossUnrelatedOutput()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
+
+    SessionWorker worker;
+    worker.resizeTerminal(40, 4, 8, 16, 320, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
+    QSignalSpy activationSpy(
+        &worker, &SessionWorker::hyperlinkActivationResolved);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    const QByteArray original = QByteArrayLiteral(
+        "https://example.test/live");
+    const QByteArray replacement = QByteArrayLiteral(
+        "https://example.test/gone");
+    const QString script = QStringLiteral(
+        "printf '\033[2J\033[Hhttps://example.test/live'; "
+        "sleep 0.5; "
+        "i=0; while [ $i -lt 80 ]; do "
+        "printf '\0337\033[4;1Htick-%02d\0338' \"$i\"; "
+        "i=$((i + 1)); sleep 0.02; done; "
+        "sleep 0.3; "
+        "printf '\0337\033[1;1Hhttps://example.test/gone\0338'");
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
+    };
+    options.hold = true;
+    options.linkUrl = true;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QString::fromUtf8(original)), 5000);
+    TerminalFrame frame = accumulatedFrame(updateSpy);
+    worker.queryHyperlink(501, frame.contentRevision, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.constLast().at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(hyperlinkSpy.constLast().at(4).toByteArray(), original);
+
+    const int stableResolutionCount = hyperlinkSpy.count();
+    const quint64 stableRevision = frame.contentRevision;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (frame = accumulatedFrame(updateSpy)).contentRevision
+            >= stableRevision + 3,
+        1500);
+    QTest::qWait(50);
+    QCOMPARE(hyperlinkSpy.count(), stableResolutionCount);
+
+    // A press owns a distinct text-range lease. Unrelated output can advance
+    // the broad frame revision, but replacing the covered bytes must make the
+    // eventual release fail closed rather than open the new text.
+    worker.prepareHyperlinkActivation(
+        502, frame.contentRevision, 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QString::fromUtf8(replacement)), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hyperlinkSpy.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   hyperlinkSpy.constLast().at(2))
+                == TerminalHyperlinkState::Invalid,
+        1000);
+    worker.commitHyperlinkActivation(502, 0, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(activationSpy.count(), 1, 1000);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(
+                 activationSpy.constLast().at(2)),
+             TerminalLinkKind::Regex);
+    QVERIFY(activationSpy.constLast().at(3).toByteArray().isEmpty());
+
+    frame = accumulatedFrame(updateSpy);
+    worker.queryHyperlink(503, frame.contentRevision, 0, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hyperlinkSpy.isEmpty()
+            && hyperlinkSpy.constLast().at(0).toULongLong() == quint64(503),
+        1000);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(qvariant_cast<TerminalLinkKind>(hyperlinkSpy.constLast().at(3)),
+             TerminalLinkKind::Regex);
+    QCOMPARE(hyperlinkSpy.constLast().at(4).toByteArray(), replacement);
+    QVERIFY(errorSpy.isEmpty());
 
     worker.shutdown();
 }

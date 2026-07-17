@@ -42,6 +42,14 @@ enum class TerminalHyperlinkState : quint8 {
     Visible,
 };
 
+// OSC 8 and regex-detected links share the same hover and activation
+// machinery, but opening a regex match may first resolve a relative path
+// against the terminal working directory.
+enum class TerminalLinkKind : quint8 {
+    Osc8,
+    Regex,
+};
+
 struct TerminalCell {
     QString text;
     QColor foreground;
@@ -245,6 +253,7 @@ struct TerminalMouseInput {
 Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalHyperlinkState)
+Q_DECLARE_METATYPE(TerminalLinkKind)
 Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

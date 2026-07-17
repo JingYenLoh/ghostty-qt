@@ -5,6 +5,7 @@
 
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontDatabase>
@@ -464,6 +465,21 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     }
                 }
                 if (applied) {
+                    if (hyperlinkQueryRejected_ && options_.linkUrl
+                        && (terminalUpdate.fullFrame
+                            || terminalUpdate.scrollbarChanged
+                            || std::any_of(
+                                terminalUpdate.dirtyRows.cbegin(),
+                                terminalUpdate.dirtyRows.cend(),
+                                [this](const TerminalRowUpdate &row) {
+                                    return row.row == hoverCell_.y();
+                                }))) {
+                        // A rejected regex query has no worker-owned lease to
+                        // refresh. Retry only when the stationary pointer's
+                        // row (or its viewport mapping) changed.
+                        hyperlinkQueryRejected_ = false;
+                        hyperlinkQueryCell_ = QPoint(-1, -1);
+                    }
                     // A worker-owned tracked reference decides whether the
                     // logical target actually moved or disappeared. Merely
                     // advancing the broad terminal revision must not flicker
@@ -585,6 +601,7 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     LaunchOptions updated = options_;
+    const bool linkUrlChanged = updated.linkUrl != options.linkUrl;
     updated.fontFamily = options.fontFamily;
     updated.fontSize = options.fontSize;
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
@@ -593,6 +610,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.scrollbackLimit = options.scrollbackLimit;
     updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
     updated.confirmCloseMode = options.confirmCloseMode;
+    updated.linkUrl = options.linkUrl;
     updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
@@ -649,7 +667,21 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     if (previousKeyTables != keybinds_.activeTableNames()) {
         Q_EMIT activeKeyTablesChanged();
     }
+    if (linkUrlChanged && !options.linkUrl) {
+        if (hyperlinkPressKind_ == TerminalLinkKind::Regex) {
+            cancelHyperlinkPress();
+        }
+        if (pendingActivationKind_ == TerminalLinkKind::Regex) {
+            cancelPendingHyperlinkActivation();
+        }
+    }
+    if (linkUrlChanged) {
+        clearHyperlinkHover();
+    }
     controller_->applyRuntimeOptions(options_);
+    if (linkUrlChanged) {
+        recomputeHyperlinkHover();
+    }
 
     if (metricsChanged) {
         updateMetrics();
@@ -1685,8 +1717,13 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
             && hyperlinkCellCandidate(hoverCell_, &contentRevision);
         if (hyperlinkPressArmed_) {
             hyperlinkPressCell_ = hoverCell_;
-            hyperlinkPressUri_ = hoveredHyperlinkCell_ == hoverCell_
-                ? hoveredHyperlinkUri_ : QByteArray{};
+            if (hoveredHyperlinkCell_ == hoverCell_) {
+                hyperlinkPressKind_ = hoveredLinkKind_;
+                hyperlinkPressUri_ = hoveredHyperlinkUri_;
+            } else {
+                hyperlinkPressKind_ = TerminalLinkKind::Osc8;
+                hyperlinkPressUri_.clear();
+            }
             hyperlinkPressRequestId_ =
                 controller_->prepareHyperlinkActivation(
                     hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
@@ -1809,6 +1846,7 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
         && hyperlinkPressRequestId_ != 0
         && hoverCell_.x() >= 0 && hoverCell_.y() >= 0;
     if (activateHyperlink) {
+        pendingActivationKind_ = hyperlinkPressKind_;
         pendingActivationUri_ = hyperlinkPressUri_;
         pendingActivationRequestId_ = hyperlinkPressRequestId_;
         controller_->commitHyperlinkActivation(
@@ -1824,6 +1862,7 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     hyperlinkPressArmed_ = false;
     hyperlinkPressDragged_ = false;
     hyperlinkPressCell_ = QPoint(-1, -1);
+    hyperlinkPressKind_ = TerminalLinkKind::Osc8;
     hyperlinkPressUri_.clear();
     hyperlinkPressRequestId_ = 0;
     event->accept();
@@ -2054,7 +2093,7 @@ void TerminalPane::refreshHyperlinkHover()
     }
 
     quint64 contentRevision = 0;
-    bool targetHasHyperlink = false;
+    bool targetMayHaveLink = false;
     {
         QMutexLocker locker(&renderMutex_);
         if (!hasFrame_ || hoverCell_.x() >= frame_.columns
@@ -2064,12 +2103,12 @@ void TerminalPane::refreshHyperlinkHover()
         contentRevision = frame_.contentRevision;
         const int targetIndex = hoverCell_.y() * frame_.columns
             + hoverCell_.x();
-        targetHasHyperlink = targetIndex >= 0
+        targetMayHaveLink = options_.linkUrl || (targetIndex >= 0
             && targetIndex < frame_.cells.size()
-            && frame_.cells.at(targetIndex).hasHyperlink;
+            && frame_.cells.at(targetIndex).hasHyperlink);
     }
 
-    if (!targetHasHyperlink) {
+    if (!targetMayHaveLink) {
         clearHyperlinkHover();
         return;
     }
@@ -2083,6 +2122,7 @@ void TerminalPane::refreshHyperlinkHover()
 
 void TerminalPane::clearHyperlinkDecoration()
 {
+    hoveredLinkKind_ = TerminalLinkKind::Osc8;
     hoveredHyperlinkUri_.clear();
     hoveredHyperlinkCell_ = QPoint(-1, -1);
 
@@ -2116,6 +2156,7 @@ void TerminalPane::cancelHyperlinkPress()
     hyperlinkPressArmed_ = false;
     hyperlinkPressDragged_ = false;
     hyperlinkPressCell_ = QPoint(-1, -1);
+    hyperlinkPressKind_ = TerminalLinkKind::Osc8;
     hyperlinkPressUri_.clear();
     hyperlinkPressRequestId_ = 0;
 }
@@ -2125,6 +2166,7 @@ void TerminalPane::cancelPendingHyperlinkActivation()
     controller_->cancelHyperlinkActivation(
         pendingActivationRequestId_);
     pendingActivationRequestId_ = 0;
+    pendingActivationKind_ = TerminalLinkKind::Osc8;
     pendingActivationUri_.clear();
 }
 
@@ -2137,8 +2179,14 @@ bool TerminalPane::hyperlinkCellCandidate(
         return false;
     }
     const int index = cell.y() * frame_.columns + cell.x();
-    if (index < 0 || index >= frame_.cells.size()
-        || !frame_.cells.at(index).hasHyperlink) {
+    const bool osc8Candidate = index >= 0 && index < frame_.cells.size()
+        && frame_.cells.at(index).hasHyperlink;
+    const bool resolvedRegexCandidate = options_.linkUrl
+        && hoveredLinkKind_ == TerminalLinkKind::Regex
+        && hoveredHyperlinkColumns_ == frame_.columns
+        && hoveredHyperlinkRows_ == frame_.rows
+        && hoveredHyperlinkCellIndexes_.contains(index);
+    if (!osc8Candidate && !resolvedRegexCandidate) {
         return false;
     }
     if (contentRevision != nullptr) {
@@ -2149,7 +2197,7 @@ bool TerminalPane::hyperlinkCellCandidate(
 
 void TerminalPane::handleHyperlinkResult(
     quint64 contentRevision, TerminalHyperlinkState state,
-    const QByteArray &uri, const QPoint &targetCell,
+    TerminalLinkKind kind, const QByteArray &uri, const QPoint &targetCell,
     const QVector<QPoint> &matchingCells)
 {
     if (!hyperlinkQueryPending_ && !hyperlinkLeaseActive_) {
@@ -2224,6 +2272,7 @@ void TerminalPane::handleHyperlinkResult(
 
     hyperlinkLeaseActive_ = true;
     hyperlinkQueryRejected_ = false;
+    hoveredLinkKind_ = kind;
     hoveredHyperlinkUri_ = uri;
     hoveredHyperlinkCell_ = hoverCell_;
     {
@@ -2236,10 +2285,24 @@ void TerminalPane::handleHyperlinkResult(
     update();
 }
 
-QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri) const
+QUrl TerminalPane::hyperlinkUrl(
+    const QByteArray &uri, TerminalLinkKind kind) const
 {
     if (uri.isEmpty() || uri.contains('\0')) {
         return {};
+    }
+    if (kind == TerminalLinkKind::Regex) {
+        const QString value = QString::fromUtf8(uri);
+        if (!QDir::isAbsolutePath(value)) {
+            const QString directory = controller_->currentDirectory();
+            if (!directory.isEmpty()) {
+                const QString resolved = QDir::cleanPath(
+                    QDir(directory).absoluteFilePath(value));
+                if (QFileInfo::exists(resolved)) {
+                    return QUrl::fromLocalFile(resolved);
+                }
+            }
+        }
     }
     const QUrl url = uri.startsWith('/')
         ? QUrl::fromLocalFile(QString::fromUtf8(uri))
@@ -2248,17 +2311,20 @@ QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri) const
 }
 
 void TerminalPane::handleHyperlinkActivation(
-    quint64 contentRevision, const QByteArray &uri)
+    quint64 contentRevision, TerminalLinkKind kind, const QByteArray &uri)
 {
     static_cast<void>(contentRevision);
     const quint64 requestId =
         std::exchange(pendingActivationRequestId_, 0);
+    const TerminalLinkKind expectedKind = std::exchange(
+        pendingActivationKind_, TerminalLinkKind::Osc8);
     const QByteArray expectedUri = std::exchange(pendingActivationUri_, {});
     if (requestId == 0 || uri.isEmpty()
+        || kind != expectedKind
         || (!expectedUri.isEmpty() && uri != expectedUri) || !urlOpener_) {
         return;
     }
-    const QUrl url = hyperlinkUrl(uri);
+    const QUrl url = hyperlinkUrl(uri, kind);
     if (url.isValid() && !url.isEmpty()) {
         static_cast<void>(urlOpener_(url));
     }

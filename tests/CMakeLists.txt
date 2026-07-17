@@ -32,6 +32,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-vt-static
     util
@@ -66,6 +67,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Gui
     Qt6::Quick
     Qt6::Test
+    ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-vt-static
     util
@@ -119,6 +121,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Quick
     Qt6::Test
     PkgConfig::XKBCommon
+    ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-vt-static
     util
@@ -148,6 +151,31 @@ target_link_libraries(test-ghostty-vt-adapter PRIVATE
 )
 add_test(NAME ghostty-vt-adapter COMMAND test-ghostty-vt-adapter)
 set_tests_properties(ghostty-vt-adapter PROPERTIES TIMEOUT 20)
+
+qt_add_executable(test-ghostty-link-matcher
+    test_ghostty_link_matcher.cpp
+)
+target_link_libraries(test-ghostty-link-matcher PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-link-matcher
+)
+add_test(NAME ghostty-link-matcher COMMAND test-ghostty-link-matcher)
+set_tests_properties(ghostty-link-matcher PROPERTIES TIMEOUT 20)
+
+add_test(NAME ghostty-link-matcher-upstream-corpus
+    COMMAND "${CMAKE_COMMAND}"
+        "-DZIG_EXECUTABLE=${GHOSTTY_QT_ZIG_EXECUTABLE}"
+        "-DSOURCE_DIR=${GHOSTTY_QT_LINK_MATCHER_SOURCE_DIR}"
+        "-DURL_SOURCE=${GHOSTTY_SOURCE_DIR}/src/config/url.zig"
+        "-DCACHE_DIR=${GHOSTTY_QT_LINK_MATCHER_CACHE_DIR}"
+        "-DGLOBAL_CACHE_DIR=${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
+        "-DLOCK_FILE=${GHOSTTY_QT_LINK_MATCHER_REVISION_DIR}/build.lock"
+        "-DOPTIMIZE=${_GHOSTTY_QT_LINK_MATCHER_OPTIMIZE}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/TestGhosttyLinkMatcher.cmake"
+)
+set_tests_properties(ghostty-link-matcher-upstream-corpus PROPERTIES
+    TIMEOUT 60)
 
 qt_add_executable(test-workspace-foundation
     test_workspace_foundation.cpp

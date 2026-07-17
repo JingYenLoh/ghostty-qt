@@ -101,9 +101,11 @@ Q_SIGNALS:
     void bell();
     void hyperlinkResolved(quint64 contentRevision,
                            TerminalHyperlinkState state,
+                           TerminalLinkKind kind,
                            const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
     void hyperlinkActivationResolved(quint64 contentRevision,
+                                     TerminalLinkKind kind,
                                      const QByteArray &uri);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,

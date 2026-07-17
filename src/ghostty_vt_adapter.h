@@ -21,6 +21,60 @@ class GhosttyVtAdapter final {
     class Impl;
 
 public:
+    // A short-lived, move-only snapshot of one unwrapped logical terminal
+    // line. Byte offsets use the exact UTF-8 byte stream consumed by Ghostty's
+    // regex matcher; targetByteOffset identifies the first byte mapped to the
+    // viewport cell used to create the snapshot, or -1 when that cell emits no
+    // text.
+    class LogicalLineSnapshot final {
+    public:
+        LogicalLineSnapshot(LogicalLineSnapshot &&) noexcept;
+        LogicalLineSnapshot &operator=(LogicalLineSnapshot &&) noexcept;
+        ~LogicalLineSnapshot();
+
+        LogicalLineSnapshot(const LogicalLineSnapshot &) = delete;
+        LogicalLineSnapshot &operator=(const LogicalLineSnapshot &) = delete;
+
+        const QByteArray &text() const;
+        qsizetype targetByteOffset() const;
+        bool byteRangeContainsTarget(qsizetype beginByte,
+                                     qsizetype endByte) const;
+
+    private:
+        class Impl;
+
+        friend class GhosttyVtAdapter;
+        friend class GhosttyVtAdapter::Impl;
+
+        explicit LogicalLineSnapshot(std::unique_ptr<Impl> impl);
+
+        std::unique_ptr<Impl> impl_;
+    };
+
+    // An owned regex-text range. Both inclusive cell endpoints and the queried
+    // target cell are tracked so the range and pointer anchor follow
+    // scrollback movement and primary-screen reflow without exposing a
+    // libghostty handle.
+    class TrackedTextRange final {
+    public:
+        TrackedTextRange(TrackedTextRange &&) noexcept;
+        TrackedTextRange &operator=(TrackedTextRange &&) noexcept;
+        ~TrackedTextRange();
+
+        TrackedTextRange(const TrackedTextRange &) = delete;
+        TrackedTextRange &operator=(const TrackedTextRange &) = delete;
+
+    private:
+        class Impl;
+
+        friend class GhosttyVtAdapter;
+        friend class GhosttyVtAdapter::Impl;
+
+        explicit TrackedTextRange(std::unique_ptr<Impl> impl);
+
+        std::unique_ptr<Impl> impl_;
+    };
+
     // An owned logical OSC 8 target. The underlying libghostty tracked grid
     // reference remains hidden in the implementation and must stay on the
     // adapter's worker thread. Moving transfers ownership; copying would create
@@ -95,6 +149,18 @@ public:
         QVector<QPoint> cells;
     };
 
+    struct TextRangeMatch {
+        // The original regex match, not necessarily the complete grapheme
+        // content of its inclusive endpoint cells.
+        QByteArray text;
+        QPoint targetCell{-1, -1};
+        QVector<QPoint> cells;
+        // Visible viewport rows belonging to the target's complete semantic,
+        // unwrapped logical line. A worker can use this sparse set to decide
+        // whether a dirty row requires re-running regex precedence.
+        QVector<int> logicalLineRows;
+    };
+
     static std::unique_ptr<GhosttyVtAdapter> create(
         const Options &options, Callbacks callbacks = {});
     static bool isPasteSafe(QByteArrayView text);
@@ -143,6 +209,29 @@ public:
     std::optional<HyperlinkMatch> resolveHyperlink(
         const TrackedHyperlink &target,
         const QVector<QPoint> &candidateCells) const;
+
+    // Snapshot the complete logical line under a viewport cell. Soft wraps
+    // are removed and semantic prompt-state transitions remain boundaries,
+    // matching Ghostty's configured-link behavior.
+    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(
+        int column, int row) const;
+    // Convert a non-empty half-open UTF-8 byte match into three owned logical
+    // cell anchors: both inclusive endpoints and the queried target. The
+    // snapshot must still belong to this adapter and no terminal mutation may
+    // occur between snapshotting and this call.
+    std::optional<TrackedTextRange> trackTextRange(
+        const LogicalLineSnapshot &line,
+        qsizetype beginByte, qsizetype endByte) const;
+    // Whether both endpoints and the queried target still exist and the cell
+    // range retains the text it covered when it was created. An inactive
+    // owning screen is valid but cannot be resolved for viewport decoration.
+    bool trackedTextRangeValid(const TrackedTextRange &range) const;
+    // Resolve the currently visible portion of a tracked range. A valid range
+    // that is wholly outside the viewport or on the inactive screen returns
+    // no match; callers can distinguish that from invalidation with the
+    // validity query above.
+    std::optional<TextRangeMatch> resolveTextRange(
+        const TrackedTextRange &range) const;
 
     std::uint64_t compressionActivity() const;
     bool compressScrollback();

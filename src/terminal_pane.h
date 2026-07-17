@@ -142,12 +142,14 @@ private:
                                 quint64 *contentRevision = nullptr) const;
     void handleHyperlinkResult(quint64 contentRevision,
                                TerminalHyperlinkState state,
+                               TerminalLinkKind kind,
                                const QByteArray &uri,
                                const QPoint &targetCell,
                                const QVector<QPoint> &matchingCells);
     void handleHyperlinkActivation(quint64 contentRevision,
+                                   TerminalLinkKind kind,
                                    const QByteArray &uri);
-    QUrl hyperlinkUrl(const QByteArray &uri) const;
+    QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -184,6 +186,7 @@ private:
     bool hyperlinkQueryPending_ = false;
     bool hyperlinkLeaseActive_ = false;
     bool hyperlinkQueryRejected_ = false;
+    TerminalLinkKind hoveredLinkKind_ = TerminalLinkKind::Osc8;
     QByteArray hoveredHyperlinkUri_;
     QPoint hoveredHyperlinkCell_{-1, -1};
     QSet<int> hoveredHyperlinkCellIndexes_;
@@ -193,9 +196,11 @@ private:
     bool hyperlinkPressDragged_ = false;
     QPointF hyperlinkPressPosition_;
     QPoint hyperlinkPressCell_{-1, -1};
+    TerminalLinkKind hyperlinkPressKind_ = TerminalLinkKind::Osc8;
     QByteArray hyperlinkPressUri_;
     quint64 hyperlinkPressRequestId_ = 0;
     QByteArray pendingActivationUri_;
+    TerminalLinkKind pendingActivationKind_ = TerminalLinkKind::Osc8;
     quint64 pendingActivationRequestId_ = 0;
     QSet<Qt::MouseButton> mouseReportedPresses_;
     std::function<bool(const QUrl &)> urlOpener_;
