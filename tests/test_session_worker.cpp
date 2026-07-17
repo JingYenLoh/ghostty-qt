@@ -124,10 +124,13 @@ void SessionWorkerTest::runsCommandThroughPty()
 void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
 {
     qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
     qRegisterMetaType<QVector<QPoint>>();
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy hyperlinkSpy(&worker, &SessionWorker::hyperlinkResolved);
+    QSignalSpy activationSpy(
+        &worker, &SessionWorker::hyperlinkActivationResolved);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -173,44 +176,122 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
 
     worker.queryHyperlink(41, frame.contentRevision,
                           candidates.constFirst().x(),
-                          candidates.constFirst().y(), candidates);
-    QCOMPARE(hyperlinkSpy.count(), 1);
+                          candidates.constFirst().y());
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 1, 1000);
     QCOMPARE(hyperlinkSpy.at(0).at(0).toULongLong(), quint64(41));
     QCOMPARE(hyperlinkSpy.at(0).at(1).toULongLong(), frame.contentRevision);
-    QCOMPARE(hyperlinkSpy.at(0).at(2).toByteArray(), uri);
-    QCOMPARE(qvariant_cast<QVector<QPoint>>(hyperlinkSpy.at(0).at(3)),
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.at(0).at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(hyperlinkSpy.at(0).at(3).toByteArray(), uri);
+    QCOMPARE(hyperlinkSpy.at(0).at(4).toPoint(), candidates.constFirst());
+    QCOMPARE(qvariant_cast<QVector<QPoint>>(hyperlinkSpy.at(0).at(5)),
              candidates);
 
-    worker.queryHyperlink(42, frame.contentRevision, 11, 0, candidates);
-    QCOMPARE(hyperlinkSpy.count(), 2);
-    QCOMPARE(hyperlinkSpy.at(1).at(0).toULongLong(), quint64(42));
-    QVERIFY(hyperlinkSpy.at(1).at(2).toByteArray().isEmpty());
+    // A tracked hover becomes hidden when its logical target leaves the
+    // viewport, then reappears without a new pointer query.
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 2, 1000);
+    QCOMPARE(hyperlinkSpy.at(1).at(0).toULongLong(), quint64(41));
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.at(1).at(2)),
+             TerminalHyperlinkState::Hidden);
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), 3, 1000);
+    QCOMPARE(hyperlinkSpy.at(2).at(0).toULongLong(), quint64(41));
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.at(2).at(2)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(hyperlinkSpy.at(2).at(3).toByteArray(), uri);
 
-    worker.queryHyperlink(43, frame.contentRevision - 1,
+    worker.cancelHyperlinkQuery(41);
+    const int cancelledCount = hyperlinkSpy.count();
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
+    QTest::qWait(30);
+    QCOMPARE(hyperlinkSpy.count(), cancelledCount);
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    const TerminalFrame restoredFrame = accumulatedFrame(updateSpy);
+
+    worker.queryHyperlink(42, restoredFrame.contentRevision, 11, 0);
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), cancelledCount + 1, 1000);
+    const QList<QVariant> invalidPosition = hyperlinkSpy.constLast();
+    QCOMPARE(invalidPosition.at(0).toULongLong(), quint64(42));
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(invalidPosition.at(2)),
+             TerminalHyperlinkState::Invalid);
+    QVERIFY(invalidPosition.at(3).toByteArray().isEmpty());
+
+    worker.queryHyperlink(43, restoredFrame.contentRevision - 1,
                           candidates.constFirst().x(),
-                          candidates.constFirst().y(), candidates);
-    QCOMPARE(hyperlinkSpy.count(), 3);
-    QCOMPARE(hyperlinkSpy.at(2).at(0).toULongLong(), quint64(43));
-    QCOMPARE(hyperlinkSpy.at(2).at(1).toULongLong(), frame.contentRevision);
-    QVERIFY(hyperlinkSpy.at(2).at(2).toByteArray().isEmpty());
+                          candidates.constFirst().y());
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), cancelledCount + 2, 1000);
+    const QList<QVariant> staleQuery = hyperlinkSpy.constLast();
+    QCOMPARE(staleQuery.at(0).toULongLong(), quint64(43));
+    QCOMPARE(staleQuery.at(1).toULongLong(), restoredFrame.contentRevision);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(staleQuery.at(2)),
+             TerminalHyperlinkState::Stale);
+
+    // Many unresolved pointer events share one zero-delay dispatch. Only the
+    // newest request reaches libghostty and produces a reply.
+    const int beforeFlood = hyperlinkSpy.count();
+    for (quint64 requestId = 100; requestId <= 200; ++requestId) {
+        QMetaObject::invokeMethod(
+            &worker,
+            [&worker, requestId, revision = restoredFrame.contentRevision,
+             cell = candidates.constFirst()] {
+                worker.queryHyperlink(
+                    requestId, revision, cell.x(), cell.y());
+            },
+            Qt::QueuedConnection);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(hyperlinkSpy.count(), beforeFlood + 1, 1000);
+    QCOMPARE(hyperlinkSpy.constLast().at(0).toULongLong(), quint64(200));
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Visible);
+
+    worker.queryHyperlink(
+        201, restoredFrame.contentRevision,
+        candidates.constFirst().x(), candidates.constFirst().y());
+    worker.cancelHyperlinkQuery(201);
+    QTest::qWait(30);
+    QCOMPARE(hyperlinkSpy.count(), beforeFlood + 1);
+
+    // Press validation is a separate tracked lane, so hover replacement and
+    // cancellation cannot consume or retarget an activation.
+    worker.prepareHyperlinkActivation(
+        301, restoredFrame.contentRevision,
+        candidates.constFirst().x(), candidates.constFirst().y());
+    worker.queryHyperlink(302, restoredFrame.contentRevision, 11, 0);
+    worker.commitHyperlinkActivation(
+        301, candidates.constFirst().x(), candidates.constFirst().y());
+    QCOMPARE(activationSpy.count(), 1);
+    QCOMPARE(activationSpy.constFirst().at(0).toULongLong(), quint64(301));
+    QCOMPARE(activationSpy.constFirst().at(2).toByteArray(), uri);
 
     // A valid raw action follows the viewport back to the live screen even
     // when its decoded payload is empty. That viewport mutation advances the
     // revision, so a query using the old scrollback coordinates is rejected.
     worker.sendRawText(QByteArray{});
     QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).contentRevision > frame.contentRevision,
+        accumulatedFrame(updateSpy).contentRevision
+            > restoredFrame.contentRevision,
         1000);
     const TerminalFrame liveFrame = accumulatedFrame(updateSpy);
     QVERIFY(liveFrame.scrollOffset > 0);
-    worker.queryHyperlink(44, frame.contentRevision,
+    worker.queryHyperlink(44, restoredFrame.contentRevision,
                           candidates.constFirst().x(),
-                          candidates.constFirst().y(), candidates);
-    QCOMPARE(hyperlinkSpy.count(), 4);
-    QCOMPARE(hyperlinkSpy.at(3).at(0).toULongLong(), quint64(44));
-    QCOMPARE(hyperlinkSpy.at(3).at(1).toULongLong(),
+                          candidates.constFirst().y());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !hyperlinkSpy.isEmpty()
+            && hyperlinkSpy.constLast().at(0).toULongLong() == quint64(44),
+        1000);
+    QCOMPARE(hyperlinkSpy.constLast().at(1).toULongLong(),
              liveFrame.contentRevision);
-    QVERIFY(hyperlinkSpy.at(3).at(2).toByteArray().isEmpty());
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 hyperlinkSpy.constLast().at(2)),
+             TerminalHyperlinkState::Stale);
 
     worker.shutdown();
 }

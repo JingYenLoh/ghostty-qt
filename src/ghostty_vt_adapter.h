@@ -18,7 +18,34 @@
 // surface consists only of project and Qt value types so that an upstream C
 // API change does not leak into the application or its threading model.
 class GhosttyVtAdapter final {
+    class Impl;
+
 public:
+    // An owned logical OSC 8 target. The underlying libghostty tracked grid
+    // reference remains hidden in the implementation and must stay on the
+    // adapter's worker thread. Moving transfers ownership; copying would create
+    // ambiguous ownership of the tracked reference and is intentionally
+    // disabled.
+    class TrackedHyperlink final {
+    public:
+        TrackedHyperlink(TrackedHyperlink &&) noexcept;
+        TrackedHyperlink &operator=(TrackedHyperlink &&) noexcept;
+        ~TrackedHyperlink();
+
+        TrackedHyperlink(const TrackedHyperlink &) = delete;
+        TrackedHyperlink &operator=(const TrackedHyperlink &) = delete;
+
+    private:
+        class Impl;
+
+        friend class GhosttyVtAdapter;
+        friend class GhosttyVtAdapter::Impl;
+
+        explicit TrackedHyperlink(std::unique_ptr<Impl> impl);
+
+        std::unique_ptr<Impl> impl_;
+    };
+
     struct Geometry {
         int columns = 80;
         int rows = 24;
@@ -62,6 +89,9 @@ public:
         // OSC 8 destinations are byte strings. Keep the original bytes for
         // exact clipboard output and defer QUrl conversion to the GUI thread.
         QByteArray uri;
+        // Current viewport coordinate of the logical target. Unlike the
+        // original pointer coordinate, this follows scrolling and reflow.
+        QPoint targetCell{-1, -1};
         QVector<QPoint> cells;
     };
 
@@ -100,6 +130,19 @@ public:
     // expose OSC 8 identity, so equal-URI links cannot be distinguished here.
     std::optional<HyperlinkMatch> hyperlinkAt(
         int column, int row, const QVector<QPoint> &candidateCells) const;
+    // Create a sparse, owned logical anchor for an OSC 8 cell. The target can
+    // move through scroll, pruning, and reflow without exposing a Ghostty
+    // handle outside this adapter.
+    std::optional<TrackedHyperlink> trackHyperlinkAt(int column, int row) const;
+    // Whether the logical target still exists and retains its original URI.
+    // This deliberately remains true while the target is off-screen or its
+    // owning primary/alternate screen is inactive.
+    bool trackedHyperlinkValid(const TrackedHyperlink &target) const;
+    // Resolve a tracked target only when its owning screen is active and its
+    // logical cell is visible in the current viewport.
+    std::optional<HyperlinkMatch> resolveHyperlink(
+        const TrackedHyperlink &target,
+        const QVector<QPoint> &candidateCells) const;
 
     std::uint64_t compressionActivity() const;
     bool compressScrollback();
@@ -107,8 +150,6 @@ public:
     DeferredEffects takeDeferredEffects();
 
 private:
-    class Impl;
-
     explicit GhosttyVtAdapter(std::unique_ptr<Impl> impl);
 
     std::unique_ptr<Impl> impl_;

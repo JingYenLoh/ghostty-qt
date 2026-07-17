@@ -29,6 +29,19 @@ enum class TerminalUnderlineStyle : quint8 {
     Dashed,
 };
 
+// Worker-owned hyperlink anchors can remain meaningful while their cell is
+// temporarily outside the viewport or belongs to the inactive screen. Keep
+// that distinct from permanent invalidation so a hover can reappear without
+// rescanning when the tracked cell becomes visible again.
+enum class TerminalHyperlinkState : quint8 {
+    Invalid,
+    // The viewport coordinate came from an older frame. This is retryable
+    // once the UI installs the worker revision returned with the result.
+    Stale,
+    Hidden,
+    Visible,
+};
+
 struct TerminalCell {
     QString text;
     QColor foreground;
@@ -75,8 +88,9 @@ struct TerminalFrame {
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
     // Monotonic worker-owned revision for terminal content and viewport
-    // mutations. Hyperlink replies are accepted only against the exact frame
-    // revision that supplied their viewport coordinates.
+    // mutations. New hyperlink anchors require the exact frame revision that
+    // supplied their initial viewport coordinate; accepted anchors then follow
+    // the logical cell independently through later revisions.
     quint64 contentRevision = 0;
 };
 
@@ -230,6 +244,7 @@ struct TerminalMouseInput {
 
 Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
+Q_DECLARE_METATYPE(TerminalHyperlinkState)
 Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

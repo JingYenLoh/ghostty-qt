@@ -13,6 +13,9 @@
 
 namespace {
 
+struct AdapterOwnerToken final {
+};
+
 QColor toQColor(GhosttyColorRgb color)
 {
     return QColor::fromRgb(color.r, color.g, color.b);
@@ -339,11 +342,37 @@ GhosttyMouseButton mapQtMouseButton(int button)
 
 } // namespace
 
+class GhosttyVtAdapter::TrackedHyperlink::Impl final {
+public:
+    Impl(std::shared_ptr<const AdapterOwnerToken> owner,
+         GhosttyTerminalScreen screen)
+        : owner_(std::move(owner))
+        , screen_(screen)
+    {
+    }
+
+    ~Impl()
+    {
+        ghostty_tracked_grid_ref_free(reference_);
+    }
+
+    Impl(const Impl &) = delete;
+    Impl &operator=(const Impl &) = delete;
+    Impl(Impl &&) = delete;
+    Impl &operator=(Impl &&) = delete;
+
+    std::shared_ptr<const AdapterOwnerToken> owner_;
+    GhosttyTrackedGridRef reference_ = nullptr;
+    GhosttyTerminalScreen screen_ = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+    QByteArray uri_;
+};
+
 class GhosttyVtAdapter::Impl final {
 public:
     Impl(Geometry geometry, Callbacks callbacks)
         : geometry_(geometry)
         , callbacks_(std::move(callbacks))
+        , ownerToken_(std::make_shared<AdapterOwnerToken>())
     {
     }
 
@@ -839,13 +868,20 @@ public:
         return ghostty_terminal_grid_ref(terminal_, point, out) == GHOSTTY_SUCCESS;
     }
 
-    std::optional<QByteArray> hyperlinkUriAt(int column, int row) const
+    std::optional<GhosttyTerminalScreen> activeScreen() const
     {
-        GhosttyGridRef reference{};
-        if (!pointToGridRefExact(column, row, &reference)) {
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        if (ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen)
+            != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
+        return screen;
+    }
 
+    std::optional<QByteArray> hyperlinkUri(
+        const GhosttyGridRef &reference) const
+    {
         size_t required = 0;
         GhosttyResult result = ghostty_grid_ref_hyperlink_uri(
             &reference, nullptr, 0, &required);
@@ -871,6 +907,133 @@ public:
         return uri;
     }
 
+    std::optional<QByteArray> hyperlinkUriAt(int column, int row) const
+    {
+        GhosttyGridRef reference{};
+        if (!pointToGridRefExact(column, row, &reference)) {
+            return std::nullopt;
+        }
+        return hyperlinkUri(reference);
+    }
+
+    std::optional<TrackedHyperlink> trackHyperlinkAt(int column, int row) const
+    {
+        if (column < 0 || column >= geometry_.columns
+            || row < 0 || row >= geometry_.rows) {
+            return std::nullopt;
+        }
+
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value()) {
+            return std::nullopt;
+        }
+
+        auto tracked = std::make_unique<TrackedHyperlink::Impl>(
+            ownerToken_, *screen);
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+        point.value.coordinate.x = static_cast<uint16_t>(column);
+        point.value.coordinate.y = static_cast<uint32_t>(row);
+        if (ghostty_terminal_grid_ref_track(
+                terminal_, point, &tracked->reference_)
+                != GHOSTTY_SUCCESS
+            || tracked->reference_ == nullptr) {
+            return std::nullopt;
+        }
+
+        GhosttyGridRef snapshot{};
+        snapshot.size = sizeof(snapshot);
+        if (ghostty_tracked_grid_ref_snapshot(
+                tracked->reference_, &snapshot)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+        std::optional<QByteArray> uri = hyperlinkUri(snapshot);
+        if (!uri.has_value() || uri->isEmpty()) {
+            return std::nullopt;
+        }
+        tracked->uri_ = std::move(*uri);
+        return TrackedHyperlink(std::move(tracked));
+    }
+
+    std::optional<QByteArray> currentTrackedHyperlinkUri(
+        const TrackedHyperlink::Impl &target) const
+    {
+        if (target.reference_ == nullptr
+            || target.owner_.get() != ownerToken_.get()) {
+            return std::nullopt;
+        }
+
+        GhosttyGridRef snapshot{};
+        snapshot.size = sizeof(snapshot);
+        if (ghostty_tracked_grid_ref_snapshot(
+                target.reference_, &snapshot)
+            != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        std::optional<QByteArray> uri = hyperlinkUri(snapshot);
+        if (!uri.has_value() || uri->isEmpty()
+            || *uri != target.uri_) {
+            return std::nullopt;
+        }
+        return uri;
+    }
+
+    bool trackedHyperlinkValid(const TrackedHyperlink::Impl &target) const
+    {
+        return currentTrackedHyperlinkUri(target).has_value();
+    }
+
+    std::optional<HyperlinkMatch> resolveHyperlink(
+        const TrackedHyperlink::Impl &target,
+        const QVector<QPoint> &candidateCells) const
+    {
+        if (target.reference_ == nullptr
+            || target.owner_.get() != ownerToken_.get()) {
+            return std::nullopt;
+        }
+
+        const std::optional<GhosttyTerminalScreen> screen = activeScreen();
+        if (!screen.has_value() || *screen != target.screen_) {
+            return std::nullopt;
+        }
+
+        GhosttyPointCoordinate coordinate{};
+        if (ghostty_tracked_grid_ref_point(
+                target.reference_, GHOSTTY_POINT_TAG_VIEWPORT, &coordinate)
+            != GHOSTTY_SUCCESS
+            || static_cast<int>(coordinate.x) >= geometry_.columns
+            || coordinate.y > static_cast<uint32_t>(INT_MAX)
+            || static_cast<int>(coordinate.y) >= geometry_.rows) {
+            return std::nullopt;
+        }
+
+        const std::optional<QByteArray> uri =
+            currentTrackedHyperlinkUri(target);
+        if (!uri.has_value()) {
+            return std::nullopt;
+        }
+
+        const QPoint targetCell(static_cast<int>(coordinate.x),
+                                static_cast<int>(coordinate.y));
+        HyperlinkMatch match;
+        match.uri = *uri;
+        match.targetCell = targetCell;
+        match.cells.reserve(candidateCells.size());
+        for (const QPoint &candidate : candidateCells) {
+            const std::optional<QByteArray> candidateUri = hyperlinkUriAt(
+                candidate.x(), candidate.y());
+            if (candidateUri.has_value() && *candidateUri == match.uri) {
+                match.cells.append(candidate);
+            }
+        }
+        if (!match.cells.contains(targetCell)) {
+            match.cells.append(targetCell);
+        }
+        return match;
+    }
+
     std::optional<HyperlinkMatch> hyperlinkAt(
         int column, int row, const QVector<QPoint> &candidateCells) const
     {
@@ -881,6 +1044,7 @@ public:
 
         HyperlinkMatch match;
         match.uri = *uri;
+        match.targetCell = QPoint(column, row);
         match.cells.reserve(candidateCells.size());
         for (const QPoint &candidate : candidateCells) {
             const std::optional<QByteArray> candidateUri = hyperlinkUriAt(
@@ -1659,6 +1823,7 @@ private:
 
     Geometry geometry_;
     Callbacks callbacks_;
+    std::shared_ptr<const AdapterOwnerToken> ownerToken_;
     GhosttyTerminal terminal_ = nullptr;
     GhosttyRenderState renderState_ = nullptr;
     GhosttyRenderStateRowIterator rowIterator_ = nullptr;
@@ -1679,6 +1844,21 @@ private:
     uint32_t mouseModeFingerprint_ = 0;
     bool mouseEncoderConfigured_ = false;
 };
+
+GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(
+    std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl))
+{
+}
+
+GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(
+    TrackedHyperlink &&) noexcept = default;
+
+GhosttyVtAdapter::TrackedHyperlink &
+GhosttyVtAdapter::TrackedHyperlink::operator=(TrackedHyperlink &&) noexcept =
+    default;
+
+GhosttyVtAdapter::TrackedHyperlink::~TrackedHyperlink() = default;
 
 std::unique_ptr<GhosttyVtAdapter> GhosttyVtAdapter::create(
     const Options &options, Callbacks callbacks)
@@ -1797,6 +1977,30 @@ GhosttyVtAdapter::hyperlinkAt(
     int column, int row, const QVector<QPoint> &candidateCells) const
 {
     return impl_->hyperlinkAt(column, row, candidateCells);
+}
+
+std::optional<GhosttyVtAdapter::TrackedHyperlink>
+GhosttyVtAdapter::trackHyperlinkAt(int column, int row) const
+{
+    return impl_->trackHyperlinkAt(column, row);
+}
+
+bool GhosttyVtAdapter::trackedHyperlinkValid(
+    const TrackedHyperlink &target) const
+{
+    return target.impl_ != nullptr
+        && impl_->trackedHyperlinkValid(*target.impl_);
+}
+
+std::optional<GhosttyVtAdapter::HyperlinkMatch>
+GhosttyVtAdapter::resolveHyperlink(
+    const TrackedHyperlink &target,
+    const QVector<QPoint> &candidateCells) const
+{
+    if (target.impl_ == nullptr) {
+        return std::nullopt;
+    }
+    return impl_->resolveHyperlink(*target.impl_, candidateCells);
 }
 
 std::uint64_t GhosttyVtAdapter::compressionActivity() const

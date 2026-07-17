@@ -67,9 +67,10 @@ advanced text/graphics support, and distribution:
   review and protocol regressions.
 - Color emoji, ligatures across cells, Kitty graphics, regex-detected links,
   link previews, and search each require explicit UI/render policy beyond VT
-  parsing. The OSC 8 slice now provides revision-safe hover, copy, and open
-  interaction; exact grouping by hyperlink ID remains limited by the public C
-  API, which currently exposes only the destination URI.
+  parsing. The OSC 8 slice now provides tracked hover, copy, and open
+  interaction with sparse tracked references, stable live-output behavior, and
+  coalesced pointer queries; exact grouping by hyperlink ID remains limited by
+  the public C API, which currently exposes only the destination URI.
 - Runtime terminfo lookup is relocatable and covered by a staged-install test;
   desktop integration metadata and distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path

@@ -105,8 +105,9 @@ byte staging, invalid-sequence replay, table reset, reload cancellation,
 full/fractional/line/absolute viewport movement, selection-target scrolling,
 select-all, endpoint adjustment/autoscroll, byte-exact CSI/ESC/text actions,
 full-reset cache synchronization, long OSC 8 URI extraction across viewport
-and alternate-screen state, revision-correlated lookup, stale-result rejection,
-hover decoration, raw-destination copy, and release-only activation.
+and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
+latest-request coalescing, stale-result rejection, stable live-output hover,
+raw-destination copy, and release-only tracked activation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
 stable tab reordering/index selection, wrapped split traversal, mutable and
 equalized layouts, and split zoom lifecycle. `ghostty-global-shortcut-portal`

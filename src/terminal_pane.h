@@ -122,6 +122,7 @@ private:
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
                    Qt::MouseButton button, Qt::MouseButtons buttons,
                    Qt::KeyboardModifiers modifiers);
+    Qt::MouseButtons reportedMouseButtons(Qt::MouseButtons buttons) const;
     QPoint cellAt(const QPointF &position) const;
     std::optional<QPoint> hoverCellAt(const QPointF &position) const;
     int normalizedMouseButton(Qt::MouseButton button) const;
@@ -133,11 +134,16 @@ private:
     void updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers);
     void recomputeHyperlinkHover();
     void refreshHyperlinkHover();
+    void clearHyperlinkDecoration();
     void clearHyperlinkHover();
+    void cancelHyperlinkPress();
+    void cancelPendingHyperlinkActivation();
     bool hyperlinkCellCandidate(const QPoint &cell,
                                 quint64 *contentRevision = nullptr) const;
     void handleHyperlinkResult(quint64 contentRevision,
+                               TerminalHyperlinkState state,
                                const QByteArray &uri,
+                               const QPoint &targetCell,
                                const QVector<QPoint> &matchingCells);
     void handleHyperlinkActivation(quint64 contentRevision,
                                    const QByteArray &uri);
@@ -175,20 +181,23 @@ private:
     Qt::KeyboardModifiers keyboardModifiers_ = Qt::NoModifier;
     Qt::KeyboardModifiers hoverModifiers_ = Qt::NoModifier;
     QPoint hyperlinkQueryCell_{-1, -1};
-    quint64 hyperlinkQueryRevision_ = 0;
     bool hyperlinkQueryPending_ = false;
+    bool hyperlinkLeaseActive_ = false;
+    bool hyperlinkQueryRejected_ = false;
     QByteArray hoveredHyperlinkUri_;
     QPoint hoveredHyperlinkCell_{-1, -1};
-    quint64 hoveredHyperlinkRevision_ = 0;
     QSet<int> hoveredHyperlinkCellIndexes_;
+    int hoveredHyperlinkColumns_ = 0;
+    int hoveredHyperlinkRows_ = 0;
     bool hyperlinkPressArmed_ = false;
     bool hyperlinkPressDragged_ = false;
     QPointF hyperlinkPressPosition_;
     QPoint hyperlinkPressCell_{-1, -1};
     QByteArray hyperlinkPressUri_;
-    quint64 hyperlinkPressRevision_ = 0;
+    quint64 hyperlinkPressRequestId_ = 0;
     QByteArray pendingActivationUri_;
-    quint64 pendingActivationRevision_ = 0;
+    quint64 pendingActivationRequestId_ = 0;
+    QSet<Qt::MouseButton> mouseReportedPresses_;
     std::function<bool(const QUrl &)> urlOpener_;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
 };

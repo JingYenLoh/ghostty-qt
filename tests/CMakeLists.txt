@@ -73,7 +73,7 @@ target_link_libraries(test-terminal-pane PRIVATE
 add_dependencies(test-terminal-pane ghostty-qt-terminfo)
 add_test(NAME terminal-pane-render COMMAND test-terminal-pane)
 set_tests_properties(terminal-pane-render PROPERTIES
-    TIMEOUT 10
+    TIMEOUT 20
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
 )

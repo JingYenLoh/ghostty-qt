@@ -342,10 +342,11 @@ zoom are covered through typed actions. Adapter/session tests cover absolute,
 relative, and selection-driven viewport movement plus select-all and endpoint
 adjustment. They also verify byte-exact CSI, ESC, and Zig-literal text writes,
 screen/history/mode reset semantics, OSC 8 extraction across viewport and
-alternate-screen state, revision-correlated hyperlink lookup, hover rendering,
-raw-destination copy, release-only activation, and the helper's canonical
-byte-payload boundary, while interactive pointer selection and unsafe-paste
-dialog input are not yet fully automated.
+alternate-screen state, tracked hyperlink behavior through output, reflow,
+viewport hiding, reset, and pruning, coalesced hover lookup, stable live-output
+rendering, raw-destination copy, release-only activation, and the helper's
+canonical byte-payload boundary, while interactive pointer selection and
+unsafe-paste dialog input are not yet fully automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -395,9 +396,6 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   destinations remain available to `copy_url_to_clipboard` but are not sent to
   the desktop opener. URI-scheme handling after that validation belongs to Qt
   and the configured desktop services.
-- Hyperlink lookup uses a pane-wide content revision for stale-result safety.
-  Any terminal output advances that revision, so a stationary hover is cleared
-  and resolved again during continuous output even when its row did not change.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported.
 - `select_all` installs the same terminal selection as Ghostty, but the

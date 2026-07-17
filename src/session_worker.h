@@ -63,8 +63,14 @@ public Q_SLOTS:
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
     void queryHyperlink(quint64 requestId, quint64 contentRevision,
-                        int column, int row,
-                        const QVector<QPoint> &candidateCells);
+                        int column, int row);
+    void cancelHyperlinkQuery(quint64 requestId);
+    void prepareHyperlinkActivation(quint64 requestId,
+                                    quint64 contentRevision,
+                                    int column, int row);
+    void commitHyperlinkActivation(quint64 requestId,
+                                   int column, int row);
+    void cancelHyperlinkActivation(quint64 requestId);
     void shutdown();
 
 Q_SIGNALS:
@@ -84,8 +90,12 @@ Q_SIGNALS:
     // selection intent without relying on a state-change-only signal.
     void selectAllCompleted(bool selectionAvailable);
     void hyperlinkResolved(quint64 requestId, quint64 contentRevision,
-                           const QByteArray &uri,
+                           TerminalHyperlinkState state,
+                           const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
+    void hyperlinkActivationResolved(quint64 requestId,
+                                     quint64 contentRevision,
+                                     const QByteArray &uri);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 
@@ -95,6 +105,7 @@ private Q_SLOTS:
     void checkChild();
     void publishFrame();
     void compressScrollback();
+    void processPendingHyperlinkQuery();
 
 private:
     bool createTerminal();
@@ -108,6 +119,7 @@ private:
     void syncMouseEncoder();
     void syncSelectionAvailability();
     void markTerminalContentChanged();
+    void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
     void drainPty(bool finalDrain);
     void notePotentialActivity();
@@ -120,6 +132,8 @@ private:
 
     LaunchOptions options_;
     std::unique_ptr<GhosttyVtAdapter> vt_;
+    struct HyperlinkState;
+    std::unique_ptr<HyperlinkState> hyperlinkState_;
 
     int masterFd_ = -1;
     qint64 childPid_ = -1;

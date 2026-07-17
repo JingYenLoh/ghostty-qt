@@ -78,11 +78,13 @@ public:
     void selectAll();
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
-    void requestHyperlink(int column, int row, quint64 contentRevision,
-                          const QVector<QPoint> &candidateCells);
+    void requestHyperlink(int column, int row, quint64 contentRevision);
     void cancelHyperlinkRequest();
-    void requestHyperlinkActivation(int column, int row,
-                                    quint64 contentRevision);
+    [[nodiscard]] quint64 prepareHyperlinkActivation(
+        int column, int row, quint64 contentRevision);
+    void commitHyperlinkActivation(quint64 requestId,
+                                   int column, int row);
+    void cancelHyperlinkActivation(quint64 requestId);
 
     static bool isPasteSafe(const QString &text);
 
@@ -97,7 +99,9 @@ Q_SIGNALS:
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
     void bell();
-    void hyperlinkResolved(quint64 contentRevision, const QByteArray &uri,
+    void hyperlinkResolved(quint64 contentRevision,
+                           TerminalHyperlinkState state,
+                           const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
     void hyperlinkActivationResolved(quint64 contentRevision,
                                      const QByteArray &uri);
@@ -132,8 +136,13 @@ Q_SIGNALS:
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
     void hyperlinkQueryRequested(quint64 requestId, quint64 contentRevision,
-                                 int column, int row,
-                                 const QVector<QPoint> &candidateCells);
+                                 int column, int row);
+    void hyperlinkQueryCancellationRequested(quint64 requestId);
+    void hyperlinkActivationPreparationRequested(
+        quint64 requestId, quint64 contentRevision, int column, int row);
+    void hyperlinkActivationCommitRequested(
+        quint64 requestId, int column, int row);
+    void hyperlinkActivationCancellationRequested(quint64 requestId);
     void runtimeOptionsRequested(const LaunchOptions &options);
     void shutdownRequested();
 

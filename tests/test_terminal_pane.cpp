@@ -79,6 +79,8 @@ private Q_SLOTS:
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
     void interactsWithOsc8Hyperlinks();
+    void keepsOsc8InteractionStableAcrossUnrelatedOutput();
+    void restoresOsc8HoverAcrossViewportScroll();
     void letsShiftBypassMouseCaptureForHyperlinks();
     void resetClearsTerminalMetadataAndSplitInheritance();
     void routesStructuredSequencesAndCancelsThemOnReload();
@@ -1012,7 +1014,7 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
         return std::any_of(
             resolved.cbegin(), resolved.cend(),
             [&uri](const QList<QVariant> &arguments) {
-                return arguments.at(1).toByteArray() == uri;
+                return arguments.at(2).toByteArray() == uri;
             });
     };
     QTRY_VERIFY_WITH_TIMEOUT(resolvedUri(validUri), 1000);
@@ -1088,14 +1090,17 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     }
     QCOMPARE(nonLinkChanges, 0);
 
-    // A zero-row fractional scroll is a worker no-op. It clears the current
-    // hover defensively, but must not latch hyperlinks off while waiting for
-    // a frame that will never be produced.
+    // A zero-row fractional scroll is a worker no-op. It must retain the
+    // accepted lease without waiting for a frame or pointer event that will
+    // never be produced.
     const int resolvedBeforeNoOp = resolved.count();
+    const int queriesBeforeNoOp = hyperlinkQueries.count();
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("scroll_page_fractional:0.001")));
-    sendHover(validPosition, validPosition, Qt::ControlModifier);
-    QTRY_VERIFY_WITH_TIMEOUT(resolved.count() > resolvedBeforeNoOp, 1000);
+    QTest::qWait(30);
+    QCOMPARE(resolved.count(), resolvedBeforeNoOp);
+    QCOMPARE(hyperlinkQueries.count(), queriesBeforeNoOp);
+    QCOMPARE(pane->cursor().shape(), Qt::PointingHandCursor);
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
 
@@ -1128,8 +1133,9 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     sendHover(invalidPosition, validPosition, Qt::ControlModifier);
     QCOMPARE(hyperlinkQueries.count(), invalidQueriesBefore + 1);
     const TerminalFrame invalidFrame = accumulatedFrame(updates);
-    controller->hyperlinkResolved(invalidFrame.contentRevision, invalidUri,
-                                  {QPoint(3, 0)});
+    controller->hyperlinkResolved(
+        invalidFrame.contentRevision, TerminalHyperlinkState::Visible,
+        invalidUri, QPoint(3, 0), {QPoint(3, 0)});
     QGuiApplication::clipboard()->setText(QStringLiteral("sentinel"));
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
@@ -1181,18 +1187,29 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QCoreApplication::sendEvent(pane, &controlPress);
     sendHover(validPosition, validSecondPosition, Qt::ControlModifier);
     const TerminalFrame focusFrame = accumulatedFrame(updates);
-    controller->hyperlinkResolved(focusFrame.contentRevision, validUri,
-                                  {QPoint(0, 0), QPoint(1, 0)});
+    controller->hyperlinkResolved(
+        focusFrame.contentRevision, TerminalHyperlinkState::Visible,
+        validUri, QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
+    const int opensBeforeFocusLoss = openCount;
+    sendMouse(QEvent::MouseButtonPress, validPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::ControlModifier);
+    sendMouse(QEvent::MouseButtonRelease, validPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::ControlModifier);
     QQuickItem focusTarget(window.contentItem());
     focusTarget.setFocusPolicy(Qt::StrongFocus);
     focusTarget.forceActiveFocus();
     QTRY_VERIFY_WITH_TIMEOUT(!pane->hasActiveFocus(), 1000);
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
-    controller->hyperlinkResolved(focusFrame.contentRevision, validUri,
-                                  {QPoint(0, 0), QPoint(1, 0)});
+    controller->hyperlinkActivationResolved(
+        focusFrame.contentRevision, validUri);
+    QTest::qWait(30);
+    QCOMPARE(openCount, opensBeforeFocusLoss);
+    controller->hyperlinkResolved(
+        focusFrame.contentRevision, TerminalHyperlinkState::Visible,
+        validUri, QPoint(0, 0), {QPoint(0, 0), QPoint(1, 0)});
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QVERIFY2(errors.isEmpty(),
@@ -1202,6 +1219,224 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
 
     window.close();
     delete pane;
+}
+
+void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+
+    const QByteArray uri = QByteArrayLiteral(
+        "https://example.test/live-output");
+    const QString script = QStringLiteral(
+        "printf '\033[2J\033[H\033]8;;https://example.test/live-output"
+        "\033\\LINK\033]8;;\033\\'; "
+        "i=0; while [ $i -lt 200 ]; do "
+        "printf '\0337\033[4;1Htick-%02d\0338' \"$i\"; "
+        "i=$((i + 1)); sleep 0.01; done");
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
+    };
+    options.hold = true;
+    options.fontFamily =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    options.keybindingsConfigured = true;
+    options.keybindings = {
+        QStringLiteral("ctrl+y=copy_url_to_clipboard"),
+    };
+
+    QFont font(options.fontFamily);
+    font.setPointSizeF(options.fontSize);
+    font.setFixedPitch(true);
+    font.setStyleHint(QFont::Monospace);
+    const QFontMetricsF metrics(font);
+    const qreal cellWidth = std::max(
+        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
+    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+
+    QQuickWindow window;
+    window.resize(qCeil(cellWidth * 12.0), qCeil(cellHeight * 4.0));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy queries(
+        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
+    QSignalSpy activationResolved(
+        controller, &TerminalController::hyperlinkActivationResolved);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+
+    int openCount = 0;
+    pane->setUrlOpener([&](const QUrl &opened) {
+        if (opened == QUrl::fromEncoded(uri, QUrl::StrictMode)) {
+            ++openCount;
+        }
+        return true;
+    });
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("LINK")), 5000);
+
+    const QPointF linkPosition(cellWidth * 0.5, cellHeight * 0.5);
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &controlPress);
+    QHoverEvent hover(QEvent::HoverMove, linkPosition, linkPosition,
+                      linkPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &hover);
+    QTRY_VERIFY_WITH_TIMEOUT(!resolved.isEmpty(), 1000);
+    QCOMPARE(qvariant_cast<TerminalHyperlinkState>(
+                 resolved.constLast().at(1)),
+             TerminalHyperlinkState::Visible);
+    QCOMPARE(resolved.constLast().at(2).toByteArray(), uri);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane->cursor().shape(), Qt::PointingHandCursor, 1000);
+    const int queryCount = queries.count();
+    const int resolutionCount = resolved.count();
+    const quint64 resolvedRevision = accumulatedFrame(updates).contentRevision;
+
+    // Repeated writes to another row advance the broad terminal revision,
+    // but they do not affect the tracked target or enqueue another URI scan.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updates).contentRevision
+            >= resolvedRevision + 5,
+        3000);
+    QVERIFY(frameText(accumulatedFrame(updates)).contains(
+        QStringLiteral("tick-")));
+    QCOMPARE(queries.count(), queryCount);
+    QCOMPARE(resolved.count(), resolutionCount);
+    QCOMPARE(pane->cursor().shape(), Qt::PointingHandCursor);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
+                 QStringLiteral("text/plain")),
+             uri);
+
+    const quint64 pressRevision = accumulatedFrame(updates).contentRevision;
+    QMouseEvent press(QEvent::MouseButtonPress, linkPosition, linkPosition,
+                      linkPosition, Qt::LeftButton, Qt::LeftButton,
+                      Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &press);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        accumulatedFrame(updates).contentRevision > pressRevision, 1000);
+    QMouseEvent release(QEvent::MouseButtonRelease, linkPosition,
+                        linkPosition, linkPosition, Qt::LeftButton,
+                        Qt::NoButton, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &release);
+    QTRY_COMPARE_WITH_TIMEOUT(activationResolved.count(), 1, 1000);
+    QCOMPARE(openCount, 1);
+    QVERIFY(errors.isEmpty());
+
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &controlRelease);
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+
+    const QByteArray uri = QByteArrayLiteral(
+        "https://example.test/tracked-scroll");
+    QByteArray output = QByteArrayLiteral("\033]8;;");
+    output += uri;
+    output += QByteArrayLiteral("\033\\LINK\033]8;;\033\\");
+    for (int row = 0; row < 40; ++row) {
+        output += QByteArrayLiteral("\r\nplain-row-");
+        output += QByteArray::number(row).rightJustified(2, '0');
+    }
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    options.hold = true;
+    options.fontFamily =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+
+    QFont font(options.fontFamily);
+    font.setPointSizeF(options.fontSize);
+    font.setFixedPitch(true);
+    font.setStyleHint(QFont::Monospace);
+    const QFontMetricsF metrics(font);
+    const qreal cellWidth = std::max(
+        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
+    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(cellWidth * 12.0, cellHeight * 3.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy queries(
+        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
+    QSignalSpy sessionEnded(&pane, &TerminalPane::sessionEnded);
+
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_top")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        frameText(accumulatedFrame(updates)).contains(
+            QStringLiteral("LINK")),
+        1000);
+
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    const QPointF linkPosition(cellWidth * 0.5, cellHeight * 0.5);
+    QHoverEvent hover(QEvent::HoverMove, linkPosition, linkPosition,
+                      linkPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &hover);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Visible,
+        1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    const int queryCount = queries.count();
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_bottom")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Hidden,
+        1000);
+    QCOMPARE(queries.count(), queryCount);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_top")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        qvariant_cast<TerminalHyperlinkState>(
+            resolved.constLast().at(1))
+            == TerminalHyperlinkState::Visible,
+        1000);
+    QCOMPARE(queries.count(), queryCount);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &controlRelease);
 }
 
 void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
@@ -1295,7 +1530,7 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCOMPARE(hyperlinkQueries.count(), 1);
     QCOMPARE(mouseRequests.count(), 1);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
-    QCOMPARE(hyperlinkResolved.constLast().at(1).toByteArray(), uri);
+    QCOMPARE(hyperlinkResolved.constLast().at(2).toByteArray(), uri);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(QGuiApplication::clipboard()->mimeData()->data(
@@ -1315,6 +1550,81 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
                              Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &controlRelease);
+
+    // Route capture for the full physical gesture. Changing Shift while the
+    // button is held must neither strand a reported press nor synthesize a
+    // release for a locally handled press.
+    const int beforeCapturedGesture = mouseRequests.count();
+    sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
+              Qt::NoModifier);
+    sendMouse(QEvent::MouseMove, Qt::NoButton, Qt::LeftButton,
+              Qt::ShiftModifier);
+    sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
+              Qt::ShiftModifier);
+    QCOMPARE(mouseRequests.count(), beforeCapturedGesture + 3);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.at(beforeCapturedGesture).constFirst()).action,
+             TerminalMouseInput::Press);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.at(beforeCapturedGesture + 1).constFirst()).action,
+             TerminalMouseInput::Motion);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.at(beforeCapturedGesture + 2).constFirst()).action,
+             TerminalMouseInput::Release);
+
+    const int beforeLocalGesture = mouseRequests.count();
+    sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
+              Qt::ShiftModifier);
+    sendMouse(QEvent::MouseMove, Qt::NoButton, Qt::LeftButton,
+              Qt::NoModifier);
+    sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
+              Qt::NoModifier);
+    QCOMPARE(mouseRequests.count(), beforeLocalGesture);
+
+    // Each held button retains its own route. A local Shift-left followed by
+    // a captured right press must encode motion as right-button motion and
+    // must not expose the unreported left button through `anyButtonPressed`.
+    const int beforeMixedGesture = mouseRequests.count();
+    sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
+              Qt::ShiftModifier);
+    sendMouse(QEvent::MouseButtonPress, Qt::RightButton,
+              Qt::LeftButton | Qt::RightButton, Qt::NoModifier);
+    sendMouse(QEvent::MouseMove, Qt::NoButton,
+              Qt::LeftButton | Qt::RightButton, Qt::NoModifier);
+    sendMouse(QEvent::MouseButtonRelease, Qt::RightButton, Qt::LeftButton,
+              Qt::NoModifier);
+    sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
+              Qt::NoModifier);
+    QCOMPARE(mouseRequests.count(), beforeMixedGesture + 3);
+    const TerminalMouseInput mixedPress = qvariant_cast<TerminalMouseInput>(
+        mouseRequests.at(beforeMixedGesture).constFirst());
+    const TerminalMouseInput mixedMotion = qvariant_cast<TerminalMouseInput>(
+        mouseRequests.at(beforeMixedGesture + 1).constFirst());
+    const TerminalMouseInput mixedRelease = qvariant_cast<TerminalMouseInput>(
+        mouseRequests.at(beforeMixedGesture + 2).constFirst());
+    QCOMPARE(mixedPress.action, TerminalMouseInput::Press);
+    QCOMPARE(mixedPress.button, 2);
+    QVERIFY(mixedPress.anyButtonPressed);
+    QCOMPARE(mixedMotion.action, TerminalMouseInput::Motion);
+    QCOMPARE(mixedMotion.button, 2);
+    QVERIFY(mixedMotion.anyButtonPressed);
+    QCOMPARE(mixedRelease.action, TerminalMouseInput::Release);
+    QCOMPARE(mixedRelease.button, 2);
+    QVERIFY(!mixedRelease.anyButtonPressed);
+
+    // Focus loss may occur while Qt still owns the mouse grab. Preserve the
+    // captured route until the physical release arrives.
+    const int beforeFocusLoss = mouseRequests.count();
+    sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
+              Qt::NoModifier);
+    QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusOut);
+    sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
+              Qt::ShiftModifier);
+    QCOMPARE(mouseRequests.count(), beforeFocusLoss + 2);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.constLast().constFirst()).action,
+             TerminalMouseInput::Release);
 }
 
 void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()

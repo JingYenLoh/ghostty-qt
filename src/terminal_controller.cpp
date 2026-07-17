@@ -30,6 +30,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     , activeProcess_(true)
 {
     qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
     qRegisterMetaType<TerminalViewportRequest>();
     qRegisterMetaType<TerminalSelectionAdjustment>();
     qRegisterMetaType<TerminalKeyInput>();
@@ -85,6 +86,20 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
     connect(this, &TerminalController::hyperlinkQueryRequested,
             worker_, &SessionWorker::queryHyperlink, Qt::QueuedConnection);
+    connect(this, &TerminalController::hyperlinkQueryCancellationRequested,
+            worker_, &SessionWorker::cancelHyperlinkQuery,
+            Qt::QueuedConnection);
+    connect(this,
+            &TerminalController::hyperlinkActivationPreparationRequested,
+            worker_, &SessionWorker::prepareHyperlinkActivation,
+            Qt::QueuedConnection);
+    connect(this, &TerminalController::hyperlinkActivationCommitRequested,
+            worker_, &SessionWorker::commitHyperlinkActivation,
+            Qt::QueuedConnection);
+    connect(this,
+            &TerminalController::hyperlinkActivationCancellationRequested,
+            worker_, &SessionWorker::cancelHyperlinkActivation,
+            Qt::QueuedConnection);
     connect(this, &TerminalController::runtimeOptionsRequested,
             worker_, &SessionWorker::applyRuntimeOptions, Qt::QueuedConnection);
     connect(this, &TerminalController::shutdownRequested,
@@ -132,18 +147,29 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::hyperlinkResolved, this,
             [this](quint64 requestId, quint64 contentRevision,
-                   const QByteArray &uri,
+                   TerminalHyperlinkState state, const QByteArray &uri,
+                   const QPoint &targetCell,
                    const QVector<QPoint> &matchingCells) {
                 if (requestId == activeHyperlinkRequestId_) {
-                    activeHyperlinkRequestId_ = 0;
-                    Q_EMIT hyperlinkResolved(contentRevision, uri,
-                                             matchingCells);
+                    if (state == TerminalHyperlinkState::Invalid
+                        || state == TerminalHyperlinkState::Stale) {
+                        // Clear before forwarding so a pane-side replacement
+                        // request made synchronously from this signal cannot
+                        // be clobbered when this handler returns.
+                        activeHyperlinkRequestId_ = 0;
+                    }
+                    Q_EMIT hyperlinkResolved(contentRevision, state, uri,
+                                             targetCell, matchingCells);
+                }
+            }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::hyperlinkActivationResolved, this,
+            [this](quint64 requestId, quint64 contentRevision,
+                   const QByteArray &uri) {
+                if (requestId != activeHyperlinkActivationId_) {
                     return;
                 }
-                if (requestId == activeHyperlinkActivationId_) {
-                    activeHyperlinkActivationId_ = 0;
-                    Q_EMIT hyperlinkActivationResolved(contentRevision, uri);
-                }
+                activeHyperlinkActivationId_ = 0;
+                Q_EMIT hyperlinkActivationResolved(contentRevision, uri);
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
             [](const QString &text) {
@@ -383,25 +409,55 @@ quint64 TerminalController::nextHyperlinkRequestId()
 }
 
 void TerminalController::requestHyperlink(
-    int column, int row, quint64 contentRevision,
-    const QVector<QPoint> &candidateCells)
+    int column, int row, quint64 contentRevision)
 {
+    if (activeHyperlinkRequestId_ != 0) {
+        Q_EMIT hyperlinkQueryCancellationRequested(
+            activeHyperlinkRequestId_);
+    }
     activeHyperlinkRequestId_ = nextHyperlinkRequestId();
     Q_EMIT hyperlinkQueryRequested(activeHyperlinkRequestId_, contentRevision,
-                                   column, row, candidateCells);
+                                   column, row);
 }
 
 void TerminalController::cancelHyperlinkRequest()
 {
+    if (activeHyperlinkRequestId_ != 0) {
+        Q_EMIT hyperlinkQueryCancellationRequested(
+            activeHyperlinkRequestId_);
+    }
     activeHyperlinkRequestId_ = 0;
 }
 
-void TerminalController::requestHyperlinkActivation(
+quint64 TerminalController::prepareHyperlinkActivation(
     int column, int row, quint64 contentRevision)
 {
+    if (activeHyperlinkActivationId_ != 0) {
+        Q_EMIT hyperlinkActivationCancellationRequested(
+            activeHyperlinkActivationId_);
+    }
     activeHyperlinkActivationId_ = nextHyperlinkRequestId();
-    Q_EMIT hyperlinkQueryRequested(activeHyperlinkActivationId_,
-                                   contentRevision, column, row, {});
+    Q_EMIT hyperlinkActivationPreparationRequested(
+        activeHyperlinkActivationId_, contentRevision, column, row);
+    return activeHyperlinkActivationId_;
+}
+
+void TerminalController::commitHyperlinkActivation(
+    quint64 requestId, int column, int row)
+{
+    if (requestId == 0 || requestId != activeHyperlinkActivationId_) {
+        return;
+    }
+    Q_EMIT hyperlinkActivationCommitRequested(requestId, column, row);
+}
+
+void TerminalController::cancelHyperlinkActivation(quint64 requestId)
+{
+    if (requestId == 0 || requestId != activeHyperlinkActivationId_) {
+        return;
+    }
+    Q_EMIT hyperlinkActivationCancellationRequested(requestId);
+    activeHyperlinkActivationId_ = 0;
 }
 
 bool TerminalController::isPasteSafe(const QString &text)

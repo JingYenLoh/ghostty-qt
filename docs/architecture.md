@@ -178,23 +178,32 @@ signals:
 
 The render update exposes only whether a cell has an OSC 8 hyperlink. URI
 lookup remains beside the terminal on the session thread: a hover request sends
-the viewport-relative cell, the retained content revision, and the visible
-candidate hyperlink cells. The adapter creates fresh grid references and uses
-libghostty's two-pass URI query to return the original destination bytes. The
-worker tags the reply with its current revision, and both the controller and
-pane reject canceled or stale results before changing the pointer or underline
-mask. Resizes, output batches, reset, viewport movement, and selection
-operations that can move the viewport all advance the revision. This global
-revision is deliberately conservative; continuous output can make a stationary
-hover re-resolve even when the linked row itself is unchanged.
+the viewport-relative cell and retained content revision. That revision is an
+initial-coordinate handshake only. The worker collapses queued pointer queries
+to the newest coordinate, derives candidates from its own retained frame, and
+creates one owned libghostty tracked grid reference for the accepted target.
+The adapter caches its original destination bytes and primary/alternate-screen
+owner. Each refresh snapshots the tracked cell, rejects URI replacement,
+treats an inactive screen or off-viewport point as temporarily hidden, and
+returns the target's current coordinate after scrolling or reflow. Reset and
+scrollback pruning permanently invalidate the anchor.
+
+The worker refreshes the sparse anchor only when a full/scrollbar update, a
+dirty tracked row, or a row containing hyperlink candidates can affect its
+visible mask. Unrelated output can therefore advance the pane-wide content
+revision without clearing the pointer, re-querying the URI, or rescanning all
+visible links. Cancellation crosses the queued boundary and frees the anchor
+on the session thread before terminal destruction.
 
 Public `libghostty-vt` exposes the destination URI but not the OSC 8 hyperlink
 ID. Hover grouping therefore compares the URI of every visible candidate: two
 separate IDs with the same URI can be underlined together. Activation remains
-cell-specific. A left press on a cell carrying the raw hyperlink bit arms the
-gesture even if the hover lookup is still pending. Only a release in that same
-cell below Qt's drag threshold starts a second worker lookup; when the hover
-URI was already known, the reply must also match it exactly. The value used by
+cell-specific. A left press on a cell carrying the raw hyperlink bit creates a
+separate tracked press anchor, even if the hover lookup is still pending. Drag,
+focus loss, or cancellation frees that lane independently. A release below
+Qt's drag threshold activates only when the tracked logical cell still resolves
+to the release coordinate with its original URI; unrelated output between
+press and release does not cancel the gesture. The value used by
 `copy_url_to_clipboard` remains byte-exact through the worker lookup and is put
 directly in the clipboard's `text/plain` MIME payload, never round-tripped
 through `QString` or `QUrl`. For opening, the GUI converts absolute paths with
@@ -474,13 +483,16 @@ The default CTest suite has seventeen layers:
   with exact autoscroll, plus primary/alternate-screen reset, mode clearing,
   selection invalidation, history removal, forced full-frame publication, and
   long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
-  state.
+  state. Tracked URI anchors are also exercised across unrelated output,
+  reflow, viewport hiding/restoration, screen switches, replacement, reset,
+  and scrollback pruning.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, byte-exact terminal-control action writes, reset cache
   synchronization, process exit, explicit-program activity, and an interactive
-  shell's idle/job/idle foreground transitions. It also verifies
-  revision-correlated OSC 8 queries and stale-revision rejection.
+  shell's idle/job/idle foreground transitions. It also verifies coalesced OSC
+  8 hover queries, stale-coordinate retry signaling, tracked targets across
+  viewport hiding/restoration, and independent hover and activation leases.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
@@ -507,8 +519,10 @@ The default CTest suite has seventeen layers:
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,
-  release suppression, reload cancellation, and OSC 8 hover/copy/release-only
-  activation through a real PTY-backed pane.
+  release suppression, reload cancellation, and tracked OSC 8 hover, copy, and
+  release-only activation through a real PTY-backed pane, including live
+  output, viewport hiding/restoration, resize-safe masks, and mouse-capture
+  modifier transitions.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.

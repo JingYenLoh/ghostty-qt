@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 namespace {
 
@@ -48,6 +49,18 @@ QString frameRowText(const TerminalFrame &frame, int row)
     return result.trimmed();
 }
 
+QVector<QPoint> hyperlinkCandidates(const TerminalFrame &frame)
+{
+    QVector<QPoint> candidates;
+    for (int index = 0; index < frame.cells.size(); ++index) {
+        if (frame.cells.at(index).hasHyperlink) {
+            candidates.append(QPoint(index % frame.columns,
+                                     index / frame.columns));
+        }
+    }
+    return candidates;
+}
+
 } // namespace
 
 class GhosttyVtAdapterTest : public QObject {
@@ -60,6 +73,10 @@ private Q_SLOTS:
     void encodesUsingTerminalModes();
     void resetsAllTerminalStateAndPublishesFullFrame();
     void resolvesOsc8HyperlinksAcrossViewportState();
+    void tracksOsc8HyperlinksAcrossOutputAndReflow();
+    void tracksOsc8HyperlinksAcrossViewportAndScreenChanges();
+    void invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset();
+    void invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning();
     void selectsAndNavigatesViewportAtomically();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
@@ -257,6 +274,241 @@ void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
     const auto byteMatch = adapter->hyperlinkAt(0, 0, {QPoint(0, 0)});
     QVERIFY(byteMatch.has_value());
     QCOMPARE(byteMatch->uri, byteUri);
+}
+
+void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossOutputAndReflow()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 4;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray uri = QByteArrayLiteral("https://example.test/tracked-reflow");
+    QByteArray output = QByteArrayLiteral("12345678\033]8;id=reflow;");
+    output += uri;
+    output += QByteArrayLiteral("\033\\ABCDEFGH\033]8;;\033\\");
+    adapter->writeVt(output);
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("12345678ABCD"));
+    QCOMPARE(frameRowText(frame, 1), QStringLiteral("EFGH"));
+    const QVector<QPoint> initialCandidates = hyperlinkCandidates(frame);
+    QCOMPARE(initialCandidates.size(), 8);
+
+    auto tracked = adapter->trackHyperlinkAt(1, 1);
+    QVERIFY(tracked.has_value());
+    QVERIFY(!adapter->trackHyperlinkAt(-1, 0).has_value());
+    QVERIFY(!adapter->trackHyperlinkAt(12, 0).has_value());
+    QVERIFY(!adapter->trackHyperlinkAt(0, 4).has_value());
+    QVERIFY(!adapter->trackHyperlinkAt(0, 0).has_value());
+
+    auto match = adapter->resolveHyperlink(*tracked, initialCandidates);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, uri);
+    QCOMPARE(match->targetCell, QPoint(1, 1));
+    QCOMPARE(match->cells, initialCandidates);
+
+    // Output elsewhere in the viewport mutates libghostty's terminal state
+    // and invalidates every ordinary grid ref. The owned tracked ref must
+    // continue to resolve without requiring the pointer to move.
+    adapter->writeVt(QByteArrayLiteral("\0337\033[4;1HTICK\0338"));
+    renderInto(adapter.get(), &frame);
+    match = adapter->resolveHyperlink(*tracked, hyperlinkCandidates(frame));
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, uri);
+    QCOMPARE(match->targetCell, QPoint(1, 1));
+
+    // Reflow moves the tracked F cell from column 1 to column 5. Resolving
+    // the old viewport coordinate would now identify a different cell.
+    GhosttyVtAdapter::Geometry resized = options.geometry;
+    resized.columns = 8;
+    resized.rows = 5;
+    QVERIFY(adapter->resize(resized));
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("12345678"));
+    QCOMPARE(frameRowText(frame, 1), QStringLiteral("ABCDEFGH"));
+    const QVector<QPoint> reflowedCandidates = hyperlinkCandidates(frame);
+    QCOMPARE(reflowedCandidates.size(), 8);
+    match = adapter->resolveHyperlink(*tracked, reflowedCandidates);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, uri);
+    QCOMPARE(match->targetCell, QPoint(5, 1));
+    QCOMPARE(match->cells, reflowedCandidates);
+
+    GhosttyVtAdapter::TrackedHyperlink moved = std::move(*tracked);
+    QVERIFY(!adapter->resolveHyperlink(
+        *tracked, reflowedCandidates).has_value());
+    match = adapter->resolveHyperlink(moved, reflowedCandidates);
+    QVERIFY(match.has_value());
+    QCOMPARE(match->targetCell, QPoint(5, 1));
+
+    auto foreignAdapter = GhosttyVtAdapter::create(options);
+    QVERIFY(foreignAdapter != nullptr);
+    QVERIFY(!foreignAdapter->trackedHyperlinkValid(moved));
+    QVERIFY(!foreignAdapter->resolveHyperlink(
+        moved, reflowedCandidates).has_value());
+}
+
+void GhosttyVtAdapterTest::tracksOsc8HyperlinksAcrossViewportAndScreenChanges()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray primaryUri = QByteArrayLiteral(
+        "https://example.test/tracked-primary");
+    QByteArray primary = QByteArrayLiteral("\033]8;id=primary;");
+    primary += primaryUri;
+    primary += QByteArrayLiteral("\033\\PRIMARY\033]8;;\033\\");
+    adapter->writeVt(primary);
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    auto primaryTracked = adapter->trackHyperlinkAt(2, 0);
+    QVERIFY(primaryTracked.has_value());
+    auto match = adapter->resolveHyperlink(
+        *primaryTracked, hyperlinkCandidates(frame));
+    QVERIFY(match.has_value());
+    QCOMPARE(match->targetCell, QPoint(2, 0));
+
+    // The logical target remains owned while it is outside the live
+    // viewport, then becomes representable again when history is displayed.
+    adapter->writeVt(QByteArrayLiteral("\r\nrow-2\r\nrow-3"));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *primaryTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(adapter->trackedHyperlinkValid(*primaryTracked));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    match = adapter->resolveHyperlink(
+        *primaryTracked, hyperlinkCandidates(frame));
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, primaryUri);
+    QVERIFY(match->cells.contains(match->targetCell));
+
+    // Tracked-ref point conversion deliberately resolves against the owning
+    // page list even while another screen is active. The adapter must add an
+    // active-screen check so a primary link cannot appear over alternate
+    // screen content at the same viewport coordinates.
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    const QByteArray alternateUri = QByteArrayLiteral(
+        "https://example.test/tracked-alternate");
+    QByteArray alternate = QByteArrayLiteral("\033]8;id=alternate;");
+    alternate += alternateUri;
+    alternate += QByteArrayLiteral("\033\\ALT\033]8;;\033\\");
+    adapter->writeVt(alternate);
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *primaryTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(adapter->trackedHyperlinkValid(*primaryTracked));
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    match = adapter->resolveHyperlink(
+        *primaryTracked, hyperlinkCandidates(frame));
+    QVERIFY(match.has_value());
+    QCOMPARE(match->uri, primaryUri);
+    QVERIFY(match->cells.contains(match->targetCell));
+}
+
+void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray originalUri = QByteArrayLiteral(
+        "https://example.test/original");
+    QByteArray original = QByteArrayLiteral("\033]8;;");
+    original += originalUri;
+    original += QByteArrayLiteral("\033\\X\033]8;;\033\\");
+    adapter->writeVt(original);
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    auto tracked = adapter->trackHyperlinkAt(0, 0);
+    QVERIFY(tracked.has_value());
+
+    // Replacing the tracked cell with a different destination must not turn
+    // a pending click on the original link into activation of the new one.
+    const QByteArray replacementUri = QByteArrayLiteral(
+        "https://example.test/replacement");
+    QByteArray replacement = QByteArrayLiteral("\033[1;1H\033]8;;");
+    replacement += replacementUri;
+    replacement += QByteArrayLiteral("\033\\Y\033]8;;\033\\");
+    adapter->writeVt(replacement);
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *tracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
+
+    auto replacementTracked = adapter->trackHyperlinkAt(0, 0);
+    QVERIFY(replacementTracked.has_value());
+    QVERIFY(adapter->resolveHyperlink(
+        *replacementTracked, hyperlinkCandidates(frame)).has_value());
+
+    adapter->writeVt(QByteArrayLiteral("\033[1;1H "));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *replacementTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->trackedHyperlinkValid(*replacementTracked));
+
+    adapter->writeVt(original);
+    renderInto(adapter.get(), &frame);
+    auto resetTracked = adapter->trackHyperlinkAt(1, 0);
+    QVERIFY(resetTracked.has_value());
+    adapter->reset();
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *resetTracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->trackedHyperlinkValid(*resetTracked));
+}
+
+void GhosttyVtAdapterTest::invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 2;
+    // The active area still reserves libghostty's minimum page-list memory.
+    // Once a third page is needed, this zero history budget guarantees that
+    // the first page is genuinely pruned rather than merely hidden.
+    options.scrollbackBytes = 0;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray uri = QByteArrayLiteral("https://example.test/pruned");
+    QByteArray linked = QByteArrayLiteral("\033]8;;");
+    linked += uri;
+    linked += QByteArrayLiteral("\033\\P\033]8;;\033\\");
+    adapter->writeVt(linked);
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    auto tracked = adapter->trackHyperlinkAt(0, 0);
+    QVERIFY(tracked.has_value());
+
+    QByteArray history;
+    history.reserve(20'000 * 7);
+    for (int row = 0; row < 20'000; ++row) {
+        history += QByteArrayLiteral("\r\nline");
+    }
+    adapter->writeVt(history);
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+    renderInto(adapter.get(), &frame);
+    QVERIFY(!adapter->resolveHyperlink(
+        *tracked, hyperlinkCandidates(frame)).has_value());
+    QVERIFY(!adapter->trackedHyperlinkValid(*tracked));
 }
 
 void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()

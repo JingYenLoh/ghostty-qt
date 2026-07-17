@@ -450,14 +450,10 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
                 bool applied = false;
-                bool contentRevisionChanged = false;
                 {
                     QMutexLocker locker(&renderMutex_);
                     if (hasFrame_ || terminalUpdate.fullFrame) {
-                        const quint64 previousRevision = frame_.contentRevision;
                         applied = applyTerminalUpdate(&frame_, terminalUpdate);
-                        contentRevisionChanged = applied
-                            && previousRevision != frame_.contentRevision;
                         hasFrame_ = hasFrame_ || applied;
                         if (applied && frame_.rows > 0
                             && (!terminalResizePending_
@@ -468,10 +464,11 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     }
                 }
                 if (applied) {
-                    if (contentRevisionChanged) {
-                        clearHyperlinkHover();
-                        recomputeHyperlinkHover();
-                    }
+                    // A worker-owned tracked reference decides whether the
+                    // logical target actually moved or disappeared. Merely
+                    // advancing the broad terminal revision must not flicker
+                    // a stable hover or cancel a press gesture.
+                    recomputeHyperlinkHover();
                     if (terminalUpdate.resetCursorBlink && hasActiveFocus()) {
                         resetCursorBlink();
                     } else {
@@ -507,7 +504,8 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     connect(controller_, &TerminalController::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
                 clearHyperlinkHover();
-                hyperlinkPressDragged_ = false;
+                cancelHyperlinkPress();
+                cancelPendingHyperlinkActivation();
                 bool hasError = false;
                 {
                     QMutexLocker locker(&renderMutex_);
@@ -707,7 +705,10 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         baseFont = font_;
         preedit = preedit_;
         status = statusMessage_;
-        hoveredHyperlinkCells = hoveredHyperlinkCellIndexes_;
+        if (hoveredHyperlinkColumns_ == frame_.columns
+            && hoveredHyperlinkRows_ == frame_.rows) {
+            hoveredHyperlinkCells = hoveredHyperlinkCellIndexes_;
+        }
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
         baseline = baseline_;
@@ -1052,12 +1053,6 @@ void TerminalPane::resetCursorBlink()
 
 void TerminalPane::updateTerminalSize()
 {
-    if (controller_ != nullptr) {
-        // Drop viewport-relative state immediately. If the item is too small
-        // to send a resize, a later hover can resolve again without waiting
-        // for a frame that will never arrive.
-        clearHyperlinkHover();
-    }
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     {
@@ -1066,6 +1061,10 @@ void TerminalPane::updateTerminalSize()
         cellHeight = cellHeight_;
     }
     if (width() < cellWidth || height() < cellHeight) {
+        if (controller_ != nullptr) {
+            clearHyperlinkHover();
+            cancelHyperlinkPress();
+        }
         return;
     }
     const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
@@ -1372,14 +1371,21 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         return controller_->selectionExpected();
     }
     if (name == QLatin1StringView("copy_url_to_clipboard")) {
-        quint64 contentRevision = 0;
+        bool hoveredCellIsLinked = false;
         {
             QMutexLocker locker(&renderMutex_);
-            contentRevision = frame_.contentRevision;
+            const int index = hoverCell_.y() * frame_.columns
+                + hoverCell_.x();
+            hoveredCellIsLinked = hoverCell_.x() >= 0
+                && hoverCell_.x() < frame_.columns
+                && hoverCell_.y() >= 0 && hoverCell_.y() < frame_.rows
+                && hoveredHyperlinkColumns_ == frame_.columns
+                && hoveredHyperlinkRows_ == frame_.rows
+                && hoveredHyperlinkCellIndexes_.contains(index);
         }
         return !parameter.has_value() && !hoveredHyperlinkUri_.isEmpty()
             && hoveredHyperlinkCell_ == hoverCell_
-            && hoveredHyperlinkRevision_ == contentRevision
+            && hoveredCellIsLinked
             && hyperlinkModifiersMatch(hoverModifiers_);
     }
     if (name == QLatin1StringView("activate_key_table")
@@ -1465,7 +1471,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
                 && !controller_->selectionExpected()) {
                 return false;
             }
-            clearHyperlinkHover();
             controller_->scrollViewport(paneAction->viewport);
             return true;
         case GhosttyPaneActionKind::ScrollPageUp:
@@ -1476,7 +1481,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             request.delta = paneAction->kind
                     == GhosttyPaneActionKind::ScrollPageUp
                 ? -rows : rows;
-            clearHyperlinkHover();
             controller_->scrollViewport(request);
             return true;
         }
@@ -1487,7 +1491,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             TerminalViewportRequest request;
             request.kind = TerminalViewportRequest::Kind::Delta;
             request.delta = *delta;
-            clearHyperlinkHover();
             controller_->scrollViewport(request);
             return true;
         }
@@ -1496,26 +1499,21 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             return true;
         case GhosttyPaneActionKind::AdjustSelection:
             if (!controller_->selectionExpected()) return false;
-            clearHyperlinkHover();
             controller_->adjustSelection(paneAction->selectionAdjustment);
             return true;
         case GhosttyPaneActionKind::Csi:
-            clearHyperlinkHover();
             controller_->sendCsi(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Esc:
-            clearHyperlinkHover();
             controller_->sendEscape(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Text:
             // Ghostty validates Zig string escapes only when performing the
             // action. Keep the serialized bytes intact until the worker so a
             // malformed binding is still consumed without writing to the PTY.
-            clearHyperlinkHover();
             controller_->sendRawText(paneAction->payload.toUtf8());
             return true;
         case GhosttyPaneActionKind::Reset:
-            clearHyperlinkHover();
             controller_->resetTerminal();
             return true;
         }
@@ -1678,6 +1676,8 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
     if (event->button() == Qt::LeftButton) {
+        cancelPendingHyperlinkActivation();
+        cancelHyperlinkPress();
         hyperlinkPressDragged_ = false;
         hyperlinkPressPosition_ = event->position();
         quint64 contentRevision = 0;
@@ -1685,18 +1685,27 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
             && hyperlinkCellCandidate(hoverCell_, &contentRevision);
         if (hyperlinkPressArmed_) {
             hyperlinkPressCell_ = hoverCell_;
-            hyperlinkPressRevision_ = contentRevision;
             hyperlinkPressUri_ = hoveredHyperlinkCell_ == hoverCell_
-                    && hoveredHyperlinkRevision_ == contentRevision
                 ? hoveredHyperlinkUri_ : QByteArray{};
+            hyperlinkPressRequestId_ =
+                controller_->prepareHyperlinkActivation(
+                    hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
+                    contentRevision);
         }
     }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
         && !modifiers.testFlag(Qt::ShiftModifier);
+    if (event->button() != Qt::NoButton) {
+        if (report) {
+            mouseReportedPresses_.insert(event->button());
+        } else {
+            mouseReportedPresses_.remove(event->button());
+        }
+    }
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  event->buttons(), modifiers);
+                  reportedMouseButtons(event->buttons()), modifiers);
     } else if (event->button() == Qt::LeftButton) {
         // Ghostty starts its normal selection gesture even for a potential
         // link click. A release may activate the link, while a drag naturally
@@ -1718,12 +1727,18 @@ void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    if (!controller_->mouseTracking()
-        || modifiers.testFlag(Qt::ShiftModifier)) {
+    const bool report = controller_->mouseTracking()
+        && !modifiers.testFlag(Qt::ShiftModifier);
+    if (report) {
+        mouseReportedPresses_.insert(event->button());
+    } else {
+        mouseReportedPresses_.remove(event->button());
+    }
+    if (!report) {
         beginLocalSelection(event->position(), 2, modifiers);
     } else {
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  event->buttons(), modifiers);
+                  reportedMouseButtons(event->buttons()), modifiers);
     }
     event->accept();
 }
@@ -1742,15 +1757,24 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
-        hyperlinkPressDragged_ = true;
+        if (!hyperlinkPressDragged_) {
+            hyperlinkPressDragged_ = true;
+            controller_->cancelHyperlinkActivation(
+                hyperlinkPressRequestId_);
+            hyperlinkPressRequestId_ = 0;
+        }
     }
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier);
+    const Qt::MouseButtons reportedButtons =
+        reportedMouseButtons(event->buttons());
+    const bool report = event->buttons() == Qt::NoButton
+        ? controller_->mouseTracking()
+            && !modifiers.testFlag(Qt::ShiftModifier)
+        : reportedButtons != Qt::NoButton;
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
-                  event->buttons(), modifiers);
+                  reportedButtons, modifiers);
     } else if (selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint cell = cellAt(event->position());
         controller_->updateSelection(cell.x(), cell.y(),
@@ -1764,39 +1788,44 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
-        hyperlinkPressDragged_ = true;
+        if (!hyperlinkPressDragged_) {
+            hyperlinkPressDragged_ = true;
+            controller_->cancelHyperlinkActivation(
+                hyperlinkPressRequestId_);
+            hyperlinkPressRequestId_ = 0;
+        }
     }
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier);
+    const bool report = mouseReportedPresses_.remove(event->button()) > 0;
     if (event->button() == Qt::LeftButton && selecting_) {
         const QPoint cell = cellAt(event->position());
         controller_->endSelection(cell.x(), cell.y());
         selecting_ = false;
     }
-    quint64 releaseRevision = 0;
     const bool activateHyperlink = event->button() == Qt::LeftButton
         && hyperlinkPressArmed_ && !hyperlinkPressDragged_
         && hyperlinkModifiersMatch(hoverModifiers_)
-        && hoverCell_ == hyperlinkPressCell_
-        && hyperlinkCellCandidate(hyperlinkPressCell_, &releaseRevision)
-        && releaseRevision == hyperlinkPressRevision_;
+        && hyperlinkPressRequestId_ != 0
+        && hoverCell_.x() >= 0 && hoverCell_.y() >= 0;
     if (activateHyperlink) {
         pendingActivationUri_ = hyperlinkPressUri_;
-        pendingActivationRevision_ = hyperlinkPressRevision_;
-        controller_->requestHyperlinkActivation(
-            hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
-            hyperlinkPressRevision_);
+        pendingActivationRequestId_ = hyperlinkPressRequestId_;
+        controller_->commitHyperlinkActivation(
+            hyperlinkPressRequestId_, hoverCell_.x(), hoverCell_.y());
     } else if (report) {
         sendMouse(event->position(), TerminalMouseInput::Release, event->button(),
-                  event->buttons(), modifiers);
+                  reportedMouseButtons(event->buttons()), modifiers);
+    }
+    if (!activateHyperlink) {
+        controller_->cancelHyperlinkActivation(
+            hyperlinkPressRequestId_);
     }
     hyperlinkPressArmed_ = false;
     hyperlinkPressDragged_ = false;
     hyperlinkPressCell_ = QPoint(-1, -1);
     hyperlinkPressUri_.clear();
-    hyperlinkPressRevision_ = 0;
+    hyperlinkPressRequestId_ = 0;
     event->accept();
 }
 
@@ -1817,7 +1846,7 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
     hoverInside_ = false;
     hoverCell_ = QPoint(-1, -1);
     clearHyperlinkHover();
-    hyperlinkPressDragged_ = false;
+    cancelHyperlinkPress();
     QQuickItem::hoverLeaveEvent(event);
     event->accept();
 }
@@ -1847,7 +1876,6 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         TerminalViewportRequest request;
         request.kind = TerminalViewportRequest::Kind::Delta;
         request.delta = -static_cast<qint64>(steps) * 3;
-        clearHyperlinkHover();
         controller_->scrollViewport(request);
     }
     event->accept();
@@ -1876,6 +1904,18 @@ void TerminalPane::sendMouse(const QPointF &position, TerminalMouseInput::Action
     input.y = static_cast<float>(position.y() * devicePixelRatio);
     input.anyButtonPressed = buttons != Qt::NoButton;
     controller_->sendMouse(input);
+}
+
+Qt::MouseButtons TerminalPane::reportedMouseButtons(
+    Qt::MouseButtons buttons) const
+{
+    Qt::MouseButtons reported = Qt::NoButton;
+    for (const Qt::MouseButton button : mouseReportedPresses_) {
+        if (buttons.testFlag(button)) {
+            reported |= button;
+        }
+    }
+    return reported;
 }
 
 int TerminalPane::normalizedMouseButton(Qt::MouseButton button) const
@@ -1942,6 +1982,9 @@ void TerminalPane::updateHyperlinkHover(
     if (nextCell != hoverCell_) {
         if (hyperlinkPressArmed_) {
             hyperlinkPressDragged_ = true;
+            controller_->cancelHyperlinkActivation(
+                hyperlinkPressRequestId_);
+            hyperlinkPressRequestId_ = 0;
         }
         bool remainsOnResolvedLink = false;
         {
@@ -1950,8 +1993,10 @@ void TerminalPane::updateHyperlinkHover(
             remainsOnResolvedLink = nextCell.x() >= 0
                 && nextCell.x() < frame_.columns
                 && nextCell.y() >= 0 && nextCell.y() < frame_.rows
-                && hoveredHyperlinkRevision_ == frame_.contentRevision
+                && hoveredHyperlinkColumns_ == frame_.columns
+                && hoveredHyperlinkRows_ == frame_.rows
                 && hoveredHyperlinkCellIndexes_.contains(index)
+                && hyperlinkLeaseActive_
                 && !hyperlinkPressDragged_
                 && hyperlinkModifiersMatch(hoverModifiers_);
         }
@@ -1964,6 +2009,7 @@ void TerminalPane::updateHyperlinkHover(
         }
     }
     if (!hyperlinkModifiersMatch(hoverModifiers_)) {
+        cancelHyperlinkPress();
         clearHyperlinkHover();
         return;
     }
@@ -1983,6 +2029,7 @@ void TerminalPane::updateHyperlinkModifiers(
     keyboardModifiers_ = normalizedModifiers(modifiers);
     hoverModifiers_ = keyboardModifiers_;
     if (!hyperlinkModifiersMatch(hoverModifiers_)) {
+        cancelHyperlinkPress();
         clearHyperlinkHover();
         return;
     }
@@ -1997,9 +2044,16 @@ void TerminalPane::refreshHyperlinkHover()
         || !hyperlinkModifiersMatch(hoverModifiers_)) {
         return;
     }
+    if (hyperlinkQueryCell_ == hoverCell_) {
+        if (hyperlinkQueryPending_ || hyperlinkQueryRejected_) {
+            return;
+        }
+        if (hyperlinkLeaseActive_) {
+            return;
+        }
+    }
 
     quint64 contentRevision = 0;
-    QVector<QPoint> candidates;
     bool targetHasHyperlink = false;
     {
         QMutexLocker locker(&renderMutex_);
@@ -2013,60 +2067,65 @@ void TerminalPane::refreshHyperlinkHover()
         targetHasHyperlink = targetIndex >= 0
             && targetIndex < frame_.cells.size()
             && frame_.cells.at(targetIndex).hasHyperlink;
-        if (targetHasHyperlink) {
-            candidates.reserve(frame_.cells.size());
-            for (int index = 0; index < frame_.cells.size(); ++index) {
-                if (frame_.cells.at(index).hasHyperlink) {
-                    candidates.append(QPoint(index % frame_.columns,
-                                             index / frame_.columns));
-                }
-            }
-        }
     }
 
     if (!targetHasHyperlink) {
         clearHyperlinkHover();
         return;
     }
-    if (hyperlinkQueryCell_ == hoverCell_
-        && hyperlinkQueryRevision_ == contentRevision) {
-        return;
-    }
-
     clearHyperlinkHover();
     hyperlinkQueryCell_ = hoverCell_;
-    hyperlinkQueryRevision_ = contentRevision;
     hyperlinkQueryPending_ = true;
+    hyperlinkQueryRejected_ = false;
     controller_->requestHyperlink(hoverCell_.x(), hoverCell_.y(),
-                                  contentRevision, candidates);
+                                  contentRevision);
 }
 
-void TerminalPane::clearHyperlinkHover()
+void TerminalPane::clearHyperlinkDecoration()
 {
-    controller_->cancelHyperlinkRequest();
-    hyperlinkQueryCell_ = QPoint(-1, -1);
-    hyperlinkQueryRevision_ = 0;
-    hyperlinkQueryPending_ = false;
     hoveredHyperlinkUri_.clear();
     hoveredHyperlinkCell_ = QPoint(-1, -1);
-    hoveredHyperlinkRevision_ = 0;
-    if (hyperlinkPressArmed_) {
-        hyperlinkPressDragged_ = true;
-    }
-    hyperlinkPressArmed_ = false;
-    hyperlinkPressUri_.clear();
-    hyperlinkPressRevision_ = 0;
 
     bool hadHighlight = false;
     {
         QMutexLocker locker(&renderMutex_);
         hadHighlight = !hoveredHyperlinkCellIndexes_.isEmpty();
         hoveredHyperlinkCellIndexes_.clear();
+        hoveredHyperlinkColumns_ = 0;
+        hoveredHyperlinkRows_ = 0;
     }
     unsetCursor();
     if (hadHighlight) {
         update();
     }
+}
+
+void TerminalPane::clearHyperlinkHover()
+{
+    controller_->cancelHyperlinkRequest();
+    hyperlinkQueryCell_ = QPoint(-1, -1);
+    hyperlinkQueryPending_ = false;
+    hyperlinkLeaseActive_ = false;
+    hyperlinkQueryRejected_ = false;
+    clearHyperlinkDecoration();
+}
+
+void TerminalPane::cancelHyperlinkPress()
+{
+    controller_->cancelHyperlinkActivation(hyperlinkPressRequestId_);
+    hyperlinkPressArmed_ = false;
+    hyperlinkPressDragged_ = false;
+    hyperlinkPressCell_ = QPoint(-1, -1);
+    hyperlinkPressUri_.clear();
+    hyperlinkPressRequestId_ = 0;
+}
+
+void TerminalPane::cancelPendingHyperlinkActivation()
+{
+    controller_->cancelHyperlinkActivation(
+        pendingActivationRequestId_);
+    pendingActivationRequestId_ = 0;
+    pendingActivationUri_.clear();
 }
 
 bool TerminalPane::hyperlinkCellCandidate(
@@ -2089,12 +2148,14 @@ bool TerminalPane::hyperlinkCellCandidate(
 }
 
 void TerminalPane::handleHyperlinkResult(
-    quint64 contentRevision, const QByteArray &uri,
+    quint64 contentRevision, TerminalHyperlinkState state,
+    const QByteArray &uri, const QPoint &targetCell,
     const QVector<QPoint> &matchingCells)
 {
-    if (!hyperlinkQueryPending_) {
+    if (!hyperlinkQueryPending_ && !hyperlinkLeaseActive_) {
         return;
     }
+    const bool hadTrackedLease = hyperlinkLeaseActive_;
     hyperlinkQueryPending_ = false;
 
     quint64 currentRevision = 0;
@@ -2106,19 +2167,40 @@ void TerminalPane::handleHyperlinkResult(
         columns = frame_.columns;
         rows = frame_.rows;
     }
-    if (contentRevision != hyperlinkQueryRevision_
-        || contentRevision != currentRevision
-        || hyperlinkQueryCell_ != hoverCell_
+    if (hyperlinkQueryCell_ != hoverCell_
         || !hoverInside_ || !hyperlinkModifiersMatch(hoverModifiers_)) {
         clearHyperlinkHover();
         return;
     }
 
-    if (uri.isEmpty()) {
-        hoveredHyperlinkUri_.clear();
-        hoveredHyperlinkCell_ = QPoint(-1, -1);
-        hoveredHyperlinkRevision_ = 0;
-        unsetCursor();
+    if (state == TerminalHyperlinkState::Hidden) {
+        hyperlinkLeaseActive_ = true;
+        hyperlinkQueryRejected_ = false;
+        clearHyperlinkDecoration();
+        if (hyperlinkCellCandidate(hoverCell_)) {
+            clearHyperlinkHover();
+            refreshHyperlinkHover();
+        }
+        return;
+    }
+    if (state == TerminalHyperlinkState::Stale) {
+        hyperlinkLeaseActive_ = false;
+        hyperlinkQueryRejected_ = false;
+        hyperlinkQueryCell_ = QPoint(-1, -1);
+        clearHyperlinkDecoration();
+        if (currentRevision >= contentRevision) {
+            refreshHyperlinkHover();
+        }
+        return;
+    }
+    if (state != TerminalHyperlinkState::Visible || uri.isEmpty()) {
+        hyperlinkLeaseActive_ = false;
+        hyperlinkQueryRejected_ = !hadTrackedLease;
+        clearHyperlinkDecoration();
+        if (hadTrackedLease) {
+            hyperlinkQueryCell_ = QPoint(-1, -1);
+            refreshHyperlinkHover();
+        }
         return;
     }
 
@@ -2129,16 +2211,26 @@ void TerminalPane::handleHyperlinkResult(
             indexes.insert(cell.y() * columns + cell.x());
         }
     }
-    if (indexes.isEmpty()) {
-        indexes.insert(hoverCell_.y() * columns + hoverCell_.x());
+    if (targetCell.x() >= 0 && targetCell.x() < columns
+        && targetCell.y() >= 0 && targetCell.y() < rows) {
+        indexes.insert(targetCell.y() * columns + targetCell.x());
+    }
+    const int hoverIndex = hoverCell_.y() * columns + hoverCell_.x();
+    if (!indexes.contains(hoverIndex)) {
+        clearHyperlinkHover();
+        refreshHyperlinkHover();
+        return;
     }
 
+    hyperlinkLeaseActive_ = true;
+    hyperlinkQueryRejected_ = false;
     hoveredHyperlinkUri_ = uri;
     hoveredHyperlinkCell_ = hoverCell_;
-    hoveredHyperlinkRevision_ = contentRevision;
     {
         QMutexLocker locker(&renderMutex_);
         hoveredHyperlinkCellIndexes_ = std::move(indexes);
+        hoveredHyperlinkColumns_ = columns;
+        hoveredHyperlinkRows_ = rows;
     }
     setCursor(Qt::PointingHandCursor);
     update();
@@ -2158,10 +2250,11 @@ QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri) const
 void TerminalPane::handleHyperlinkActivation(
     quint64 contentRevision, const QByteArray &uri)
 {
+    static_cast<void>(contentRevision);
+    const quint64 requestId =
+        std::exchange(pendingActivationRequestId_, 0);
     const QByteArray expectedUri = std::exchange(pendingActivationUri_, {});
-    const quint64 expectedRevision =
-        std::exchange(pendingActivationRevision_, 0);
-    if (contentRevision != expectedRevision || uri.isEmpty()
+    if (requestId == 0 || uri.isEmpty()
         || (!expectedUri.isEmpty() && uri != expectedUri) || !urlOpener_) {
         return;
     }
@@ -2200,7 +2293,8 @@ void TerminalPane::focusOutEvent(QFocusEvent *event)
     keyboardModifiers_ = Qt::NoModifier;
     hoverModifiers_ = Qt::NoModifier;
     clearHyperlinkHover();
-    hyperlinkPressDragged_ = false;
+    cancelHyperlinkPress();
+    cancelPendingHyperlinkActivation();
     controller_->setFocused(false);
     QQuickItem::focusOutEvent(event);
     update();
