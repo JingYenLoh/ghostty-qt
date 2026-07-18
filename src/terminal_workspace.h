@@ -108,7 +108,7 @@ private:
     void activatePane(PaneId id);
     void requestQuitImpl();
     void approveQuit();
-    void resolvePendingPaneRemoval(PaneId paneId);
+    void resolvePendingPaneRemoval(PaneHandle handle);
     void resolvePendingTabRemoval(TabId tabId);
     void reevaluatePendingClose();
     Tab *currentTab();
@@ -134,7 +134,6 @@ private:
     TerminalPane *firstPane(Node *node) const;
     PaneId firstPaneId(Node *node) const;
     TerminalPane *paneForId(PaneId paneId) const;
-    void collectPanes(Node *node, std::vector<TerminalPane *> *panes) const;
     bool navigateFrom(PaneId paneId, int direction);
     bool navigateRelative(PaneId paneId, qint64 delta);
     bool resizeSplit(PaneId paneId, int direction, int amount);
@@ -147,12 +146,11 @@ private:
     int tabIndexForId(TabId tabId) const;
     int tabIndexForPane(PaneId paneId) const;
     TabId tabIdForPane(PaneId paneId) const;
-    PaneId paneIdForPane(TerminalPane *pane) const;
     bool changeTabRelativeImpl(int delta, TabId origin = {});
     void beginUnsafePaste(quint64 requestId, const QString &text,
                           PaneId paneId);
     void finishPendingPaste(quint64 confirmationId, bool confirmed);
-    void removePendingPastesForPane(PaneId paneId);
+    void removePendingPastesForPane(PaneHandle handle);
     void schedulePendingPastePreview();
     void showPendingPastePreview();
     static QString pastePreview(const QString &text);

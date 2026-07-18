@@ -57,6 +57,16 @@ struct TerminalWorkspace::Node {
 
     bool isLeaf() const { return pane != nullptr; }
 
+    void collectPanes(std::vector<PaneHandle> &panes) const
+    {
+        if (isLeaf()) {
+            panes.push_back({paneId, pane});
+            return;
+        }
+        if (first != nullptr) first->collectPanes(panes);
+        if (second != nullptr) second->collectPanes(panes);
+    }
+
     [[nodiscard]] AxisWeights equalize()
     {
         if (isLeaf()) return {};
@@ -127,10 +137,10 @@ void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
         });
 
         for (const std::unique_ptr<Tab> &tab : tabs_) {
-            std::vector<TerminalPane *> panes;
-            collectPanes(tab->root.get(), &panes);
-            for (TerminalPane *pane : panes) {
-                createSearchOverlay(pane);
+            std::vector<PaneHandle> panes;
+            tab->root->collectPanes(panes);
+            for (const PaneHandle &handle : panes) {
+                createSearchOverlay(handle.pane);
             }
         }
     }
@@ -178,10 +188,10 @@ void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapsho
 {
     effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
     for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<TerminalPane *> panes;
-        collectPanes(tab->root.get(), &panes);
-        for (TerminalPane *pane : panes) {
-            pane->applyRuntimeOptions(effectiveOptions_);
+        std::vector<PaneHandle> panes;
+        tab->root->collectPanes(panes);
+        for (const PaneHandle &handle : panes) {
+            handle.pane->applyRuntimeOptions(effectiveOptions_);
         }
     }
     reevaluatePendingClose();
@@ -241,11 +251,11 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
     // process-level caller.
     std::vector<QPointer<TerminalPane>> panes;
     for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<TerminalPane *> rawPanes;
-        collectPanes(tab->root.get(), &rawPanes);
-        panes.reserve(panes.size() + rawPanes.size());
-        for (TerminalPane *pane : rawPanes) {
-            panes.emplace_back(pane);
+        std::vector<PaneHandle> tabPanes;
+        tab->root->collectPanes(tabPanes);
+        panes.reserve(panes.size() + tabPanes.size());
+        for (const PaneHandle &handle : tabPanes) {
+            panes.emplace_back(handle.pane);
         }
     }
 
@@ -488,8 +498,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::currentDirectoryChanged, this,
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::sessionEnded, this,
-            [this, paneId](TerminalPane *, int, int) {
-                removePendingPastesForPane(paneId);
+            [this, paneId, pane](TerminalPane *, int, int) {
+                removePendingPastesForPane({paneId, pane});
                 refreshTab(tabIdForPane(paneId));
             });
     connect(pane, &TerminalPane::processStateChanged, this,
@@ -794,7 +804,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     if (tab->zoomedPaneId == paneId) {
         tab->zoomedPaneId = {};
     }
-    resolvePendingPaneRemoval(paneId);
+    resolvePendingPaneRemoval({paneId, pane});
     removePaneFromNode(tab->root, paneId);
     if (tab->root == nullptr) {
         removeTab(tabId);
@@ -873,13 +883,16 @@ void TerminalWorkspace::removeTab(TabId tabId)
         return;
     }
     const bool removedCurrentTab = index == currentIndex_;
-    std::vector<TerminalPane *> panes;
-    collectPanes(tabs_[static_cast<size_t>(index)]->root.get(), &panes);
-    for (TerminalPane *pane : panes) {
-        resolvePendingPaneRemoval(paneIdForPane(pane));
-        pane->beginShutdown();
-        pane->setVisible(false);
-        pane->deleteLater();
+    std::vector<PaneHandle> panes;
+    if (const Node *root = tabs_[static_cast<size_t>(index)]->root.get();
+        root != nullptr) {
+        root->collectPanes(panes);
+    }
+    for (const PaneHandle &handle : panes) {
+        resolvePendingPaneRemoval(handle);
+        handle.pane->beginShutdown();
+        handle.pane->setVisible(false);
+        handle.pane->deleteLater();
     }
     tabs_.erase(tabs_.begin() + index);
     tabModel_.remove(tabId);
@@ -913,10 +926,10 @@ void TerminalWorkspace::removeTab(TabId tabId)
     }
 }
 
-void TerminalWorkspace::resolvePendingPaneRemoval(PaneId paneId)
+void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
 {
-    removePendingPastesForPane(paneId);
-    if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != paneId) {
+    removePendingPastesForPane(handle);
+    if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != handle.id) {
         return;
     }
     pendingClose_ = PendingClose::None;
@@ -1008,10 +1021,10 @@ void TerminalWorkspace::approveQuit()
     // per-process grace periods then overlap on their independent threads
     // instead of accumulating serially on the GUI thread.
     for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<TerminalPane *> panes;
-        collectPanes(tab->root.get(), &panes);
-        for (TerminalPane *pane : panes) {
-            pane->beginShutdown();
+        std::vector<PaneHandle> panes;
+        tab->root->collectPanes(panes);
+        for (const PaneHandle &handle : panes) {
+            handle.pane->beginShutdown();
         }
     }
     Q_EMIT quitApproved();
@@ -1151,9 +1164,8 @@ void TerminalWorkspace::finishPendingPaste(quint64 confirmationId,
     schedulePendingPastePreview();
 }
 
-void TerminalWorkspace::removePendingPastesForPane(PaneId paneId)
+void TerminalWorkspace::removePendingPastesForPane(PaneHandle handle)
 {
-    TerminalPane *const pane = paneForId(paneId);
     bool removedActiveRequest = false;
     for (qsizetype pendingIndex = pendingPastes_.size();
          pendingIndex-- > 0;) {
@@ -1161,11 +1173,11 @@ void TerminalWorkspace::removePendingPastesForPane(PaneId paneId)
         for (qsizetype targetIndex = pending.targets.size();
              targetIndex-- > 0;) {
             const PendingPasteTarget target = pending.targets[targetIndex];
-            if (target.paneId != paneId) {
+            if (target.paneId != handle.id) {
                 continue;
             }
-            if (pane != nullptr) {
-                pane->cancelPaste(target.requestId);
+            if (handle.pane != nullptr) {
+                handle.pane->cancelPaste(target.requestId);
             }
             pending.targets.removeAt(targetIndex);
         }
@@ -1191,10 +1203,11 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
         activePane = firstPane(tab.root.get());
     }
 
-    std::vector<TerminalPane *> panes;
-    collectPanes(tab.root.get(), &panes);
+    std::vector<PaneHandle> panes;
+    tab.root->collectPanes(panes);
     const bool running = std::ranges::any_of(
-        panes, [](TerminalPane *pane) { return pane->isRunning(); });
+        panes,
+        [](const PaneHandle &handle) { return handle.pane->isRunning(); });
 
     TabListEntry entry;
     entry.id = tab.id;
@@ -1366,18 +1379,6 @@ TerminalPane *TerminalWorkspace::paneForId(PaneId paneId) const
     return nullptr;
 }
 
-void TerminalWorkspace::collectPanes(Node *node,
-                                     std::vector<TerminalPane *> *panes) const
-{
-    if (node == nullptr || panes == nullptr) return;
-    if (node->isLeaf()) {
-        panes->push_back(node->pane);
-        return;
-    }
-    collectPanes(node->first.get(), panes);
-    collectPanes(node->second.get(), panes);
-}
-
 bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
 {
     Tab *tab = tabById(tabIdForPane(paneId));
@@ -1482,15 +1483,11 @@ bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
 {
     Tab *tab = tabById(tabIdForPane(paneId));
     if (tab == nullptr) return false;
-    std::vector<TerminalPane *> panes;
-    collectPanes(tab->root.get(), &panes);
+    std::vector<PaneHandle> panes;
+    tab->root->collectPanes(panes);
     if (panes.size() <= 1) return false;
 
-    const auto current = std::ranges::find_if(
-        panes,
-        [this, paneId](TerminalPane *pane) {
-            return paneIdForPane(pane) == paneId;
-        });
+    const auto current = std::ranges::find(panes, paneId, &PaneHandle::id);
     if (current == panes.end()) return false;
 
     const qint64 count = static_cast<qint64>(panes.size());
@@ -1505,7 +1502,7 @@ bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
         refreshTab(tab->id);
         if (tab->id == currentTabId()) layoutCurrentTab();
     }
-    activatePane(paneIdForPane(panes[destination]));
+    activatePane(panes[destination].id);
     return true;
 }
 
@@ -1618,14 +1615,16 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
 
 bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
 {
-    std::vector<TerminalPane *> panes;
-    collectPanes(tab.root.get(), &panes);
+    std::vector<PaneHandle> panes;
+    tab.root->collectPanes(panes);
     const bool childRunning = std::ranges::any_of(
         panes,
-        [](TerminalPane *pane) { return pane->isRunning(); });
+        [](const PaneHandle &handle) { return handle.pane->isRunning(); });
     const bool activeProcess = std::ranges::any_of(
         panes,
-        [](TerminalPane *pane) { return pane->hasActiveProcess(); });
+        [](const PaneHandle &handle) {
+            return handle.pane->hasActiveProcess();
+        });
     return shouldConfirmClose(effectiveOptions_.confirmCloseMode,
                               childRunning, activeProcess);
 }
@@ -1664,24 +1663,4 @@ TabId TerminalWorkspace::tabIdForPane(PaneId paneId) const
 {
     const int index = tabIndexForPane(paneId);
     return index >= 0 ? tabs_[static_cast<size_t>(index)]->id : TabId{};
-}
-
-PaneId TerminalWorkspace::paneIdForPane(TerminalPane *pane) const
-{
-    if (pane == nullptr) {
-        return {};
-    }
-    const auto findPaneId = [pane](auto &&self, Node *node) -> PaneId {
-        if (node == nullptr) return {};
-        if (node->isLeaf()) return node->pane == pane ? node->paneId : PaneId{};
-        const PaneId first = self(self, node->first.get());
-        return first.isValid() ? first : self(self, node->second.get());
-    };
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        const PaneId paneId = findPaneId(findPaneId, tab->root.get());
-        if (paneId.isValid()) {
-            return paneId;
-        }
-    }
-    return {};
 }

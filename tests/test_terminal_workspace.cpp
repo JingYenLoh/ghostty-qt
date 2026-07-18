@@ -59,6 +59,7 @@ class TerminalWorkspaceTest : public QObject {
 
 private Q_SLOTS:
     void runningProgramPromptsThenResolvesOnceOnExit();
+    void closingOnlyPaneRemovesTab();
     void idleShellDoesNotPromptInRunningProcessesMode();
     void submittedCommandPromptsBeforeForegroundPoll();
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
@@ -74,6 +75,7 @@ private Q_SLOTS:
     void splitDirectionsPlaceAndFocusNewPane();
     void automaticSplitUsesOriginatingPaneAspect();
     void splitNavigationWrapsInTreeAndSpatialOrder();
+    void relativeSplitNavigationUsesExplicitSourceAndTreeOrder();
     void splitResizeAndEqualizeRespectTreeAxes();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
     void broadContainerActionsResolveFromActivePane();
@@ -106,6 +108,29 @@ void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
     QTRY_COMPARE_WITH_TIMEOUT(resolved.count(), 1, 3000);
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 3000);
     QTest::qWait(100);
+    QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::closingOnlyPaneRemovesTab()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId paneId = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, paneId, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 0);
     QCOMPARE(quit.count(), 1);
 }
 
@@ -1168,6 +1193,69 @@ void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()
         {tabId, first, Qt::Key_Up},
     }));
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third);
+}
+
+void TerminalWorkspaceTest::relativeSplitNavigationUsesExplicitSourceAndTreeOrder()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId first = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, first, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, first);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, first, 0},
+    }));
+    const PaneId second = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitLeft,
+        {tabId, second, 0},
+    }));
+    const PaneId third = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    // The split tree is now [first, third, second], unlike creation order.
+    // Navigating from an explicit inactive source must use that tree order.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, second, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, first, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, third);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, first, -1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, second);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, second, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, first);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, PaneId(999'999), 1},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {TabId(999'999), first, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, first);
 }
 
 void TerminalWorkspaceTest::splitResizeAndEqualizeRespectTreeAxes()
