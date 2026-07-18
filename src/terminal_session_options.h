@@ -28,6 +28,12 @@ enum class TerminalCopyOnSelectMode : quint8 {
     PrimaryAndClipboard,
 };
 
+enum class TerminalClipboardDestination : quint8 {
+    Standard,
+    Primary,
+    PrimaryAndStandard,
+};
+
 struct TerminalSelectionClipboardOptions {
     bool trimTrailingSpaces = true;
     TerminalCopyOnSelectMode copyOnSelect = TerminalCopyOnSelectMode::Primary;
@@ -80,3 +86,4 @@ inline quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns)
 
 Q_DECLARE_METATYPE(TerminalSessionLaunchOptions)
 Q_DECLARE_METATYPE(TerminalSessionRuntimeOptions)
+Q_DECLARE_METATYPE(TerminalClipboardDestination)

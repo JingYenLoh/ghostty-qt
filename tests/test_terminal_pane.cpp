@@ -1,4 +1,5 @@
 #include "launch_options.h"
+#include "terminal_clipboard.h"
 #include "terminal_controller.h"
 #include "terminal_pane.h"
 #include "terminal_types.h"
@@ -75,6 +76,8 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
+    void writesClipboardDestinations();
+    void reloadsMiddleClickClipboardPolicy();
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
@@ -312,6 +315,135 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     pane.resetZoom();
     QCOMPARE(pane.fontPointSize(), 10.0);
     QVERIFY(!pane.splitLaunchOptions().fontSizeManuallyAdjusted);
+}
+
+void TerminalPaneTest::writesClipboardDestinations()
+{
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const bool supportsPrimary = clipboard->supportsSelection();
+    const QString standardSentinel =
+        QStringLiteral("clipboard-standard-sentinel");
+    const QString primarySentinel =
+        QStringLiteral("clipboard-primary-sentinel");
+    const auto resetClipboards = [&] {
+        clipboard->setText(standardSentinel, QClipboard::Clipboard);
+        if (supportsPrimary) {
+            clipboard->setText(primarySentinel, QClipboard::Selection);
+        }
+    };
+
+    resetClipboards();
+    writeTerminalClipboard(
+        clipboard, QStringLiteral("standard-write"),
+        TerminalClipboardDestination::Standard);
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
+                 QStringLiteral("standard-write"));
+    if (supportsPrimary) {
+        QCOMPARE(clipboard->text(QClipboard::Selection), primarySentinel);
+    }
+
+    resetClipboards();
+    writeTerminalClipboard(
+        clipboard, QStringLiteral("primary-write"),
+        TerminalClipboardDestination::Primary);
+    if (supportsPrimary) {
+        QTRY_COMPARE(clipboard->text(QClipboard::Selection),
+                     QStringLiteral("primary-write"));
+        QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
+    } else {
+        QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
+                     QStringLiteral("primary-write"));
+    }
+
+    resetClipboards();
+    writeTerminalClipboard(
+        clipboard, QStringLiteral("both-write"),
+        TerminalClipboardDestination::PrimaryAndStandard);
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
+                 QStringLiteral("both-write"));
+    if (supportsPrimary) {
+        QTRY_COMPARE(clipboard->text(QClipboard::Selection),
+                     QStringLiteral("both-write"));
+    }
+
+    clipboard->clear(QClipboard::Clipboard);
+    if (supportsPrimary) {
+        clipboard->clear(QClipboard::Selection);
+    }
+}
+
+void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033[?1000h'; sleep 5"),
+    };
+    options.hold = true;
+    options.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    options.middleClickAction = MiddleClickAction::PrimaryPaste;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy mouse(controller, &TerminalController::mouseRequested);
+    QSignalSpy unsafe(&pane, &TerminalPane::unsafePasteRequested);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->mouseTracking(), 5000);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const bool supportsPrimary = clipboard->supportsSelection();
+    const QString standardText = QStringLiteral("middle-standard");
+    const QString primaryText = QStringLiteral("middle-primary");
+    clipboard->setText(standardText, QClipboard::Clipboard);
+    if (supportsPrimary) {
+        clipboard->setText(primaryText, QClipboard::Selection);
+    }
+
+    const auto pressMiddleButton = [&pane](Qt::KeyboardModifiers modifiers) {
+        const QPointF position(1.0, 1.0);
+        QMouseEvent event(
+            QEvent::MouseButtonPress, position, position, position,
+            Qt::MiddleButton, Qt::MiddleButton, modifiers);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+
+    pressMiddleButton(Qt::ShiftModifier);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constLast().constFirst().toString(),
+             supportsPrimary ? primaryText : standardText);
+    QCOMPARE(unsafe.count(), 0);
+
+    LaunchOptions reloaded = options;
+    reloaded.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+    pane.applyRuntimeOptions(reloaded);
+    pressMiddleButton(Qt::ShiftModifier);
+    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(pasted.constLast().constFirst().toString(), standardText);
+    QCOMPARE(unsafe.count(), 0);
+
+    pressMiddleButton(Qt::NoModifier);
+    QCOMPARE(mouse.count(), 1);
+    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(unsafe.count(), 0);
+
+    reloaded.middleClickAction = MiddleClickAction::Ignore;
+    pane.applyRuntimeOptions(reloaded);
+    pressMiddleButton(Qt::ShiftModifier);
+    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(unsafe.count(), 0);
+
+    clipboard->clear(QClipboard::Clipboard);
+    if (supportsPrimary) {
+        clipboard->clear(QClipboard::Selection);
+    }
 }
 
 void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()

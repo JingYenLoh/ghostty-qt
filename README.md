@@ -26,8 +26,10 @@ the host-language comparison and remaining engineering risks.
   Ghostty generic renderer.
 - Keyboard, focus, mouse-reporting, bracketed-paste, and IME input paths.
 - Mouse selection, double-click word selection, rectangular selection with
-  `Alt`, keyboard select-all/endpoint adjustment, clipboard copy,
-  primary-selection paste, and an unsafe-paste review dialog.
+  `Alt`, keyboard select-all/endpoint adjustment, configurable trailing-space
+  trimming and copy-on-select destinations, primary-selection fallback,
+  selection clearing after explicit copy, configurable middle-click paste,
+  and an unsafe-paste review dialog.
 - Explicit OSC 8 hyperlinks and Ghostty's default regex-detected URLs/paths,
   with `Ctrl`-hover pointer/underline feedback, release-validated `Ctrl`-click
   opening through the desktop URL handler, and the `copy_url_to_clipboard`
@@ -223,6 +225,8 @@ The current compatibility slice applies these keys:
 | `theme` | A static theme's appearance values can flow through the canonical fields above when the pinned parser resolves them. Dynamic light/dark theme switching is not implemented. |
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
+| `clipboard-trim-trailing-spaces`, `copy-on-select`, `selection-clear-on-copy` | Apply live to selection copying. Linux `copy-on-select` accepts Ghostty's `false`, `true` (primary selection), and `clipboard` (primary and standard clipboard) modes, with standard-clipboard fallback when primary selection is unavailable. Explicit copy can clear only after formatting; automatic copy never clears. |
+| `middle-click-action` | Applies `primary-paste` or `ignore` live. Primary paste reads the standard clipboard in `copy-on-select=clipboard` mode; otherwise it reads the primary selection with standard fallback. Terminal mouse reporting takes precedence. |
 | `link-url` | Enables Ghostty's pinned default regex matcher for scheme URLs and file paths. The default is `true`; live reload recomputes hover state. Explicit OSC 8 hyperlinks are unaffected. |
 | `link-previews` | Controls the destination overlay for an accepted `Ctrl` hover. `true` (the default) previews OSC 8 and regex links, `false` previews neither, and `osc8` previews only explicit OSC 8 destinations. Reload is frontend-only and preserves a hover over the terminal link. Removing a preview while its bottom-left guard owns the pointer resumes physical terminal hit testing and may query that newly exposed cell. |
 | `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
@@ -333,7 +337,9 @@ testing. Control and bidirectional formatting characters are escaped, invalid
 UTF-8 is replaced visibly, and long byte strings are capped before layout.
 When an application has captured the mouse, use
 `Ctrl+Shift`: `Shift` releases the capture before the exact `Ctrl` link
-modifier is matched. Middle-click pastes the Wayland primary selection.
+modifier is matched. Middle-click follows the configured primary-paste/ignore
+policy and falls back to the standard clipboard when primary selection is not
+available.
 
 ## Terminfo
 
@@ -468,10 +474,7 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   the desktop opener. URI-scheme handling after validation belongs to Qt and
   the configured desktop services.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
-  are supported.
-- `select_all` installs the same terminal selection as Ghostty, but the
-  separate `copy-on-select` configuration and automatic clipboard side effect
-  remain planned, so that action is tracked as partial rather than supported.
+  are supported; styled HTML/VT clipboard formats are not yet emitted.
 - Selection-dependent `performable` bindings use asynchronously reconciled UI
   state. Immediate select-all chains retain worker order, but a separate key
   event can still race a blank select-all completion or terminal-driven

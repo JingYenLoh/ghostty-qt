@@ -276,6 +276,10 @@
       "status": "supported",
       "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
     },
+    "clipboard-trim-trailing-spaces": {
+      "status": "supported",
+      "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."
+    },
     "command": {
       "status": "partial",
       "note": "An initial positional command exists, but Ghostty config and initial-command semantics do not."
@@ -287,6 +291,10 @@
     "confirm-close-surface": {
       "status": "partial",
       "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups plus a command-submission latch detect external jobs, but long-running shell builtins remain indistinguishable from an idle shell until Ghostty semantic prompt metadata and shell integration are wired."
+    },
+    "copy-on-select": {
+      "status": "supported",
+      "note": "Linux false, primary-only true, and clipboard modes apply live. Selection release and select-all copy to the primary selection, both clipboards, or neither, with standard-clipboard fallback when the platform lacks a primary selection."
     },
     "cursor-color": {
       "status": "supported",
@@ -340,6 +348,10 @@
       "status": "supported",
       "note": "The pinned default URL/path expression and vendored Oniguruma semantics run on complete semantic logical lines. The setting defaults true, reloads live, and controls only regex links; explicit OSC 8 destinations remain interactive when disabled."
     },
+    "middle-click-action": {
+      "status": "supported",
+      "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
+    },
     "palette": {
       "status": "supported",
       "note": "All 256 canonical defaults are applied. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured defaults."
@@ -371,6 +383,10 @@
     "selection-background": {
       "status": "supported",
       "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal foreground."
+    },
+    "selection-clear-on-copy": {
+      "status": "supported",
+      "note": "Explicit copy formats and emits the installed selection before optionally clearing it in the same session-thread operation; automatic copy-on-select never clears."
     },
     "selection-foreground": {
       "status": "supported",
@@ -677,7 +693,7 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Configured plain/mixed copy routes to selection copy; styled VT and HTML formats remain absent."
+          "note": "Configured plain/mixed copy routes to session-thread selection formatting with live trailing-space trimming and optional post-copy clearing; styled VT and HTML formats remain absent."
         },
         "copy_url_to_clipboard": {
           "status": "partial",
@@ -834,8 +850,8 @@
           "note": "When a terminal selection exists, its untrimmed text becomes the needle and opens the pane overlay; without a selection the action is not performed. Search execution uses the cooperative frontend foundation."
         },
         "select_all": {
-          "status": "partial",
-          "note": "Installs Ghostty's full selectable-content range and exposes it for copy; copy-on-select configuration and its automatic clipboard side effect remain planned."
+          "status": "supported",
+          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",

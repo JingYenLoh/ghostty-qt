@@ -86,6 +86,8 @@ private Q_SLOTS:
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
+    void copiesSelectionWithRuntimeFormattingAndAtomicClear();
+    void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
     void searchesIncrementallyAndNavigates();
@@ -1103,6 +1105,177 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(16, 4, 8, 16, 128, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'abc   \\r\\ncopy-ready'; sleep 5"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("copy-ready")), 5000);
+
+    worker.beginSelection(0, 0, 1, false);
+    worker.updateSelection(6, 0, false);
+    worker.endSelection(6, 0);
+    QCOMPARE(clipboardSpy.count(), 0);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("abc"));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Standard);
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+
+    options.runtime.selectionClipboard.trimTrailingSpaces = false;
+    options.runtime.selectionClipboard.clearOnCopy = true;
+    worker.applyRuntimeOptions(options.runtime);
+    clipboardSpy.clear();
+    selectionSpy.clear();
+    updateSpy.clear();
+    QStringList lifecycle;
+    const QMetaObject::Connection copiedConnection = connect(
+        &worker, &SessionWorker::clipboardTextReady, &worker,
+        [&lifecycle](const QString &,
+                     TerminalClipboardDestination) {
+            lifecycle.append(QStringLiteral("copied"));
+        });
+    const QMetaObject::Connection selectionConnection = connect(
+        &worker, &SessionWorker::selectionAvailableChanged, &worker,
+        [&lifecycle](bool available) {
+            lifecycle.append(available ? QStringLiteral("selected")
+                                       : QStringLiteral("cleared"));
+        });
+
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("abc   "));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Standard);
+    QCOMPARE(lifecycle,
+             QStringList({QStringLiteral("copied"),
+                          QStringLiteral("cleared")}));
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 1000);
+
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 1);
+    disconnect(copiedConnection);
+    disconnect(selectionConnection);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(16, 4, 8, 16, 128, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy selectAllSpy(&worker, &SessionWorker::selectAllCompleted);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'auto-copy\\r\\nauto-ready'; sleep 5"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    options.runtime.selectionClipboard.clearOnCopy = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("auto-ready")), 5000);
+
+    worker.beginSelection(0, 0, 1, false);
+    worker.updateSelection(9, 0, false);
+    QCOMPARE(clipboardSpy.count(), 0);
+    worker.endSelection(9, 0);
+    QCOMPARE(clipboardSpy.count(), 0);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+
+    worker.clearSelection();
+    selectionSpy.clear();
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Primary;
+    worker.applyRuntimeOptions(options.runtime);
+    QCOMPARE(clipboardSpy.count(), 0);
+
+    worker.beginSelection(0, 0, 1, false);
+    worker.updateSelection(9, 0, false);
+    QCOMPARE(clipboardSpy.count(), 0);
+    worker.endSelection(9, 0);
+    QCOMPARE(clipboardSpy.count(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("auto-copy"));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Primary);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+
+    clipboardSpy.clear();
+    selectionSpy.clear();
+    worker.beginSelection(0, 1, 1, false);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    worker.endSelection(0, 1);
+    QCOMPARE(clipboardSpy.count(), 0);
+    selectionSpy.clear();
+
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+    worker.applyRuntimeOptions(options.runtime);
+    QCOMPARE(clipboardSpy.count(), 0);
+
+    worker.selectAll();
+    QCOMPARE(selectAllSpy.count(), 1);
+    QVERIFY(selectAllSpy.constFirst().constFirst().toBool());
+    QCOMPARE(clipboardSpy.count(), 1);
+    QVERIFY(clipboardSpy.constFirst().at(0).toString().contains(
+        QStringLiteral("auto-copy")));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::PrimaryAndStandard);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

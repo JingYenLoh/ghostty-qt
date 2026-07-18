@@ -1,3 +1,4 @@
+#include "terminal_clipboard.h"
 #include "terminal_types.h"
 
 #include <QTest>
@@ -33,6 +34,7 @@ private Q_SLOTS:
     void appliesFullAndPartialUpdates();
     void rejectsMalformedUpdateWithoutMutation();
     void rejectsUnrepresentableFrameSize();
+    void resolvesClipboardRoutingWithoutPlatformAssumptions();
 };
 
 void TerminalTypesTest::appliesFullAndPartialUpdates()
@@ -105,6 +107,43 @@ void TerminalTypesTest::rejectsUnrepresentableFrameSize()
     QCOMPARE(frame.columns, 0);
     QCOMPARE(frame.rows, 0);
     QVERIFY(frame.cells.isEmpty());
+}
+
+void TerminalTypesTest::resolvesClipboardRoutingWithoutPlatformAssumptions()
+{
+    const auto verifyTargets = [](TerminalClipboardDestination destination,
+                                  bool supportsPrimary, bool standard,
+                                  bool primary) {
+        const TerminalClipboardWriteTargets targets =
+            terminalClipboardWriteTargets(destination, supportsPrimary);
+        QCOMPARE(targets.standard, standard);
+        QCOMPARE(targets.primary, primary);
+    };
+
+    verifyTargets(TerminalClipboardDestination::Standard, false, true, false);
+    verifyTargets(TerminalClipboardDestination::Standard, true, true, false);
+    verifyTargets(TerminalClipboardDestination::Primary, false, true, false);
+    verifyTargets(TerminalClipboardDestination::Primary, true, false, true);
+    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard,
+                  false, true, false);
+    verifyTargets(TerminalClipboardDestination::PrimaryAndStandard,
+                  true, true, true);
+
+    for (const TerminalCopyOnSelectMode mode : {
+             TerminalCopyOnSelectMode::Disabled,
+             TerminalCopyOnSelectMode::Primary,
+         }) {
+        QCOMPARE(terminalMiddleClickSource(mode, false),
+                 TerminalClipboardSource::Standard);
+        QCOMPARE(terminalMiddleClickSource(mode, true),
+                 TerminalClipboardSource::Primary);
+    }
+    QCOMPARE(terminalMiddleClickSource(
+                 TerminalCopyOnSelectMode::PrimaryAndClipboard, false),
+             TerminalClipboardSource::Standard);
+    QCOMPARE(terminalMiddleClickSource(
+                 TerminalCopyOnSelectMode::PrimaryAndClipboard, true),
+             TerminalClipboardSource::Standard);
 }
 
 QTEST_APPLESS_MAIN(TerminalTypesTest)

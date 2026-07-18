@@ -2,8 +2,8 @@
 
 #include "ghostty_vt_adapter.h"
 #include "session_worker.h"
+#include "terminal_clipboard.h"
 
-#include <QClipboard>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QThread>
@@ -42,6 +42,7 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalMouseInput>();
     qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
+    qRegisterMetaType<TerminalClipboardDestination>();
 
     thread_ = new QThread(this);
     worker_ = new SessionWorker;
@@ -205,10 +206,10 @@ TerminalController::TerminalController(
                 Q_EMIT searchSelectionReady(available, text);
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
-            [](const QString &text) {
-                if (QGuiApplication::clipboard() != nullptr) {
-                    QGuiApplication::clipboard()->setText(text);
-                }
+            [](const QString &text,
+               TerminalClipboardDestination destination) {
+                writeTerminalClipboard(QGuiApplication::clipboard(), text,
+                                       destination);
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::errorOccurred,
             this, &TerminalController::errorOccurred, Qt::QueuedConnection);

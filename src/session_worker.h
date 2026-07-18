@@ -86,7 +86,8 @@ Q_SIGNALS:
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
     void mouseTrackingChanged(bool enabled);
-    void clipboardTextReady(const QString &text);
+    void clipboardTextReady(const QString &text,
+                            TerminalClipboardDestination destination);
     void bell();
     void started(qint64 processId);
     // True means closing this surface would interrupt active work. An idle
@@ -148,7 +149,9 @@ private:
     void handleChildStatus(int status);
     QByteArray encodeKey(const TerminalKeyInput &input);
     QByteArray encodeMouse(const TerminalMouseInput &input);
-    QString selectedText() const;
+    void copySelectionTo(TerminalClipboardDestination destination,
+                         bool clearAfterCopy);
+    void copySelectionOnSelect();
 
     TerminalSessionLaunchOptions options_;
     std::unique_ptr<GhosttyVtAdapter> vt_;

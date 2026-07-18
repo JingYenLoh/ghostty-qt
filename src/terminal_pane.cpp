@@ -1,6 +1,7 @@
 #include "terminal_pane.h"
 
 #include "ghostty_action_catalog.h"
+#include "terminal_clipboard.h"
 #include "terminal_controller.h"
 
 #include <QClipboard>
@@ -2139,10 +2140,15 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
         // continues as selection instead.
         beginLocalSelection(event->position(), 1, modifiers);
     } else if (event->button() == Qt::MiddleButton) {
-        const QString text = QGuiApplication::clipboard()->text(QClipboard::Selection);
-        if (!text.isEmpty()) {
-            if (TerminalController::isPasteSafe(text)) pasteText(text);
-            else Q_EMIT unsafePasteRequested(text, this);
+        QClipboard *const clipboard = QGuiApplication::clipboard();
+        if (options_.middleClickAction == MiddleClickAction::PrimaryPaste
+            && clipboard != nullptr) {
+            const QString text = readMiddleClickClipboard(
+                clipboard, options_.selectionClipboard.copyOnSelect);
+            if (!text.isEmpty()) {
+                if (TerminalController::isPasteSafe(text)) pasteText(text);
+                else Q_EMIT unsafePasteRequested(text, this);
+            }
         }
     }
     event->accept();

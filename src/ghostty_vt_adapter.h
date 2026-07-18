@@ -208,8 +208,7 @@ public:
     QByteArray encodeFocus(bool focused) const;
     QByteArray encodePaste(const QString &text) const;
 
-    QString selectedText() const;
-    QString selectedTextForSearch(bool trim = false) const;
+    QString selectedText(bool trim = true) const;
     bool hasSelection() const;
     void clearSelection();
     bool beginSelection(int column, int row, int clickCount, bool rectangular);

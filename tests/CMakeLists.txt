@@ -12,6 +12,8 @@ add_test(NAME launch-options COMMAND test-launch-options)
 qt_add_executable(test-terminal-types
     test_terminal_types.cpp
     ../src/terminal_actions.h
+    ../src/terminal_clipboard.h
+    ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
 target_include_directories(test-terminal-types PRIVATE
@@ -60,6 +62,8 @@ qt_add_executable(test-terminal-pane
     ../src/session_worker.h
     ../src/terminal_controller.cpp
     ../src/terminal_controller.h
+    ../src/terminal_clipboard.cpp
+    ../src/terminal_clipboard.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/launch_options.cpp
@@ -104,6 +108,8 @@ qt_add_executable(test-terminal-workspace
     ../src/tab_list_model.h
     ../src/terminal_controller.cpp
     ../src/terminal_controller.h
+    ../src/terminal_clipboard.cpp
+    ../src/terminal_clipboard.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_session_options.h

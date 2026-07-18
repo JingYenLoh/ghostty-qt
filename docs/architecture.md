@@ -187,9 +187,14 @@ signals:
 - Paste uses Ghostty's safe-paste check and bracketed-paste encoder. Unsafe text
   is held in `TerminalWorkspace` until the QML dialog confirms it.
 - Selection is stored in Ghostty's terminal model and formatted by Ghostty for
-  clipboard copy. Libghostty's tracked selection-gesture state keeps the drag
-  anchor stable across output, scrolling, and resize. OSC-driven clipboard
-  writes from terminal applications are denied by the host callback.
+  clipboard copy. Formatting, destination intent, and optional explicit-copy
+  clearing are one `SessionWorker` operation; the resulting immutable text and
+  typed intent cross to a queued GUI receiver, so only the GUI thread
+  reads or writes `QClipboard`. Linux copy-on-select commits on left-button
+  release and select-all, with primary-selection fallback resolved from Qt's
+  GUI-thread capability. Libghostty's tracked selection-gesture state keeps
+  the drag anchor stable across output, scrolling, and resize. OSC-driven
+  clipboard writes from terminal applications are denied by the host callback.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain
@@ -631,7 +636,8 @@ The default CTest suite has focused layers for each ownership boundary:
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
   focus, and key input using terminal modes. It also verifies tagged viewport
   scrolling, selection-target alignment, select-all, and endpoint adjustment
-  with exact autoscroll, plus primary/alternate-screen reset, mode clearing,
+  with exact autoscroll and configurable selection trimming, plus
+  primary/alternate-screen reset, mode clearing,
   selection invalidation, history removal, forced full-frame publication, and
   long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
   state. Tracked URI anchors are also exercised across unrelated output,
@@ -706,12 +712,14 @@ The default CTest suite has focused layers for each ownership boundary:
   relocated private config helper, verifies runtime terminfo lookup, and checks
   valid and invalid explicit overrides.
 
-Interactive selection and unsafe-paste confirmation behavior are not fully
-automated yet. Typed-action tests cover tab and split state transitions; the
-offscreen tests validate QML startup, close-dialog
-shutdown, and scene-graph frame replacement in a headless environment, but they
-do not validate the hardware RHI path. `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a
-test escape hatch rather than a
+Clipboard tests cover trim policy, copy destinations and primary fallback,
+explicit copy-and-clear ordering, automatic selection commits, select-all,
+live reload, and middle-click source/ignore policy. Pointer-drag sequencing and
+unsafe-paste dialog confirmation are not fully automated yet. Typed-action
+tests cover tab and split state transitions; the offscreen tests validate QML
+startup, close-dialog shutdown, and scene-graph frame replacement in a headless
+environment, but they do not validate the hardware RHI path.
+`GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
 supported runtime configuration; GPU output must also be checked interactively
 in a real Wayland session.
 

@@ -1197,15 +1197,44 @@ void SessionWorker::paste(const QString &text)
 
 void SessionWorker::copySelection()
 {
-    const QString text = selectedText();
-    if (!text.isNull()) {
-        Q_EMIT clipboardTextReady(text);
+    copySelectionTo(TerminalClipboardDestination::Standard,
+                    options_.runtime.selectionClipboard.clearOnCopy);
+}
+
+void SessionWorker::copySelectionTo(
+    TerminalClipboardDestination destination, bool clearAfterCopy)
+{
+    if (vt_ == nullptr) {
+        return;
+    }
+
+    const QString text = vt_->selectedText(
+        options_.runtime.selectionClipboard.trimTrailingSpaces);
+    if (text.isNull()) {
+        return;
+    }
+
+    Q_EMIT clipboardTextReady(text, destination);
+    if (clearAfterCopy) {
+        vt_->clearSelection();
+        syncSelectionAvailability();
+        scheduleFrame();
     }
 }
 
-QString SessionWorker::selectedText() const
+void SessionWorker::copySelectionOnSelect()
 {
-    return vt_ != nullptr ? vt_->selectedText() : QString{};
+    switch (options_.runtime.selectionClipboard.copyOnSelect) {
+    case TerminalCopyOnSelectMode::Disabled:
+        return;
+    case TerminalCopyOnSelectMode::Primary:
+        copySelectionTo(TerminalClipboardDestination::Primary, false);
+        return;
+    case TerminalCopyOnSelectMode::PrimaryAndClipboard:
+        copySelectionTo(TerminalClipboardDestination::PrimaryAndStandard,
+                        false);
+        return;
+    }
 }
 
 void SessionWorker::clearSelection()
@@ -1246,6 +1275,7 @@ void SessionWorker::endSelection(int column, int row)
     if (vt_ != nullptr) {
         vt_->endSelection(column, row);
         syncSelectionAvailability();
+        copySelectionOnSelect();
     }
 }
 
@@ -1253,6 +1283,9 @@ void SessionWorker::selectAll()
 {
     const bool selected = vt_ != nullptr && vt_->selectAll();
     syncSelectionAvailability();
+    if (selected) {
+        copySelectionOnSelect();
+    }
     Q_EMIT selectAllCompleted(selectionAvailable_);
     if (selected) {
         scheduleFrame();
@@ -1725,8 +1758,7 @@ void SessionWorker::requestSearchSelection(quint64 requestId)
         return;
     }
     const bool available = vt_ != nullptr && vt_->hasSelection();
-    const QString text = available
-        ? vt_->selectedTextForSearch(false) : QString{};
+    const QString text = available ? vt_->selectedText(false) : QString{};
     Q_EMIT searchSelectionReady(requestId, available, text);
 }
 

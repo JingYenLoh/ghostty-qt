@@ -1803,6 +1803,7 @@ public:
             return false;
         }
 
+        const bool hadSelection = hasSelection();
         ghostty_selection_gesture_reset(selectionGesture_, terminal_);
         const int boundedClickCount = std::clamp(clickCount, 1, 3);
         const GhosttySelectionGestureBehavior behavior = boundedClickCount == 2
@@ -1822,10 +1823,21 @@ public:
 
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        return ghostty_selection_gesture_event(
-                   selectionGesture_, terminal_, selectionPressEvent_, &selection)
-                == GHOSTTY_SUCCESS
-            && installSelection(selection);
+        const GhosttyResult result = ghostty_selection_gesture_event(
+            selectionGesture_, terminal_, selectionPressEvent_, &selection);
+        if (result == GHOSTTY_SUCCESS) {
+            return installSelection(selection);
+        }
+        if (result == GHOSTTY_NO_VALUE && boundedClickCount == 1
+            && hadSelection) {
+            // A single press creates the drag anchor without returning an
+            // installed range. Match Ghostty's surface lifecycle by clearing
+            // the old range without resetting that new gesture state.
+            return ghostty_terminal_set(
+                       terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr)
+                == GHOSTTY_SUCCESS;
+        }
+        return false;
     }
 
     bool updateSelection(int column, int row, bool rectangular)
@@ -2931,12 +2943,7 @@ QByteArray GhosttyVtAdapter::encodePaste(const QString &text) const
     return impl_->encodePaste(text);
 }
 
-QString GhosttyVtAdapter::selectedText() const
-{
-    return impl_->selectedText();
-}
-
-QString GhosttyVtAdapter::selectedTextForSearch(bool trim) const
+QString GhosttyVtAdapter::selectedText(bool trim) const
 {
     return impl_->selectedText(trim);
 }

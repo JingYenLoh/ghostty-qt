@@ -84,7 +84,7 @@ private Q_SLOTS:
     void invalidatesTrackedTextRangesAfterCoveredTextMutation();
     void selectsAndNavigatesViewportAtomically();
     void mapsAndRevealsSearchRanges();
-    void formatsSearchSelectionWithoutTrimming();
+    void formatsSelectionWithConfigurableTrimming();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
 };
@@ -1286,7 +1286,7 @@ void GhosttyVtAdapterTest::mapsAndRevealsSearchRanges()
     QVERIFY(!adapter->scrollSearchRangeIntoView(invalid));
 }
 
-void GhosttyVtAdapterTest::formatsSearchSelectionWithoutTrimming()
+void GhosttyVtAdapterTest::formatsSelectionWithConfigurableTrimming()
 {
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 10;
@@ -1299,8 +1299,20 @@ void GhosttyVtAdapterTest::formatsSearchSelectionWithoutTrimming()
     QVERIFY(adapter->updateSelection(6, 0, false));
     adapter->endSelection(6, 0);
     QCOMPARE(adapter->selectedText(), QStringLiteral("abc"));
-    QCOMPARE(adapter->selectedTextForSearch(true), QStringLiteral("abc"));
-    QCOMPARE(adapter->selectedTextForSearch(), QStringLiteral("abc   "));
+    QCOMPARE(adapter->selectedText(true), QStringLiteral("abc"));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("abc   "));
+
+    // A no-value repeat click does not clear an existing selection upstream.
+    QVERIFY(!adapter->beginSelection(0, 1, 2, false));
+    QVERIFY(adapter->hasSelection());
+
+    // A fresh single press clears the installed selection while retaining
+    // the new drag anchor maintained by Ghostty's gesture state.
+    QVERIFY(adapter->beginSelection(1, 0, 1, false));
+    QVERIFY(!adapter->hasSelection());
+    QVERIFY(adapter->updateSelection(3, 0, false));
+    adapter->endSelection(3, 0);
+    QVERIFY(adapter->hasSelection());
 }
 
 void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()

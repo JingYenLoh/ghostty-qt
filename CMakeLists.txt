@@ -488,6 +488,8 @@ qt_add_executable(ghostty-qt
     src/terminal_appearance.h
     src/terminal_controller.cpp
     src/terminal_controller.h
+    src/terminal_clipboard.cpp
+    src/terminal_clipboard.h
     src/terminal_pane.cpp
     src/terminal_pane.h
     src/terminal_session_options.h
