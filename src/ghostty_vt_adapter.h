@@ -30,6 +30,31 @@ public:
                                const EncodedKey &) = default;
     };
 
+    enum class PasteDisposition : quint8 {
+        Ready,
+        ConfirmationRequired,
+        Failed,
+    };
+
+    enum class PasteAuthorization : quint8 {
+        Initial,
+        Confirmed,
+    };
+
+    struct PastePreparationOptions {
+        bool protection = true;
+        bool bracketedSafe = true;
+        PasteAuthorization authorization = PasteAuthorization::Initial;
+    };
+
+    struct PreparedPaste {
+        PasteDisposition disposition = PasteDisposition::Failed;
+        QByteArray bytes;
+
+        friend bool operator==(const PreparedPaste &,
+                               const PreparedPaste &) = default;
+    };
+
     // A short-lived, move-only snapshot of one unwrapped logical terminal
     // line. Byte offsets use the exact UTF-8 byte stream consumed by Ghostty's
     // regex matcher; targetByteOffset identifies the first byte mapped to the
@@ -198,7 +223,6 @@ public:
 
     static std::unique_ptr<GhosttyVtAdapter> create(
         const Options &options, Callbacks callbacks = {});
-    static bool isPasteSafe(QByteArrayView text);
     ~GhosttyVtAdapter();
 
     GhosttyVtAdapter(const GhosttyVtAdapter &) = delete;
@@ -216,6 +240,10 @@ public:
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QByteArray encodeFocus(bool focused) const;
     QByteArray encodePaste(const QString &text) const;
+    // Classification and encoding share one bracketed-mode snapshot so an
+    // accepted request cannot be encoded under different terminal state.
+    PreparedPaste preparePaste(const QString &text,
+                               const PastePreparationOptions &options) const;
 
     QString selectedText(bool trim = true) const;
     bool hasSelection() const;

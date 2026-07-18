@@ -189,8 +189,18 @@ signals:
   destinations. This presentation policy does not change link detection,
   underline, copy, or activation behavior.
 - Focus changes are encoded only when the terminal requests focus reporting.
-- Paste uses Ghostty's safe-paste check and bracketed-paste encoder. Unsafe text
-  is held in `TerminalWorkspace` until the QML dialog confirms it.
+- Paste classification, retained unsafe text, and encoding stay on
+  `SessionWorker`. One adapter operation snapshots Ghostty's current
+  bracketed-paste mode for both the exact safety decision and encoding.
+  Rejected text receives a nonzero worker-local request ID. The GUI retains an
+  immutable display/grouping copy plus queued `(pane, request ID)` targets,
+  but never uses that copy as paste input. A separate workspace dialog token
+  prevents duplicate or stale accept/reject callbacks from consuming the next
+  request. Confirmation consumes the original worker request once, snapshots
+  current terminal mode again, and bypasses protection without rereading
+  `QClipboard`. Only an accepted paste marks activity, returns to the active
+  screen, and queues PTY bytes. Pane removal, session exit, and cancellation
+  invalidate pending targets without writing.
 - Selection is stored in Ghostty's terminal model and formatted by Ghostty for
   clipboard copy. Formatting, destination intent, and optional explicit-copy
   clearing are one `SessionWorker` operation; the resulting immutable text and
@@ -723,7 +733,11 @@ Clipboard and selection-lifecycle tests cover trim policy, copy destinations
 and primary fallback, explicit copy-and-clear ordering, automatic selection
 commits, select-all, live reload, middle-click source/ignore policy,
 clear-on-typing key traits, sequence replay exclusions, and IME/preedit
-transitions. Unsafe-paste dialog confirmation is not fully automated yet.
+transitions. Paste-safety tests cover Ghostty's exact bracketed and
+non-bracketed policy, live options, control-byte encoding, confirmation-time
+mode changes, accepted-only activity and viewport changes, all GUI paste entry
+points, immutable worker IDs, multi-pane dialog correlation, queued payloads,
+stale responses, session/pane teardown, and preview bounds.
 Typed-action tests cover tab and split state transitions; the offscreen tests
 validate QML startup, close-dialog shutdown, and scene-graph frame replacement
 in a headless environment, but they do not validate the hardware RHI path.

@@ -86,6 +86,7 @@ private Q_SLOTS:
     void runsCommandThroughPty();
     void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
+    void protectsPasteWithCorrelatedWorkerConfirmation();
     void sendsTerminalControlActionsThroughPty();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
@@ -864,6 +865,140 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral(
                  "paste-bytes:1b5b3230307e6f6e650a74776f1b5b3230317e")),
              qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::protectsPasteWithCorrelatedWorkerConfirmation()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy unsafeSpy(
+        &worker, &SessionWorker::unsafePasteConfirmationRequested);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/paste-safety-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString modeMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("enable-mode"));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "i=0; while [ $i -lt 24 ]; do "
+            "printf 'paste-history-%02d\\r\\n' \"$i\"; i=$((i + 1)); done; "
+            "printf 'paste-worker-ready'; "
+            "payload=$(dd bs=1 count=4 2>/dev/null); "
+            "printf '\\r\\npaste-first:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+            "printf '\\033[?2004hmode-ready'; "
+            "payload=$(dd bs=1 count=19 2>/dev/null); "
+            "printf '\\033[?2004l\\r\\npaste-second:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "payload=$(dd bs=1 count=7 2>/dev/null); "
+            "printf '\\r\\npaste-third:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "payload=$(dd bs=1 count=4 2>/dev/null); "
+            "printf '\\r\\npaste-fourth:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\n'"),
+        QStringLiteral("paste-safety-test"),
+        modeMarker,
+    };
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("paste-worker-ready")), 5000);
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{0}, 1000);
+
+    const QString unsafeText = QStringLiteral("one\ntwo");
+    worker.paste(unsafeText);
+    QCOMPARE(unsafeSpy.count(), 1);
+    const quint64 cancelledId = unsafeSpy.constFirst().at(0).toULongLong();
+    QVERIFY(cancelledId != 0);
+    QCOMPARE(unsafeSpy.constFirst().at(1).toString(), unsafeText);
+    const QString independentlyPending = QStringLiteral("red\nblue");
+    worker.paste(independentlyPending);
+    QCOMPARE(unsafeSpy.count(), 2);
+    const quint64 independentlyPendingId =
+        unsafeSpy.constLast().at(0).toULongLong();
+    QVERIFY(independentlyPendingId != 0);
+    QVERIFY(independentlyPendingId != cancelledId);
+    QCOMPARE(unsafeSpy.constLast().at(1).toString(), independentlyPending);
+    QTest::qWait(100);
+    QVERIFY(!updatesContain(updateSpy, QStringLiteral("paste-first:")));
+    QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{0});
+
+    worker.cancelPaste(cancelledId);
+    worker.confirmPaste(cancelledId);
+    worker.cancelPaste(independentlyPendingId);
+    worker.confirmPaste(independentlyPendingId);
+    worker.paste(QStringLiteral("SAFE"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("paste-first:53414645")),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                             1000);
+
+    worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{0}, 1000);
+    worker.paste(unsafeText);
+    QCOMPARE(unsafeSpy.count(), 3);
+    const quint64 confirmedId = unsafeSpy.constLast().at(0).toULongLong();
+    QVERIFY(confirmedId != 0);
+    QVERIFY(confirmedId != cancelledId);
+
+    QFile marker(modeMarker);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.close();
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        worker.scrollViewport({
+            .kind = TerminalViewportRequest::Kind::Bottom,
+        });
+        return updatesContain(updateSpy, QStringLiteral("mode-ready"));
+    })(), 5000);
+    worker.confirmPaste(confirmedId);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updateSpy,
+            QStringLiteral(
+                "paste-second:1b5b3230307e6f6e650a74776f1b5b3230317e")),
+        5000);
+
+    // The ID was consumed exactly once. A duplicate cannot feed the child's
+    // next fixed-size read or authorize another payload.
+    worker.confirmPaste(confirmedId);
+    options.runtime.clipboardPaste.protection = false;
+    worker.applyRuntimeOptions(options.runtime);
+    worker.paste(unsafeText);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("paste-third:6f6e650d74776f")),
+        5000);
+    QCOMPARE(unsafeSpy.count(), 3);
+
+    worker.paste(QStringLiteral("DONE"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("paste-fourth:444f4e45")),
+        5000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -1709,11 +1844,14 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     SessionWorker worker;
     QSignalSpy startedSpy(&worker, &SessionWorker::started);
     QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy unsafeSpy(
+        &worker, &SessionWorker::unsafePasteConfirmationRequested);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.hold = true;
+    options.runtime.clipboardPaste.bracketedSafe = false;
     worker.initialize(options);
     QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1000);
 
@@ -1723,6 +1861,26 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
         !activitySpy.isEmpty()
             && !activitySpy.constLast().constFirst().toBool(),
         1000);
+    activitySpy.clear();
+
+    // Merely rejecting or cancelling an unsafe request is not process
+    // activity. Confirmation applies the hint only when bytes are accepted.
+    worker.paste(QStringLiteral("cancelled\n"));
+    QCOMPARE(unsafeSpy.count(), 1);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+    worker.cancelPaste(unsafeSpy.constLast().at(0).toULongLong());
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+
+    worker.paste(QStringLiteral("\n"));
+    QCOMPARE(unsafeSpy.count(), 2);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+    worker.confirmPaste(unsafeSpy.constLast().at(0).toULongLong());
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        3000);
     activitySpy.clear();
 
     const QString command = QStringLiteral("sleep 1");

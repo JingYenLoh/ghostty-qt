@@ -574,6 +574,11 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 controller_->search(text);
                 Q_EMIT searchUiFocusRequested();
             });
+    connect(controller_,
+            &TerminalController::unsafePasteConfirmationRequested,
+            this, [this](quint64 requestId, const QString &text) {
+                Q_EMIT unsafePasteRequested(requestId, text, this);
+            });
     connect(controller_, &TerminalController::hyperlinkResolved, this,
             &TerminalPane::handleHyperlinkResult);
     connect(controller_, &TerminalController::hyperlinkActivationResolved,
@@ -1507,8 +1512,7 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
         case Qt::Key_V: {
             const QString text = QGuiApplication::clipboard()->text();
             if (!text.isEmpty()) {
-                if (TerminalController::isPasteSafe(text)) pasteText(text);
-                else Q_EMIT unsafePasteRequested(text, this);
+                pasteText(text);
             }
             return KeyHandling::ConsumePressAndRelease;
         }
@@ -1947,16 +1951,14 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     if (name == QLatin1StringView("paste_from_clipboard")) {
         const QString text = QGuiApplication::clipboard()->text();
         if (text.isEmpty()) return false;
-        if (TerminalController::isPasteSafe(text)) pasteText(text);
-        else Q_EMIT unsafePasteRequested(text, this);
+        pasteText(text);
         return true;
     }
     if (name == QLatin1StringView("paste_from_selection")) {
         const QString text =
             QGuiApplication::clipboard()->text(QClipboard::Selection);
         if (text.isEmpty()) return false;
-        if (TerminalController::isPasteSafe(text)) pasteText(text);
-        else Q_EMIT unsafePasteRequested(text, this);
+        pasteText(text);
         return true;
     }
     if (name == QLatin1StringView("increase_font_size")
@@ -2154,8 +2156,7 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
             const QString text = readMiddleClickClipboard(
                 clipboard, options_.selectionClipboard.copyOnSelect);
             if (!text.isEmpty()) {
-                if (TerminalController::isPasteSafe(text)) pasteText(text);
-                else Q_EMIT unsafePasteRequested(text, this);
+                pasteText(text);
             }
         }
     }
@@ -2923,6 +2924,16 @@ void TerminalPane::copySelection()
 void TerminalPane::pasteText(const QString &text)
 {
     controller_->paste(text);
+}
+
+void TerminalPane::confirmPaste(quint64 requestId)
+{
+    controller_->confirmPaste(requestId);
+}
+
+void TerminalPane::cancelPaste(quint64 requestId)
+{
+    controller_->cancelPaste(requestId);
 }
 
 void TerminalPane::setFontPointSize(qreal points)

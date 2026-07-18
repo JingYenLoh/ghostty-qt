@@ -1165,20 +1165,7 @@ void SessionWorker::sendRawAction(const QByteArray &data)
         notePotentialActivity();
     }
     queuePtyWrite(data);
-    if (vt_ != nullptr
-        && vt_->scrollViewport({
-            .kind = TerminalViewportRequest::Kind::Bottom,
-        })) {
-        // Custom terminal-control actions follow Ghostty back to the live
-        // viewport. This changes viewport-relative OSC 8 coordinates even
-        // before the child produces more output.
-        markTerminalContentChanged();
-        if (searchState_->active) {
-            rebuildSearchVisibleCells();
-            publishSearchUpdate();
-        }
-        scheduleFrame();
-    }
+    scrollToBottomForInput();
 }
 
 void SessionWorker::resetTerminal()
@@ -1235,12 +1222,80 @@ void SessionWorker::setFocused(bool focused)
 
 void SessionWorker::paste(const QString &text)
 {
+    if (text.isEmpty() || vt_ == nullptr || masterFd_ < 0) {
+        return;
+    }
+
+    const TerminalClipboardPasteOptions &options =
+        options_.runtime.clipboardPaste;
+    const GhosttyVtAdapter::PreparedPaste prepared = vt_->preparePaste(
+        text, {
+            .protection = options.protection,
+            .bracketedSafe = options.bracketedSafe,
+        });
+    if (prepared.disposition
+        == GhosttyVtAdapter::PasteDisposition::ConfirmationRequired) {
+        do {
+            ++nextPasteRequestId_;
+        } while (nextPasteRequestId_ == 0
+                 || pendingPastes_.contains(nextPasteRequestId_));
+        pendingPastes_.insert(nextPasteRequestId_, text);
+        Q_EMIT unsafePasteConfirmationRequested(nextPasteRequestId_, text);
+        return;
+    }
+    if (prepared.disposition == GhosttyVtAdapter::PasteDisposition::Ready) {
+        commitPaste(text, prepared.bytes);
+    }
+}
+
+void SessionWorker::confirmPaste(quint64 requestId)
+{
+    const auto pending = pendingPastes_.find(requestId);
+    if (pending == pendingPastes_.end()) {
+        return;
+    }
+    const QString text = pending.value();
+    pendingPastes_.erase(pending);
+    if (vt_ == nullptr || masterFd_ < 0) {
+        return;
+    }
+
+    const TerminalClipboardPasteOptions &options =
+        options_.runtime.clipboardPaste;
+    const GhosttyVtAdapter::PreparedPaste prepared = vt_->preparePaste(
+        text, {
+            .protection = options.protection,
+            .bracketedSafe = options.bracketedSafe,
+            .authorization = GhosttyVtAdapter::PasteAuthorization::Confirmed,
+        });
+    if (prepared.disposition == GhosttyVtAdapter::PasteDisposition::Ready) {
+        commitPaste(text, prepared.bytes);
+    }
+}
+
+void SessionWorker::cancelPaste(quint64 requestId)
+{
+    pendingPastes_.remove(requestId);
+}
+
+void SessionWorker::commitPaste(const QString &text,
+                                const QByteArray &encoded)
+{
+    if (encoded.isEmpty()) {
+        return;
+    }
     if (text.contains(u'\n') || text.contains(u'\r')) {
         notePotentialActivity();
     }
-    if (vt_ != nullptr) {
-        queuePtyWrite(vt_->encodePaste(text));
-    }
+    // Ghostty returns to the active screen before making accepted paste data
+    // visible to the child. Rejected and cancelled requests never get here.
+    scrollToBottomForInput();
+    queuePtyWrite(encoded);
+}
+
+void SessionWorker::scrollToBottomForInput()
+{
+    scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
 }
 
 void SessionWorker::copySelection()
@@ -2325,6 +2380,7 @@ void SessionWorker::closePty()
         masterFd_ = -1;
     }
     pendingWrites_.clear();
+    pendingPastes_.clear();
     stagedSequenceBytes_.clear();
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;

@@ -68,6 +68,8 @@ public:
     void focusTerminal();
     void copySelection();
     void pasteText(const QString &text);
+    void confirmPaste(quint64 requestId);
+    void cancelPaste(quint64 requestId);
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -99,7 +101,8 @@ Q_SIGNALS:
     void requestQuit();
     void requestConfigReload();
     void broadActionsRequested(const QStringList &actions);
-    void unsafePasteRequested(const QString &text, TerminalPane *pane);
+    void unsafePasteRequested(quint64 requestId, const QString &text,
+                              TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 
 protected:

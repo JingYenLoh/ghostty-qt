@@ -276,6 +276,14 @@
       "status": "supported",
       "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
     },
+    "clipboard-paste-bracketed-safe": {
+      "status": "supported",
+      "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
+    },
+    "clipboard-paste-protection": {
+      "status": "supported",
+      "note": "The live default-true policy is enforced on SessionWorker. Unsafe immutable text is correlated through pane-local request IDs; confirmation re-snapshots mode, and rejected or cancelled requests do not scroll, write, or mark activity."
+    },
     "clipboard-trim-trailing-spaces": {
       "status": "supported",
       "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."

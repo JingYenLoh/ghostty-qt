@@ -71,6 +71,7 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
+    void preparesPasteUsingExactSafetyPolicy();
     void clearsSelectionWithoutCancellingGesture();
     void resetsAllTerminalStateAndPublishesFullFrame();
     void resolvesOsc8HyperlinksAcrossViewportState();
@@ -1077,6 +1078,62 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     QVERIFY(!encodedRelease.bytes.isEmpty());
     QVERIFY(!encodedRelease.modifier);
     QVERIFY(!encodedRelease.escape);
+}
+
+void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter != nullptr);
+
+    const auto prepare = [&adapter](const QString &text,
+                                    bool protection = true,
+                                    bool bracketedSafe = true,
+                                    bool confirmed = false) {
+        return adapter->preparePaste(text, {
+            .protection = protection,
+            .bracketedSafe = bracketedSafe,
+            .authorization = confirmed
+                ? GhosttyVtAdapter::PasteAuthorization::Confirmed
+                : GhosttyVtAdapter::PasteAuthorization::Initial,
+        });
+    };
+    const auto expectReady = [](const GhosttyVtAdapter::PreparedPaste &paste,
+                                const QByteArray &bytes) {
+        QCOMPARE(paste.disposition,
+                 GhosttyVtAdapter::PasteDisposition::Ready);
+        QCOMPARE(paste.bytes, bytes);
+    };
+    const auto expectConfirmation = [](
+        const GhosttyVtAdapter::PreparedPaste &paste) {
+        QCOMPARE(paste.disposition,
+                 GhosttyVtAdapter::PasteDisposition::ConfirmationRequired);
+        QVERIFY(paste.bytes.isEmpty());
+    };
+
+    expectReady(prepare(QString{}), {});
+    expectReady(prepare(QStringLiteral("plain")), QByteArrayLiteral("plain"));
+    expectReady(prepare(QStringLiteral("one\rtwo")),
+                QByteArrayLiteral("one\rtwo"));
+    expectConfirmation(prepare(QStringLiteral("one\ntwo")));
+
+    const QString fence = QStringLiteral("one\x1b[201~two");
+    expectConfirmation(prepare(fence));
+    expectReady(prepare(QStringLiteral("one\ntwo"), true, true, true),
+                QByteArrayLiteral("one\rtwo"));
+    expectReady(prepare(fence, false), QByteArrayLiteral("one [201~two"));
+
+    const QString arbitraryEscape = QStringLiteral("one\x1b[31mtwo");
+    expectReady(prepare(arbitraryEscape), QByteArrayLiteral("one [31mtwo"));
+
+    adapter->writeVt(QByteArrayLiteral("\033[?2004h"));
+    expectReady(prepare(QStringLiteral("one\ntwo")),
+                QByteArrayLiteral("\033[200~one\ntwo\033[201~"));
+    expectConfirmation(prepare(QStringLiteral("one\ntwo"), true, false));
+    expectConfirmation(prepare(fence));
+    expectReady(prepare(fence, false),
+                QByteArrayLiteral("\033[200~one [201~two\033[201~"));
+    expectReady(prepare(fence, true, true, true),
+                QByteArrayLiteral("\033[200~one [201~two\033[201~"));
 }
 
 void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()

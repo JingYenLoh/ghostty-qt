@@ -69,6 +69,8 @@ public:
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);
+    void confirmPaste(quint64 requestId);
+    void cancelPaste(quint64 requestId);
     void copySelection();
     void clearSelection();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
@@ -93,8 +95,6 @@ public:
                                    int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
 
-    static bool isPasteSafe(const QString &text);
-
 Q_SIGNALS:
     void terminalUpdated(const TerminalUpdate &update);
     void titleChanged(const QString &title);
@@ -116,6 +116,8 @@ Q_SIGNALS:
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
     void searchSelectionReady(bool available, const QString &text);
+    void unsafePasteConfirmationRequested(quint64 requestId,
+                                          const QString &text);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -137,6 +139,8 @@ Q_SIGNALS:
     void mouseRequested(const TerminalMouseInput &input);
     void focusRequested(bool focused);
     void pasteRequested(const QString &text);
+    void confirmPasteRequested(quint64 requestId);
+    void cancelPasteRequested(quint64 requestId);
     void copyRequested();
     void clearSelectionRequested();
     void beginSelectionRequested(int column, int row, int clickCount,

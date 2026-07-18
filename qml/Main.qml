@@ -134,19 +134,20 @@ ApplicationWindow {
 
     Dialog {
         id: pasteDialog
+        property var confirmationId: 0
         anchors.centerIn: parent
         width: Math.max(320, Math.min(560, window.width - 32))
         modal: true
         title: "Paste text containing a command break?"
         standardButtons: Dialog.Ok | Dialog.Cancel
-        onAccepted: workspace.confirmPaste()
-        onRejected: workspace.cancelPaste()
+        onAccepted: workspace.confirmPaste(confirmationId)
+        onRejected: workspace.cancelPaste(confirmationId)
 
         ColumnLayout {
             width: pasteDialog.availableWidth
             Label {
                 Layout.fillWidth: true
-                text: "The clipboard contains a newline or terminal control sequence. Review it before pasting."
+                text: "The clipboard contains a newline or bracketed-paste terminator. Review it before pasting."
                 wrapMode: Text.WordWrap
             }
             ScrollView {
@@ -171,9 +172,16 @@ ApplicationWindow {
         function onCloseConfirmationResolved() {
             closeDialog.close()
         }
-        function onUnsafePasteConfirmationRequested(preview) {
+        function onUnsafePasteConfirmationRequested(confirmationId, preview) {
+            pasteDialog.confirmationId = confirmationId
             pastePreview.text = preview
             pasteDialog.open()
+        }
+        function onUnsafePasteConfirmationResolved(confirmationId) {
+            if (pasteDialog.confirmationId !== confirmationId)
+                return
+            pasteDialog.confirmationId = 0
+            pasteDialog.close()
         }
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()

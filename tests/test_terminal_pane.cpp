@@ -69,6 +69,36 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
         && std::abs(left.blue() - right.blue()) <= tolerance;
 }
 
+bool spyContainsBool(const QSignalSpy &spy, bool value)
+{
+    return std::any_of(spy.cbegin(), spy.cend(), [value](const auto &arguments) {
+        return !arguments.isEmpty() && arguments.constFirst().toBool() == value;
+    });
+}
+
+class ShellEnvironment final {
+public:
+    ShellEnvironment()
+        : wasSet_(qEnvironmentVariableIsSet("SHELL"))
+        , previous_(qgetenv("SHELL"))
+    {
+        qputenv("SHELL", QByteArrayLiteral("/bin/sh"));
+    }
+
+    ~ShellEnvironment()
+    {
+        if (wasSet_) {
+            qputenv("SHELL", previous_);
+        } else {
+            qunsetenv("SHELL");
+        }
+    }
+
+private:
+    bool wasSet_ = false;
+    QByteArray previous_;
+};
+
 } // namespace
 
 class TerminalPaneTest : public QObject {
@@ -80,6 +110,8 @@ private Q_SLOTS:
     void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
     void reloadsMiddleClickClipboardPolicy();
+    void routesAllPasteEntryPointsThroughController();
+    void routesUnsafePasteConfirmationThroughWorker();
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
@@ -517,6 +549,135 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     if (supportsPrimary) {
         clipboard->clear(QClipboard::Selection);
     }
+}
+
+void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    options.clipboardPaste.protection = false;
+    options.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+    options.middleClickAction = MiddleClickAction::PrimaryPaste;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy unsafe(&pane, &TerminalPane::unsafePasteRequested);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    clipboard->setText(QStringLiteral("shortcut\npaste"),
+                       QClipboard::Clipboard);
+
+    QKeyEvent shortcutPress(
+        QEvent::KeyPress, Qt::Key_V,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("V"));
+    QCoreApplication::sendEvent(&pane, &shortcutPress);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constLast().constFirst().toString(),
+             QStringLiteral("shortcut\npaste"));
+    QKeyEvent shortcutRelease(
+        QEvent::KeyRelease, Qt::Key_V,
+        Qt::ControlModifier | Qt::ShiftModifier);
+    QCoreApplication::sendEvent(&pane, &shortcutRelease);
+
+    clipboard->setText(QStringLiteral("configured\npaste"),
+                       QClipboard::Clipboard);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("paste_from_clipboard")));
+    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(pasted.constLast().constFirst().toString(),
+             QStringLiteral("configured\npaste"));
+
+    if (clipboard->supportsSelection()) {
+        clipboard->setText(QStringLiteral("selection\npaste"),
+                           QClipboard::Selection);
+        QVERIFY(pane.executeConfiguredAction(
+            QStringLiteral("paste_from_selection")));
+        QCOMPARE(pasted.count(), 3);
+        QCOMPARE(pasted.constLast().constFirst().toString(),
+                 QStringLiteral("selection\npaste"));
+    }
+
+    const int beforeMiddleClick = pasted.count();
+    clipboard->setText(QStringLiteral("middle\npaste"),
+                       QClipboard::Clipboard);
+    const QPointF position(1.0, 1.0);
+    QMouseEvent middleClick(
+        QEvent::MouseButtonPress, position, position, position,
+        Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &middleClick);
+    QVERIFY(middleClick.isAccepted());
+    QCOMPARE(pasted.count(), beforeMiddleClick + 1);
+    QCOMPARE(pasted.constLast().constFirst().toString(),
+             QStringLiteral("middle\npaste"));
+
+    QTest::qWait(100);
+    QCOMPARE(unsafe.count(), 0);
+    clipboard->clear(QClipboard::Clipboard);
+    if (clipboard->supportsSelection()) {
+        clipboard->clear(QClipboard::Selection);
+    }
+}
+
+void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
+{
+    ShellEnvironment shell;
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.hold = true;
+    options.clipboardPaste.bracketedSafe = false;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy confirmed(controller,
+                         &TerminalController::confirmPasteRequested);
+    QSignalSpy cancelled(controller,
+                         &TerminalController::cancelPasteRequested);
+    QSignalSpy unsafe(&pane, &TerminalPane::unsafePasteRequested);
+    QSignalSpy activity(controller, &TerminalController::activeProcessChanged);
+
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 2000);
+    activity.clear();
+
+    const QString rejected = QStringLiteral("cancelled\n");
+    pane.pasteText(rejected);
+    QCOMPARE(pasted.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(unsafe.count(), 1, 2000);
+    const quint64 cancelledId = unsafe.constFirst().at(0).toULongLong();
+    QVERIFY(cancelledId != 0);
+    QCOMPARE(unsafe.constFirst().at(1).toString(), rejected);
+    QCOMPARE(qvariant_cast<TerminalPane *>(unsafe.constFirst().at(2)), &pane);
+    QVERIFY(!spyContainsBool(activity, true));
+
+    pane.cancelPaste(cancelledId);
+    QCOMPARE(cancelled.count(), 1);
+    QCOMPARE(cancelled.constFirst().constFirst().toULongLong(), cancelledId);
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activity, true));
+
+    pane.pasteText(QStringLiteral("\n"));
+    QCOMPARE(pasted.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(unsafe.count(), 2, 2000);
+    const quint64 confirmedId = unsafe.constLast().at(0).toULongLong();
+    QVERIFY(confirmedId != 0);
+    QVERIFY(confirmedId != cancelledId);
+    QVERIFY(!spyContainsBool(activity, true));
+
+    pane.confirmPaste(confirmedId);
+    QCOMPARE(confirmed.count(), 1);
+    QCOMPARE(confirmed.constFirst().constFirst().toULongLong(), confirmedId);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, true), 2000);
 }
 
 void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()

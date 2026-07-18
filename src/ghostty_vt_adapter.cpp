@@ -911,14 +911,19 @@ public:
         return QByteArray(buffer.data(), static_cast<qsizetype>(written));
     }
 
-    QByteArray encodePaste(const QString &text) const
+    bool bracketedPasteMode() const
     {
-        if (text.isEmpty()) {
+        bool bracketed = false;
+        (void) ghostty_terminal_mode_get(
+            terminal_, GHOSTTY_MODE_BRACKETED_PASTE, &bracketed);
+        return bracketed;
+    }
+
+    QByteArray encodePaste(QByteArray mutableInput, bool bracketed) const
+    {
+        if (mutableInput.isEmpty()) {
             return {};
         }
-        bool bracketed = false;
-        ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_BRACKETED_PASTE, &bracketed);
-        QByteArray mutableInput = text.toUtf8();
         QByteArray encoded(mutableInput.size() + 32, Qt::Uninitialized);
         size_t written = 0;
         GhosttyResult result = ghostty_paste_encode(
@@ -935,6 +940,54 @@ public:
         }
         encoded.resize(static_cast<qsizetype>(written));
         return encoded;
+    }
+
+    QByteArray encodePaste(const QString &text) const
+    {
+        return encodePaste(text.toUtf8(), bracketedPasteMode());
+    }
+
+    GhosttyVtAdapter::PreparedPaste preparePaste(
+        const QString &text,
+        const GhosttyVtAdapter::PastePreparationOptions &options) const
+    {
+        if (text.isEmpty()) {
+            return {
+                .disposition = GhosttyVtAdapter::PasteDisposition::Ready,
+                .bytes = {},
+            };
+        }
+
+        const bool bracketed = bracketedPasteMode();
+        QByteArray utf8 = text.toUtf8();
+        if (options.protection
+            && options.authorization
+                == GhosttyVtAdapter::PasteAuthorization::Initial) {
+            const bool containsEndFence =
+                utf8.contains(QByteArrayLiteral("\x1b[201~"));
+            const bool baselineSafe = ghostty_paste_is_safe(
+                utf8.constData(), static_cast<size_t>(utf8.size()));
+            if ((bracketed && containsEndFence)
+                || ((!bracketed || !options.bracketedSafe)
+                    && !baselineSafe)) {
+                return {
+                    .disposition = GhosttyVtAdapter::PasteDisposition::ConfirmationRequired,
+                    .bytes = {},
+                };
+            }
+        }
+
+        QByteArray encoded = encodePaste(std::move(utf8), bracketed);
+        if (encoded.isEmpty()) {
+            return {
+                .disposition = GhosttyVtAdapter::PasteDisposition::Failed,
+                .bytes = {},
+            };
+        }
+        return {
+            .disposition = GhosttyVtAdapter::PasteDisposition::Ready,
+            .bytes = std::move(encoded),
+        };
     }
 
     QString selectedText(bool trim = true) const
@@ -2907,11 +2960,6 @@ std::unique_ptr<GhosttyVtAdapter> GhosttyVtAdapter::create(
     return std::unique_ptr<GhosttyVtAdapter>(new GhosttyVtAdapter(std::move(impl)));
 }
 
-bool GhosttyVtAdapter::isPasteSafe(QByteArrayView text)
-{
-    return ghostty_paste_is_safe(text.data(), static_cast<size_t>(text.size()));
-}
-
 GhosttyVtAdapter::GhosttyVtAdapter(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl))
 {
@@ -2963,6 +3011,12 @@ QByteArray GhosttyVtAdapter::encodeFocus(bool focused) const
 QByteArray GhosttyVtAdapter::encodePaste(const QString &text) const
 {
     return impl_->encodePaste(text);
+}
+
+GhosttyVtAdapter::PreparedPaste GhosttyVtAdapter::preparePaste(
+    const QString &text, const PastePreparationOptions &options) const
+{
+    return impl_->preparePaste(text, options);
 }
 
 QString GhosttyVtAdapter::selectedText(bool trim) const

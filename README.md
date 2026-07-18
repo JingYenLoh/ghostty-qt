@@ -29,7 +29,8 @@ the host-language comparison and remaining engineering risks.
   `Alt`, keyboard select-all/endpoint adjustment, configurable trailing-space
   trimming and copy-on-select destinations, primary-selection fallback,
   selection clearing after explicit copy or typed input, configurable
-  middle-click paste, and an unsafe-paste review dialog.
+  middle-click paste, and worker-authoritative unsafe-paste review with
+  correlated confirmation.
 - Explicit OSC 8 hyperlinks and Ghostty's default regex-detected URLs/paths,
   with `Ctrl`-hover pointer/underline feedback, release-validated `Ctrl`-click
   opening through the desktop URL handler, and the `copy_url_to_clipboard`
@@ -226,6 +227,7 @@ The current compatibility slice applies these keys:
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
 | `clipboard-trim-trailing-spaces`, `copy-on-select`, `selection-clear-on-copy` | Apply live to selection copying. Linux `copy-on-select` accepts Ghostty's `false`, `true` (primary selection), and `clipboard` (primary and standard clipboard) modes, with standard-clipboard fallback when primary selection is unavailable. Explicit copy can clear only after formatting; automatic copy never clears. |
+| `clipboard-paste-protection`, `clipboard-paste-bracketed-safe` | Default to `true` and apply live. The session worker uses Ghostty's current bracketed-paste mode, exact safety check, and encoder. Unsafe text is retained under a correlated request ID; cancellation is inert, while confirmation rechecks current terminal mode before encoding and returns to the active screen before writing. |
 | `selection-clear-on-typing` | Defaults to `true` and applies live. A non-modifier key clears only after it produces terminal bytes; encoded repeats/releases follow the same rule, and physical Escape clears even when configured `false`. IME commit and preedit transitions participate, while consumed bindings, sequence-leader replay, raw `text`/`csi`/`esc` actions, and paste do not. |
 | `middle-click-action` | Applies `primary-paste` or `ignore` live. Primary paste reads the standard clipboard in `copy-on-select=clipboard` mode; otherwise it reads the primary selection with standard fallback. Terminal mouse reporting takes precedence. |
 | `link-url` | Enables Ghostty's pinned default regex matcher for scheme URLs and file paths. The default is `true`; live reload recomputes hover state. Explicit OSC 8 hyperlinks are unaffected. |

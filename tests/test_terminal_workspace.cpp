@@ -62,6 +62,7 @@ private Q_SLOTS:
     void idleShellDoesNotPromptInRunningProcessesMode();
     void submittedCommandPromptsBeforeForegroundPoll();
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
+    void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
     void alwaysModePromptsForIdleShell();
     void multiPaneShutdownGracePeriodsOverlap();
@@ -192,6 +193,187 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose();
+}
+
+void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    workspace.splitRight();
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    TerminalPane *const firstPane = panes.at(0);
+    TerminalPane *const secondPane = panes.at(1);
+
+    TerminalController *const firstController =
+        firstPane->findChild<TerminalController *>();
+    TerminalController *const secondController =
+        secondPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QSignalSpy firstPasted(firstController,
+                           &TerminalController::pasteRequested);
+    QSignalSpy secondPasted(secondController,
+                            &TerminalController::pasteRequested);
+    QSignalSpy firstConfirmed(firstController,
+                              &TerminalController::confirmPasteRequested);
+    QSignalSpy secondConfirmed(secondController,
+                               &TerminalController::confirmPasteRequested);
+    QSignalSpy firstCancelled(firstController,
+                              &TerminalController::cancelPasteRequested);
+    QSignalSpy secondCancelled(secondController,
+                               &TerminalController::cancelPasteRequested);
+    QSignalSpy previews(
+        &workspace,
+        &TerminalWorkspace::unsafePasteConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::unsafePasteConfirmationResolved);
+
+    const QString shared = QStringLiteral("shared\x1b[201~\n");
+    Q_EMIT firstPane->unsafePasteRequested(11, shared, firstPane);
+    QCOMPARE(previews.count(), 1);
+    const quint64 sharedConfirmationId =
+        previews.constFirst().at(0).toULongLong();
+    QVERIFY(sharedConfirmationId != 0);
+    QCOMPARE(previews.constFirst().at(1).toString(),
+             QStringLiteral("shared␛[201~↵\n"));
+
+    // Worker IDs are pane-local. Identical broad-action payloads share one
+    // dialog, but every (pane, request ID) target remains correlated.
+    Q_EMIT secondPane->unsafePasteRequested(11, shared, secondPane);
+    QCOMPARE(previews.count(), 1);
+
+    const QString queued = QStringLiteral("queued\ncommand");
+    Q_EMIT firstPane->unsafePasteRequested(12, queued, firstPane);
+    QCOMPARE(previews.count(), 1);
+
+    workspace.confirmPaste(sharedConfirmationId);
+    QCOMPARE(firstConfirmed.count(), 1);
+    QCOMPARE(firstConfirmed.constFirst().constFirst().toULongLong(),
+             quint64{11});
+    QCOMPARE(secondConfirmed.count(), 1);
+    QCOMPARE(secondConfirmed.constFirst().constFirst().toULongLong(),
+             quint64{11});
+    QCOMPARE(firstPasted.count(), 0);
+    QCOMPARE(secondPasted.count(), 0);
+    QCOMPARE(resolved.count(), 1);
+
+    // A duplicate/stale response cannot consume the queued request before
+    // its own dialog is shown.
+    workspace.confirmPaste(sharedConfirmationId);
+    QCOMPARE(firstConfirmed.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(previews.count(), 2, 1000);
+    const quint64 queuedConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    QVERIFY(queuedConfirmationId != 0);
+    QVERIFY(queuedConfirmationId != sharedConfirmationId);
+    QCOMPARE(previews.constLast().at(1).toString(),
+             QStringLiteral("queued↵\ncommand"));
+
+    workspace.cancelPaste(sharedConfirmationId);
+    QCOMPARE(firstCancelled.count(), 0);
+    workspace.cancelPaste(queuedConfirmationId);
+    QCOMPARE(firstCancelled.count(), 1);
+    QCOMPARE(firstCancelled.constFirst().constFirst().toULongLong(),
+             quint64{12});
+    QCOMPARE(secondCancelled.count(), 0);
+    QCOMPARE(resolved.count(), 2);
+
+    // Truncation is decided from the immutable original text, not the
+    // expanded visible preview.
+    const QString longPaste(241, u'x');
+    Q_EMIT firstPane->unsafePasteRequested(13, longPaste, firstPane);
+    QCOMPARE(previews.count(), 3);
+    const quint64 longConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    QCOMPARE(previews.constLast().at(1).toString(),
+             QString(240, u'x') + QStringLiteral("…"));
+    workspace.cancelPaste(longConfirmationId);
+    QCOMPARE(firstCancelled.count(), 2);
+
+    // Two same-pane requests cannot share a dialog because their worker IDs
+    // are independently consumable. The second waits behind the first.
+    const QString repeated = QStringLiteral("repeat\n");
+    Q_EMIT firstPane->unsafePasteRequested(14, repeated, firstPane);
+    Q_EMIT firstPane->unsafePasteRequested(15, repeated, firstPane);
+    QCOMPARE(previews.count(), 4);
+    const quint64 firstRepeatConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    workspace.confirmPaste(firstRepeatConfirmationId);
+    QCOMPARE(firstConfirmed.count(), 2);
+    QCOMPARE(firstConfirmed.constLast().constFirst().toULongLong(),
+             quint64{14});
+    QTRY_COMPARE_WITH_TIMEOUT(previews.count(), 5, 1000);
+    const quint64 secondRepeatConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    workspace.cancelPaste(secondRepeatConfirmationId);
+    QCOMPARE(firstCancelled.count(), 3);
+    QCOMPARE(firstCancelled.constLast().constFirst().toULongLong(),
+             quint64{15});
+
+    // A held pane remains in the tree after its PTY exits. Its dead active
+    // request is removed so a queued request for another live pane can be
+    // reviewed without user interaction on the stale dialog.
+    Q_EMIT firstPane->unsafePasteRequested(
+        18, QStringLiteral("ended\n"), firstPane);
+    Q_EMIT secondPane->unsafePasteRequested(
+        19, QStringLiteral("survives\n"), secondPane);
+    QCOMPARE(previews.count(), 6);
+    const quint64 endedConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    Q_EMIT firstPane->sessionEnded(firstPane, 0, 0);
+    QCOMPARE(firstCancelled.count(), 4);
+    QCOMPARE(firstCancelled.constLast().constFirst().toULongLong(),
+             quint64{18});
+    QCOMPARE(resolved.constLast().constFirst().toULongLong(),
+             endedConfirmationId);
+    QTRY_COMPARE_WITH_TIMEOUT(previews.count(), 7, 1000);
+    const quint64 survivingConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    workspace.cancelPaste(survivingConfirmationId);
+    QCOMPARE(secondCancelled.count(), 1);
+    QCOMPARE(secondCancelled.constLast().constFirst().toULongLong(),
+             quint64{19});
+
+    // Closing a target pane explicitly cancels its pending worker request and
+    // resolves the visible dialog before the pane is destroyed.
+    Q_EMIT secondPane->unsafePasteRequested(
+        16, QStringLiteral("closing\n"), secondPane);
+    QCOMPARE(previews.count(), 8);
+    const quint64 closingConfirmationId =
+        previews.constLast().at(0).toULongLong();
+    QPointer<TerminalPane> closingPane(secondPane);
+    Q_EMIT secondPane->requestClose();
+    QCOMPARE(secondCancelled.count(), 2);
+    QCOMPARE(secondCancelled.constLast().constFirst().toULongLong(),
+             quint64{16});
+    QCOMPARE(resolved.count(), 8);
+    QCOMPARE(resolved.constLast().constFirst().toULongLong(),
+             closingConfirmationId);
+
+    // A worker rejection queued before removal can still reach the pane
+    // during deleteLater teardown. It is cancelled without reopening a dead
+    // target dialog.
+    Q_EMIT secondPane->unsafePasteRequested(
+        17, QStringLiteral("late\n"), secondPane);
+    QCOMPARE(previews.count(), 8);
+    QCOMPARE(secondCancelled.count(), 3);
+    QCOMPARE(secondCancelled.constLast().constFirst().toULongLong(),
+             quint64{17});
+    QTRY_VERIFY_WITH_TIMEOUT(closingPane.isNull(), 1000);
+
+    const int confirmations = firstConfirmed.count();
+    const int cancellations = firstCancelled.count();
+    workspace.confirmPaste(closingConfirmationId);
+    workspace.cancelPaste(closingConfirmationId);
+    QCOMPARE(firstConfirmed.count(), confirmations);
+    QCOMPARE(firstCancelled.count(), cancellations);
 }
 
 void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()

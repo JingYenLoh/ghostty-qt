@@ -457,6 +457,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::sessionEnded, this,
             [this, paneId](TerminalPane *, int, int) {
+                removePendingPastesForPane(paneId);
                 refreshTab(tabIdForPane(paneId));
             });
     connect(pane, &TerminalPane::processStateChanged, this,
@@ -500,8 +501,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::broadActionsRequested,
             this, &TerminalWorkspace::broadActionsRequested);
     connect(pane, &TerminalPane::unsafePasteRequested, this,
-            [this, paneId](const QString &text, TerminalPane *) {
-                beginUnsafePaste(text, paneId);
+            [this, paneId, pane](quint64 requestId, const QString &text,
+                                 TerminalPane *) {
+                if (paneForId(paneId) != pane) {
+                    pane->cancelPaste(requestId);
+                    return;
+                }
+                beginUnsafePaste(requestId, text, paneId);
             });
     createSearchOverlay(pane);
     return {paneId, pane};
@@ -838,6 +844,7 @@ void TerminalWorkspace::removeTab(TabId tabId)
     std::vector<TerminalPane *> panes;
     collectPanes(tabs_[static_cast<size_t>(index)]->root.get(), &panes);
     for (TerminalPane *pane : panes) {
+        resolvePendingPaneRemoval(paneIdForPane(pane));
         pane->beginShutdown();
         pane->setVisible(false);
         pane->deleteLater();
@@ -876,6 +883,7 @@ void TerminalWorkspace::removeTab(TabId tabId)
 
 void TerminalWorkspace::resolvePendingPaneRemoval(PaneId paneId)
 {
+    removePendingPastesForPane(paneId);
     if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != paneId) {
         return;
     }
@@ -1002,43 +1010,149 @@ void TerminalWorkspace::cancelClose()
     pendingTabId_ = {};
 }
 
-void TerminalWorkspace::beginUnsafePaste(const QString &text, PaneId paneId)
+void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
+                                         const QString &text,
+                                         PaneId paneId)
 {
-    // A broad paste can reach multiple surfaces during one action fanout. Use
-    // one confirmation for the identical clipboard payload and retain every
-    // target instead of repeatedly overwriting a single pending pane.
-    if (!pendingPaste_.isEmpty() && pendingPaste_ == text) {
-        if (!pendingPastePaneIds_.contains(paneId)) {
-            pendingPastePaneIds_.append(paneId);
-        }
+    if (requestId == 0 || text.isEmpty() || !paneId.isValid()) {
         return;
     }
-    pendingPaste_ = text;
-    pendingPastePaneIds_ = {paneId};
-    QString preview = text.left(240);
-    preview.replace(QLatin1Char('\n'), QStringLiteral("↵\n"));
-    if (text.size() > preview.size()) {
-        preview.append(QStringLiteral("…"));
-    }
-    Q_EMIT unsafePasteConfirmationRequested(preview);
-}
 
-void TerminalWorkspace::confirmPaste()
-{
-    const QString text = pendingPaste_;
-    const QVector<PaneId> paneIds = pendingPastePaneIds_;
-    for (PaneId paneId : paneIds) {
-        if (TerminalPane *pane = paneForId(paneId); pane != nullptr) {
-            pane->pasteText(text);
+    const auto matchesTarget = [paneId, requestId](
+                                   const PendingPasteTarget &target) {
+        return target.paneId == paneId && target.requestId == requestId;
+    };
+    for (const PendingPaste &pending : std::as_const(pendingPastes_)) {
+        if (std::any_of(pending.targets.cbegin(), pending.targets.cend(),
+                        matchesTarget)) {
+            return;
         }
     }
-    cancelPaste();
+
+    const bool firstRequest = pendingPastes_.isEmpty();
+    if (!firstRequest && pendingPastes_.front().text == text) {
+        PendingPaste &active = pendingPastes_.front();
+        const bool alreadyTargetsPane = std::any_of(
+            active.targets.cbegin(), active.targets.cend(),
+            [paneId](const PendingPasteTarget &target) {
+                return target.paneId == paneId;
+            });
+        if (!alreadyTargetsPane) {
+            active.targets.append({paneId, requestId});
+            return;
+        }
+    }
+
+    pendingPastes_.append({text, {{paneId, requestId}}});
+    if (firstRequest) {
+        showPendingPastePreview();
+    }
 }
 
-void TerminalWorkspace::cancelPaste()
+QString TerminalWorkspace::pastePreview(const QString &text)
 {
-    pendingPaste_.clear();
-    pendingPastePaneIds_.clear();
+    constexpr qsizetype limit = 240;
+    const bool truncated = text.size() > limit;
+    QString preview = text.left(limit);
+    preview.replace(QChar(0x1b), QStringLiteral("␛"));
+    preview.replace(QLatin1Char('\n'), QStringLiteral("↵\n"));
+    if (truncated) {
+        preview.append(QStringLiteral("…"));
+    }
+    return preview;
+}
+
+void TerminalWorkspace::showPendingPastePreview()
+{
+    if (pendingPastes_.isEmpty() || activePasteConfirmationId_ != 0) {
+        return;
+    }
+    do {
+        ++nextPasteConfirmationId_;
+    } while (nextPasteConfirmationId_ == 0);
+    activePasteConfirmationId_ = nextPasteConfirmationId_;
+    Q_EMIT unsafePasteConfirmationRequested(
+        activePasteConfirmationId_,
+        pastePreview(pendingPastes_.front().text));
+}
+
+void TerminalWorkspace::schedulePendingPastePreview()
+{
+    if (pendingPastes_.isEmpty() || pendingPastePreviewScheduled_) {
+        return;
+    }
+    pendingPastePreviewScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        pendingPastePreviewScheduled_ = false;
+        showPendingPastePreview();
+    });
+}
+
+void TerminalWorkspace::confirmPaste(quint64 confirmationId)
+{
+    finishPendingPaste(confirmationId, true);
+}
+
+void TerminalWorkspace::cancelPaste(quint64 confirmationId)
+{
+    finishPendingPaste(confirmationId, false);
+}
+
+void TerminalWorkspace::finishPendingPaste(quint64 confirmationId,
+                                           bool confirmed)
+{
+    if (pendingPastes_.isEmpty() || confirmationId == 0
+        || confirmationId != activePasteConfirmationId_) {
+        return;
+    }
+
+    activePasteConfirmationId_ = 0;
+    PendingPaste pending = std::move(pendingPastes_.front());
+    pendingPastes_.removeFirst();
+    for (const PendingPasteTarget &target : std::as_const(pending.targets)) {
+        if (TerminalPane *pane = paneForId(target.paneId); pane != nullptr) {
+            if (confirmed) {
+                pane->confirmPaste(target.requestId);
+            } else {
+                pane->cancelPaste(target.requestId);
+            }
+        }
+    }
+    Q_EMIT unsafePasteConfirmationResolved(confirmationId);
+    schedulePendingPastePreview();
+}
+
+void TerminalWorkspace::removePendingPastesForPane(PaneId paneId)
+{
+    TerminalPane *const pane = paneForId(paneId);
+    bool removedActiveRequest = false;
+    for (qsizetype pendingIndex = pendingPastes_.size();
+         pendingIndex-- > 0;) {
+        PendingPaste &pending = pendingPastes_[pendingIndex];
+        for (qsizetype targetIndex = pending.targets.size();
+             targetIndex-- > 0;) {
+            const PendingPasteTarget target = pending.targets[targetIndex];
+            if (target.paneId != paneId) {
+                continue;
+            }
+            if (pane != nullptr) {
+                pane->cancelPaste(target.requestId);
+            }
+            pending.targets.removeAt(targetIndex);
+        }
+        if (pending.targets.isEmpty()) {
+            removedActiveRequest = removedActiveRequest || pendingIndex == 0;
+            pendingPastes_.removeAt(pendingIndex);
+        }
+    }
+    if (removedActiveRequest) {
+        const quint64 confirmationId = activePasteConfirmationId_;
+        activePasteConfirmationId_ = 0;
+        if (confirmationId != 0) {
+            Q_EMIT unsafePasteConfirmationResolved(confirmationId);
+        }
+        schedulePendingPastePreview();
+    }
 }
 
 TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const

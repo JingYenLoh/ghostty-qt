@@ -1,6 +1,5 @@
 #include "terminal_controller.h"
 
-#include "ghostty_vt_adapter.h"
 #include "session_worker.h"
 #include "terminal_clipboard.h"
 
@@ -74,6 +73,10 @@ TerminalController::TerminalController(
             worker_, &SessionWorker::setFocused, Qt::QueuedConnection);
     connect(this, &TerminalController::pasteRequested,
             worker_, &SessionWorker::paste, Qt::QueuedConnection);
+    connect(this, &TerminalController::confirmPasteRequested,
+            worker_, &SessionWorker::confirmPaste, Qt::QueuedConnection);
+    connect(this, &TerminalController::cancelPasteRequested,
+            worker_, &SessionWorker::cancelPaste, Qt::QueuedConnection);
     connect(this, &TerminalController::copyRequested,
             worker_, &SessionWorker::copySelection, Qt::QueuedConnection);
     connect(this, &TerminalController::clearSelectionRequested,
@@ -212,6 +215,9 @@ TerminalController::TerminalController(
                 writeTerminalClipboard(QGuiApplication::clipboard(), text,
                                        destination);
             }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::unsafePasteConfirmationRequested,
+            this, &TerminalController::unsafePasteConfirmationRequested,
+            Qt::QueuedConnection);
     connect(worker_, &SessionWorker::errorOccurred,
             this, &TerminalController::errorOccurred, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::bell,
@@ -387,10 +393,21 @@ void TerminalController::setFocused(bool focused)
 
 void TerminalController::paste(const QString &text)
 {
-    if (text.contains(u'\n') || text.contains(u'\r')) {
-        notePotentialActivity();
-    }
     Q_EMIT pasteRequested(text);
+}
+
+void TerminalController::confirmPaste(quint64 requestId)
+{
+    if (requestId != 0) {
+        Q_EMIT confirmPasteRequested(requestId);
+    }
+}
+
+void TerminalController::cancelPaste(quint64 requestId)
+{
+    if (requestId != 0) {
+        Q_EMIT cancelPasteRequested(requestId);
+    }
 }
 
 void TerminalController::notePotentialActivity()
@@ -559,10 +576,4 @@ void TerminalController::cancelHyperlinkActivation(quint64 requestId)
     }
     Q_EMIT hyperlinkActivationCancellationRequested(requestId);
     activeHyperlinkActivationId_ = 0;
-}
-
-bool TerminalController::isPasteSafe(const QString &text)
-{
-    const QByteArray utf8 = text.toUtf8();
-    return GhosttyVtAdapter::isPasteSafe(utf8);
 }

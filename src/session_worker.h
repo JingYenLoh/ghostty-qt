@@ -5,6 +5,7 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QPoint>
 #include <QString>
@@ -55,6 +56,8 @@ public Q_SLOTS:
     void sendMouse(const TerminalMouseInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);
+    void confirmPaste(quint64 requestId);
+    void cancelPaste(quint64 requestId);
     void copySelection();
     void clearSelection();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
@@ -88,6 +91,8 @@ Q_SIGNALS:
     void mouseTrackingChanged(bool enabled);
     void clipboardTextReady(const QString &text,
                             TerminalClipboardDestination destination);
+    void unsafePasteConfirmationRequested(quint64 requestId,
+                                          const QString &text);
     void bell();
     void started(qint64 processId);
     // True means closing this surface would interrupt active work. An idle
@@ -148,6 +153,8 @@ private:
     void setActiveProcess(bool active);
     void handleChildStatus(int status);
     QByteArray encodeMouse(const TerminalMouseInput &input);
+    void commitPaste(const QString &text, const QByteArray &encoded);
+    void scrollToBottomForInput();
     void clearSelectionState();
     void clearSelectionAfterKey(bool modifier, bool escape);
     void copySelectionTo(TerminalClipboardDestination destination,
@@ -170,6 +177,8 @@ private:
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
     QByteArray pendingWrites_;
+    QHash<quint64, QString> pendingPastes_;
+    quint64 nextPasteRequestId_ = 0;
     QByteArray stagedSequenceBytes_;
     quint64 newestSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;

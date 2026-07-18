@@ -58,8 +58,8 @@ public:
     Q_INVOKABLE void requestQuit();
     Q_INVOKABLE void confirmClose();
     Q_INVOKABLE void cancelClose();
-    Q_INVOKABLE void confirmPaste();
-    Q_INVOKABLE void cancelPaste();
+    Q_INVOKABLE void confirmPaste(quint64 confirmationId);
+    Q_INVOKABLE void cancelPaste(quint64 confirmationId);
 
 Q_SIGNALS:
     void tabTitlesChanged();
@@ -67,7 +67,9 @@ Q_SIGNALS:
     void currentIndexChanged();
     void closeConfirmationRequested(const QString &message);
     void closeConfirmationResolved();
-    void unsafePasteConfirmationRequested(const QString &preview);
+    void unsafePasteConfirmationRequested(quint64 confirmationId,
+                                          const QString &preview);
+    void unsafePasteConfirmationResolved(quint64 confirmationId);
     void configReloadRequested();
     void broadActionsRequested(const QStringList &actions);
     void toggleFullscreenRequested();
@@ -81,6 +83,14 @@ private:
     struct Node;
     struct Tab;
     struct PaneHandle;
+    struct PendingPasteTarget {
+        PaneId paneId;
+        quint64 requestId = 0;
+    };
+    struct PendingPaste {
+        QString text;
+        QVector<PendingPasteTarget> targets;
+    };
     enum class PendingClose {
         None,
         Pane,
@@ -141,7 +151,13 @@ private:
     TabId tabIdForPane(PaneId paneId) const;
     PaneId paneIdForPane(TerminalPane *pane) const;
     bool changeTabRelativeImpl(int delta, TabId origin = {});
-    void beginUnsafePaste(const QString &text, PaneId paneId);
+    void beginUnsafePaste(quint64 requestId, const QString &text,
+                          PaneId paneId);
+    void finishPendingPaste(quint64 confirmationId, bool confirmed);
+    void removePendingPastesForPane(PaneId paneId);
+    void schedulePendingPastePreview();
+    void showPendingPastePreview();
+    static QString pastePreview(const QString &text);
 
     static LaunchOptions defaultOptions_;
     LaunchOptions effectiveOptions_;
@@ -156,8 +172,10 @@ private:
     PendingClose pendingClose_ = PendingClose::None;
     PaneId pendingPaneId_;
     TabId pendingTabId_;
-    QString pendingPaste_;
-    QVector<PaneId> pendingPastePaneIds_;
+    QVector<PendingPaste> pendingPastes_;
+    bool pendingPastePreviewScheduled_ = false;
+    quint64 nextPasteConfirmationId_ = 0;
+    quint64 activePasteConfirmationId_ = 0;
     bool broadActionFanout_ = false;
     QQmlComponent *searchOverlayComponent_ = nullptr;
 };
