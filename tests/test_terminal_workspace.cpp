@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQuickWindow>
@@ -14,8 +15,11 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -65,6 +69,80 @@ QPoint windowPoint(const TerminalWorkspace *workspace,
     return workspace->mapToScene(workspacePoint).toPoint();
 }
 
+bool approximatelyEqual(const QColor &left, const QColor &right)
+{
+    constexpr int tolerance = 2;
+    return std::abs(left.red() - right.red()) <= tolerance
+        && std::abs(left.green() - right.green()) <= tolerance
+        && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
+                             const QColor &expected,
+                             bool requireDifferentNeighbors = true)
+{
+    const QImage image = window->grabWindow();
+    if (image.isNull() || window->width() <= 0 || window->height() <= 0) {
+        return false;
+    }
+    const QRectF sceneRect = divider->mapRectToScene(divider->boundingRect());
+    const qreal xScale = static_cast<qreal>(image.width()) / window->width();
+    const qreal yScale = static_cast<qreal>(image.height()) / window->height();
+    const bool verticalDivider =
+        divider->cursor().shape() == Qt::SplitHCursor;
+    const qreal thicknessScale = verticalDivider ? xScale : yScale;
+    const qreal start = verticalDivider ? sceneRect.left() : sceneRect.top();
+    const qreal end = verticalDivider ? sceneRect.right() : sceneRect.bottom();
+    const int physicalStart = qRound(start * thicknessScale);
+    const int physicalEnd = qRound(end * thicknessScale);
+    if (physicalEnd - physicalStart != qRound(2.0 * thicknessScale)
+        || physicalStart <= 0) {
+        return false;
+    }
+
+    const int alongLimit = verticalDivider ? image.height() : image.width();
+    const int thicknessLimit = verticalDivider ? image.width() : image.height();
+    const qreal alongScale = verticalDivider ? yScale : xScale;
+    const qreal alongStart = verticalDivider
+        ? sceneRect.top() : sceneRect.left();
+    const qreal alongEnd = verticalDivider
+        ? sceneRect.bottom() : sceneRect.right();
+    const int physicalAlongStart = std::max(0, qRound(alongStart * alongScale));
+    const int physicalAlongEnd = std::min(
+        alongLimit, qRound(alongEnd * alongScale));
+    if (physicalAlongStart >= physicalAlongEnd
+        || physicalEnd >= thicknessLimit) {
+        return false;
+    }
+
+    const auto pixel = [&](int thicknessPosition, int along) {
+        return verticalDivider
+            ? image.pixelColor(thicknessPosition, along)
+            : image.pixelColor(along, thicknessPosition);
+    };
+    // Scan for a cross-section away from nested T-junctions. At that point,
+    // every physical pixel in the half-open two-DIP stripe must be colored,
+    // and both immediately adjacent terminal pixels must remain untouched.
+    for (int along = physicalAlongStart; along < physicalAlongEnd; ++along) {
+        bool filled = true;
+        for (int position = physicalStart; position < physicalEnd; ++position) {
+            if (!approximatelyEqual(pixel(position, along), expected)) {
+                filled = false;
+                break;
+            }
+        }
+        if (filled
+            && (!requireDifferentNeighbors
+                || (!approximatelyEqual(
+                        pixel(physicalStart - 1, along), expected)
+                    && !approximatelyEqual(
+                        pixel(physicalEnd, along), expected)))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 class TerminalWorkspaceTest : public QObject {
@@ -91,6 +169,7 @@ private Q_SLOTS:
     void relativeSplitNavigationUsesExplicitSourceAndTreeOrder();
     void splitResizeAndEqualizeRespectTreeAxes();
     void dragsExactNestedSplitDividerAndPreservesFocus();
+    void splitDividerColorReloadsWithoutRelayout();
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
     void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
@@ -1551,6 +1630,226 @@ void TerminalWorkspaceTest::dragsExactNestedSplitDividerAndPreservesFocus()
     QCOMPARE(window.activeFocusItem(), fourthPane);
 
     workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const QColor toolkitColor(QStringLiteral("#07111b"));
+    const QColor firstColor(QStringLiteral("#a1b2c3"));
+    const QColor secondColor(QStringLiteral("#d4a017"));
+    QQuickWindow window;
+    window.setColor(toolkitColor);
+    window.resize(604, 404);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    if (qEnvironmentVariableIsSet("GHOSTTY_QT_EXPECT_HIDPI")) {
+        QVERIFY(window.devicePixelRatio() >= 2.0);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) {
+            secondPane = pane;
+        }
+    }
+    QVERIFY(secondPane != nullptr);
+    secondPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), secondPane, 1000);
+
+    QList<QQuickItem *> dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 1);
+    QQuickItem *rootDivider = dividers.constFirst();
+    QCOMPARE(rootDivider->width(), 2.0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        dividerPaintsExactColor(&window, rootDivider, toolkitColor, false),
+        2000);
+
+    const QRectF rootDividerGeometry(rootDivider->position(),
+                                     rootDivider->size());
+    const QRectF firstPaneGeometry(firstPane->position(), firstPane->size());
+    const QRectF secondPaneGeometry(secondPane->position(), secondPane->size());
+    QSignalSpy secondActivated(secondPane, &TerminalPane::activated);
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("split-divider-color"), firstColor);
+    workspace->applyConfigSnapshot(snapshot);
+
+    dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 1);
+    QCOMPARE(dividers.constFirst(), rootDivider);
+    QCOMPARE(QRectF(rootDivider->position(), rootDivider->size()),
+             rootDividerGeometry);
+    QCOMPARE(QRectF(firstPane->position(), firstPane->size()),
+             firstPaneGeometry);
+    QCOMPARE(QRectF(secondPane->position(), secondPane->size()),
+             secondPaneGeometry);
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, secondId);
+    QCOMPARE(window.activeFocusItem(), secondPane);
+    QCOMPARE(secondActivated.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        dividerPaintsExactColor(&window, rootDivider, firstColor),
+        2000);
+
+    // A divider created after reload inherits the same workspace-owned color.
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, secondId, 0},
+    }));
+    const PaneId thirdId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane) {
+            thirdPane = pane;
+        }
+    }
+    QVERIFY(thirdPane != nullptr);
+    thirdPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), thirdPane, 1000);
+    dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 2);
+    for (QQuickItem *divider : std::as_const(dividers)) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(&window, divider, firstColor),
+            2000);
+    }
+
+    struct DividerState {
+        QQuickItem *item = nullptr;
+        QRectF geometry;
+        Qt::CursorShape cursor = Qt::ArrowCursor;
+    };
+    std::vector<DividerState> dividerStates;
+    dividerStates.reserve(static_cast<std::size_t>(dividers.size()));
+    for (QQuickItem *divider : std::as_const(dividers)) {
+        dividerStates.push_back({
+            .item = divider,
+            .geometry = {divider->position(), divider->size()},
+            .cursor = divider->cursor().shape(),
+        });
+    }
+    const QList<TerminalPane *> panes =
+        workspace->findChildren<TerminalPane *>();
+    std::vector<std::pair<TerminalPane *, QRectF>> paneStates;
+    paneStates.reserve(static_cast<std::size_t>(panes.size()));
+    for (TerminalPane *pane : panes) {
+        paneStates.emplace_back(
+            pane, QRectF(pane->position(), pane->size()));
+    }
+    QSignalSpy thirdActivated(thirdPane, &TerminalPane::activated);
+
+    snapshot.values.insert(QStringLiteral("split-divider-color"), secondColor);
+    workspace->applyConfigSnapshot(snapshot);
+    for (const DividerState &state : dividerStates) {
+        QVERIFY(splitDividerItems(workspace.get()).contains(state.item));
+        QCOMPARE(QRectF(state.item->position(), state.item->size()),
+                 state.geometry);
+        QCOMPARE(state.item->cursor().shape(), state.cursor);
+        QCOMPARE(state.item->z(), 1.0);
+        QCOMPARE(state.item->acceptedMouseButtons(), Qt::LeftButton);
+        QCOMPARE(state.item->focusPolicy(), Qt::NoFocus);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(&window, state.item, secondColor),
+            2000);
+    }
+    for (const auto &[pane, geometry] : paneStates) {
+        QCOMPARE(QRectF(pane->position(), pane->size()), geometry);
+    }
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, thirdId);
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+    QCOMPARE(thirdActivated.count(), 0);
+
+    // Empty canonical output removes the custom node and reveals the
+    // frontend's ordinary gap color without recreating the handles.
+    snapshot.values.insert(QStringLiteral("split-divider-color"), QString());
+    workspace->applyConfigSnapshot(snapshot);
+    for (const DividerState &state : dividerStates) {
+        QVERIFY(splitDividerItems(workspace.get()).contains(state.item));
+        QCOMPARE(QRectF(state.item->position(), state.item->size()),
+                 state.geometry);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(
+                &window, state.item, toolkitColor, false),
+            2000);
+    }
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+    QCOMPARE(thirdActivated.count(), 0);
+
+    // Zoom destroys the handles. Unzoom recreates them with the newest
+    // effective color rather than a stale construction-time value.
+    snapshot.values.insert(QStringLiteral("split-divider-color"), secondColor);
+    workspace->applyConfigSnapshot(snapshot);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, thirdId, 0},
+    }));
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, thirdId, 0},
+    }));
+    dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 2);
+    for (QQuickItem *divider : std::as_const(dividers)) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(&window, divider, secondColor),
+            2000);
+    }
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, thirdId);
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+
+    workspace->newTab();
+    QCOMPARE(workspace->currentIndex(), 1);
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ActivateTab,
+        {tabId, PaneId{}, 0},
+    }));
+    dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 2);
+    for (QQuickItem *divider : std::as_const(dividers)) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(&window, divider, secondColor),
+            2000);
+    }
+
+    QQuickWindow secondWindow;
+    secondWindow.setColor(QColor(QStringLiteral("#24160b")));
+    secondWindow.resize(window.size());
+    secondWindow.show();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isExposed(), 1000);
+    workspace->setParentItem(secondWindow.contentItem());
+    workspace->setSize(secondWindow.size());
+    dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 2);
+    for (QQuickItem *divider : std::as_const(dividers)) {
+        QTRY_VERIFY_WITH_TIMEOUT(
+            dividerPaintsExactColor(&secondWindow, divider, secondColor),
+            2000);
+    }
+
+    workspace.reset();
+    secondWindow.close();
     window.close();
 }
 

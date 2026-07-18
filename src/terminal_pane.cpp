@@ -926,6 +926,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.confirmCloseMode = options.confirmCloseMode;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
+    updated.splitDividerColor = options.splitDividerColor;
     updated.middleClickAction = options.middleClickAction;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;

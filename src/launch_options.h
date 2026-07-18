@@ -3,11 +3,13 @@
 #include "ghostty_config_snapshot.h"
 #include "terminal_session_options.h"
 
+#include <QColor>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
 
 #include <expected>
+#include <optional>
 
 enum class ConfirmCloseMode {
     Never,
@@ -42,6 +44,10 @@ struct LaunchOptions {
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
     TerminalClipboardPasteOptions clipboardPaste;
+    // Split dividers belong to the Qt workspace, not the worker-owned
+    // terminal renderer. An unset value leaves the toolkit background in the
+    // reserved divider gap, matching Ghostty's nullable frontend override.
+    std::optional<QColor> splitDividerColor;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

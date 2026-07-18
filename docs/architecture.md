@@ -49,8 +49,10 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 ```
 
 `LaunchOptions` remains on the application, workspace, and pane side because it
-also owns font policy, keybindings, close behavior, link previews, and split
-inheritance. Before a session starts, the pane projects it to
+also owns font policy, keybindings, close behavior, link previews, split
+inheritance, and the optional split-divider color. The divider setting stays
+workspace-owned and never crosses the session-worker boundary. Before a
+session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
 appearance, and URL-matching state owned by the session. Live reloads cross the
 queued controller/worker boundary as `TerminalSessionRuntimeOptions`, which is
@@ -68,8 +70,12 @@ identity on each event instead of retaining tree pointers that pane closure can
 invalidate. Their hit rectangles are exactly the existing two-logical-pixel
 layout gaps, so they never cover a terminal cell; adjacent half-open rectangles
 also make nested T-junction ownership deterministic without stacking tricks.
-Drag ratios remain unitless, clamp to `[0, 1]`, and relayout only after the
-floored divider position changes. The handles accept no keyboard focus, so
+An optional configured RGB color is painted by one public
+`QSGSimpleRectNode` per visible handle; an unset value creates no scene-graph
+node and exposes the ordinary Qt/QML gap color. Color reloads update existing
+handles in place, while newly created handles inherit the current workspace
+value. Drag ratios remain unitless, clamp to `[0, 1]`, and relayout only after
+the floored divider position changes. The handles accept no keyboard focus, so
 active-pane and search-overlay focus survive a drag. Moving the workspace to a
 different Qt Quick scene destroys the old scene's handles synchronously to
 release any delivery-agent grab, then recreates them from the stable split IDs.
@@ -463,7 +469,8 @@ good snapshot active when one exists; a successful changed snapshot is applied
 to the workspace.
 
 The current typed compatibility slice contains `font-family`, `font-size`, the
-appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
+appearance keys listed below, the frontend-only `split-divider-color`,
+`scrollback-limit`, `confirm-close-surface`,
 `link-url`, `link-previews`, `config-file`, and a versioned dump of the
 finalized keybinding sets.
 Appearance crosses threads as a
@@ -483,6 +490,9 @@ configured style. Selection, search, cursor aliases/opacity/text, bold-color,
 and faint-opacity are frontend render policy and therefore update without
 mutating terminal-originated state. Close confirmation policy and the built-in
 regex link matcher also update live; toggling `link-url` never disables OSC 8.
+The nullable divider color likewise reloads entirely on the UI thread: a fixed
+RGB value paints the exact reserved gaps, while an empty canonical value
+removes those nodes without relayout, focus changes, or terminal-state work.
 The three-state link-preview policy reloads entirely in each pane's frontend and
 preserves an accepted hover over the terminal link. Removing an occupied
 preview guard instead resumes physical hit testing, as pointer ownership has
@@ -719,9 +729,10 @@ The default CTest suite has focused layers for each ownership boundary:
   preserve stable tab and pane identity. It also sends real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,
   focus preservation, endpoint clamping, cancellation, zoom/tab/scene
-  lifecycle, ratio persistence, and terminal-cell hit regions. A focused
-  second CTest run repeats the nested drag at a scale factor of two to keep the
-  math in logical coordinates.
+  lifecycle, ratio persistence, terminal-cell hit regions, and nullable live
+  divider recoloring. A focused second CTest run repeats the nested drag and
+  color capture at a scale factor of two to keep geometry in logical
+  coordinates while checking physical pixels.
 - `workspace-foundation` verifies stable tab identity after row removal and
   movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
@@ -739,7 +750,8 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-config-process-loader` verifies canonical and structured snapshot
   parsing, the validation/default/current/keybinding/post-validation protocol,
   deterministic process failure paths, warning preservation, and real-parser
-  `clear`/`unbind` resolution, including canonical byte-string action export.
+  `clear`/`unbind` resolution, including canonical byte-string action export
+  and nullable X11 divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
 - `terminal-pane-render` renders frames offscreen, verifies the initial

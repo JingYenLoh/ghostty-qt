@@ -100,6 +100,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.selectionClipboard.clearOnCopy);
     QVERIFY(options.clipboardPaste.protection);
     QVERIFY(options.clipboardPaste.bracketedSafe);
+    QVERIFY(!options.splitDividerColor.has_value());
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -255,6 +256,8 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("font-size"), 14.5);
     snapshot.values.insert(QStringLiteral("foreground"), QColor(QStringLiteral("#112233")));
     snapshot.values.insert(QStringLiteral("background"), QColor(QStringLiteral("#445566")));
+    snapshot.values.insert(QStringLiteral("split-divider-color"),
+                           QColor(QStringLiteral("#a1b2c3")));
     snapshot.values.insert(QStringLiteral("palette"), testPalette());
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            QStringLiteral("cell-foreground"));
@@ -318,6 +321,8 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
              QColor(QStringLiteral("#112233")));
     QCOMPARE(cliResult.appearance.backgroundColor,
              QColor(QStringLiteral("#445566")));
+    QCOMPARE(cliResult.splitDividerColor,
+             std::optional<QColor>(QColor(QStringLiteral("#a1b2c3"))));
     QCOMPARE(cliResult.appearance.palette.size(), 256);
     QCOMPARE(cliResult.appearance.palette.at(42),
              QColor::fromRgb(42, 213, 21));
@@ -461,6 +466,7 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     base.appearance.boldColor = {
         .kind = TerminalBoldColorKind::Bright,
     };
+    base.splitDividerColor = QColor(Qt::blue);
 
     GhosttyConfigSnapshot snapshot;
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -470,6 +476,7 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     snapshot.values.insert(QStringLiteral("cursor-style-blink"), QString());
     snapshot.values.insert(QStringLiteral("cursor-text"), QString());
     snapshot.values.insert(QStringLiteral("bold-color"), QString());
+    snapshot.values.insert(QStringLiteral("split-divider-color"), QString());
 
     const TerminalAppearance appearance =
         applyGhosttyConfigSnapshot(base, snapshot).appearance;
@@ -479,6 +486,8 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     QVERIFY(!appearance.cursorBlink.has_value());
     QCOMPARE(appearance.cursorTextColor.kind, TerminalColorKind::Unset);
     QCOMPARE(appearance.boldColor.kind, TerminalBoldColorKind::Unset);
+    QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
+                 .splitDividerColor.has_value());
 }
 
 void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
@@ -524,6 +533,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
                            QStringLiteral("true"));
     snapshot.values.insert(QStringLiteral("middle-click-action"), false);
+    snapshot.values.insert(QStringLiteral("split-divider-color"),
+                           QStringLiteral("not-a-color"));
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
 
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -537,6 +548,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.selectionClipboard, base.selectionClipboard);
     QCOMPARE(result.clipboardPaste, base.clipboardPaste);
     QCOMPARE(result.middleClickAction, base.middleClickAction);
+    QCOMPARE(result.splitDividerColor, base.splitDividerColor);
 }
 
 void LaunchOptionsTest::projectsTerminalSessionOptions()
@@ -592,6 +604,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.fontFamilyExplicit = true;
     frontendOnlyChanged.fontSizeExplicit = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
+    frontendOnlyChanged.splitDividerColor = QColor(QStringLiteral("#abcdef"));
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
     frontendOnlyChanged.keybindings = {QStringLiteral("ctrl+x=ignore")};

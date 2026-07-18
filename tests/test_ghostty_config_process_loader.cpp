@@ -34,6 +34,7 @@ QByteArray defaultOutput()
                           "font-size = 13\n"
                           "foreground = #ffffff\n"
                           "background = #282c34\n"
+                          "split-divider-color = \n"
                           "selection-foreground = \n"
                           "selection-background = \n"
                           "search-foreground = #000000\n"
@@ -301,6 +302,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "font-family = Noto Color Emoji\r\n"
             "font-size = 15.5\r\n"
             "foreground = #102030\r\n"
+            "split-divider-color = #a1b2c3\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
@@ -351,6 +353,9 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QColor(QStringLiteral("#102030")));
     QCOMPARE(snapshot.values.value(QStringLiteral("background")).value<QColor>(),
              QColor(QStringLiteral("#282c34")));
+    QCOMPARE(snapshot.values.value(QStringLiteral("split-divider-color"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#a1b2c3")));
     const QVariantList palette =
         snapshot.values.value(QStringLiteral("palette")).toList();
     QCOMPARE(palette.size(), 256);
@@ -560,6 +565,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     ConfigFixture fixture;
     const QByteArray defaults = defaultOutput()
         + QByteArrayLiteral(
+            "split-divider-color = #090807\n"
             "selection-foreground = #101010\n"
             "selection-background = #202020\n"
             "cursor-color = #303030\n"
@@ -567,6 +573,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
             "cursor-text = #404040\n"
             "bold-color = #505050\n");
     const QByteArray changes = QByteArrayLiteral(
+        "split-divider-color = \n"
         "selection-foreground = \n"
         "selection-background = \n"
         "cursor-color = \n"
@@ -580,6 +587,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const QVariant emptyString = QString{};
     for (const QString &key : {
+             QStringLiteral("split-divider-color"),
              QStringLiteral("selection-foreground"),
              QStringLiteral("selection-background"),
              QStringLiteral("cursor-color"),
@@ -601,6 +609,20 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     QVERIFY(!missing.has_value());
     QCOMPARE(missing.error(),
              QStringLiteral("Ghostty default config output is missing a required compatibility key"));
+
+    QByteArray missingDividerDefault = defaultOutput();
+    const QByteArray dividerLine =
+        QByteArrayLiteral("split-divider-color = \n");
+    const qsizetype dividerLineOffset =
+        missingDividerDefault.indexOf(dividerLine);
+    QVERIFY(dividerLineOffset >= 0);
+    missingDividerDefault.remove(dividerLineOffset, dividerLine.size());
+    const GhosttyConfigLoadResult missingDivider =
+        parseGhosttyConfigShowOutputs(
+            missingDividerDefault, {}, fixture.candidates());
+    QVERIFY(!missingDivider.has_value());
+    QCOMPARE(missingDivider.error(),
+             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
@@ -612,6 +634,15 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformed.has_value());
     QCOMPARE(malformed.error(),
              QStringLiteral("Invalid foreground in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedDivider =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(),
+            QByteArrayLiteral("split-divider-color = not-a-color\n"),
+            fixture.candidates());
+    QVERIFY(!malformedDivider.has_value());
+    QCOMPARE(malformedDivider.error(),
+             QStringLiteral("Invalid split-divider-color in Ghostty config output at line 1"));
 
     const GhosttyConfigLoadResult malformedPalette =
         parseGhosttyConfigShowOutputs(
@@ -849,6 +880,7 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
         fixture.preferredPath,
         QByteArrayLiteral(
             "palette = 42=#123456\n"
+            "split-divider-color = AliceBlue\n"
             "selection-foreground = cell-background\n"
             "selection-background = #334455\n"
             "search-foreground = cell-background\n"
@@ -889,6 +921,9 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
         result->values.value(QStringLiteral("palette")).toList();
     QCOMPARE(palette.size(), 256);
     QCOMPARE(palette.at(42).value<QColor>(), QColor(QStringLiteral("#123456")));
+    QCOMPARE(result->values.value(QStringLiteral("split-divider-color"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#f0f8ff")));
     QCOMPARE(result->values.value(
                  QStringLiteral("selection-foreground")).toString(),
              QStringLiteral("cell-background"));

@@ -156,6 +156,7 @@ add_test(
     NAME terminal-workspace-divider-hidpi
     COMMAND test-terminal-workspace
             dragsExactNestedSplitDividerAndPreservesFocus
+            splitDividerColorReloadsWithoutRelayout
 )
 set_tests_properties(terminal-workspace-divider-hidpi PROPERTIES
     TIMEOUT 15

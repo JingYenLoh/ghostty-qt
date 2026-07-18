@@ -185,6 +185,19 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             snapshot, QStringLiteral("background"))) {
         result.appearance.backgroundColor = *background;
     }
+    const auto splitDividerColor = snapshot.values.constFind(
+        QStringLiteral("split-divider-color"));
+    if (splitDividerColor != snapshot.values.cend()) {
+        if (splitDividerColor->metaType() == QMetaType::fromType<QString>()
+            && splitDividerColor->toString().isEmpty()) {
+            result.splitDividerColor.reset();
+        } else {
+            const QColor color = splitDividerColor->value<QColor>();
+            if (color.isValid()) {
+                result.splitDividerColor = color;
+            }
+        }
+    }
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;

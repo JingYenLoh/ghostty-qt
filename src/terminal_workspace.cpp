@@ -11,6 +11,7 @@
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QScopedValueRollback>
+#include <QSGSimpleRectNode>
 #include <QTimer>
 
 #include <algorithm>
@@ -118,6 +119,7 @@ public:
         setAcceptHoverEvents(true);
         setFocusPolicy(Qt::NoFocus);
         setZ(splitDividerZ);
+        setFlag(ItemHasContents);
     }
 
     void setOrientation(Qt::Orientation orientation)
@@ -131,12 +133,48 @@ public:
         generation_ = generation;
     }
 
+    void setColor(std::optional<QColor> color)
+    {
+        if (color.has_value() && !color->isValid()) {
+            color.reset();
+        }
+        if (color_ == color) {
+            return;
+        }
+        color_ = std::move(color);
+        update();
+    }
+
     [[nodiscard]] bool isCurrent(quint64 generation) const
     {
         return generation_ == generation;
     }
 
 protected:
+    void geometryChange(const QRectF &newGeometry,
+                        const QRectF &oldGeometry) override
+    {
+        QQuickItem::geometryChange(newGeometry, oldGeometry);
+        if (newGeometry.size() != oldGeometry.size()) {
+            update();
+        }
+    }
+
+    QSGNode *updatePaintNode(QSGNode *oldNode,
+                             UpdatePaintNodeData *) override
+    {
+        if (!color_.has_value()) {
+            delete oldNode;
+            return nullptr;
+        }
+        auto *node = oldNode != nullptr
+            ? static_cast<QSGSimpleRectNode *>(oldNode)
+            : new QSGSimpleRectNode;
+        node->setRect(boundingRect());
+        node->setColor(*color_);
+        return node;
+    }
+
     void mousePressEvent(QMouseEvent *event) override
     {
         if (event->button() != Qt::LeftButton || workspace_ == nullptr) {
@@ -212,6 +250,7 @@ private:
     quint64 splitId_ = 0;
     TerminalWorkspace *workspace_ = nullptr;
     SplitDividerDrag drag_;
+    std::optional<QColor> color_;
     quint64 generation_ = 0;
     bool dragging_ = false;
 };
@@ -301,6 +340,9 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
 {
     effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
+    for (SplitDividerItem *divider : std::as_const(splitDividers_)) {
+        divider->setColor(effectiveOptions_.splitDividerColor);
+    }
     for (const std::unique_ptr<Tab> &tab : tabs_) {
         std::vector<PaneHandle> panes;
         tab->root->collectPanes(panes);
@@ -1497,6 +1539,7 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
         SplitDividerItem *divider = splitDividers_.value(node->splitId);
         if (divider == nullptr) {
             divider = new SplitDividerItem(node->splitId, this);
+            divider->setColor(effectiveOptions_.splitDividerColor);
             splitDividers_.insert(node->splitId, divider);
         }
         divider->markCurrent(generation);

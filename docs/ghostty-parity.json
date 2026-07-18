@@ -404,6 +404,11 @@
       "status": "supported",
       "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."
     },
+    "split-divider-color": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "The exact pinned parser supplies the optional RGB override; existing and future exact-gap divider handles recolor live, while unset preserves the Qt frontend default without changing geometry, opacity, or focus."
+    },
     "theme": {
       "status": "partial",
       "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."
