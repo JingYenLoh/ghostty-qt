@@ -205,16 +205,16 @@ GhosttyConfigLoadResult processFailure(const QString &operation,
 {
     switch (result.status) {
     case ProcessResult::Status::StartFailed:
-        return GhosttyConfigLoadResult::failed(
+        return std::unexpected(
             QStringLiteral("Ghostty config helper could not be started during %1")
                 .arg(operation));
     case ProcessResult::Status::TimedOut:
-        return GhosttyConfigLoadResult::failed(
+        return std::unexpected(
             QStringLiteral("Ghostty config helper timed out during %1 after %2 ms")
                 .arg(operation)
                 .arg(std::max(1, timeoutMilliseconds)));
     case ProcessResult::Status::Crashed:
-        return GhosttyConfigLoadResult::failed(
+        return std::unexpected(
             QStringLiteral("Ghostty config helper crashed during %1").arg(operation));
     case ProcessResult::Status::Completed:
         break;
@@ -228,7 +228,7 @@ GhosttyConfigLoadResult processFailure(const QString &operation,
     if (!details.isEmpty()) {
         message.append(QStringLiteral(": %1").arg(details));
     }
-    return GhosttyConfigLoadResult::failed(std::move(message));
+    return std::unexpected(std::move(message));
 }
 
 void appendProcessDiagnostics(GhosttyConfigSnapshot *snapshot,
@@ -1204,17 +1204,17 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     ParsedConfig defaults;
     QString parseError;
     if (!parseDump(defaultOutput, &defaults, &parseError)) {
-        return GhosttyConfigLoadResult::failed(std::move(parseError));
+        return std::unexpected(std::move(parseError));
     }
 
     if (!hasRequiredFields(defaults)) {
-        return GhosttyConfigLoadResult::failed(
+        return std::unexpected(
             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
     }
 
     ParsedConfig changes;
     if (!parseDump(changesOutput, &changes, &parseError)) {
-        return GhosttyConfigLoadResult::failed(std::move(parseError));
+        return std::unexpected(std::move(parseError));
     }
 
     const QStringList fontFamilies =
@@ -1234,7 +1234,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     paletteValues.reserve(static_cast<qsizetype>(palette.size()));
     for (const std::optional<QColor> &color : palette) {
         if (!color.has_value()) {
-            return GhosttyConfigLoadResult::failed(
+            return std::unexpected(
                 QStringLiteral("Ghostty default config output is missing a required compatibility key"));
         }
         paletteValues.append(*color);
@@ -1368,7 +1368,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         appendExistingSource(&snapshot.sourcePaths, &seenSources, path);
     }
 
-    return GhosttyConfigLoadResult::loaded(std::move(snapshot));
+    return snapshot;
 }
 
 GhosttyConfigLoader makeGhosttyConfigProcessLoader(
@@ -1377,7 +1377,7 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
     return [options = std::move(options)](
                const QStringList &candidatePaths) -> GhosttyConfigLoadResult {
         if (options.helperPath.isEmpty()) {
-            return GhosttyConfigLoadResult::failed(
+            return std::unexpected(
                 QStringLiteral("Ghostty config helper path is empty"));
         }
 
@@ -1385,7 +1385,7 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         const QString xdgConfigHome =
             ghosttyConfigXdgHome(candidatePaths, &candidateError);
         if (xdgConfigHome.isEmpty()) {
-            return GhosttyConfigLoadResult::failed(std::move(candidateError));
+            return std::unexpected(std::move(candidateError));
         }
 
         QDeadlineTimer overallDeadline(
@@ -1472,13 +1472,13 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         }
         if (changes.standardOutput != verifiedChanges.standardOutput
             || keybinds.standardOutput != verifiedKeybinds.standardOutput) {
-            return GhosttyConfigLoadResult::failed(QStringLiteral(
+            return std::unexpected(QStringLiteral(
                 "Ghostty config changed while it was being queried; reload will retry"));
         }
 
         GhosttyConfigLoadResult parsed = parseGhosttyConfigShowOutputs(
             defaults.standardOutput, changes.standardOutput, candidatePaths);
-        if (!parsed.succeeded()) {
+        if (!parsed) {
             return parsed;
         }
         GhosttyKeybindConfig keybindConfig;
@@ -1486,34 +1486,34 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         if (!parseGhosttyKeybindConfigJson(keybinds.standardOutput,
                                            &keybindConfig,
                                            &keybindParseError)) {
-            return GhosttyConfigLoadResult::failed(
+            return std::unexpected(
                 QStringLiteral("Ghostty keybinding query returned malformed data: %1")
                     .arg(keybindParseError));
         }
-        parsed.snapshot->keybindConfig = std::move(keybindConfig);
+        parsed->keybindConfig = std::move(keybindConfig);
 
         // Config values belong on stdout; any successful stderr and validator
         // stdout are warnings from the pinned parser and must remain visible
         // to callers instead of disappearing with the helper process.
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("validation"),
                                  validation.standardOutput);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("validation"),
                                  validation.standardError);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("default query"),
                                  defaults.standardError);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("current query"),
                                  changes.standardError);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("keybinding query"),
                                  keybinds.standardError);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("post-query validation"),
                                  postQueryValidation.standardOutput);
-        appendProcessDiagnostics(&*parsed.snapshot,
+        appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("post-query validation"),
                                  postQueryValidation.standardError);
         return parsed;

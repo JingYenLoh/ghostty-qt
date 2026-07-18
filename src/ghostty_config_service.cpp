@@ -175,25 +175,25 @@ void GhosttyConfigService::reloadNow()
     ++loadGeneration_;
 
     if (!loader_) {
-        applyLoadResult(GhosttyConfigLoadResult::failed(
+        applyLoadResult(std::unexpected(
             QStringLiteral("Ghostty configuration loader is unavailable")));
         return;
     }
 
-    GhosttyConfigLoadResult result;
-    {
+    GhosttyConfigLoadResult result = [&] {
         QMutexLocker locker(&loaderMutex_);
-        result = loader_(candidatePaths_);
-    }
+        return loader_(candidatePaths_);
+    }();
     applyLoadResult(std::move(result));
 }
 
 void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
 {
-    if (!result.succeeded()) {
-        const QString message = result.errorMessage.isEmpty()
+    if (!result) {
+        const QString &error = result.error();
+        const QString message = error.isEmpty()
             ? QStringLiteral("Ghostty configuration reload failed")
-            : result.errorMessage;
+            : error;
         lastError_ = message;
         refreshWatchPaths();
         if (!failureRetryTimer_.isActive()) {
@@ -207,8 +207,8 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
 
     failureRetryTimer_.stop();
     lastError_.clear();
-    const bool changedSnapshot = !snapshot_.has_value() || *snapshot_ != *result.snapshot;
-    snapshot_ = std::move(*result.snapshot);
+    const bool changedSnapshot = !snapshot_.has_value() || *snapshot_ != *result;
+    snapshot_ = std::move(*result);
     refreshWatchPaths();
     if (changedSnapshot) {
         // As above, signal handlers may synchronously delete the sender.
@@ -226,7 +226,7 @@ void GhosttyConfigService::beginAsyncReload()
         return;
     }
     if (!loader_) {
-        applyLoadResult(GhosttyConfigLoadResult::failed(
+        applyLoadResult(std::unexpected(
             QStringLiteral("Ghostty configuration loader is unavailable")));
         return;
     }
@@ -239,11 +239,10 @@ void GhosttyConfigService::beginAsyncReload()
     QMutex *const loaderMutex = &loaderMutex_;
     reloadPool_.start(
         [self, loader, candidates, generation, loaderMutex] {
-            GhosttyConfigLoadResult result;
-            {
+            GhosttyConfigLoadResult result = [&] {
                 QMutexLocker locker(loaderMutex);
-                result = loader(candidates);
-            }
+                return loader(candidates);
+            }();
             QMetaObject::invokeMethod(
                 self,
                 [self, generation, result = std::move(result)]() mutable {
