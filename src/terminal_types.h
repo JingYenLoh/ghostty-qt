@@ -2,6 +2,7 @@
 
 #include "terminal_actions.h"
 
+#include <QBitArray>
 #include <QColor>
 #include <QMetaType>
 #include <QPoint>
@@ -99,8 +100,10 @@ struct TerminalSearchUpdate {
     qint64 selectedMatch = -1;
     int columns = 0;
     int rows = 0;
-    QVector<QPoint> visibleCells;
-    QVector<QPoint> selectedCells;
+    // Row-major viewport masks. Active worker updates size both masks to
+    // columns * rows; inactive updates leave them empty.
+    QBitArray visibleCellMask;
+    QBitArray selectedCellMask;
 };
 
 struct TerminalCell {

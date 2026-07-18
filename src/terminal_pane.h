@@ -185,6 +185,7 @@ private:
     void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
     void installSearchDecorationsLocked(
         const TerminalSearchUpdate &searchUpdate);
+    void clearPendingSearchUpdateLocked();
     void clearSearchDecorationsLocked();
 
     LaunchOptions options_;
@@ -251,8 +252,8 @@ private:
     QString searchMatchLabel_ = QStringLiteral("0/0");
     TerminalSearchUpdate pendingSearchUpdate_;
     bool hasPendingSearchUpdate_ = false;
-    QSet<int> searchCandidateCellIndexes_;
-    QSet<int> searchSelectedCellIndexes_;
+    QBitArray searchCandidateCellMask_;
+    QBitArray searchSelectedCellMask_;
     quint64 searchDecorationRevision_ = 0;
     int searchDecorationColumns_ = 0;
     int searchDecorationRows_ = 0;

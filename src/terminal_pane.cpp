@@ -515,12 +515,12 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                             if (pendingMatchesFrame) {
                                 installSearchDecorationsLocked(
                                     pendingSearchUpdate_);
-                                hasPendingSearchUpdate_ = false;
+                                clearPendingSearchUpdateLocked();
                             } else {
                                 if (hasPendingSearchUpdate_
                                     && pendingSearchUpdate_.contentRevision
-                                        < frame_.contentRevision) {
-                                    hasPendingSearchUpdate_ = false;
+                                        <= frame_.contentRevision) {
+                                    clearPendingSearchUpdateLocked();
                                 }
                                 if (searchDecorationRevision_
                                         != frame_.contentRevision
@@ -626,7 +626,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 Q_EMIT searchMatchLabelChanged();
                 {
                     QMutexLocker locker(&renderMutex_);
-                    hasPendingSearchUpdate_ = false;
+                    clearPendingSearchUpdateLocked();
                     clearSearchDecorationsLocked();
                 }
                 bool hasError = false;
@@ -878,7 +878,7 @@ void TerminalPane::endSearchUi()
     }
     {
         QMutexLocker locker(&renderMutex_);
-        hasPendingSearchUpdate_ = false;
+        clearPendingSearchUpdateLocked();
         clearSearchDecorationsLocked();
     }
     controller_->cancelSearch();
@@ -895,18 +895,24 @@ void TerminalPane::navigateSearch(int direction)
 
 void TerminalPane::clearSearchDecorationsLocked()
 {
-    searchCandidateCellIndexes_.clear();
-    searchSelectedCellIndexes_.clear();
+    searchCandidateCellMask_.clear();
+    searchSelectedCellMask_.clear();
     searchDecorationRevision_ = 0;
     searchDecorationColumns_ = 0;
     searchDecorationRows_ = 0;
 }
 
+void TerminalPane::clearPendingSearchUpdateLocked()
+{
+    pendingSearchUpdate_ = {};
+    hasPendingSearchUpdate_ = false;
+}
+
 void TerminalPane::installSearchDecorationsLocked(
     const TerminalSearchUpdate &searchUpdate)
 {
-    searchCandidateCellIndexes_.clear();
-    searchSelectedCellIndexes_.clear();
+    searchCandidateCellMask_.clear();
+    searchSelectedCellMask_.clear();
     searchDecorationRevision_ = searchUpdate.contentRevision;
     searchDecorationColumns_ = searchUpdate.columns;
     searchDecorationRows_ = searchUpdate.rows;
@@ -915,20 +921,19 @@ void TerminalPane::installSearchDecorationsLocked(
         return;
     }
 
-    const auto addCell = [&searchUpdate](const QPoint &cell,
-                                         QSet<int> *destination) {
-        if (cell.x() < 0 || cell.x() >= searchUpdate.columns
-            || cell.y() < 0 || cell.y() >= searchUpdate.rows) {
-            return;
-        }
-        destination->insert(cell.y() * searchUpdate.columns + cell.x());
-    };
-    for (const QPoint &cell : searchUpdate.visibleCells) {
-        addCell(cell, &searchCandidateCellIndexes_);
+    const qsizetype columnCount = searchUpdate.columns;
+    const qsizetype maskSize = searchUpdate.visibleCellMask.size();
+    const bool masksEmpty = maskSize == 0
+        && searchUpdate.selectedCellMask.isEmpty();
+    const bool masksMatchGrid = maskSize > 0
+        && maskSize == searchUpdate.selectedCellMask.size()
+        && maskSize % columnCount == 0
+        && maskSize / columnCount == searchUpdate.rows;
+    if (!masksEmpty && !masksMatchGrid) {
+        return;
     }
-    for (const QPoint &cell : searchUpdate.selectedCells) {
-        addCell(cell, &searchSelectedCellIndexes_);
-    }
+    searchCandidateCellMask_ = searchUpdate.visibleCellMask;
+    searchSelectedCellMask_ = searchUpdate.selectedCellMask;
 }
 
 void TerminalPane::handleSearchUpdate(
@@ -949,14 +954,14 @@ void TerminalPane::handleSearchUpdate(
     {
         QMutexLocker locker(&renderMutex_);
         if (!searchUpdate.active) {
-            hasPendingSearchUpdate_ = false;
+            clearPendingSearchUpdateLocked();
             clearSearchDecorationsLocked();
         } else if (hasFrame_
                    && searchUpdate.contentRevision == frame_.contentRevision
                    && searchUpdate.columns == frame_.columns
                    && searchUpdate.rows == frame_.rows) {
             installSearchDecorationsLocked(searchUpdate);
-            hasPendingSearchUpdate_ = false;
+            clearPendingSearchUpdateLocked();
         } else if (!hasFrame_
                    || searchUpdate.contentRevision > frame_.contentRevision) {
             pendingSearchUpdate_ = searchUpdate;
@@ -986,8 +991,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QString linkPreview;
     QRectF linkPreviewRect;
     QSet<int> hoveredHyperlinkCells;
-    QSet<int> searchCandidateCells;
-    QSet<int> searchSelectedCells;
+    QBitArray searchCandidateCellMask;
+    QBitArray searchSelectedCellMask;
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     qreal baseline = 0.0;
@@ -1008,14 +1013,18 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         if (searchDecorationRevision_ == frame_.contentRevision
             && searchDecorationColumns_ == frame_.columns
             && searchDecorationRows_ == frame_.rows) {
-            searchCandidateCells = searchCandidateCellIndexes_;
-            searchSelectedCells = searchSelectedCellIndexes_;
+            searchCandidateCellMask = searchCandidateCellMask_;
+            searchSelectedCellMask = searchSelectedCellMask_;
         }
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
         baseline = baseline_;
         hasFrame = hasFrame_;
     }
+    const bool candidateMaskMatchesFrame =
+        searchCandidateCellMask.size() == frame.cells.size();
+    const bool selectedMaskMatchesFrame =
+        searchSelectedCellMask.size() == frame.cells.size();
 
     const QRectF viewport = boundingRect();
     const QSGRendererInterface *rendererInterface = window() != nullptr
@@ -1072,8 +1081,10 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             && cursorStyle == 1;
         QColor cursorCellForeground = frame.foreground;
         QColor cursorCellBackground = frame.background;
-        const int cursorCellIndex = frame.cursorRow * frame.columns
-            + frame.cursorColumn;
+        const qsizetype cursorCellIndex = cursorActive
+            ? static_cast<qsizetype>(frame.cursorRow) * frame.columns
+                + frame.cursorColumn
+            : -1;
         if (cursorActive && cursorCellIndex >= 0
             && cursorCellIndex < frame.cells.size()) {
             const TerminalCell &cursorCell = frame.cells.at(cursorCellIndex);
@@ -1091,8 +1102,9 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         for (int row = 0; row < visibleRows; ++row) {
             const qreal top = static_cast<qreal>(row) * cellHeight;
             for (int column = 0; column < visibleColumns; ++column) {
-                const int index = row * frame.columns + column;
-                if (index < 0 || index >= frame.cells.size()) {
+                const qsizetype index = static_cast<qsizetype>(row)
+                    * frame.columns + column;
+                if (index >= frame.cells.size()) {
                     continue;
                 }
                 const TerminalCell &cell = frame.cells.at(index);
@@ -1104,18 +1116,20 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 applyBoldColor(cell, frame, appearance,
                                &styledForeground, &styledBackground);
 
-                bool candidateSearchMatch =
-                    searchCandidateCells.contains(index);
-                bool selectedSearchMatch =
-                    searchSelectedCells.contains(index);
+                bool candidateSearchMatch = candidateMaskMatchesFrame
+                    && searchCandidateCellMask.testBit(index);
+                bool selectedSearchMatch = selectedMaskMatchesFrame
+                    && searchSelectedCellMask.testBit(index);
                 if (cell.spacer && column > 0) {
                     // libghostty maps every UTF-8 byte to the owning wide
                     // head. Carry that decoration into its spacer tail so the
                     // highlighted grapheme remains one visual unit.
                     candidateSearchMatch = candidateSearchMatch
-                        || searchCandidateCells.contains(index - 1);
+                        || (candidateMaskMatchesFrame
+                            && searchCandidateCellMask.testBit(index - 1));
                     selectedSearchMatch = selectedSearchMatch
-                        || searchSelectedCells.contains(index - 1);
+                        || (selectedMaskMatchesFrame
+                            && searchSelectedCellMask.testBit(index - 1));
                 }
 
                 QColor cellBackground = styledBackground;
@@ -1201,7 +1215,9 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                                   appearance.faintOpacity);
                 }
                 TerminalUnderlineStyle underlineStyle = cell.underlineStyle;
-                if (hoveredHyperlinkCells.contains(index)) {
+                if (index <= std::numeric_limits<int>::max()
+                    && hoveredHyperlinkCells.contains(
+                        static_cast<int>(index))) {
                     // Ghostty renders a hovered link as single-underlined,
                     // except an existing single underline becomes double so
                     // the hover remains visually distinguishable.

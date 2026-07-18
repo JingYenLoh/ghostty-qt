@@ -77,6 +77,15 @@ std::optional<TerminalSearchUpdate> latestSearchUpdate(
     return std::nullopt;
 }
 
+bool maskIsSubset(const QBitArray &subset, const QBitArray &superset)
+{
+    if (subset.size() != superset.size()) return false;
+    for (qsizetype index = 0; index < subset.size(); ++index) {
+        if (subset.testBit(index) && !superset.testBit(index)) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 class SessionWorkerTest : public QObject {
@@ -127,7 +136,7 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
             "i=0; while [ $i -lt 500 ]; do "
             "printf 'scan-row-%03d needle\\n' \"$i\"; "
             "i=$((i + 1)); done; "
-            "printf 'AAAA\\nleft\\nright\\nÄ ä\\n'")};
+            "printf 'AAAA\\nleft\\nright\\nÄ ä\\n界\\n'")};
     options.hold = true;
     worker.initialize(options);
 
@@ -152,12 +161,27 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
         latestSearchUpdate(searchSpy, 1).has_value()
             && latestSearchUpdate(searchSpy, 1)->complete,
         5000);
-    QCOMPARE(latestSearchUpdate(searchSpy, 1)->totalMatches, quint64(3));
+    const TerminalSearchUpdate completedAa = *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(completedAa.totalMatches, quint64(3));
+    const qsizetype maskSize = static_cast<qsizetype>(completedAa.columns)
+        * completedAa.rows;
+    QCOMPARE(completedAa.visibleCellMask.size(), maskSize);
+    QCOMPARE(completedAa.selectedCellMask.size(), maskSize);
+    QCOMPARE(completedAa.visibleCellMask.count(true), qsizetype(4));
+    QCOMPARE(completedAa.selectedCellMask.count(true), qsizetype(0));
 
     worker.navigateSearch(1, TerminalSearchDirection::Next);
-    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
+    const TerminalSearchUpdate firstAa = *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(firstAa.selectedMatch, qint64(0));
+    QCOMPARE(firstAa.selectedCellMask.count(true), qsizetype(2));
+    QVERIFY(maskIsSubset(firstAa.selectedCellMask, firstAa.visibleCellMask));
     worker.navigateSearch(1, TerminalSearchDirection::Previous);
-    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(2));
+    const TerminalSearchUpdate lastAa = *latestSearchUpdate(searchSpy, 1);
+    QCOMPARE(lastAa.selectedMatch, qint64(2));
+    QCOMPARE(lastAa.visibleCellMask, firstAa.visibleCellMask);
+    QCOMPARE(lastAa.selectedCellMask.count(true), qsizetype(2));
+    QVERIFY(lastAa.selectedCellMask != firstAa.selectedCellMask);
+    QVERIFY(maskIsSubset(lastAa.selectedCellMask, lastAa.visibleCellMask));
     worker.navigateSearch(1, TerminalSearchDirection::Next);
     QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
 
@@ -166,7 +190,28 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
         latestSearchUpdate(searchSpy, 2).has_value()
             && latestSearchUpdate(searchSpy, 2)->complete,
         5000);
-    QCOMPARE(latestSearchUpdate(searchSpy, 2)->totalMatches, quint64(1));
+    const TerminalSearchUpdate multiline = *latestSearchUpdate(searchSpy, 2);
+    QCOMPARE(multiline.totalMatches, quint64(1));
+    QCOMPARE(multiline.visibleCellMask.size(), maskSize);
+    int firstDecoratedRow = -1;
+    bool spansRows = false;
+    for (qsizetype index = 0; index < multiline.visibleCellMask.size();
+         ++index) {
+        if (!multiline.visibleCellMask.testBit(index)) continue;
+        const int row = static_cast<int>(index / multiline.columns);
+        if (firstDecoratedRow < 0) {
+            firstDecoratedRow = row;
+        } else if (row != firstDecoratedRow) {
+            spansRows = true;
+        }
+    }
+    QVERIFY(spansRows);
+    worker.navigateSearch(2, TerminalSearchDirection::Next);
+    const TerminalSearchUpdate selectedMultiline =
+        *latestSearchUpdate(searchSpy, 2);
+    QVERIFY(selectedMultiline.selectedCellMask.count(true) > 0);
+    QVERIFY(maskIsSubset(selectedMultiline.selectedCellMask,
+                         selectedMultiline.visibleCellMask));
 
     worker.search(3, QStringLiteral("Ä").toUtf8());
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -175,39 +220,68 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
         5000);
     QCOMPARE(latestSearchUpdate(searchSpy, 3)->totalMatches, quint64(1));
 
-    worker.searchSerialized(4, QByteArrayLiteral("A\\x41"));
+    worker.search(4, QStringLiteral("界").toUtf8());
     QTRY_VERIFY_WITH_TIMEOUT(
         latestSearchUpdate(searchSpy, 4).has_value()
             && latestSearchUpdate(searchSpy, 4)->complete,
         5000);
-    QCOMPARE(latestSearchUpdate(searchSpy, 4)->totalMatches, quint64(3));
+    QCOMPARE(latestSearchUpdate(searchSpy, 4)->totalMatches, quint64(1));
+    QCOMPARE(latestSearchUpdate(searchSpy, 4)->visibleCellMask.count(true),
+             qsizetype(1));
+    const TerminalFrame wideFrame = accumulatedFrame(updateSpy);
+    const auto wideHead = std::ranges::find_if(
+        wideFrame.cells,
+        [](const TerminalCell &cell) { return cell.text == u"界"; });
+    QVERIFY(wideHead != wideFrame.cells.cend());
+    const qsizetype wideHeadIndex =
+        std::ranges::distance(wideFrame.cells.cbegin(), wideHead);
+    QCOMPARE(wideHead->columnSpan, 2);
+    QVERIFY(wideHeadIndex + 1 < wideFrame.cells.size());
+    QVERIFY(wideFrame.cells.at(wideHeadIndex + 1).spacer);
+    QVERIFY(latestSearchUpdate(searchSpy, 4)->visibleCellMask.testBit(
+        wideHeadIndex));
+    worker.navigateSearch(4, TerminalSearchDirection::Next);
+    QCOMPARE(latestSearchUpdate(searchSpy, 4)->selectedCellMask.count(true),
+             qsizetype(1));
 
-    // The oldest match is wholly outside the live viewport. Previous starts
-    // there, while Next wraps back to the newest result and follows it down.
-    worker.search(5, QByteArrayLiteral("needle"));
+    worker.searchSerialized(5, QByteArrayLiteral("A\\x41"));
     QTRY_VERIFY_WITH_TIMEOUT(
         latestSearchUpdate(searchSpy, 5).has_value()
             && latestSearchUpdate(searchSpy, 5)->complete,
         5000);
-    QCOMPARE(latestSearchUpdate(searchSpy, 5)->totalMatches, quint64(500));
-    worker.navigateSearch(5, TerminalSearchDirection::Previous);
-    QCOMPARE(latestSearchUpdate(searchSpy, 5)->selectedMatch, qint64(499));
-    QVERIFY(!latestSearchUpdate(searchSpy, 5)->selectedCells.isEmpty());
+    QCOMPARE(latestSearchUpdate(searchSpy, 5)->totalMatches, quint64(3));
+
+    // The oldest match is wholly outside the live viewport. Previous starts
+    // there, while Next wraps back to the newest result and follows it down.
+    worker.search(6, QByteArrayLiteral("needle"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 6).has_value()
+            && latestSearchUpdate(searchSpy, 6)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 6)->totalMatches, quint64(500));
+    worker.navigateSearch(6, TerminalSearchDirection::Previous);
+    QCOMPARE(latestSearchUpdate(searchSpy, 6)->selectedMatch, qint64(499));
+    QVERIFY(latestSearchUpdate(searchSpy, 6)->selectedCellMask.count(true) > 0);
     QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
                              1000);
-    worker.navigateSearch(5, TerminalSearchDirection::Next);
-    QCOMPARE(latestSearchUpdate(searchSpy, 5)->selectedMatch, qint64(0));
+    worker.navigateSearch(6, TerminalSearchDirection::Next);
+    QCOMPARE(latestSearchUpdate(searchSpy, 6)->selectedMatch, qint64(0));
     QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
                              1000);
 
-    worker.search(6, QByteArrayLiteral("needle"));
-    worker.search(7, QByteArrayLiteral("aa"));
-    worker.cancelSearch(8);
+    worker.search(7, QByteArrayLiteral("needle"));
+    worker.search(8, QByteArrayLiteral("aa"));
+    worker.cancelSearch(9);
     QTRY_VERIFY_WITH_TIMEOUT(
-        latestSearchUpdate(searchSpy, 8).has_value()
-            && latestSearchUpdate(searchSpy, 8)->complete,
+        latestSearchUpdate(searchSpy, 9).has_value()
+            && latestSearchUpdate(searchSpy, 9)->complete,
         1000);
-    QVERIFY(!latestSearchUpdate(searchSpy, 8)->active);
+    const TerminalSearchUpdate cancelled = *latestSearchUpdate(searchSpy, 9);
+    QVERIFY(!cancelled.active);
+    QCOMPARE(cancelled.columns, 0);
+    QCOMPARE(cancelled.rows, 0);
+    QVERIFY(cancelled.visibleCellMask.isEmpty());
+    QVERIFY(cancelled.selectedCellMask.isEmpty());
     const int afterCancel = searchSpy.count();
     QTest::qWait(50);
     QCOMPARE(searchSpy.count(), afterCancel);

@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <initializer_list>
 #include <utility>
 
 namespace {
@@ -74,6 +75,19 @@ bool spyContainsBool(const QSignalSpy &spy, bool value)
     return std::any_of(spy.cbegin(), spy.cend(), [value](const auto &arguments) {
         return !arguments.isEmpty() && arguments.constFirst().toBool() == value;
     });
+}
+
+QBitArray cellMask(int columns, int rows,
+                   std::initializer_list<QPoint> cells)
+{
+    QBitArray mask(static_cast<qsizetype>(columns) * rows);
+    for (const QPoint &cell : cells) {
+        if (cell.x() >= 0 && cell.x() < columns
+            && cell.y() >= 0 && cell.y() < rows) {
+            mask.setBit(static_cast<qsizetype>(cell.y()) * columns + cell.x());
+        }
+    }
+    return mask;
 }
 
 class ShellEnvironment final {
@@ -958,10 +972,11 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     searchUpdate.selectedMatch = 0;
     searchUpdate.columns = columns;
     searchUpdate.rows = rows;
-    searchUpdate.visibleCells = {
+    searchUpdate.visibleCellMask = cellMask(columns, rows, {
         QPoint(2, 1), QPoint(3, 1), QPoint(4, 1), QPoint(5, 1),
-    };
-    searchUpdate.selectedCells = {QPoint(3, 1), QPoint(4, 1)};
+    });
+    searchUpdate.selectedCellMask = cellMask(
+        columns, rows, {QPoint(3, 1), QPoint(4, 1)});
     controller->searchUpdated(searchUpdate);
     // The synthetic frame was delivered synchronously. Keep a later PTY
     // readiness update from replacing it while the software scene graph is

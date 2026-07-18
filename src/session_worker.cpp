@@ -9,7 +9,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcessEnvironment>
-#include <QSet>
 #include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QThread>
@@ -88,19 +87,34 @@ QVector<qsizetype> searchPrefixTable(QByteArrayView pattern)
     return prefix;
 }
 
-QVector<QPoint> visibleSearchCells(
+std::optional<qsizetype> gridCellCount(int columns, int rows)
+{
+    if (columns <= 0 || rows <= 0) return std::nullopt;
+    const qsizetype columnCount = columns;
+    const qsizetype rowCount = rows;
+    if (columnCount > std::numeric_limits<qsizetype>::max() / rowCount) {
+        return std::nullopt;
+    }
+    return columnCount * rowCount;
+}
+
+void addVisibleSearchCells(
+    QBitArray &destination,
     TerminalSearchRange range,
     const GhosttyVtAdapter::SearchExtent &extent)
 {
+    const std::optional<qsizetype> cellCount =
+        gridCellCount(extent.columns, extent.rows);
     if (range.end < range.start) {
         std::swap(range.start, range.end);
     }
-    if (extent.columns <= 0 || extent.viewportLength == 0
+    if (!cellCount.has_value() || destination.size() != *cellCount
+        || extent.viewportLength == 0
         || range.start.column >= extent.columns
         || range.end.column >= extent.columns
         || range.start.screenRow >= extent.totalRows
         || range.end.screenRow >= extent.totalRows) {
-        return {};
+        return;
     }
 
     const quint64 viewportStart = extent.viewportOffset;
@@ -110,21 +124,24 @@ QVector<QPoint> visibleSearchCells(
     const quint64 lastRowExclusive = std::min<quint64>(
         static_cast<quint64>(range.end.screenRow) + 1U, viewportEnd);
     if (firstRow >= lastRowExclusive) {
-        return {};
+        return;
     }
 
-    QVector<QPoint> result;
     for (quint64 row = firstRow; row < lastRowExclusive; ++row) {
         const int firstColumn = row == range.start.screenRow
             ? static_cast<int>(range.start.column) : 0;
         const int lastColumn = row == range.end.screenRow
             ? static_cast<int>(range.end.column) : extent.columns - 1;
-        const int viewportRow = static_cast<int>(row - viewportStart);
+        const quint64 relativeRow = row - viewportStart;
+        if (relativeRow >= static_cast<quint64>(extent.rows)) {
+            continue;
+        }
+        const int viewportRow = static_cast<int>(relativeRow);
         for (int column = firstColumn; column <= lastColumn; ++column) {
-            result.append(QPoint(column, viewportRow));
+            destination.setBit(
+                static_cast<qsizetype>(viewportRow) * extent.columns + column);
         }
     }
-    return result;
 }
 
 bool keyMayStartProcess(const TerminalKeyInput &input)
@@ -356,8 +373,8 @@ struct SessionWorker::SearchState {
     qsizetype matched = 0;
     std::deque<TerminalSearchCell> recentCells;
     QVector<TerminalSearchRange> matches;
-    QSet<QPoint> visibleCells;
-    QVector<QPoint> selectedCells;
+    QBitArray visibleCellMask;
+    QBitArray selectedCellMask;
     qint64 selectedMatch = -1;
     qint64 nextScreenRow = -1;
     std::optional<GhosttyVtAdapter::SearchRowSnapshot> currentRow;
@@ -1353,6 +1370,13 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
         publishSearchUpdate();
         return;
     }
+    const std::optional<qsizetype> cellCount =
+        gridCellCount(extent->columns, extent->rows);
+    if (!cellCount.has_value()) {
+        searchState_->complete = true;
+        publishSearchUpdate();
+        return;
+    }
 
     searchState_->active = true;
     searchState_->totalRows = extent->totalRows;
@@ -1361,6 +1385,8 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
     searchState_->viewportOffset = extent->viewportOffset;
     searchState_->viewportLength = extent->viewportLength;
     searchState_->activeScreen = extent->activeScreen;
+    searchState_->visibleCellMask.resize(*cellCount);
+    searchState_->selectedCellMask.resize(*cellCount);
     searchState_->nextScreenRow = extent->totalRows == 0
         ? -1 : static_cast<qint64>(extent->totalRows - 1U);
     searchState_->reversedNeedle = reversedFoldedSearchNeedle(needle);
@@ -1444,16 +1470,16 @@ void SessionWorker::publishSearchUpdate()
     update.selectedMatch = searchState_->selectedMatch;
     update.columns = searchState_->columns;
     update.rows = searchState_->rows;
-    update.visibleCells = searchState_->visibleCells.values();
-    update.selectedCells = searchState_->selectedCells;
+    update.visibleCellMask = searchState_->visibleCellMask;
+    update.selectedCellMask = searchState_->selectedCellMask;
     Q_EMIT searchUpdated(update);
     searchState_->lastPublication.restart();
 }
 
 void SessionWorker::rebuildSearchVisibleCells()
 {
-    searchState_->visibleCells.clear();
-    searchState_->selectedCells.clear();
+    searchState_->visibleCellMask.fill(false);
+    searchState_->selectedCellMask.fill(false);
     if (!searchState_->active || vt_ == nullptr) {
         return;
     }
@@ -1485,14 +1511,12 @@ void SessionWorker::rebuildSearchVisibleCells()
             // intersect this viewport.
             break;
         }
-        const QVector<QPoint> cells = visibleSearchCells(range, *extent);
-        for (const QPoint &cell : cells) {
-            searchState_->visibleCells.insert(cell);
-        }
+        addVisibleSearchCells(searchState_->visibleCellMask, range, *extent);
     }
     if (searchState_->selectedMatch >= 0
         && searchState_->selectedMatch < searchState_->matches.size()) {
-        searchState_->selectedCells = visibleSearchCells(
+        addVisibleSearchCells(
+            searchState_->selectedCellMask,
             searchState_->matches.at(searchState_->selectedMatch), *extent);
     }
 }
@@ -1551,10 +1575,7 @@ void SessionWorker::processSearchChunk()
             .end = state.recentCells.front(),
         };
         state.matches.append(range);
-        const QVector<QPoint> visible = visibleSearchCells(range, extent);
-        for (const QPoint &visibleCell : visible) {
-            state.visibleCells.insert(visibleCell);
-        }
+        addVisibleSearchCells(state.visibleCellMask, range, extent);
         state.matched = state.prefix.at(state.matched - 1);
     };
 
