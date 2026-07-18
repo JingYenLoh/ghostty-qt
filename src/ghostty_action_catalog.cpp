@@ -10,13 +10,25 @@
 #include <cstdlib>
 #include <limits>
 #include <locale.h>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace {
 
 using Error = GhosttyActionTranslationError;
 using OptionalView = std::optional<QStringView>;
+
+locale_t cNumericLocale()
+{
+    using Locale = std::remove_pointer_t<locale_t>;
+    static const std::unique_ptr<Locale, decltype(&freelocale)> locale{
+        newlocale(LC_NUMERIC_MASK, "C", nullptr),
+        &freelocale,
+    };
+    return locale.get();
+}
 
 bool equals(QStringView value, QLatin1StringView expected)
 {
@@ -216,11 +228,10 @@ std::optional<float> parseFloat32(QStringView value)
     // to obtain the same binary32 rounding independent of the process locale.
     // A strict lexer above prevents strtof_l's whitespace and NaN-payload
     // extensions from widening the accepted action grammar.
-    locale_t numericLocale = newlocale(LC_NUMERIC_MASK, "C", nullptr);
+    const locale_t numericLocale = cNumericLocale();
     if (numericLocale == nullptr) return std::nullopt;
     char *end = nullptr;
     const float result = strtof_l(normalized.c_str(), &end, numericLocale);
-    freelocale(numericLocale);
     if (end != normalized.data() + normalized.size()) {
         return std::nullopt;
     }
