@@ -3,8 +3,10 @@
 #include "ghostty_action_catalog.h"
 #include "terminal_pane.h"
 
+#include <QCursor>
 #include <QDebug>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickWindow>
@@ -21,6 +23,7 @@
 namespace {
 
 constexpr qreal splitGap = 2.0;
+constexpr qreal splitDividerZ = 1.0;
 
 struct AxisWeights {
     [[nodiscard]] std::size_t along(
@@ -88,6 +91,7 @@ struct TerminalWorkspace::Node {
 
     PaneId paneId;
     TerminalPane *pane = nullptr;
+    quint64 splitId = 0;
     Qt::Orientation orientation = Qt::Horizontal;
     qreal ratio = 0.5;
     QRectF geometry;
@@ -100,6 +104,116 @@ struct TerminalWorkspace::Tab {
     std::unique_ptr<Node> root;
     PaneId activePaneId;
     PaneId zoomedPaneId;
+};
+
+class TerminalWorkspace::SplitDividerItem final : public QQuickItem {
+public:
+    SplitDividerItem(quint64 splitId, TerminalWorkspace *workspace)
+        : QQuickItem(workspace)
+        , splitId_(splitId)
+        , workspace_(workspace)
+    {
+        setObjectName(QStringLiteral("_ghosttyQtSplitDivider"));
+        setAcceptedMouseButtons(Qt::LeftButton);
+        setAcceptHoverEvents(true);
+        setFocusPolicy(Qt::NoFocus);
+        setZ(splitDividerZ);
+    }
+
+    void setOrientation(Qt::Orientation orientation)
+    {
+        setCursor(orientation == Qt::Horizontal
+            ? Qt::SplitHCursor : Qt::SplitVCursor);
+    }
+
+    void markCurrent(quint64 generation)
+    {
+        generation_ = generation;
+    }
+
+    [[nodiscard]] bool isCurrent(quint64 generation) const
+    {
+        return generation_ == generation;
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (event->button() != Qt::LeftButton || workspace_ == nullptr) {
+            event->ignore();
+            return;
+        }
+        const std::optional<SplitDividerDrag> drag =
+            workspace_->beginSplitDividerDrag(
+                splitId_, mapToItem(workspace_, event->position()));
+        if (!drag.has_value()) {
+            event->ignore();
+            return;
+        }
+        drag_ = *drag;
+        dragging_ = true;
+        setKeepMouseGrab(true);
+        event->accept();
+    }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (!dragging_) {
+            event->ignore();
+            return;
+        }
+        if (workspace_ == nullptr || !(event->buttons() & Qt::LeftButton)
+            || !workspace_->dragSplitDivider(
+                splitId_, mapToItem(workspace_, event->position()),
+                drag_)) {
+            cancelDragging();
+        }
+        event->accept();
+    }
+
+    void mouseReleaseEvent(QMouseEvent *event) override
+    {
+        if (!dragging_ || event->button() != Qt::LeftButton) {
+            event->ignore();
+            return;
+        }
+        if (workspace_ != nullptr) {
+            (void) workspace_->dragSplitDivider(
+                splitId_, mapToItem(workspace_, event->position()),
+                drag_);
+        }
+        clearDragging();
+        event->accept();
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent *event) override
+    {
+        mousePressEvent(event);
+    }
+
+    void mouseUngrabEvent() override
+    {
+        clearDragging();
+    }
+
+private:
+    void clearDragging()
+    {
+        dragging_ = false;
+        setKeepMouseGrab(false);
+    }
+
+    void cancelDragging()
+    {
+        clearDragging();
+        ungrabMouse();
+    }
+
+    quint64 splitId_ = 0;
+    TerminalWorkspace *workspace_ = nullptr;
+    SplitDividerDrag drag_;
+    quint64 generation_ = 0;
+    bool dragging_ = false;
 };
 
 LaunchOptions TerminalWorkspace::defaultOptions_;
@@ -724,6 +838,9 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
     const PaneHandle oldHandle{node->paneId, oldPane};
     node->paneId = {};
     node->pane = nullptr;
+    do {
+        node->splitId = nextSplitId_++;
+    } while (node->splitId == 0);
     node->orientation = orientation;
     node->ratio = 0.5;
     node->first = std::make_unique<Node>(
@@ -901,6 +1018,7 @@ void TerminalWorkspace::removeTab(TabId tabId)
 
     if (tabs_.empty()) {
         currentIndex_ = -1;
+        updateSplitDividers(nullptr);
         Q_EMIT currentIndexChanged();
         Q_EMIT currentTitleChanged();
         approveQuit();
@@ -1245,10 +1363,28 @@ void TerminalWorkspace::geometryChange(const QRectF &newGeometry,
     }
 }
 
+void TerminalWorkspace::itemChange(ItemChange change,
+                                   const ItemChangeData &value)
+{
+    if (change == ItemSceneChange) {
+        // QQuickItem::ungrabMouse() follows the item's current scene. If this
+        // workspace moves between windows while a divider owns the old
+        // scene's grab, only destroying that handle reliably releases both
+        // delivery agents through Qt's public API. Stable split IDs recreate
+        // it below before the base emits windowChanged().
+        updateSplitDividers(nullptr);
+        if (value.window != nullptr) {
+            layoutCurrentTab();
+        }
+    }
+    QQuickItem::itemChange(change, value);
+}
+
 void TerminalWorkspace::layoutCurrentTab()
 {
     Tab *tab = currentTab();
     if (tab == nullptr || tab->root == nullptr) {
+        updateSplitDividers(nullptr);
         return;
     }
     // Keep logical geometry current while zoomed, but don't resize hidden
@@ -1262,6 +1398,7 @@ void TerminalWorkspace::layoutCurrentTab()
     } else {
         applyNodeGeometry(tab->root.get());
     }
+    updateSplitDividers(tab);
 }
 
 void TerminalWorkspace::updateNodeGeometry(Node *node,
@@ -1310,6 +1447,153 @@ void TerminalWorkspace::applyNodeGeometry(Node *node)
     }
     applyNodeGeometry(node->first.get());
     applyNodeGeometry(node->second.get());
+}
+
+TerminalWorkspace::Node *TerminalWorkspace::findSplitNode(
+    Node *node, quint64 splitId) const
+{
+    if (node == nullptr || node->isLeaf()) {
+        return nullptr;
+    }
+    if (node->splitId == splitId) {
+        return node;
+    }
+    if (Node *match = findSplitNode(node->first.get(), splitId);
+        match != nullptr) {
+        return match;
+    }
+    return findSplitNode(node->second.get(), splitId);
+}
+
+void TerminalWorkspace::updateSplitDividers(const Tab *tab)
+{
+    ++splitDividerGeneration_;
+    if (tab != nullptr && tab->root != nullptr
+        && !tab->zoomedPaneId.isValid()) {
+        updateSplitDividers(tab->root.get(), splitDividerGeneration_);
+    }
+
+    for (auto divider = splitDividers_.begin();
+         divider != splitDividers_.end();) {
+        if (divider.value()->isCurrent(splitDividerGeneration_)) {
+            ++divider;
+            continue;
+        }
+        delete divider.value();
+        divider = splitDividers_.erase(divider);
+    }
+}
+
+void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
+{
+    if (node == nullptr || node->isLeaf()) {
+        return;
+    }
+
+    const qreal perpendicular = node->orientation == Qt::Horizontal
+        ? node->geometry.height() : node->geometry.width();
+    if (splitExtent(node->geometry, node->orientation) > 0.0
+        && perpendicular > 0.0) {
+        SplitDividerItem *divider = splitDividers_.value(node->splitId);
+        if (divider == nullptr) {
+            divider = new SplitDividerItem(node->splitId, this);
+            splitDividers_.insert(node->splitId, divider);
+        }
+        divider->markCurrent(generation);
+        QRectF geometry;
+        if (node->orientation == Qt::Horizontal) {
+            geometry = QRectF(
+                node->first->geometry.right(), node->geometry.top(),
+                splitGap, node->geometry.height());
+        } else {
+            geometry = QRectF(
+                node->geometry.left(), node->first->geometry.bottom(),
+                node->geometry.width(), splitGap);
+        }
+        divider->setOrientation(node->orientation);
+        divider->setPosition(geometry.topLeft());
+        divider->setSize(geometry.size());
+        divider->setVisible(true);
+    }
+
+    updateSplitDividers(node->first.get(), generation);
+    updateSplitDividers(node->second.get(), generation);
+}
+
+std::optional<TerminalWorkspace::SplitDividerDrag>
+TerminalWorkspace::beginSplitDividerDrag(
+    quint64 splitId, const QPointF &position) const
+{
+    const Tab *tab = currentTab();
+    if (tab == nullptr || tab->root == nullptr
+        || tab->zoomedPaneId.isValid()) {
+        return std::nullopt;
+    }
+    const Node *split = findSplitNode(tab->root.get(), splitId);
+    if (split == nullptr) {
+        return std::nullopt;
+    }
+    const qreal available = splitExtent(split->geometry, split->orientation);
+    if (available <= 0.0) {
+        return std::nullopt;
+    }
+    const qreal pointer = split->orientation == Qt::Horizontal
+        ? position.x() : position.y();
+    if (!std::isfinite(pointer)) {
+        return std::nullopt;
+    }
+    return SplitDividerDrag{pointer, split->ratio};
+}
+
+bool TerminalWorkspace::dragSplitDivider(
+    quint64 splitId, const QPointF &position,
+    const SplitDividerDrag &drag)
+{
+    Tab *tab = currentTab();
+    if (tab == nullptr || tab->root == nullptr
+        || tab->zoomedPaneId.isValid()) {
+        return false;
+    }
+    Node *split = findSplitNode(tab->root.get(), splitId);
+    if (split == nullptr) {
+        return false;
+    }
+    const qreal available = splitExtent(split->geometry, split->orientation);
+    if (available <= 0.0) {
+        return false;
+    }
+    const qreal pointer = split->orientation == Qt::Horizontal
+        ? position.x() : position.y();
+    if (!std::isfinite(pointer) || !std::isfinite(drag.pointer)
+        || !std::isfinite(drag.ratio)) {
+        return false;
+    }
+    const qreal ratio = std::clamp(
+        drag.ratio + (pointer - drag.pointer) / available, 0.0, 1.0);
+    if (ratio > 0.0 && ratio < 1.0
+        && std::floor(available * ratio)
+            == std::floor(available * split->ratio)) {
+        return true;
+    }
+    setSplitRatio(*tab, *split, ratio);
+    return true;
+}
+
+void TerminalWorkspace::setSplitRatio(Tab &tab, Node &split, qreal ratio)
+{
+    if (!std::isfinite(ratio)) {
+        return;
+    }
+    ratio = std::clamp(ratio, 0.0, 1.0);
+    if (ratio == split.ratio) {
+        return;
+    }
+    split.ratio = ratio;
+    if (tab.id == currentTabId()) {
+        layoutCurrentTab();
+    } else {
+        updateNodeGeometry(tab.root.get(), boundingRect());
+    }
 }
 
 void TerminalWorkspace::updateTabVisibility(Tab &tab, bool visible)
@@ -1565,15 +1849,9 @@ bool TerminalWorkspace::resizeSplit(PaneId paneId, int direction, int amount)
     if (split != nullptr) {
         const qreal extent = splitExtent(split->geometry, orientation);
         if (extent > 0.0) {
-            split->ratio = std::clamp(
-                split->ratio + sign * static_cast<qreal>(amount) / extent,
-                0.0,
-                1.0);
-        }
-        if (tab->id == currentTabId()) {
-            layoutCurrentTab();
-        } else {
-            updateNodeGeometry(tab->root.get(), boundingRect());
+            setSplitRatio(
+                *tab, *split,
+                split->ratio + sign * static_cast<qreal>(amount) / extent);
         }
     }
 

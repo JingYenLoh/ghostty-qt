@@ -52,6 +52,19 @@ LaunchOptions baseOptions()
     return options;
 }
 
+QList<QQuickItem *> splitDividerItems(TerminalWorkspace *workspace)
+{
+    return workspace->findChildren<QQuickItem *>(
+        QStringLiteral("_ghosttyQtSplitDivider"),
+        Qt::FindDirectChildrenOnly);
+}
+
+QPoint windowPoint(const TerminalWorkspace *workspace,
+                   const QPointF &workspacePoint)
+{
+    return workspace->mapToScene(workspacePoint).toPoint();
+}
+
 } // namespace
 
 class TerminalWorkspaceTest : public QObject {
@@ -77,6 +90,9 @@ private Q_SLOTS:
     void splitNavigationWrapsInTreeAndSpatialOrder();
     void relativeSplitNavigationUsesExplicitSourceAndTreeOrder();
     void splitResizeAndEqualizeRespectTreeAxes();
+    void dragsExactNestedSplitDividerAndPreservesFocus();
+    void splitDividerHitRegionPreservesTerminalInputAndZoom();
+    void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
     void broadContainerActionsResolveFromActivePane();
     void routesFullscreenActionToHostWindow();
@@ -1371,6 +1387,526 @@ void TerminalWorkspaceTest::splitResizeAndEqualizeRespectTreeAxes()
     QVERIFY(qAbs(thirdPane->height() - fourthPane->height()) <= 1.0);
     QVERIFY(qAbs(fourthPane->height() - fifthPane->height()) <= 1.0);
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, fifthId);
+}
+
+void TerminalWorkspaceTest::dragsExactNestedSplitDividerAndPreservesFocus()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(902, 602);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    if (qEnvironmentVariableIsSet("GHOSTTY_QT_EXPECT_HIDPI")) {
+        QVERIFY(window.devicePixelRatio() >= 2.0);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, secondId, 0},
+    }));
+    const PaneId thirdId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane) thirdPane = pane;
+    }
+    QVERIFY(thirdPane != nullptr);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 2);
+
+    thirdPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), thirdPane, 1000);
+    const QSizeF firstSize = firstPane->size();
+    const qreal secondWidth = secondPane->width();
+    const qreal thirdWidth = thirdPane->width();
+    const qreal nestedEdge = secondPane->x() + secondPane->width();
+    QCOMPARE(thirdPane->x(), nestedEdge + 2.0);
+
+    QQuickItem *nestedDivider = nullptr;
+    for (QQuickItem *divider : splitDividerItems(workspace.get())) {
+        QCOMPARE(divider->width(), 2.0);
+        QCOMPARE(divider->cursor().shape(), Qt::SplitHCursor);
+        if (qAbs(divider->x() - nestedEdge) <= 0.01) {
+            nestedDivider = divider;
+        }
+    }
+    QVERIFY(nestedDivider != nullptr);
+
+    QSignalSpy firstActivated(firstPane, &TerminalPane::activated);
+    QSignalSpy secondActivated(secondPane, &TerminalPane::activated);
+    QSignalSpy thirdActivated(thirdPane, &TerminalPane::activated);
+    const QPoint horizontalStart = windowPoint(
+        workspace.get(), QPointF(nestedEdge + 1.0,
+                                 workspace->height() / 2.0));
+    const QPoint horizontalEnd = horizontalStart + QPoint(60, 0);
+    QTest::mouseMove(&window, horizontalStart);
+    QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitHCursor, 1000);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
+                      horizontalStart);
+    QVERIFY(window.mouseGrabberItem() != nullptr);
+    QCOMPARE(window.mouseGrabberItem()->objectName(),
+             QStringLiteral("_ghosttyQtSplitDivider"));
+    QTest::mouseMove(&window, horizontalEnd);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
+                        horizontalEnd);
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+
+    QCOMPARE(firstPane->size(), firstSize);
+    QVERIFY(qAbs(secondPane->width() - (secondWidth + 60.0)) <= 1.0);
+    QVERIFY(qAbs(thirdPane->width() - (thirdWidth - 60.0)) <= 1.0);
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, thirdId);
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+    QCOMPARE(firstActivated.count(), 0);
+    QCOMPARE(secondActivated.count(), 0);
+    QCOMPARE(thirdActivated.count(), 0);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, thirdId, 0},
+    }));
+    const PaneId fourthId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *fourthPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane && pane != thirdPane) {
+            fourthPane = pane;
+        }
+    }
+    QVERIFY(fourthPane != nullptr);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 3);
+    fourthPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), fourthPane, 1000);
+
+    const QSizeF firstBeforeVertical = firstPane->size();
+    const QSizeF secondBeforeVertical = secondPane->size();
+    const qreal thirdHeight = thirdPane->height();
+    const qreal fourthHeight = fourthPane->height();
+    const qreal verticalEdge = thirdPane->y() + thirdPane->height();
+    QCOMPARE(fourthPane->y(), verticalEdge + 2.0);
+    QQuickItem *verticalDivider = nullptr;
+    for (QQuickItem *divider : splitDividerItems(workspace.get())) {
+        QCOMPARE(divider->z(), 1.0);
+        if (divider->cursor().shape() == Qt::SplitVCursor) {
+            verticalDivider = divider;
+        }
+    }
+    QVERIFY(verticalDivider != nullptr);
+    QCOMPARE(verticalDivider->position(),
+             QPointF(thirdPane->x(), verticalEdge));
+    QCOMPARE(verticalDivider->size(), QSizeF(thirdPane->width(), 2.0));
+
+    // Exact half-open gap geometry resolves the T-junction without relying
+    // on QObject creation or stacking order: the nested horizontal handle
+    // ends where the vertical handle's subtree begins.
+    const QPoint horizontalSide = windowPoint(
+        workspace.get(), QPointF(thirdPane->x() - 1.0,
+                                 verticalEdge + 1.0));
+    const QPoint verticalSide = windowPoint(
+        workspace.get(), QPointF(thirdPane->x(), verticalEdge + 1.0));
+    QTest::mouseMove(&window, horizontalSide);
+    QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitHCursor, 1000);
+    QTest::mouseMove(&window, verticalSide);
+    QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitVCursor, 1000);
+
+    const QPoint verticalStart = windowPoint(
+        workspace.get(), QPointF(thirdPane->x() + thirdPane->width() / 2.0,
+                                 verticalEdge + 1.0));
+    const QPoint verticalEnd = verticalStart + QPoint(0, 60);
+    QTest::mouseMove(&window, verticalStart);
+    QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitVCursor, 1000);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, verticalStart);
+    QVERIFY(window.mouseGrabberItem() != nullptr);
+    QCOMPARE(window.mouseGrabberItem()->objectName(),
+             QStringLiteral("_ghosttyQtSplitDivider"));
+    QTest::mouseMove(&window, verticalEnd);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, verticalEnd);
+
+    QCOMPARE(firstPane->size(), firstBeforeVertical);
+    QCOMPARE(secondPane->size(), secondBeforeVertical);
+    QVERIFY(qAbs(thirdPane->height() - (thirdHeight + 60.0)) <= 1.0);
+    QVERIFY(qAbs(fourthPane->height() - (fourthHeight - 60.0)) <= 1.0);
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, fourthId);
+    QCOMPARE(window.activeFocusItem(), fourthPane);
+
+    workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(902, 602);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    TerminalController *firstController =
+        firstPane->findChild<TerminalController *>();
+    TerminalController *secondController =
+        secondPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QSignalSpy firstSelectionBegun(
+        firstController, &TerminalController::beginSelectionRequested);
+    QSignalSpy firstSelectionEnded(
+        firstController, &TerminalController::endSelectionRequested);
+    QSignalSpy secondSelectionBegun(
+        secondController, &TerminalController::beginSelectionRequested);
+    QSignalSpy secondSelectionEnded(
+        secondController, &TerminalController::endSelectionRequested);
+
+    const qreal dividerEdge = firstPane->x() + firstPane->width();
+    QCOMPARE(secondPane->x(), dividerEdge + 2.0);
+    const QList<QQuickItem *> dividers = splitDividerItems(workspace.get());
+    QCOMPARE(dividers.size(), 1);
+    QQuickItem *divider = dividers.constFirst();
+    QCOMPARE(divider->position(), QPointF(dividerEdge, 0.0));
+    QCOMPARE(divider->size(), QSizeF(2.0, workspace->height()));
+    QCOMPARE(divider->z(), 1.0);
+
+    const qreal pointerY = workspace->height() / 3.0;
+    const QPoint gapPoint = windowPoint(
+        workspace.get(), QPointF(dividerEdge + 1.0, pointerY));
+    QTest::mouseMove(&window, gapPoint);
+    QTRY_COMPARE_WITH_TIMEOUT(window.cursor().shape(), Qt::SplitHCursor, 1000);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, gapPoint);
+    QVERIFY(window.mouseGrabberItem() == divider);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, gapPoint);
+    QCOMPARE(firstSelectionBegun.count(), 0);
+    QCOMPARE(firstSelectionEnded.count(), 0);
+    QCOMPARE(secondSelectionBegun.count(), 0);
+    QCOMPARE(secondSelectionEnded.count(), 0);
+
+    const QPoint firstCellPoint = windowPoint(
+        workspace.get(), QPointF(dividerEdge - 1.0, pointerY));
+    QTest::mouseMove(&window, firstCellPoint);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
+                      firstCellPoint);
+    QVERIFY(window.mouseGrabberItem() == firstPane);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
+                        firstCellPoint);
+    QCOMPARE(firstSelectionBegun.count(), 1);
+    QCOMPARE(firstSelectionEnded.count(), 1);
+
+    const QPoint secondCellPoint = windowPoint(
+        workspace.get(), QPointF(secondPane->x() + 1.0, pointerY));
+    QTest::mouseMove(&window, secondCellPoint);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier,
+                      secondCellPoint);
+    QVERIFY(window.mouseGrabberItem() == secondPane);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
+                        secondCellPoint);
+    QCOMPARE(secondSelectionBegun.count(), 1);
+    QCOMPARE(secondSelectionBegun.constFirst().constFirst().toInt(), 0);
+    QCOMPARE(secondSelectionEnded.count(), 1);
+    QCOMPARE(workspace->tabModel()->entryAt(0)->activePaneId, secondId);
+
+    const QSizeF normalFirstSize = firstPane->size();
+    const QSizeF normalSecondSize = secondPane->size();
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QCOMPARE(secondPane->size(), workspace->size());
+
+    QTest::mouseMove(&window, gapPoint);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, gapPoint);
+    QVERIFY(window.mouseGrabberItem() == secondPane);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, gapPoint);
+    QCOMPARE(secondSelectionBegun.count(), 2);
+    QCOMPARE(secondSelectionEnded.count(), 2);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QCOMPARE(firstPane->size(), normalFirstSize);
+    QCOMPARE(secondPane->size(), normalSecondSize);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+
+    workspace->newTab();
+    QCOMPARE(workspace->currentIndex(), 1);
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ActivateTab,
+        {tabId, PaneId{}, 0},
+    }));
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+
+    // Moving a grabbed workspace to another scene destroys the old handle,
+    // releases the old window's delivery-agent grab, and recreates a fresh
+    // handle from the stable split ID in the new scene.
+    QQuickWindow secondWindow;
+    secondWindow.resize(window.size());
+    secondWindow.show();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isExposed(), 1000);
+    const QSizeF firstBeforeReparent = firstPane->size();
+    const QSizeF secondBeforeReparent = secondPane->size();
+    const qreal reparentEdge = firstPane->x() + firstPane->width();
+    const QPoint oldSceneStart = windowPoint(
+        workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, oldSceneStart);
+    QVERIFY(window.mouseGrabberItem() != nullptr);
+    workspace->setParentItem(secondWindow.contentItem());
+    workspace->setSize(secondWindow.size());
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QVERIFY(secondWindow.mouseGrabberItem() == nullptr);
+    QCOMPARE(firstPane->size(), firstBeforeReparent);
+    QCOMPARE(secondPane->size(), secondBeforeReparent);
+    const QPoint staleMove = oldSceneStart + QPoint(60, 0);
+    QTest::mouseMove(&window, staleMove);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, staleMove);
+    QCOMPARE(firstPane->size(), firstBeforeReparent);
+    QCOMPARE(secondPane->size(), secondBeforeReparent);
+
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+    const QPoint newSceneStart = windowPoint(
+        workspace.get(), QPointF(reparentEdge + 1.0, pointerY));
+    const QPoint newSceneEnd = newSceneStart + QPoint(60, 0);
+    QTest::mousePress(&secondWindow, Qt::LeftButton, Qt::NoModifier,
+                      newSceneStart);
+    QVERIFY(secondWindow.mouseGrabberItem() != nullptr);
+    QTest::mouseMove(&secondWindow, newSceneEnd);
+    QTest::mouseRelease(&secondWindow, Qt::LeftButton, Qt::NoModifier,
+                        newSceneEnd);
+    QVERIFY(qAbs(firstPane->width()
+                 - (firstBeforeReparent.width() + 60.0)) <= 1.0);
+    QVERIFY(qAbs(secondPane->width()
+                 - (secondBeforeReparent.width() - 60.0)) <= 1.0);
+
+    workspace.reset();
+    secondWindow.close();
+    window.close();
+}
+
+void TerminalWorkspaceTest::splitDividerDragClampsPersistsAndCancels()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(602, 903);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *topPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(topPane != nullptr);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, firstId, 0},
+    }));
+    const PaneId bottomId = workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *bottomPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != topPane) bottomPane = pane;
+    }
+    QVERIFY(bottomPane != nullptr);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+
+    const auto dividerPoint = [&] {
+        return windowPoint(
+            workspace.get(),
+            QPointF(workspace->width() / 2.0,
+                    topPane->y() + topPane->height() + 1.0));
+    };
+
+    // A press/release without pointer movement must preserve the fractional
+    // ratio instead of quantizing it to the divider's floored pixel.
+    const QSizeF initialTopSize = topPane->size();
+    const QSizeF initialBottomSize = bottomPane->size();
+    QPoint start = dividerPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QCOMPARE(topPane->size(), initialTopSize);
+    QCOMPARE(bottomPane->size(), initialBottomSize);
+
+    window.resize(602, 1003);
+    workspace->setSize(window.size());
+    QCOMPARE(topPane->height(), 500.0);
+    QCOMPARE(bottomPane->height(), 501.0);
+
+    window.resize(602, 903);
+    workspace->setSize(window.size());
+    QCOMPARE(topPane->height(), 450.0);
+    QCOMPARE(bottomPane->height(), 451.0);
+
+    const qreal topHeightBeforeDrag = topPane->height();
+    start = dividerPoint();
+    const QPoint moved = start + QPoint(0, 60);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(&window, moved);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, moved);
+    QCOMPARE(topPane->height(), topHeightBeforeDrag + 60.0);
+
+    window.resize(602, 1003);
+    workspace->setSize(window.size());
+    QCOMPARE(topPane->height(), 567.0);
+    QCOMPARE(bottomPane->y(), topPane->height() + 2.0);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::EqualizeSplits,
+        {tabId, bottomId, 0},
+    }));
+    QVERIFY(qAbs(topPane->height() - bottomPane->height()) <= 1.0);
+    const QSizeF equalTopSize = topPane->size();
+    const QSizeF equalBottomSize = bottomPane->size();
+
+    // An explicit grab cancellation leaves the last accepted ratio intact
+    // and prevents later pointer movement from mutating it.
+    start = dividerPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QQuickItem *grabber = window.mouseGrabberItem();
+    QVERIFY(grabber != nullptr);
+    QCOMPARE(grabber->objectName(), QStringLiteral("_ghosttyQtSplitDivider"));
+    grabber->ungrabMouse();
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    const QPoint canceledMove = start + QPoint(0, 120);
+    QTest::mouseMove(&window, canceledMove);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier,
+                        canceledMove);
+    QCOMPARE(topPane->size(), equalTopSize);
+    QCOMPARE(bottomPane->size(), equalBottomSize);
+
+    // Zooming during a drag destroys the visible handle and must relinquish
+    // its grab without changing focus or the stored split ratio.
+    start = dividerPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QVERIFY(window.mouseGrabberItem() != nullptr);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, bottomId, 0},
+    }));
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, bottomId, 0},
+    }));
+    QCOMPARE(topPane->size(), equalTopSize);
+    QCOMPARE(bottomPane->size(), equalBottomSize);
+
+    // Both endpoints are legal and the edge handle remains available to
+    // recover a collapsed child.
+    start = dividerPoint();
+    const QPoint topEdge = windowPoint(
+        workspace.get(), QPointF(workspace->width() / 2.0, 0.0));
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(&window, topEdge);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, topEdge);
+    QCOMPARE(topPane->height(), 0.0);
+    QCOMPARE(bottomPane->y(), 2.0);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+
+    start = dividerPoint();
+    const QPoint bottomEdge = windowPoint(
+        workspace.get(),
+        QPointF(workspace->width() / 2.0, workspace->height() - 1.0));
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(&window, bottomEdge);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, bottomEdge);
+    QCOMPARE(topPane->height(), workspace->height() - 2.0);
+    QCOMPARE(bottomPane->height(), 0.0);
+
+    start = dividerPoint();
+    const QPoint center = windowPoint(
+        workspace.get(),
+        QPointF(workspace->width() / 2.0, workspace->height() / 2.0));
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTest::mouseMove(&window, center);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, center);
+    QVERIFY(qAbs(topPane->height() - bottomPane->height()) <= 1.0);
+
+    workspace->setHeight(2.0);
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    const QPoint zeroExtent = windowPoint(
+        workspace.get(), QPointF(workspace->width() / 2.0, 1.0));
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, zeroExtent);
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, zeroExtent);
+
+    // Tree collapse invalidates the target node, but its stable ID lets the
+    // workspace remove the grabbed handle without retaining a dangling node.
+    workspace->setHeight(1002.0);
+    QCOMPARE(splitDividerItems(workspace.get()).size(), 1);
+    start = dividerPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QVERIFY(window.mouseGrabberItem() != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(!topPane->isRunning(), 1000);
+    QPointer<TerminalPane> closedPane(topPane);
+    QPointer<TerminalPane> survivingPane(bottomPane);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, start);
+    QTRY_VERIFY_WITH_TIMEOUT(closedPane.isNull(), 1000);
+    QVERIFY(!survivingPane.isNull());
+    QCOMPARE(workspace->findChildren<TerminalPane *>(),
+             QList<TerminalPane *>{survivingPane});
+    QCOMPARE(survivingPane->position(), QPointF());
+    QCOMPARE(survivingPane->size(), workspace->size());
+
+    workspace.reset();
+    window.close();
 }
 
 void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSplit()

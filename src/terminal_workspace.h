@@ -4,12 +4,14 @@
 #include "tab_list_model.h"
 #include "workspace_action.h"
 
+#include <QHash>
 #include <QQuickItem>
 #include <QStringList>
 #include <QStringView>
 #include <QVector>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QQmlComponent;
@@ -78,11 +80,17 @@ Q_SIGNALS:
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void itemChange(ItemChange change, const ItemChangeData &value) override;
 
 private:
     struct Node;
     struct Tab;
     struct PaneHandle;
+    struct SplitDividerDrag {
+        qreal pointer = 0.0;
+        qreal ratio = 0.0;
+    };
+    class SplitDividerItem;
     struct PendingPasteTarget {
         PaneId paneId;
         quint64 requestId = 0;
@@ -127,6 +135,14 @@ private:
     void layoutCurrentTab();
     void updateNodeGeometry(Node *node, const QRectF &geometry);
     void applyNodeGeometry(Node *node);
+    void updateSplitDividers(const Tab *tab);
+    void updateSplitDividers(Node *node, quint64 generation);
+    Node *findSplitNode(Node *node, quint64 splitId) const;
+    [[nodiscard]] std::optional<SplitDividerDrag> beginSplitDividerDrag(
+        quint64 splitId, const QPointF &position) const;
+    bool dragSplitDivider(quint64 splitId, const QPointF &position,
+                          const SplitDividerDrag &drag);
+    void setSplitRatio(Tab &tab, Node &split, qreal ratio);
     void updateTabVisibility(Tab &tab, bool visible);
     void setNodeVisibility(Node *node, bool visible);
     Node *findNode(Node *node, PaneId paneId) const;
@@ -163,6 +179,9 @@ private:
     int currentIndex_ = -1;
     quint64 nextTabId_ = 1;
     quint64 nextPaneId_ = 1;
+    quint64 nextSplitId_ = 1;
+    quint64 splitDividerGeneration_ = 0;
+    QHash<quint64, SplitDividerItem *> splitDividers_;
     bool initialTabCreated_ = false;
     bool quitApprovedEmitted_ = false;
     PendingClose pendingClose_ = PendingClose::None;

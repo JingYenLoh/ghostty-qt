@@ -61,15 +61,28 @@ the existing terminal's scrollback allocation are launch-only by construction.
 application chrome and dialogs. Each tab owns a recursive binary tree whose
 leaves are `TerminalPane` objects; internal nodes describe horizontal or
 vertical splits with mutable ratios. The workspace supports cyclic in-order and
-wrapped spatial focus, nearest-axis divider resizing, axis-aware equalization,
-and a per-tab zoomed leaf. Zoom changes only presentation: the complete tree,
-ratios, PTYs, and logical geometry remain intact. Only the current tab's panes
-are visible. The active pane supplies the tab title and receives toolbar and
-directional-focus actions. A new split can be placed on any side of its source;
-left/up insert the new leaf before the source and right/down insert it after.
-The omitted or explicit `auto` direction compares the source pane's effective
-surface-pixel width and height, choosing right only when width is greater and
-down otherwise. Every split focuses the new leaf and clears split zoom.
+wrapped spatial focus, nearest-axis keybinding resizing, exact-divider pointer
+dragging, axis-aware equalization, and a per-tab zoomed leaf. Every internal
+node has a stable split identity. Workspace-owned pointer handles resolve that
+identity on each event instead of retaining tree pointers that pane closure can
+invalidate. Their hit rectangles are exactly the existing two-logical-pixel
+layout gaps, so they never cover a terminal cell; adjacent half-open rectangles
+also make nested T-junction ownership deterministic without stacking tricks.
+Drag ratios remain unitless, clamp to `[0, 1]`, and relayout only after the
+floored divider position changes. The handles accept no keyboard focus, so
+active-pane and search-overlay focus survive a drag. Moving the workspace to a
+different Qt Quick scene destroys the old scene's handles synchronously to
+release any delivery-agent grab, then recreates them from the stable split IDs.
+
+Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
+geometry remain intact, while divider handles are absent. Only the current
+tab's panes and dividers are exposed. The active pane supplies the tab title
+and receives toolbar and directional-focus actions. A new split can be placed
+on any side of its source; left/up insert the new leaf before the source and
+right/down insert it after. The omitted or explicit `auto` direction compares
+the source pane's effective surface-pixel width and height, choosing right only
+when width is greater and down otherwise. Every split focuses the new leaf and
+clears split zoom.
 
 Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
@@ -703,7 +716,12 @@ The default CTest suite has focused layers for each ownership boundary:
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
-  preserve stable tab and pane identity.
+  preserve stable tab and pane identity. It also sends real pointer gestures
+  through nested divider gaps to verify exact-split targeting, T-junctions,
+  focus preservation, endpoint clamping, cancellation, zoom/tab/scene
+  lifecycle, ratio persistence, and terminal-cell hit regions. A focused
+  second CTest run repeats the nested drag at a scale factor of two to keep the
+  math in logical coordinates.
 - `workspace-foundation` verifies stable tab identity after row removal and
   movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
@@ -778,8 +796,6 @@ in a real Wayland session.
   precedence over DEC mode 12, and the text config dump cannot expose the
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
-- Split ratios support keybinding resize/equalization, but draggable divider
-  interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
   actions, user-defined `link` rules, multi-window operation, saved sessions,
   and production packaging remain future work. OSC 8, the default `link-url`

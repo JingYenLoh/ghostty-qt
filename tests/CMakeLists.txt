@@ -152,6 +152,16 @@ set_tests_properties(terminal-workspace PROPERTIES
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
 )
+add_test(
+    NAME terminal-workspace-divider-hidpi
+    COMMAND test-terminal-workspace
+            dragsExactNestedSplitDividerAndPreservesFocus
+)
+set_tests_properties(terminal-workspace-divider-hidpi PROPERTIES
+    TIMEOUT 15
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=2;GHOSTTY_QT_EXPECT_HIDPI=1"
+)
 
 qt_add_executable(test-ghostty-vt-adapter
     test_ghostty_vt_adapter.cpp

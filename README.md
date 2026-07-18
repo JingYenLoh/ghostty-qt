@@ -49,9 +49,9 @@ the host-language comparison and remaining engineering risks.
   selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
   directional and aspect-selected automatic splits with wrapped spatial and
-  tree-order navigation, keybinding resize/equalize, split zoom, and close
-  confirmation that distinguishes an idle interactive shell from a foreground
-  job on its PTY.
+  tree-order navigation, keybinding resize/equalize, exact-gap pointer-dragged
+  dividers, split zoom, and close confirmation that distinguishes an idle
+  interactive shell from a foreground job on its PTY.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
@@ -434,8 +434,6 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   Transient geometry still scans the visible grid on each presented update;
   compatible text-run batching and retained geometry remain CPU/allocation
   optimizations.
-- Split ratios can be resized and equalized through Ghostty keybindings, but
-  there are no draggable dividers yet.
 - No X11 backend, multi-window support, theme editor, session
   persistence, or production package metadata yet. Configuration support is
   limited to the documented compatibility slice; most Ghostty keys remain
