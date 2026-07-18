@@ -36,8 +36,6 @@ struct LaunchOptions {
     // override. Ghostty configuration must not replace explicit CLI fonts.
     bool fontFamilyExplicit = false;
     bool fontSizeExplicit = false;
-    // Carries pane-local zoom state when a split inherits its parent's font.
-    bool fontSizeManuallyAdjusted = false;
     TerminalAppearance appearance;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;

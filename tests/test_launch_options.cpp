@@ -591,7 +591,6 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.fontSize = 19.0;
     frontendOnlyChanged.fontFamilyExplicit = true;
     frontendOnlyChanged.fontSizeExplicit = true;
-    frontendOnlyChanged.fontSizeManuallyAdjusted = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;

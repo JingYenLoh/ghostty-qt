@@ -317,6 +317,10 @@ destination or default-regex match currently accepted under the pointer.
 Raw-write actions return the viewport to the active area, while reset clears
 emulator state without sending bytes to the child.
 
+Font bindings support `increase_font_size:<points>`,
+`decrease_font_size:<points>`, `set_font_size:<points>`, and
+`reset_font_size`. Numeric payloads use Ghostty's required f32 action grammar.
+
 Search bindings support `start_search`, `end_search`, `search:<text>`,
 `search_selection`, and `navigate_search:next|previous`. `search:<text>`
 changes the engine needle without opening the overlay; an empty value stops

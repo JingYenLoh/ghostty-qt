@@ -3,6 +3,7 @@
 #include <QTest>
 #include <QtCore/qnamespace.h>
 
+#include <cmath>
 #include <limits>
 
 class GhosttyActionCatalogTest : public QObject {
@@ -21,8 +22,10 @@ private Q_SLOTS:
     void matchesPinnedIntegerParsing_data();
     void matchesPinnedIntegerParsing();
     void parsesPaneActions();
+    void parsesFontSizePaneActions();
     void parsesSearchPaneActions();
     void rejectsMalformedPaneActions();
+    void rejectsMalformedFontSizePaneActions();
     void rejectsMalformedSearchPaneActions();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
@@ -501,6 +504,68 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         QStringLiteral("new_tab")).has_value());
 }
 
+void GhosttyActionCatalogTest::parsesFontSizePaneActions()
+{
+    const auto parse = [](QStringView serialized) {
+        const std::optional<GhosttyPaneAction> action =
+            GhosttyActionCatalog::parsePaneAction(serialized);
+        return action.value();
+    };
+
+    const GhosttyPaneAction increase =
+        parse(QStringLiteral("increase_font_size:1_2.5"));
+    QCOMPARE(increase.kind, GhosttyPaneActionKind::FontSize);
+    QCOMPARE(increase.fontSize.kind,
+             TerminalFontSizeRequest::Kind::Increase);
+    QCOMPARE(increase.fontSize.points, 12.5F);
+
+    const GhosttyPaneAction decrease =
+        parse(QStringLiteral("decrease_font_size:-0"));
+    QCOMPARE(decrease.fontSize.kind,
+             TerminalFontSizeRequest::Kind::Decrease);
+    QCOMPARE(decrease.fontSize.points, 0.0F);
+    QVERIFY(std::signbit(decrease.fontSize.points));
+
+    const GhosttyPaneAction set =
+        parse(QStringLiteral("set_font_size:0x1.8p1"));
+    QCOMPARE(set.fontSize.kind, TerminalFontSizeRequest::Kind::Set);
+    QCOMPARE(set.fontSize.points, 3.0F);
+
+    const GhosttyPaneAction reset =
+        parse(QStringLiteral("reset_font_size"));
+    QCOMPARE(reset.fontSize.kind, TerminalFontSizeRequest::Kind::Reset);
+
+    const GhosttyPaneAction infinity =
+        parse(QStringLiteral("increase_font_size:InFiNiTy"));
+    QVERIFY(std::isinf(infinity.fontSize.points));
+    QVERIFY(infinity.fontSize.points > 0.0F);
+
+    const GhosttyPaneAction negativeInfinity =
+        parse(QStringLiteral("set_font_size:-INF"));
+    QVERIFY(std::isinf(negativeInfinity.fontSize.points));
+    QVERIFY(negativeInfinity.fontSize.points < 0.0F);
+
+    const GhosttyPaneAction overflow =
+        parse(QStringLiteral("decrease_font_size:1e999"));
+    QVERIFY(std::isinf(overflow.fontSize.points));
+
+    const GhosttyPaneAction nan =
+        parse(QStringLiteral("set_font_size:-nAn"));
+    QVERIFY(std::isnan(nan.fontSize.points));
+    QVERIFY(!std::signbit(nan.fontSize.points));
+
+    const QStringList implemented{
+        QStringLiteral("increase_font_size:1."),
+        QStringLiteral("decrease_font_size:.5e+1"),
+        QStringLiteral("set_font_size:+0XAp-1"),
+        QStringLiteral("reset_font_size"),
+    };
+    for (const QString &serialized : implemented) {
+        QVERIFY2(GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+}
+
 void GhosttyActionCatalogTest::parsesSearchPaneActions()
 {
     const auto parse = [](QStringView serialized) {
@@ -580,6 +645,34 @@ void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
         QStringLiteral("adjust_selection:"),
         QStringLiteral("adjust_selection:LEFT"),
         QStringLiteral("adjust_selection:word"),
+    };
+
+    for (const QString &serialized : invalid) {
+        QVERIFY2(!GhosttyActionCatalog::parsePaneAction(serialized).has_value(),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+}
+
+void GhosttyActionCatalogTest::rejectsMalformedFontSizePaneActions()
+{
+    const QStringList invalid{
+        QStringLiteral("increase_font_size"),
+        QStringLiteral("increase_font_size:"),
+        QStringLiteral("decrease_font_size"),
+        QStringLiteral("decrease_font_size:"),
+        QStringLiteral("set_font_size"),
+        QStringLiteral("set_font_size:"),
+        QStringLiteral("reset_font_size:"),
+        QStringLiteral("reset_font_size:1"),
+        QStringLiteral("increase_font_size: 1"),
+        QStringLiteral("increase_font_size:1 "),
+        QStringLiteral("increase_font_size:1__0"),
+        QStringLiteral("increase_font_size:1e"),
+        QStringLiteral("increase_font_size:nan(payload)"),
+        QStringLiteral("increase_font_size:infinite"),
+        QStringLiteral("set_font_size:1:2"),
     };
 
     for (const QString &serialized : invalid) {

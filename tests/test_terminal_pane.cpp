@@ -107,6 +107,7 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
+    void executesTypedFontSizeActions();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
     void reloadsMiddleClickClipboardPolicy();
@@ -331,6 +332,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(pane.fontPointSize(), 14.0);
     const LaunchOptions splitOptions = pane.splitLaunchOptions();
     QCOMPARE(splitOptions.fontFamily, QStringLiteral("Monospace"));
+    QCOMPARE(splitOptions.fontSize, 14.0);
     QCOMPARE(splitOptions.workingDirectory, QDir::tempPath());
     QVERIFY(splitOptions.program.isEmpty());
     QVERIFY(!splitOptions.hold);
@@ -350,11 +352,121 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.fontSize = 10.0;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 15.0);
-    QVERIFY(pane.splitLaunchOptions().fontSizeManuallyAdjusted);
+    const LaunchOptions inherited = pane.splitLaunchOptions();
+    QCOMPARE(inherited.fontSize, 15.0);
+
+    // A split inherits the effective size as its initial config/reset target,
+    // but starts unadjusted so the next live reload replaces that target.
+    LaunchOptions childOptions = inherited;
+    childOptions.program = {QStringLiteral("/bin/true")};
+    childOptions.hold = true;
+    TerminalPane child(childOptions);
+    QCOMPARE(child.fontPointSize(), 15.0);
+    child.resetZoom();
+    QCOMPARE(child.fontPointSize(), 15.0);
+
+    LaunchOptions nextReload = reloaded;
+    nextReload.fontSize = 9.0;
+    pane.applyRuntimeOptions(nextReload);
+    child.applyRuntimeOptions(nextReload);
+    QCOMPARE(pane.fontPointSize(), 15.0);
+    QCOMPARE(child.fontPointSize(), 9.0);
 
     pane.resetZoom();
+    QCOMPARE(pane.fontPointSize(), 9.0);
+    nextReload.fontSize = 11.0;
+    pane.applyRuntimeOptions(nextReload);
+    child.applyRuntimeOptions(nextReload);
+    QCOMPARE(pane.fontPointSize(), 11.0);
+    QCOMPARE(child.fontPointSize(), 11.0);
+}
+
+void TerminalPaneTest::executesTypedFontSizeActions()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.fontSize = 12.0;
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(20.0, 20.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy changed(&pane, &TerminalPane::fontPointSizeChanged);
+    QSignalSpy resized(controller, &TerminalController::resizeRequested);
+
+    // A valid negative delta is a visual no-op, but still establishes the
+    // manual-adjustment lifecycle and therefore blocks the next live reload.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("increase_font_size:-2")));
+    QCOMPARE(pane.fontPointSize(), 12.0);
+    QCOMPARE(changed.count(), 0);
+    LaunchOptions reloaded = options;
+    reloaded.fontSize = 10.0;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(pane.fontPointSize(), 12.0);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset_font_size")));
     QCOMPARE(pane.fontPointSize(), 10.0);
-    QVERIFY(!pane.splitLaunchOptions().fontSizeManuallyAdjusted);
+    reloaded.fontSize = 11.0;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(pane.fontPointSize(), 11.0);
+
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("increase_font_size:1.5")));
+    QCOMPARE(pane.fontPointSize(), 12.5);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("decrease_font_size:.5")));
+    QCOMPARE(pane.fontPointSize(), 12.0);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:300")));
+    QCOMPARE(pane.fontPointSize(), 255.0);
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:-3")));
+    QCOMPARE(pane.fontPointSize(), 1.0);
+
+    resized.clear();
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("increase_font_size:nan")));
+    QCOMPARE(pane.fontPointSize(), 255.0);
+    QVERIFY(!resized.isEmpty());
+    QCOMPARE(resized.constLast().at(0).toInt(), 1);
+    QCOMPARE(resized.constLast().at(1).toInt(), 1);
+
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("decrease_font_size:infinity")));
+    QCOMPARE(pane.fontPointSize(), 1.0);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("increase_font_size:-inf")));
+    QCOMPARE(pane.fontPointSize(), 1.0);
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:nan")));
+    QCOMPARE(pane.fontPointSize(), 255.0);
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_font_size:-inf")));
+    QCOMPARE(pane.fontPointSize(), 1.0);
+
+    LaunchOptions oversized = options;
+    oversized.fontSize = 300.0;
+    TerminalPane oversizedPane(oversized);
+    QVERIFY(oversizedPane.executeConfiguredAction(
+        QStringLiteral("decrease_font_size:300")));
+    QCOMPARE(oversizedPane.fontPointSize(), 45.0);
+    oversizedPane.resetZoom();
+    QCOMPARE(oversizedPane.fontPointSize(), 300.0);
+    QVERIFY(oversizedPane.executeConfiguredAction(
+        QStringLiteral("decrease_font_size:1")));
+    // Ghostty applies an asymmetric lower clamp here; it does not globally
+    // clamp an existing configured size down to the action maximum.
+    QCOMPARE(oversizedPane.fontPointSize(), 299.0);
+
+    // Reload clamps the displayed size but retains the raw configured value
+    // as reset_font_size's target, matching Surface.updateConfig.
+    TerminalPane reloadBounds(options);
+    LaunchOptions oversizedReload = options;
+    oversizedReload.fontSize = 300.0;
+    reloadBounds.applyRuntimeOptions(oversizedReload);
+    QCOMPARE(reloadBounds.fontPointSize(), 255.0);
+    reloadBounds.resetZoom();
+    QCOMPARE(reloadBounds.fontPointSize(), 300.0);
 }
 
 void TerminalPaneTest::packagesInputMethodLifecycleAsOneWorkerRequest()
@@ -3028,11 +3140,16 @@ void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
         QStringLiteral("paste_from_clipboard:"),
         QStringLiteral("paste_from_clipboard:bogus"),
         QStringLiteral("reset_font_size:bogus"),
+        QStringLiteral("reset_font_size:"),
         QStringLiteral("reload_config:bogus"),
         QStringLiteral("close_window:bogus"),
         QStringLiteral("ignore:bogus"),
+        QStringLiteral("increase_font_size"),
         QStringLiteral("increase_font_size:"),
+        QStringLiteral("decrease_font_size"),
         QStringLiteral("decrease_font_size:"),
+        QStringLiteral("set_font_size"),
+        QStringLiteral("set_font_size:"),
     };
     for (const QString &serialized : malformed) {
         QVERIFY2(!pane.executeConfiguredAction(serialized),

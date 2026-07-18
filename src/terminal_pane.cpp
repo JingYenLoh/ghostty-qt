@@ -40,11 +40,18 @@
 
 namespace {
 
-constexpr qreal kMinimumFontSize = 6.0;
-constexpr qreal kMaximumFontSize = 48.0;
+constexpr float kMinimumActionFontSize = 1.0F;
+constexpr float kMaximumActionFontSize = 255.0F;
 constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
 constexpr qreal kLinkPreviewVerticalPadding = 4.0;
+
+float clampFontActionValue(float value, float minimum)
+{
+    // Zig's @min/@max select the numeric operand when the other is NaN.
+    // std::fmin/std::fmax provide the same behavior; std::clamp does not.
+    return std::fmax(minimum, std::fmin(value, kMaximumActionFontSize));
+}
 
 QString linkPreviewDisplaySource(const QByteArray &uri)
 {
@@ -440,7 +447,6 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     , options_(options)
     , appearance_(options.appearance)
     , defaultFontPointSize_(options.fontSize)
-    , manuallyZoomed_(options.fontSizeManuallyAdjusted)
 {
     setFlag(QQuickItem::ItemHasContents, true);
     setClip(true);
@@ -705,7 +711,6 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
         result.fontFamily = font_.family();
         result.fontSize = font_.pointSizeF();
     }
-    result.fontSizeManuallyAdjusted = manuallyZoomed_;
     result.program.clear();
     result.hold = false;
     return result;
@@ -747,9 +752,12 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
             metricsChanged = true;
         }
         defaultFontPointSize_ = updated.fontSize;
+        const qreal reloadedFontSize = static_cast<qreal>(
+            clampFontActionValue(static_cast<float>(updated.fontSize),
+                                 kMinimumActionFontSize));
         if (!manuallyZoomed_
-            && !qFuzzyCompare(font_.pointSizeF(), updated.fontSize)) {
-            font_.setPointSizeF(updated.fontSize);
+            && !qFuzzyCompare(font_.pointSizeF(), reloadedFontSize)) {
+            font_.setPointSizeF(reloadedFontSize);
             metricsChanged = true;
             pointSizeChanged = true;
         }
@@ -766,7 +774,6 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         appearance_ = updated.appearance;
     }
     options_ = updated;
-    options_.fontSizeManuallyAdjusted = manuallyZoomed_;
     if (activeSequenceToken_ != 0) {
         controller_->resolveSequence(activeSequenceToken_,
                                      TerminalSequenceResolution::Drop);
@@ -1433,6 +1440,8 @@ void TerminalPane::resetCursorBlink()
 
 void TerminalPane::updateTerminalSize()
 {
+    if (controller_ == nullptr) return;
+
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     {
@@ -1440,12 +1449,17 @@ void TerminalPane::updateTerminalSize()
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
     }
-    if (width() < cellWidth || height() < cellHeight) {
-        if (controller_ != nullptr) {
-            clearHyperlinkHover();
-            cancelHyperlinkPress();
-        }
+    if (width() <= 0.0 || height() <= 0.0
+        || cellWidth <= 0.0 || cellHeight <= 0.0
+        || !std::isfinite(width()) || !std::isfinite(height())
+        || !std::isfinite(cellWidth) || !std::isfinite(cellHeight)) {
+        clearHyperlinkHover();
+        cancelHyperlinkPress();
         return;
+    }
+    if (width() < cellWidth || height() < cellHeight) {
+        clearHyperlinkHover();
+        cancelHyperlinkPress();
     }
     const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
     const int columns = std::max(1, static_cast<int>(std::floor(width() / cellWidth)));
@@ -1796,13 +1810,10 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         return !QGuiApplication::clipboard()->text(
             QClipboard::Selection).isEmpty();
     }
-    if (name == QLatin1StringView("reset_font_size")
-        || name == QLatin1StringView("reload_config")
+    if (name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("close_window")
         || name == QLatin1StringView("end_key_sequence")
-        || name == QLatin1StringView("ignore")
-        || name == QLatin1StringView("increase_font_size")
-        || name == QLatin1StringView("decrease_font_size")) {
+        || name == QLatin1StringView("ignore")) {
         return true;
     }
 
@@ -1881,6 +1892,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             controller_->scrollViewport(request);
             return true;
         }
+        case GhosttyPaneActionKind::FontSize:
+            applyFontSizeRequest(paneAction->fontSize);
+            return true;
         case GhosttyPaneActionKind::SelectAll:
             controller_->selectAll();
             return true;
@@ -1959,20 +1973,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             QGuiApplication::clipboard()->text(QClipboard::Selection);
         if (text.isEmpty()) return false;
         pasteText(text);
-        return true;
-    }
-    if (name == QLatin1StringView("increase_font_size")
-        || name == QLatin1StringView("decrease_font_size")) {
-        const qreal amount = parameter.has_value()
-            ? parameter->toString().toDouble()
-            : 1.0;
-        adjustZoom(name == QLatin1StringView("increase_font_size")
-                       ? amount
-                       : -amount);
-        return true;
-    }
-    if (name == QLatin1StringView("reset_font_size")) {
-        resetZoom();
         return true;
     }
     if (name == QLatin1StringView("reload_config")) {
@@ -2938,7 +2938,6 @@ void TerminalPane::cancelPaste(quint64 requestId)
 
 void TerminalPane::setFontPointSize(qreal points)
 {
-    points = std::clamp(points, kMinimumFontSize, kMaximumFontSize);
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     {
         QMutexLocker locker(&renderMutex_);
@@ -2957,24 +2956,49 @@ void TerminalPane::setFontPointSize(qreal points)
 
 void TerminalPane::zoomIn()
 {
-    adjustZoom(1.0);
+    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Increase, 1.0F});
 }
 
 void TerminalPane::zoomOut()
 {
-    adjustZoom(-1.0);
-}
-
-void TerminalPane::adjustZoom(qreal delta)
-{
-    manuallyZoomed_ = true;
-    options_.fontSizeManuallyAdjusted = true;
-    setFontPointSize(fontPointSize() + delta);
+    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Decrease, 1.0F});
 }
 
 void TerminalPane::resetZoom()
 {
-    manuallyZoomed_ = false;
-    options_.fontSizeManuallyAdjusted = false;
-    setFontPointSize(defaultFontPointSize_);
+    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Reset, 0.0F});
+}
+
+void TerminalPane::applyFontSizeRequest(
+    const TerminalFontSizeRequest &request)
+{
+    if (request.kind == TerminalFontSizeRequest::Kind::Reset) {
+        manuallyZoomed_ = false;
+        setFontPointSize(defaultFontPointSize_);
+        return;
+    }
+
+    const float current = static_cast<float>(fontPointSize());
+    float points = current;
+    switch (request.kind) {
+    case TerminalFontSizeRequest::Kind::Increase: {
+        const float delta = clampFontActionValue(request.points, 0.0F);
+        points = std::fmin(current + delta, kMaximumActionFontSize);
+        break;
+    }
+    case TerminalFontSizeRequest::Kind::Decrease: {
+        const float delta = clampFontActionValue(request.points, 0.0F);
+        points = std::fmax(kMinimumActionFontSize, current - delta);
+        break;
+    }
+    case TerminalFontSizeRequest::Kind::Set:
+        points = clampFontActionValue(request.points,
+                                      kMinimumActionFontSize);
+        break;
+    case TerminalFontSizeRequest::Kind::Reset:
+        Q_UNREACHABLE();
+    }
+
+    manuallyZoomed_ = true;
+    setFontPointSize(points);
 }

@@ -334,7 +334,7 @@
     },
     "font-size": {
       "status": "partial",
-      "note": "Pinned config parsing, CLI precedence, and live reload are implemented; manually zoomed panes intentionally retain their local size."
+      "note": "Pinned config parsing, CLI precedence, and live reload are implemented; manually adjusted panes retain their local size, while reset_font_size restores the newest live default and resumes following reloads."
     },
     "foreground": {
       "status": "supported",
@@ -716,7 +716,8 @@
           "note": "Restores the configured byte payload from Ghostty's canonical action format, queues it with the CSI introducer as one contiguous sequence on the worker thread, and scrolls the viewport to the active area."
         },
         "decrease_font_size": {
-          "status": "partial"
+          "status": "supported",
+          "note": "Parses the required payload with Ghostty's f32 grammar, clamps the delta to 0..255 (including pinned NaN/infinity behavior), computes max(1, current-delta) in binary32, and marks each targeted pane manually adjusted even for an effective no-op."
         },
         "deactivate_all_key_tables": {
           "status": "supported"
@@ -749,7 +750,8 @@
           "note": "Selects a one-based tab index, rejects zero or values outside Ghostty's c_int frontend range at execution, and clamps higher representable indices to the final tab."
         },
         "increase_font_size": {
-          "status": "partial"
+          "status": "supported",
+          "note": "Parses the required payload with Ghostty's f32 grammar, clamps the delta to 0..255 (including pinned NaN/infinity behavior), computes min(current+delta, 255) in binary32, and marks each targeted pane manually adjusted even for an effective no-op."
         },
         "ignore": {
           "status": "partial",
@@ -811,7 +813,8 @@
           "note": "Performs libghostty's full terminal reset on the session thread, resynchronizes cached mouse-input, selection, title, and working-directory state, and publishes a complete replacement frame without writing to the PTY."
         },
         "reset_font_size": {
-          "status": "partial"
+          "status": "supported",
+          "note": "Rejects every parameter, restores the pane's newest configured font size without an action clamp, and clears manual adjustment so later live reloads apply. A fresh split uses its inherited effective size as this target until reload replaces it."
         },
         "reset_window_size": {
           "status": "not_applicable",
@@ -864,6 +867,10 @@
         "select_all": {
           "status": "supported",
           "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction. Automatic-copy MIME format parity is tracked separately by copy-on-select."
+        },
+        "set_font_size": {
+          "status": "supported",
+          "note": "Parses the required payload directly to f32, applies Ghostty's 1..255 clamp including NaN and signed-infinity behavior, and marks every targeted pane manually adjusted even when its effective size is unchanged."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",

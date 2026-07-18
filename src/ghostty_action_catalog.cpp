@@ -137,7 +137,7 @@ bool consumeFloatDigits(QStringView value, qsizetype *index, int base,
     return true;
 }
 
-std::optional<float> parseFiniteFloat32(QStringView value)
+std::optional<float> parseFloat32(QStringView value)
 {
     if (value.isEmpty()) return std::nullopt;
 
@@ -148,6 +148,20 @@ std::optional<float> parseFiniteFloat32(QStringView value)
         ++index;
     }
     if (index >= value.size()) return std::nullopt;
+
+    const QStringView unsignedValue = value.sliced(index);
+    if (unsignedValue.compare(QLatin1StringView("nan"),
+                              Qt::CaseInsensitive) == 0) {
+        // Zig discards the sign when parsing NaN.
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    if (unsignedValue.compare(QLatin1StringView("inf"),
+                              Qt::CaseInsensitive) == 0
+        || unsignedValue.compare(QLatin1StringView("infinity"),
+                                 Qt::CaseInsensitive) == 0) {
+        const float infinity = std::numeric_limits<float>::infinity();
+        return negative ? -infinity : infinity;
+    }
 
     const bool hexadecimal = index + 1 < value.size()
         && value.at(index) == u'0'
@@ -205,8 +219,16 @@ std::optional<float> parseFiniteFloat32(QStringView value)
     char *end = nullptr;
     const float result = strtof_l(normalized.c_str(), &end, numericLocale);
     freelocale(numericLocale);
-    if (end != normalized.data() + normalized.size()
-        || !std::isfinite(result)) {
+    if (end != normalized.data() + normalized.size()) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+std::optional<float> parseFiniteFloat32(QStringView value)
+{
+    const std::optional<float> result = parseFloat32(value);
+    if (!result.has_value() || !std::isfinite(*result)) {
         return std::nullopt;
     }
     return result;
@@ -633,6 +655,37 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("increase_font_size")
+        || name == QLatin1StringView("decrease_font_size")
+        || name == QLatin1StringView("set_font_size")) {
+        // All three fields are f32 in Binding.Action. The parameter is
+        // required, and parseFloat intentionally accepts non-finite values;
+        // Surface.performBindingAction gives those defined clamp semantics.
+        if (!parameter.has_value()) return std::nullopt;
+        const std::optional<float> points = parseFloat32(*parameter);
+        if (!points.has_value()) return std::nullopt;
+
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::FontSize;
+        if (name == QLatin1StringView("increase_font_size")) {
+            action.fontSize.kind = TerminalFontSizeRequest::Kind::Increase;
+        } else if (name == QLatin1StringView("decrease_font_size")) {
+            action.fontSize.kind = TerminalFontSizeRequest::Kind::Decrease;
+        } else {
+            action.fontSize.kind = TerminalFontSizeRequest::Kind::Set;
+        }
+        action.fontSize.points = *points;
+        return action;
+    }
+
+    if (name == QLatin1StringView("reset_font_size")) {
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::FontSize;
+        action.fontSize.kind = TerminalFontSizeRequest::Kind::Reset;
+        return action;
+    }
+
     if (name == QLatin1StringView("select_all")) {
         if (parameter.has_value()) return std::nullopt;
         GhosttyPaneAction action;
@@ -762,7 +815,6 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
     if (name == QLatin1StringView("paste_from_clipboard")
         || name == QLatin1StringView("paste_from_selection")
         || name == QLatin1StringView("copy_url_to_clipboard")
-        || name == QLatin1StringView("reset_font_size")
         || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("end_key_sequence")
         || name == QLatin1StringView("close_window")
@@ -778,15 +830,6 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
     if (name == QLatin1StringView("deactivate_key_table")
         || name == QLatin1StringView("deactivate_all_key_tables")) {
         return !parameter.has_value();
-    }
-    if (name == QLatin1StringView("increase_font_size")
-        || name == QLatin1StringView("decrease_font_size")) {
-        if (!parameter.has_value()) {
-            return true;
-        }
-        bool valid = false;
-        const double amount = parameter->toString().toDouble(&valid);
-        return valid && std::isfinite(amount) && amount > 0.0;
     }
     return translate(serializedAction).accepted();
 }

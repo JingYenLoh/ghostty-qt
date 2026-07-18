@@ -373,7 +373,9 @@ other terminal access remain serialized on the pane's worker thread.
 The first pane receives the parsed command-line options. Without a command,
 the worker starts executable `$SHELL` or `/bin/sh`. A new tab starts the default
 shell in the original working directory. A split starts the default shell using
-the source pane's latest reported directory, font, and font size.
+the source pane's latest reported directory, font, and effective font size. The
+inherited size is the child's reset target until a later config reload replaces
+it; the child starts unadjusted, so that reload also updates its visible size.
 
 The child inherits the host environment with these terminal-specific values:
 

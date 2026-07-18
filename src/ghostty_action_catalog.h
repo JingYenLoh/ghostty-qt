@@ -40,6 +40,7 @@ enum class GhosttyPaneActionKind {
     ScrollPageUp,
     ScrollPageDown,
     ScrollPageFractional,
+    FontSize,
     SelectAll,
     AdjustSelection,
     StartSearch,
@@ -53,10 +54,25 @@ enum class GhosttyPaneActionKind {
     Reset,
 };
 
+struct TerminalFontSizeRequest {
+    enum class Kind : quint8 {
+        Increase,
+        Decrease,
+        Reset,
+        Set,
+    };
+
+    Kind kind = Kind::Reset;
+    float points = 0.0F;
+
+    bool operator==(const TerminalFontSizeRequest &) const = default;
+};
+
 struct GhosttyPaneAction {
     GhosttyPaneActionKind kind = GhosttyPaneActionKind::ScrollViewport;
     TerminalViewportRequest viewport;
     float pageFraction = 0.0F;
+    TerminalFontSizeRequest fontSize;
     TerminalSelectionAdjustment selectionAdjustment =
         TerminalSelectionAdjustment::Left;
     TerminalSearchDirection searchDirection = TerminalSearchDirection::Next;
@@ -105,8 +121,8 @@ public:
     // clipboard/zoom/scroll/reload actions as well as typed workspace actions.
     [[nodiscard]] static bool isImplemented(QStringView serializedAction);
 
-    // Parse the implemented pane-local viewport, selection, and terminal
-    // control actions. Integer syntax and f32 rounding follow
+    // Parse the implemented pane-local viewport, font, selection, and
+    // terminal control actions. Integer syntax and f32 rounding follow
     // Binding.Action.parse at the pinned revision. Unlike upstream,
     // non-finite or intrinsically out-of-range fractional values are rejected
     // so execution cannot reach Zig's safety-checked illegal float-to-isize
