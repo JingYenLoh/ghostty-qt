@@ -71,6 +71,7 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
+    void clearsSelectionWithoutCancellingGesture();
     void resetsAllTerminalStateAndPublishesFullFrame();
     void resolvesOsc8HyperlinksAcrossViewportState();
     void tracksOsc8HyperlinksAcrossOutputAndReflow();
@@ -1031,7 +1032,10 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     TerminalKeyInput input;
     input.key = Qt::Key_A;
     input.text = QStringLiteral("a");
-    QCOMPARE(adapter->encodeKey(input), QByteArrayLiteral("a"));
+    const GhosttyVtAdapter::EncodedKey encodedA = adapter->encodeKey(input);
+    QCOMPARE(encodedA.bytes, QByteArrayLiteral("a"));
+    QVERIFY(!encodedA.modifier);
+    QVERIFY(!encodedA.escape);
 
     // Physical location comes from Qt's Linux XKB scan code, even when the
     // logical key/modifier tuple does not identify a keypad key. Kitty's
@@ -1041,7 +1045,61 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     TerminalKeyInput keypad;
     keypad.key = Qt::Key_Left;
     keypad.nativeScanCode = KEY_KP1 + 8U;
-    QCOMPARE(adapter->encodeKey(keypad), QByteArrayLiteral("\033[57400u"));
+    QCOMPARE(adapter->encodeKey(keypad).bytes,
+             QByteArrayLiteral("\033[57400u"));
+
+    // Classification follows the physical key that the encoder actually
+    // receives, even when the logical Qt key says something else.
+    adapter->writeVt(QByteArrayLiteral("\033[>11u"));
+    TerminalKeyInput physicalShift;
+    physicalShift.key = Qt::Key_A;
+    physicalShift.nativeScanCode = KEY_LEFTSHIFT + 8U;
+    const GhosttyVtAdapter::EncodedKey encodedShift =
+        adapter->encodeKey(physicalShift);
+    QVERIFY(!encodedShift.bytes.isEmpty());
+    QVERIFY(encodedShift.modifier);
+    QVERIFY(!encodedShift.escape);
+
+    TerminalKeyInput physicalEscape;
+    physicalEscape.key = Qt::Key_A;
+    physicalEscape.nativeScanCode = KEY_ESC + 8U;
+    const GhosttyVtAdapter::EncodedKey encodedEscape =
+        adapter->encodeKey(physicalEscape);
+    QVERIFY(!encodedEscape.bytes.isEmpty());
+    QVERIFY(!encodedEscape.modifier);
+    QVERIFY(encodedEscape.escape);
+
+    TerminalKeyInput releasedA = input;
+    releasedA.nativeScanCode = KEY_A + 8U;
+    releasedA.pressed = false;
+    const GhosttyVtAdapter::EncodedKey encodedRelease =
+        adapter->encodeKey(releasedA);
+    QVERIFY(!encodedRelease.bytes.isEmpty());
+    QVERIFY(!encodedRelease.modifier);
+    QVERIFY(!encodedRelease.escape);
+}
+
+void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 16;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("selection-target"));
+
+    adapter->beginSelection(0, 0, 1, false);
+    QVERIFY(adapter->updateSelection(5, 0, false));
+    QVERIFY(adapter->hasSelection());
+
+    adapter->clearSelection();
+    QVERIFY(!adapter->hasSelection());
+
+    // Ghostty's setSelection(null) keeps the active drag anchor. A later
+    // motion in that same gesture can establish a new installed range.
+    QVERIFY(adapter->updateSelection(8, 0, false));
+    QVERIFY(adapter->hasSelection());
+    adapter->endSelection(8, 0);
 }
 
 void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()

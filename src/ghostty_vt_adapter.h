@@ -21,6 +21,15 @@ class GhosttyVtAdapter final {
     class Impl;
 
 public:
+    struct EncodedKey {
+        QByteArray bytes;
+        bool modifier = false;
+        bool escape = false;
+
+        friend bool operator==(const EncodedKey &,
+                               const EncodedKey &) = default;
+    };
+
     // A short-lived, move-only snapshot of one unwrapped logical terminal
     // line. Byte offsets use the exact UTF-8 byte stream consumed by Ghostty's
     // regex matcher; targetByteOffset identifies the first byte mapped to the
@@ -203,7 +212,7 @@ public:
     void reset();
     void synchronizeInputModes();
 
-    QByteArray encodeKey(const TerminalKeyInput &input);
+    EncodedKey encodeKey(const TerminalKeyInput &input);
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QByteArray encodeFocus(bool focused) const;
     QByteArray encodePaste(const QString &text) const;

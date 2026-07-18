@@ -167,10 +167,15 @@ Qt events travel in the opposite direction through value types and queued
 signals:
 
 - Key press/release events are mapped to project value types. The adapter's
-  Ghostty key encoder reads the current terminal modes before producing PTY
-  bytes.
-- IME commit strings use the same encoder path; preedit text remains a local UI
-  overlay until committed.
+  Ghostty key encoder reads the current terminal modes and returns bytes plus
+  modifier/Escape traits from the final physical Ghostty key. The worker uses
+  those traits only after a nonempty encoding to apply live selection-clearing
+  policy; sequence leaders remain byte-only and never acquire that policy when
+  flushed.
+- One typed IME value carries the commit and preedit transition through a
+  single queued worker operation. Commits use the same encoded-key policy;
+  preedit start/change/end clears independently when configured. The rendered
+  preedit string remains a local UI overlay.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
 - Link hover requires exactly `Ctrl` on Linux. Explicit OSC 8 destinations take
@@ -193,8 +198,10 @@ signals:
   reads or writes `QClipboard`. Linux copy-on-select commits on left-button
   release and select-all, with primary-selection fallback resolved from Qt's
   GUI-thread capability. Libghostty's tracked selection-gesture state keeps
-  the drag anchor stable across output, scrolling, and resize. OSC-driven
-  clipboard writes from terminal applications are denied by the host callback.
+  the drag anchor stable across output, scrolling, resize, and automatic
+  selection clearing. Raw binding actions, paste, mouse/focus reports, and
+  replayed sequence leaders bypass clear-on-typing. OSC-driven clipboard writes
+  from terminal applications are denied by the host callback.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain
@@ -712,13 +719,14 @@ The default CTest suite has focused layers for each ownership boundary:
   relocated private config helper, verifies runtime terminfo lookup, and checks
   valid and invalid explicit overrides.
 
-Clipboard tests cover trim policy, copy destinations and primary fallback,
-explicit copy-and-clear ordering, automatic selection commits, select-all,
-live reload, and middle-click source/ignore policy. Pointer-drag sequencing and
-unsafe-paste dialog confirmation are not fully automated yet. Typed-action
-tests cover tab and split state transitions; the offscreen tests validate QML
-startup, close-dialog shutdown, and scene-graph frame replacement in a headless
-environment, but they do not validate the hardware RHI path.
+Clipboard and selection-lifecycle tests cover trim policy, copy destinations
+and primary fallback, explicit copy-and-clear ordering, automatic selection
+commits, select-all, live reload, middle-click source/ignore policy,
+clear-on-typing key traits, sequence replay exclusions, and IME/preedit
+transitions. Unsafe-paste dialog confirmation is not fully automated yet.
+Typed-action tests cover tab and split state transitions; the offscreen tests
+validate QML startup, close-dialog shutdown, and scene-graph frame replacement
+in a headless environment, but they do not validate the hardware RHI path.
 `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
 supported runtime configuration; GPU output must also be checked interactively
 in a real Wayland session.

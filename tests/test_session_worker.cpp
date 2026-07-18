@@ -2,10 +2,14 @@
 #include "terminal_types.h"
 
 #include <QDir>
+#include <QFile>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
+#include <QTemporaryDir>
 #include <QTimer>
+
+#include <linux/input-event-codes.h>
 
 #include <algorithm>
 #include <optional>
@@ -86,6 +90,7 @@ private Q_SLOTS:
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
+    void clearsSelectionOnlyForUpstreamTypingPaths();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
@@ -1108,6 +1113,200 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     worker.shutdown();
 }
 
+void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/selection-typing-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString kittyMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("enable-kitty"));
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf 'selection-target\\r\\nlegacy-ready'; "
+            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+            "printf '\\033[>11ukitty-ready'; "
+            "sleep 5"),
+        QStringLiteral("selection-typing-test"),
+        kittyMarker,
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("legacy-ready")), 5000);
+
+    const auto letter = [](QChar character, bool pressed = true) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.unshiftedCodepoint = character.toLower().unicode();
+        input.pressed = pressed;
+        return input;
+    };
+    const auto selectTarget = [&] {
+        worker.clearSelection();
+        selectionSpy.clear();
+        worker.beginSelection(0, 0, 1, false);
+        worker.updateSelection(7, 0, false);
+        worker.endSelection(7, 0);
+        QVERIFY(spyContainsBool(selectionSpy, true));
+        selectionSpy.clear();
+    };
+    const auto expectClearedWithoutCopy = [&] {
+        QVERIFY(spyContainsBool(selectionSpy, false));
+        const qsizetype copies = clipboardSpy.size();
+        worker.copySelection();
+        QCOMPARE(clipboardSpy.size(), copies);
+        selectionSpy.clear();
+    };
+    const auto expectPreservedWithoutCopy = [&] {
+        QVERIFY(!spyContainsBool(selectionSpy, false));
+        const qsizetype copies = clipboardSpy.size();
+        worker.copySelection();
+        QCOMPARE(clipboardSpy.size(), copies + 1);
+        worker.clearSelection();
+        selectionSpy.clear();
+    };
+
+    // The default applies only after a non-modifier key actually encodes.
+    selectTarget();
+    worker.sendKey(letter(u'a'));
+    expectClearedWithoutCopy();
+
+    options.runtime.selectionClipboard.clearOnTyping = false;
+    worker.applyRuntimeOptions(options.runtime);
+    selectTarget();
+    worker.sendKey(letter(u'b'));
+    expectPreservedWithoutCopy();
+
+    // A physical Escape reaching ordinary encoding is the sole config-false
+    // override. A legacy release and an unidentified empty key encode nothing.
+    selectTarget();
+    TerminalKeyInput escape;
+    escape.key = Qt::Key_Escape;
+    escape.nativeScanCode = KEY_ESC + 8U;
+    worker.sendKey(escape);
+    expectClearedWithoutCopy();
+
+    selectTarget();
+    worker.sendKey(letter(u'c', false));
+    expectPreservedWithoutCopy();
+
+    selectTarget();
+    worker.sendKey({});
+    expectPreservedWithoutCopy();
+
+    options.runtime.selectionClipboard.clearOnTyping = true;
+    worker.applyRuntimeOptions(options.runtime);
+
+    // Data-writing actions and paste bypass the physical-key policy.
+    selectTarget();
+    worker.sendCsi(QByteArrayLiteral("31m"));
+    worker.sendEscape(QByteArrayLiteral("7"));
+    worker.sendRawText(QByteArrayLiteral("action-text"));
+    worker.paste(QStringLiteral("paste-text"));
+    expectPreservedWithoutCopy();
+
+    // IME commits are typed unidentified keys; preedit transitions clear
+    // independently and carry no clipboard side effect.
+    selectTarget();
+    worker.sendInputMethod({.commitText = QStringLiteral("commit")});
+    expectClearedWithoutCopy();
+
+    selectTarget();
+    worker.sendInputMethod({.preeditTransition = true});
+    expectClearedWithoutCopy();
+
+    options.runtime.selectionClipboard.clearOnTyping = false;
+    worker.applyRuntimeOptions(options.runtime);
+    selectTarget();
+    worker.sendInputMethod({.commitText = QStringLiteral("commit")});
+    expectPreservedWithoutCopy();
+    selectTarget();
+    worker.sendInputMethod({.preeditTransition = true});
+    expectPreservedWithoutCopy();
+
+    QFile marker(kittyMarker);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.close();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("kitty-ready")), 5000);
+    options.runtime.selectionClipboard.clearOnTyping = true;
+    worker.applyRuntimeOptions(options.runtime);
+
+    // Kitty report-all makes the physical modifier encode, but it remains
+    // excluded. Kitty report-events makes a non-modifier release eligible.
+    TerminalKeyInput shift;
+    shift.key = Qt::Key_A;
+    shift.nativeScanCode = KEY_LEFTSHIFT + 8U;
+    selectTarget();
+    worker.sendKey(shift);
+    expectPreservedWithoutCopy();
+
+    selectTarget();
+    worker.sendKey(letter(u'd', false));
+    expectClearedWithoutCopy();
+
+    // Leaders never retroactively become typing when replayed. Only a
+    // separately encoded current key in FlushAndSendCurrent can clear.
+    selectTarget();
+    worker.stageSequenceKey(1, letter(u'e'));
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    expectPreservedWithoutCopy();
+
+    selectTarget();
+    worker.stageSequenceKey(2, letter(u'f'));
+    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    expectPreservedWithoutCopy();
+
+    selectTarget();
+    worker.stageSequenceKey(3, letter(u'g'));
+    worker.resolveSequence(3,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, letter(u'h'));
+    expectClearedWithoutCopy();
+
+    selectTarget();
+    worker.stageSequenceKey(4, letter(u'i'));
+    worker.resolveSequence(4,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, shift);
+    expectPreservedWithoutCopy();
+
+    options.runtime.selectionClipboard.clearOnTyping = false;
+    worker.applyRuntimeOptions(options.runtime);
+    selectTarget();
+    worker.stageSequenceKey(5, letter(u'j'));
+    worker.resolveSequence(5,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, escape);
+    expectClearedWithoutCopy();
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
 void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
 {
     qRegisterMetaType<TerminalUpdate>();
@@ -1528,7 +1727,7 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
 
     const QString command = QStringLiteral("sleep 1");
     for (const QChar character : command) {
-        worker.sendText(QString(character));
+        worker.sendInputMethod({.commitText = QString(character)});
     }
     TerminalKeyInput enter;
     enter.key = Qt::Key_Return;
@@ -1553,7 +1752,7 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     // Keep the direct-key path covered independently of sequence staging.
     activitySpy.clear();
     for (const QChar character : command) {
-        worker.sendText(QString(character));
+        worker.sendInputMethod({.commitText = QString(character)});
     }
     worker.sendKey(enter);
     QVERIFY(spyContainsBool(activitySpy, true));

@@ -215,6 +215,23 @@ GhosttyKey mapQtKey(int key)
     }
 }
 
+bool isModifierKey(GhosttyKey key)
+{
+    switch (key) {
+    case GHOSTTY_KEY_SHIFT_LEFT:
+    case GHOSTTY_KEY_SHIFT_RIGHT:
+    case GHOSTTY_KEY_CONTROL_LEFT:
+    case GHOSTTY_KEY_CONTROL_RIGHT:
+    case GHOSTTY_KEY_ALT_LEFT:
+    case GHOSTTY_KEY_ALT_RIGHT:
+    case GHOSTTY_KEY_META_LEFT:
+    case GHOSTTY_KEY_META_RIGHT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 GhosttyKey mapNativeScanCode(quint32 nativeScanCode)
 {
     if (nativeScanCode < 8U) {
@@ -760,7 +777,7 @@ public:
         }
     }
 
-    QByteArray encodeKey(const TerminalKeyInput &input)
+    GhosttyVtAdapter::EncodedKey encodeKey(const TerminalKeyInput &input)
     {
         ghostty_key_encoder_setopt_from_terminal(keyEncoder_, terminal_);
         ghostty_key_event_set_action(
@@ -819,10 +836,15 @@ public:
                 &written);
         }
         if (result != GHOSTTY_SUCCESS) {
-            return {};
+            encoded.clear();
+        } else {
+            encoded.resize(static_cast<qsizetype>(written));
         }
-        encoded.resize(static_cast<qsizetype>(written));
-        return encoded;
+        return {
+            .bytes = std::move(encoded),
+            .modifier = isModifierKey(key),
+            .escape = key == GHOSTTY_KEY_ESCAPE,
+        };
     }
 
     QByteArray encodeMouse(const TerminalMouseInput &input)
@@ -961,7 +983,6 @@ public:
     void clearSelection()
     {
         ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
-        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
     }
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
@@ -2923,7 +2944,8 @@ void GhosttyVtAdapter::synchronizeInputModes()
     impl_->synchronizeInputModes();
 }
 
-QByteArray GhosttyVtAdapter::encodeKey(const TerminalKeyInput &input)
+GhosttyVtAdapter::EncodedKey GhosttyVtAdapter::encodeKey(
+    const TerminalKeyInput &input)
 {
     return impl_->encodeKey(input);
 }

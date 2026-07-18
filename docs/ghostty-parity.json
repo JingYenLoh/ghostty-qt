@@ -388,6 +388,10 @@
       "status": "supported",
       "note": "Explicit copy formats and emits the installed selection before optionally clearing it in the same session-thread operation; automatic copy-on-select never clears."
     },
+    "selection-clear-on-typing": {
+      "status": "supported",
+      "note": "Live worker-side policy clears only after encoded non-modifier keys, with physical Escape overriding false. IME commit/preedit lifecycle is atomic; consumed bindings, staged/replayed leaders, raw actions, and paste remain excluded."
+    },
     "selection-foreground": {
       "status": "supported",
       "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."

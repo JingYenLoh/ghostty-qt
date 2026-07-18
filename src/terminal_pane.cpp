@@ -2059,12 +2059,19 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
 
 void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
 {
-    if (!event->commitString().isEmpty()) {
-        controller_->sendText(event->commitString());
-    }
+    const QString nextPreedit = event->preeditString();
+    bool hadPreedit = false;
     {
         QMutexLocker locker(&renderMutex_);
-        preedit_ = event->preeditString();
+        hadPreedit = !preedit_.isEmpty();
+        preedit_ = nextPreedit.isEmpty() ? QString{} : nextPreedit;
+    }
+    const TerminalInputMethodInput input{
+        .commitText = event->commitString(),
+        .preeditTransition = hadPreedit || !nextPreedit.isNull(),
+    };
+    if (!input.commitText.isEmpty() || input.preeditTransition) {
+        controller_->sendInputMethod(input);
     }
     update();
     event->accept();

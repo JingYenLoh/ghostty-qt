@@ -274,6 +274,16 @@ struct TerminalKeyInput {
     uint32_t unshiftedCodepoint = 0;
 };
 
+// One GUI input-method callback becomes one worker operation so committed
+// bytes and selection lifecycle cannot interleave with clipboard commands.
+struct TerminalInputMethodInput {
+    QString commitText;
+    bool preeditTransition = false;
+
+    friend bool operator==(const TerminalInputMethodInput &,
+                           const TerminalInputMethodInput &) = default;
+};
+
 // Resolves terminal input held while the UI decides whether a key sequence
 // matches. Leaders are encoded on the session thread when staged so later VT
 // mode changes cannot alter the bytes they would originally have produced.
@@ -307,5 +317,6 @@ Q_DECLARE_METATYPE(TerminalSearchCell)
 Q_DECLARE_METATYPE(TerminalSearchRange)
 Q_DECLARE_METATYPE(TerminalSearchUpdate)
 Q_DECLARE_METATYPE(TerminalKeyInput)
+Q_DECLARE_METATYPE(TerminalInputMethodInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

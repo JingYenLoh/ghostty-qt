@@ -38,6 +38,7 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalViewportRequest>();
     qRegisterMetaType<TerminalSelectionAdjustment>();
     qRegisterMetaType<TerminalKeyInput>();
+    qRegisterMetaType<TerminalInputMethodInput>();
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
     qRegisterMetaType<QVector<QPoint>>();
@@ -57,8 +58,8 @@ TerminalController::TerminalController(
             worker_, &SessionWorker::stageSequenceKey, Qt::QueuedConnection);
     connect(this, &TerminalController::sequenceResolutionRequested,
             worker_, &SessionWorker::resolveSequence, Qt::QueuedConnection);
-    connect(this, &TerminalController::textRequested,
-            worker_, &SessionWorker::sendText, Qt::QueuedConnection);
+    connect(this, &TerminalController::inputMethodRequested,
+            worker_, &SessionWorker::sendInputMethod, Qt::QueuedConnection);
     connect(this, &TerminalController::csiRequested,
             worker_, &SessionWorker::sendCsi, Qt::QueuedConnection);
     connect(this, &TerminalController::escapeRequested,
@@ -335,12 +336,14 @@ void TerminalController::resolveSequence(
     }
 }
 
-void TerminalController::sendText(const QString &text)
+void TerminalController::sendInputMethod(
+    const TerminalInputMethodInput &input)
 {
-    if (text.contains(u'\n') || text.contains(u'\r')) {
+    if (input.commitText.contains(u'\n')
+        || input.commitText.contains(u'\r')) {
         notePotentialActivity();
     }
-    Q_EMIT textRequested(text);
+    Q_EMIT inputMethodRequested(input);
 }
 
 void TerminalController::sendCsi(const QByteArray &payload)

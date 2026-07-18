@@ -13,6 +13,7 @@
 #include <QFontMetricsF>
 #include <QImage>
 #include <QHoverEvent>
+#include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -76,6 +77,7 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
+    void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
     void reloadsMiddleClickClipboardPolicy();
     void rendersConfiguredCellCursorAndDecorationAppearance();
@@ -316,6 +318,71 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     pane.resetZoom();
     QCOMPARE(pane.fontPointSize(), 10.0);
     QVERIFY(!pane.splitLaunchOptions().fontSizeManuallyAdjusted);
+}
+
+void TerminalPaneTest::packagesInputMethodLifecycleAsOneWorkerRequest()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy requests(controller, &TerminalController::inputMethodRequested);
+
+    QInputMethodEvent commitOnly;
+    commitOnly.setCommitString(QStringLiteral("é"));
+    QCoreApplication::sendEvent(&pane, &commitOnly);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 requests.takeFirst().constFirst()),
+             TerminalInputMethodInput{.commitText = QStringLiteral("é")});
+
+    QInputMethodEvent start(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &start);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 requests.takeFirst().constFirst()),
+             TerminalInputMethodInput{.preeditTransition = true});
+
+    QInputMethodEvent end(QString{}, {});
+    QCoreApplication::sendEvent(&pane, &end);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 requests.takeFirst().constFirst()),
+             TerminalInputMethodInput{.preeditTransition = true});
+
+    // A present-but-empty callback is a transition even with no old preedit.
+    const QString presentEmpty = QString::fromLatin1("", 0);
+    QVERIFY(presentEmpty.isEmpty());
+    QVERIFY(!presentEmpty.isNull());
+    QInputMethodEvent emptyUpdate(presentEmpty, {});
+    QCoreApplication::sendEvent(&pane, &emptyUpdate);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 requests.takeFirst().constFirst()),
+             TerminalInputMethodInput{.preeditTransition = true});
+
+    QInputMethodEvent noOp;
+    QCoreApplication::sendEvent(&pane, &noOp);
+    QCOMPARE(requests.count(), 0);
+
+    QInputMethodEvent combined(QStringLiteral("next"), {});
+    combined.setCommitString(QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &combined);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalInputMethodInput>(
+                 requests.takeFirst().constFirst()),
+             (TerminalInputMethodInput{
+                 .commitText = QStringLiteral("x"),
+                 .preeditTransition = true,
+             }));
 }
 
 void TerminalPaneTest::writesClipboardDestinations()

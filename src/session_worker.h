@@ -45,7 +45,7 @@ public Q_SLOTS:
                          TerminalSequenceResolution resolution,
                          bool hasCurrent,
                          const TerminalKeyInput &current);
-    void sendText(const QString &text);
+    void sendInputMethod(const TerminalInputMethodInput &input);
     void sendCsi(const QByteArray &payload);
     void sendEscape(const QByteArray &payload);
     // Decode Ghostty's Zig string-literal payload on the worker thread before
@@ -147,8 +147,9 @@ private:
     void updateProcessActivity();
     void setActiveProcess(bool active);
     void handleChildStatus(int status);
-    QByteArray encodeKey(const TerminalKeyInput &input);
     QByteArray encodeMouse(const TerminalMouseInput &input);
+    void clearSelectionState();
+    void clearSelectionAfterKey(bool modifier, bool escape);
     void copySelectionTo(TerminalClipboardDestination destination,
                          bool clearAfterCopy);
     void copySelectionOnSelect();

@@ -849,6 +849,7 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
         }
         markTerminalContentChanged();
         processDeferredEffects();
+        syncSelectionAvailability();
         noteCompressionActivity();
         scheduleFrame();
     }
@@ -993,7 +994,15 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
             || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
         notePotentialActivity();
     }
-    queuePtyWrite(encodeKey(input));
+    if (vt_ == nullptr || masterFd_ < 0) {
+        return;
+    }
+    const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(input);
+    if (encoded.bytes.isEmpty()) {
+        return;
+    }
+    queuePtyWrite(encoded.bytes);
+    clearSelectionAfterKey(encoded.modifier, encoded.escape);
 }
 
 void SessionWorker::stageSequenceKey(quint64 token,
@@ -1014,7 +1023,10 @@ void SessionWorker::stageSequenceKey(quint64 token,
         stagedSequencePotentialActivity_ = false;
     }
 
-    const QByteArray encoded = encodeKey(input);
+    if (vt_ == nullptr) {
+        return;
+    }
+    const QByteArray encoded = vt_->encodeKey(input).bytes;
     if (encoded.isEmpty()) {
         return;
     }
@@ -1034,6 +1046,9 @@ void SessionWorker::resolveSequence(quint64 token,
 
     QByteArray bytes;
     bool potentialActivity = false;
+    bool currentModifier = true;
+    bool currentEscape = false;
+    bool currentEncoded = false;
     if (resolution == TerminalSequenceResolution::Flush
         || resolution == TerminalSequenceResolution::FlushAndSendCurrent) {
         bytes = std::move(stagedSequenceBytes_);
@@ -1042,11 +1057,16 @@ void SessionWorker::resolveSequence(quint64 token,
     }
     if (resolution == TerminalSequenceResolution::FlushAndSendCurrent
         && hasCurrent) {
-        const QByteArray encodedCurrent = encodeKey(current);
-        if (!encodedCurrent.isEmpty()) {
-            bytes.append(encodedCurrent);
+        const GhosttyVtAdapter::EncodedKey encodedCurrent =
+            vt_ != nullptr ? vt_->encodeKey(current)
+                           : GhosttyVtAdapter::EncodedKey{};
+        if (!encodedCurrent.bytes.isEmpty()) {
+            bytes.append(encodedCurrent.bytes);
             potentialActivity = potentialActivity
                 || keyMayStartProcess(current);
+            currentModifier = encodedCurrent.modifier;
+            currentEscape = encodedCurrent.escape;
+            currentEncoded = true;
         }
     }
 
@@ -1061,22 +1081,36 @@ void SessionWorker::resolveSequence(quint64 token,
             notePotentialActivity();
         }
         queuePtyWrite(bytes);
+        if (currentEncoded) {
+            clearSelectionAfterKey(currentModifier, currentEscape);
+        }
     }
 }
 
-void SessionWorker::sendText(const QString &text)
+void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
 {
-    if (text.isEmpty()) {
+    if (input.preeditTransition
+        && options_.runtime.selectionClipboard.clearOnTyping) {
+        clearSelectionState();
+    }
+
+    if (input.commitText.isEmpty() || vt_ == nullptr || masterFd_ < 0) {
         return;
     }
-    if (text.contains(u'\n') || text.contains(u'\r')) {
+    if (input.commitText.contains(u'\n')
+        || input.commitText.contains(u'\r')) {
         notePotentialActivity();
     }
-    TerminalKeyInput input;
-    input.key = Qt::Key_unknown;
-    input.text = text;
-    input.pressed = true;
-    queuePtyWrite(encodeKey(input));
+    TerminalKeyInput key;
+    key.key = Qt::Key_unknown;
+    key.text = input.commitText;
+    key.pressed = true;
+    const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(key);
+    if (encoded.bytes.isEmpty()) {
+        return;
+    }
+    queuePtyWrite(encoded.bytes);
+    clearSelectionAfterKey(encoded.modifier, encoded.escape);
 }
 
 void SessionWorker::sendCsi(const QByteArray &payload)
@@ -1163,9 +1197,23 @@ void SessionWorker::resetTerminal()
     scheduleFrame();
 }
 
-QByteArray SessionWorker::encodeKey(const TerminalKeyInput &input)
+void SessionWorker::clearSelectionState()
 {
-    return vt_ != nullptr ? vt_->encodeKey(input) : QByteArray{};
+    if (vt_ == nullptr || !selectionAvailable_) {
+        return;
+    }
+
+    vt_->clearSelection();
+    syncSelectionAvailability();
+    scheduleFrame();
+}
+
+void SessionWorker::clearSelectionAfterKey(bool modifier, bool escape)
+{
+    if (!modifier
+        && (options_.runtime.selectionClipboard.clearOnTyping || escape)) {
+        clearSelectionState();
+    }
 }
 
 void SessionWorker::sendMouse(const TerminalMouseInput &input)
@@ -1216,9 +1264,7 @@ void SessionWorker::copySelectionTo(
 
     Q_EMIT clipboardTextReady(text, destination);
     if (clearAfterCopy) {
-        vt_->clearSelection();
-        syncSelectionAvailability();
-        scheduleFrame();
+        clearSelectionState();
     }
 }
 
@@ -1239,11 +1285,7 @@ void SessionWorker::copySelectionOnSelect()
 
 void SessionWorker::clearSelection()
 {
-    if (vt_ != nullptr) {
-        vt_->clearSelection();
-        syncSelectionAvailability();
-        scheduleFrame();
-    }
+    clearSelectionState();
 }
 
 void SessionWorker::beginSelection(int column, int row, int clickCount, bool rectangular)
