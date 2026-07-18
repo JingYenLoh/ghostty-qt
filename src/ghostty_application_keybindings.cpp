@@ -205,8 +205,6 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
     // Ghostty dispatches chains action-major: each surface receives action N
     // before any surface receives action N+1. App actions run only once.
     for (const QString &action : actions) {
-        const QVector<QPointer<TerminalWorkspace>> workspaces =
-            workspaceSnapshot();
         if (GhosttyActionCatalog::scope(action)
             == GhosttyActionScope::Application) {
             if (TerminalWorkspace *workspace = activeWorkspace();
@@ -215,6 +213,9 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
             }
             continue;
         }
+
+        const QVector<QPointer<TerminalWorkspace>> workspaces =
+            workspaceSnapshot();
 
         // In the current frontend every surface belongs to a tab/window. A
         // broad close of surfaces, tabs, or windows therefore converges on the
