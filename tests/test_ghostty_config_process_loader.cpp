@@ -130,6 +130,7 @@ private Q_SLOTS:
     void preservesDefaultAndAcceptsEveryLinkPreviewMode();
     void preservesDefaultsAndAcceptsEveryClipboardMode();
     void emptyRepeatableChangesResetDefaults();
+    void emptyNullableChangesOverrideDefaults();
     void rejectsMalformedCanonicalValues();
     void invokesValidationThenDefaultAndCurrentQueries();
     void rejectsFailedOrMalformedStructuredQuery();
@@ -482,8 +483,27 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMo
 void GhosttyConfigProcessLoaderTest::emptyRepeatableChangesResetDefaults()
 {
     ConfigFixture fixture;
-    const QByteArray defaults =
-        QByteArrayLiteral("font-family = Monospace\n") + defaultOutput();
+    const QString includePath = QDir(fixture.temporary.path())
+                                    .filePath(QStringLiteral("default.conf"));
+    ConfigFixture::writeFile(includePath, {});
+    const QByteArray defaults = defaultOutput()
+        + QStringLiteral("font-family = Monospace\nconfig-file = %1\n")
+              .arg(includePath)
+              .toUtf8();
+
+    const GhosttyConfigLoadResult unchanged =
+        parseGhosttyConfigShowOutputs(defaults, {}, fixture.candidates());
+    QVERIFY2(unchanged.succeeded(), qPrintable(unchanged.errorMessage));
+    QCOMPARE(unchanged.snapshot->values.value(QStringLiteral("font-family"))
+                 .toStringList(),
+             QStringList({QStringLiteral("Monospace")}));
+    QCOMPARE(unchanged.snapshot->values.value(QStringLiteral("config-file"))
+                 .toStringList(),
+             QStringList({includePath}));
+    QCOMPARE(unchanged.snapshot->values.value(QStringLiteral("keybind"))
+                 .toStringList(),
+             QStringList({QStringLiteral("ctrl+shift+t=new_tab")}));
+
     const QByteArray changes =
         QByteArrayLiteral("font-family = \nkeybind = \nconfig-file = \n");
 
@@ -499,6 +519,54 @@ void GhosttyConfigProcessLoaderTest::emptyRepeatableChangesResetDefaults()
     QVERIFY(result.snapshot->values.value(QStringLiteral("keybind"))
                 .toStringList()
                 .isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
+{
+    ConfigFixture fixture;
+    const QByteArray defaults = defaultOutput()
+        + QByteArrayLiteral(
+            "selection-foreground = #101010\n"
+            "selection-background = #202020\n"
+            "cursor-color = #303030\n"
+            "cursor-style-blink = true\n"
+            "cursor-text = #404040\n"
+            "bold-color = #505050\n");
+    const QByteArray changes = QByteArrayLiteral(
+        "selection-foreground = \n"
+        "selection-background = \n"
+        "cursor-color = \n"
+        "cursor-style-blink = \n"
+        "cursor-text = \n"
+        "bold-color = \n");
+
+    const GhosttyConfigLoadResult result =
+        parseGhosttyConfigShowOutputs(defaults, changes,
+                                      fixture.candidates());
+    QVERIFY2(result.succeeded(), qPrintable(result.errorMessage));
+    const QVariant emptyString = QString{};
+    for (const QString &key : {
+             QStringLiteral("selection-foreground"),
+             QStringLiteral("selection-background"),
+             QStringLiteral("cursor-color"),
+             QStringLiteral("cursor-style-blink"),
+             QStringLiteral("cursor-text"),
+             QStringLiteral("bold-color"),
+         }) {
+        QCOMPARE(result.snapshot->values.value(key), emptyString);
+    }
+
+    QByteArray missingNullableDefault = defaultOutput();
+    const QByteArray nullableLine = QByteArrayLiteral("cursor-color = \n");
+    const qsizetype nullableLineOffset =
+        missingNullableDefault.indexOf(nullableLine);
+    QVERIFY(nullableLineOffset >= 0);
+    missingNullableDefault.remove(nullableLineOffset, nullableLine.size());
+    const GhosttyConfigLoadResult missing = parseGhosttyConfigShowOutputs(
+        missingNullableDefault, {}, fixture.candidates());
+    QVERIFY(!missing.succeeded());
+    QCOMPARE(missing.errorMessage,
+             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()

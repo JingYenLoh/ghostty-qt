@@ -26,71 +26,86 @@ namespace {
 
 constexpr auto LegacyConfigName = "config";
 constexpr auto PreferredConfigName = "config.ghostty";
+using SparsePalette = std::array<std::optional<QColor>, 256>;
 
 struct ParsedConfig {
-    bool hasFontFamilies = false;
-    QStringList fontFamilies;
-    bool hasFontSize = false;
-    double fontSize = 0.0;
-    bool hasForeground = false;
-    QColor foreground;
-    bool hasBackground = false;
-    QColor background;
-    bool hasPalette = false;
-    std::array<std::optional<QColor>, 256> palette;
-    bool hasSelectionForeground = false;
-    QVariant selectionForeground;
-    bool hasSelectionBackground = false;
-    QVariant selectionBackground;
-    bool hasSearchForeground = false;
-    QVariant searchForeground;
-    bool hasSearchBackground = false;
-    QVariant searchBackground;
-    bool hasSearchSelectedForeground = false;
-    QVariant searchSelectedForeground;
-    bool hasSearchSelectedBackground = false;
-    QVariant searchSelectedBackground;
-    bool hasCursorColor = false;
-    QVariant cursorColor;
-    bool hasCursorOpacity = false;
-    double cursorOpacity = 1.0;
-    bool hasCursorStyle = false;
-    QString cursorStyle;
-    bool hasCursorStyleBlink = false;
-    QVariant cursorStyleBlink;
-    bool hasCursorText = false;
-    QVariant cursorText;
-    bool hasBoldColor = false;
-    QVariant boldColor;
-    bool hasFaintOpacity = false;
-    double faintOpacity = 0.5;
-    bool hasScrollbackLimit = false;
-    quint64 scrollbackLimit = 0;
-    bool hasConfirmCloseSurface = false;
-    QString confirmCloseSurface;
-    bool hasClipboardTrimTrailingSpaces = false;
-    bool clipboardTrimTrailingSpaces = true;
-    bool hasClipboardPasteProtection = false;
-    bool clipboardPasteProtection = true;
-    bool hasClipboardPasteBracketedSafe = false;
-    bool clipboardPasteBracketedSafe = true;
-    bool hasCopyOnSelect = false;
-    QString copyOnSelect = QStringLiteral("true");
-    bool hasSelectionClearOnTyping = false;
-    bool selectionClearOnTyping = true;
-    bool hasSelectionClearOnCopy = false;
-    bool selectionClearOnCopy = false;
-    bool hasMiddleClickAction = false;
-    QString middleClickAction = QStringLiteral("primary-paste");
-    bool hasLinkUrl = false;
-    bool linkUrl = true;
-    bool hasLinkPreviews = false;
-    QString linkPreviews = QStringLiteral("true");
-    bool hasKeybinds = false;
-    QStringList keybinds;
-    bool hasConfigFiles = false;
-    QStringList configFiles;
+    std::optional<QStringList> fontFamilies;
+    std::optional<double> fontSize;
+    std::optional<QColor> foreground;
+    std::optional<QColor> background;
+    SparsePalette palette;
+    std::optional<QVariant> selectionForeground;
+    std::optional<QVariant> selectionBackground;
+    std::optional<QVariant> searchForeground;
+    std::optional<QVariant> searchBackground;
+    std::optional<QVariant> searchSelectedForeground;
+    std::optional<QVariant> searchSelectedBackground;
+    std::optional<QVariant> cursorColor;
+    std::optional<double> cursorOpacity;
+    std::optional<QString> cursorStyle;
+    std::optional<QVariant> cursorStyleBlink;
+    std::optional<QVariant> cursorText;
+    std::optional<QVariant> boldColor;
+    std::optional<double> faintOpacity;
+    std::optional<quint64> scrollbackLimit;
+    std::optional<QString> confirmCloseSurface;
+    std::optional<bool> clipboardTrimTrailingSpaces;
+    std::optional<bool> clipboardPasteProtection;
+    std::optional<bool> clipboardPasteBracketedSafe;
+    std::optional<QString> copyOnSelect;
+    std::optional<bool> selectionClearOnTyping;
+    std::optional<bool> selectionClearOnCopy;
+    std::optional<QString> middleClickAction;
+    std::optional<bool> linkUrl;
+    std::optional<QString> linkPreviews;
+    std::optional<QStringList> keybinds;
+    std::optional<QStringList> configFiles;
 };
+
+template<typename... Values>
+bool allPresent(const std::optional<Values> &...values)
+{
+    return (... && values.has_value());
+}
+
+bool hasRequiredFields(const ParsedConfig &parsed)
+{
+    const bool hasPaletteEntry = std::ranges::any_of(
+        parsed.palette,
+        [](const auto &color) { return color.has_value(); });
+    return hasPaletteEntry
+        && allPresent(
+            parsed.fontFamilies,
+            parsed.fontSize,
+            parsed.foreground,
+            parsed.background,
+            parsed.selectionForeground,
+            parsed.selectionBackground,
+            parsed.searchForeground,
+            parsed.searchBackground,
+            parsed.searchSelectedForeground,
+            parsed.searchSelectedBackground,
+            parsed.cursorColor,
+            parsed.cursorOpacity,
+            parsed.cursorStyle,
+            parsed.cursorStyleBlink,
+            parsed.cursorText,
+            parsed.boldColor,
+            parsed.faintOpacity,
+            parsed.scrollbackLimit,
+            parsed.confirmCloseSurface,
+            parsed.clipboardTrimTrailingSpaces,
+            parsed.clipboardPasteProtection,
+            parsed.clipboardPasteBracketedSafe,
+            parsed.copyOnSelect,
+            parsed.selectionClearOnTyping,
+            parsed.selectionClearOnCopy,
+            parsed.middleClickAction,
+            parsed.linkUrl,
+            parsed.linkPreviews,
+            parsed.keybinds,
+            parsed.configFiles);
+}
 
 struct ProcessResult {
     enum class Status {
@@ -434,14 +449,13 @@ bool parseDump(const QByteArray &dump,
         const QString value = line.mid(separator + 1).trimmed();
         const int displayLine = lineIndex + 1;
         if (key == QStringLiteral("font-family")) {
-            if (!parsed->hasFontFamilies) {
-                parsed->fontFamilies.clear();
-                parsed->hasFontFamilies = true;
+            if (!parsed->fontFamilies.has_value()) {
+                parsed->fontFamilies.emplace();
             }
             if (value.isEmpty()) {
-                parsed->fontFamilies.clear();
+                parsed->fontFamilies->clear();
             } else {
-                parsed->fontFamilies.append(value);
+                parsed->fontFamilies->append(value);
             }
         } else if (key == QStringLiteral("font-size")) {
             bool valid = false;
@@ -452,24 +466,25 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasFontSize = true;
             parsed->fontSize = fontSize;
         } else if (key == QStringLiteral("foreground")) {
-            if (!parseColor(value, &parsed->foreground)) {
+            QColor foreground;
+            if (!parseColor(value, &foreground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid foreground in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasForeground = true;
+            parsed->foreground = std::move(foreground);
         } else if (key == QStringLiteral("background")) {
-            if (!parseColor(value, &parsed->background)) {
+            QColor background;
+            if (!parseColor(value, &background)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid background in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasBackground = true;
+            parsed->background = std::move(background);
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -479,78 +494,87 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasPalette = true;
             parsed->palette[static_cast<std::size_t>(index)] = color;
         } else if (key == QStringLiteral("selection-foreground")) {
-            if (!parseTerminalColor(value, &parsed->selectionForeground)) {
+            QVariant selectionForeground;
+            if (!parseTerminalColor(value, &selectionForeground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid selection-foreground in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSelectionForeground = true;
+            parsed->selectionForeground = std::move(selectionForeground);
         } else if (key == QStringLiteral("selection-background")) {
-            if (!parseTerminalColor(value, &parsed->selectionBackground)) {
+            QVariant selectionBackground;
+            if (!parseTerminalColor(value, &selectionBackground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid selection-background in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSelectionBackground = true;
+            parsed->selectionBackground = std::move(selectionBackground);
         } else if (key == QStringLiteral("search-foreground")) {
+            QVariant searchForeground;
             if (value.isEmpty()
-                || !parseTerminalColor(value, &parsed->searchForeground)) {
+                || !parseTerminalColor(value, &searchForeground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid search-foreground in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSearchForeground = true;
+            parsed->searchForeground = std::move(searchForeground);
         } else if (key == QStringLiteral("search-background")) {
+            QVariant searchBackground;
             if (value.isEmpty()
-                || !parseTerminalColor(value, &parsed->searchBackground)) {
+                || !parseTerminalColor(value, &searchBackground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid search-background in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSearchBackground = true;
+            parsed->searchBackground = std::move(searchBackground);
         } else if (key == QStringLiteral("search-selected-foreground")) {
+            QVariant searchSelectedForeground;
             if (value.isEmpty()
                 || !parseTerminalColor(value,
-                                       &parsed->searchSelectedForeground)) {
+                                       &searchSelectedForeground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid search-selected-foreground in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSearchSelectedForeground = true;
+            parsed->searchSelectedForeground =
+                std::move(searchSelectedForeground);
         } else if (key == QStringLiteral("search-selected-background")) {
+            QVariant searchSelectedBackground;
             if (value.isEmpty()
                 || !parseTerminalColor(value,
-                                       &parsed->searchSelectedBackground)) {
+                                       &searchSelectedBackground)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid search-selected-background in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSearchSelectedBackground = true;
+            parsed->searchSelectedBackground =
+                std::move(searchSelectedBackground);
         } else if (key == QStringLiteral("cursor-color")) {
-            parsed->hasCursorColor = true;
-            if (!parseTerminalColor(value, &parsed->cursorColor)) {
+            QVariant cursorColor;
+            if (!parseTerminalColor(value, &cursorColor)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid cursor-color in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
+            parsed->cursorColor = std::move(cursorColor);
         } else if (key == QStringLiteral("cursor-opacity")) {
-            if (!parseFiniteDouble(value, &parsed->cursorOpacity)) {
+            double cursorOpacity = 0.0;
+            if (!parseFiniteDouble(value, &cursorOpacity)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid cursor-opacity in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasCursorOpacity = true;
+            parsed->cursorOpacity = cursorOpacity;
         } else if (key == QStringLiteral("cursor-style")) {
             if (value != QStringLiteral("block")
                 && value != QStringLiteral("bar")
@@ -561,28 +585,29 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasCursorStyle = true;
             parsed->cursorStyle = value;
         } else if (key == QStringLiteral("cursor-style-blink")) {
-            if (!parseOptionalBool(value, &parsed->cursorStyleBlink)) {
+            QVariant cursorStyleBlink;
+            if (!parseOptionalBool(value, &cursorStyleBlink)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid cursor-style-blink in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasCursorStyleBlink = true;
+            parsed->cursorStyleBlink = std::move(cursorStyleBlink);
         } else if (key == QStringLiteral("cursor-text")) {
-            if (!parseTerminalColor(value, &parsed->cursorText)) {
+            QVariant cursorText;
+            if (!parseTerminalColor(value, &cursorText)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid cursor-text in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasCursorText = true;
+            parsed->cursorText = std::move(cursorText);
         } else if (key == QStringLiteral("bold-color")) {
-            parsed->hasBoldColor = true;
+            QVariant boldColor;
             if (value.isEmpty() || value == QStringLiteral("bright")) {
-                parsed->boldColor = value;
+                boldColor = value;
             } else {
                 QColor color;
                 if (!parseColor(value, &color)) {
@@ -591,16 +616,18 @@ bool parseDump(const QByteArray &dump,
                                  .arg(displayLine));
                     return false;
                 }
-                parsed->boldColor = color;
+                boldColor = color;
             }
+            parsed->boldColor = std::move(boldColor);
         } else if (key == QStringLiteral("faint-opacity")) {
-            if (!parseUnitInterval(value, &parsed->faintOpacity)) {
+            double faintOpacity = 0.0;
+            if (!parseUnitInterval(value, &faintOpacity)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid faint-opacity in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasFaintOpacity = true;
+            parsed->faintOpacity = faintOpacity;
         } else if (key == QStringLiteral("scrollback-limit")) {
             bool valid = false;
             const quint64 scrollbackLimit = value.toULongLong(&valid);
@@ -610,7 +637,6 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasScrollbackLimit = true;
             parsed->scrollbackLimit = scrollbackLimit;
         } else if (key == QStringLiteral("confirm-close-surface")) {
             if (value != QStringLiteral("false")
@@ -621,32 +647,36 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasConfirmCloseSurface = true;
             parsed->confirmCloseSurface = value;
         } else if (key == QStringLiteral("clipboard-trim-trailing-spaces")) {
-            if (!parseBool(value, &parsed->clipboardTrimTrailingSpaces)) {
+            bool clipboardTrimTrailingSpaces = false;
+            if (!parseBool(value, &clipboardTrimTrailingSpaces)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid clipboard-trim-trailing-spaces in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasClipboardTrimTrailingSpaces = true;
+            parsed->clipboardTrimTrailingSpaces =
+                clipboardTrimTrailingSpaces;
         } else if (key == QStringLiteral("clipboard-paste-protection")) {
-            if (!parseBool(value, &parsed->clipboardPasteProtection)) {
+            bool clipboardPasteProtection = false;
+            if (!parseBool(value, &clipboardPasteProtection)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid clipboard-paste-protection in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasClipboardPasteProtection = true;
+            parsed->clipboardPasteProtection = clipboardPasteProtection;
         } else if (key == QStringLiteral("clipboard-paste-bracketed-safe")) {
-            if (!parseBool(value, &parsed->clipboardPasteBracketedSafe)) {
+            bool clipboardPasteBracketedSafe = false;
+            if (!parseBool(value, &clipboardPasteBracketedSafe)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid clipboard-paste-bracketed-safe in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasClipboardPasteBracketedSafe = true;
+            parsed->clipboardPasteBracketedSafe =
+                clipboardPasteBracketedSafe;
         } else if (key == QStringLiteral("copy-on-select")) {
             if (value != QStringLiteral("false")
                 && value != QStringLiteral("true")
@@ -656,24 +686,25 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasCopyOnSelect = true;
             parsed->copyOnSelect = value;
         } else if (key == QStringLiteral("selection-clear-on-typing")) {
-            if (!parseBool(value, &parsed->selectionClearOnTyping)) {
+            bool selectionClearOnTyping = false;
+            if (!parseBool(value, &selectionClearOnTyping)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid selection-clear-on-typing in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSelectionClearOnTyping = true;
+            parsed->selectionClearOnTyping = selectionClearOnTyping;
         } else if (key == QStringLiteral("selection-clear-on-copy")) {
-            if (!parseBool(value, &parsed->selectionClearOnCopy)) {
+            bool selectionClearOnCopy = false;
+            if (!parseBool(value, &selectionClearOnCopy)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasSelectionClearOnCopy = true;
+            parsed->selectionClearOnCopy = selectionClearOnCopy;
         } else if (key == QStringLiteral("middle-click-action")) {
             if (value != QStringLiteral("primary-paste")
                 && value != QStringLiteral("ignore")) {
@@ -682,16 +713,16 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasMiddleClickAction = true;
             parsed->middleClickAction = value;
         } else if (key == QStringLiteral("link-url")) {
-            if (!parseBool(value, &parsed->linkUrl)) {
+            bool linkUrl = false;
+            if (!parseBool(value, &linkUrl)) {
                 setError(errorMessage,
                          QStringLiteral("Invalid link-url in Ghostty config output at line %1")
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasLinkUrl = true;
+            parsed->linkUrl = linkUrl;
         } else if (key == QStringLiteral("link-previews")) {
             if (value != QStringLiteral("false")
                 && value != QStringLiteral("true")
@@ -701,39 +732,28 @@ bool parseDump(const QByteArray &dump,
                              .arg(displayLine));
                 return false;
             }
-            parsed->hasLinkPreviews = true;
             parsed->linkPreviews = value;
         } else if (key == QStringLiteral("keybind")) {
-            if (!parsed->hasKeybinds) {
-                parsed->keybinds.clear();
-                parsed->hasKeybinds = true;
+            if (!parsed->keybinds.has_value()) {
+                parsed->keybinds.emplace();
             }
             // An empty formatted entry is Ghostty's effective empty binding
             // set. Do not retain a synthetic empty binding.
             if (!value.isEmpty()) {
-                parsed->keybinds.append(value);
+                parsed->keybinds->append(value);
             }
         } else if (key == QStringLiteral("config-file")) {
-            if (!parsed->hasConfigFiles) {
-                parsed->configFiles.clear();
-                parsed->hasConfigFiles = true;
+            if (!parsed->configFiles.has_value()) {
+                parsed->configFiles.emplace();
             }
             if (value.isEmpty()) {
-                parsed->configFiles.clear();
+                parsed->configFiles->clear();
             } else {
-                parsed->configFiles.append(value);
+                parsed->configFiles->append(value);
             }
         }
     }
     return true;
-}
-
-template<typename Value>
-Value mergedValue(bool changesHasValue,
-                  const Value &changesValue,
-                  const Value &defaultValue)
-{
-    return changesHasValue ? changesValue : defaultValue;
 }
 
 QString configPathWithoutOptionalMarker(QString path)
@@ -1187,28 +1207,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         return GhosttyConfigLoadResult::failed(std::move(parseError));
     }
 
-    if (!defaults.hasFontFamilies || !defaults.hasFontSize
-        || !defaults.hasForeground || !defaults.hasBackground
-        || !defaults.hasPalette
-        || !defaults.hasSelectionForeground
-        || !defaults.hasSelectionBackground
-        || !defaults.hasSearchForeground || !defaults.hasSearchBackground
-        || !defaults.hasSearchSelectedForeground
-        || !defaults.hasSearchSelectedBackground
-        || !defaults.hasCursorColor || !defaults.hasCursorOpacity
-        || !defaults.hasCursorStyle || !defaults.hasCursorStyleBlink
-        || !defaults.hasCursorText || !defaults.hasBoldColor
-        || !defaults.hasFaintOpacity
-        || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
-        || !defaults.hasClipboardTrimTrailingSpaces
-        || !defaults.hasClipboardPasteProtection
-        || !defaults.hasClipboardPasteBracketedSafe
-        || !defaults.hasCopyOnSelect || !defaults.hasSelectionClearOnTyping
-        || !defaults.hasSelectionClearOnCopy
-        || !defaults.hasMiddleClickAction
-        || !defaults.hasLinkUrl
-        || !defaults.hasLinkPreviews
-        || !defaults.hasKeybinds || !defaults.hasConfigFiles) {
+    if (!hasRequiredFields(defaults)) {
         return GhosttyConfigLoadResult::failed(
             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
     }
@@ -1219,22 +1218,16 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     }
 
     const QStringList fontFamilies =
-        mergedValue(changes.hasFontFamilies, changes.fontFamilies,
-                    defaults.fontFamilies);
-    const double fontSize =
-        mergedValue(changes.hasFontSize, changes.fontSize, defaults.fontSize);
+        changes.fontFamilies.value_or(*defaults.fontFamilies);
+    const double fontSize = changes.fontSize.value_or(*defaults.fontSize);
     const QColor foreground =
-        mergedValue(changes.hasForeground, changes.foreground,
-                    defaults.foreground);
+        changes.foreground.value_or(*defaults.foreground);
     const QColor background =
-        mergedValue(changes.hasBackground, changes.background,
-                    defaults.background);
-    std::array<std::optional<QColor>, 256> palette = defaults.palette;
-    if (changes.hasPalette) {
-        for (std::size_t index = 0; index < palette.size(); ++index) {
-            if (changes.palette[index].has_value()) {
-                palette[index] = changes.palette[index];
-            }
+        changes.background.value_or(*defaults.background);
+    SparsePalette palette = defaults.palette;
+    for (std::size_t index = 0; index < palette.size(); ++index) {
+        if (changes.palette[index].has_value()) {
+            palette[index] = changes.palette[index];
         }
     }
     QVariantList paletteValues;
@@ -1246,96 +1239,64 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         }
         paletteValues.append(*color);
     }
-    const QVariant selectionForeground =
-        mergedValue(changes.hasSelectionForeground,
-                    changes.selectionForeground,
-                    defaults.selectionForeground);
-    const QVariant selectionBackground =
-        mergedValue(changes.hasSelectionBackground,
-                    changes.selectionBackground,
-                    defaults.selectionBackground);
+    const QVariant selectionForeground = changes.selectionForeground.value_or(
+        *defaults.selectionForeground);
+    const QVariant selectionBackground = changes.selectionBackground.value_or(
+        *defaults.selectionBackground);
     const QVariant searchForeground =
-        mergedValue(changes.hasSearchForeground,
-                    changes.searchForeground,
-                    defaults.searchForeground);
+        changes.searchForeground.value_or(*defaults.searchForeground);
     const QVariant searchBackground =
-        mergedValue(changes.hasSearchBackground,
-                    changes.searchBackground,
-                    defaults.searchBackground);
+        changes.searchBackground.value_or(*defaults.searchBackground);
     const QVariant searchSelectedForeground =
-        mergedValue(changes.hasSearchSelectedForeground,
-                    changes.searchSelectedForeground,
-                    defaults.searchSelectedForeground);
+        changes.searchSelectedForeground.value_or(
+            *defaults.searchSelectedForeground);
     const QVariant searchSelectedBackground =
-        mergedValue(changes.hasSearchSelectedBackground,
-                    changes.searchSelectedBackground,
-                    defaults.searchSelectedBackground);
+        changes.searchSelectedBackground.value_or(
+            *defaults.searchSelectedBackground);
     const QVariant cursorColor =
-        mergedValue(changes.hasCursorColor, changes.cursorColor,
-                    defaults.cursorColor);
+        changes.cursorColor.value_or(*defaults.cursorColor);
     const double cursorOpacity =
-        mergedValue(changes.hasCursorOpacity, changes.cursorOpacity,
-                    defaults.cursorOpacity);
+        changes.cursorOpacity.value_or(*defaults.cursorOpacity);
     const QString cursorStyle =
-        mergedValue(changes.hasCursorStyle, changes.cursorStyle,
-                    defaults.cursorStyle);
-    const QVariant cursorStyleBlink =
-        mergedValue(changes.hasCursorStyleBlink,
-                    changes.cursorStyleBlink,
-                    defaults.cursorStyleBlink);
+        changes.cursorStyle.value_or(*defaults.cursorStyle);
+    const QVariant cursorStyleBlink = changes.cursorStyleBlink.value_or(
+        *defaults.cursorStyleBlink);
     const QVariant cursorText =
-        mergedValue(changes.hasCursorText, changes.cursorText,
-                    defaults.cursorText);
+        changes.cursorText.value_or(*defaults.cursorText);
     const QVariant boldColor =
-        mergedValue(changes.hasBoldColor, changes.boldColor,
-                    defaults.boldColor);
+        changes.boldColor.value_or(*defaults.boldColor);
     const double faintOpacity =
-        mergedValue(changes.hasFaintOpacity, changes.faintOpacity,
-                    defaults.faintOpacity);
+        changes.faintOpacity.value_or(*defaults.faintOpacity);
     const quint64 scrollbackLimit =
-        mergedValue(changes.hasScrollbackLimit, changes.scrollbackLimit,
-                    defaults.scrollbackLimit);
-    const QString confirmCloseSurface =
-        mergedValue(changes.hasConfirmCloseSurface,
-                    changes.confirmCloseSurface,
-                    defaults.confirmCloseSurface);
+        changes.scrollbackLimit.value_or(*defaults.scrollbackLimit);
+    const QString confirmCloseSurface = changes.confirmCloseSurface.value_or(
+        *defaults.confirmCloseSurface);
     const bool clipboardTrimTrailingSpaces =
-        mergedValue(changes.hasClipboardTrimTrailingSpaces,
-                    changes.clipboardTrimTrailingSpaces,
-                    defaults.clipboardTrimTrailingSpaces);
+        changes.clipboardTrimTrailingSpaces.value_or(
+            *defaults.clipboardTrimTrailingSpaces);
     const bool clipboardPasteProtection =
-        mergedValue(changes.hasClipboardPasteProtection,
-                    changes.clipboardPasteProtection,
-                    defaults.clipboardPasteProtection);
+        changes.clipboardPasteProtection.value_or(
+            *defaults.clipboardPasteProtection);
     const bool clipboardPasteBracketedSafe =
-        mergedValue(changes.hasClipboardPasteBracketedSafe,
-                    changes.clipboardPasteBracketedSafe,
-                    defaults.clipboardPasteBracketedSafe);
+        changes.clipboardPasteBracketedSafe.value_or(
+            *defaults.clipboardPasteBracketedSafe);
     const QString copyOnSelect =
-        mergedValue(changes.hasCopyOnSelect, changes.copyOnSelect,
-                    defaults.copyOnSelect);
+        changes.copyOnSelect.value_or(*defaults.copyOnSelect);
     const bool selectionClearOnTyping =
-        mergedValue(changes.hasSelectionClearOnTyping,
-                    changes.selectionClearOnTyping,
-                    defaults.selectionClearOnTyping);
+        changes.selectionClearOnTyping.value_or(
+            *defaults.selectionClearOnTyping);
     const bool selectionClearOnCopy =
-        mergedValue(changes.hasSelectionClearOnCopy,
-                    changes.selectionClearOnCopy,
-                    defaults.selectionClearOnCopy);
+        changes.selectionClearOnCopy.value_or(
+            *defaults.selectionClearOnCopy);
     const QString middleClickAction =
-        mergedValue(changes.hasMiddleClickAction, changes.middleClickAction,
-                    defaults.middleClickAction);
-    const bool linkUrl =
-        mergedValue(changes.hasLinkUrl, changes.linkUrl, defaults.linkUrl);
+        changes.middleClickAction.value_or(*defaults.middleClickAction);
+    const bool linkUrl = changes.linkUrl.value_or(*defaults.linkUrl);
     const QString linkPreviews =
-        mergedValue(changes.hasLinkPreviews, changes.linkPreviews,
-                    defaults.linkPreviews);
+        changes.linkPreviews.value_or(*defaults.linkPreviews);
     const QStringList keybinds =
-        mergedValue(changes.hasKeybinds, changes.keybinds,
-                    defaults.keybinds);
+        changes.keybinds.value_or(*defaults.keybinds);
     const QStringList configFiles =
-        mergedValue(changes.hasConfigFiles, changes.configFiles,
-                    defaults.configFiles);
+        changes.configFiles.value_or(*defaults.configFiles);
 
     GhosttyConfigSnapshot snapshot;
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -1384,10 +1345,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("link-previews"), linkPreviews);
     snapshot.values.insert(QStringLiteral("keybind"), keybinds);
     snapshot.values.insert(QStringLiteral("config-file"), configFiles);
-    if (changes.hasKeybinds) {
+    if (changes.keybinds.has_value()) {
         QStringList changedKeybinds;
         for (const QString &keybind : keybinds) {
-            if (!defaults.keybinds.contains(keybind)) {
+            if (!defaults.keybinds->contains(keybind)) {
                 changedKeybinds.append(keybind);
             }
         }
