@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 
+class QQmlComponent;
 class TerminalPane;
 
 class TerminalWorkspace : public QQuickItem {
@@ -21,6 +22,10 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabTitlesChanged)
+    Q_PROPERTY(QQmlComponent *searchOverlayComponent
+               READ searchOverlayComponent
+               WRITE setSearchOverlayComponent
+               NOTIFY searchOverlayComponentChanged)
 
 public:
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
@@ -34,6 +39,11 @@ public:
     TabListModel *tabModel() { return &tabModel_; }
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
+    QQmlComponent *searchOverlayComponent() const
+    {
+        return searchOverlayComponent_;
+    }
+    void setSearchOverlayComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeApplicationConfiguredAction(QStringView action);
@@ -61,6 +71,7 @@ Q_SIGNALS:
     void configReloadRequested();
     void broadActionsRequested(const QStringList &actions);
     void quitApproved();
+    void searchOverlayComponentChanged();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -77,6 +88,7 @@ private:
     };
 
     PaneHandle createPane(const LaunchOptions &options);
+    void createSearchOverlay(TerminalPane *pane);
     bool executeAction(const WorkspaceActionRequest &request);
     void createNewTab();
     void activateTab(TabId id);
@@ -145,4 +157,5 @@ private:
     QString pendingPaste_;
     QVector<PaneId> pendingPastePaneIds_;
     bool broadActionFanout_ = false;
+    QQmlComponent *searchOverlayComponent_ = nullptr;
 };

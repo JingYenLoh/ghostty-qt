@@ -37,6 +37,9 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY activeKeyTablesChanged)
     Q_PROPERTY(QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
     Q_PROPERTY(QRectF linkPreviewRect READ linkPreviewRect NOTIFY linkPreviewChanged)
+    Q_PROPERTY(bool searchUiActive READ searchUiActive NOTIFY searchUiActiveChanged)
+    Q_PROPERTY(QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
+    Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY searchMatchLabelChanged)
 
 public:
     explicit TerminalPane(const LaunchOptions &options, QQuickItem *parent = nullptr);
@@ -48,6 +51,9 @@ public:
     QStringList activeKeyTables() const;
     QString linkPreviewText() const;
     QRectF linkPreviewRect() const;
+    bool searchUiActive() const { return searchUiActive_; }
+    QString searchUiText() const { return searchUiText_; }
+    QString searchMatchLabel() const { return searchMatchLabel_; }
     bool isRunning() const;
     bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions() const;
@@ -65,6 +71,9 @@ public:
     void zoomIn();
     void zoomOut();
     void resetZoom();
+    Q_INVOKABLE void setSearchUiText(const QString &text);
+    Q_INVOKABLE void endSearchUi();
+    Q_INVOKABLE void navigateSearch(int direction);
     // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
     // implementation as a focused local binding.
     bool executeConfiguredAction(QStringView action);
@@ -76,6 +85,10 @@ Q_SIGNALS:
     void fontPointSizeChanged();
     void activeKeyTablesChanged();
     void linkPreviewChanged();
+    void searchUiActiveChanged();
+    void searchUiTextChanged();
+    void searchMatchLabelChanged();
+    void searchUiFocusRequested();
     void processStateChanged();
     void requestNewTab();
     void requestSplit(int orientation);
@@ -159,6 +172,11 @@ private:
                                    TerminalLinkKind kind,
                                    const QByteArray &uri);
     QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
+    void startSearchUi();
+    void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
+    void installSearchDecorationsLocked(
+        const TerminalSearchUpdate &searchUpdate);
+    void clearSearchDecorationsLocked();
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -218,4 +236,15 @@ private:
     QSet<Qt::MouseButton> mouseReportedPresses_;
     std::function<bool(const QUrl &)> urlOpener_;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
+    bool searchUiActive_ = false;
+    bool searchEngineActive_ = false;
+    QString searchUiText_;
+    QString searchMatchLabel_ = QStringLiteral("0/0");
+    TerminalSearchUpdate pendingSearchUpdate_;
+    bool hasPendingSearchUpdate_ = false;
+    QSet<int> searchCandidateCellIndexes_;
+    QSet<int> searchSelectedCellIndexes_;
+    quint64 searchDecorationRevision_ = 0;
+    int searchDecorationColumns_ = 0;
+    int searchDecorationRows_ = 0;
 };

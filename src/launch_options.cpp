@@ -202,6 +202,30 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             snapshot, QStringLiteral("selection-background"))) {
         result.appearance.selectionBackground = *selectionBackground;
     }
+    if (const auto searchForeground = configTerminalColor(
+            snapshot, QStringLiteral("search-foreground"));
+        searchForeground
+        && searchForeground->kind != TerminalColorKind::Unset) {
+        result.appearance.searchForeground = *searchForeground;
+    }
+    if (const auto searchBackground = configTerminalColor(
+            snapshot, QStringLiteral("search-background"));
+        searchBackground
+        && searchBackground->kind != TerminalColorKind::Unset) {
+        result.appearance.searchBackground = *searchBackground;
+    }
+    if (const auto searchSelectedForeground = configTerminalColor(
+            snapshot, QStringLiteral("search-selected-foreground"));
+        searchSelectedForeground
+        && searchSelectedForeground->kind != TerminalColorKind::Unset) {
+        result.appearance.searchSelectedForeground = *searchSelectedForeground;
+    }
+    if (const auto searchSelectedBackground = configTerminalColor(
+            snapshot, QStringLiteral("search-selected-background"));
+        searchSelectedBackground
+        && searchSelectedBackground->kind != TerminalColorKind::Unset) {
+        result.appearance.searchSelectedBackground = *searchSelectedBackground;
+    }
     if (const auto cursor = configTerminalColor(
             snapshot, QStringLiteral("cursor-color"))) {
         result.appearance.cursorColor = *cursor;

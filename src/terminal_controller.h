@@ -78,6 +78,14 @@ public:
     void selectAll();
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    // Search requests are generation-scoped so an incremental scan can yield
+    // to PTY and UI work without publishing results from a superseded query.
+    void search(const QString &text);
+    void searchSerialized(const QByteArray &serializedText);
+    void cancelSearch();
+    void navigateSearch(TerminalSearchDirection direction);
+    void requestSearchSelection();
+    [[nodiscard]] bool searchExpected() const { return searchExpected_; }
     void requestHyperlink(int column, int row, quint64 contentRevision);
     void cancelHyperlinkRequest();
     [[nodiscard]] quint64 prepareHyperlinkActivation(
@@ -107,6 +115,8 @@ Q_SIGNALS:
     void hyperlinkActivationResolved(quint64 contentRevision,
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
+    void searchUpdated(const TerminalSearchUpdate &update);
+    void searchSelectionReady(bool available, const QString &text);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -137,6 +147,13 @@ Q_SIGNALS:
     void selectAllRequested();
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
+    void searchRequested(quint64 generation, const QByteArray &needle);
+    void serializedSearchRequested(quint64 generation,
+                                   const QByteArray &serializedNeedle);
+    void searchCancellationRequested(quint64 generation);
+    void searchNavigationRequested(quint64 generation,
+                                   TerminalSearchDirection direction);
+    void searchSelectionRequested(quint64 requestId);
     void hyperlinkQueryRequested(quint64 requestId, quint64 contentRevision,
                                  int column, int row);
     void hyperlinkQueryCancellationRequested(quint64 requestId);
@@ -151,6 +168,8 @@ Q_SIGNALS:
 private:
     void notePotentialActivity();
     quint64 nextHyperlinkRequestId();
+    quint64 nextSearchGeneration();
+    quint64 nextSearchSelectionRequestId();
 
     LaunchOptions options_;
     QThread *thread_ = nullptr;
@@ -169,4 +188,9 @@ private:
     quint64 nextHyperlinkRequestId_ = 0;
     quint64 activeHyperlinkRequestId_ = 0;
     quint64 activeHyperlinkActivationId_ = 0;
+    quint64 nextSearchGeneration_ = 0;
+    quint64 activeSearchGeneration_ = 0;
+    quint64 nextSearchSelectionRequestId_ = 0;
+    quint64 activeSearchSelectionRequestId_ = 0;
+    bool searchExpected_ = false;
 };

@@ -14,8 +14,9 @@ enum class TerminalColorKind {
 };
 
 // A configured color may be a fixed RGB value or one of Ghostty's
-// cell-relative aliases. Keeping the alias intact is important for selection
-// and cursor text, whose effective color can differ for every rendered cell.
+// cell-relative aliases. Keeping the alias intact is important for search
+// matches, selections, and cursor text, whose effective color can differ for
+// every rendered cell.
 struct TerminalColorValue {
     TerminalColorKind kind = TerminalColorKind::Unset;
     QColor color;
@@ -58,6 +59,15 @@ struct TerminalAppearance {
 
     TerminalColorValue selectionForeground;
     TerminalColorValue selectionBackground;
+
+    TerminalColorValue searchForeground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#000000")));
+    TerminalColorValue searchBackground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#FFE082")));
+    TerminalColorValue searchSelectedForeground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#000000")));
+    TerminalColorValue searchSelectedBackground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#F2A57E")));
 
     TerminalColorValue cursorColor;
     TerminalCursorStyle cursorStyle = TerminalCursorStyle::Block;

@@ -352,6 +352,22 @@
       "status": "planned",
       "note": "The pinned +show-config text output does not expose the derived palette and explicit-entry mask required for exact harmonization."
     },
+    "search-background": {
+      "status": "supported",
+      "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."
+    },
+    "search-foreground": {
+      "status": "supported",
+      "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default black is retained when unset."
+    },
+    "search-selected-background": {
+      "status": "supported",
+      "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default #F2A57E is retained when unset."
+    },
+    "search-selected-foreground": {
+      "status": "supported",
+      "note": "Fixed, cell-foreground, and cell-background values apply live to the navigated match; the Ghostty default black is retained when unset."
+    },
     "selection-background": {
       "status": "supported",
       "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal foreground."
@@ -684,6 +700,10 @@
           "status": "partial",
           "note": "Root and named-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it."
         },
+        "end_search": {
+          "status": "partial",
+          "note": "Stops the cooperative pane scan, clears its highlights, and hides the pane-local Qt overlay. The public libghostty-vt artifact omits Ghostty's xev-dependent search thread, so this uses the frontend search foundation."
+        },
         "equalize_splits": {
           "status": "supported",
           "note": "Equalizes the source tab with Ghostty's same-axis subtree weighting while preserving focus and split zoom."
@@ -717,6 +737,10 @@
         "move_tab": {
           "status": "supported",
           "note": "Moves the source surface's tab by a signed cyclic offset while retaining stable tab identity and selection."
+        },
+        "navigate_search": {
+          "status": "partial",
+          "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. Candidate highlights in older viewports can lag until the bottom-up scan reaches them; terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
         },
         "new_split": {
           "status": "partial",
@@ -797,6 +821,14 @@
           "status": "supported",
           "note": "Pins the viewport to the top of scrollback through libghostty's tagged viewport API."
         },
+        "search": {
+          "status": "partial",
+          "note": "Replaces the literal needle without changing search-UI visibility, and an empty needle stops matching while leaving the overlay alone. The generation-cancelled bottom-up scan uses public grid references, whose reads temporarily restore compressed pages and therefore interleave bounded recompression. Flat public rows cannot exactly reproduce internal page-boundary delimiters or every blank-cell point mapping; mutations restart the scan, older viewport highlights can lag, and only the active screen has results."
+        },
+        "search_selection": {
+          "status": "partial",
+          "note": "When a terminal selection exists, its untrimmed text becomes the needle and opens the pane overlay; without a selection the action is not performed. Search execution uses the cooperative frontend foundation."
+        },
         "select_all": {
           "status": "partial",
           "note": "Installs Ghostty's full selectable-content range and exposes it for copy; copy-on-select configuration and its automatic clipboard side effect remain planned."
@@ -807,6 +839,10 @@
         },
         "show_on_screen_keyboard": {
           "scope": "qt_mapping"
+        },
+        "start_search": {
+          "status": "partial",
+          "note": "Opens and focuses a pane-local top-right Qt overlay, retaining and selecting its prior text without starting work for an empty needle. The overlay is not draggable and the upstream xev-dependent search thread is unavailable in libghostty-vt."
         },
         "text": {
           "status": "supported",

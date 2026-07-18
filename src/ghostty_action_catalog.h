@@ -1,6 +1,6 @@
 #pragma once
 
-#include "terminal_actions.h"
+#include "terminal_types.h"
 #include "workspace_action.h"
 
 #include <QMetaType>
@@ -33,6 +33,11 @@ enum class GhosttyPaneActionKind {
     ScrollPageFractional,
     SelectAll,
     AdjustSelection,
+    StartSearch,
+    EndSearch,
+    SearchSelection,
+    Search,
+    NavigateSearch,
     Csi,
     Esc,
     Text,
@@ -45,6 +50,7 @@ struct GhosttyPaneAction {
     float pageFraction = 0.0F;
     TerminalSelectionAdjustment selectionAdjustment =
         TerminalSelectionAdjustment::Left;
+    TerminalSearchDirection searchDirection = TerminalSearchDirection::Next;
     // Raw parameter spelling after the first colon. In particular, Text is
     // deliberately not decoded here: Binding.Action.parse accepts invalid
     // Zig string escapes and Ghostty only reports those when performing the

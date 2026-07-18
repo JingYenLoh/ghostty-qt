@@ -2,8 +2,10 @@
 
 #include "terminal_pane.h"
 
+#include <QDebug>
 #include <QKeyEvent>
 #include <QPointer>
+#include <QQmlComponent>
 #include <QScopedValueRollback>
 #include <QTimer>
 
@@ -74,6 +76,64 @@ TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
 }
 
 TerminalWorkspace::~TerminalWorkspace() = default;
+
+void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
+{
+    if (searchOverlayComponent_ == component) {
+        return;
+    }
+
+    searchOverlayComponent_ = component;
+    if (component != nullptr) {
+        connect(component, &QObject::destroyed, this, [this, component] {
+            if (searchOverlayComponent_ == component) {
+                searchOverlayComponent_ = nullptr;
+                Q_EMIT searchOverlayComponentChanged();
+            }
+        });
+
+        for (const std::unique_ptr<Tab> &tab : tabs_) {
+            std::vector<TerminalPane *> panes;
+            collectPanes(tab->root.get(), &panes);
+            for (TerminalPane *pane : panes) {
+                createSearchOverlay(pane);
+            }
+        }
+    }
+
+    Q_EMIT searchOverlayComponentChanged();
+}
+
+void TerminalWorkspace::createSearchOverlay(TerminalPane *pane)
+{
+    constexpr auto attachedProperty = "_ghosttyQtSearchOverlayAttached";
+    if (pane == nullptr || searchOverlayComponent_ == nullptr
+        || pane->property(attachedProperty).toBool()) {
+        return;
+    }
+
+    QObject *overlay = searchOverlayComponent_->createWithInitialProperties({
+        {QStringLiteral("terminalPane"),
+         QVariant::fromValue(static_cast<QObject *>(pane))},
+    });
+    if (overlay == nullptr) {
+        qWarning().noquote()
+            << "Could not create terminal search overlay:"
+            << searchOverlayComponent_->errorString();
+        return;
+    }
+
+    auto *overlayItem = qobject_cast<QQuickItem *>(overlay);
+    if (overlayItem == nullptr) {
+        qWarning() << "Terminal search overlay component did not create a QQuickItem";
+        delete overlay;
+        return;
+    }
+
+    overlay->setParent(pane);
+    overlayItem->setParentItem(pane);
+    pane->setProperty(attachedProperty, true);
+}
 
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 {
@@ -398,6 +458,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             [this, paneId](const QString &text, TerminalPane *) {
                 beginUnsafePaste(text, paneId);
             });
+    createSearchOverlay(pane);
     return {paneId, pane};
 }
 

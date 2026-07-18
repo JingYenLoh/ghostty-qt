@@ -78,9 +78,13 @@ private Q_SLOTS:
     void invalidatesTrackedOsc8HyperlinksAfterReplacementAndReset();
     void invalidatesTrackedOsc8HyperlinksAfterScrollbackPruning();
     void snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps();
+    void snapshotsPhysicalSearchRowsAcrossHistoryAndScreens();
+    void searchSnapshotsFollowLiveDeccolmDimensions();
     void tracksTextRangesAcrossReflowViewportAndScreenChanges();
     void invalidatesTrackedTextRangesAfterCoveredTextMutation();
     void selectsAndNavigatesViewportAtomically();
+    void mapsAndRevealsSearchRanges();
+    void formatsSearchSelectionWithoutTrimming();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
 };
@@ -613,6 +617,144 @@ void GhosttyVtAdapterTest::snapshotsLogicalLineBytesAcrossGraphemesAndWideWraps(
     QCOMPARE(match->cells, QVector<QPoint>({QPoint(1, 0)}));
 }
 
+void GhosttyVtAdapterTest::snapshotsPhysicalSearchRowsAcrossHistoryAndScreens()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray wrappedLine = QStringLiteral(
+        "abcde\u0301fg\u754c/path").toUtf8();
+    QByteArray output = QByteArrayLiteral("A\033[4GB  \r\n");
+    output += wrappedLine;
+    output += QByteArrayLiteral(
+        "\r\ntail-0\r\ntail-1\r\ntail-2\r\ntail-3");
+    adapter->writeVt(output);
+
+    const std::optional<GhosttyVtAdapter::SearchExtent> extent =
+        adapter->searchExtent();
+    QVERIFY(extent.has_value());
+    QCOMPARE(extent->columns, 8);
+    QVERIFY(extent->totalRows > static_cast<quint32>(options.geometry.rows));
+    QCOMPARE(extent->activeScreen,
+             GhosttyVtAdapter::SearchScreen::Primary);
+    QVERIFY(!adapter->snapshotSearchRow(extent->totalRows).has_value());
+
+    std::optional<GhosttyVtAdapter::SearchRowSnapshot> gapRow;
+    std::optional<GhosttyVtAdapter::SearchRowSnapshot> wrapHead;
+    std::optional<GhosttyVtAdapter::SearchRowSnapshot> wrapTail;
+    const QByteArray expectedHead = QStringLiteral("abcde\u0301fg").toUtf8();
+    const QByteArray expectedTail = QStringLiteral("\u754c/path").toUtf8();
+    for (quint32 row = 0; row < extent->totalRows; ++row) {
+        auto snapshot = adapter->snapshotSearchRow(row);
+        QVERIFY(snapshot.has_value());
+        QCOMPARE(snapshot->screenRow, row);
+        QCOMPARE(snapshot->text.size(), snapshot->byteCells.size());
+        if (snapshot->text == QByteArrayLiteral("A  B")) {
+            gapRow = std::move(snapshot);
+        } else if (snapshot->text == expectedHead) {
+            wrapHead = std::move(snapshot);
+        } else if (snapshot->text == expectedTail) {
+            wrapTail = std::move(snapshot);
+        }
+    }
+
+    QVERIFY(gapRow.has_value());
+    QVERIFY(!gapRow->wrapped);
+    QCOMPARE(gapRow->byteCells,
+             QVector<TerminalSearchCell>({
+                 {.column = 0, .screenRow = gapRow->screenRow},
+                 {.column = 1, .screenRow = gapRow->screenRow},
+                 {.column = 2, .screenRow = gapRow->screenRow},
+                 {.column = 3, .screenRow = gapRow->screenRow},
+             }));
+    const TerminalSearchCell expectedGapNewline{
+        .column = 3,
+        .screenRow = gapRow->screenRow,
+    };
+    QCOMPARE(gapRow->newlineCell, expectedGapNewline);
+
+    QVERIFY(wrapHead.has_value());
+    QVERIFY(wrapHead->wrapped);
+    QCOMPARE(wrapHead->byteCells.at(4).column, quint16{4});
+    QCOMPARE(wrapHead->byteCells.at(5).column, quint16{4});
+    QCOMPARE(wrapHead->byteCells.at(6).column, quint16{4});
+    QCOMPARE(wrapHead->newlineCell, wrapHead->byteCells.constLast());
+
+    QVERIFY(wrapTail.has_value());
+    QVERIFY(!wrapTail->wrapped);
+    const QByteArray wide = QStringLiteral("\u754c").toUtf8();
+    for (qsizetype index = 0; index < wide.size(); ++index) {
+        QCOMPARE(wrapTail->byteCells.at(index).column, quint16{0});
+    }
+    QCOMPARE(wrapTail->byteCells.at(wide.size()).column, quint16{2});
+
+    // A soft wrap can follow a row whose final cells are spaces. Those bytes
+    // are part of the logical search text and must not be trimmed like the
+    // trailing spaces at a hard line ending.
+    auto spacedWrapAdapter = GhosttyVtAdapter::create(options);
+    QVERIFY(spacedWrapAdapter != nullptr);
+    spacedWrapAdapter->writeVt(QByteArrayLiteral("abc     Z"));
+    const auto spacedWrapHead = spacedWrapAdapter->snapshotSearchRow(0);
+    QVERIFY(spacedWrapHead.has_value());
+    QVERIFY(spacedWrapHead->wrapped);
+    QCOMPARE(spacedWrapHead->text, QByteArrayLiteral("abc     "));
+    QCOMPARE(spacedWrapHead->byteCells.size(), qsizetype{8});
+    for (quint16 column = 0; column < 8; ++column) {
+        const TerminalSearchCell expected{
+            .column = column,
+            .screenRow = 0,
+        };
+        QCOMPARE(spacedWrapHead->byteCells.at(column), expected);
+    }
+    QCOMPARE(spacedWrapHead->newlineCell,
+             spacedWrapHead->byteCells.constLast());
+    const auto spacedWrapTail = spacedWrapAdapter->snapshotSearchRow(1);
+    QVERIFY(spacedWrapTail.has_value());
+    QVERIFY(!spacedWrapTail->wrapped);
+    QCOMPARE(spacedWrapTail->text, QByteArrayLiteral("Z"));
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h\033[H\033[2JALT"));
+    const auto alternateExtent = adapter->searchExtent();
+    QVERIFY(alternateExtent.has_value());
+    QCOMPARE(alternateExtent->activeScreen,
+             GhosttyVtAdapter::SearchScreen::Alternate);
+    QCOMPARE(alternateExtent->totalRows,
+             static_cast<quint32>(options.geometry.rows));
+    bool foundAlternateText = false;
+    for (quint32 row = 0; row < alternateExtent->totalRows; ++row) {
+        const auto alternateRow = adapter->snapshotSearchRow(row);
+        QVERIFY(alternateRow.has_value());
+        foundAlternateText = foundAlternateText
+            || alternateRow->text == QByteArrayLiteral("ALT");
+    }
+    QVERIFY(foundAlternateText);
+}
+
+void GhosttyVtAdapterTest::searchSnapshotsFollowLiveDeccolmDimensions()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 80;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    // DEC mode 40 opts into DECCOLM; mode 3 then resizes libghostty's grid
+    // internally without going through the frontend resize path.
+    adapter->writeVt(QByteArrayLiteral("\033[?40h\033[?3hwide-grid"));
+    const auto extent = adapter->searchExtent();
+    QVERIFY(extent.has_value());
+    QCOMPARE(extent->columns, 132);
+    QCOMPARE(extent->rows, 3);
+
+    const auto row = adapter->snapshotSearchRow(0);
+    QVERIFY(row.has_value());
+    QCOMPARE(row->text, QByteArrayLiteral("wide-grid"));
+    QCOMPARE(row->byteCells.size(), row->text.size());
+}
+
 void GhosttyVtAdapterTest::tracksTextRangesAcrossReflowViewportAndScreenChanges()
 {
     GhosttyVtAdapter::Options options;
@@ -1060,6 +1202,105 @@ void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
     const QString all = adapter->selectedText();
     QVERIFY(all.startsWith(QStringLiteral("row-0")));
     QVERIFY(all.endsWith(QStringLiteral("row-7")));
+}
+
+void GhosttyVtAdapterTest::mapsAndRevealsSearchRanges()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral(
+        "row-0\r\nrow-1\r\nrow-2\r\nrow-3\r\n"
+        "row-4\r\nrow-5\r\nrow-6\r\nrow-7"));
+
+    const auto extent = adapter->searchExtent();
+    QVERIFY(extent.has_value());
+    QCOMPARE(extent->totalRows, quint32{8});
+
+    const TerminalSearchRange topRange{
+        .start = {.column = 1, .screenRow = 0},
+        .end = {.column = 3, .screenRow = 0},
+    };
+    QVERIFY(adapter->visibleCellsForSearchRange(topRange).isEmpty());
+    QVERIFY(adapter->scrollSearchRangeIntoView(topRange));
+    QCOMPARE(adapter->visibleCellsForSearchRange(topRange),
+             QVector<QPoint>({QPoint(1, 0), QPoint(2, 0), QPoint(3, 0)}));
+    QVERIFY(!adapter->scrollSearchRangeIntoView(topRange));
+
+    // Reversed endpoints are normalized before clipping to the viewport.
+    const TerminalSearchRange reversed{
+        .start = {.column = 6, .screenRow = 1},
+        .end = {.column = 2, .screenRow = 0},
+    };
+    QVector<QPoint> expected;
+    for (int column = 2; column < options.geometry.columns; ++column) {
+        expected.append(QPoint(column, 0));
+    }
+    for (int column = 0; column <= 6; ++column) {
+        expected.append(QPoint(column, 1));
+    }
+    QCOMPARE(adapter->visibleCellsForSearchRange(reversed), expected);
+
+    // A result below the viewport is pinned by its start row. Row four has
+    // enough following content that libghostty does not need to clamp the
+    // viewport against the bottom of history.
+    const TerminalSearchRange belowRange{
+        .start = {.column = 2, .screenRow = 4},
+        .end = {.column = 4, .screenRow = 4},
+    };
+    QVERIFY(adapter->visibleCellsForSearchRange(belowRange).isEmpty());
+    QVERIFY(adapter->scrollSearchRangeIntoView(belowRange));
+    const auto revealedExtent = adapter->searchExtent();
+    QVERIFY(revealedExtent.has_value());
+    QCOMPARE(revealedExtent->viewportOffset, quint64{4});
+    QCOMPARE(adapter->visibleCellsForSearchRange(belowRange),
+             QVector<QPoint>({QPoint(2, 0), QPoint(3, 0), QPoint(4, 0)}));
+
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = 3,
+    }));
+    const TerminalSearchRange overlap{
+        .start = {.column = 6, .screenRow = 2},
+        .end = {.column = 1, .screenRow = 3},
+    };
+    QVERIFY(!adapter->scrollSearchRangeIntoView(overlap));
+    QCOMPARE(adapter->visibleCellsForSearchRange(overlap),
+             QVector<QPoint>({QPoint(0, 0), QPoint(1, 0)}));
+
+    const TerminalSearchRange bottomRange{
+        .start = {.column = 0, .screenRow = 7},
+        .end = {.column = 2, .screenRow = 7},
+    };
+    QVERIFY(adapter->scrollSearchRangeIntoView(bottomRange));
+    QCOMPARE(adapter->visibleCellsForSearchRange(bottomRange),
+             QVector<QPoint>({QPoint(0, 2), QPoint(1, 2), QPoint(2, 2)}));
+
+    const TerminalSearchRange invalid{
+        .start = {.column = 8, .screenRow = 0},
+        .end = {.column = 8, .screenRow = 0},
+    };
+    QVERIFY(adapter->visibleCellsForSearchRange(invalid).isEmpty());
+    QVERIFY(!adapter->scrollSearchRangeIntoView(invalid));
+}
+
+void GhosttyVtAdapterTest::formatsSearchSelectionWithoutTrimming()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 10;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("abc   "));
+
+    adapter->beginSelection(0, 0, 1, false);
+    QVERIFY(adapter->updateSelection(6, 0, false));
+    adapter->endSelection(6, 0);
+    QCOMPARE(adapter->selectedText(), QStringLiteral("abc"));
+    QCOMPARE(adapter->selectedTextForSearch(true), QStringLiteral("abc"));
+    QCOMPARE(adapter->selectedTextForSearch(), QStringLiteral("abc   "));
 }
 
 void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()

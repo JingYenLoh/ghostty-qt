@@ -915,13 +915,13 @@ public:
         return encoded;
     }
 
-    QString selectedText() const
+    QString selectedText(bool trim = true) const
     {
         GhosttyTerminalSelectionFormatOptions options{};
         options.size = sizeof(options);
         options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
         options.unwrap = true;
-        options.trim = true;
+        options.trim = trim;
         options.selection = nullptr;
 
         size_t required = 0;
@@ -1256,9 +1256,16 @@ public:
             std::swap(start, end);
         }
 
+        uint16_t liveColumns = 0;
+        if (ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_COLS, &liveColumns)
+                != GHOSTTY_SUCCESS
+            || liveColumns == 0) {
+            return std::nullopt;
+        }
+        const int terminalColumns = static_cast<int>(liveColumns);
         const quint64 rowCount = static_cast<quint64>(end.y) - start.y + 1U;
-        const quint64 columnCount = static_cast<quint64>(
-            std::max(geometry_.columns, 1));
+        const quint64 columnCount = static_cast<quint64>(terminalColumns);
         if (rowCount > maximumLogicalLineCells
             || rowCount * columnCount > maximumLogicalLineCells) {
             return std::nullopt;
@@ -1297,21 +1304,46 @@ public:
             const int firstColumn = y == start.y ? start.x : 0;
             const int lastColumn = y == end.y
                 ? end.x
-                : geometry_.columns - 1;
+                : terminalColumns - 1;
             if (firstColumn < 0 || lastColumn < firstColumn
-                || lastColumn >= geometry_.columns) {
+                || lastColumn >= terminalColumns) {
                 return std::nullopt;
             }
 
+            // A screen-coordinate lookup may traverse the complete page
+            // list. Resolve both endpoints and require one page/local row
+            // before advancing the public x field through the validated
+            // span. Calling gridRefAtScreen for every cell turns one history
+            // row into columns x scrollback work, while validating only the
+            // first point could forge an out-of-bounds ref on a narrow page
+            // left behind by an incomplete reflow.
+            GhosttyGridRef rowReference{};
+            GhosttyGridRef lastReference{};
+            if (!gridRefAtScreen(
+                    ScreenCell{
+                        .x = static_cast<uint16_t>(firstColumn),
+                        .y = y,
+                    },
+                    &rowReference)
+                || !gridRefAtScreen(
+                    ScreenCell{
+                        .x = static_cast<uint16_t>(lastColumn),
+                        .y = y,
+                    },
+                    &lastReference)
+                || rowReference.node != lastReference.node
+                || rowReference.y != lastReference.y
+                || rowReference.x != static_cast<uint16_t>(firstColumn)
+                || lastReference.x != static_cast<uint16_t>(lastColumn)) {
+                return std::nullopt;
+            }
             for (int column = firstColumn; column <= lastColumn; ++column) {
                 const ScreenCell cell{
                     .x = static_cast<uint16_t>(column),
                     .y = y,
                 };
-                GhosttyGridRef reference{};
-                if (!gridRefAtScreen(cell, &reference)) {
-                    return std::nullopt;
-                }
+                GhosttyGridRef reference = rowReference;
+                reference.x = static_cast<uint16_t>(column);
 
                 GhosttyCell rawCell = 0;
                 GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
@@ -1951,6 +1983,225 @@ public:
         return true;
     }
 
+    std::optional<SearchExtent> searchExtent() const
+    {
+        size_t totalRows = 0;
+        uint16_t columns = 0;
+        uint16_t rows = 0;
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        GhosttyTerminalScrollbar scrollbar{};
+        const GhosttyTerminalData keys[] = {
+            GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
+            GHOSTTY_TERMINAL_DATA_COLS,
+            GHOSTTY_TERMINAL_DATA_ROWS,
+            GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+            GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+        };
+        void *values[] = {
+            &totalRows, &columns, &rows, &screen, &scrollbar,
+        };
+        size_t written = 0;
+        if (ghostty_terminal_get_multi(
+                terminal_, std::size(keys), keys, values, &written)
+                != GHOSTTY_SUCCESS
+            || written != std::size(keys) || columns == 0 || rows == 0
+            || totalRows > static_cast<size_t>(UINT32_MAX)) {
+            return std::nullopt;
+        }
+
+        SearchScreen searchScreen = SearchScreen::Primary;
+        switch (screen) {
+        case GHOSTTY_TERMINAL_SCREEN_PRIMARY:
+            break;
+        case GHOSTTY_TERMINAL_SCREEN_ALTERNATE:
+            searchScreen = SearchScreen::Alternate;
+            break;
+        default:
+            return std::nullopt;
+        }
+        const quint64 viewportOffset = std::min<quint64>(
+            scrollbar.offset, static_cast<quint64>(totalRows));
+        return SearchExtent{
+            .totalRows = static_cast<quint32>(totalRows),
+            .columns = static_cast<int>(columns),
+            .rows = static_cast<int>(rows),
+            .viewportOffset = viewportOffset,
+            .viewportLength = std::min<quint64>(
+                scrollbar.len,
+                static_cast<quint64>(totalRows) - viewportOffset),
+            .activeScreen = searchScreen,
+        };
+    }
+
+    std::optional<SearchRowSnapshot> snapshotSearchRow(
+        quint32 screenRow) const
+    {
+        const std::optional<SearchExtent> extent = searchExtent();
+        if (!extent.has_value() || screenRow >= extent->totalRows
+            || extent->columns <= 0
+            || extent->columns > static_cast<int>(UINT16_MAX)) {
+            return std::nullopt;
+        }
+
+        const ScreenCell start{.x = 0, .y = screenRow};
+        const ScreenCell end{
+            .x = static_cast<uint16_t>(extent->columns - 1),
+            .y = screenRow,
+        };
+        GhosttyGridRef rowReference{};
+        GhosttyRow rawRow = 0;
+        bool wrapped = false;
+        if (!gridRefAtScreen(start, &rowReference)
+            || ghostty_grid_ref_row(&rowReference, &rawRow)
+                != GHOSTTY_SUCCESS
+            || ghostty_row_get(rawRow, GHOSTTY_ROW_DATA_WRAP, &wrapped)
+                != GHOSTTY_SUCCESS) {
+            return std::nullopt;
+        }
+
+        // PageFormatter carries trailing blanks across a soft-wrap boundary
+        // and emits them if the continuation later contains text. Preserve
+        // those cells for a wrapped row; only a hard line ending owns
+        // independently trimmable trailing spaces.
+        std::optional<TextMapData> data = textMapBetween(
+            start, end, wrapped);
+        if (!data.has_value()) {
+            return std::nullopt;
+        }
+        if (!wrapped) {
+            while (!data->text.isEmpty()
+                   && data->text.at(data->text.size() - 1) == ' ') {
+                data->text.chop(1);
+                data->byteCells.removeLast();
+            }
+        }
+        if (data->text.size() != data->byteCells.size()) {
+            return std::nullopt;
+        }
+
+        SearchRowSnapshot snapshot;
+        snapshot.screenRow = screenRow;
+        snapshot.text = std::move(data->text);
+        snapshot.byteCells.reserve(data->byteCells.size());
+        for (const ScreenCell &cell : std::as_const(data->byteCells)) {
+            snapshot.byteCells.append(TerminalSearchCell{
+                .column = cell.x,
+                .screenRow = cell.y,
+            });
+        }
+        snapshot.wrapped = wrapped;
+        snapshot.newlineCell = snapshot.byteCells.isEmpty()
+            ? TerminalSearchCell{.column = 0, .screenRow = screenRow}
+            : snapshot.byteCells.constLast();
+        return snapshot;
+    }
+
+    QVector<QPoint> visibleCellsForSearchRange(
+        TerminalSearchRange range) const
+    {
+        const std::optional<SearchExtent> extent = searchExtent();
+        if (!extent.has_value() || extent->columns <= 0
+            || range.start.column >= extent->columns
+            || range.end.column >= extent->columns
+            || range.start.screenRow >= extent->totalRows
+            || range.end.screenRow >= extent->totalRows) {
+            return {};
+        }
+
+        const auto before = [](const TerminalSearchCell &left,
+                               const TerminalSearchCell &right) {
+            return left.screenRow < right.screenRow
+                || (left.screenRow == right.screenRow
+                    && left.column < right.column);
+        };
+        if (before(range.end, range.start)) {
+            std::swap(range.start, range.end);
+        }
+
+        GhosttyTerminalScrollbar scrollbar{};
+        if (ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+                != GHOSTTY_SUCCESS
+            || scrollbar.len == 0) {
+            return {};
+        }
+        const quint64 viewportStart = scrollbar.offset;
+        const quint64 viewportEnd = std::min(
+            static_cast<quint64>(scrollbar.offset + scrollbar.len),
+            static_cast<quint64>(extent->totalRows));
+        const quint64 firstRow = std::max(
+            static_cast<quint64>(range.start.screenRow), viewportStart);
+        const quint64 lastRowExclusive = std::min(
+            static_cast<quint64>(range.end.screenRow) + 1U, viewportEnd);
+        if (firstRow >= lastRowExclusive) {
+            return {};
+        }
+
+        QVector<QPoint> result;
+        for (quint64 row = firstRow; row < lastRowExclusive; ++row) {
+            const int firstColumn = row == range.start.screenRow
+                ? static_cast<int>(range.start.column)
+                : 0;
+            const int lastColumn = row == range.end.screenRow
+                ? static_cast<int>(range.end.column)
+                : extent->columns - 1;
+            const quint64 viewportRow = row - viewportStart;
+            if (viewportRow > static_cast<quint64>(INT_MAX)) {
+                return {};
+            }
+            for (int column = firstColumn; column <= lastColumn; ++column) {
+                result.append(QPoint(column, static_cast<int>(viewportRow)));
+            }
+        }
+        return result;
+    }
+
+    bool scrollSearchRangeIntoView(TerminalSearchRange range)
+    {
+        const std::optional<SearchExtent> extent = searchExtent();
+        if (!extent.has_value() || extent->columns <= 0
+            || range.start.column >= extent->columns
+            || range.end.column >= extent->columns
+            || range.start.screenRow >= extent->totalRows
+            || range.end.screenRow >= extent->totalRows) {
+            return false;
+        }
+
+        const auto before = [](const TerminalSearchCell &left,
+                               const TerminalSearchCell &right) {
+            return left.screenRow < right.screenRow
+                || (left.screenRow == right.screenRow
+                    && left.column < right.column);
+        };
+        if (before(range.end, range.start)) {
+            std::swap(range.start, range.end);
+        }
+
+        GhosttyTerminalScrollbar scrollbar{};
+        if (ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+                != GHOSTTY_SUCCESS
+            || scrollbar.len == 0) {
+            return false;
+        }
+        const quint64 viewportStart = scrollbar.offset;
+        const quint64 viewportEnd = scrollbar.offset + scrollbar.len;
+        const bool overlapsViewport = range.start.screenRow < viewportEnd
+            && range.end.screenRow >= viewportStart;
+        if (overlapsViewport) {
+            return false;
+        }
+        // Ghostty's search thread scrolls the result's start pin directly to
+        // the viewport origin. This intentionally differs from selection
+        // endpoint scrolling, which places a below-viewport endpoint on the
+        // final visible row.
+        GhosttyTerminalScrollViewport scroll{};
+        scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
+        scroll.value.row = boundedRow(range.start.screenRow);
+        ghostty_terminal_scroll_viewport(terminal_, scroll);
+        return true;
+    }
+
     std::uint64_t compressionActivity() const
     {
         uint64_t activity = 0;
@@ -2424,14 +2675,14 @@ private:
         return static_cast<size_t>(std::min(row, maximum));
     }
 
-    void scrollEndpointIntoView(uint32_t endpointRow)
+    bool scrollEndpointIntoView(uint32_t endpointRow)
     {
         GhosttyTerminalScrollbar scrollbar{};
         if (ghostty_terminal_get(
                 terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
                 != GHOSTTY_SUCCESS
             || scrollbar.len == 0) {
-            return;
+            return false;
         }
 
         const uint64_t row = endpointRow;
@@ -2439,7 +2690,7 @@ private:
         if (row >= scrollbar.offset) {
             const uint64_t viewportRow = row - scrollbar.offset;
             if (viewportRow < scrollbar.len) {
-                return;
+                return false;
             }
             // Put a logical endpoint below the viewport on its final row,
             // matching Ghostty's pin-up-by-(rows-1) adjustment.
@@ -2450,6 +2701,7 @@ private:
         scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
         scroll.value.row = boundedRow(target);
         ghostty_terminal_scroll_viewport(terminal_, scroll);
+        return true;
     }
 
     static void writePtyCallback(GhosttyTerminal, void *userdata,
@@ -2684,6 +2936,11 @@ QString GhosttyVtAdapter::selectedText() const
     return impl_->selectedText();
 }
 
+QString GhosttyVtAdapter::selectedTextForSearch(bool trim) const
+{
+    return impl_->selectedText(trim);
+}
+
 bool GhosttyVtAdapter::hasSelection() const
 {
     return impl_->hasSelection();
@@ -2722,6 +2979,30 @@ bool GhosttyVtAdapter::adjustSelection(TerminalSelectionAdjustment adjustment)
 bool GhosttyVtAdapter::scrollViewport(const TerminalViewportRequest &request)
 {
     return impl_->scrollViewport(request);
+}
+
+std::optional<GhosttyVtAdapter::SearchExtent>
+GhosttyVtAdapter::searchExtent() const
+{
+    return impl_->searchExtent();
+}
+
+std::optional<GhosttyVtAdapter::SearchRowSnapshot>
+GhosttyVtAdapter::snapshotSearchRow(quint32 screenRow) const
+{
+    return impl_->snapshotSearchRow(screenRow);
+}
+
+QVector<QPoint> GhosttyVtAdapter::visibleCellsForSearchRange(
+    const TerminalSearchRange &range) const
+{
+    return impl_->visibleCellsForSearchRange(range);
+}
+
+bool GhosttyVtAdapter::scrollSearchRangeIntoView(
+    const TerminalSearchRange &range)
+{
+    return impl_->scrollSearchRangeIntoView(range);
 }
 
 std::optional<GhosttyVtAdapter::HyperlinkMatch>

@@ -63,6 +63,13 @@ public Q_SLOTS:
     void selectAll();
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    void search(quint64 generation, const QByteArray &needle);
+    void searchSerialized(quint64 generation,
+                          const QByteArray &serializedNeedle);
+    void cancelSearch(quint64 generation);
+    void navigateSearch(quint64 generation,
+                        TerminalSearchDirection direction);
+    void requestSearchSelection(quint64 requestId);
     void queryHyperlink(quint64 requestId, quint64 contentRevision,
                         int column, int row);
     void cancelHyperlinkQuery(quint64 requestId);
@@ -99,6 +106,9 @@ Q_SIGNALS:
                                      quint64 contentRevision,
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
+    void searchUpdated(const TerminalSearchUpdate &update);
+    void searchSelectionReady(quint64 requestId, bool available,
+                              const QString &text);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 
@@ -109,6 +119,7 @@ private Q_SLOTS:
     void publishFrame();
     void compressScrollback();
     void processPendingHyperlinkQuery();
+    void processSearchChunk();
 
 private:
     bool createTerminal();
@@ -122,6 +133,12 @@ private:
     void syncMouseEncoder();
     void syncSelectionAvailability();
     void markTerminalContentChanged();
+    void markSearchContentChanged();
+    void beginSearch(quint64 generation, const QByteArray &needle);
+    void restartSearch();
+    void scheduleSearchChunk();
+    void publishSearchUpdate();
+    void rebuildSearchVisibleCells();
     void refreshTrackedHyperlink(bool force = false);
     void processDeferredEffects();
     void drainPty(bool finalDrain);
@@ -138,6 +155,8 @@ private:
     std::unique_ptr<GhosttyLinkMatcher> linkMatcher_;
     struct HyperlinkState;
     std::unique_ptr<HyperlinkState> hyperlinkState_;
+    struct SearchState;
+    std::unique_ptr<SearchState> searchState_;
 
     int masterFd_ = -1;
     qint64 childPid_ = -1;
@@ -169,6 +188,7 @@ private:
     bool hold_ = false;
     bool mouseTracking_ = false;
     quint64 terminalContentRevision_ = 1;
+    quint64 searchContentRevision_ = 1;
     quint64 publishedContentRevision_ = 0;
     uint64_t compressionActivity_ = 0;
 };

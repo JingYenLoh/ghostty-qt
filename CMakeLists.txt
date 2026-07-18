@@ -458,6 +458,7 @@ qt_add_qml_module(ghostty-qt
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/SearchOverlay.qml
 )
 
 target_link_libraries(ghostty-qt PRIVATE

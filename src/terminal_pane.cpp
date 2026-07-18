@@ -497,6 +497,31 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                             terminalRows_ = frame_.rows;
                             terminalResizePending_ = false;
                         }
+                        if (applied) {
+                            const bool pendingMatchesFrame =
+                                hasPendingSearchUpdate_
+                                && pendingSearchUpdate_.contentRevision
+                                    == frame_.contentRevision
+                                && pendingSearchUpdate_.columns == frame_.columns
+                                && pendingSearchUpdate_.rows == frame_.rows;
+                            if (pendingMatchesFrame) {
+                                installSearchDecorationsLocked(
+                                    pendingSearchUpdate_);
+                                hasPendingSearchUpdate_ = false;
+                            } else {
+                                if (hasPendingSearchUpdate_
+                                    && pendingSearchUpdate_.contentRevision
+                                        < frame_.contentRevision) {
+                                    hasPendingSearchUpdate_ = false;
+                                }
+                                if (searchDecorationRevision_
+                                        != frame_.contentRevision
+                                    || searchDecorationColumns_ != frame_.columns
+                                    || searchDecorationRows_ != frame_.rows) {
+                                    clearSearchDecorationsLocked();
+                                }
+                            }
+                        }
                     }
                 }
                 if (applied) {
@@ -526,6 +551,26 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                         update();
                     }
                 }
+            });
+    connect(controller_, &TerminalController::searchUpdated, this,
+            &TerminalPane::handleSearchUpdate);
+    connect(controller_, &TerminalController::searchSelectionReady, this,
+            [this](bool available, const QString &text) {
+                if (!available) {
+                    return;
+                }
+                const bool activeChanged = !searchUiActive_;
+                const bool textChanged = searchUiText_ != text;
+                searchUiActive_ = true;
+                searchUiText_ = text;
+                if (activeChanged) {
+                    Q_EMIT searchUiActiveChanged();
+                }
+                if (textChanged) {
+                    Q_EMIT searchUiTextChanged();
+                }
+                controller_->search(text);
+                Q_EMIT searchUiFocusRequested();
             });
     connect(controller_, &TerminalController::hyperlinkResolved, this,
             &TerminalPane::handleHyperlinkResult);
@@ -557,6 +602,20 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 clearHyperlinkHover();
                 cancelHyperlinkPress();
                 cancelPendingHyperlinkActivation();
+                // TerminalController invalidates worker progress and pending
+                // search_selection replies before forwarding sessionExited.
+                if (searchUiActive_) {
+                    searchUiActive_ = false;
+                    Q_EMIT searchUiActiveChanged();
+                }
+                searchEngineActive_ = false;
+                searchMatchLabel_ = QStringLiteral("0/0");
+                Q_EMIT searchMatchLabelChanged();
+                {
+                    QMutexLocker locker(&renderMutex_);
+                    hasPendingSearchUpdate_ = false;
+                    clearSearchDecorationsLocked();
+                }
                 bool hasError = false;
                 {
                     QMutexLocker locker(&renderMutex_);
@@ -764,6 +823,132 @@ void TerminalPane::beginShutdown()
     controller_->beginShutdown();
 }
 
+void TerminalPane::startSearchUi()
+{
+    const bool wasInactive = !searchUiActive_;
+    if (wasInactive) {
+        searchUiActive_ = true;
+        Q_EMIT searchUiActiveChanged();
+        // Ghostty retains the last entry text. Reopening the UI starts a fresh
+        // generation so results cannot outlive terminal mutations that
+        // happened while the overlay was hidden.
+        controller_->search(searchUiText_);
+    }
+    Q_EMIT searchUiFocusRequested();
+}
+
+void TerminalPane::setSearchUiText(const QString &text)
+{
+    if (searchUiText_ == text) {
+        return;
+    }
+    searchUiText_ = text;
+    Q_EMIT searchUiTextChanged();
+    controller_->search(searchUiText_);
+}
+
+void TerminalPane::endSearchUi()
+{
+    if (searchUiActive_) {
+        searchUiActive_ = false;
+        Q_EMIT searchUiActiveChanged();
+    }
+    searchEngineActive_ = false;
+    if (searchMatchLabel_ != QLatin1StringView("0/0")) {
+        searchMatchLabel_ = QStringLiteral("0/0");
+        Q_EMIT searchMatchLabelChanged();
+    }
+    {
+        QMutexLocker locker(&renderMutex_);
+        hasPendingSearchUpdate_ = false;
+        clearSearchDecorationsLocked();
+    }
+    controller_->cancelSearch();
+    update();
+    forceActiveFocus(Qt::ShortcutFocusReason);
+}
+
+void TerminalPane::navigateSearch(int direction)
+{
+    controller_->navigateSearch(direction < 0
+        ? TerminalSearchDirection::Previous
+        : TerminalSearchDirection::Next);
+}
+
+void TerminalPane::clearSearchDecorationsLocked()
+{
+    searchCandidateCellIndexes_.clear();
+    searchSelectedCellIndexes_.clear();
+    searchDecorationRevision_ = 0;
+    searchDecorationColumns_ = 0;
+    searchDecorationRows_ = 0;
+}
+
+void TerminalPane::installSearchDecorationsLocked(
+    const TerminalSearchUpdate &searchUpdate)
+{
+    searchCandidateCellIndexes_.clear();
+    searchSelectedCellIndexes_.clear();
+    searchDecorationRevision_ = searchUpdate.contentRevision;
+    searchDecorationColumns_ = searchUpdate.columns;
+    searchDecorationRows_ = searchUpdate.rows;
+    if (!searchUpdate.active || searchUpdate.columns <= 0
+        || searchUpdate.rows <= 0) {
+        return;
+    }
+
+    const auto addCell = [&searchUpdate](const QPoint &cell,
+                                         QSet<int> *destination) {
+        if (cell.x() < 0 || cell.x() >= searchUpdate.columns
+            || cell.y() < 0 || cell.y() >= searchUpdate.rows) {
+            return;
+        }
+        destination->insert(cell.y() * searchUpdate.columns + cell.x());
+    };
+    for (const QPoint &cell : searchUpdate.visibleCells) {
+        addCell(cell, &searchCandidateCellIndexes_);
+    }
+    for (const QPoint &cell : searchUpdate.selectedCells) {
+        addCell(cell, &searchSelectedCellIndexes_);
+    }
+}
+
+void TerminalPane::handleSearchUpdate(
+    const TerminalSearchUpdate &searchUpdate)
+{
+    searchEngineActive_ = searchUpdate.active;
+    const QString nextLabel = searchUpdate.active
+        ? QStringLiteral("%1/%2")
+              .arg(searchUpdate.selectedMatch >= 0
+                       ? searchUpdate.selectedMatch + 1 : 0)
+              .arg(searchUpdate.totalMatches)
+        : QStringLiteral("0/0");
+    if (searchMatchLabel_ != nextLabel) {
+        searchMatchLabel_ = nextLabel;
+        Q_EMIT searchMatchLabelChanged();
+    }
+
+    {
+        QMutexLocker locker(&renderMutex_);
+        if (!searchUpdate.active) {
+            hasPendingSearchUpdate_ = false;
+            clearSearchDecorationsLocked();
+        } else if (hasFrame_
+                   && searchUpdate.contentRevision == frame_.contentRevision
+                   && searchUpdate.columns == frame_.columns
+                   && searchUpdate.rows == frame_.rows) {
+            installSearchDecorationsLocked(searchUpdate);
+            hasPendingSearchUpdate_ = false;
+        } else if (!hasFrame_
+                   || searchUpdate.contentRevision > frame_.contentRevision) {
+            pendingSearchUpdate_ = searchUpdate;
+            hasPendingSearchUpdate_ = true;
+            clearSearchDecorationsLocked();
+        }
+    }
+    update();
+}
+
 QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
     // Keep the root that Qt already parented into the item scene graph. Returning
@@ -783,6 +968,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QString linkPreview;
     QRectF linkPreviewRect;
     QSet<int> hoveredHyperlinkCells;
+    QSet<int> searchCandidateCells;
+    QSet<int> searchSelectedCells;
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     qreal baseline = 0.0;
@@ -799,6 +986,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         if (hoveredHyperlinkColumns_ == frame_.columns
             && hoveredHyperlinkRows_ == frame_.rows) {
             hoveredHyperlinkCells = hoveredHyperlinkCellIndexes_;
+        }
+        if (searchDecorationRevision_ == frame_.contentRevision
+            && searchDecorationColumns_ == frame_.columns
+            && searchDecorationRows_ == frame_.rows) {
+            searchCandidateCells = searchCandidateCellIndexes_;
+            searchSelectedCells = searchSelectedCellIndexes_;
         }
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
@@ -893,11 +1086,37 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 applyBoldColor(cell, frame, appearance,
                                &styledForeground, &styledBackground);
 
-                const QColor cellBackground = cell.selected
-                    ? resolveRelativeColor(appearance.selectionBackground,
-                                           styledForeground, styledBackground,
-                                           frame.foreground)
-                    : styledBackground;
+                bool candidateSearchMatch =
+                    searchCandidateCells.contains(index);
+                bool selectedSearchMatch =
+                    searchSelectedCells.contains(index);
+                if (cell.spacer && column > 0) {
+                    // libghostty maps every UTF-8 byte to the owning wide
+                    // head. Carry that decoration into its spacer tail so the
+                    // highlighted grapheme remains one visual unit.
+                    candidateSearchMatch = candidateSearchMatch
+                        || searchCandidateCells.contains(index - 1);
+                    selectedSearchMatch = selectedSearchMatch
+                        || searchSelectedCells.contains(index - 1);
+                }
+
+                QColor cellBackground = styledBackground;
+                if (cell.selected) {
+                    cellBackground = resolveRelativeColor(
+                        appearance.selectionBackground,
+                        styledForeground, styledBackground,
+                        frame.foreground);
+                } else if (selectedSearchMatch) {
+                    cellBackground = resolveRelativeColor(
+                        appearance.searchSelectedBackground,
+                        styledForeground, styledBackground,
+                        frame.foreground);
+                } else if (candidateSearchMatch) {
+                    cellBackground = resolveRelativeColor(
+                        appearance.searchBackground,
+                        styledForeground, styledBackground,
+                        frame.foreground);
+                }
                 if (cellBackground != background) {
                     // Background is grid-cell state, even when the glyph in
                     // this cell spans multiple columns. Drawing one column at
@@ -907,11 +1126,23 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                cellBackground);
                 }
 
-                QColor foreground = cell.selected
-                    ? resolveRelativeColor(appearance.selectionForeground,
-                                           styledForeground, styledBackground,
-                                           frame.background)
-                    : styledForeground;
+                QColor foreground = styledForeground;
+                if (cell.selected) {
+                    foreground = resolveRelativeColor(
+                        appearance.selectionForeground,
+                        styledForeground, styledBackground,
+                        frame.background);
+                } else if (selectedSearchMatch) {
+                    foreground = resolveRelativeColor(
+                        appearance.searchSelectedForeground,
+                        styledForeground, styledBackground,
+                        frame.background);
+                } else if (candidateSearchMatch) {
+                    foreground = resolveRelativeColor(
+                        appearance.searchForeground,
+                        styledForeground, styledBackground,
+                        frame.background);
+                }
                 const bool insideBlockCursor = blockCursorActive
                     && row == frame.cursorRow
                     && column >= frame.cursorColumn
@@ -1280,8 +1511,15 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
         case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_W: Q_EMIT requestCloseTab(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_Q: Q_EMIT requestQuit(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_F: startSearchUi(); return KeyHandling::ConsumePressAndRelease;
         default: break;
         }
+    }
+
+    if (key == Qt::Key_Escape && modifiers == Qt::NoModifier
+        && (searchUiActive_ || searchEngineActive_)) {
+        endSearchUi();
+        return KeyHandling::ConsumePressAndRelease;
     }
 
     if ((modifiers == Qt::ControlModifier && key == Qt::Key_Equal)
@@ -1493,10 +1731,23 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         paneAction.has_value()) {
         const bool needsSelection =
             paneAction->kind == GhosttyPaneActionKind::AdjustSelection
+            || paneAction->kind == GhosttyPaneActionKind::SearchSelection
             || (paneAction->kind == GhosttyPaneActionKind::ScrollViewport
                 && paneAction->viewport.kind
                     == TerminalViewportRequest::Kind::Selection);
-        return !needsSelection || controller_->selectionExpected();
+        if (needsSelection && !controller_->selectionExpected()) {
+            return false;
+        }
+        if (paneAction->kind == GhosttyPaneActionKind::EndSearch) {
+            // Ghostty always dispatches end_search so the GUI can clean up
+            // stale UI, even though execution reports false without an
+            // active engine.
+            return true;
+        }
+        if (paneAction->kind == GhosttyPaneActionKind::NavigateSearch) {
+            return searchEngineActive_ || controller_->searchExpected();
+        }
+        return true;
     }
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
@@ -1638,6 +1889,31 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         case GhosttyPaneActionKind::AdjustSelection:
             if (!controller_->selectionExpected()) return false;
             controller_->adjustSelection(paneAction->selectionAdjustment);
+            return true;
+        case GhosttyPaneActionKind::StartSearch:
+            startSearchUi();
+            return true;
+        case GhosttyPaneActionKind::EndSearch: {
+            const bool performed = searchEngineActive_
+                || controller_->searchExpected();
+            endSearchUi();
+            return performed;
+        }
+        case GhosttyPaneActionKind::SearchSelection:
+            if (!controller_->selectionExpected()) return false;
+            controller_->requestSearchSelection();
+            return true;
+        case GhosttyPaneActionKind::Search: {
+            // Binding.Action.format serializes arbitrary bytes with Zig
+            // escapes. Preserve the payload until the worker decodes it.
+            const bool hadSearch = searchEngineActive_
+                || controller_->searchExpected();
+            controller_->searchSerialized(paneAction->payload.toUtf8());
+            return !paneAction->payload.isEmpty() || hadSearch;
+        }
+        case GhosttyPaneActionKind::NavigateSearch:
+            if (!controller_->searchExpected()) return false;
+            controller_->navigateSearch(paneAction->searchDirection);
             return true;
         case GhosttyPaneActionKind::Csi:
             controller_->sendCsi(paneAction->payload.toUtf8());
@@ -2616,6 +2892,10 @@ void TerminalPane::focusOutEvent(QFocusEvent *event)
 
 void TerminalPane::focusTerminal()
 {
+    if (searchUiActive_) {
+        Q_EMIT searchUiFocusRequested();
+        return;
+    }
     forceActiveFocus(Qt::OtherFocusReason);
 }
 

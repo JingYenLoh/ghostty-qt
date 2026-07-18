@@ -6,8 +6,10 @@
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
+#include <QTimer>
 
 #include <algorithm>
+#include <optional>
 
 namespace {
 
@@ -59,6 +61,19 @@ bool spyContainsBool(const QSignalSpy &spy, bool expected)
     });
 }
 
+std::optional<TerminalSearchUpdate> latestSearchUpdate(
+    const QSignalSpy &spy, quint64 generation)
+{
+    for (auto iterator = spy.crbegin(); iterator != spy.crend(); ++iterator) {
+        const TerminalSearchUpdate update =
+            qvariant_cast<TerminalSearchUpdate>(iterator->constFirst());
+        if (update.generation == generation) {
+            return update;
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 class SessionWorkerTest : public QObject {
@@ -74,6 +89,8 @@ private Q_SLOTS:
     void appliesReloadedAppearanceToExistingTerminal();
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
+    void searchesIncrementallyAndNavigates();
+    void preservesFormattedSearchBoundaries();
     void resetsTerminalStateAndWorkerCaches();
     void resolvesCorrelatedHyperlinkQueries();
     void resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence();
@@ -82,6 +99,178 @@ private Q_SLOTS:
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
+
+void SessionWorkerTest::searchesIncrementallyAndNavigates()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalSearchUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 6, 8, 16, 256, 96);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy searchSpy(&worker, &SessionWorker::searchUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "i=0; while [ $i -lt 500 ]; do "
+            "printf 'scan-row-%03d needle\\n' \"$i\"; "
+            "i=$((i + 1)); done; "
+            "printf 'AAAA\\nleft\\nright\\nÄ ä\\n'")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY(errorSpy.isEmpty());
+
+    bool eventLoopMarker = false;
+    worker.search(1, QByteArrayLiteral("aa"));
+    QTimer::singleShot(0, &worker, [&eventLoopMarker] {
+        eventLoopMarker = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(eventLoopMarker, 1000);
+    const std::optional<TerminalSearchUpdate> partial =
+        latestSearchUpdate(searchSpy, 1);
+    QVERIFY(partial.has_value());
+    QVERIFY(partial->active);
+    QVERIFY(!partial->complete);
+    QVERIFY(partial->scannedRows < partial->totalRows);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 1).has_value()
+            && latestSearchUpdate(searchSpy, 1)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->totalMatches, quint64(3));
+
+    worker.navigateSearch(1, TerminalSearchDirection::Next);
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
+    worker.navigateSearch(1, TerminalSearchDirection::Previous);
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(2));
+    worker.navigateSearch(1, TerminalSearchDirection::Next);
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(0));
+
+    worker.search(2, QByteArrayLiteral("left\nright"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 2).has_value()
+            && latestSearchUpdate(searchSpy, 2)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 2)->totalMatches, quint64(1));
+
+    worker.search(3, QStringLiteral("Ä").toUtf8());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 3).has_value()
+            && latestSearchUpdate(searchSpy, 3)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 3)->totalMatches, quint64(1));
+
+    worker.searchSerialized(4, QByteArrayLiteral("A\\x41"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 4).has_value()
+            && latestSearchUpdate(searchSpy, 4)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 4)->totalMatches, quint64(3));
+
+    // The oldest match is wholly outside the live viewport. Previous starts
+    // there, while Next wraps back to the newest result and follows it down.
+    worker.search(5, QByteArrayLiteral("needle"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 5).has_value()
+            && latestSearchUpdate(searchSpy, 5)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 5)->totalMatches, quint64(500));
+    worker.navigateSearch(5, TerminalSearchDirection::Previous);
+    QCOMPARE(latestSearchUpdate(searchSpy, 5)->selectedMatch, qint64(499));
+    QVERIFY(!latestSearchUpdate(searchSpy, 5)->selectedCells.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0,
+                             1000);
+    worker.navigateSearch(5, TerminalSearchDirection::Next);
+    QCOMPARE(latestSearchUpdate(searchSpy, 5)->selectedMatch, qint64(0));
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                             1000);
+
+    worker.search(6, QByteArrayLiteral("needle"));
+    worker.search(7, QByteArrayLiteral("aa"));
+    worker.cancelSearch(8);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 8).has_value()
+            && latestSearchUpdate(searchSpy, 8)->complete,
+        1000);
+    QVERIFY(!latestSearchUpdate(searchSpy, 8)->active);
+    const int afterCancel = searchSpy.count();
+    QTest::qWait(50);
+    QCOMPARE(searchSpy.count(), afterCancel);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesFormattedSearchBoundaries()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalSearchUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(16, 4, 8, 16, 128, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy searchSpy(&worker, &SessionWorker::searchUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf 'abc%14s\\n12345678901234  tail\\nfinal-line\\n' ''")};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY(errorSpy.isEmpty());
+
+    worker.search(1, QByteArrayLiteral("final-line\n"));
+    const std::optional<TerminalSearchUpdate> initial =
+        latestSearchUpdate(searchSpy, 1);
+    QVERIFY(initial.has_value());
+    QVERIFY(!initial->complete);
+    QCOMPARE(initial->totalMatches, quint64(0));
+
+    // Navigation is an instantaneous mailbox operation. A request made
+    // before the first progressive chunk finds a result must not be replayed.
+    worker.navigateSearch(1, TerminalSearchDirection::Next);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 1).has_value()
+            && latestSearchUpdate(searchSpy, 1)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->totalMatches, quint64(1));
+    QCOMPARE(latestSearchUpdate(searchSpy, 1)->selectedMatch, qint64(-1));
+
+    // The two spaces fill the final cells of the first physical row. They
+    // remain part of the logical line when the following text soft-wraps.
+    worker.search(2, QByteArrayLiteral("12345678901234  tail"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 2).has_value()
+            && latestSearchUpdate(searchSpy, 2)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 2)->totalMatches, quint64(1));
+
+    // The first line wraps after a run of spaces but has no later nonblank
+    // continuation. PageFormatter drops that pending run rather than making
+    // it searchable.
+    worker.search(3, QByteArrayLiteral("abc "));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        latestSearchUpdate(searchSpy, 3).has_value()
+            && latestSearchUpdate(searchSpy, 3)->complete,
+        5000);
+    QCOMPARE(latestSearchUpdate(searchSpy, 3)->totalMatches, quint64(0));
+
+    worker.shutdown();
+}
 
 void SessionWorkerTest::runsCommandThroughPty()
 {

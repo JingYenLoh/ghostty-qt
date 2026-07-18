@@ -161,6 +161,32 @@ public:
         QVector<int> logicalLineRows;
     };
 
+    enum class SearchScreen : quint8 {
+        Primary,
+        Alternate,
+    };
+
+    struct SearchExtent {
+        quint32 totalRows = 0;
+        int columns = 0;
+        int rows = 0;
+        quint64 viewportOffset = 0;
+        quint64 viewportLength = 0;
+        SearchScreen activeScreen = SearchScreen::Primary;
+    };
+
+    // A bounded, value-only snapshot of one physical row in full-screen
+    // coordinates. Each emitted UTF-8 byte maps to its owning cell. The
+    // caller uses wrapped to decide whether to concatenate the following row
+    // or insert a hard newline mapped to newlineCell.
+    struct SearchRowSnapshot {
+        quint32 screenRow = 0;
+        QByteArray text;
+        QVector<TerminalSearchCell> byteCells;
+        bool wrapped = false;
+        TerminalSearchCell newlineCell;
+    };
+
     static std::unique_ptr<GhosttyVtAdapter> create(
         const Options &options, Callbacks callbacks = {});
     static bool isPasteSafe(QByteArrayView text);
@@ -183,6 +209,7 @@ public:
     QByteArray encodePaste(const QString &text) const;
 
     QString selectedText() const;
+    QString selectedTextForSearch(bool trim = false) const;
     bool hasSelection() const;
     void clearSelection();
     bool beginSelection(int column, int row, int clickCount, bool rectangular);
@@ -191,6 +218,12 @@ public:
     bool selectAll();
     bool adjustSelection(TerminalSelectionAdjustment adjustment);
     bool scrollViewport(const TerminalViewportRequest &request);
+    std::optional<SearchExtent> searchExtent() const;
+    std::optional<SearchRowSnapshot> snapshotSearchRow(
+        quint32 screenRow) const;
+    QVector<QPoint> visibleCellsForSearchRange(
+        const TerminalSearchRange &range) const;
+    bool scrollSearchRangeIntoView(const TerminalSearchRange &range);
     // Resolve a viewport-relative cell and, for hover rendering, every
     // candidate visible cell with the same URI. Public libghostty-vt does not
     // expose OSC 8 identity, so equal-URI links cannot be distinguished here.

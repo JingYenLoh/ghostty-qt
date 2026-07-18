@@ -37,6 +37,11 @@ the host-language comparison and remaining engineering risks.
   controls a pane-local destination overlay for the already accepted hover;
   its policy also reloads live without rescanning while the pointer remains on
   that terminal link.
+- Pane-local terminal search across the active screen and its scrollback, with
+  progressive match counts, overlapping literal matches, next/previous
+  navigation, selected-result scrolling, and candidate/selected highlights.
+  The top-right Qt search overlay supports the pinned Ghostty search actions
+  and live-reloaded fixed or cell-relative search colors.
 - Full-height, fractional, line, absolute-row, top/bottom, and
   selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
@@ -203,6 +208,8 @@ The current compatibility slice applies these keys:
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
 | `palette` | Applies Ghostty's complete 256-color default palette. Terminal OSC 4 overrides survive a config reload; OSC 104 resets an entry to the newest configured default. |
 | `selection-foreground`, `selection-background` | Apply fixed colors or Ghostty's cell foreground/background aliases. Unset values retain Ghostty's default terminal-foreground/terminal-background selection pairing. |
+| `search-foreground`, `search-background` | Apply fixed or cell-relative colors to search candidates. The defaults are black on `#FFE082`, matching Ghostty. |
+| `search-selected-foreground`, `search-selected-background` | Apply fixed or cell-relative colors to the selected search result. The defaults are black on `#F2A57E`, matching Ghostty. Normal terminal selection still has render priority. |
 | `cursor-color`, `cursor-style`, `cursor-opacity`, `cursor-text` | Apply live cursor appearance, including fixed and cell-relative colors. Terminal OSC 12 and DECSCUSR overrides survive reload; their reset sequences reveal the newest configured defaults. |
 | `cursor-style-blink` | Applies the configured default, but is not yet exact: the public `libghostty-vt` setter accepts only a boolean, so it cannot retain Ghostty's explicit true/false-versus-DEC-mode-12 distinction. |
 | `bold-color`, `faint-opacity` | Apply Ghostty's bold foreground transformation and faint glyph/decorations opacity. |
@@ -265,6 +272,7 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | --- | --- |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy the selection / paste the clipboard. |
 | `Ctrl+Shift+A` | Select all terminal content. |
+| `Ctrl+Shift+F` | Open and focus the current pane's search overlay. |
 | `Ctrl+Shift+T` | Open a tab. |
 | `Ctrl+Shift+O` / `Ctrl+Shift+E` | Split right / split down. |
 | `Ctrl+Shift+W` | Close the active tab. |
@@ -291,6 +299,14 @@ directly. Viewport/selection bindings additionally support `scroll_to_top`,
 destination or default-regex match currently accepted under the pointer.
 Raw-write actions return the viewport to the active area, while reset clears
 emulator state without sending bytes to the child.
+
+Search bindings support `start_search`, `end_search`, `search:<text>`,
+`search_selection`, and `navigate_search:next|previous`. `search:<text>`
+changes the engine needle without opening the overlay; an empty value stops
+matching but leaves the UI alone. `search_selection` opens the overlay only
+when a selection exists and preserves its untrimmed text. In the overlay,
+Enter selects the next result, Shift+Enter selects the previous result, and
+Escape ends search. Reopening search retains and selects the previous entry.
 
 Drag with the left mouse button to select; double-click to select a word and
 hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
@@ -365,6 +381,10 @@ stable live-output rendering, tracked regex reflow and mutation invalidation,
 byte-exact copy, relative-path opening, release-only activation, all three
 `link-previews` policies, live frontend-only policy changes, left/right
 relocation, and bounded safe display of arbitrary destination bytes.
+Search coverage includes row/UTF-8 cell mapping, soft-wrap and hard-newline
+semantics, progressive worker scans, generation cancellation, overlapping and
+ASCII-case-insensitive matches, navigation/viewport alignment, action/UI
+separation, color parsing, and renderer highlight precedence.
 Interactive pointer selection and unsafe-paste dialog input are not yet fully
 automated.
 
@@ -389,10 +409,25 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   CPU/allocation optimizations.
 - Split ratios can be resized and equalized through Ghostty keybindings, but
   there are no draggable dividers yet.
-- No X11 backend, multi-window support, theme editor, search UI, session
+- No X11 backend, multi-window support, theme editor, session
   persistence, or production package metadata yet. Configuration support is
   limited to the documented compatibility slice; most Ghostty keys remain
   planned.
+- Search is an incremental compatibility foundation rather than the upstream
+  engine. The public `libghostty-vt` artifact exposes no search thread because
+  Ghostty's implementation currently depends on `xev`. This frontend therefore
+  scans public value snapshots cooperatively on the pane worker. Reading cold
+  history through public grid references temporarily restores compressed pages,
+  so the scan interleaves libghostty's bounded recompression work. The public
+  API exposes flat rows rather than Ghostty's internal page formatter, so page
+  boundary delimiters and some blank-cell coordinate mappings are not exact;
+  highlights in an older viewport can also lag until the bottom-up scan reaches
+  those rows. Terminal-data mutation restarts the active query, and only the
+  current primary or alternate screen is searched; no independent result set is
+  retained for the inactive screen. Cooperative yielding occurs within the
+  matcher after one physical-row value snapshot has been prepared, so a
+  pathological maximum-width row or exceptionally large grapheme can still
+  exceed the normal slice budget. The top-right overlay is not draggable yet.
 - Configured bindings support finalized root and named tables, including
   sequences, catch-all triggers, chains, local consume/performability,
   `all` fanout, and XDG-portal-backed `global` registration for the documented

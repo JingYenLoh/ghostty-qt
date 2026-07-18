@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QMetaType>
+#include <QPoint>
 #include <QString>
 #include <QVector>
 
@@ -48,6 +49,46 @@ enum class TerminalHyperlinkState : quint8 {
 enum class TerminalLinkKind : quint8 {
     Osc8,
     Regex,
+};
+
+enum class TerminalSearchDirection : quint8 {
+    Next,
+    Previous,
+};
+
+// Search results use full-screen coordinates so they remain independent of
+// the current viewport. They are value-only snapshots, not libghostty grid
+// references, and are valid only for the terminal revision that produced
+// them.
+struct TerminalSearchCell {
+    quint16 column = 0;
+    quint32 screenRow = 0;
+
+    friend bool operator==(const TerminalSearchCell &,
+                           const TerminalSearchCell &) = default;
+};
+
+struct TerminalSearchRange {
+    TerminalSearchCell start;
+    TerminalSearchCell end;
+
+    friend bool operator==(const TerminalSearchRange &,
+                           const TerminalSearchRange &) = default;
+};
+
+struct TerminalSearchUpdate {
+    quint64 generation = 0;
+    quint64 contentRevision = 0;
+    bool active = false;
+    bool complete = false;
+    quint64 scannedRows = 0;
+    quint64 totalRows = 0;
+    quint64 totalMatches = 0;
+    qint64 selectedMatch = -1;
+    int columns = 0;
+    int rows = 0;
+    QVector<QPoint> visibleCells;
+    QVector<QPoint> selectedCells;
 };
 
 struct TerminalCell {
@@ -254,6 +295,10 @@ Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalHyperlinkState)
 Q_DECLARE_METATYPE(TerminalLinkKind)
+Q_DECLARE_METATYPE(TerminalSearchDirection)
+Q_DECLARE_METATYPE(TerminalSearchCell)
+Q_DECLARE_METATYPE(TerminalSearchRange)
+Q_DECLARE_METATYPE(TerminalSearchUpdate)
 Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)

@@ -32,6 +32,8 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
     qRegisterMetaType<TerminalLinkKind>();
+    qRegisterMetaType<TerminalSearchDirection>();
+    qRegisterMetaType<TerminalSearchUpdate>();
     qRegisterMetaType<TerminalViewportRequest>();
     qRegisterMetaType<TerminalSelectionAdjustment>();
     qRegisterMetaType<TerminalKeyInput>();
@@ -85,6 +87,17 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             worker_, &SessionWorker::adjustSelection, Qt::QueuedConnection);
     connect(this, &TerminalController::scrollRequested,
             worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
+    connect(this, &TerminalController::searchRequested,
+            worker_, &SessionWorker::search, Qt::QueuedConnection);
+    connect(this, &TerminalController::serializedSearchRequested,
+            worker_, &SessionWorker::searchSerialized, Qt::QueuedConnection);
+    connect(this, &TerminalController::searchCancellationRequested,
+            worker_, &SessionWorker::cancelSearch, Qt::QueuedConnection);
+    connect(this, &TerminalController::searchNavigationRequested,
+            worker_, &SessionWorker::navigateSearch, Qt::QueuedConnection);
+    connect(this, &TerminalController::searchSelectionRequested,
+            worker_, &SessionWorker::requestSearchSelection,
+            Qt::QueuedConnection);
     connect(this, &TerminalController::hyperlinkQueryRequested,
             worker_, &SessionWorker::queryHyperlink, Qt::QueuedConnection);
     connect(this, &TerminalController::hyperlinkQueryCancellationRequested,
@@ -174,6 +187,22 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
                 Q_EMIT hyperlinkActivationResolved(
                     contentRevision, kind, uri);
             }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::searchUpdated, this,
+            [this](const TerminalSearchUpdate &update) {
+                if (update.generation != activeSearchGeneration_) {
+                    return;
+                }
+                searchExpected_ = update.active;
+                Q_EMIT searchUpdated(update);
+            }, Qt::QueuedConnection);
+    connect(worker_, &SessionWorker::searchSelectionReady, this,
+            [this](quint64 requestId, bool available, const QString &text) {
+                if (requestId != activeSearchSelectionRequestId_) {
+                    return;
+                }
+                activeSearchSelectionRequestId_ = 0;
+                Q_EMIT searchSelectionReady(available, text);
+            }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::clipboardTextReady, this,
             [](const QString &text) {
                 if (QGuiApplication::clipboard() != nullptr) {
@@ -187,6 +216,11 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     connect(worker_, &SessionWorker::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
                 if (closing_) return;
+                // Invalidate queued search progress and selection-derived
+                // queries before observers clear their UI. The held terminal
+                // remains readable, so also ask the worker to release search
+                // state and finish recompressing any pages restored by it.
+                cancelSearch();
                 if (activeProcess_) {
                     activeProcess_ = false;
                     Q_EMIT activeProcessChanged(false);
@@ -401,6 +435,63 @@ void TerminalController::adjustSelection(TerminalSelectionAdjustment adjustment)
 void TerminalController::scrollViewport(const TerminalViewportRequest &request)
 {
     Q_EMIT scrollRequested(request);
+}
+
+quint64 TerminalController::nextSearchGeneration()
+{
+    do {
+        ++nextSearchGeneration_;
+    } while (nextSearchGeneration_ == 0);
+    return nextSearchGeneration_;
+}
+
+quint64 TerminalController::nextSearchSelectionRequestId()
+{
+    do {
+        ++nextSearchSelectionRequestId_;
+    } while (nextSearchSelectionRequestId_ == 0);
+    return nextSearchSelectionRequestId_;
+}
+
+void TerminalController::search(const QString &text)
+{
+    activeSearchSelectionRequestId_ = 0;
+    activeSearchGeneration_ = nextSearchGeneration();
+    searchExpected_ = !text.isEmpty();
+    Q_EMIT searchRequested(activeSearchGeneration_, text.toUtf8());
+}
+
+void TerminalController::searchSerialized(const QByteArray &serializedText)
+{
+    activeSearchSelectionRequestId_ = 0;
+    activeSearchGeneration_ = nextSearchGeneration();
+    // Escape decoding intentionally stays on the worker. Treat the request as
+    // active until its authoritative update arrives so an action chain such
+    // as `search:term>navigate_search:next` remains ordered and performable.
+    searchExpected_ = !serializedText.isEmpty();
+    Q_EMIT serializedSearchRequested(activeSearchGeneration_, serializedText);
+}
+
+void TerminalController::cancelSearch()
+{
+    activeSearchSelectionRequestId_ = 0;
+    activeSearchGeneration_ = nextSearchGeneration();
+    searchExpected_ = false;
+    Q_EMIT searchCancellationRequested(activeSearchGeneration_);
+}
+
+void TerminalController::navigateSearch(TerminalSearchDirection direction)
+{
+    if (!searchExpected_ || activeSearchGeneration_ == 0) {
+        return;
+    }
+    Q_EMIT searchNavigationRequested(activeSearchGeneration_, direction);
+}
+
+void TerminalController::requestSearchSelection()
+{
+    activeSearchSelectionRequestId_ = nextSearchSelectionRequestId();
+    Q_EMIT searchSelectionRequested(activeSearchSelectionRequestId_);
 }
 
 quint64 TerminalController::nextHyperlinkRequestId()

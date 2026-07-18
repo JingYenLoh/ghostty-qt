@@ -80,6 +80,7 @@ private Q_SLOTS:
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
+    void routesSearchActionsAndRetainsUiState();
     void interactsWithOsc8Hyperlinks();
     void interactsWithRegexLinksAndReloadsLinkUrl();
     void previewsLinksAccordingToPolicyAndBoundsDisplay();
@@ -91,6 +92,102 @@ private Q_SLOTS:
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
 };
+
+void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
+{
+    qRegisterMetaType<TerminalSearchUpdate>();
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy activeSpy(&pane, &TerminalPane::searchUiActiveChanged);
+    QSignalSpy textSpy(&pane, &TerminalPane::searchUiTextChanged);
+    QSignalSpy labelSpy(&pane, &TerminalPane::searchMatchLabelChanged);
+    QSignalSpy focusSpy(&pane, &TerminalPane::searchUiFocusRequested);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(pane.searchUiActive());
+    QCOMPARE(activeSpy.count(), 1);
+    QCOMPARE(focusSpy.count(), 1);
+
+    pane.setSearchUiText(QStringLiteral("visible entry"));
+    QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
+    QCOMPARE(textSpy.count(), 1);
+    QVERIFY(controller->searchExpected());
+
+    // Engine-only actions do not open, close, or rewrite the retained entry.
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search:backend")));
+    QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
+    QVERIFY(pane.searchUiActive());
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("navigate_search:next")));
+
+    TerminalSearchUpdate progress;
+    progress.generation = 99;
+    progress.contentRevision = 1;
+    progress.active = true;
+    progress.totalMatches = 4;
+    progress.selectedMatch = -1;
+    progress.columns = 80;
+    progress.rows = 24;
+    controller->searchUpdated(progress);
+    QCOMPARE(pane.searchMatchLabel(), QStringLiteral("0/4"));
+    progress.selectedMatch = 1;
+    controller->searchUpdated(progress);
+    QCOMPARE(pane.searchMatchLabel(), QStringLiteral("2/4"));
+    QVERIFY(labelSpy.count() >= 2);
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("end_search")));
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
+    QCOMPARE(pane.searchMatchLabel(), QStringLiteral("0/0"));
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("end_search")));
+
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("search:detached")));
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
+    QVERIFY(controller->searchExpected());
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(), QStringLiteral("visible entry"));
+    const int focusBeforeActivation = focusSpy.count();
+    pane.focusTerminal();
+    QCOMPARE(focusSpy.count(), focusBeforeActivation + 1);
+
+    pane.endSearchUi();
+    QVERIFY(!pane.searchUiActive());
+    QKeyEvent openSearch(
+        QEvent::KeyPress, Qt::Key_F,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("f"));
+    QCoreApplication::sendEvent(&pane, &openSearch);
+    QVERIFY(openSearch.isAccepted());
+    QVERIFY(pane.searchUiActive());
+    QKeyEvent closeSearch(
+        QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &closeSearch);
+    QVERIFY(closeSearch.isAccepted());
+    QVERIFY(!pane.searchUiActive());
+
+    // Empty search actions mirror Ghostty's performability while still
+    // dispatching end_search so a stale frontend overlay is cleaned up.
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("search:")));
+    pane.setSearchUiText(QString{});
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(pane.searchUiActive());
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("end_search")));
+    QVERIFY(!pane.searchUiActive());
+
+    // No selection means Ghostty's search_selection action is not
+    // performable and must not synthesize an empty query.
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("search_selection")));
+}
 
 void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
 {
@@ -208,6 +305,13 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     options.appearance.faintOpacity = 0.25;
     options.appearance.selectionBackground.kind = TerminalColorKind::CellForeground;
     options.appearance.selectionForeground.kind = TerminalColorKind::CellBackground;
+    options.appearance.searchBackground = TerminalColorValue::fromColor(
+        QColor(QStringLiteral("#123456")));
+    options.appearance.searchForeground = TerminalColorValue::fromColor(Qt::white);
+    options.appearance.searchSelectedBackground = TerminalColorValue::fromColor(
+        QColor(QStringLiteral("#654321")));
+    options.appearance.searchSelectedForeground =
+        TerminalColorValue::fromColor(Qt::white);
     options.appearance.cursorColor = TerminalColorValue::fromColor(
         QColor(QStringLiteral("#ff00ff")));
     options.appearance.cursorTextColor = TerminalColorValue::fromColor(
@@ -258,6 +362,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     update.cursorRow = 0;
     update.cursorStyle = 1;
     update.cursorColumnSpan = 2;
+    update.contentRevision = 77;
     for (int row = 0; row < rows; ++row) {
         TerminalRowUpdate rowUpdate;
         rowUpdate.row = row;
@@ -326,7 +431,30 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     retainedBlink.foreground = QColor(QStringLiteral("#ffff00"));
     retainedBlink.textBlink = true;
 
+    TerminalCell &selectedOverSearch = update.dirtyRows[1].cells[4];
+    selectedOverSearch.foreground = QColor(QStringLiteral("#aa0000"));
+    selectedOverSearch.background = QColor(QStringLiteral("#0000aa"));
+    selectedOverSearch.selected = true;
+    TerminalCell &searchWideHead = update.dirtyRows[1].cells[5];
+    searchWideHead.columnSpan = 2;
+    TerminalCell &searchWideTail = update.dirtyRows[1].cells[6];
+    searchWideTail.spacer = true;
+
     controller->terminalUpdated(update);
+    TerminalSearchUpdate searchUpdate;
+    searchUpdate.generation = 1;
+    searchUpdate.contentRevision = update.contentRevision;
+    searchUpdate.active = true;
+    searchUpdate.complete = true;
+    searchUpdate.totalMatches = 2;
+    searchUpdate.selectedMatch = 0;
+    searchUpdate.columns = columns;
+    searchUpdate.rows = rows;
+    searchUpdate.visibleCells = {
+        QPoint(2, 1), QPoint(3, 1), QPoint(4, 1), QPoint(5, 1),
+    };
+    searchUpdate.selectedCells = {QPoint(3, 1), QPoint(4, 1)};
+    controller->searchUpdated(searchUpdate);
     // The synthetic frame was delivered synchronously. Keep a later PTY
     // readiness update from replacing it while the software scene graph is
     // being sampled.
@@ -429,6 +557,17 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QCOMPARE(invisiblePixels, 0);
     QVERIFY(approximatelyEqual(secondRowCenterColor(1, image),
                                QColor(QStringLiteral("#ffff00"))));
+    QVERIFY(approximatelyEqual(secondRowCenterColor(2, image),
+                               QColor(QStringLiteral("#123456"))));
+    QVERIFY(approximatelyEqual(secondRowCenterColor(3, image),
+                               QColor(QStringLiteral("#654321"))));
+    // A normal terminal selection remains stronger than both search layers.
+    QVERIFY(approximatelyEqual(secondRowCenterColor(4, image),
+                               QColor(QStringLiteral("#aa0000"))));
+    QVERIFY(approximatelyEqual(secondRowCenterColor(5, image),
+                               QColor(QStringLiteral("#123456"))));
+    QVERIFY(approximatelyEqual(secondRowCenterColor(6, image),
+                               QColor(QStringLiteral("#123456"))));
     // Cross the 600 ms cursor-blink cadence: SGR text blink remains stable,
     // matching the pinned Ghostty renderer rather than sharing that timer.
     QTest::qWait(650);

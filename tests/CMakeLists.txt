@@ -206,6 +206,7 @@ target_include_directories(test-ghostty-action-catalog PRIVATE
 )
 target_link_libraries(test-ghostty-action-catalog PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Test
 )
 add_test(NAME ghostty-action-catalog COMMAND test-ghostty-action-catalog)

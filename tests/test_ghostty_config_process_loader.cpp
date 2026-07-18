@@ -29,6 +29,10 @@ QByteArray defaultOutput()
                           "background = #282c34\n"
                           "selection-foreground = \n"
                           "selection-background = \n"
+                          "search-foreground = #000000\n"
+                          "search-background = #ffe082\n"
+                          "search-selected-foreground = #000000\n"
+                          "search-selected-background = #f2a57e\n"
                           "cursor-color = \n"
                           "cursor-opacity = 1\n"
                           "cursor-style = block\n"
@@ -258,6 +262,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
             "selection-background = #334455\r\n"
+            "search-foreground = cell-background\r\n"
+            "search-background = #123456\r\n"
+            "search-selected-foreground = cell-foreground\r\n"
+            "search-selected-background = #654321\r\n"
             "cursor-color = cell-background\r\n"
             "cursor-opacity = 0.375\r\n"
             "cursor-style = block_hollow\r\n"
@@ -305,6 +313,18 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(QStringLiteral("selection-background"))
                  .value<QColor>(),
              QColor(QStringLiteral("#334455")));
+    QCOMPARE(snapshot.values.value(QStringLiteral("search-foreground"))
+                 .toString(),
+             QStringLiteral("cell-background"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("search-background"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#123456")));
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("search-selected-foreground")).toString(),
+             QStringLiteral("cell-foreground"));
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("search-selected-background")).value<QColor>(),
+             QColor(QStringLiteral("#654321")));
     QCOMPARE(snapshot.values.value(QStringLiteral("cursor-color")).toString(),
              QStringLiteral("cell-background"));
     QCOMPARE(snapshot.values.value(QStringLiteral("cursor-opacity")).toDouble(),
@@ -353,6 +373,18 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryLinkPreviewM
     QCOMPARE(unchanged.snapshot->values
                  .value(QStringLiteral("link-previews")).toString(),
              QStringLiteral("true"));
+    QCOMPARE(unchanged.snapshot->values
+                 .value(QStringLiteral("search-foreground")).value<QColor>(),
+             QColor(QStringLiteral("#000000")));
+    QCOMPARE(unchanged.snapshot->values
+                 .value(QStringLiteral("search-background")).value<QColor>(),
+             QColor(QStringLiteral("#ffe082")));
+    QCOMPARE(unchanged.snapshot->values.value(
+                 QStringLiteral("search-selected-foreground")).value<QColor>(),
+             QColor(QStringLiteral("#000000")));
+    QCOMPARE(unchanged.snapshot->values.value(
+                 QStringLiteral("search-selected-background")).value<QColor>(),
+             QColor(QStringLiteral("#f2a57e")));
 
     for (const QByteArray &mode : {QByteArrayLiteral("false"),
                                    QByteArrayLiteral("true"),
@@ -406,6 +438,22 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedPalette.succeeded());
     QCOMPARE(malformedPalette.errorMessage,
              QStringLiteral("Invalid palette in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedSearch =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(),
+            QByteArrayLiteral("search-background = not-an-alias\n"),
+            fixture.candidates());
+    QVERIFY(!malformedSearch.succeeded());
+    QCOMPARE(malformedSearch.errorMessage,
+             QStringLiteral("Invalid search-background in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult emptySearch = parseGhosttyConfigShowOutputs(
+        defaultOutput(), QByteArrayLiteral("search-foreground = \n"),
+        fixture.candidates());
+    QVERIFY(!emptySearch.succeeded());
+    QCOMPARE(emptySearch.errorMessage,
+             QStringLiteral("Invalid search-foreground in Ghostty config output at line 1"));
 
     const GhosttyConfigLoadResult malformedCursor =
         parseGhosttyConfigShowOutputs(
@@ -591,6 +639,10 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
             "palette = 42=#123456\n"
             "selection-foreground = cell-background\n"
             "selection-background = #334455\n"
+            "search-foreground = cell-background\n"
+            "search-background = #123456\n"
+            "search-selected-foreground = cell-foreground\n"
+            "search-selected-background = #654321\n"
             "cursor-color = #abcdef\n"
             "cursor-opacity = 0.4\n"
             "cursor-style = block_hollow\n"
@@ -624,6 +676,18 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
     QCOMPARE(result.snapshot->values.value(
                  QStringLiteral("selection-background")).value<QColor>(),
              QColor(QStringLiteral("#334455")));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("search-foreground"))
+                 .toString(),
+             QStringLiteral("cell-background"));
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("search-background"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#123456")));
+    QCOMPARE(result.snapshot->values.value(
+                 QStringLiteral("search-selected-foreground")).toString(),
+             QStringLiteral("cell-foreground"));
+    QCOMPARE(result.snapshot->values.value(
+                 QStringLiteral("search-selected-background")).value<QColor>(),
+             QColor(QStringLiteral("#654321")));
     QCOMPARE(result.snapshot->values.value(QStringLiteral("cursor-color"))
                  .value<QColor>(),
              QColor(QStringLiteral("#abcdef")));

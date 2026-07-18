@@ -42,6 +42,14 @@ struct ParsedConfig {
     QVariant selectionForeground;
     bool hasSelectionBackground = false;
     QVariant selectionBackground;
+    bool hasSearchForeground = false;
+    QVariant searchForeground;
+    bool hasSearchBackground = false;
+    QVariant searchBackground;
+    bool hasSearchSelectedForeground = false;
+    QVariant searchSelectedForeground;
+    bool hasSearchSelectedBackground = false;
+    QVariant searchSelectedBackground;
     bool hasCursorColor = false;
     QVariant cursorColor;
     bool hasCursorOpacity = false;
@@ -475,6 +483,44 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->hasSelectionBackground = true;
+        } else if (key == QStringLiteral("search-foreground")) {
+            if (value.isEmpty()
+                || !parseTerminalColor(value, &parsed->searchForeground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid search-foreground in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSearchForeground = true;
+        } else if (key == QStringLiteral("search-background")) {
+            if (value.isEmpty()
+                || !parseTerminalColor(value, &parsed->searchBackground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid search-background in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSearchBackground = true;
+        } else if (key == QStringLiteral("search-selected-foreground")) {
+            if (value.isEmpty()
+                || !parseTerminalColor(value,
+                                       &parsed->searchSelectedForeground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid search-selected-foreground in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSearchSelectedForeground = true;
+        } else if (key == QStringLiteral("search-selected-background")) {
+            if (value.isEmpty()
+                || !parseTerminalColor(value,
+                                       &parsed->searchSelectedBackground)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid search-selected-background in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSearchSelectedBackground = true;
         } else if (key == QStringLiteral("cursor-color")) {
             parsed->hasCursorColor = true;
             if (!parseTerminalColor(value, &parsed->cursorColor)) {
@@ -1071,6 +1117,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasPalette
         || !defaults.hasSelectionForeground
         || !defaults.hasSelectionBackground
+        || !defaults.hasSearchForeground || !defaults.hasSearchBackground
+        || !defaults.hasSearchSelectedForeground
+        || !defaults.hasSearchSelectedBackground
         || !defaults.hasCursorColor || !defaults.hasCursorOpacity
         || !defaults.hasCursorStyle || !defaults.hasCursorStyleBlink
         || !defaults.hasCursorText || !defaults.hasBoldColor
@@ -1124,6 +1173,22 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         mergedValue(changes.hasSelectionBackground,
                     changes.selectionBackground,
                     defaults.selectionBackground);
+    const QVariant searchForeground =
+        mergedValue(changes.hasSearchForeground,
+                    changes.searchForeground,
+                    defaults.searchForeground);
+    const QVariant searchBackground =
+        mergedValue(changes.hasSearchBackground,
+                    changes.searchBackground,
+                    defaults.searchBackground);
+    const QVariant searchSelectedForeground =
+        mergedValue(changes.hasSearchSelectedForeground,
+                    changes.searchSelectedForeground,
+                    defaults.searchSelectedForeground);
+    const QVariant searchSelectedBackground =
+        mergedValue(changes.hasSearchSelectedBackground,
+                    changes.searchSelectedBackground,
+                    defaults.searchSelectedBackground);
     const QVariant cursorColor =
         mergedValue(changes.hasCursorColor, changes.cursorColor,
                     defaults.cursorColor);
@@ -1176,6 +1241,14 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            selectionForeground);
     snapshot.values.insert(QStringLiteral("selection-background"),
                            selectionBackground);
+    snapshot.values.insert(QStringLiteral("search-foreground"),
+                           searchForeground);
+    snapshot.values.insert(QStringLiteral("search-background"),
+                           searchBackground);
+    snapshot.values.insert(QStringLiteral("search-selected-foreground"),
+                           searchSelectedForeground);
+    snapshot.values.insert(QStringLiteral("search-selected-background"),
+                           searchSelectedBackground);
     snapshot.values.insert(QStringLiteral("cursor-color"), cursorColor);
     snapshot.values.insert(QStringLiteral("cursor-opacity"), cursorOpacity);
     snapshot.values.insert(QStringLiteral("cursor-style"), cursorStyle);

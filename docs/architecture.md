@@ -11,7 +11,7 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | Window and chrome | Qt Quick, QML, Quick Controls 2 | Window, tab strip, toolbar, and confirmation dialogs. |
 | Terminal item and workspace | C++20, Qt Quick | Scene-graph rendering, input events, focus, tabs, and a recursive split tree. |
 | Session orchestration | Qt Core/Gui on a dedicated `QThread` per pane | PTY I/O, child lifecycle, immutable frame snapshots, and queued UI communication. |
-| Ghostty adapter | C++20 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, and deferred-effect operations. |
+| Ghostty adapter | C++20 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, search-snapshot, and deferred-effect operations. |
 | Terminal engine | Zig-built static `libghostty-vt` through its C API | VT parsing, terminal state, render-state iteration, selection, and key/mouse/paste encoding. |
 | Configuration | Qt file-watching service plus a helper process | Uses the exact pinned Ghostty application parser, then exposes only selected typed values to the Qt application. |
 | Application keybindings | C++20 plus Qt D-Bus | Routes app-scoped and all-surface actions, and owns the Linux XDG Global Shortcuts portal session. |
@@ -108,8 +108,8 @@ pane shutdowns first so grace periods overlap.
 6. `TerminalPane::updatePaintNode()` repopulates its retained render-node root. Public
    `QSGTextNode` objects use `QtRendering`, which stores distance-field glyphs
    in GPU atlases on hardware RHI backends. Color-batched solid geometry draws cell
-   backgrounds, selections, cursor shapes, text decorations, overlays, and the
-   scrollbar. Cell values retain foreground provenance and bold, faint,
+   backgrounds, selections, search results, cursor shapes, text decorations,
+   overlays, and the scrollbar. Cell values retain foreground provenance and bold, faint,
    inverse, invisible, underline, strike-through, overline, and text-blink
    attributes so frontend-only appearance rules do not have to be flattened at
    the worker boundary.
@@ -136,14 +136,17 @@ for each update and performs a `QTextLayout` per rendered cell, so shaping,
 node construction, and full-frame snapshot copying remain CPU-side performance
 targets.
 
-The renderer resolves configured selection and cursor cell-relative aliases
-against each cell's visual colors, applies Ghostty's bold palette/direct-color
-rules before inverse presentation, and applies faint opacity to glyphs and
-decorations without dimming the cell background. It draws block, bar,
-underline, and hollow cursors plus single, double, curly, dotted, and dashed
-underlines. Text-blink state is retained in the value model but intentionally
-does not drive an animation because the pinned Ghostty generic renderer also
-leaves blinking text visible; cursor blink remains an independent animation.
+The renderer resolves configured selection, search, and cursor cell-relative
+aliases against each cell's visual colors, applies Ghostty's bold
+palette/direct-color rules before inverse presentation, and applies faint
+opacity to glyphs and decorations without dimming the cell background. Normal
+terminal selection has priority over the selected search result, which has
+priority over candidate search results; a wide cell's spacer inherits the
+owning cell's search layer. The renderer draws block, bar, underline, and
+hollow cursors plus single, double, curly, dotted, and dashed underlines.
+Text-blink state is retained in the value model but intentionally does not
+drive an animation because the pinned Ghostty generic renderer also leaves
+blinking text visible; cursor blink remains an independent animation.
 
 ## Input path
 
@@ -259,6 +262,69 @@ remains over the terminal link. If policy or geometry removes an occupied
 bottom-left guard, the pane resumes hit testing at the physical pointer and may
 query that newly exposed terminal cell.
 
+Terminal search is also owned by `SessionWorker`, but it does not call
+Ghostty's application search thread. The pinned terminal module explicitly
+defines `terminal.search.Thread` as `void` for a library artifact: the upstream
+thread is currently available only to the Ghostty application because it
+depends on `xev`. The public `libghostty-vt` C API exposes neither that thread
+nor an equivalent search entry point. The adapter therefore provides a narrow,
+value-only foundation: the extent of the active screen and scrollback, one
+physical-row snapshot at a time, UTF-8-byte-to-cell ownership, visible-cell
+resolution for a result, and result scrolling. Ghostty handles and untracked
+grid references never leave the adapter call.
+
+Those public screen-coordinate reads differ from Ghostty's internal search
+window in two important ways. Reading a grid reference in compressed history
+temporarily restores its page instead of decoding it into temporary owned
+storage, so the worker interleaves libghostty's bounded compression traversal
+during a scan and starts a final pass when a scan completes, is canceled, or is
+replaced. The public API also exposes a flat row sequence without internal page
+boundaries or `PageFormatter` trailing state. The frontend can reproduce the
+ordinary literal, soft-wrap, and hard-line behavior, but it cannot exactly
+reproduce every page-boundary delimiter or the pinned formatter's blank-cell
+point-map quirks.
+
+The worker scans those snapshots from newest to oldest in bounded row/time
+chunks and yields to its Qt event loop between chunks. It coalesces progressive
+publication to roughly 30 Hz so deep history does not create one queued GUI
+event per scan chunk. A generation token cancels superseded needles without
+publishing stale results, while updates carry rows scanned, rows total, the
+match count, and only the currently visible candidate/selected cell masks.
+Literal UTF-8 byte matching is
+ASCII-case-insensitive, permits overlapping results, removes soft-wrap
+boundaries, and retains hard line boundaries as newline bytes. Next selects the
+newest result first and then walks older results; previous starts at the oldest
+and walks newer results. Both wrap, and selection scrolls only when the result
+is wholly outside the viewport. Unlike Ghostty's dedicated viewport search, the
+frontend derives candidate highlights from results already found by the global
+bottom-up scan. Scrolling into older history can therefore show candidates late,
+when that scan reaches the newly visible rows.
+
+Terminal-data mutation increments a search-specific revision and restarts the
+active query so no value result is applied to changed grid content. A viewport
+scroll only recomputes visible decorations and does not restart the scan. This
+is intentionally an incremental compatibility foundation: it can redo work
+during continuous output, searches only the currently active primary or
+alternate screen, and does not preserve independent result sets while the
+other screen is inactive. Together with the flat-row formatter and viewport-lag
+differences above, those gaps remain until a stable upstream search API is
+available or the public adapter can own tracked results across screen switches.
+The byte matcher checks its cooperative time budget within a row, but the
+public adapter currently prepares one complete physical-row snapshot first;
+an adversarial maximum-width row or unusually large grapheme can therefore
+exceed the ordinary slice duration before matching yields.
+
+`TerminalWorkspace` creates one pane-local QML search overlay through a shared
+component factory. `start_search` shows it without allocating scan work until a
+nonempty needle exists; reopening retains the text and requests select-all.
+`search:<text>` replaces or stops the engine needle without changing overlay
+visibility, `search_selection` copies the current untrimmed selection into the
+overlay, `navigate_search:next|previous` changes the selected result, and
+`end_search` stops the engine and hides the overlay. The entry debounces edits,
+shows progressive selected/total status, and maps Enter, Shift+Enter, and
+Escape to next, previous, and end. It is anchored at the top-right and is not
+draggable yet.
+
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
 terminal and the kernel PTY with `TIOCSWINSZ`.
@@ -337,22 +403,22 @@ appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
 finalized keybinding sets.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
-palette defaults, selection colors, cursor color/style/blink/opacity/text,
-bold-color, and faint-opacity. Fixed colors and Ghostty's cell-foreground and
-cell-background aliases remain distinct until the renderer has the target
-cell. Only the first configured font family is rendered. Explicit font and
-scrollback CLI options retain precedence.
+palette defaults, selection and candidate/selected search colors, cursor
+color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed colors and
+Ghostty's cell-foreground and cell-background aliases remain distinct until
+the renderer has the target cell. Only the first configured font family is
+rendered. Explicit font and scrollback CLI options retain precedence.
 
 Live reload updates font and appearance on existing panes without overriding a
 pane's manual font zoom. Palette and fixed cursor defaults are updated through
 `libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
-configured style. Selection, cursor aliases/opacity/text, bold-color, and
-faint-opacity are frontend render policy and therefore update without mutating
-terminal-originated state. Close confirmation policy and the built-in regex
-link matcher also update live; toggling `link-url` never disables OSC 8. The
-three-state link-preview policy reloads entirely in each pane's frontend and
+configured style. Selection, search, cursor aliases/opacity/text, bold-color,
+and faint-opacity are frontend render policy and therefore update without
+mutating terminal-originated state. Close confirmation policy and the built-in
+regex link matcher also update live; toggling `link-url` never disables OSC 8.
+The three-state link-preview policy reloads entirely in each pane's frontend and
 preserves an accepted hover over the terminal link. Removing an occupied
 preview guard instead resumes physical hit testing, as pointer ownership has
 changed.
@@ -523,8 +589,10 @@ part of this frontend's parity target.
 source and rejects revision, schema, ordering, or inventory drift. This keeps
 an upstream snapshot update from silently adding untracked parity work. The
 contract remains conservative: only the typed configuration slice, including
-`link-url` and `link-previews`, is marked partial or supported, while custom
-`link` rules and other upstream keys stay explicitly planned. In particular,
+the four search colors, `link-url`, and `link-previews`, is marked partial or
+supported. Search actions remain partial because the public library artifact
+cannot expose Ghostty's `xev`-dependent search thread, while custom `link`
+rules and other upstream keys stay explicitly planned. In particular,
 the pinned Ghostty `RepeatableLink.parseCLI` still returns
 `error.NotImplemented`, so this frontend does not invent a parallel syntax for
 user-defined expressions and actions.
@@ -552,7 +620,9 @@ The default CTest suite has focused layers for each ownership boundary:
   reflow, viewport hiding/restoration, screen switches, replacement, reset,
   and scrollback pruning. Logical-line snapshots additionally cover exact UTF-8
   mapping across combining graphemes, wide cells, soft wraps, semantic prompt
-  boundaries, range reflow, text replacement, and scrollback pruning.
+  boundaries, range reflow, text replacement, and scrollback pruning. Search
+  snapshots cover trimmed physical rows, byte-to-cell ownership, hard-newline
+  versus soft-wrap behavior, visible range mapping, and viewport alignment.
 - `ghostty-link-matcher` verifies the C++/C ABI, successive UTF-8 byte ranges,
   scheme/path heuristics, punctuation, IPv6, and invalid-coordinate handling.
 - `ghostty-link-matcher-upstream-corpus` runs the complete pinned Ghostty
@@ -566,7 +636,10 @@ The default CTest suite has focused layers for each ownership boundary:
   viewport hiding/restoration, and independent hover and activation leases. It
   also verifies regex lookup across UTF-8 graphemes and soft wraps, OSC 8
   precedence, range reflow, viewport hiding/restoration, stable unrelated
-  output, and activation invalidation after covered-text replacement.
+  output, and activation invalidation after covered-text replacement. Search
+  tests exercise bounded progressive scans, superseding generations, content
+  mutation restarts, overlapping ASCII-insensitive matches, navigation, and
+  selection-derived needles.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
@@ -574,7 +647,8 @@ The default CTest suite has focused layers for each ownership boundary:
 - `workspace-foundation` verifies stable tab identity after row removal and
   movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
-  action-string parsing and deterministic malformed/unsupported results.
+  action-string parsing—including the five search actions and exact navigation
+  grammar—and deterministic malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
   locations, shifted/unshifted Unicode matching, shared-prefix sequences,
   catch-all priority and recovery, local/broad flags, action chains, named-table
@@ -599,7 +673,10 @@ The default CTest suite has focused layers for each ownership boundary:
   modifier transitions. The same path covers live `link-url` enable/disable,
   byte-exact regex copy, relative-path opening, OSC 8 independence, all three
   link-preview policies, live frontend-only reload, no-query relocation, and
-  bounded/escaped display of arbitrary destination bytes.
+  bounded/escaped display of arbitrary destination bytes. Search rendering
+  covers candidate/selected/terminal-selection precedence, resize-safe masks,
+  live colors, overlay state, and the distinction between UI and engine-only
+  actions.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -636,8 +713,11 @@ in a real Wayland session.
 - Split ratios support keybinding resize/equalization, but draggable divider
   interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, search, user-defined `link` rules, multi-window operation, saved
-  sessions, and production packaging remain future work. OSC 8, the default
-  `link-url` matcher, and link previews are implemented; custom `link` parsing
-  remains unavailable in the pinned parser, and OSC grouping stays URI-based
-  until the public C API exposes hyperlink identity.
+  actions, user-defined `link` rules, multi-window operation, saved sessions,
+  and production packaging remain future work. OSC 8, the default `link-url`
+  matcher, link previews, and the incremental search foundation are
+  implemented. Search remains partial because the library artifact omits the
+  upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen
+  results are not retained independently, and the overlay is not draggable.
+  Custom `link` parsing remains unavailable in the pinned parser, and OSC
+  grouping stays URI-based until the public C API exposes hyperlink identity.

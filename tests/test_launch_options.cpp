@@ -61,6 +61,22 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.appearance.backgroundColor,
              QColor(QStringLiteral("#1e222a")));
     QVERIFY(options.appearance.palette.isEmpty());
+    QCOMPARE(options.appearance.searchForeground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(options.appearance.searchForeground.color,
+             QColor(QStringLiteral("#000000")));
+    QCOMPARE(options.appearance.searchBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(options.appearance.searchBackground.color,
+             QColor(QStringLiteral("#FFE082")));
+    QCOMPARE(options.appearance.searchSelectedForeground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(options.appearance.searchSelectedForeground.color,
+             QColor(QStringLiteral("#000000")));
+    QCOMPARE(options.appearance.searchSelectedBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(options.appearance.searchSelectedBackground.color,
+             QColor(QStringLiteral("#F2A57E")));
     QCOMPARE(options.appearance.cursorColor.kind, TerminalColorKind::Unset);
     QCOMPARE(options.appearance.cursorStyle, TerminalCursorStyle::Block);
     QVERIFY(!options.appearance.cursorBlink.has_value());
@@ -236,6 +252,14 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
                            QStringLiteral("cell-foreground"));
     snapshot.values.insert(QStringLiteral("selection-background"),
                            QColor(QStringLiteral("#223344")));
+    snapshot.values.insert(QStringLiteral("search-foreground"),
+                           QStringLiteral("cell-background"));
+    snapshot.values.insert(QStringLiteral("search-background"),
+                           QColor(QStringLiteral("#123456")));
+    snapshot.values.insert(QStringLiteral("search-selected-foreground"),
+                           QStringLiteral("cell-foreground"));
+    snapshot.values.insert(QStringLiteral("search-selected-background"),
+                           QColor(QStringLiteral("#654321")));
     snapshot.values.insert(QStringLiteral("cursor-color"),
                            QStringLiteral("cell-background"));
     snapshot.values.insert(QStringLiteral("cursor-opacity"), 0.625);
@@ -284,6 +308,18 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
              TerminalColorKind::Color);
     QCOMPARE(cliResult.appearance.selectionBackground.color,
              QColor(QStringLiteral("#223344")));
+    QCOMPARE(cliResult.appearance.searchForeground.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(cliResult.appearance.searchBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(cliResult.appearance.searchBackground.color,
+             QColor(QStringLiteral("#123456")));
+    QCOMPARE(cliResult.appearance.searchSelectedForeground.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(cliResult.appearance.searchSelectedBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(cliResult.appearance.searchSelectedBackground.color,
+             QColor(QStringLiteral("#654321")));
     QCOMPARE(cliResult.appearance.cursorColor.kind,
              TerminalColorKind::CellBackground);
     QCOMPARE(cliResult.appearance.cursorStyle,
@@ -392,6 +428,9 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("foreground"), QStringLiteral("not-a-color"));
     snapshot.values.insert(QStringLiteral("palette"), QVariantList{QColor(Qt::red)});
     snapshot.values.insert(QStringLiteral("selection-background"),
+                           QStringLiteral("not-an-alias"));
+    snapshot.values.insert(QStringLiteral("search-background"), QString());
+    snapshot.values.insert(QStringLiteral("search-selected-foreground"),
                            QStringLiteral("not-an-alias"));
     snapshot.values.insert(QStringLiteral("cursor-opacity"), 2.0);
     snapshot.values.insert(QStringLiteral("cursor-style"),

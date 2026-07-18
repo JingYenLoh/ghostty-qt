@@ -617,6 +617,47 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("start_search")
+        || name == QLatin1StringView("end_search")
+        || name == QLatin1StringView("search_selection")) {
+        // These are void Binding.Action fields, so even an explicitly empty
+        // parameter is invalid.
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        if (name == QLatin1StringView("start_search")) {
+            action.kind = GhosttyPaneActionKind::StartSearch;
+        } else if (name == QLatin1StringView("end_search")) {
+            action.kind = GhosttyPaneActionKind::EndSearch;
+        } else {
+            action.kind = GhosttyPaneActionKind::SearchSelection;
+        }
+        return action;
+    }
+
+    if (name == QLatin1StringView("search")) {
+        // Search is a []const u8 field. Its colon is required, its payload may
+        // be empty, and only the first colon separates the action name.
+        if (!parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::Search;
+        action.payload = parameter->toString();
+        return action;
+    }
+
+    if (name == QLatin1StringView("navigate_search")) {
+        if (!parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::NavigateSearch;
+        if (*parameter == QLatin1StringView("previous")) {
+            action.searchDirection = TerminalSearchDirection::Previous;
+        } else if (*parameter == QLatin1StringView("next")) {
+            action.searchDirection = TerminalSearchDirection::Next;
+        } else {
+            return std::nullopt;
+        }
+        return action;
+    }
+
     if (name == QLatin1StringView("csi")
         || name == QLatin1StringView("esc")
         || name == QLatin1StringView("text")) {

@@ -17,6 +17,11 @@ ApplicationWindow {
            : "ghostty-qt"
     color: "#1e222a"
 
+    Component {
+        id: terminalSearchOverlayFactory
+        SearchOverlay {}
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -95,6 +100,7 @@ ApplicationWindow {
         TerminalWorkspace {
             id: workspace
             anchors.fill: parent
+            searchOverlayComponent: terminalSearchOverlayFactory
         }
     }
 

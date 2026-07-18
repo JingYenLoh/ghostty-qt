@@ -20,7 +20,9 @@ private Q_SLOTS:
     void matchesPinnedIntegerParsing_data();
     void matchesPinnedIntegerParsing();
     void parsesPaneActions();
+    void parsesSearchPaneActions();
     void rejectsMalformedPaneActions();
+    void rejectsMalformedSearchPaneActions();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
 };
@@ -455,6 +457,53 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         QStringLiteral("new_tab")).has_value());
 }
 
+void GhosttyActionCatalogTest::parsesSearchPaneActions()
+{
+    const auto parse = [](QStringView serialized) {
+        return GhosttyActionCatalog::parsePaneAction(serialized).value();
+    };
+
+    QCOMPARE(parse(QStringLiteral("start_search")).kind,
+             GhosttyPaneActionKind::StartSearch);
+    QCOMPARE(parse(QStringLiteral("end_search")).kind,
+             GhosttyPaneActionKind::EndSearch);
+    QCOMPARE(parse(QStringLiteral("search_selection")).kind,
+             GhosttyPaneActionKind::SearchSelection);
+
+    const GhosttyPaneAction emptySearch = parse(QStringLiteral("search:"));
+    QCOMPARE(emptySearch.kind, GhosttyPaneActionKind::Search);
+    QCOMPARE(emptySearch.payload, QString{});
+
+    const GhosttyPaneAction search =
+        parse(QStringLiteral("search:needle:with:colons"));
+    QCOMPARE(search.kind, GhosttyPaneActionKind::Search);
+    QCOMPARE(search.payload, QStringLiteral("needle:with:colons"));
+
+    const GhosttyPaneAction previous =
+        parse(QStringLiteral("navigate_search:previous"));
+    QCOMPARE(previous.kind, GhosttyPaneActionKind::NavigateSearch);
+    QCOMPARE(previous.searchDirection, TerminalSearchDirection::Previous);
+
+    const GhosttyPaneAction next =
+        parse(QStringLiteral("navigate_search:next"));
+    QCOMPARE(next.kind, GhosttyPaneActionKind::NavigateSearch);
+    QCOMPARE(next.searchDirection, TerminalSearchDirection::Next);
+
+    const QStringList implemented{
+        QStringLiteral("start_search"),
+        QStringLiteral("end_search"),
+        QStringLiteral("search_selection"),
+        QStringLiteral("search:"),
+        QStringLiteral("search:needle:with:colons"),
+        QStringLiteral("navigate_search:previous"),
+        QStringLiteral("navigate_search:next"),
+    };
+    for (const QString &serialized : implemented) {
+        QVERIFY2(GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+}
+
 void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
 {
     const QStringList invalid{
@@ -497,6 +546,30 @@ void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
     }
 }
 
+void GhosttyActionCatalogTest::rejectsMalformedSearchPaneActions()
+{
+    const QStringList invalid{
+        QStringLiteral("start_search:"),
+        QStringLiteral("start_search:now"),
+        QStringLiteral("end_search:"),
+        QStringLiteral("end_search:now"),
+        QStringLiteral("search_selection:"),
+        QStringLiteral("search_selection:needle"),
+        QStringLiteral("search"),
+        QStringLiteral("navigate_search"),
+        QStringLiteral("navigate_search:"),
+        QStringLiteral("navigate_search:Previous"),
+        QStringLiteral("navigate_search:next:previous"),
+    };
+
+    for (const QString &serialized : invalid) {
+        QVERIFY2(!GhosttyActionCatalog::parsePaneAction(serialized).has_value(),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+}
+
 void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
 {
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("quit")),
@@ -517,6 +590,19 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("activate_key_table:copy")),
              GhosttyActionScope::Surface);
+
+    const QStringList searchActions{
+        QStringLiteral("start_search"),
+        QStringLiteral("end_search"),
+        QStringLiteral("search_selection"),
+        QStringLiteral("search:needle:with:colons"),
+        QStringLiteral("navigate_search:next"),
+        QStringLiteral("navigate_search:previous"),
+    };
+    for (const QString &serialized : searchActions) {
+        QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                 GhosttyActionScope::Surface);
+    }
 }
 
 void GhosttyActionCatalogTest::recognizesKeyTableActions()
