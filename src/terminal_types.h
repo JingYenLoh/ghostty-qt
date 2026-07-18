@@ -204,6 +204,13 @@ inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &upda
         return false;
     }
 
+    const qsizetype columnCount = update.columns;
+    const qsizetype rowCount = update.rows;
+    if (columnCount > QVector<TerminalCell>::maxSize() / rowCount) {
+        return false;
+    }
+    const qsizetype cellCount = columnCount * rowCount;
+
     QVector<bool> seen(update.rows, false);
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         if (row.row < 0 || row.row >= update.rows || seen.at(row.row)
@@ -217,14 +224,14 @@ inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &upda
             return false;
         }
     } else if (frame->columns != update.columns || frame->rows != update.rows
-               || frame->cells.size() != update.columns * update.rows) {
+               || frame->cells.size() != cellCount) {
         return false;
     }
 
     if (update.fullFrame) {
         frame->columns = update.columns;
         frame->rows = update.rows;
-        frame->cells.resize(update.columns * update.rows);
+        frame->cells.resize(cellCount);
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         const qsizetype destination = static_cast<qsizetype>(row.row) * update.columns;

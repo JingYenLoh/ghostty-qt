@@ -8,6 +8,22 @@ target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-terminal-types
+    test_terminal_types.cpp
+    ../src/terminal_actions.h
+    ../src/terminal_types.h
+)
+target_include_directories(test-terminal-types PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-types PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME terminal-types COMMAND test-terminal-types)
+set_tests_properties(terminal-types PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-ghostty-smoke
     test_ghostty_smoke.cpp
 )
