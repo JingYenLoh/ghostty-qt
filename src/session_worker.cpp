@@ -2071,7 +2071,7 @@ void SessionWorker::publishFrame()
         mouseTracking_ = snapshot.mouseTracking;
         Q_EMIT mouseTrackingChanged(mouseTracking_);
     }
-    TerminalUpdate update = std::move(snapshot.update);
+    TerminalUpdate &update = snapshot.update;
     update.contentRevision = terminalContentRevision_;
     update.resetCursorBlink = cursorBlinkResetPending_;
     bool hyperlinkMayHaveChanged = update.fullFrame
@@ -2100,7 +2100,7 @@ void SessionWorker::publishFrame()
     }
     if (hyperlinkState_->hasFrame || update.fullFrame) {
         hyperlinkState_->hasFrame = applyTerminalUpdate(
-            &hyperlinkState_->frame, update);
+            hyperlinkState_->frame, update);
     }
     const bool revisionChanged =
         publishedContentRevision_ != terminalContentRevision_;

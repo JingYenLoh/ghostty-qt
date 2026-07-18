@@ -2335,9 +2335,20 @@ public:
         }
         metadata.foreground = toQColor(colors.foreground);
         metadata.background = toQColor(colors.background);
-        metadata.palette.reserve(256);
-        for (const GhosttyColorRgb &color : colors.palette) {
-            metadata.palette.append(toQColor(color));
+        const bool paletteChanged = !std::ranges::equal(
+            colors.palette, std::as_const(publishedMetadata_.palette),
+            [](const GhosttyColorRgb &current, const QColor &published) {
+                return published.rgb()
+                    == qRgb(current.r, current.g, current.b);
+            });
+        if (paletteChanged) {
+            metadata.palette.reserve(
+                static_cast<qsizetype>(std::size(colors.palette)));
+            for (const GhosttyColorRgb &color : colors.palette) {
+                metadata.palette.append(toQColor(color));
+            }
+        } else {
+            metadata.palette = publishedMetadata_.palette;
         }
         metadata.cursorColorExplicit = colors.cursor_has_value;
         metadata.cursorColor = colors.cursor_has_value
@@ -2409,7 +2420,9 @@ public:
         update.columns = metadata.columns;
         update.rows = metadata.rows;
         update.fullFrame = fullFrame;
-        QVector<int> rowsToClear;
+        if (fullFrame) {
+            update.dirtyRows.reserve(metadata.rows);
+        }
 
         const bool inspectCursorCell = metadata.cursorVisible && !cursorOnWideTail
             && metadata.cursorColumn >= 0 && metadata.cursorColumn < metadata.columns
@@ -2613,7 +2626,6 @@ public:
                 }
                 if (copyRow) {
                     update.dirtyRows.append(std::move(rowUpdate));
-                    rowsToClear.append(rowIndex);
                 }
                 ++rowIndex;
             }
@@ -2626,14 +2638,16 @@ public:
             || metadata.foreground != publishedMetadata_.foreground
             || metadata.background != publishedMetadata_.background
             || metadata.cursorColor != publishedMetadata_.cursorColor
-            || metadata.palette != publishedMetadata_.palette
+            || paletteChanged
             || metadata.cursorColorExplicit
                 != publishedMetadata_.cursorColorExplicit;
-        update.foreground = metadata.foreground;
-        update.background = metadata.background;
-        update.cursorColor = metadata.cursorColor;
-        update.palette = metadata.palette;
-        update.cursorColorExplicit = metadata.cursorColorExplicit;
+        if (update.colorsChanged) {
+            update.foreground = metadata.foreground;
+            update.background = metadata.background;
+            update.cursorColor = metadata.cursorColor;
+            update.palette = metadata.palette;
+            update.cursorColorExplicit = metadata.cursorColorExplicit;
+        }
 
         update.cursorChanged = fullFrame || !hasPublishedFrame_
             || metadata.cursorVisible != publishedMetadata_.cursorVisible
@@ -2657,8 +2671,10 @@ public:
         update.scrollOffset = metadata.scrollOffset;
         update.scrollLength = metadata.scrollLength;
 
-        const auto setRowDirty = [this](const QVector<int> &rowIndexes, bool value) {
-            if (rowIndexes.isEmpty()) {
+        const auto setRowsDirty = [this](
+                                      const QVector<TerminalRowUpdate> &rowUpdates,
+                                      bool value) {
+            if (rowUpdates.isEmpty()) {
                 return true;
             }
             if (ghostty_render_state_get(renderState_,
@@ -2669,9 +2685,9 @@ public:
             }
             qsizetype target = 0;
             int rowIndex = 0;
-            while (target < rowIndexes.size()
+            while (target < rowUpdates.size()
                    && ghostty_render_state_row_iterator_next(rowIterator_)) {
-                if (rowIndex == rowIndexes.at(target)) {
+                if (rowIndex == rowUpdates.at(target).row) {
                     if (ghostty_render_state_row_set(
                             rowIterator_, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
                             &value)
@@ -2682,13 +2698,13 @@ public:
                 }
                 ++rowIndex;
             }
-            return target == rowIndexes.size();
+            return target == rowUpdates.size();
         };
 
         const bool clean = false;
-        if (!setRowDirty(rowsToClear, clean)) {
+        if (!setRowsDirty(update.dirtyRows, clean)) {
             const bool dirtyRow = true;
-            setRowDirty(rowsToClear, dirtyRow);
+            setRowsDirty(update.dirtyRows, dirtyRow);
             return RenderResult::Retry;
         }
         const GhosttyRenderStateDirty cleanState = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
@@ -2696,13 +2712,13 @@ public:
                                     &cleanState)
             != GHOSTTY_SUCCESS) {
             const bool dirtyRow = true;
-            setRowDirty(rowsToClear, dirtyRow);
+            setRowsDirty(update.dirtyRows, dirtyRow);
             return RenderResult::Retry;
         }
 
         bool tracking = false;
         ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking);
-        publishedMetadata_ = metadata;
+        publishedMetadata_ = std::move(metadata);
         hasPublishedFrame_ = true;
         snapshot->update = std::move(update);
         snapshot->mouseTracking = tracking;

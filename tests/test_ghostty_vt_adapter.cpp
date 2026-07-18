@@ -26,7 +26,7 @@ QString frameText(const TerminalFrame &frame)
 TerminalFrame applyUpdate(const TerminalUpdate &update)
 {
     TerminalFrame frame;
-    const bool applied = applyTerminalUpdate(&frame, update);
+    const bool applied = applyTerminalUpdate(frame, update);
     Q_ASSERT(applied);
     return frame;
 }
@@ -36,7 +36,7 @@ void renderInto(GhosttyVtAdapter *adapter, TerminalFrame *frame)
     GhosttyVtAdapter::RenderSnapshot snapshot;
     const auto result = adapter->renderFrame(&snapshot);
     QVERIFY(result == GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(*frame, snapshot.update));
 }
 
 QString frameRowText(const TerminalFrame &frame, int row)
@@ -116,6 +116,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     GhosttyVtAdapter::RenderSnapshot snapshot;
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
+    QVERIFY(snapshot.update.colorsChanged);
+    QCOMPARE(snapshot.update.palette.size(), 256);
     QCOMPARE(snapshot.update.dirtyRows.size(), 3);
     TerminalFrame frame = applyUpdate(snapshot.update);
     QCOMPARE(frame.columns, 16);
@@ -133,6 +135,8 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
 
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(!snapshot.update.hasChanges());
+    QVERIFY(!snapshot.update.colorsChanged);
+    QVERIFY(snapshot.update.palette.isEmpty());
 
     const QColor reloadedForeground(QStringLiteral("#f4dbd6"));
     const QColor reloadedBackground(QStringLiteral("#1e2030"));
@@ -142,21 +146,27 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     reloadedAppearance.backgroundColor = reloadedBackground;
     reloadedAppearance.cursorColor =
         TerminalColorValue::fromColor(reloadedCursor);
+    const QColor *const paletteBeforeReload = frame.palette.constData();
     QVERIFY(adapter->setAppearance(reloadedAppearance));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.colorsChanged);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QCOMPARE(snapshot.update.palette.size(), 256);
+    QCOMPARE(snapshot.update.palette.constData(), paletteBeforeReload);
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.foreground, reloadedForeground);
     QCOMPARE(frame.background, reloadedBackground);
     QCOMPARE(frame.cursorColor, reloadedCursor);
     QVERIFY(frame.cursorColorExplicit);
+    QCOMPARE(frame.palette.constData(), paletteBeforeReload);
 
     adapter->writeVt(QByteArrayLiteral("\rZ"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(!snapshot.update.fullFrame);
     QCOMPARE(snapshot.update.dirtyRows.size(), 1);
+    QVERIFY(!snapshot.update.colorsChanged);
+    QVERIFY(snapshot.update.palette.isEmpty());
     QVERIFY(snapshot.update.cursorChanged);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QVERIFY(frameText(frame).startsWith(QStringLiteral("ZB")));
 
     GhosttyVtAdapter::Geometry resized = options.geometry;
@@ -165,8 +175,10 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(adapter->resize(resized));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
     QVERIFY(snapshot.update.fullFrame);
+    QVERIFY(snapshot.update.colorsChanged);
+    QCOMPARE(snapshot.update.palette.size(), 256);
     QCOMPARE(snapshot.update.dirtyRows.size(), 4);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
 }
@@ -973,7 +985,7 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
         "\033]4;1;#00bb00\007"
         "\033]12;#abcdef\007"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#00bb00")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#abcdef")));
 
@@ -985,7 +997,7 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     reloaded.cursorBlink = true;
     QVERIFY(adapter->setAppearance(reloaded));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#00bb00")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#abcdef")));
     QCOMPARE(frame.cursorStyle, 2);
@@ -995,7 +1007,7 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     // that were active when the application override was installed.
     adapter->writeVt(QByteArrayLiteral("\033]104;1\007\033]112\007"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.palette.at(1), QColor(QStringLiteral("#0000cc")));
     QCOMPARE(frame.cursorColor, QColor(QStringLiteral("#fedcba")));
 
@@ -1003,17 +1015,17 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     // 0 q returns to the latest configured style and blink state.
     adapter->writeVt(QByteArrayLiteral("\033[2 q"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 1);
     QVERIFY(!frame.cursorBlinking);
     reloaded.cursorStyle = TerminalCursorStyle::Bar;
     QVERIFY(adapter->setAppearance(reloaded));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 1);
     adapter->writeVt(QByteArrayLiteral("\033[0 q"));
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, snapshot.update));
+    QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 0);
     QVERIFY(frame.cursorBlinking);
 }
@@ -1184,7 +1196,7 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
     GhosttyVtAdapter::RenderSnapshot before;
     QCOMPARE(adapter->renderFrame(&before),
              GhosttyVtAdapter::RenderResult::Ready);
-    QVERIFY(applyTerminalUpdate(&frame, before.update));
+    QVERIFY(applyTerminalUpdate(frame, before.update));
     QVERIFY(before.mouseTracking);
     QCOMPARE(adapter->encodePaste(QStringLiteral("paste")),
              QByteArrayLiteral("\033[200~paste\033[201~"));
@@ -1219,7 +1231,7 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
     QCOMPARE(adapter->encodePaste(QStringLiteral("paste")),
              QByteArrayLiteral("paste"));
     QCOMPARE(adapter->encodeFocus(true), QByteArray{});
-    QVERIFY(applyTerminalUpdate(&frame, after.update));
+    QVERIFY(applyTerminalUpdate(frame, after.update));
     QCOMPARE(frame.columns, options.geometry.columns);
     QCOMPARE(frame.rows, options.geometry.rows);
     QCOMPARE(frame.cursorColumn, 0);

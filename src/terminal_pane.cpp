@@ -497,7 +497,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 {
                     QMutexLocker locker(&renderMutex_);
                     if (hasFrame_ || terminalUpdate.fullFrame) {
-                        applied = applyTerminalUpdate(&frame_, terminalUpdate);
+                        applied = applyTerminalUpdate(frame_, terminalUpdate);
                         hasFrame_ = hasFrame_ || applied;
                         if (applied && frame_.rows > 0
                             && (!terminalResizePending_

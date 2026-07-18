@@ -46,8 +46,9 @@ bool updatesContain(const QSignalSpy &spy, const QString &needle)
 {
     TerminalFrame frame;
     for (const QList<QVariant> &arguments : spy) {
-        applyTerminalUpdate(
-            &frame, qvariant_cast<TerminalUpdate>(arguments.constFirst()));
+        const bool applied = applyTerminalUpdate(
+            frame, qvariant_cast<TerminalUpdate>(arguments.constFirst()));
+        Q_ASSERT(applied);
     }
     return frameText(frame).contains(needle);
 }
@@ -56,8 +57,9 @@ TerminalFrame accumulatedFrame(const QSignalSpy &spy)
 {
     TerminalFrame frame;
     for (const QList<QVariant> &arguments : spy) {
-        applyTerminalUpdate(
-            &frame, qvariant_cast<TerminalUpdate>(arguments.constFirst()));
+        const bool applied = applyTerminalUpdate(
+            frame, qvariant_cast<TerminalUpdate>(arguments.constFirst()));
+        Q_ASSERT(applied);
     }
     return frame;
 }

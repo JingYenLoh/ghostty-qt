@@ -159,7 +159,8 @@ struct TerminalFrame {
 };
 
 // A row is the smallest cell payload that crosses the worker/UI thread
-// boundary after the initial frame. The row index is viewport-relative.
+// boundary after the initial frame. The row index is viewport-relative, and
+// updates carry rows in strictly increasing order.
 struct TerminalRowUpdate {
     int row = 0;
     QVector<TerminalCell> cells;
@@ -213,9 +214,10 @@ struct TerminalUpdate {
 // happens before mutation so a malformed or incomplete delta cannot leave the
 // retained frame half-updated. Returns false for an invalid update or a
 // partial update whose dimensions do not match the retained frame.
-inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &update)
+[[nodiscard]] inline bool applyTerminalUpdate(
+    TerminalFrame &frame, const TerminalUpdate &update)
 {
-    if (frame == nullptr || update.columns <= 0 || update.rows <= 0) {
+    if (update.columns <= 0 || update.rows <= 0) {
         return false;
     }
 
@@ -226,54 +228,55 @@ inline bool applyTerminalUpdate(TerminalFrame *frame, const TerminalUpdate &upda
     }
     const qsizetype cellCount = columnCount * rowCount;
 
-    QVector<bool> seen(update.rows, false);
+    int previousRow = -1;
     for (const TerminalRowUpdate &row : update.dirtyRows) {
-        if (row.row < 0 || row.row >= update.rows || seen.at(row.row)
+        if (row.row <= previousRow || row.row >= update.rows
             || row.cells.size() != update.columns) {
             return false;
         }
-        seen[row.row] = true;
+        previousRow = row.row;
     }
     if (update.fullFrame) {
         if (update.dirtyRows.size() != update.rows) {
             return false;
         }
-    } else if (frame->columns != update.columns || frame->rows != update.rows
-               || frame->cells.size() != cellCount) {
+    } else if (frame.columns != update.columns || frame.rows != update.rows
+               || frame.cells.size() != cellCount) {
         return false;
     }
 
     if (update.fullFrame) {
-        frame->columns = update.columns;
-        frame->rows = update.rows;
-        frame->cells.resize(cellCount);
+        frame.columns = update.columns;
+        frame.rows = update.rows;
+        frame.cells.resize(cellCount);
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         const qsizetype destination = static_cast<qsizetype>(row.row) * update.columns;
-        std::copy(row.cells.cbegin(), row.cells.cend(), frame->cells.begin() + destination);
+        std::copy(row.cells.cbegin(), row.cells.cend(),
+                  frame.cells.begin() + destination);
     }
 
     if (update.fullFrame || update.colorsChanged) {
-        frame->foreground = update.foreground;
-        frame->background = update.background;
-        frame->cursorColor = update.cursorColor;
-        frame->palette = update.palette;
-        frame->cursorColorExplicit = update.cursorColorExplicit;
+        frame.foreground = update.foreground;
+        frame.background = update.background;
+        frame.cursorColor = update.cursorColor;
+        frame.palette = update.palette;
+        frame.cursorColorExplicit = update.cursorColorExplicit;
     }
     if (update.fullFrame || update.cursorChanged) {
-        frame->cursorVisible = update.cursorVisible;
-        frame->cursorBlinking = update.cursorBlinking;
-        frame->cursorColumn = update.cursorColumn;
-        frame->cursorRow = update.cursorRow;
-        frame->cursorStyle = update.cursorStyle;
-        frame->cursorColumnSpan = update.cursorColumnSpan;
+        frame.cursorVisible = update.cursorVisible;
+        frame.cursorBlinking = update.cursorBlinking;
+        frame.cursorColumn = update.cursorColumn;
+        frame.cursorRow = update.cursorRow;
+        frame.cursorStyle = update.cursorStyle;
+        frame.cursorColumnSpan = update.cursorColumnSpan;
     }
     if (update.fullFrame || update.scrollbarChanged) {
-        frame->scrollTotal = update.scrollTotal;
-        frame->scrollOffset = update.scrollOffset;
-        frame->scrollLength = update.scrollLength;
+        frame.scrollTotal = update.scrollTotal;
+        frame.scrollOffset = update.scrollOffset;
+        frame.scrollLength = update.scrollLength;
     }
-    frame->contentRevision = update.contentRevision;
+    frame.contentRevision = update.contentRevision;
     return true;
 }
 
