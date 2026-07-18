@@ -747,7 +747,9 @@ void SessionWorker::drainPty(bool finalDrain)
         return;
     }
 
-    std::array<uint8_t, static_cast<size_t>(kReadBufferSize)> buffer{};
+    // read() initializes every byte exposed through the resulting view, so
+    // zero-filling this 64 KiB buffer on every notifier activation is wasted.
+    std::array<uint8_t, static_cast<size_t>(kReadBufferSize)> buffer;
     qsizetype totalRead = 0;
     bool receivedData = false;
 
