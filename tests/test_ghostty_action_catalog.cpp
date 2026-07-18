@@ -747,18 +747,61 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
 
 void GhosttyActionCatalogTest::recognizesKeyTableActions()
 {
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("activate_key_table:copy")));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("activate_key_table_once:")));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("deactivate_key_table")));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("deactivate_all_key_tables")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("activate_key_table")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("deactivate_key_table:copy")));
+    const auto parse = [](QStringView serialized) {
+        return GhosttyActionCatalog::parsePaneAction(serialized).value();
+    };
+
+    const GhosttyPaneAction activate =
+        parse(QStringLiteral("activate_key_table:copy:mode"));
+    QCOMPARE(activate.kind, GhosttyPaneActionKind::KeyTable);
+    QCOMPARE(activate.keyTable.kind,
+             TerminalKeyTableRequest::Kind::Activate);
+    QCOMPARE(activate.keyTable.name, QStringLiteral("copy:mode"));
+
+    const GhosttyPaneAction activateOnce =
+        parse(QStringLiteral("activate_key_table_once:"));
+    QCOMPARE(activateOnce.kind, GhosttyPaneActionKind::KeyTable);
+    QCOMPARE(activateOnce.keyTable.kind,
+             TerminalKeyTableRequest::Kind::ActivateOnce);
+    QVERIFY(activateOnce.keyTable.name.isEmpty());
+
+    const GhosttyPaneAction deactivate =
+        parse(QStringLiteral("deactivate_key_table"));
+    QCOMPARE(deactivate.kind, GhosttyPaneActionKind::KeyTable);
+    QCOMPARE(deactivate.keyTable.kind,
+             TerminalKeyTableRequest::Kind::Deactivate);
+
+    const GhosttyPaneAction deactivateAll =
+        parse(QStringLiteral("deactivate_all_key_tables"));
+    QCOMPARE(deactivateAll.kind, GhosttyPaneActionKind::KeyTable);
+    QCOMPARE(deactivateAll.keyTable.kind,
+             TerminalKeyTableRequest::Kind::DeactivateAll);
+
+    const QStringList valid{
+        QStringLiteral("activate_key_table:copy:mode"),
+        QStringLiteral("activate_key_table_once:"),
+        QStringLiteral("deactivate_key_table"),
+        QStringLiteral("deactivate_all_key_tables"),
+    };
+    for (const QString &serialized : valid) {
+        QVERIFY2(GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
+
+    const QStringList invalid{
+        QStringLiteral("activate_key_table"),
+        QStringLiteral("activate_key_table_once"),
+        QStringLiteral("deactivate_key_table:"),
+        QStringLiteral("deactivate_key_table:copy"),
+        QStringLiteral("deactivate_all_key_tables:"),
+        QStringLiteral("deactivate_all_key_tables:copy"),
+    };
+    for (const QString &serialized : invalid) {
+        QVERIFY2(!GhosttyActionCatalog::parsePaneAction(serialized).has_value(),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+    }
 }
 
 QTEST_APPLESS_MAIN(GhosttyActionCatalogTest)

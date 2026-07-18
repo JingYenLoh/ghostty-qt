@@ -755,11 +755,13 @@ void GhosttyKeybindSetTest::enforcesTableStackAndActivationRules()
 
     GhosttyKeybindSet set;
     (void) set.load(config);
+    QVERIFY(!set.hasActiveTables());
     QVERIFY(set.hasTable(QStringLiteral("A")));
     QVERIFY(!set.hasTable(QStringLiteral("missing")));
     QVERIFY(!set.activateTable(QStringLiteral("missing")));
     QVERIFY(set.canActivateTable(QStringLiteral("A")));
     QVERIFY(set.activateTable(QStringLiteral("A")));
+    QVERIFY(set.hasActiveTables());
     QVERIFY(!set.canActivateTable(QStringLiteral("A")));
     QVERIFY(!set.activateTable(QStringLiteral("A")));
     QVERIFY(set.activateTable(QStringLiteral("B")));
@@ -768,9 +770,11 @@ void GhosttyKeybindSetTest::enforcesTableStackAndActivationRules()
              QStringList({QStringLiteral("A"), QStringLiteral("B"),
                           QStringLiteral("A")}));
     QVERIFY(set.deactivateTable());
+    QVERIFY(set.hasActiveTables());
     QCOMPARE(set.activeTableNames(),
              QStringList({QStringLiteral("A"), QStringLiteral("B")}));
     QVERIFY(set.deactivateAllTables());
+    QVERIFY(!set.hasActiveTables());
     QVERIFY(!set.deactivateAllTables());
     QVERIFY(!set.deactivateTable());
 

@@ -1739,17 +1739,12 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
 
 bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
 {
-    if (!GhosttyActionCatalog::isImplemented(action)) {
-        return false;
-    }
-    const GhosttySerializedActionView parsed =
-        GhosttyActionCatalog::parseSerializedAction(action);
-    const QStringView name = parsed.name;
-    const std::optional<QStringView> &parameter = parsed.parameter;
-
-    if (const std::optional<GhosttyPaneAction> paneAction =
-            GhosttyActionCatalog::parsePaneAction(action);
-        paneAction.has_value()) {
+    const std::optional<GhosttyPaneAction> paneAction =
+        GhosttyActionCatalog::parsePaneAction(action);
+    if (paneAction.has_value()) {
+        if (paneAction->kind == GhosttyPaneActionKind::KeyTable) {
+            return canApplyKeyTableRequest(paneAction->keyTable);
+        }
         const bool needsSelection =
             paneAction->kind == GhosttyPaneActionKind::AdjustSelection
             || paneAction->kind == GhosttyPaneActionKind::SearchSelection
@@ -1771,6 +1766,13 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         return true;
     }
 
+    if (!GhosttyActionCatalog::isImplemented(action)) {
+        return false;
+    }
+    const GhosttySerializedActionView parsed =
+        GhosttyActionCatalog::parseSerializedAction(action);
+    const QStringView name = parsed.name;
+
     if (name == QLatin1StringView("copy_to_clipboard")) {
         return controller_->selectionExpected();
     }
@@ -1791,17 +1793,6 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
             && hoveredHyperlinkCell_ == hoverCell_
             && hoveredCellIsLinked
             && hyperlinkModifiersMatch(hoverModifiers_);
-    }
-    if (name == QLatin1StringView("activate_key_table")
-        || name == QLatin1StringView("activate_key_table_once")) {
-        return parameter.has_value()
-            && keybinds_.canActivateTable(*parameter);
-    }
-    if (name == QLatin1StringView("deactivate_key_table")) {
-        return !keybinds_.activeTableNames().isEmpty();
-    }
-    if (name == QLatin1StringView("deactivate_all_key_tables")) {
-        return !keybinds_.activeTableNames().isEmpty();
     }
     if (name == QLatin1StringView("paste_from_clipboard")) {
         return !QGuiApplication::clipboard()->text().isEmpty();
@@ -1831,37 +1822,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     // Broad action fanout calls this public boundary without the normal
     // performability preflight. Apply the catalog grammar before any action
     // can mutate pane or application state.
-    if (!GhosttyActionCatalog::isImplemented(action)) {
-        return false;
-    }
-    const GhosttySerializedActionView parsed =
-        GhosttyActionCatalog::parseSerializedAction(action);
-    const QStringView name = parsed.name;
-    const std::optional<QStringView> &parameter = parsed.parameter;
-
-    if (name == QLatin1StringView("activate_key_table")
-        || name == QLatin1StringView("activate_key_table_once")) {
-        if (!parameter.has_value()) return false;
-        const bool changed = keybinds_.activateTable(
-            *parameter,
-            name == QLatin1StringView("activate_key_table_once"));
-        if (changed) Q_EMIT activeKeyTablesChanged();
-        return changed;
-    }
-    if (name == QLatin1StringView("deactivate_key_table")) {
-        const bool changed = keybinds_.deactivateTable();
-        if (changed) Q_EMIT activeKeyTablesChanged();
-        return changed;
-    }
-    if (name == QLatin1StringView("deactivate_all_key_tables")) {
-        const bool changed = keybinds_.deactivateAllTables();
-        if (changed) Q_EMIT activeKeyTablesChanged();
-        return changed;
-    }
-
-    if (const std::optional<GhosttyPaneAction> paneAction =
-            GhosttyActionCatalog::parsePaneAction(action);
-        paneAction.has_value()) {
+    const std::optional<GhosttyPaneAction> paneAction =
+        GhosttyActionCatalog::parsePaneAction(action);
+    if (paneAction.has_value()) {
         switch (paneAction->kind) {
         case GhosttyPaneActionKind::ScrollViewport:
             if (paneAction->viewport.kind
@@ -1895,6 +1858,8 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         case GhosttyPaneActionKind::FontSize:
             applyFontSizeRequest(paneAction->fontSize);
             return true;
+        case GhosttyPaneActionKind::KeyTable:
+            return applyKeyTableRequest(paneAction->keyTable);
         case GhosttyPaneActionKind::SelectAll:
             controller_->selectAll();
             return true;
@@ -1944,6 +1909,13 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             return true;
         }
     }
+
+    if (!GhosttyActionCatalog::isImplemented(action)) {
+        return false;
+    }
+    const GhosttySerializedActionView parsed =
+        GhosttyActionCatalog::parseSerializedAction(action);
+    const QStringView name = parsed.name;
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
         copySelection();
@@ -3001,4 +2973,43 @@ void TerminalPane::applyFontSizeRequest(
 
     manuallyZoomed_ = true;
     setFontPointSize(points);
+}
+
+bool TerminalPane::canApplyKeyTableRequest(
+    const TerminalKeyTableRequest &request) const
+{
+    switch (request.kind) {
+    case TerminalKeyTableRequest::Kind::Activate:
+    case TerminalKeyTableRequest::Kind::ActivateOnce:
+        return keybinds_.canActivateTable(request.name);
+    case TerminalKeyTableRequest::Kind::Deactivate:
+    case TerminalKeyTableRequest::Kind::DeactivateAll:
+        return keybinds_.hasActiveTables();
+    }
+    return false;
+}
+
+bool TerminalPane::applyKeyTableRequest(
+    const TerminalKeyTableRequest &request)
+{
+    bool changed = false;
+    switch (request.kind) {
+    case TerminalKeyTableRequest::Kind::Activate:
+        changed = keybinds_.activateTable(request.name);
+        break;
+    case TerminalKeyTableRequest::Kind::ActivateOnce:
+        changed = keybinds_.activateTable(request.name, true);
+        break;
+    case TerminalKeyTableRequest::Kind::Deactivate:
+        changed = keybinds_.deactivateTable();
+        break;
+    case TerminalKeyTableRequest::Kind::DeactivateAll:
+        changed = keybinds_.deactivateAllTables();
+        break;
+    }
+
+    if (changed) {
+        Q_EMIT activeKeyTablesChanged();
+    }
+    return changed;
 }

@@ -686,6 +686,36 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("activate_key_table")
+        || name == QLatin1StringView("activate_key_table_once")) {
+        // These fields are []const u8 in Binding.Action. The colon is
+        // required, but an empty or colon-containing table name still parses;
+        // table existence is pane state checked immediately before execution.
+        if (!parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::KeyTable;
+        action.keyTable.kind =
+            name == QLatin1StringView("activate_key_table")
+            ? TerminalKeyTableRequest::Kind::Activate
+            : TerminalKeyTableRequest::Kind::ActivateOnce;
+        action.keyTable.name = parameter->toString();
+        return action;
+    }
+
+    if (name == QLatin1StringView("deactivate_key_table")
+        || name == QLatin1StringView("deactivate_all_key_tables")) {
+        // Both deactivation fields are void, so even an empty parameter is
+        // invalid rather than an alternate spelling of the action.
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::KeyTable;
+        action.keyTable.kind =
+            name == QLatin1StringView("deactivate_key_table")
+            ? TerminalKeyTableRequest::Kind::Deactivate
+            : TerminalKeyTableRequest::Kind::DeactivateAll;
+        return action;
+    }
+
     if (name == QLatin1StringView("select_all")) {
         if (parameter.has_value()) return std::nullopt;
         GhosttyPaneAction action;
@@ -819,16 +849,6 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         || name == QLatin1StringView("end_key_sequence")
         || name == QLatin1StringView("close_window")
         || name == QLatin1StringView("ignore")) {
-        return !parameter.has_value();
-    }
-    if (name == QLatin1StringView("activate_key_table")
-        || name == QLatin1StringView("activate_key_table_once")) {
-        // Binding.Action.parse accepts an empty string parameter. Whether the
-        // named table exists is a pane-state question handled at execution.
-        return parameter.has_value();
-    }
-    if (name == QLatin1StringView("deactivate_key_table")
-        || name == QLatin1StringView("deactivate_all_key_tables")) {
         return !parameter.has_value();
     }
     return translate(serializedAction).accepted();

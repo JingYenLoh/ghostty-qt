@@ -2980,6 +2980,12 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
                 GhosttyKeybindFlags{.performable = true}),
         binding({unicode('o', GhosttyKeybindCtrl)},
                 QStringLiteral("activate_key_table_once:once")),
+        binding({unicode('u', GhosttyKeybindCtrl)},
+                QStringLiteral("activate_key_table:missing"),
+                GhosttyKeybindFlags{.performable = true}),
+        binding({unicode('d', GhosttyKeybindCtrl)},
+                QStringLiteral("deactivate_key_table"),
+                GhosttyKeybindFlags{.performable = true}),
     };
     options.keybindConfig.tables = {
         GhosttyKeybindTable{
@@ -3012,8 +3018,29 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
         QCoreApplication::sendEvent(&pane, &event);
     };
 
+    // State-dependent no-ops report false at the public broad-action boundary
+    // and emit no table notification.
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:missing")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("deactivate_key_table")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("deactivate_all_key_tables")));
+    QCOMPARE(tableChanges.count(), 0);
+
+    // The same unavailable operations make performable bindings act absent.
+    const int beforeUnavailable = forwarded.count();
+    press(Qt::Key_U, Qt::ControlModifier, QString(QChar(0x15)));
+    press(Qt::Key_D, Qt::ControlModifier, QString(QChar(0x04)));
+    QCOMPARE(forwarded.count(), beforeUnavailable + 2);
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 0);
+
+    const int beforeOrdinary = forwarded.count();
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
-    QCOMPARE(forwarded.count(), 1);
+    QCOMPARE(forwarded.count(), beforeOrdinary + 1);
 
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
@@ -3023,29 +3050,64 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
 
     // A performable activation of the already-innermost table behaves as an
     // absent binding and reaches the terminal.
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QCOMPARE(tableChanges.count(), 1);
     const int beforeDuplicate = forwarded.count();
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
     QCOMPARE(forwarded.count(), beforeDuplicate + 1);
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 1);
 
+    // Typed single/all deactivation preserves exact stack and notification
+    // semantics even when called through the public broad-action boundary.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table_once:once")));
+    QCOMPARE(pane.activeKeyTables(),
+             QStringList({QStringLiteral("edit"), QStringLiteral("once")}));
+    QCOMPARE(tableChanges.count(), 2);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("deactivate_key_table")));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 3);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table_once:once")));
+    QCOMPARE(tableChanges.count(), 4);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("deactivate_all_key_tables")));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 5);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("deactivate_key_table")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("deactivate_all_key_tables")));
+    QCOMPARE(tableChanges.count(), 5);
+
+    press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
+    QCOMPARE(tableChanges.count(), 6);
     press(Qt::Key_Escape, Qt::NoModifier, QString{});
     QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 7);
 
     // A one-shot table pops on the sequence leader, while the retained child
     // trie still resolves the continuation.
     press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
+    QCOMPARE(tableChanges.count(), 8);
     press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
     QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 9);
     press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
     QCOMPARE(newTab.count(), 2);
 
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 10);
     LaunchOptions reloaded = options;
     reloaded.keybindConfig.tables.clear();
     pane.applyRuntimeOptions(reloaded);
     QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 11);
 }
 
 void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()

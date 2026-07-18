@@ -512,9 +512,11 @@ unconsumed, or unavailable performable match flushes the prefix and current key
 atomically; `end_key_sequence` flushes only the leaders. This preserves the VT
 mode that existed at each leader press and prevents reload or stale queued
 operations from leaking input. Supported actions then pass through
-`GhosttyActionCatalog` and the same typed
-workspace dispatcher used by QML controls; pane-local copy, paste, font zoom,
-scroll, selection, and reload actions use their terminal operations directly.
+`GhosttyActionCatalog`. Catalog parsing routes workspace actions through the
+same typed dispatcher used by QML controls, while viewport, font-size,
+selection, search, terminal-control, and named-key-table actions become owned
+typed pane requests. Pane-local copy, paste, and reload actions still use their
+terminal operations directly.
 Page actions use the full terminal height; fractional pages multiply in f32
 and truncate toward zero, while line and absolute-row parameters retain their
 pinned i16 and usize bounds. Non-finite or unsafe fractional values are

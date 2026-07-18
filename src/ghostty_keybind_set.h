@@ -151,6 +151,10 @@ public:
     [[nodiscard]] bool activateTable(QStringView name, bool oneShot = false);
     [[nodiscard]] bool deactivateTable() noexcept;
     [[nodiscard]] bool deactivateAllTables() noexcept;
+    [[nodiscard]] bool hasActiveTables() const noexcept
+    {
+        return !activeTables_.isEmpty();
+    }
     [[nodiscard]] QStringList activeTableNames() const;
 
     [[nodiscard]] qsizetype size() const noexcept { return bindingCount_; }

@@ -29,6 +29,7 @@ class QTimer;
 class QWheelEvent;
 class TerminalController;
 struct TerminalFontSizeRequest;
+struct TerminalKeyTableRequest;
 
 class TerminalPane final : public QQuickItem {
     Q_OBJECT
@@ -140,6 +141,10 @@ private:
     bool canExecuteConfiguredAction(QStringView action) const;
     int viewportPageRows() const;
     void applyFontSizeRequest(const TerminalFontSizeRequest &request);
+    [[nodiscard]] bool canApplyKeyTableRequest(
+        const TerminalKeyTableRequest &request) const;
+    [[nodiscard]] bool applyKeyTableRequest(
+        const TerminalKeyTableRequest &request);
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
