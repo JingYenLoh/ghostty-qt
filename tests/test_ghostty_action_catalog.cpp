@@ -9,6 +9,7 @@ class GhosttyActionCatalogTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void tokenizesSerializedActions();
     void translatesParameterlessActions();
     void translatesParameterizedActions_data();
     void translatesParameterizedActions();
@@ -26,6 +27,34 @@ private Q_SLOTS:
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
 };
+
+void GhosttyActionCatalogTest::tokenizesSerializedActions()
+{
+    const QString parameterlessSource = QStringLiteral("reload_config");
+    const GhosttySerializedActionView parameterless =
+        GhosttyActionCatalog::parseSerializedAction(
+            parameterlessSource);
+    QCOMPARE(parameterless.name.toString(), QStringLiteral("reload_config"));
+    QVERIFY(!parameterless.parameter.has_value());
+
+    const QString emptyParameterSource = QStringLiteral("reload_config:");
+    const GhosttySerializedActionView emptyParameter =
+        GhosttyActionCatalog::parseSerializedAction(
+            emptyParameterSource);
+    QCOMPARE(emptyParameter.name.toString(), QStringLiteral("reload_config"));
+    QVERIFY(emptyParameter.parameter.has_value());
+    QVERIFY(emptyParameter.parameter->isEmpty());
+
+    const QString embeddedColonsSource =
+        QStringLiteral("csi:38:2:255:0:0m");
+    const GhosttySerializedActionView embeddedColons =
+        GhosttyActionCatalog::parseSerializedAction(
+            embeddedColonsSource);
+    QCOMPARE(embeddedColons.name.toString(), QStringLiteral("csi"));
+    QVERIFY(embeddedColons.parameter.has_value());
+    QCOMPARE(embeddedColons.parameter->toString(),
+             QStringLiteral("38:2:255:0:0m"));
+}
 
 void GhosttyActionCatalogTest::translatesParameterlessActions()
 {

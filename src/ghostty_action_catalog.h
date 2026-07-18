@@ -23,6 +23,15 @@ enum class GhosttyActionScope {
     Surface,
 };
 
+// Non-owning tokenization of Ghostty's serialized Action.parse format. The
+// views remain valid only while the source QStringView remains valid. Keeping
+// the optional parameter preserves the semantic difference between `action`
+// and `action:` for every validation and execution path.
+struct GhosttySerializedActionView {
+    QStringView name;
+    std::optional<QStringView> parameter;
+};
+
 // Pane-local actions have state-dependent execution that cannot be represented
 // by WorkspaceActionRequest. Keep their parsed values typed so TerminalPane
 // never has to reinterpret Ghostty's serialized numeric or enum parameters.
@@ -77,6 +86,11 @@ struct GhosttyActionTranslation {
 
 class GhosttyActionCatalog final {
 public:
+    // Split only at the first colon. Action-specific grammar is validated by
+    // translate, parsePaneAction, and isImplemented.
+    [[nodiscard]] static GhosttySerializedActionView parseSerializedAction(
+        QStringView serializedAction);
+
     // Translate the Ghostty Action.parse wire format into the workspace's
     // typed action vocabulary. Parsing intentionally follows the pinned
     // ghostty/src/input/Binding.zig rules: the first colon separates the

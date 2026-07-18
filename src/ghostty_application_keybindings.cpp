@@ -52,12 +52,6 @@ std::uint32_t unshiftedCodepoint(int key)
     }
 }
 
-QStringView actionName(QStringView action)
-{
-    const qsizetype colon = action.indexOf(u':');
-    return colon < 0 ? action : action.first(colon);
-}
-
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
@@ -70,8 +64,7 @@ bool containsIgnore(const QStringList &actions)
 {
     return std::any_of(actions.cbegin(), actions.cend(),
                        [](const QString &action) {
-                           return actionName(action)
-                               == QLatin1StringView("ignore");
+                           return action == QLatin1StringView("ignore");
                        });
 }
 

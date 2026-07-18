@@ -566,9 +566,7 @@ bool isModifierKey(int key)
 
 bool isIgnoreAction(QStringView action)
 {
-    const qsizetype colon = action.indexOf(u':');
-    return (colon < 0 ? action : action.first(colon))
-        == QLatin1StringView("ignore");
+    return action == QLatin1StringView("ignore");
 }
 
 } // namespace

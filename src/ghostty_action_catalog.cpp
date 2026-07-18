@@ -278,12 +278,6 @@ bool isCatalogAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("resize_split"));
 }
 
-QStringView actionName(QStringView serializedAction)
-{
-    const qsizetype colon = serializedAction.indexOf(u':');
-    return colon < 0 ? serializedAction : serializedAction.first(colon);
-}
-
 bool isApplicationAction(QStringView name)
 {
     // Keep this list synchronized with Binding.Action.scope(). `unbind` does
@@ -306,17 +300,28 @@ bool isApplicationAction(QStringView name)
 
 } // namespace
 
+GhosttySerializedActionView GhosttyActionCatalog::parseSerializedAction(
+    QStringView serializedAction)
+{
+    const qsizetype colon = serializedAction.indexOf(u':');
+    GhosttySerializedActionView result;
+    result.name = colon < 0
+        ? serializedAction
+        : serializedAction.first(colon);
+    if (colon >= 0) {
+        result.parameter = serializedAction.sliced(colon + 1);
+    }
+    return result;
+}
+
 GhosttyActionTranslation GhosttyActionCatalog::translate(
     QStringView serializedAction,
     WorkspaceActionContext context)
 {
-    const qsizetype colonIndex = serializedAction.indexOf(QChar(u':'));
-    const QStringView actionName = colonIndex < 0
-        ? serializedAction
-        : serializedAction.first(colonIndex);
-    const OptionalView parameter = colonIndex < 0
-        ? OptionalView{}
-        : OptionalView{serializedAction.sliced(colonIndex + 1)};
+    const GhosttySerializedActionView parsed =
+        parseSerializedAction(serializedAction);
+    const QStringView actionName = parsed.name;
+    const OptionalView parameter = parsed.parameter;
 
     // Binding.Action.parse reports an empty action name as InvalidFormat.
     if (actionName.isEmpty()) {
@@ -534,13 +539,10 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
 std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
     QStringView serializedAction)
 {
-    const qsizetype colon = serializedAction.indexOf(u':');
-    const QStringView name = colon < 0
-        ? serializedAction
-        : serializedAction.first(colon);
-    const OptionalView parameter = colon < 0
-        ? OptionalView{}
-        : OptionalView{serializedAction.sliced(colon + 1)};
+    const GhosttySerializedActionView parsed =
+        parseSerializedAction(serializedAction);
+    const QStringView name = parsed.name;
+    const OptionalView parameter = parsed.parameter;
 
     const auto viewportAction = [](TerminalViewportRequest::Kind kind) {
         GhosttyPaneAction action;
@@ -722,20 +724,14 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
 
 bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
 {
-    if (translate(serializedAction).accepted()) {
-        return true;
-    }
     if (parsePaneAction(serializedAction).has_value()) {
         return true;
     }
 
-    const qsizetype colon = serializedAction.indexOf(u':');
-    const QStringView name = colon < 0
-        ? serializedAction
-        : serializedAction.first(colon);
-    const OptionalView parameter = colon < 0
-        ? OptionalView{}
-        : OptionalView{serializedAction.sliced(colon + 1)};
+    const GhosttySerializedActionView parsed =
+        parseSerializedAction(serializedAction);
+    const QStringView name = parsed.name;
+    const OptionalView parameter = parsed.parameter;
 
     if (name == QLatin1StringView("copy_to_clipboard")) {
         return !parameter.has_value()
@@ -771,13 +767,13 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         const double amount = parameter->toString().toDouble(&valid);
         return valid && std::isfinite(amount) && amount > 0.0;
     }
-    return false;
+    return translate(serializedAction).accepted();
 }
 
 GhosttyActionScope GhosttyActionCatalog::scope(
     QStringView serializedAction)
 {
-    return isApplicationAction(actionName(serializedAction))
+    return isApplicationAction(parseSerializedAction(serializedAction).name)
         ? GhosttyActionScope::Application
         : GhosttyActionScope::Surface;
 }

@@ -1,5 +1,6 @@
 #include "terminal_workspace.h"
 
+#include "ghostty_action_catalog.h"
 #include "terminal_pane.h"
 
 #include <QDebug>
@@ -180,12 +181,12 @@ bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
 
 bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
 {
-    const qsizetype colon = action.indexOf(u':');
-    const QStringView name = colon < 0 ? action : action.first(colon);
-    const bool hasParameter = colon >= 0;
-    if (hasParameter) {
+    if (!GhosttyActionCatalog::isImplemented(action)) {
         return false;
     }
+    const GhosttySerializedActionView parsed =
+        GhosttyActionCatalog::parseSerializedAction(action);
+    const QStringView name = parsed.name;
     if (name == QLatin1StringView("ignore")) {
         return true;
     }

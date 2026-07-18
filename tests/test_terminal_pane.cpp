@@ -91,6 +91,7 @@ private Q_SLOTS:
     void routesStructuredSequencesAndCancelsThemOnReload();
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
+    void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
 
 void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
@@ -2583,6 +2584,51 @@ void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()
              errors.isEmpty()
                  ? ""
                  : qPrintable(errors.constFirst().constFirst().toString()));
+}
+
+void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy copied(controller, &TerminalController::copyRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
+    QSignalSpy quit(&pane, &TerminalPane::requestQuit);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    clipboard->setText(QStringLiteral("malformed-action-sentinel"));
+    const qreal originalFontSize = pane.fontPointSize();
+
+    const QStringList malformed{
+        QStringLiteral("copy_to_clipboard:"),
+        QStringLiteral("copy_to_clipboard:bogus"),
+        QStringLiteral("paste_from_clipboard:"),
+        QStringLiteral("paste_from_clipboard:bogus"),
+        QStringLiteral("reset_font_size:bogus"),
+        QStringLiteral("reload_config:bogus"),
+        QStringLiteral("close_window:bogus"),
+        QStringLiteral("ignore:bogus"),
+        QStringLiteral("increase_font_size:"),
+        QStringLiteral("decrease_font_size:"),
+    };
+    for (const QString &serialized : malformed) {
+        QVERIFY2(!pane.executeConfiguredAction(serialized),
+                 qPrintable(serialized));
+    }
+
+    QCOMPARE(copied.count(), 0);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(reload.count(), 0);
+    QCOMPARE(quit.count(), 0);
+    QCOMPARE(pane.fontPointSize(), originalFontSize);
+    clipboard->clear();
 }
 
 QTEST_MAIN(TerminalPaneTest)

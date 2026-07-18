@@ -476,6 +476,16 @@ void GhosttyKeybindSetTest::recoversInvalidSequencesAndHonorsCatchAll()
     QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
              GhosttyKeybindStepKind::InvalidSequence);
 
+    // Parameterized ignore is invalid Ghostty action grammar and must not
+    // inherit ignore's special invalid-sequence behavior.
+    (void) set.load({
+        QStringLiteral("ctrl+a>b=new_tab"),
+        QStringLiteral("catch_all=ignore:bogus"),
+    });
+    QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
+    QCOMPARE(set.advance({.qtKey = Qt::Key_Z, .text = QStringLiteral("z")}).kind,
+             GhosttyKeybindStepKind::InvalidSequence);
+
     // A catch-all inside the active sequence is an ordinary leaf.
     (void) set.load({QStringLiteral("ctrl+a>catch_all=reload_config")});
     QCOMPARE(set.advance(leader).kind, GhosttyKeybindStepKind::Leader);
