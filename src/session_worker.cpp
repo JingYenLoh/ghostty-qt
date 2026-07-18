@@ -623,11 +623,11 @@ bool SessionWorker::spawnChild()
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
     if (!terminfo) {
-        Q_EMIT errorOccurred(terminfo.error);
+        Q_EMIT errorOccurred(terminfo.error());
         return false;
     }
     environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-ghostty"));
-    environment.insert(QStringLiteral("TERMINFO"), terminfo.directory);
+    environment.insert(QStringLiteral("TERMINFO"), *terminfo);
     environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
     environment.insert(QStringLiteral("TERM_PROGRAM"), QStringLiteral("ghostty-qt"));
     environment.insert(QStringLiteral("TERM_PROGRAM_VERSION"),

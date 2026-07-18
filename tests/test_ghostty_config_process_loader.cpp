@@ -269,17 +269,18 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredKeybindJson()
 void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
 {
     ConfigFixture fixture;
-    QString error;
-    QCOMPARE(ghosttyConfigXdgHome(fixture.candidates(), &error), fixture.xdgHome);
-    QVERIFY(error.isEmpty());
+    auto result = ghosttyConfigXdgHome(fixture.candidates());
+    QVERIFY(result.has_value());
+    QCOMPARE(*result, fixture.xdgHome);
 
-    QCOMPARE(ghosttyConfigXdgHome(
-                 {fixture.preferredPath, fixture.legacyPath}, &error),
-             fixture.xdgHome);
-    QVERIFY(error.isEmpty());
+    result = ghosttyConfigXdgHome(
+        {fixture.preferredPath, fixture.legacyPath});
+    QVERIFY(result.has_value());
+    QCOMPARE(*result, fixture.xdgHome);
 
-    QVERIFY(ghosttyConfigXdgHome({fixture.legacyPath}, &error).isEmpty());
-    QCOMPARE(error,
+    result = ghosttyConfigXdgHome({fixture.legacyPath});
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(),
              QStringLiteral("Ghostty config candidates must contain both config and config.ghostty"));
 }
 

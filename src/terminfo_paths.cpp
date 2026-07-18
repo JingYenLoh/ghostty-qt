@@ -37,19 +37,20 @@ TerminfoResolution resolveTerminfoDirectory(
 {
     if (overrideDirectory.has_value()) {
         if (overrideDirectory->isEmpty()) {
-            return {{}, QStringLiteral("GHOSTTY_QT_TERMINFO is set but empty.")};
+            return std::unexpected(
+                QStringLiteral("GHOSTTY_QT_TERMINFO is set but empty."));
         }
 
         const QString overridePath = QDir::cleanPath(
             QDir(*overrideDirectory).absolutePath());
         const QString resolvedOverride = normalizedDatabaseDirectory(overridePath);
         if (resolvedOverride.isEmpty()) {
-            return {{},
-                    QStringLiteral("GHOSTTY_QT_TERMINFO='%1' does not contain a "
-                                   "readable xterm-ghostty entry.")
-                        .arg(overridePath)};
+            return std::unexpected(
+                QStringLiteral("GHOSTTY_QT_TERMINFO='%1' does not contain a "
+                               "readable xterm-ghostty entry.")
+                    .arg(overridePath));
         }
-        return {resolvedOverride, {}};
+        return resolvedOverride;
     }
 
     const QDir executableDir(executableDirectory);
@@ -57,7 +58,7 @@ TerminfoResolution resolveTerminfoDirectory(
         QStringLiteral(GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR)));
     const QString installedDatabase = normalizedDatabaseDirectory(installedPath);
     if (!installedDatabase.isEmpty()) {
-        return {installedDatabase, {}};
+        return installedDatabase;
     }
 
     // Build-tree executables live next to share/terminfo rather than in bin/.
@@ -65,14 +66,14 @@ TerminfoResolution resolveTerminfoDirectory(
         executableDir.absoluteFilePath(QStringLiteral("share/terminfo")));
     const QString buildDatabase = normalizedDatabaseDirectory(buildPath);
     if (!buildDatabase.isEmpty()) {
-        return {buildDatabase, {}};
+        return buildDatabase;
     }
 
-    return {{},
-            QStringLiteral("Unable to locate the xterm-ghostty terminfo database. "
-                           "Checked installed path '%1' and build-tree path '%2'. "
-                           "Set GHOSTTY_QT_TERMINFO to an explicit database directory.")
-                .arg(installedPath, buildPath)};
+    return std::unexpected(
+        QStringLiteral("Unable to locate the xterm-ghostty terminfo database. "
+                       "Checked installed path '%1' and build-tree path '%2'. "
+                       "Set GHOSTTY_QT_TERMINFO to an explicit database directory.")
+            .arg(installedPath, buildPath));
 }
 
 TerminfoResolution resolveRuntimeTerminfoDirectory()

@@ -7,6 +7,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <expected>
+
 struct GhosttyConfigProcessLoaderOptions {
     QString helperPath;
     int timeoutMilliseconds = 5'000;
@@ -33,7 +35,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
 
 // Candidate paths describe Ghostty's legacy file followed by its preferred
 // file. This returns the XDG root which makes the helper load those files, or
-// an empty string and a stable error message when they cannot be represented
-// by Ghostty's standard Linux config lookup.
-QString ghosttyConfigXdgHome(const QStringList &candidatePaths,
-                             QString *errorMessage = nullptr);
+// a stable error message when they cannot be represented by Ghostty's standard
+// Linux config lookup.
+std::expected<QString, QString> ghosttyConfigXdgHome(
+    const QStringList &candidatePaths);

@@ -2,14 +2,10 @@
 
 #include <QString>
 
+#include <expected>
 #include <optional>
 
-struct TerminfoResolution {
-    QString directory;
-    QString error;
-
-    explicit operator bool() const { return !directory.isEmpty(); }
-};
+using TerminfoResolution = std::expected<QString, QString>;
 
 // Resolve the private xterm-ghostty database for an executable directory.
 // A present override is authoritative: an invalid override is reported rather

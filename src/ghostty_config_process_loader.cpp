@@ -1151,30 +1151,24 @@ parseGhosttyKeybindConfigJson(const QByteArray &json)
     return parsed;
 }
 
-QString ghosttyConfigXdgHome(const QStringList &candidatePaths,
-                             QString *errorMessage)
+std::expected<QString, QString> ghosttyConfigXdgHome(
+    const QStringList &candidatePaths)
 {
-    if (errorMessage) {
-        errorMessage->clear();
-    }
-
     const QString legacyPath =
         candidateNamed(candidatePaths, QString::fromLatin1(LegacyConfigName));
     const QString preferredPath =
         candidateNamed(candidatePaths, QString::fromLatin1(PreferredConfigName));
     if (legacyPath.isEmpty() || preferredPath.isEmpty()) {
-        setError(errorMessage,
-                 QStringLiteral("Ghostty config candidates must contain both config and config.ghostty"));
-        return {};
+        return std::unexpected(
+            QStringLiteral("Ghostty config candidates must contain both config and config.ghostty"));
     }
 
     const QString legacyDirectory = QFileInfo(legacyPath).absolutePath();
     const QString preferredDirectory = QFileInfo(preferredPath).absolutePath();
     if (legacyDirectory != preferredDirectory
         || QFileInfo(legacyDirectory).fileName() != QStringLiteral("ghostty")) {
-        setError(errorMessage,
-                 QStringLiteral("Ghostty config candidates must share one XDG ghostty directory"));
-        return {};
+        return std::unexpected(
+            QStringLiteral("Ghostty config candidates must share one XDG ghostty directory"));
     }
 
     return QDir::cleanPath(QFileInfo(legacyDirectory).absolutePath());
@@ -1365,12 +1359,11 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                 QStringLiteral("Ghostty config helper path is empty"));
         }
 
-        QString candidateError;
-        const QString xdgConfigHome =
-            ghosttyConfigXdgHome(candidatePaths, &candidateError);
-        if (xdgConfigHome.isEmpty()) {
-            return std::unexpected(std::move(candidateError));
+        auto xdgConfigHomeResult = ghosttyConfigXdgHome(candidatePaths);
+        if (!xdgConfigHomeResult.has_value()) {
+            return std::unexpected(std::move(xdgConfigHomeResult.error()));
         }
+        const QString xdgConfigHome = std::move(*xdgConfigHomeResult);
 
         QDeadlineTimer overallDeadline(
             std::max(1, options.overallTimeoutMilliseconds));
