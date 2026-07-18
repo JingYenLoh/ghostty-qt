@@ -13,7 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CMAKE_BUILD_PARALLEL_LEVEL: 2
   CTEST_PARALLEL_LEVEL: 2
 
 jobs:
@@ -99,7 +98,7 @@ jobs:
           -DGHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=${{ matrix.config_parser }}
 
       - name: Build
-        run: cmake --build --preset "${{ matrix.preset }}"
+        run: cmake --build --preset "${{ matrix.preset }}" -j"$(nproc)"
 
       - name: Test
         run: ctest --preset "${{ matrix.preset }}"
