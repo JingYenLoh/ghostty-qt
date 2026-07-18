@@ -9,6 +9,7 @@
 #include <QVector>
 
 #include <algorithm>
+#include <compare>
 #include <cstdint>
 
 // The renderer needs the original SGR foreground source in addition to the
@@ -63,6 +64,17 @@ enum class TerminalSearchDirection : quint8 {
 struct TerminalSearchCell {
     quint16 column = 0;
     quint32 screenRow = 0;
+
+    friend constexpr std::strong_ordering operator<=>(
+        const TerminalSearchCell &left,
+        const TerminalSearchCell &right)
+    {
+        if (const auto rowOrder = left.screenRow <=> right.screenRow;
+            rowOrder != 0) {
+            return rowOrder;
+        }
+        return left.column <=> right.column;
+    }
 
     friend bool operator==(const TerminalSearchCell &,
                            const TerminalSearchCell &) = default;

@@ -98,13 +98,7 @@ QVector<QPoint> visibleSearchCells(
     TerminalSearchRange range,
     const GhosttyVtAdapter::SearchExtent &extent)
 {
-    const auto before = [](const TerminalSearchCell &left,
-                           const TerminalSearchCell &right) {
-        return left.screenRow < right.screenRow
-            || (left.screenRow == right.screenRow
-                && left.column < right.column);
-    };
-    if (before(range.end, range.start)) {
+    if (range.end < range.start) {
         std::swap(range.start, range.end);
     }
     if (extent.columns <= 0 || extent.viewportLength == 0

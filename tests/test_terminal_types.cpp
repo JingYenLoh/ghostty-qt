@@ -34,6 +34,7 @@ private Q_SLOTS:
     void appliesFullAndPartialUpdates();
     void rejectsMalformedUpdateWithoutMutation();
     void rejectsUnrepresentableFrameSize();
+    void ordersSearchCellsByRowThenColumn();
     void resolvesClipboardRoutingWithoutPlatformAssumptions();
 };
 
@@ -107,6 +108,18 @@ void TerminalTypesTest::rejectsUnrepresentableFrameSize()
     QCOMPARE(frame.columns, 0);
     QCOMPARE(frame.rows, 0);
     QVERIFY(frame.cells.isEmpty());
+}
+
+void TerminalTypesTest::ordersSearchCellsByRowThenColumn()
+{
+    const TerminalSearchCell first{.column = 2, .screenRow = 3};
+    const TerminalSearchCell laterColumn{.column = 7, .screenRow = 3};
+    const TerminalSearchCell laterRow{.column = 0, .screenRow = 4};
+
+    QVERIFY(first < laterColumn);
+    QVERIFY(laterColumn < laterRow);
+    QVERIFY(laterRow > first);
+    QCOMPARE(first, (TerminalSearchCell{.column = 2, .screenRow = 3}));
 }
 
 void TerminalTypesTest::resolvesClipboardRoutingWithoutPlatformAssumptions()

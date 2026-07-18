@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <compare>
 #include <linux/input-event-codes.h>
 #include <limits>
 #include <utility>
@@ -21,14 +22,17 @@ struct ScreenCell final {
     uint16_t x = 0;
     uint32_t y = 0;
 
+    friend constexpr std::strong_ordering operator<=>(
+        const ScreenCell &left, const ScreenCell &right)
+    {
+        if (const auto rowOrder = left.y <=> right.y; rowOrder != 0) {
+            return rowOrder;
+        }
+        return left.x <=> right.x;
+    }
+
     friend bool operator==(const ScreenCell &, const ScreenCell &) = default;
 };
-
-bool screenCellBefore(const ScreenCell &left, const ScreenCell &right)
-{
-    return left.y < right.y
-        || (left.y == right.y && left.x < right.x);
-}
 
 struct TextMapData final {
     QByteArray text;
@@ -458,8 +462,7 @@ public:
         // between the preceding bytes and the glyph on the next row. Ghostty
         // link activation uses the inclusive matched selection, so that cell
         // belongs only to matches whose byte-mapped endpoints straddle it.
-        return screenCellBefore(*begin, targetCell_)
-            && screenCellBefore(targetCell_, *(end - 1));
+        return *begin < targetCell_ && targetCell_ < *(end - 1);
     }
 
     std::shared_ptr<const AdapterOwnerToken> owner_;
@@ -1326,7 +1329,7 @@ public:
         ScreenCell start, ScreenCell end,
         bool includeTrailingEmptyStorage = false) const
     {
-        if (screenCellBefore(end, start)) {
+        if (end < start) {
             std::swap(start, end);
         }
 
@@ -2194,13 +2197,7 @@ public:
             return {};
         }
 
-        const auto before = [](const TerminalSearchCell &left,
-                               const TerminalSearchCell &right) {
-            return left.screenRow < right.screenRow
-                || (left.screenRow == right.screenRow
-                    && left.column < right.column);
-        };
-        if (before(range.end, range.start)) {
+        if (range.end < range.start) {
             std::swap(range.start, range.end);
         }
 
@@ -2253,13 +2250,7 @@ public:
             return false;
         }
 
-        const auto before = [](const TerminalSearchCell &left,
-                               const TerminalSearchCell &right) {
-            return left.screenRow < right.screenRow
-                || (left.screenRow == right.screenRow
-                    && left.column < right.column);
-        };
-        if (before(range.end, range.start)) {
+        if (range.end < range.start) {
             std::swap(range.start, range.end);
         }
 
