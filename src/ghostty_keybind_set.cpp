@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <expected>
 #include <linux/input-event-codes.h>
 #include <ranges>
 
@@ -22,6 +23,7 @@ struct ParsedFlags {
     bool consumed = true;
     bool performable = false;
     bool nonLocal = false;
+    qsizetype triggerStart = 0;
 };
 
 struct ParsedTrigger {
@@ -286,11 +288,9 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
         : std::optional<PhysicalKey>(*found);
 }
 
-bool parseFlags(QStringView input,
-                qsizetype *triggerStart,
-                ParsedFlags *flags,
-                QString *error)
+std::expected<ParsedFlags, QString> parseFlags(QStringView input)
 {
+    ParsedFlags flags;
     qsizetype start = 0;
     bool seenConsumed = false;
     bool seenPerformable = false;
@@ -306,32 +306,31 @@ bool parseFlags(QStringView input,
         bool recognized = true;
         if (prefix == QLatin1StringView("unconsumed")) {
             if (seenConsumed) {
-                *error = QStringLiteral("duplicate unconsumed flag");
-                return false;
+                return std::unexpected(
+                    QStringLiteral("duplicate unconsumed flag"));
             }
             seenConsumed = true;
-            flags->consumed = false;
+            flags.consumed = false;
         } else if (prefix == QLatin1StringView("performable")) {
             if (seenPerformable) {
-                *error = QStringLiteral("duplicate performable flag");
-                return false;
+                return std::unexpected(
+                    QStringLiteral("duplicate performable flag"));
             }
             seenPerformable = true;
-            flags->performable = true;
+            flags.performable = true;
         } else if (prefix == QLatin1StringView("all")) {
             if (seenAll) {
-                *error = QStringLiteral("duplicate all flag");
-                return false;
+                return std::unexpected(QStringLiteral("duplicate all flag"));
             }
             seenAll = true;
-            flags->nonLocal = true;
+            flags.nonLocal = true;
         } else if (prefix == QLatin1StringView("global")) {
             if (seenGlobal) {
-                *error = QStringLiteral("duplicate global flag");
-                return false;
+                return std::unexpected(
+                    QStringLiteral("duplicate global flag"));
             }
             seenGlobal = true;
-            flags->nonLocal = true;
+            flags.nonLocal = true;
         } else {
             recognized = false;
         }
@@ -342,8 +341,8 @@ bool parseFlags(QStringView input,
         start = colon + 1;
     }
 
-    *triggerStart = start;
-    return true;
+    flags.triggerStart = start;
+    return flags;
 }
 
 std::optional<Qt::KeyboardModifier> modifierFor(QStringView part)
@@ -390,13 +389,13 @@ std::optional<char32_t> singleUnicodeScalar(QStringView value)
     return 0x10000U + ((high - 0xd800U) << 10U) + (low - 0xdc00U);
 }
 
-bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
+std::expected<ParsedTrigger, QString> parseTrigger(QStringView input)
 {
     if (input.isEmpty()) {
-        *error = QStringLiteral("empty trigger");
-        return false;
+        return std::unexpected(QStringLiteral("empty trigger"));
     }
 
+    ParsedTrigger trigger;
     bool hasKey = false;
     qsizetype start = 0;
     while (start < input.size()) {
@@ -406,55 +405,52 @@ bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
         start = plus < 0 ? input.size() : plus + 1;
 
         if (const auto modifier = modifierFor(part)) {
-            if (trigger->modifiers.testFlag(*modifier)) {
-                *error = QStringLiteral("duplicate modifier");
-                return false;
+            if (trigger.modifiers.testFlag(*modifier)) {
+                return std::unexpected(QStringLiteral("duplicate modifier"));
             }
-            trigger->modifiers |= *modifier;
+            trigger.modifiers |= *modifier;
             continue;
         }
 
         if (hasKey) {
-            *error = QStringLiteral("trigger contains more than one key");
-            return false;
+            return std::unexpected(
+                QStringLiteral("trigger contains more than one key"));
         }
         hasKey = true;
 
         // An empty part is Ghostty's spelling for a literal plus key. A
         // trailing plus is not iterated a second time, matching Trigger.parse.
         if (part.isEmpty()) {
-            trigger->unicode = QStringLiteral("+");
+            trigger.unicode = QStringLiteral("+");
             continue;
         }
         if (part == QLatin1StringView("catch_all")) {
-            trigger->catchAll = true;
+            trigger.catchAll = true;
             continue;
         }
         if (const auto key = physicalKey(part)) {
-            trigger->physical = true;
-            trigger->qtKey = key->qtKey;
-            trigger->nativeScanCode = key->nativeScanCode;
-            trigger->keypad = key->keypad;
-            trigger->physicalName =
+            trigger.physical = true;
+            trigger.qtKey = key->qtKey;
+            trigger.nativeScanCode = key->nativeScanCode;
+            trigger.keypad = key->keypad;
+            trigger.physicalName =
                 part.contains(u'_') || part == part.toString().toLower()
                 ? part.toString().toLower()
                 : w3cToSnake(part);
             continue;
         }
         if (singleUnicodeScalar(part).has_value()) {
-            trigger->unicode = part.toString();
+            trigger.unicode = part.toString();
             continue;
         }
 
-        *error = QStringLiteral("unknown key name");
-        return false;
+        return std::unexpected(QStringLiteral("unknown key name"));
     }
 
     if (!hasKey) {
-        *error = QStringLiteral("trigger has no key");
-        return false;
+        return std::unexpected(QStringLiteral("trigger has no key"));
     }
-    return true;
+    return trigger;
 }
 
 QString unicodeFromQtEvent(int qtKey, QStringView text)
@@ -689,42 +685,43 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
         }
 
         chainTarget = -1;
-        ParsedFlags flags;
-        qsizetype triggerStart = 0;
-        QString error;
-        if (!parseFlags(left, &triggerStart, &flags, &error)) {
+        auto flags = parseFlags(left);
+        if (!flags.has_value()) {
             report.records.append(record(input, Disposition::Invalid,
-                                         Reason::None, std::move(error)));
+                                         Reason::None,
+                                         std::move(flags.error())));
             continue;
         }
-        if (flags.nonLocal) {
+        if (flags->nonLocal) {
             report.records.append(record(input, Disposition::Unsupported,
                                          Reason::NonLocal));
             continue;
         }
 
-        const QString triggerText = left.sliced(triggerStart).toString();
+        const QString triggerText = left.sliced(flags->triggerStart).toString();
         const QStringList parts = triggerText.split(u'>', Qt::KeepEmptyParts);
         GhosttyKeybindDefinition definition;
         definition.actions.append(action);
-        definition.flags.consumed = flags.consumed;
-        definition.flags.performable = flags.performable;
+        definition.flags.consumed = flags->consumed;
+        definition.flags.performable = flags->performable;
         bool valid = !parts.isEmpty();
+        QString error;
         for (const QString &part : parts) {
-            ParsedTrigger parsed;
-            if (!parseTrigger(part, &parsed, &error)) {
+            auto parsed = parseTrigger(part);
+            if (!parsed.has_value()) {
+                error = std::move(parsed.error());
                 valid = false;
                 break;
             }
             GhosttyKeybindTrigger trigger;
-            trigger.modifiers = configModifiers(parsed.modifiers);
-            if (parsed.catchAll) {
+            trigger.modifiers = configModifiers(parsed->modifiers);
+            if (parsed->catchAll) {
                 trigger.kind = GhosttyKeybindKeyKind::CatchAll;
-            } else if (parsed.physical) {
+            } else if (parsed->physical) {
                 trigger.kind = GhosttyKeybindKeyKind::Physical;
-                trigger.physicalName = parsed.physicalName;
+                trigger.physicalName = std::move(parsed->physicalName);
             } else {
-                const auto codepoint = singleUnicodeScalar(parsed.unicode);
+                const auto codepoint = singleUnicodeScalar(parsed->unicode);
                 if (!codepoint.has_value()) {
                     error = QStringLiteral("Unicode trigger is not one scalar");
                     valid = false;
