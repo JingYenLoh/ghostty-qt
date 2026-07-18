@@ -111,6 +111,40 @@ def _require_string(value: Any, label: str) -> str:
     return value
 
 
+def _require_exact_keys(
+    value: Any, label: str, expected: set[str]
+) -> dict[str, Any]:
+    result = _require_dict(value, label)
+    missing = sorted(expected - set(result))
+    unsupported = sorted(set(result) - expected)
+    problems: list[str] = []
+    if missing:
+        problems.append("missing: " + ", ".join(missing))
+    if unsupported:
+        problems.append("unsupported: " + ", ".join(unsupported))
+    if problems:
+        raise ParityError(f"{label} fields are invalid ({'; '.join(problems)})")
+    return result
+
+
+def _require_string_list(value: Any, label: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(item, str) or not item for item in value)
+    ):
+        raise ParityError(f"{label} must be an array of non-empty strings")
+    return value
+
+
+def _require_string_map(value: Any, label: str) -> dict[str, str]:
+    result = _require_dict(value, label)
+    if not result or any(
+        not isinstance(item, str) or not item for item in result.values()
+    ):
+        raise ParityError(f"{label} must map names to non-empty strings")
+    return result
+
+
 def _inventory_diff(expected: list[str], actual: list[str]) -> str:
     expected_set = set(expected)
     actual_set = set(actual)
@@ -143,16 +177,48 @@ def _git_revision(source: Path) -> str:
     return result.stdout.strip()
 
 
-def _cmake_revision(path: Path) -> str:
+def _cmake_revision_file(path: Path) -> Path:
     text = _read(path)
     match = re.search(
-        r"set\s*\(\s*GHOSTTY_QT_GHOSTTY_REVISION\s+\"([0-9a-f]{40})\"",
+        r"set\s*\(\s*GHOSTTY_QT_GHOSTTY_REVISION_FILE\s+"
+        r'"\$\{CMAKE_CURRENT_SOURCE_DIR\}/([^"]+)"\s*\)',
         text,
         re.MULTILINE,
     )
     if not match:
-        raise ParityError(f"cannot find GHOSTTY_QT_GHOSTTY_REVISION in {path}")
-    return match.group(1)
+        raise ParityError(
+            f"cannot find GHOSTTY_QT_GHOSTTY_REVISION_FILE in {path}"
+        )
+    return Path(match.group(1))
+
+
+def _repository_path(root: Path, relative: str, label: str) -> Path:
+    root = root.resolve()
+    relative_path = Path(relative)
+    if relative_path.is_absolute():
+        raise ParityError(f"{label} must be relative to the repository root")
+    path = (root / relative_path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as error:
+        raise ParityError(
+            f"{label} must stay within the repository root"
+        ) from error
+    return path
+
+
+def _pinned_revision(root: Path, relative: str) -> str:
+    path = _repository_path(root, relative, "upstream.revision_file")
+    text = _read(path)
+    revision = text.strip()
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or text not in {revision, revision + "\n"}
+    ):
+        raise ParityError(
+            f"{path} must contain one full lowercase Git hash"
+        )
+    return revision
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:
@@ -170,22 +236,74 @@ def check_repository(
 ) -> dict[str, Counter[str]]:
     root = root.resolve()
     path = (manifest_path or root / "docs" / "ghostty-parity.json").resolve()
-    manifest = _load_manifest(path)
+    manifest = _require_exact_keys(
+        _load_manifest(path),
+        "manifest",
+        {
+            "schema_version",
+            "upstream",
+            "scope",
+            "status_definitions",
+            "scope_definitions",
+            "inventories",
+        },
+    )
 
-    if manifest.get("schema_version") != 1:
-        raise ParityError("schema_version must be 1")
+    if manifest.get("schema_version") != 2:
+        raise ParityError("schema_version must be 2")
 
-    upstream = _require_dict(manifest.get("upstream"), "upstream")
-    expected_revision = _require_string(upstream.get("revision"), "upstream.revision")
-    if not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
-        raise ParityError("upstream.revision must be a full lowercase Git hash")
+    upstream = _require_exact_keys(
+        manifest.get("upstream"),
+        "upstream",
+        {"project", "revision_file", "source_directory"},
+    )
+    if _require_string(upstream.get("project"), "upstream.project") != "ghostty":
+        raise ParityError("upstream.project must be 'ghostty'")
+    revision_file = _require_string(
+        upstream.get("revision_file"), "upstream.revision_file"
+    )
+    expected_revision = _pinned_revision(root, revision_file)
+
+    scope = _require_exact_keys(
+        manifest.get("scope"),
+        "scope",
+        {
+            "host_os",
+            "display_servers",
+            "toolkit",
+            "shared_config",
+            "toolkit_mapping_policy",
+            "excluded_platforms",
+        },
+    )
+    _require_string_list(scope.get("host_os"), "scope.host_os")
+    _require_string_list(scope.get("display_servers"), "scope.display_servers")
+    _require_string(scope.get("toolkit"), "scope.toolkit")
+    _require_string(
+        scope.get("toolkit_mapping_policy"), "scope.toolkit_mapping_policy"
+    )
+    _require_string_list(
+        scope.get("excluded_platforms"), "scope.excluded_platforms"
+    )
+    shared_config = _require_exact_keys(
+        scope.get("shared_config"),
+        "scope.shared_config",
+        {"enabled", "format", "policy"},
+    )
+    if not isinstance(shared_config.get("enabled"), bool):
+        raise ParityError("scope.shared_config.enabled must be a boolean")
+    _require_string(shared_config.get("format"), "scope.shared_config.format")
+    _require_string(shared_config.get("policy"), "scope.shared_config.policy")
 
     source = (
         source_path.resolve()
         if source_path is not None
-        else root
-        / _require_string(
-            upstream.get("source_directory"), "upstream.source_directory"
+        else _repository_path(
+            root,
+            _require_string(
+                upstream.get("source_directory"), "upstream.source_directory"
+            ),
+            "upstream.source_directory",
         )
     )
     actual_revision = _git_revision(source)
@@ -193,16 +311,22 @@ def check_repository(
         raise ParityError(
             f"Ghostty checkout is {actual_revision}, ledger expects {expected_revision}"
         )
-    cmake_revision = _cmake_revision(root / "CMakeLists.txt")
-    if cmake_revision != expected_revision:
+    cmake_revision_file = _cmake_revision_file(root / "CMakeLists.txt")
+    if cmake_revision_file != Path(revision_file):
         raise ParityError(
-            f"CMake pins {cmake_revision}, ledger expects {expected_revision}"
+            f"CMake reads {cmake_revision_file}, ledger reads {revision_file}"
         )
 
-    statuses = set(_require_dict(manifest.get("status_definitions"), "status_definitions"))
-    scopes = set(_require_dict(manifest.get("scope_definitions"), "scope_definitions"))
-    if not statuses or not scopes:
-        raise ParityError("status_definitions and scope_definitions cannot be empty")
+    statuses = set(
+        _require_string_map(
+            manifest.get("status_definitions"), "status_definitions"
+        )
+    )
+    scopes = set(
+        _require_string_map(
+            manifest.get("scope_definitions"), "scope_definitions"
+        )
+    )
 
     inventories = _require_dict(manifest.get("inventories"), "inventories")
     if set(inventories) != set(_EXTRACTORS):
@@ -212,13 +336,21 @@ def check_repository(
 
     summaries: dict[str, Counter[str]] = {}
     for inventory_name, extractor in _EXTRACTORS.items():
-        inventory = _require_dict(inventories[inventory_name], f"inventories.{inventory_name}")
+        inventory = _require_exact_keys(
+            inventories[inventory_name],
+            f"inventories.{inventory_name}",
+            {"source", "default", "entries", "overrides"},
+        )
         source_file = source / _require_string(
             inventory.get("source"), f"inventories.{inventory_name}.source"
         )
         expected = inventory.get("entries")
-        if not isinstance(expected, list) or any(not isinstance(item, str) for item in expected):
-            raise ParityError(f"inventories.{inventory_name}.entries must be a string array")
+        if not isinstance(expected, list) or any(
+            not isinstance(item, str) for item in expected
+        ):
+            raise ParityError(
+                f"inventories.{inventory_name}.entries must be a string array"
+            )
         if expected != sorted(set(expected)):
             raise ParityError(
                 f"inventories.{inventory_name}.entries must be sorted and unique"
@@ -226,14 +358,20 @@ def check_repository(
 
         actual = extractor(source_file)
         if len(actual) != len(set(actual)):
-            raise ParityError(f"extractor found duplicate {inventory_name} in {source_file}")
+            raise ParityError(
+                f"extractor found duplicate {inventory_name} in {source_file}"
+            )
         if expected != actual:
             raise ParityError(
                 f"{inventory_name} drifted from {source_file}: "
                 + _inventory_diff(expected, actual)
             )
 
-        default = _require_dict(inventory.get("default"), f"inventories.{inventory_name}.default")
+        default = _require_exact_keys(
+            inventory.get("default"),
+            f"inventories.{inventory_name}.default",
+            {"status", "scope"},
+        )
         default_status = _require_string(
             default.get("status"), f"inventories.{inventory_name}.default.status"
         )
@@ -241,12 +379,17 @@ def check_repository(
             default.get("scope"), f"inventories.{inventory_name}.default.scope"
         )
         if default_status not in statuses:
-            raise ParityError(f"unknown default status {default_status!r} in {inventory_name}")
+            raise ParityError(
+                f"unknown default status {default_status!r} in {inventory_name}"
+            )
         if default_scope not in scopes:
-            raise ParityError(f"unknown default scope {default_scope!r} in {inventory_name}")
+            raise ParityError(
+                f"unknown default scope {default_scope!r} in {inventory_name}"
+            )
 
         overrides = _require_dict(
-            inventory.get("overrides", {}), f"inventories.{inventory_name}.overrides"
+            inventory.get("overrides", {}),
+            f"inventories.{inventory_name}.overrides",
         )
         unknown = sorted(set(overrides) - set(expected))
         if unknown:
@@ -263,9 +406,13 @@ def check_repository(
             status = override.get("status", default_status)
             scope = override.get("scope", default_scope)
             if status not in statuses:
-                raise ParityError(f"unknown status {status!r} for {inventory_name}.{name}")
+                raise ParityError(
+                    f"unknown status {status!r} for {inventory_name}.{name}"
+                )
             if scope not in scopes:
-                raise ParityError(f"unknown scope {scope!r} for {inventory_name}.{name}")
+                raise ParityError(
+                    f"unknown scope {scope!r} for {inventory_name}.{name}"
+                )
             if set(override) - {"status", "scope", "note"}:
                 raise ParityError(
                     f"unsupported override fields for {inventory_name}.{name}: "
@@ -298,7 +445,9 @@ def main(argv: list[str] | None = None) -> int:
     manifest = _load_manifest(
         args.manifest or args.root / "docs" / "ghostty-parity.json"
     )
-    revision = manifest["upstream"]["revision"]
+    revision = _pinned_revision(
+        args.root.resolve(), manifest["upstream"]["revision_file"]
+    )
     print(f"Ghostty parity inventory matches {revision}")
     for name in sorted(summaries):
         counts = summaries[name]

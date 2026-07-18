@@ -64,7 +64,7 @@ The upstream change should exercise the public C representation with real OSC
 
 Once the API is present in an official, publicly reachable Ghostty commit:
 
-1. Update the submodule pin and every recorded revision together.
+1. Update `GHOSTTY_REVISION` and the submodule gitlink together.
 2. Add a typed `PromptDelta` viewport request while reusing the existing
    pane-to-controller-to-worker route.
 3. Parse the exact signed `i16` `jump_to_prompt` grammar.

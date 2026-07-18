@@ -1,8 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "upstream": {
     "project": "ghostty",
-    "revision": "c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3",
+    "revision_file": "GHOSTTY_REVISION",
     "source_directory": "ghostty"
   },
   "scope": {

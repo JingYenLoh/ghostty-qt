@@ -151,11 +151,12 @@ python3 scripts/check-ghostty-parity.py
 ```
 
 The checker requires the pinned Ghostty submodule. It verifies that the
-manifest, checkout, and CMake pin name the same revision, then derives fresh
-inventories from the upstream Zig declarations and reports deterministic drift.
-CTest runs the same contract as `ghostty-parity-manifest`. Update the pinned
-revision, extractor (if upstream declarations changed shape), and manifest in
-one reviewed change when intentionally advancing the Ghostty snapshot.
+manifest and CMake reference `GHOSTTY_REVISION` and that the checkout matches
+it, then derives fresh inventories from the upstream Zig declarations and
+reports deterministic drift. CTest runs the same contract as
+`ghostty-parity-manifest`. Update `GHOSTTY_REVISION`, the submodule gitlink,
+the extractor (if upstream declarations changed shape), and the manifest
+inventory in one reviewed change when intentionally advancing the snapshot.
 
 For a sanitizer run, install Clang and use:
 

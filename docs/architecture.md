@@ -527,10 +527,10 @@ focus-only Qt shortcut.
 
 ## Build integration
 
-The source tree expects Ghostty commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`. CMake validates the revision when
-the checkout has Git metadata and rejects a mismatch unless upgrade work
-explicitly enables `GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY`.
+The source tree reads its authoritative Ghostty commit from
+`GHOSTTY_REVISION`. CMake validates the submodule revision when the checkout
+has Git metadata and rejects a mismatch unless upgrade work explicitly enables
+`GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY`.
 
 Ghostty's CMake wrapper invokes Zig and exports `ghostty-vt-static`. The project
 checks `zig version` at configure time and accepts only `0.15.2`, matching the
@@ -577,22 +577,22 @@ API legitimately contains struct fields named `emit`.
 
 ## Parity contract
 
-`docs/ghostty-parity.json` pins the same Ghostty revision as CMake, records the
-Linux/Wayland/Qt scope, and inventories upstream configuration keys,
-keybinding actions, and CLI actions with explicit status and scope labels. The
-target is to preserve portable and Linux Ghostty configuration names and
-semantics while mapping meaningful GTK frontend behavior onto Qt. GTK-only
-presentation/debugging internals, X11, macOS, iOS, and FreeBSD behavior are not
-part of this frontend's parity target.
+`docs/ghostty-parity.json` references the same authoritative revision file as
+CMake, records the Linux/Wayland/Qt scope, and inventories upstream
+configuration keys, keybinding actions, and CLI actions with explicit status
+and scope labels. The target is to preserve portable and Linux Ghostty
+configuration names and semantics while mapping meaningful GTK frontend
+behavior onto Qt. GTK-only presentation/debugging internals, X11, macOS, iOS,
+and FreeBSD behavior are not part of this frontend's parity target.
 
 `scripts/check-ghostty-parity.py` re-extracts those inventories from the pinned
-source and rejects revision, schema, ordering, or inventory drift. This keeps
-an upstream snapshot update from silently adding untracked parity work. The
-contract remains conservative: only the typed configuration slice, including
-the four search colors, `link-url`, and `link-previews`, is marked partial or
-supported. Search actions remain partial because the public library artifact
-cannot expose Ghostty's `xev`-dependent search thread, while custom `link`
-rules and other upstream keys stay explicitly planned. In particular,
+source and rejects revision-file, schema, ordering, or inventory drift. This
+keeps an upstream snapshot update from silently adding untracked parity work.
+The contract remains conservative: only the typed configuration slice,
+including the four search colors, `link-url`, and `link-previews`, is marked
+partial or supported. Search actions remain partial because the public library
+artifact cannot expose Ghostty's `xev`-dependent search thread, while custom
+`link` rules and other upstream keys stay explicitly planned. In particular,
 the pinned Ghostty `RepeatableLink.parseCLI` still returns
 `error.NotImplemented`, so this frontend does not invent a parallel syntax for
 user-defined expressions and actions.

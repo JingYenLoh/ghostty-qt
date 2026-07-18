@@ -103,10 +103,12 @@ the sanitizer preset, and the CI build matrix.
 
 ## Get the pinned Ghostty source
 
-The expected source is the `ghostty` submodule at commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`:
+The authoritative commit is recorded in
+[`GHOSTTY_REVISION`](GHOSTTY_REVISION), and the `ghostty` submodule must point
+to that official upstream revision:
 
 ```sh
+cat GHOSTTY_REVISION
 git submodule update --init --recursive
 git -C ghostty rev-parse HEAD
 ```
