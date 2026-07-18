@@ -431,12 +431,27 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
     GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR}"
 )
 
+add_library(ghostty-qt-action-pipeline STATIC
+    src/ghostty_action_catalog.cpp
+    src/ghostty_action_catalog.h
+    src/ghostty_keybind_set.cpp
+    src/ghostty_keybind_set.h
+)
+target_include_directories(ghostty-qt-action-pipeline PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-action-pipeline PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+target_compile_options(ghostty-qt-action-pipeline PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 qt_add_executable(ghostty-qt
     src/main.cpp
     src/ghostty_application_keybindings.cpp
     src/ghostty_application_keybindings.h
-    src/ghostty_action_catalog.cpp
-    src/ghostty_action_catalog.h
     src/ghostty_config_loader.h
     src/ghostty_config_process_loader.cpp
     src/ghostty_config_process_loader.h
@@ -444,8 +459,6 @@ qt_add_executable(ghostty-qt
     src/ghostty_config_service.h
     src/ghostty_config_snapshot.h
     src/ghostty_keybind_config.h
-    src/ghostty_keybind_set.cpp
-    src/ghostty_keybind_set.h
     src/ghostty_global_shortcut_portal.cpp
     src/ghostty_global_shortcut_portal.h
     src/ghostty_vt_adapter.cpp
@@ -484,6 +497,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     PkgConfig::XKBCommon
+    ghostty-qt-action-pipeline
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-vt-static
