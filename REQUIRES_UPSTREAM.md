@@ -3,8 +3,9 @@
 ghostty-qt consumes Ghostty only through the official `ghostty-org/ghostty`
 submodule and its public APIs. Do not carry local Ghostty source patches in this
 repository. When a parity item needs an upstream change, describe the missing
-public contract here and leave the feature at an honest non-supported status
-until an official Ghostty commit provides it.
+public contract here and do not mark the unavailable behavior supported. Use
+`partial`, `planned`, or `blocked_upstream` as appropriate until an official
+Ghostty commit provides it.
 
 ## Semantic prompt viewport navigation
 
@@ -103,14 +104,15 @@ detection are separate parity stages and are not implied by prompt navigation.
 
 ## Exact clipboard selection formatting
 
-**Status:** plain copying is supported; exact VT, HTML, and mixed clipboard
-payloads are blocked on an upstream public formatter contract.
+**Status:** unmapped plain copying is supported; mapped plain output and exact
+VT, HTML, and mixed clipboard payloads are blocked on an upstream public
+formatter contract.
 
 Ghostty's internal `Surface.copySelectionToClipboards` does not use the public
 terminal formatter defaults. It constructs a screen formatter with clipboard-
 specific state:
 
-- the live `clipboard-codepoint-map` for plain output;
+- the live `clipboard-codepoint-map`;
 - the terminal's effective foreground and background colors;
 - the terminal's current 256-color palette;
 - soft-wrap unwrapping and the live trailing-space trimming policy; and
@@ -121,6 +123,14 @@ the HTML representation before publishing either. The mixed HTML output
 deliberately omits the terminal's default foreground and background while
 retaining cell styling. Automatic copy-on-select uses this mixed format for
 both primary-only and primary-plus-standard destinations.
+
+The pinned implementation and its comments currently disagree about codepoint
+mapping. `Surface.copySelectionToClipboards` passes the same map through every
+formatter mode, and `PageFormatter` applies replacements without a plain-only
+guard. Nearby Surface comments say VT and HTML should preserve their native
+encoding and should not receive mappings. Upstream must define which behavior
+is canonical before exposing it as a public clipboard contract; ghostty-qt
+must not choose between implementation and stated intent locally.
 
 The official public artifact can select plain, VT, or HTML output, but neither
 of its formatter paths can express that clipboard contract:
@@ -147,11 +157,13 @@ would duplicate Ghostty's private formatter policy. It would also remain
 fragile as palette resolution, hyperlink styling, formatter envelopes, and
 codepoint mapping evolve upstream.
 
-ghostty-qt therefore keeps the exact plain path and does not advertise the
-public terminal formatter's different styled output as clipboard parity. The
-current destination routing, primary-selection fallback, live trimming, and
-worker-atomic copy/clear lifecycle remain useful partial behavior. The parity
-ledger records that automatic copies currently contain plain text rather than
+ghostty-qt therefore keeps the exact plain path for the currently supported
+configuration slice, where `clipboard-codepoint-map` is unavailable and thus
+empty. It does not advertise mapped plain output or the public terminal
+formatter's different styled output as clipboard parity. The current
+destination routing, primary-selection fallback, live trimming, and worker-
+atomic copy/clear lifecycle remain useful partial behavior. The parity ledger
+records that automatic copies currently contain plain text rather than
 Ghostty's required mixed plain-plus-HTML payload.
 
 ### Required upstream contract
@@ -161,11 +173,12 @@ with Ghostty's clipboard semantics. The exact API shape is an upstream
 decision, but it must support either a complete mixed MIME result or enough
 clipboard-specific options to produce the representations independently:
 
-- the active selection or an explicit `GhosttySelection` snapshot;
+- the active selection or an explicit `GhosttySelection` value/range;
 - plain, VT, HTML, and mixed plain-plus-HTML behavior;
 - raw byte output with no `QString` or NUL-termination requirement;
 - soft-wrap unwrapping and configurable trailing-space trimming;
-- the clipboard codepoint map applied to plain output only;
+- a defined codepoint-mapping policy for every representation, resolving the
+  pinned implementation/comment disagreement described above;
 - the effective foreground/background and current palette for explicit VT and
   HTML output;
 - mixed HTML's intentional omission of default foreground/background colors;
@@ -188,7 +201,9 @@ The public C tests should compare the new contract with
   OSC 8 hyperlinks;
 - non-ASCII text and exact raw bytes;
 - soft-wrapped and hard-wrapped lines with trimming enabled and disabled;
-- clipboard codepoint mappings applying only to plain representations;
+- clipboard codepoint mappings across every representation, with acceptance
+  expectations chosen explicitly after resolving the pinned implementation/
+  comment disagreement;
 - mixed HTML omitting only the default foreground/background envelope;
 - no selection versus a valid empty selection; and
 - all-or-none mixed formatting on allocation or formatting failure.
@@ -206,6 +221,10 @@ Once the contract is available in an official Ghostty commit:
    apply explicit-copy selection clearing.
 5. Make copy-on-select always request mixed output without clearing.
 6. Build one complete `QMimeData` per destination on the GUI thread, retaining
-   Linux primary-selection fallback and independent ownership.
-7. Add raw-byte, MIME, trimming, destination, lifecycle, and failure-atomicity
-   tests before promoting the affected parity entries.
+   Linux primary-selection fallback and independent ownership. VT is raw
+   `text/plain`; HTML is bare `text/html`; every plain representation is
+   installed first as `text/plain;charset=utf-8` and then as bare
+   `text/plain`, with identical bytes. Install every mixed representation in
+   one `setMimeData` call.
+7. Add raw-byte, MIME, charset, trimming, destination, lifecycle, and failure-
+   atomicity tests before promoting the affected parity entries.
