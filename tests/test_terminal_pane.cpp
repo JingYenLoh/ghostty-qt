@@ -289,6 +289,10 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .clearOnTyping = false,
         .clearOnCopy = true,
     };
+    reloaded.clipboardPaste = {
+        .protection = false,
+        .bracketedSafe = true,
+    };
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.linkUrl = false;
     pane.applyRuntimeOptions(reloaded);
@@ -301,6 +305,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.scrollbackLimit, reloaded.scrollbackLimit);
     QCOMPARE(splitOptions.appearance, reloaded.appearance);
     QCOMPARE(splitOptions.selectionClipboard, reloaded.selectionClipboard);
+    QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
     QCOMPARE(runtimeOptions.count(), 1);

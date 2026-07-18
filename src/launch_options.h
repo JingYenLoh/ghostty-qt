@@ -43,6 +43,7 @@ struct LaunchOptions {
     bool scrollbackLimitExplicit = false;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
+    TerminalClipboardPasteOptions clipboardPaste;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

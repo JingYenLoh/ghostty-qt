@@ -43,11 +43,21 @@ struct TerminalSelectionClipboardOptions {
     bool operator==(const TerminalSelectionClipboardOptions &) const = default;
 };
 
+// Paste safety is worker-owned because the decision depends on the terminal's
+// live bracketed-paste mode as well as live-reloaded configuration.
+struct TerminalClipboardPasteOptions {
+    bool protection = true;
+    bool bracketedSafe = true;
+
+    bool operator==(const TerminalClipboardPasteOptions &) const = default;
+};
+
 // Value-only settings that an existing terminal session can apply. Keep this
 // boundary limited to state that SessionWorker actually owns at runtime.
 struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
     TerminalSelectionClipboardOptions selectionClipboard;
+    TerminalClipboardPasteOptions clipboardPaste;
     bool linkUrl = true;
 
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;

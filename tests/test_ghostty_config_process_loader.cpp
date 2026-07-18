@@ -43,6 +43,8 @@ QByteArray defaultOutput()
                           "scrollback-limit = 50000000\n"
                           "confirm-close-surface = true\n"
                           "clipboard-trim-trailing-spaces = true\n"
+                          "clipboard-paste-protection = true\n"
+                          "clipboard-paste-bracketed-safe = true\n"
                           "copy-on-select = true\n"
                           "selection-clear-on-typing = true\n"
                           "selection-clear-on-copy = false\n"
@@ -282,6 +284,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "scrollback-limit = 123456\r\n"
             "confirm-close-surface = always\r\n"
             "clipboard-trim-trailing-spaces = false\r\n"
+            "clipboard-paste-protection = false\r\n"
+            "clipboard-paste-bracketed-safe = true\r\n"
             "copy-on-select = clipboard\r\n"
             "selection-clear-on-typing = false\r\n"
             "selection-clear-on-copy = true\r\n"
@@ -358,6 +362,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("clipboard-trim-trailing-spaces")).toBool(),
              false);
+    QVERIFY(!snapshot.values.value(
+        QStringLiteral("clipboard-paste-protection")).toBool());
+    QVERIFY(snapshot.values.value(
+        QStringLiteral("clipboard-paste-bracketed-safe")).toBool());
     QCOMPARE(snapshot.values.value(QStringLiteral("copy-on-select")).toString(),
              QStringLiteral("clipboard"));
     QCOMPARE(snapshot.values.value(
@@ -434,6 +442,10 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMo
     const QVariantMap &defaults = unchanged.snapshot->values;
     QVERIFY(defaults.value(
         QStringLiteral("clipboard-trim-trailing-spaces")).toBool());
+    QVERIFY(defaults.value(
+        QStringLiteral("clipboard-paste-protection")).toBool());
+    QVERIFY(defaults.value(
+        QStringLiteral("clipboard-paste-bracketed-safe")).toBool());
     QCOMPARE(defaults.value(QStringLiteral("copy-on-select")).toString(),
              QStringLiteral("true"));
     QVERIFY(defaults.value(
@@ -573,6 +585,10 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     } malformedClipboard[] = {
         {QByteArrayLiteral("clipboard-trim-trailing-spaces = yes\n"),
          QStringLiteral("Invalid clipboard-trim-trailing-spaces in Ghostty config output at line 1")},
+        {QByteArrayLiteral("clipboard-paste-protection = yes\n"),
+         QStringLiteral("Invalid clipboard-paste-protection in Ghostty config output at line 1")},
+        {QByteArrayLiteral("clipboard-paste-bracketed-safe = yes\n"),
+         QStringLiteral("Invalid clipboard-paste-bracketed-safe in Ghostty config output at line 1")},
         {QByteArrayLiteral("copy-on-select = primary\n"),
          QStringLiteral("Invalid copy-on-select in Ghostty config output at line 1")},
         {QByteArrayLiteral("copy-on-select = TRUE\n"),
@@ -743,6 +759,8 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
             "bold-color = bright\n"
             "faint-opacity = 0.25\n"
             "clipboard-trim-trailing-spaces = 0\n"
+            "clipboard-paste-protection = 0\n"
+            "clipboard-paste-bracketed-safe = t\n"
             "copy-on-select = clipboard\n"
             "selection-clear-on-typing = 0\n"
             "selection-clear-on-copy = t\n"
@@ -808,6 +826,10 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
              0.25);
     QVERIFY(!result.snapshot->values.value(
         QStringLiteral("clipboard-trim-trailing-spaces")).toBool());
+    QVERIFY(!result.snapshot->values.value(
+        QStringLiteral("clipboard-paste-protection")).toBool());
+    QVERIFY(result.snapshot->values.value(
+        QStringLiteral("clipboard-paste-bracketed-safe")).toBool());
     QCOMPARE(result.snapshot->values.value(QStringLiteral("copy-on-select"))
                  .toString(),
              QStringLiteral("clipboard"));

@@ -93,6 +93,8 @@ void LaunchOptionsTest::defaults()
              TerminalCopyOnSelectMode::Primary);
     QVERIFY(options.selectionClipboard.clearOnTyping);
     QVERIFY(!options.selectionClipboard.clearOnCopy);
+    QVERIFY(options.clipboardPaste.protection);
+    QVERIFY(options.clipboardPaste.bracketedSafe);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -284,6 +286,9 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
                            QStringLiteral("always"));
     snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
                            false);
+    snapshot.values.insert(QStringLiteral("clipboard-paste-protection"), false);
+    snapshot.values.insert(QStringLiteral("clipboard-paste-bracketed-safe"),
+                           true);
     snapshot.values.insert(QStringLiteral("copy-on-select"),
                            QStringLiteral("clipboard"));
     snapshot.values.insert(QStringLiteral("selection-clear-on-typing"), false);
@@ -357,6 +362,8 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
              TerminalCopyOnSelectMode::PrimaryAndClipboard);
     QVERIFY(!cliResult.selectionClipboard.clearOnTyping);
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
+    QVERIFY(!cliResult.clipboardPaste.protection);
+    QVERIFY(cliResult.clipboardPaste.bracketedSafe);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
@@ -509,6 +516,10 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
                            true);
     snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
                            QStringLiteral("false"));
+    snapshot.values.insert(QStringLiteral("clipboard-paste-protection"),
+                           QStringLiteral("false"));
+    snapshot.values.insert(QStringLiteral("clipboard-paste-bracketed-safe"),
+                           QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("copy-on-select"), true);
     snapshot.values.insert(QStringLiteral("selection-clear-on-typing"),
                            QStringLiteral("false"));
@@ -526,6 +537,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.linkUrl, base.linkUrl);
     QCOMPARE(result.linkPreviews, base.linkPreviews);
     QCOMPARE(result.selectionClipboard, base.selectionClipboard);
+    QCOMPARE(result.clipboardPaste, base.clipboardPaste);
     QCOMPARE(result.middleClickAction, base.middleClickAction);
 }
 
@@ -547,6 +559,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .clearOnTyping = false,
         .clearOnCopy = true,
     };
+    options.clipboardPaste = {
+        .protection = false,
+        .bracketedSafe = true,
+    };
     options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
 
@@ -557,6 +573,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 
     QCOMPARE(runtime.appearance, options.appearance);
     QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
+    QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.program, options.program);
@@ -593,6 +610,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.hold = false;
     options.appearance = {};
     options.selectionClipboard = {};
+    options.clipboardPaste = {};
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
@@ -610,6 +628,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .clearOnCopy = true,
     };
     QCOMPARE(launch.runtime.selectionClipboard, expectedClipboard);
+    const TerminalClipboardPasteOptions expectedPaste{
+        .protection = false,
+        .bracketedSafe = true,
+    };
+    QCOMPARE(launch.runtime.clipboardPaste, expectedPaste);
     QVERIFY(!launch.runtime.linkUrl);
 }
 

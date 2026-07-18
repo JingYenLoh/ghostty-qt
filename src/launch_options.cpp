@@ -148,6 +148,7 @@ TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
     return {
         .appearance = options.appearance,
         .selectionClipboard = options.selectionClipboard,
+        .clipboardPaste = options.clipboardPaste,
         .linkUrl = options.linkUrl,
     };
 }
@@ -313,6 +314,18 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     if (trimTrailingSpaces.metaType() == QMetaType::fromType<bool>()) {
         result.selectionClipboard.trimTrailingSpaces =
             trimTrailingSpaces.toBool();
+    }
+
+    const QVariant pasteProtection = snapshot.values.value(
+        QStringLiteral("clipboard-paste-protection"));
+    if (pasteProtection.metaType() == QMetaType::fromType<bool>()) {
+        result.clipboardPaste.protection = pasteProtection.toBool();
+    }
+
+    const QVariant bracketedPasteSafe = snapshot.values.value(
+        QStringLiteral("clipboard-paste-bracketed-safe"));
+    if (bracketedPasteSafe.metaType() == QMetaType::fromType<bool>()) {
+        result.clipboardPaste.bracketedSafe = bracketedPasteSafe.toBool();
     }
 
     const QVariant copyOnSelect = snapshot.values.value(

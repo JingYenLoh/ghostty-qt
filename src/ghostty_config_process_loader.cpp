@@ -70,6 +70,10 @@ struct ParsedConfig {
     QString confirmCloseSurface;
     bool hasClipboardTrimTrailingSpaces = false;
     bool clipboardTrimTrailingSpaces = true;
+    bool hasClipboardPasteProtection = false;
+    bool clipboardPasteProtection = true;
+    bool hasClipboardPasteBracketedSafe = false;
+    bool clipboardPasteBracketedSafe = true;
     bool hasCopyOnSelect = false;
     QString copyOnSelect = QStringLiteral("true");
     bool hasSelectionClearOnTyping = false;
@@ -627,6 +631,22 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->hasClipboardTrimTrailingSpaces = true;
+        } else if (key == QStringLiteral("clipboard-paste-protection")) {
+            if (!parseBool(value, &parsed->clipboardPasteProtection)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid clipboard-paste-protection in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasClipboardPasteProtection = true;
+        } else if (key == QStringLiteral("clipboard-paste-bracketed-safe")) {
+            if (!parseBool(value, &parsed->clipboardPasteBracketedSafe)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid clipboard-paste-bracketed-safe in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasClipboardPasteBracketedSafe = true;
         } else if (key == QStringLiteral("copy-on-select")) {
             if (value != QStringLiteral("false")
                 && value != QStringLiteral("true")
@@ -1181,6 +1201,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
         || !defaults.hasClipboardTrimTrailingSpaces
+        || !defaults.hasClipboardPasteProtection
+        || !defaults.hasClipboardPasteBracketedSafe
         || !defaults.hasCopyOnSelect || !defaults.hasSelectionClearOnTyping
         || !defaults.hasSelectionClearOnCopy
         || !defaults.hasMiddleClickAction
@@ -1281,6 +1303,14 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         mergedValue(changes.hasClipboardTrimTrailingSpaces,
                     changes.clipboardTrimTrailingSpaces,
                     defaults.clipboardTrimTrailingSpaces);
+    const bool clipboardPasteProtection =
+        mergedValue(changes.hasClipboardPasteProtection,
+                    changes.clipboardPasteProtection,
+                    defaults.clipboardPasteProtection);
+    const bool clipboardPasteBracketedSafe =
+        mergedValue(changes.hasClipboardPasteBracketedSafe,
+                    changes.clipboardPasteBracketedSafe,
+                    defaults.clipboardPasteBracketedSafe);
     const QString copyOnSelect =
         mergedValue(changes.hasCopyOnSelect, changes.copyOnSelect,
                     defaults.copyOnSelect);
@@ -1339,6 +1369,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            confirmCloseSurface);
     snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
                            clipboardTrimTrailingSpaces);
+    snapshot.values.insert(QStringLiteral("clipboard-paste-protection"),
+                           clipboardPasteProtection);
+    snapshot.values.insert(QStringLiteral("clipboard-paste-bracketed-safe"),
+                           clipboardPasteBracketedSafe);
     snapshot.values.insert(QStringLiteral("copy-on-select"), copyOnSelect);
     snapshot.values.insert(QStringLiteral("selection-clear-on-typing"),
                            selectionClearOnTyping);
