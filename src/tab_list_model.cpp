@@ -81,10 +81,7 @@ TabId TabListModel::idAt(int index) const
 
 int TabListModel::indexOf(TabId id) const
 {
-    const auto entry = std::find_if(entries_.cbegin(), entries_.cend(),
-                                    [id](const TabListEntry &candidate) {
-                                        return candidate.id == id;
-                                    });
+    const auto entry = std::ranges::find(entries_, id, &TabListEntry::id);
     return entry == entries_.cend()
         ? -1
         : static_cast<int>(std::distance(entries_.cbegin(), entry));

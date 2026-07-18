@@ -22,6 +22,7 @@
 #include <deque>
 #include <limits>
 #include <optional>
+#include <ranges>
 #include <utility>
 #include <variant>
 
@@ -59,24 +60,16 @@ QByteArray reversedFoldedSearchNeedle(QByteArrayView needle)
 {
     QByteArray result;
     result.reserve(needle.size());
-    for (qsizetype index = needle.size(); index > 0; --index) {
-        result.append(foldSearchByte(needle.at(index - 1)));
+    for (char value : needle | std::views::reverse) {
+        result.append(foldSearchByte(value));
     }
     return result;
 }
 
 bool searchNeedlesEqual(QByteArrayView left, QByteArrayView right)
 {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    for (qsizetype index = 0; index < left.size(); ++index) {
-        if (foldSearchByte(left.at(index))
-            != foldSearchByte(right.at(index))) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::equal(left, right, std::ranges::equal_to{},
+                              foldSearchByte, foldSearchByte);
 }
 
 QVector<qsizetype> searchPrefixTable(QByteArrayView pattern)
@@ -2193,14 +2186,13 @@ void SessionWorker::publishFrame()
         for (const TerminalRowUpdate &row : update.dirtyRows) {
             if (hyperlinkState_->publishedRelevantRows.contains(row.row)
                 || row.row == hyperlinkState_->publishedTarget.y()
-                || std::any_of(
-                    hyperlinkState_->publishedCells.cbegin(),
-                    hyperlinkState_->publishedCells.cend(),
+                || std::ranges::any_of(
+                    std::as_const(hyperlinkState_->publishedCells),
                     [&row](const QPoint &cell) {
                         return cell.y() == row.row;
                     })
-                || std::any_of(
-                    row.cells.cbegin(), row.cells.cend(),
+                || std::ranges::any_of(
+                    row.cells,
                     [](const TerminalCell &cell) {
                         return cell.hasHyperlink;
                     })) {

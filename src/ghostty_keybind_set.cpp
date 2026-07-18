@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <linux/input-event-codes.h>
+#include <ranges>
 
 namespace {
 
@@ -574,10 +575,8 @@ bool isIgnoreAction(QStringView action)
 int GhosttyKeybindLoadReport::count(
     GhosttyKeybindEntryDisposition disposition) const
 {
-    return int(std::count_if(records.cbegin(), records.cend(),
-                             [disposition](const auto &entry) {
-                                 return entry.disposition == disposition;
-                             }));
+    return static_cast<int>(std::ranges::count(
+        records, disposition, &GhosttyKeybindParseRecord::disposition));
 }
 
 QStringList GhosttyKeybindSet::serializedActions() const
@@ -990,8 +989,8 @@ GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
     QVector<QString> unicodeCandidates;
     const auto appendCandidate = [&unicodeCandidates](QString candidate) {
         if (candidate.isEmpty()) return;
-        const bool duplicate = std::any_of(
-            unicodeCandidates.cbegin(), unicodeCandidates.cend(),
+        const bool duplicate = std::ranges::any_of(
+            unicodeCandidates,
             [&candidate](const QString &existing) {
                 return sameUnicode(existing, candidate);
             });
@@ -1056,15 +1055,11 @@ bool GhosttyKeybindSet::activeCatchAllIgnores() const
 {
     const auto ignores = [](const Entry &entry) {
         return entry.kind == EntryKind::Leaf
-            && std::any_of(entry.actions.cbegin(), entry.actions.cend(),
-                           [](const QString &action) {
-                               return isIgnoreAction(action);
-                           });
+            && std::ranges::any_of(entry.actions, isIgnoreAction);
     };
 
-    for (auto table = activeTables_.crbegin();
-         table != activeTables_.crend(); ++table) {
-        if (const Entry *entry = bareCatchAll(table->root)) {
+    for (const ActiveTable &table : activeTables_ | std::views::reverse) {
+        if (const Entry *entry = bareCatchAll(table.root)) {
             return ignores(*entry);
         }
     }

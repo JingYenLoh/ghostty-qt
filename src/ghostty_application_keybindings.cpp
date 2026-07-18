@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace {
 
@@ -62,10 +63,9 @@ quint64 keyEventIdentity(const QKeyEvent *event)
 
 bool containsIgnore(const QStringList &actions)
 {
-    return std::any_of(actions.cbegin(), actions.cend(),
-                       [](const QString &action) {
-                           return action == QLatin1StringView("ignore");
-                       });
+    return std::ranges::any_of(actions, [](const QString &action) {
+        return action == QLatin1StringView("ignore");
+    });
 }
 
 bool closesEverySurface(QStringView action)
@@ -121,23 +121,20 @@ void GhosttyApplicationKeybindings::registerWorkspace(
     TerminalWorkspace *workspace)
 {
     if (workspace == nullptr) return;
-    const auto duplicate = std::find_if(
-        workspaces_.cbegin(), workspaces_.cend(),
-        [workspace](const QPointer<TerminalWorkspace> &candidate) {
-            return candidate == workspace;
-        });
-    if (duplicate != workspaces_.cend()) return;
+    if (std::ranges::any_of(
+            std::as_const(workspaces_), [workspace](const auto &candidate) {
+                return candidate == workspace;
+            })) {
+        return;
+    }
 
     workspaces_.append(workspace);
     connect(workspace, &TerminalWorkspace::broadActionsRequested,
             this, &GhosttyApplicationKeybindings::dispatchBroadActions);
     connect(workspace, &QObject::destroyed, this, [this] {
-        workspaces_.erase(
-            std::remove_if(workspaces_.begin(), workspaces_.end(),
-                           [](const QPointer<TerminalWorkspace> &candidate) {
-                               return candidate.isNull();
-                           }),
-            workspaces_.end());
+        workspaces_.removeIf([](const auto &candidate) {
+            return candidate.isNull();
+        });
     });
 }
 
@@ -274,8 +271,8 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
         return true;
     }
 
-    const bool applicationOnly = std::all_of(
-        match->actions.cbegin(), match->actions.cend(),
+    const bool applicationOnly = std::ranges::all_of(
+        match->actions,
         [](const QString &action) {
             return GhosttyActionCatalog::scope(action)
                 == GhosttyActionScope::Application;

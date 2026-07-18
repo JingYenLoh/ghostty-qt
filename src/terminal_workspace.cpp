@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <ranges>
 #include <utility>
 
 namespace {
@@ -1023,8 +1024,7 @@ void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
         return target.paneId == paneId && target.requestId == requestId;
     };
     for (const PendingPaste &pending : std::as_const(pendingPastes_)) {
-        if (std::any_of(pending.targets.cbegin(), pending.targets.cend(),
-                        matchesTarget)) {
+        if (std::ranges::any_of(pending.targets, matchesTarget)) {
             return;
         }
     }
@@ -1032,11 +1032,9 @@ void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
     const bool firstRequest = pendingPastes_.isEmpty();
     if (!firstRequest && pendingPastes_.front().text == text) {
         PendingPaste &active = pendingPastes_.front();
-        const bool alreadyTargetsPane = std::any_of(
-            active.targets.cbegin(), active.targets.cend(),
-            [paneId](const PendingPasteTarget &target) {
-                return target.paneId == paneId;
-            });
+        const bool alreadyTargetsPane = std::ranges::contains(
+            std::as_const(active.targets), paneId,
+            &PendingPasteTarget::paneId);
         if (!alreadyTargetsPane) {
             active.targets.append({paneId, requestId});
             return;
@@ -1164,10 +1162,8 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
 
     std::vector<TerminalPane *> panes;
     collectPanes(tab.root.get(), &panes);
-    const bool running = std::any_of(panes.cbegin(), panes.cend(),
-                                     [](TerminalPane *pane) {
-                                         return pane->isRunning();
-                                     });
+    const bool running = std::ranges::any_of(
+        panes, [](TerminalPane *pane) { return pane->isRunning(); });
 
     TabListEntry entry;
     entry.id = tab.id;
@@ -1388,10 +1384,10 @@ bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
     collectSlots(collectSlots, tab->root.get(), QRectF(0.0, 0.0, 1.0, 1.0));
     if (slots.size() <= 1) return false;
 
-    const auto sourceSlot = std::find_if(
-        slots.cbegin(), slots.cend(),
+    const auto sourceSlot = std::ranges::find_if(
+        slots,
         [paneId](const auto &slot) { return slot.first == paneId; });
-    if (sourceSlot == slots.cend()) return false;
+    if (sourceSlot == slots.end()) return false;
 
     const auto findNearest = [&slots, paneId, direction](
                                  const QRectF &source) -> PaneId {
@@ -1459,15 +1455,15 @@ bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
     collectPanes(tab->root.get(), &panes);
     if (panes.size() <= 1) return false;
 
-    const auto current = std::find_if(
-        panes.cbegin(), panes.cend(),
+    const auto current = std::ranges::find_if(
+        panes,
         [this, paneId](TerminalPane *pane) {
             return paneIdForPane(pane) == paneId;
         });
-    if (current == panes.cend()) return false;
+    if (current == panes.end()) return false;
 
     const qint64 count = static_cast<qint64>(panes.size());
-    const qint64 source = std::distance(panes.cbegin(), current);
+    const qint64 source = std::ranges::distance(panes.begin(), current);
     const qint64 offset = delta % count;
     const size_t destination = static_cast<size_t>(
         (source + offset + count) % count);
@@ -1532,9 +1528,9 @@ bool TerminalWorkspace::resizeSplit(PaneId paneId, int direction, int amount)
     if (!findNodePath(tab->root.get(), paneId, &path)) return false;
 
     Node *split = nullptr;
-    for (auto it = path.rbegin(); it != path.rend(); ++it) {
-        if (!(*it)->isLeaf() && (*it)->orientation == orientation) {
-            split = *it;
+    for (Node *node : path | std::views::reverse) {
+        if (!node->isLeaf() && node->orientation == orientation) {
+            split = node;
             break;
         }
     }
@@ -1617,11 +1613,11 @@ bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
 {
     std::vector<TerminalPane *> panes;
     collectPanes(tab.root.get(), &panes);
-    const bool childRunning = std::any_of(
-        panes.cbegin(), panes.cend(),
+    const bool childRunning = std::ranges::any_of(
+        panes,
         [](TerminalPane *pane) { return pane->isRunning(); });
-    const bool activeProcess = std::any_of(
-        panes.cbegin(), panes.cend(),
+    const bool activeProcess = std::ranges::any_of(
+        panes,
         [](TerminalPane *pane) { return pane->hasActiveProcess(); });
     return shouldConfirmClose(effectiveOptions_.confirmCloseMode,
                               childRunning, activeProcess);
