@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQmlComponent>
+#include <QQuickWindow>
 #include <QScopedValueRollback>
 #include <QTimer>
 
@@ -216,6 +217,18 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
         }
     }
 
+    // Ghostty scopes fullscreen to a source surface, but every Qt pane in a
+    // workspace ultimately mutates the same host window. Applying the toggle
+    // synchronously once per pane would cancel itself for an even pane count.
+    // Keep broad dispatch once per registered workspace/window while leaving
+    // all other surface actions on the ordinary per-pane fanout path.
+    const GhosttyActionTranslation translated =
+        GhosttyActionCatalog::translate(action);
+    if (translated.accepted()
+        && translated.request->action == WorkspaceAction::ToggleFullscreen) {
+        return !panes.empty() && dispatchAction(*translated.request);
+    }
+
     QScopedValueRollback<bool> broadFanout(broadActionFanout_, true);
     bool performed = false;
     for (const QPointer<TerminalPane> &pane : panes) {
@@ -254,15 +267,35 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             || !contextMatchesPane()) return false;
         closePane(request.context.paneId);
         return true;
+    case WorkspaceAction::SplitLeft:
     case WorkspaceAction::SplitRight:
+    case WorkspaceAction::SplitUp:
     case WorkspaceAction::SplitDown:
-        if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
+    case WorkspaceAction::SplitAuto: {
+        TerminalPane *sourcePane = paneForId(request.context.paneId);
+        if (sourcePane == nullptr || !contextMatchesPane()) return false;
+        WorkspaceAction direction = request.action;
+        if (direction == WorkspaceAction::SplitAuto) {
+            const qreal devicePixelRatio = sourcePane->window() != nullptr
+                ? sourcePane->window()->devicePixelRatio()
+                : 1.0;
+            const int surfaceWidth = std::max(
+                1, qRound(sourcePane->width() * devicePixelRatio));
+            const int surfaceHeight = std::max(
+                1, qRound(sourcePane->height() * devicePixelRatio));
+            direction = surfaceWidth > surfaceHeight
+                ? WorkspaceAction::SplitRight
+                : WorkspaceAction::SplitDown;
+        }
+        const bool horizontal = direction == WorkspaceAction::SplitLeft
+            || direction == WorkspaceAction::SplitRight;
+        const bool placeNewPaneFirst = direction == WorkspaceAction::SplitLeft
+            || direction == WorkspaceAction::SplitUp;
         splitPane(request.context.paneId,
-                  request.action == WorkspaceAction::SplitRight
-                      ? Qt::Horizontal
-                      : Qt::Vertical);
+                  horizontal ? Qt::Horizontal : Qt::Vertical,
+                  placeNewPaneFirst);
         return true;
+    }
     case WorkspaceAction::NavigatePane:
         if (paneForId(request.context.paneId) == nullptr
             || !contextMatchesPane()) return false;
@@ -392,7 +425,9 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             request.context.paneId = paneId;
             if (broadActionFanout_) {
                 switch (request.action) {
+                case WorkspaceAction::SplitLeft:
                 case WorkspaceAction::SplitRight:
+                case WorkspaceAction::SplitUp:
                 case WorkspaceAction::SplitDown:
                 case WorkspaceAction::NavigatePane:
                 case WorkspaceAction::NavigatePaneRelative:
@@ -432,10 +467,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::requestNewTab, this,
             [this] { dispatchAction({WorkspaceAction::NewTab, {}}); });
     connect(pane, &TerminalPane::requestSplit, this,
-            [this, paneId](int orientation) {
-                dispatchAction({orientation == Qt::Horizontal
-                                    ? WorkspaceAction::SplitRight
-                                    : WorkspaceAction::SplitDown,
+            [this, paneId](WorkspaceAction action) {
+                dispatchAction({action,
                                 {tabIdForPane(paneId), paneId, 0}});
             });
     connect(pane, &TerminalPane::requestClose, this,
@@ -623,7 +656,8 @@ void TerminalWorkspace::splitDown()
                     {TabId{}, currentPaneId(), 0}});
 }
 
-void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation)
+void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
+                                  bool placeNewPaneFirst)
 {
     const TabId tabId = tabIdForPane(paneId);
     Tab *tab = tabById(tabId);
@@ -644,8 +678,10 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation)
     node->pane = nullptr;
     node->orientation = orientation;
     node->ratio = 0.5;
-    node->first = std::make_unique<Node>(oldHandle);
-    node->second = std::make_unique<Node>(newPane);
+    node->first = std::make_unique<Node>(
+        placeNewPaneFirst ? newPane : oldHandle);
+    node->second = std::make_unique<Node>(
+        placeNewPaneFirst ? oldHandle : newPane);
     tab->activePaneId = newPane.id;
     const bool targetIsCurrent = tabId == currentTabId();
     if (targetIsCurrent) {

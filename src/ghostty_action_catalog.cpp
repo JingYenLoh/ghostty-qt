@@ -445,10 +445,17 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
     }
 
     if (equals(actionName, QLatin1StringView("new_split"))) {
-        // SplitDirection.default is .auto. It is valid Ghostty syntax but the
-        // current workspace can only place a new split to the right or down.
         if (!parameter.has_value()) {
-            return reject(Error::UnsupportedParameter, actionName, parameter);
+            return accept(WorkspaceAction::SplitAuto,
+                          context,
+                          actionName,
+                          parameter);
+        }
+        if (equals(*parameter, QLatin1StringView("left"))) {
+            return accept(WorkspaceAction::SplitLeft,
+                          context,
+                          actionName,
+                          parameter);
         }
         if (equals(*parameter, QLatin1StringView("right"))) {
             return accept(WorkspaceAction::SplitRight,
@@ -462,10 +469,17 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                           actionName,
                           parameter);
         }
-        if (equals(*parameter, QLatin1StringView("left"))
-            || equals(*parameter, QLatin1StringView("up"))
-            || equals(*parameter, QLatin1StringView("auto"))) {
-            return reject(Error::UnsupportedParameter, actionName, parameter);
+        if (equals(*parameter, QLatin1StringView("up"))) {
+            return accept(WorkspaceAction::SplitUp,
+                          context,
+                          actionName,
+                          parameter);
+        }
+        if (equals(*parameter, QLatin1StringView("auto"))) {
+            return accept(WorkspaceAction::SplitAuto,
+                          context,
+                          actionName,
+                          parameter);
         }
         return reject(Error::InvalidFormat, actionName, parameter);
     }

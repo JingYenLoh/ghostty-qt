@@ -1,5 +1,6 @@
 #include "launch_options.h"
 #include "ghostty_application_keybindings.h"
+#include "terminal_pane.h"
 #include "terminal_workspace.h"
 
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -119,6 +120,12 @@ bool installFullscreenActionTestHook(QQmlApplicationEngine *engine,
     }
 
     const auto exercise = [workspace, window] {
+        workspace->splitRight();
+        if (workspace->findChildren<TerminalPane *>().size() != 2) {
+            qCritical() << "Fullscreen test hook could not create two panes";
+            QCoreApplication::exit(1);
+            return;
+        }
         const QWindow::Visibility originalVisibility = window->visibility();
         if (!workspace->executeSurfaceActionOnAllPanes(
                 QStringLiteral("toggle_fullscreen"))) {
@@ -155,7 +162,12 @@ bool installFullscreenActionTestHook(QQmlApplicationEngine *engine,
         QTimer::singleShot(0, workspace, exercise);
     } else {
         QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
-                         workspace, exercise, Qt::SingleShotConnection);
+                         workspace,
+                         [workspace, exercise] {
+            // The model notification precedes activateTab(); defer until the
+            // new tab's active pane and geometry have been installed.
+            QTimer::singleShot(0, workspace, exercise);
+        }, Qt::SingleShotConnection);
     }
     return true;
 }

@@ -65,7 +65,11 @@ wrapped spatial focus, nearest-axis divider resizing, axis-aware equalization,
 and a per-tab zoomed leaf. Zoom changes only presentation: the complete tree,
 ratios, PTYs, and logical geometry remain intact. Only the current tab's panes
 are visible. The active pane supplies the tab title and receives toolbar and
-directional-focus actions.
+directional-focus actions. A new split can be placed on any side of its source;
+left/up insert the new leaf before the source and right/down insert it after.
+The omitted or explicit `auto` direction compares the source pane's effective
+surface-pixel width and height, choosing right only when width is greater and
+down otherwise. Every split focuses the new leaf and clears split zoom.
 
 Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
@@ -523,7 +527,11 @@ forwards the chain to that process controller. It executes app actions once and
 surface actions over a stable pane snapshot, action-major across the chain;
 `unconsumed` and `performable` do not alter broad-binding consumption. Split
 container actions resolve from each tab's current active pane during that
-fanout, matching the pinned GTK split-tree action boundary.
+fanout, matching the pinned GTK split-tree action boundary. Automatic split
+direction is resolved from each originating surface before that placement
+redirect. A fullscreen surface action is coalesced once per workspace during
+broad fanout because every pane maps to the same synchronously toggled Qt host
+window; separate workspaces still receive independent transitions.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions

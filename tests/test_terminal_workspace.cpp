@@ -69,6 +69,9 @@ private Q_SLOTS:
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
+    void splitDirectionsPlaceAndFocusNewPane_data();
+    void splitDirectionsPlaceAndFocusNewPane();
+    void automaticSplitUsesOriginatingPaneAspect();
     void splitNavigationWrapsInTreeAndSpatialOrder();
     void splitResizeAndEqualizeRespectTreeAxes();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
@@ -611,6 +614,18 @@ void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
     options.hold = true;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
+    // Before the deferred initial tab is created, broad surface dispatch has
+    // no target and must not manufacture a host-window transition.
+    {
+        TerminalWorkspace emptyWorkspace;
+        QSignalSpy emptyRequested(
+            &emptyWorkspace,
+            &TerminalWorkspace::toggleFullscreenRequested);
+        QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_fullscreen")));
+        QCOMPARE(emptyRequested.count(), 0);
+    }
+
     QQuickWindow window;
     window.resize(900, 600);
     auto workspace = std::make_unique<TerminalWorkspace>();
@@ -647,8 +662,154 @@ void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
     }));
     QCOMPARE(requested.count(), 2);
 
+    workspace->splitRight();
+    workspace->newTab();
+    workspace->splitRight();
+    QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 4);
+
+    requested.clear();
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_fullscreen")));
+    QCOMPARE(requested.count(), 1);
+    QVERIFY(!workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_fullscreen:")));
+    QCOMPARE(requested.count(), 1);
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_fullscreen")));
+    QCOMPARE(requested.count(), 2);
+
     workspace.reset();
     window.close();
+}
+
+void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane_data()
+{
+    QTest::addColumn<QString>("serialized");
+    QTest::addColumn<QSizeF>("workspaceSize");
+    QTest::addColumn<Qt::Orientation>("orientation");
+    QTest::addColumn<bool>("placeNewPaneFirst");
+
+    const QSizeF wide(902.0, 602.0);
+    const QSizeF tall(602.0, 902.0);
+    const QSizeF square(602.0, 602.0);
+    QTest::newRow("left")
+        << QStringLiteral("new_split:left") << wide
+        << Qt::Horizontal << true;
+    QTest::newRow("right")
+        << QStringLiteral("new_split:right") << wide
+        << Qt::Horizontal << false;
+    QTest::newRow("up")
+        << QStringLiteral("new_split:up") << tall
+        << Qt::Vertical << true;
+    QTest::newRow("down")
+        << QStringLiteral("new_split:down") << tall
+        << Qt::Vertical << false;
+    QTest::newRow("explicit-auto-wide")
+        << QStringLiteral("new_split:auto") << wide
+        << Qt::Horizontal << false;
+    QTest::newRow("explicit-auto-tall")
+        << QStringLiteral("new_split:auto") << tall
+        << Qt::Vertical << false;
+    QTest::newRow("explicit-auto-square")
+        << QStringLiteral("new_split:auto") << square
+        << Qt::Vertical << false;
+    QTest::newRow("default-auto-wide")
+        << QStringLiteral("new_split") << wide
+        << Qt::Horizontal << false;
+    QTest::newRow("default-auto-square")
+        << QStringLiteral("new_split") << square
+        << Qt::Vertical << false;
+}
+
+void TerminalWorkspaceTest::splitDirectionsPlaceAndFocusNewPane()
+{
+    QFETCH(QString, serialized);
+    QFETCH(QSizeF, workspaceSize);
+    QFETCH(Qt::Orientation, orientation);
+    QFETCH(bool, placeNewPaneFirst);
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(workspaceSize);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabListEntry *before = workspace.tabModel()->entryAt(0);
+    QVERIFY(before != nullptr);
+    const PaneId originalId = before->activePaneId;
+    TerminalPane *originalPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(originalPane != nullptr);
+
+    QVERIFY(originalPane->executeConfiguredAction(serialized));
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    TerminalPane *newPane = panes.at(0) == originalPane
+        ? panes.at(1)
+        : panes.at(0);
+    QVERIFY(newPane != nullptr);
+
+    const TabListEntry *after = workspace.tabModel()->entryAt(0);
+    QVERIFY(after != nullptr);
+    QVERIFY(after->activePaneId != originalId);
+    if (orientation == Qt::Horizontal) {
+        QVERIFY(qAbs(originalPane->height() - newPane->height()) <= 1.0);
+        QVERIFY(qAbs(originalPane->width() - newPane->width()) <= 1.0);
+        QCOMPARE(qRound(originalPane->y()), qRound(newPane->y()));
+        QVERIFY(placeNewPaneFirst
+                    ? newPane->x() < originalPane->x()
+                    : newPane->x() > originalPane->x());
+    } else {
+        QVERIFY(qAbs(originalPane->width() - newPane->width()) <= 1.0);
+        QVERIFY(qAbs(originalPane->height() - newPane->height()) <= 1.0);
+        QCOMPARE(qRound(originalPane->x()), qRound(newPane->x()));
+        QVERIFY(placeNewPaneFirst
+                    ? newPane->y() < originalPane->y()
+                    : newPane->y() > originalPane->y());
+    }
+}
+
+void TerminalWorkspaceTest::automaticSplitUsesOriginatingPaneAspect()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(1002.0, 702.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *leftPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(leftPane != nullptr);
+
+    // The root is wider than tall, so the first default auto split goes right.
+    QVERIFY(leftPane->executeConfiguredAction(QStringLiteral("new_split")));
+    QList<TerminalPane *> panes = workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    TerminalPane *rightPane = panes.at(0) == leftPane
+        ? panes.at(1)
+        : panes.at(0);
+    QVERIFY(rightPane->x() > leftPane->x());
+    QVERIFY(rightPane->width() < rightPane->height());
+
+    // Auto is resolved from that originating child, not the wider workspace,
+    // so its new sibling is placed below it.
+    QVERIFY(rightPane->executeConfiguredAction(QStringLiteral("new_split")));
+    panes = workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+    TerminalPane *lowerPane = nullptr;
+    for (TerminalPane *candidate : panes) {
+        if (candidate != leftPane && candidate != rightPane) {
+            lowerPane = candidate;
+        }
+    }
+    QVERIFY(lowerPane != nullptr);
+    QCOMPARE(qRound(lowerPane->x()), qRound(rightPane->x()));
+    QVERIFY(lowerPane->y() > rightPane->y());
 }
 
 void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
@@ -1088,7 +1249,10 @@ void TerminalWorkspaceTest::broadContainerActionsResolveFromActivePane()
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
-    workspace.setSize(QSizeF(902.0, 602.0));
+    // This aspect makes the first column wide while the two nested right-hand
+    // columns are tall, which also lets the broad-auto assertion below
+    // distinguish source resolution from active-pane placement.
+    workspace.setSize(QSizeF(1802.0, 602.0));
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId tabId = workspace.tabModel()->idAt(0);
     const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
@@ -1137,6 +1301,19 @@ void TerminalWorkspaceTest::broadContainerActionsResolveFromActivePane()
     // Three wrapped moves across three panes return to the original active
     // pane; resolving from each snapshot source would end on a different ID.
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, thirdId);
+
+    const qreal thirdWidthBeforeAuto = thirdPane->width();
+    const qreal thirdHeightBeforeAuto = thirdPane->height();
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("new_split")));
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 6);
+    // The first snapshot source is wider than tall, so its auto direction is
+    // right even though placement is redirected to the active third pane.
+    // Later tall sources split the evolving active branch downward. If auto
+    // were resolved after redirection, the third pane would be cut vertically
+    // by the first action instead of retaining its full height.
+    QVERIFY(thirdPane->width() < thirdWidthBeforeAuto);
+    QVERIFY(qAbs(thirdPane->height() - thirdHeightBeforeAuto) <= 1.0);
 }
 
 void TerminalWorkspaceTest::inactiveTabResizeAppliesWhenActivated()

@@ -28,7 +28,7 @@ Configure, build, and test a preset as one sequence:
 
 ```sh
 cmake --preset dev
-cmake --build --preset dev --parallel
+cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev
 ```
 
@@ -36,7 +36,9 @@ The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
-terminal appearance, OSC 8/default-regex interaction rendering, the pinned
+one-shot host-window effects during broad fanout, directional/default-auto
+split placement, terminal appearance, OSC 8/default-regex interaction
+rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:
@@ -162,8 +164,8 @@ For a sanitizer run, install Clang and use:
 
 ```sh
 cmake --preset sanitize
-cmake --build --preset sanitize --target clean
-cmake --build --preset sanitize --parallel
+cmake --build --preset sanitize --target clean -j"$(nproc)"
+cmake --build --preset sanitize -j"$(nproc)"
 ctest --preset sanitize
 ```
 

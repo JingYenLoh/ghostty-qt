@@ -1509,8 +1509,8 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
             return KeyHandling::ConsumePressAndRelease;
         }
         case Qt::Key_T: Q_EMIT requestNewTab(); return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_O: Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal)); return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_E: Q_EMIT requestSplit(static_cast<int>(Qt::Vertical)); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_O: Q_EMIT requestSplit(WorkspaceAction::SplitRight); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_E: Q_EMIT requestSplit(WorkspaceAction::SplitDown); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_W: Q_EMIT requestCloseTab(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_Q: Q_EMIT requestQuit(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_F: startSearchUi(); return KeyHandling::ConsumePressAndRelease;
@@ -1997,7 +1997,19 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     if (!translated.accepted()) {
         return false;
     }
-    const WorkspaceActionRequest &request = *translated.request;
+    WorkspaceActionRequest request = *translated.request;
+    if (request.action == WorkspaceAction::SplitAuto) {
+        const qreal devicePixelRatio = window() != nullptr
+            ? window()->devicePixelRatio()
+            : 1.0;
+        const int surfaceWidth = std::max(
+            1, qRound(width() * devicePixelRatio));
+        const int surfaceHeight = std::max(
+            1, qRound(height() * devicePixelRatio));
+        request.action = surfaceWidth > surfaceHeight
+            ? WorkspaceAction::SplitRight
+            : WorkspaceAction::SplitDown;
+    }
     if (workspaceActionHandler_) {
         return workspaceActionHandler_(request);
     }
@@ -2011,11 +2023,12 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     case WorkspaceAction::ClosePane:
         Q_EMIT requestClose();
         return true;
+    case WorkspaceAction::SplitLeft:
     case WorkspaceAction::SplitRight:
-        Q_EMIT requestSplit(static_cast<int>(Qt::Horizontal));
-        return true;
+    case WorkspaceAction::SplitUp:
     case WorkspaceAction::SplitDown:
-        Q_EMIT requestSplit(static_cast<int>(Qt::Vertical));
+    case WorkspaceAction::SplitAuto:
+        Q_EMIT requestSplit(request.action);
         return true;
     case WorkspaceAction::NavigatePane:
         Q_EMIT requestNavigate(static_cast<int>(request.context.value));

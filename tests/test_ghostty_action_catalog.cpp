@@ -66,6 +66,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         qint64 value;
     } cases[] = {
         {"new_tab", WorkspaceAction::NewTab, 123},
+        {"new_split", WorkspaceAction::SplitAuto, 123},
         {"close_surface", WorkspaceAction::ClosePane, 123},
         {"close_tab", WorkspaceAction::CloseTab, 123},
         {"previous_tab", WorkspaceAction::ChangeTabRelative, -1},
@@ -114,11 +115,20 @@ void GhosttyActionCatalogTest::translatesParameterizedActions_data()
     QTest::newRow("close-tab-this")
         << QStringLiteral("close_tab:this") << WorkspaceAction::CloseTab
         << qint64(700) << 0;
+    QTest::newRow("split-left")
+        << QStringLiteral("new_split:left") << WorkspaceAction::SplitLeft
+        << qint64(700) << 0;
     QTest::newRow("split-right")
         << QStringLiteral("new_split:right") << WorkspaceAction::SplitRight
         << qint64(700) << 0;
+    QTest::newRow("split-up")
+        << QStringLiteral("new_split:up") << WorkspaceAction::SplitUp
+        << qint64(700) << 0;
     QTest::newRow("split-down")
         << QStringLiteral("new_split:down") << WorkspaceAction::SplitDown
+        << qint64(700) << 0;
+    QTest::newRow("split-auto")
+        << QStringLiteral("new_split:auto") << WorkspaceAction::SplitAuto
         << qint64(700) << 0;
     QTest::newRow("goto-third-tab")
         << QStringLiteral("goto_tab:3") << WorkspaceAction::ActivateTabByIndex
@@ -209,10 +219,6 @@ void GhosttyActionCatalogTest::rejectsValidButUnsupportedParameters_data()
     // workspace does not yet implement their behavior.
     QTest::newRow("close-other") << QStringLiteral("close_tab:other") << true;
     QTest::newRow("close-right") << QStringLiteral("close_tab:right") << true;
-    QTest::newRow("split-default-auto") << QStringLiteral("new_split") << false;
-    QTest::newRow("split-auto") << QStringLiteral("new_split:auto") << true;
-    QTest::newRow("split-left") << QStringLiteral("new_split:left") << true;
-    QTest::newRow("split-up") << QStringLiteral("new_split:up") << true;
 }
 
 void GhosttyActionCatalogTest::rejectsValidButUnsupportedParameters()
@@ -242,6 +248,8 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
         << QStringLiteral("new_tab:") << Error::InvalidFormat;
     QTest::newRow("void-parameter")
         << QStringLiteral("quit:now") << Error::InvalidFormat;
+    QTest::newRow("empty-split-direction")
+        << QStringLiteral("new_split:") << Error::InvalidFormat;
     QTest::newRow("missing-required-parameter")
         << QStringLiteral("goto_split") << Error::InvalidFormat;
     QTest::newRow("empty-enum")

@@ -91,7 +91,7 @@ Q_SIGNALS:
     void searchUiFocusRequested();
     void processStateChanged();
     void requestNewTab();
-    void requestSplit(int orientation);
+    void requestSplit(WorkspaceAction action);
     void requestClose();
     void requestCloseTab();
     void requestNavigate(int direction);

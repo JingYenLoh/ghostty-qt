@@ -1,5 +1,16 @@
 # Repository guidance
 
+## Parallel builds
+
+When invoking a CMake build from the shell, use all available processors:
+
+```sh
+cmake --build --preset dev -j"$(nproc)"
+```
+
+Do not invoke `cmake --build` with a fixed parallelism value such as `-j2`;
+the available processor count varies between development environments.
+
 ## Sanitizer tests in managed environments
 
 The managed development environment runs processes under a supervisor that

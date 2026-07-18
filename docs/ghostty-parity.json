@@ -747,8 +747,8 @@
           "note": "Supports exact previous/next grammar, cyclic newest-to-oldest navigation, selected-result highlighting, and off-viewport scrolling. Candidate highlights in older viewports can lag until the bottom-up scan reaches them; terminal-data mutation restarts that scan, and inactive-screen results are not preserved independently."
         },
         "new_split": {
-          "status": "partial",
-          "note": "Local root triggers, the catalog, and workspace support right/down; left/up/auto remain absent."
+          "status": "supported",
+          "note": "Supports left/right/up/down placement plus omitted and explicit auto. Auto uses the originating surface's effective pixel aspect, choosing right only when width is greater and down otherwise; every split focuses the new pane and clears split zoom."
         },
         "new_tab": {
           "status": "partial",
@@ -861,7 +861,7 @@
         },
         "toggle_fullscreen": {
           "status": "supported",
-          "note": "Routes the finalized surface action through the typed workspace pipeline to toggle the containing Qt window; Ghostty's Linux Ctrl+physical Enter default is active."
+          "note": "Routes the finalized surface action through the typed workspace pipeline to toggle the containing Qt window; broad all/global fanout applies one transition per workspace, and Ghostty's Linux Ctrl+physical Enter default is active."
         },
         "toggle_quick_terminal": {
           "scope": "wayland"

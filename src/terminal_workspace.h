@@ -107,7 +107,8 @@ private:
     const Tab *tabById(TabId id) const;
     TabId currentTabId() const;
     PaneId currentPaneId() const;
-    void splitPane(PaneId paneId, Qt::Orientation orientation);
+    void splitPane(PaneId paneId, Qt::Orientation orientation,
+                   bool placeNewPaneFirst);
     void closePane(PaneId paneId, bool force = false);
     void closeTab(TabId tabId, bool force = false);
     void removeTab(TabId tabId);

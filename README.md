@@ -45,9 +45,10 @@ the host-language comparison and remaining engineering risks.
 - Full-height, fractional, line, absolute-row, top/bottom, and
   selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
-  right/down splits with wrapped spatial/tree-order navigation, keybinding
-  resize/equalize, split zoom, and close confirmation that distinguishes an
-  idle interactive shell from a foreground job on its PTY.
+  directional and aspect-selected automatic splits with wrapped spatial and
+  tree-order navigation, keybinding resize/equalize, split zoom, and close
+  confirmation that distinguishes an idle interactive shell from a foreground
+  job on its PTY.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
@@ -150,14 +151,14 @@ presets:
 
 ```sh
 cmake --preset dev
-cmake --build --preset dev --parallel
+cmake --build --preset dev -j"$(nproc)"
 ```
 
 For an optimized C++ build:
 
 ```sh
 cmake --preset release
-cmake --build --preset release --parallel
+cmake --build --preset release -j"$(nproc)"
 ```
 
 The developer and release presets both drive Ghostty's source-tree `zig-out`
@@ -297,11 +298,13 @@ trigger and one action; focused in-app dispatch still handles action chains.
 
 These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
-`goto_split`, `resize_split`, `equalize_splits`, and `toggle_split_zoom`
-directly. Viewport/selection bindings additionally support `scroll_to_top`,
-`scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`, `scroll_page_down`,
-`scroll_page_fractional`, `scroll_page_lines`, `scroll_to_selection`,
-`select_all`, and `adjust_selection`. Terminal-control bindings support `csi`,
+`new_split:left|right|up|down|auto` (with an omitted direction also selecting
+`auto`), `goto_split`, `resize_split`, `equalize_splits`, and
+`toggle_split_zoom` directly. Viewport/selection bindings additionally support
+`scroll_to_top`, `scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`,
+`scroll_page_down`, `scroll_page_fractional`, `scroll_page_lines`,
+`scroll_to_selection`, `select_all`, and `adjust_selection`. Terminal-control
+bindings support `csi`,
 `esc`, `text`, and `reset`; `copy_url_to_clipboard` copies the explicit OSC 8
 destination or default-regex match currently accepted under the pointer.
 Raw-write actions return the viewport to the active area, while reset clears
