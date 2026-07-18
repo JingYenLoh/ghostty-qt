@@ -448,6 +448,24 @@ target_compile_options(ghostty-qt-action-pipeline PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-vt-adapter STATIC
+    src/ghostty_vt_adapter.cpp
+    src/ghostty_vt_adapter.h
+)
+target_include_directories(ghostty-qt-vt-adapter PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-vt-adapter
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+    PRIVATE
+        ghostty-vt-static
+)
+target_compile_options(ghostty-qt-vt-adapter PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 qt_add_executable(ghostty-qt
     src/main.cpp
     src/ghostty_application_keybindings.cpp
@@ -461,8 +479,6 @@ qt_add_executable(ghostty-qt
     src/ghostty_keybind_config.h
     src/ghostty_global_shortcut_portal.cpp
     src/ghostty_global_shortcut_portal.h
-    src/ghostty_vt_adapter.cpp
-    src/ghostty_vt_adapter.h
     src/launch_options.cpp
     src/launch_options.h
     src/session_worker.cpp
@@ -501,7 +517,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-action-pipeline
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
-    ghostty-vt-static
+    ghostty-qt-vt-adapter
     util
 )
 

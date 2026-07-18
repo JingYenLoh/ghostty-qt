@@ -543,8 +543,9 @@ has Git metadata and rejects a mismatch unless upgrade work explicitly enables
 
 Ghostty's CMake wrapper invokes Zig and exports `ghostty-vt-static`. The project
 checks `zig version` at configure time and accepts only `0.15.2`, matching the
-pinned Ghostty source. The C++ executable links that static target and Linux
-`libutil`.
+pinned Ghostty source. One internal `ghostty-qt-vt-adapter` target privately
+links that engine and contains its C API; the application and focused tests
+reuse the compiled adapter. The executable separately links Linux `libutil`.
 
 Ghostty's exported VT module intentionally disables Oniguruma. CMake therefore
 builds `zig/link_matcher` as a second, narrow static C ABI, importing the pinned

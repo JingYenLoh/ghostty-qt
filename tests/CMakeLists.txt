@@ -33,8 +33,6 @@ add_test(NAME ghostty-smoke COMMAND test-ghostty-smoke)
 
 qt_add_executable(test-session-worker
     test_session_worker.cpp
-    ../src/ghostty_vt_adapter.cpp
-    ../src/ghostty_vt_adapter.h
     ../src/session_worker.cpp
     ../src/session_worker.h
     ../src/terminal_session_options.h
@@ -50,7 +48,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Test
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
-    ghostty-vt-static
+    ghostty-qt-vt-adapter
     util
 )
 add_dependencies(test-session-worker ghostty-qt-terminfo)
@@ -58,8 +56,6 @@ add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
     test_terminal_pane.cpp
-    ../src/ghostty_vt_adapter.cpp
-    ../src/ghostty_vt_adapter.h
     ../src/session_worker.cpp
     ../src/session_worker.h
     ../src/terminal_controller.cpp
@@ -83,7 +79,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     ghostty-qt-action-pipeline
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
-    ghostty-vt-static
+    ghostty-qt-vt-adapter
     util
 )
 add_dependencies(test-terminal-pane ghostty-qt-terminfo)
@@ -100,8 +96,6 @@ qt_add_executable(test-terminal-workspace
     ../src/ghostty_application_keybindings.h
     ../src/ghostty_global_shortcut_portal.cpp
     ../src/ghostty_global_shortcut_portal.h
-    ../src/ghostty_vt_adapter.cpp
-    ../src/ghostty_vt_adapter.h
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/session_worker.cpp
@@ -135,7 +129,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     ghostty-qt-action-pipeline
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
-    ghostty-vt-static
+    ghostty-qt-vt-adapter
     util
 )
 add_dependencies(test-terminal-workspace ghostty-qt-terminfo)
@@ -148,18 +142,12 @@ set_tests_properties(terminal-workspace PROPERTIES
 
 qt_add_executable(test-ghostty-vt-adapter
     test_ghostty_vt_adapter.cpp
-    ../src/ghostty_vt_adapter.cpp
-    ../src/ghostty_vt_adapter.h
-    ../src/terminal_types.h
-)
-target_include_directories(test-ghostty-vt-adapter PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
 target_link_libraries(test-ghostty-vt-adapter PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
-    ghostty-vt-static
+    ghostty-qt-vt-adapter
 )
 add_test(NAME ghostty-vt-adapter COMMAND test-ghostty-vt-adapter)
 set_tests_properties(ghostty-vt-adapter PROPERTIES TIMEOUT 20)
