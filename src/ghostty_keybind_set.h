@@ -9,6 +9,8 @@
 #include <QVector>
 #include <QtCore/qnamespace.h>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -174,7 +176,7 @@ private:
         int qtKey = Qt::Key_unknown;
         quint32 nativeScanCode = 0;
         bool keypad = false;
-        QString unicode;
+        QString foldedUnicode;
         Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     };
 
@@ -203,14 +205,25 @@ private:
         bool physical = false;
     };
 
+    struct PreparedEvent {
+        const GhosttyKeybindEvent &source;
+        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+        std::array<QString, 2> foldedUnicodeCandidates;
+        std::size_t candidateCount = 0;
+        bool unicodeCandidatesReady = false;
+    };
+
     struct ActiveTable {
         QString name;
         quint32 root = 0;
         bool oneShot = false;
     };
 
+    [[nodiscard]] static PreparedEvent prepareEvent(
+        const GhosttyKeybindEvent &event);
+    static void prepareUnicodeCandidates(PreparedEvent &event);
     [[nodiscard]] Lookup lookup(quint32 node,
-                                const GhosttyKeybindEvent &event) const;
+                                PreparedEvent &event) const;
     [[nodiscard]] const Entry *bareCatchAll(quint32 root) const;
     [[nodiscard]] bool activeCatchAllIgnores() const;
 

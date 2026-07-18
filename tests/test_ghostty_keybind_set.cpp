@@ -67,6 +67,9 @@ private Q_SLOTS:
     void nativePhysicalBindingsAreLayoutIndependent();
     void distinguishesKeypadAndModifierLocations();
     void matchesShiftedUnicodeByUnshiftedCodepoint();
+    void matchesFullUnicodeCaseFoldsAndScalars();
+    void ordersAndFiltersUnicodeCandidates();
+    void unicodeBindingsSurviveCopyAndReload();
     void appendsAdjacentChainsInOrder();
     void preservesLocalFlags();
     void supportsSequencesAndCatchAllWhileRejectingDeferredForms();
@@ -284,7 +287,151 @@ void GhosttyKeybindSetTest::matchesShiftedUnicodeByUnshiftedCodepoint()
                  .text = QStringLiteral("<"),
                  .nativeScanCode = xkbKeycode(KEY_COMMA),
                  .unshiftedCodepoint = ',',
+    }).has_value());
+}
+
+void GhosttyKeybindSetTest::matchesFullUnicodeCaseFoldsAndScalars()
+{
+    GhosttyKeybindSet set;
+    const GhosttyKeybindLoadReport report = set.load({
+        QStringLiteral("ctrl+ß=first"),
+        QStringLiteral("ctrl+ẞ=second"),
+        QStringLiteral("alt+Σ=sigma"),
+    });
+
+    QCOMPARE(report.count(Disposition::Installed), 3);
+    QCOMPARE(set.size(), 2);
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ß"),
+             })).actions,
+             QStringList({QStringLiteral("second")}));
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ẞ"),
+             })).actions,
+             QStringList({QStringLiteral("second")}));
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::AltModifier,
+                 .text = QStringLiteral("ς"),
+             })).actions,
+             QStringList({QStringLiteral("sigma")}));
+
+    QCOMPARE(set.load({QStringLiteral("😀=emoji")})
+                 .count(Disposition::Installed),
+             1);
+    const char32_t emoji = 0x1f600U;
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .text = QString::fromUcs4(&emoji, 1),
+             })).actions,
+             QStringList({QStringLiteral("emoji")}));
+}
+
+void GhosttyKeybindSetTest::ordersAndFiltersUnicodeCandidates()
+{
+    GhosttyKeybindSet set;
+    const GhosttyKeybindEvent shifted{
+        .qtKey = Qt::Key_Less,
+        .modifiers = Qt::ControlModifier | Qt::ShiftModifier,
+        .text = QStringLiteral("<"),
+        .nativeScanCode = xkbKeycode(KEY_COMMA),
+        .unshiftedCodepoint = ',',
+    };
+
+    QCOMPARE(set.load({
+                 QStringLiteral("ctrl+shift+,=unshifted"),
+                 QStringLiteral("ctrl+shift+<=shifted"),
+             }).count(Disposition::Installed),
+             2);
+    QCOMPARE(requireMatch(set.match(shifted)).actions,
+             QStringList({QStringLiteral("shifted")}));
+
+    QCOMPARE(set.load({QStringLiteral("ctrl+shift+,=unshifted")})
+                 .count(Disposition::Installed),
+             1);
+    QCOMPARE(requireMatch(set.match(shifted)).actions,
+             QStringList({QStringLiteral("unshifted")}));
+
+    QCOMPARE(set.load({
+                 QStringLiteral("ctrl+ß=sharp_s"),
+                 QStringLiteral("ctrl+é=precomposed"),
+                 QStringLiteral("ctrl+a=letter"),
+             }).count(Disposition::Installed),
+             3);
+    QVERIFY(!set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ss"),
              }).has_value());
+    QVERIFY(!set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("e\u0301"),
+             }).has_value());
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_A,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ab"),
+             })).actions,
+             QStringList({QStringLiteral("letter")}));
+    QVERIFY(!set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ab"),
+             }).has_value());
+
+    QCOMPARE(requireMatch(set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_A,
+                 .modifiers = Qt::ControlModifier | Qt::KeypadModifier
+                    | Qt::GroupSwitchModifier,
+                 .text = QStringLiteral("a"),
+             })).actions,
+             QStringList({QStringLiteral("letter")}));
+    QVERIFY(!set.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_A,
+                 .modifiers = Qt::ControlModifier | Qt::AltModifier
+                    | Qt::KeypadModifier | Qt::GroupSwitchModifier,
+                 .text = QStringLiteral("a"),
+             }).has_value());
+}
+
+void GhosttyKeybindSetTest::unicodeBindingsSurviveCopyAndReload()
+{
+    GhosttyKeybindSet original;
+    QCOMPARE(original.load({
+                 QStringLiteral("ctrl+ß=sharp_s"),
+                 QStringLiteral("alt+Σ=sigma"),
+             }).count(Disposition::Installed),
+             2);
+    const GhosttyKeybindSet copy = original;
+
+    QCOMPARE(original.load({QStringLiteral("ctrl+x=replacement")})
+                 .count(Disposition::Installed),
+             1);
+    QCOMPARE(requireMatch(copy.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ẞ"),
+             })).actions,
+             QStringList({QStringLiteral("sharp_s")}));
+    QCOMPARE(requireMatch(copy.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::AltModifier,
+                 .text = QStringLiteral("ς"),
+             })).actions,
+             QStringList({QStringLiteral("sigma")}));
+    QVERIFY(!original.match(GhosttyKeybindEvent{
+                 .qtKey = Qt::Key_unknown,
+                 .modifiers = Qt::ControlModifier,
+                 .text = QStringLiteral("ẞ"),
+             }).has_value());
+    QCOMPARE(requireMatch(original.match(
+                 Qt::Key_X, Qt::ControlModifier, QStringLiteral("x"))).actions,
+             QStringList({QStringLiteral("replacement")}));
 }
 
 void GhosttyKeybindSetTest::appendsAdjacentChainsInOrder()

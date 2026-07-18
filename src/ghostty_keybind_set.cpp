@@ -368,9 +368,26 @@ std::optional<Qt::KeyboardModifier> modifierFor(QStringView part)
     return std::nullopt;
 }
 
-bool isSingleCodepoint(QStringView value)
+std::optional<char32_t> singleUnicodeScalar(QStringView value)
 {
-    return value.toString().toUcs4().size() == 1;
+    if (value.size() == 1) {
+        const char32_t codeUnit = value.front().unicode();
+        if (codeUnit < 0xd800U || codeUnit > 0xdfffU) {
+            return codeUnit;
+        }
+        return std::nullopt;
+    }
+
+    if (value.size() != 2) {
+        return std::nullopt;
+    }
+    const char32_t high = value.front().unicode();
+    const char32_t low = value.back().unicode();
+    if (high < 0xd800U || high > 0xdbffU
+        || low < 0xdc00U || low > 0xdfffU) {
+        return std::nullopt;
+    }
+    return 0x10000U + ((high - 0xd800U) << 10U) + (low - 0xdc00U);
 }
 
 bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
@@ -424,7 +441,7 @@ bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
                 : w3cToSnake(part);
             continue;
         }
-        if (isSingleCodepoint(part)) {
+        if (singleUnicodeScalar(part).has_value()) {
             trigger->unicode = part.toString();
             continue;
         }
@@ -440,17 +457,12 @@ bool parseTrigger(QStringView input, ParsedTrigger *trigger, QString *error)
     return true;
 }
 
-bool sameUnicode(QStringView left, QStringView right)
-{
-    return left.toString().toCaseFolded() == right.toString().toCaseFolded();
-}
-
 QString unicodeFromQtEvent(int qtKey, QStringView text)
 {
-    const QList<uint> codepoints = text.toString().toUcs4();
-    if (codepoints.size() == 1
-        && codepoints.constFirst() >= 0x20U
-        && codepoints.constFirst() != 0x7fU) {
+    const auto codepoint = singleUnicodeScalar(text);
+    if (codepoint.has_value()
+        && *codepoint >= 0x20U
+        && *codepoint != 0x7fU) {
         return text.toString();
     }
 
@@ -712,14 +724,14 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
                 trigger.kind = GhosttyKeybindKeyKind::Physical;
                 trigger.physicalName = parsed.physicalName;
             } else {
-                const QList<uint> codepoints = parsed.unicode.toUcs4();
-                if (codepoints.size() != 1) {
+                const auto codepoint = singleUnicodeScalar(parsed.unicode);
+                if (!codepoint.has_value()) {
                     error = QStringLiteral("Unicode trigger is not one scalar");
                     valid = false;
                     break;
                 }
                 trigger.kind = GhosttyKeybindKeyKind::Unicode;
-                trigger.unicodeCodepoint = codepoints.constFirst();
+                trigger.unicodeCodepoint = static_cast<quint32>(*codepoint);
             }
             definition.sequence.append(std::move(trigger));
         }
@@ -767,7 +779,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
             return true;
         }
         if (left.keyKind == KeyKind::Unicode) {
-            return sameUnicode(left.unicode, right.unicode);
+            return left.foldedUnicode == right.foldedUnicode;
         }
         if (left.nativeScanCode != 0 && right.nativeScanCode != 0) {
             return left.nativeScanCode == right.nativeScanCode;
@@ -834,7 +846,8 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
                     trigger.keyKind = KeyKind::Unicode;
                     const char32_t codepoint =
                         static_cast<char32_t>(source.unicodeCodepoint);
-                    trigger.unicode = QString::fromUcs4(&codepoint, 1);
+                    trigger.foldedUnicode =
+                        QString::fromUcs4(&codepoint, 1).toCaseFolded();
                     break;
                 }
                 case GhosttyKeybindKeyKind::CatchAll:
@@ -959,17 +972,60 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
     return report;
 }
 
+GhosttyKeybindSet::PreparedEvent GhosttyKeybindSet::prepareEvent(
+    const GhosttyKeybindEvent &event)
+{
+    return {
+        .source = event,
+        .modifiers = normalizedModifiers(event.modifiers),
+        .foldedUnicodeCandidates = {},
+    };
+}
+
+void GhosttyKeybindSet::prepareUnicodeCandidates(PreparedEvent &prepared)
+{
+    if (prepared.unicodeCandidatesReady) {
+        return;
+    }
+    prepared.unicodeCandidatesReady = true;
+
+    const GhosttyKeybindEvent &event = prepared.source;
+    const auto appendCandidate = [&prepared](QString candidate) {
+        if (candidate.isEmpty()) {
+            return;
+        }
+        candidate = candidate.toCaseFolded();
+        for (std::size_t index = 0; index < prepared.candidateCount; ++index) {
+            if (prepared.foldedUnicodeCandidates[index] == candidate) {
+                return;
+            }
+        }
+        Q_ASSERT(prepared.candidateCount
+                 < prepared.foldedUnicodeCandidates.size());
+        prepared.foldedUnicodeCandidates[prepared.candidateCount++] =
+            std::move(candidate);
+    };
+
+    appendCandidate(unicodeFromQtEvent(event.qtKey, event.text));
+    if (event.unshiftedCodepoint != 0
+        && isUnicodeScalar(event.unshiftedCodepoint)) {
+        const char32_t codepoint =
+            static_cast<char32_t>(event.unshiftedCodepoint);
+        appendCandidate(QString::fromUcs4(&codepoint, 1));
+    }
+}
+
 GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
     quint32 node,
-    const GhosttyKeybindEvent &event) const
+    PreparedEvent &prepared) const
 {
     if (node >= static_cast<quint32>(nodes_.size())) {
         return {};
     }
+    const GhosttyKeybindEvent &event = prepared.source;
     const QVector<Entry> &entries =
         nodes_.at(static_cast<qsizetype>(node)).entries;
-    const Qt::KeyboardModifiers normalized =
-        normalizedModifiers(event.modifiers);
+    const Qt::KeyboardModifiers normalized = prepared.modifiers;
 
     // Ghostty prioritizes physical identity at every trie level.
     for (const Entry &entry : entries) {
@@ -986,29 +1042,16 @@ GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
         }
     }
 
-    QVector<QString> unicodeCandidates;
-    const auto appendCandidate = [&unicodeCandidates](QString candidate) {
-        if (candidate.isEmpty()) return;
-        const bool duplicate = std::ranges::any_of(
-            unicodeCandidates,
-            [&candidate](const QString &existing) {
-                return sameUnicode(existing, candidate);
-            });
-        if (!duplicate) unicodeCandidates.append(std::move(candidate));
-    };
-    appendCandidate(unicodeFromQtEvent(event.qtKey, event.text));
-    if (event.unshiftedCodepoint != 0
-        && isUnicodeScalar(event.unshiftedCodepoint)) {
-        const char32_t codepoint =
-            static_cast<char32_t>(event.unshiftedCodepoint);
-        appendCandidate(QString::fromUcs4(&codepoint, 1));
-    }
-    for (const QString &candidate : unicodeCandidates) {
+    prepareUnicodeCandidates(prepared);
+    for (std::size_t candidateIndex = 0;
+         candidateIndex < prepared.candidateCount; ++candidateIndex) {
+        const QString &candidate =
+            prepared.foldedUnicodeCandidates[candidateIndex];
         for (const Entry &entry : entries) {
             const Binding &trigger = entry.trigger;
             if (trigger.keyKind == KeyKind::Unicode
                 && trigger.modifiers == normalized
-                && sameUnicode(trigger.unicode, candidate)) {
+                && trigger.foldedUnicode == candidate) {
                 return {&entry, false};
             }
         }
@@ -1084,7 +1127,8 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
 std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
     const GhosttyKeybindEvent &event) const
 {
-    const Lookup found = lookup(0, event);
+    PreparedEvent prepared = prepareEvent(event);
+    const Lookup found = lookup(0, prepared);
     if (found.entry == nullptr || found.entry->kind != EntryKind::Leaf) {
         return std::nullopt;
     }
@@ -1101,22 +1145,23 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
 GhosttyKeybindStep GhosttyKeybindSet::advance(
     const GhosttyKeybindEvent &event)
 {
+    PreparedEvent prepared = prepareEvent(event);
     const bool continuing = activeNode_.has_value();
     Lookup found;
     qsizetype matchedTable = -1;
     if (continuing) {
-        found = lookup(*activeNode_, event);
+        found = lookup(*activeNode_, prepared);
     } else {
         for (qsizetype index = activeTables_.size(); index > 0; --index) {
             const qsizetype candidate = index - 1;
-            found = lookup(activeTables_.at(candidate).root, event);
+            found = lookup(activeTables_.at(candidate).root, prepared);
             if (found.entry != nullptr) {
                 matchedTable = candidate;
                 break;
             }
         }
         if (found.entry == nullptr) {
-            found = lookup(0, event);
+            found = lookup(0, prepared);
         }
     }
     if (found.entry == nullptr) {
