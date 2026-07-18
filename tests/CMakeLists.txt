@@ -363,7 +363,7 @@ set_tests_properties(application-lifecycle PROPERTIES
 
 add_test(
     NAME application-close-dialog
-    COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/sleep 5
+    COMMAND $<TARGET_FILE:ghostty-qt> -- /bin/sleep 30
 )
 set(_ghostty_qt_dialog_config_home
     "${CMAKE_CURRENT_BINARY_DIR}/application-close-dialog-config")

@@ -106,6 +106,7 @@ ApplicationWindow {
 
     Dialog {
         id: closeDialog
+        objectName: "closeDialog"
         anchors.centerIn: parent
         width: Math.max(280, Math.min(460, window.width - 32))
         modal: true

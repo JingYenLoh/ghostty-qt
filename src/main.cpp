@@ -17,6 +17,8 @@
 #include <QTimer>
 #include <QtQml>
 
+#include <memory>
+
 namespace {
 
 void printHelp()
@@ -53,6 +55,58 @@ void reportConfigDiagnostics(const GhosttyConfigSnapshot &snapshot)
     }
 }
 #endif
+
+bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
+                                TerminalWorkspace *workspace)
+{
+    QObject *const rootObject = engine->rootObjects().constFirst();
+    QObject *const closeDialog =
+        rootObject->findChild<QObject *>(QStringLiteral("closeDialog"));
+    if (closeDialog == nullptr) {
+        qCritical() << "Close-dialog test hook could not find the QML dialog";
+        return false;
+    }
+
+    const auto acceptanceInvoked = std::make_shared<bool>(false);
+    QObject::connect(
+        workspace, &TerminalWorkspace::closeConfirmationRequested,
+        closeDialog, [closeDialog, acceptanceInvoked] {
+            QTimer::singleShot(0, closeDialog,
+                               [closeDialog, acceptanceInvoked] {
+                if (!closeDialog->property("visible").toBool()) {
+                    qCritical()
+                        << "Close-dialog test hook observed a hidden QML dialog";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                *acceptanceInvoked = true;
+                if (!QMetaObject::invokeMethod(closeDialog, "accept")) {
+                    *acceptanceInvoked = false;
+                    qCritical()
+                        << "Close-dialog test hook could not accept the QML dialog";
+                    QCoreApplication::exit(1);
+                }
+            });
+        });
+    QObject::connect(
+        workspace, &TerminalWorkspace::quitApproved,
+        closeDialog, [acceptanceInvoked] {
+            if (!*acceptanceInvoked) {
+                qCritical() << "Close-dialog test hook quit without QML acceptance";
+                QCoreApplication::exit(1);
+            }
+        });
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, &TerminalWorkspace::requestQuit);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged,
+            workspace, [workspace] { workspace->requestQuit(); },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
 
 } // namespace
 
@@ -174,8 +228,9 @@ int main(int argc, char *argv[])
     // every normal launch.
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
-        QTimer::singleShot(100, workspace, &TerminalWorkspace::requestQuit);
-        QTimer::singleShot(300, workspace, &TerminalWorkspace::confirmClose);
+        if (!installCloseDialogTestHook(&engine, workspace)) {
+            return 1;
+        }
     }
 
     return application.exec();
