@@ -1255,9 +1255,25 @@ void TerminalWorkspaceTest::splitResizeAndEqualizeRespectTreeAxes()
     }));
     QVERIFY(qAbs(thirdPane->height() - (initialThirdHeight + 60.0)) <= 1.0);
 
+    // Add a second vertical level so equalization must propagate the nested
+    // subtree's vertical weight through its parent.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, fourthId, 0},
+    }));
+    const PaneId fifthId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *fifthPane = nullptr;
+    for (TerminalPane *candidate : workspace.findChildren<TerminalPane *>()) {
+        if (candidate != firstPane && candidate != secondPane
+            && candidate != thirdPane && candidate != fourthPane) {
+            fifthPane = candidate;
+        }
+    }
+    QVERIFY(fifthPane != nullptr);
+
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::EqualizeSplits,
-        {tabId, fourthId, 0},
+        {tabId, fifthId, 0},
     }));
     // The two contiguous horizontal splits weight the left leaf against the
     // two right-hand units at 1:2, while the perpendicular vertical subtree
@@ -1265,7 +1281,8 @@ void TerminalWorkspaceTest::splitResizeAndEqualizeRespectTreeAxes()
     QVERIFY(qAbs(firstPane->width() - secondPane->width()) <= 1.0);
     QVERIFY(qAbs(secondPane->width() - thirdPane->width()) <= 1.0);
     QVERIFY(qAbs(thirdPane->height() - fourthPane->height()) <= 1.0);
-    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, fourthId);
+    QVERIFY(qAbs(fourthPane->height() - fifthPane->height()) <= 1.0);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, fifthId);
 }
 
 void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSplit()

@@ -142,8 +142,6 @@ private:
     bool toggleSplitZoom(TabId tabId);
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
-    static int equalizeWeight(const Node *node, Qt::Orientation orientation);
-    static void equalizeNode(Node *node);
     bool shouldConfirmTabClose(const Tab &tab) const;
     bool shouldConfirmWorkspaceClose() const;
     int tabIndexForId(TabId tabId) const;

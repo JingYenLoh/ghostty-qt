@@ -12,6 +12,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <limits>
 #include <ranges>
@@ -20,6 +21,17 @@
 namespace {
 
 constexpr qreal splitGap = 2.0;
+
+struct AxisWeights {
+    [[nodiscard]] std::size_t along(
+        Qt::Orientation orientation) const noexcept
+    {
+        return orientation == Qt::Horizontal ? horizontal : vertical;
+    }
+
+    std::size_t horizontal = 1;
+    std::size_t vertical = 1;
+};
 
 qreal splitExtent(const QRectF &geometry, Qt::Orientation orientation)
 {
@@ -44,6 +56,25 @@ struct TerminalWorkspace::Node {
     }
 
     bool isLeaf() const { return pane != nullptr; }
+
+    [[nodiscard]] AxisWeights equalize()
+    {
+        if (isLeaf()) return {};
+
+        const AxisWeights firstWeights = first != nullptr
+            ? first->equalize() : AxisWeights{};
+        const AxisWeights secondWeights = second != nullptr
+            ? second->equalize() : AxisWeights{};
+        const std::size_t firstWeight = firstWeights.along(orientation);
+        const std::size_t secondWeight = secondWeights.along(orientation);
+        const std::size_t combinedWeight = firstWeight + secondWeight;
+        ratio = static_cast<qreal>(firstWeight)
+            / static_cast<qreal>(combinedWeight);
+
+        return orientation == Qt::Horizontal
+            ? AxisWeights{combinedWeight, 1}
+            : AxisWeights{1, combinedWeight};
+    }
 
     PaneId paneId;
     TerminalPane *pane = nullptr;
@@ -1554,35 +1585,11 @@ bool TerminalWorkspace::resizeSplit(PaneId paneId, int direction, int amount)
     return true;
 }
 
-int TerminalWorkspace::equalizeWeight(const Node *node,
-                                      Qt::Orientation orientation)
-{
-    if (node == nullptr || node->isLeaf()
-        || node->orientation != orientation) {
-        return 1;
-    }
-    return equalizeWeight(node->first.get(), orientation)
-        + equalizeWeight(node->second.get(), orientation);
-}
-
-void TerminalWorkspace::equalizeNode(Node *node)
-{
-    if (node == nullptr || node->isLeaf()) return;
-    const int firstWeight = equalizeWeight(node->first.get(),
-                                           node->orientation);
-    const int secondWeight = equalizeWeight(node->second.get(),
-                                            node->orientation);
-    node->ratio = static_cast<qreal>(firstWeight)
-        / static_cast<qreal>(firstWeight + secondWeight);
-    equalizeNode(node->first.get());
-    equalizeNode(node->second.get());
-}
-
 bool TerminalWorkspace::equalizeSplits(TabId tabId)
 {
     Tab *tab = tabById(tabId);
     if (tab == nullptr || tab->root == nullptr) return false;
-    equalizeNode(tab->root.get());
+    (void) tab->root->equalize();
     if (tab->id == currentTabId()) {
         layoutCurrentTab();
     } else {
