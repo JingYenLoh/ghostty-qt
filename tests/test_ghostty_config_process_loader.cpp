@@ -8,6 +8,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <expected>
 #include <limits>
 
 #ifndef GHOSTTY_QT_FAKE_CONFIG_HELPER_PATH
@@ -20,7 +21,8 @@
 
 namespace {
 
-QString errorMessage(const GhosttyConfigLoadResult &result)
+template<typename Value>
+QString errorMessage(const std::expected<Value, QString> &result)
 {
     return result ? QString{} : result.error();
 }
@@ -129,7 +131,8 @@ class GhosttyConfigProcessLoaderTest : public QObject {
 
 private Q_SLOTS:
     void derivesXdgHomeFromEitherCandidateOrder();
-    void parsesStructuredKeybindJsonTransactionally();
+    void parsesStructuredKeybindJson();
+    void parsesEmptyStructuredKeybindJson();
     void rejectsMalformedStructuredKeybindJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
     void preservesDefaultAndAcceptsEveryLinkPreviewMode();
@@ -149,7 +152,7 @@ private Q_SLOTS:
     void reportsTimeoutCrashAndStartFailureDeterministically();
 };
 
-void GhosttyConfigProcessLoaderTest::parsesStructuredKeybindJsonTransactionally()
+void GhosttyConfigProcessLoaderTest::parsesStructuredKeybindJson()
 {
     const QByteArray json = QByteArrayLiteral(R"json({
         "version": 1,
@@ -182,11 +185,9 @@ void GhosttyConfigProcessLoaderTest::parsesStructuredKeybindJsonTransactionally(
         }]
     })json");
 
-    GhosttyKeybindConfig config;
-    QString error;
-    QVERIFY2(parseGhosttyKeybindConfigJson(json, &config, &error),
-             qPrintable(error));
-    QVERIFY(error.isEmpty());
+    const auto parsed = parseGhosttyKeybindConfigJson(json);
+    QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+    const GhosttyKeybindConfig &config = *parsed;
     QCOMPARE(config.schemaVersion, 1);
     QCOMPARE(config.root.size(), 1);
     QCOMPARE(config.root.constFirst().sequence.size(), 3);
@@ -212,12 +213,26 @@ void GhosttyConfigProcessLoaderTest::parsesStructuredKeybindJsonTransactionally(
     QCOMPARE(config.tables.constFirst().bindings.size(), 1);
 }
 
+void GhosttyConfigProcessLoaderTest::parsesEmptyStructuredKeybindJson()
+{
+    const auto parsed = parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral(R"json({"version":1,"root":[],"tables":[]})json"));
+    QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+    QCOMPARE(parsed->schemaVersion,
+             GhosttyKeybindConfig::CurrentSchemaVersion);
+    QVERIFY(parsed->root.isEmpty());
+    QVERIFY(parsed->tables.isEmpty());
+}
+
 void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredKeybindJson()
 {
-    GhosttyKeybindConfig config;
-    config.schemaVersion = 77;
-    QString error;
-    QVERIFY(!parseGhosttyKeybindConfigJson(
+    auto parsed = parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral("{not-json"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY(parsed.error().startsWith(
+        QStringLiteral("Invalid Ghostty keybinding JSON at offset ")));
+
+    parsed = parseGhosttyKeybindConfigJson(
         QByteArrayLiteral(R"json({
             "version":1,
             "root":[{
@@ -226,16 +241,29 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredKeybindJson()
                 "flags":{"consumed":true,"all":false,"global":false,"performable":false}
             }],
             "tables":[]
-        })json"),
-        &config, &error));
-    QVERIFY(error.contains(QStringLiteral("Unicode scalar")));
-    QCOMPARE(config.schemaVersion, 77);
+        })json"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY(parsed.error().contains(QStringLiteral("Unicode scalar")));
 
-    QVERIFY(!parseGhosttyKeybindConfigJson(
-        QByteArrayLiteral("{\"version\":2,\"root\":[],\"tables\":[]}"),
-        &config, &error));
-    QVERIFY(error.contains(QStringLiteral("schema version")));
-    QCOMPARE(config.schemaVersion, 77);
+    parsed = parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral("{\"version\":2,\"root\":[],\"tables\":[]}"));
+    QVERIFY(!parsed.has_value());
+    QCOMPARE(parsed.error(),
+             QStringLiteral(
+                 "Unsupported Ghostty keybinding JSON schema version"));
+
+    parsed = parseGhosttyKeybindConfigJson(
+        QByteArrayLiteral(R"json({
+            "version":1,
+            "root":[],
+            "tables":[
+                {"name":"modal","bindings":[]},
+                {"name":"modal","bindings":[]}
+            ]
+        })json"));
+    QVERIFY(!parsed.has_value());
+    QCOMPARE(parsed.error(),
+             QStringLiteral("Duplicate Ghostty keybinding table 'modal'"));
 }
 
 void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
@@ -746,7 +774,9 @@ void GhosttyConfigProcessLoaderTest::rejectsFailedOrMalformedStructuredQuery()
         fixture.candidates());
     QVERIFY(!result.has_value());
     QVERIFY(result.error().startsWith(
-        QStringLiteral("Ghostty keybinding query returned malformed data:")));
+        QStringLiteral(
+            "Ghostty keybinding query returned malformed data: "
+            "Invalid Ghostty keybinding JSON at offset ")));
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsConfigThatBecomesInvalidDuringQueries()

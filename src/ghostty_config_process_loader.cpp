@@ -1060,64 +1060,52 @@ bool parseKeybindDefinitions(const QJsonValue &value,
 
 } // namespace
 
-bool parseGhosttyKeybindConfigJson(const QByteArray &json,
-                                   GhosttyKeybindConfig *output,
-                                   QString *errorMessage)
+std::expected<GhosttyKeybindConfig, QString>
+parseGhosttyKeybindConfigJson(const QByteArray &json)
 {
-    if (errorMessage) errorMessage->clear();
-    if (output == nullptr) {
-        setError(errorMessage,
-                 QStringLiteral("No keybinding config output object was provided"));
-        return false;
-    }
-
     QJsonParseError jsonError;
     const QJsonDocument document = QJsonDocument::fromJson(json, &jsonError);
     if (jsonError.error != QJsonParseError::NoError) {
-        setError(errorMessage,
-                 QStringLiteral("Invalid Ghostty keybinding JSON at offset %1: %2")
-                     .arg(jsonError.offset)
-                     .arg(jsonError.errorString()));
-        return false;
+        return std::unexpected(
+            QStringLiteral("Invalid Ghostty keybinding JSON at offset %1: %2")
+                .arg(jsonError.offset)
+                .arg(jsonError.errorString()));
     }
     if (!document.isObject()) {
-        setError(errorMessage,
-                 QStringLiteral("Ghostty keybinding JSON root must be an object"));
-        return false;
+        return std::unexpected(
+            QStringLiteral("Ghostty keybinding JSON root must be an object"));
     }
 
+    QString parseError;
     const QJsonObject object = document.object();
     if (!exactObjectKeys(object,
                          {QLatin1StringView("version"),
                           QLatin1StringView("root"),
                           QLatin1StringView("tables")},
                          QStringLiteral("Ghostty keybinding JSON root"),
-                         errorMessage)) {
-        return false;
+                         &parseError)) {
+        return std::unexpected(std::move(parseError));
     }
     quint64 schemaVersion = 0;
     if (!unsignedJsonInteger(object.value(QStringLiteral("version")),
                              std::numeric_limits<int>::max(),
                              &schemaVersion)
         || schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
-        setError(errorMessage,
-                 QStringLiteral("Unsupported Ghostty keybinding JSON schema version"));
-        return false;
+        return std::unexpected(
+            QStringLiteral("Unsupported Ghostty keybinding JSON schema version"));
     }
 
     GhosttyKeybindConfig parsed;
     parsed.schemaVersion = static_cast<int>(schemaVersion);
     if (!parseKeybindDefinitions(object.value(QStringLiteral("root")),
                                  QStringLiteral("root"), &parsed.root,
-                                 errorMessage)) {
-        return false;
+                                 &parseError)) {
+        return std::unexpected(std::move(parseError));
     }
 
     const QJsonValue tablesValue = object.value(QStringLiteral("tables"));
     if (!tablesValue.isArray()) {
-        setError(errorMessage,
-                 QStringLiteral("tables must be an array"));
-        return false;
+        return std::unexpected(QStringLiteral("tables must be an array"));
     }
     const QJsonArray tables = tablesValue.toArray();
     parsed.tables.reserve(tables.size());
@@ -1125,30 +1113,27 @@ bool parseGhosttyKeybindConfigJson(const QByteArray &json,
     for (qsizetype index = 0; index < tables.size(); ++index) {
         const QString context = QStringLiteral("tables[%1]").arg(index);
         if (!tables.at(index).isObject()) {
-            setError(errorMessage,
-                     QStringLiteral("%1 must be an object").arg(context));
-            return false;
+            return std::unexpected(
+                QStringLiteral("%1 must be an object").arg(context));
         }
         const QJsonObject table = tables.at(index).toObject();
         if (!exactObjectKeys(table,
                              {QLatin1StringView("name"),
                               QLatin1StringView("bindings")},
-                             context, errorMessage)) {
-            return false;
+                             context, &parseError)) {
+            return std::unexpected(std::move(parseError));
         }
         const QJsonValue nameValue = table.value(QStringLiteral("name"));
         if (!nameValue.isString() || nameValue.toString().isEmpty()) {
-            setError(errorMessage,
-                     QStringLiteral("%1.name must be a non-empty string")
-                         .arg(context));
-            return false;
+            return std::unexpected(
+                QStringLiteral("%1.name must be a non-empty string")
+                    .arg(context));
         }
         const QString name = nameValue.toString();
         if (tableNames.contains(name)) {
-            setError(errorMessage,
-                     QStringLiteral("Duplicate Ghostty keybinding table '%1'")
-                         .arg(name));
-            return false;
+            return std::unexpected(
+                QStringLiteral("Duplicate Ghostty keybinding table '%1'")
+                    .arg(name));
         }
         tableNames.insert(name);
         GhosttyKeybindTable parsedTable{
@@ -1157,14 +1142,13 @@ bool parseGhosttyKeybindConfigJson(const QByteArray &json,
         };
         if (!parseKeybindDefinitions(table.value(QStringLiteral("bindings")),
                                      context + QStringLiteral(".bindings"),
-                                     &parsedTable.bindings, errorMessage)) {
-            return false;
+                                     &parsedTable.bindings, &parseError)) {
+            return std::unexpected(std::move(parseError));
         }
         parsed.tables.append(std::move(parsedTable));
     }
 
-    *output = std::move(parsed);
-    return true;
+    return parsed;
 }
 
 QString ghosttyConfigXdgHome(const QStringList &candidatePaths,
@@ -1481,16 +1465,14 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         if (!parsed) {
             return parsed;
         }
-        GhosttyKeybindConfig keybindConfig;
-        QString keybindParseError;
-        if (!parseGhosttyKeybindConfigJson(keybinds.standardOutput,
-                                           &keybindConfig,
-                                           &keybindParseError)) {
+        auto keybindConfig =
+            parseGhosttyKeybindConfigJson(keybinds.standardOutput);
+        if (!keybindConfig) {
             return std::unexpected(
                 QStringLiteral("Ghostty keybinding query returned malformed data: %1")
-                    .arg(keybindParseError));
+                    .arg(keybindConfig.error()));
         }
-        parsed->keybindConfig = std::move(keybindConfig);
+        parsed->keybindConfig = std::move(*keybindConfig);
 
         // Config values belong on stdout; any successful stderr and validator
         // stdout are warnings from the pinned parser and must remain visible
