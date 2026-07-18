@@ -147,6 +147,7 @@ TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
 {
     return {
         .appearance = options.appearance,
+        .selectionClipboard = options.selectionClipboard,
         .linkUrl = options.linkUrl,
     };
 }
@@ -304,6 +305,46 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             result.linkPreviews = LinkPreviewMode::Always;
         } else if (canonical == QStringLiteral("osc8")) {
             result.linkPreviews = LinkPreviewMode::Osc8;
+        }
+    }
+
+    const QVariant trimTrailingSpaces = snapshot.values.value(
+        QStringLiteral("clipboard-trim-trailing-spaces"));
+    if (trimTrailingSpaces.metaType() == QMetaType::fromType<bool>()) {
+        result.selectionClipboard.trimTrailingSpaces =
+            trimTrailingSpaces.toBool();
+    }
+
+    const QVariant copyOnSelect = snapshot.values.value(
+        QStringLiteral("copy-on-select"));
+    if (copyOnSelect.metaType() == QMetaType::fromType<QString>()) {
+        const QString canonical = copyOnSelect.toString();
+        if (canonical == QStringLiteral("false")) {
+            result.selectionClipboard.copyOnSelect =
+                TerminalCopyOnSelectMode::Disabled;
+        } else if (canonical == QStringLiteral("true")) {
+            result.selectionClipboard.copyOnSelect =
+                TerminalCopyOnSelectMode::Primary;
+        } else if (canonical == QStringLiteral("clipboard")) {
+            result.selectionClipboard.copyOnSelect =
+                TerminalCopyOnSelectMode::PrimaryAndClipboard;
+        }
+    }
+
+    const QVariant clearOnCopy = snapshot.values.value(
+        QStringLiteral("selection-clear-on-copy"));
+    if (clearOnCopy.metaType() == QMetaType::fromType<bool>()) {
+        result.selectionClipboard.clearOnCopy = clearOnCopy.toBool();
+    }
+
+    const QVariant middleClickAction = snapshot.values.value(
+        QStringLiteral("middle-click-action"));
+    if (middleClickAction.metaType() == QMetaType::fromType<QString>()) {
+        const QString canonical = middleClickAction.toString();
+        if (canonical == QStringLiteral("primary-paste")) {
+            result.middleClickAction = MiddleClickAction::PrimaryPaste;
+        } else if (canonical == QStringLiteral("ignore")) {
+            result.middleClickAction = MiddleClickAction::Ignore;
         }
     }
 

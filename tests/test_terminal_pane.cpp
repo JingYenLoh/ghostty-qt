@@ -278,6 +278,12 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .value = 321,
         .unit = ScrollbackLimitUnit::Bytes,
     };
+    reloaded.selectionClipboard = {
+        .trimTrailingSpaces = false,
+        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnCopy = true,
+    };
+    reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.linkUrl = false;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
@@ -288,6 +294,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QVERIFY(!splitOptions.hold);
     QCOMPARE(splitOptions.scrollbackLimit, reloaded.scrollbackLimit);
     QCOMPARE(splitOptions.appearance, reloaded.appearance);
+    QCOMPARE(splitOptions.selectionClipboard, reloaded.selectionClipboard);
+    QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
     QCOMPARE(runtimeOptions.count(), 1);
     QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(

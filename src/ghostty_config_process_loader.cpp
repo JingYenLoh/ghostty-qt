@@ -68,6 +68,14 @@ struct ParsedConfig {
     quint64 scrollbackLimit = 0;
     bool hasConfirmCloseSurface = false;
     QString confirmCloseSurface;
+    bool hasClipboardTrimTrailingSpaces = false;
+    bool clipboardTrimTrailingSpaces = true;
+    bool hasCopyOnSelect = false;
+    QString copyOnSelect = QStringLiteral("true");
+    bool hasSelectionClearOnCopy = false;
+    bool selectionClearOnCopy = false;
+    bool hasMiddleClickAction = false;
+    QString middleClickAction = QStringLiteral("primary-paste");
     bool hasLinkUrl = false;
     bool linkUrl = true;
     bool hasLinkPreviews = false;
@@ -609,6 +617,43 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->hasConfirmCloseSurface = true;
             parsed->confirmCloseSurface = value;
+        } else if (key == QStringLiteral("clipboard-trim-trailing-spaces")) {
+            if (!parseBool(value, &parsed->clipboardTrimTrailingSpaces)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid clipboard-trim-trailing-spaces in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasClipboardTrimTrailingSpaces = true;
+        } else if (key == QStringLiteral("copy-on-select")) {
+            if (value != QStringLiteral("false")
+                && value != QStringLiteral("true")
+                && value != QStringLiteral("clipboard")) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid copy-on-select in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasCopyOnSelect = true;
+            parsed->copyOnSelect = value;
+        } else if (key == QStringLiteral("selection-clear-on-copy")) {
+            if (!parseBool(value, &parsed->selectionClearOnCopy)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSelectionClearOnCopy = true;
+        } else if (key == QStringLiteral("middle-click-action")) {
+            if (value != QStringLiteral("primary-paste")
+                && value != QStringLiteral("ignore")) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid middle-click-action in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasMiddleClickAction = true;
+            parsed->middleClickAction = value;
         } else if (key == QStringLiteral("link-url")) {
             if (!parseBool(value, &parsed->linkUrl)) {
                 setError(errorMessage,
@@ -1125,6 +1170,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasCursorText || !defaults.hasBoldColor
         || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
+        || !defaults.hasClipboardTrimTrailingSpaces
+        || !defaults.hasCopyOnSelect || !defaults.hasSelectionClearOnCopy
+        || !defaults.hasMiddleClickAction
         || !defaults.hasLinkUrl
         || !defaults.hasLinkPreviews
         || !defaults.hasKeybinds || !defaults.hasConfigFiles) {
@@ -1218,6 +1266,20 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         mergedValue(changes.hasConfirmCloseSurface,
                     changes.confirmCloseSurface,
                     defaults.confirmCloseSurface);
+    const bool clipboardTrimTrailingSpaces =
+        mergedValue(changes.hasClipboardTrimTrailingSpaces,
+                    changes.clipboardTrimTrailingSpaces,
+                    defaults.clipboardTrimTrailingSpaces);
+    const QString copyOnSelect =
+        mergedValue(changes.hasCopyOnSelect, changes.copyOnSelect,
+                    defaults.copyOnSelect);
+    const bool selectionClearOnCopy =
+        mergedValue(changes.hasSelectionClearOnCopy,
+                    changes.selectionClearOnCopy,
+                    defaults.selectionClearOnCopy);
+    const QString middleClickAction =
+        mergedValue(changes.hasMiddleClickAction, changes.middleClickAction,
+                    defaults.middleClickAction);
     const bool linkUrl =
         mergedValue(changes.hasLinkUrl, changes.linkUrl, defaults.linkUrl);
     const QString linkPreviews =
@@ -1260,6 +1322,13 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("scrollback-limit"), scrollbackLimit);
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            confirmCloseSurface);
+    snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
+                           clipboardTrimTrailingSpaces);
+    snapshot.values.insert(QStringLiteral("copy-on-select"), copyOnSelect);
+    snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
+                           selectionClearOnCopy);
+    snapshot.values.insert(QStringLiteral("middle-click-action"),
+                           middleClickAction);
     snapshot.values.insert(QStringLiteral("link-url"), linkUrl);
     snapshot.values.insert(QStringLiteral("link-previews"), linkPreviews);
     snapshot.values.insert(QStringLiteral("keybind"), keybinds);

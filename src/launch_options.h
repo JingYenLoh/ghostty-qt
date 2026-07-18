@@ -23,6 +23,11 @@ enum class LinkPreviewMode {
     Osc8,
 };
 
+enum class MiddleClickAction {
+    PrimaryPaste,
+    Ignore,
+};
+
 struct LaunchOptions {
     QString workingDirectory;
     QString fontFamily;
@@ -37,6 +42,10 @@ struct LaunchOptions {
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
+    TerminalSelectionClipboardOptions selectionClipboard;
+    // Middle-click is a GUI input policy. It intentionally stays outside the
+    // worker-owned terminal session options.
+    MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
     // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
     // available independently of this setting.
     bool linkUrl = true;

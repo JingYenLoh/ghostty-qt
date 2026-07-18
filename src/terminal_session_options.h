@@ -22,10 +22,25 @@ struct ScrollbackLimit {
     bool operator==(const ScrollbackLimit &) const = default;
 };
 
+enum class TerminalCopyOnSelectMode : quint8 {
+    Disabled,
+    Primary,
+    PrimaryAndClipboard,
+};
+
+struct TerminalSelectionClipboardOptions {
+    bool trimTrailingSpaces = true;
+    TerminalCopyOnSelectMode copyOnSelect = TerminalCopyOnSelectMode::Primary;
+    bool clearOnCopy = false;
+
+    bool operator==(const TerminalSelectionClipboardOptions &) const = default;
+};
+
 // Value-only settings that an existing terminal session can apply. Keep this
 // boundary limited to state that SessionWorker actually owns at runtime.
 struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
+    TerminalSelectionClipboardOptions selectionClipboard;
     bool linkUrl = true;
 
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;

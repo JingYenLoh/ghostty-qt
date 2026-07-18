@@ -720,6 +720,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.scrollbackLimit = options.scrollbackLimit;
     updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
     updated.confirmCloseMode = options.confirmCloseMode;
+    updated.selectionClipboard = options.selectionClipboard;
+    updated.middleClickAction = options.middleClickAction;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.keybindConfig = options.keybindConfig;

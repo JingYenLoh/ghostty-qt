@@ -38,6 +38,7 @@ private Q_SLOTS:
     void overlaysGhosttySnapshotAndPreservesCliFonts();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
+    void mapsClipboardModes();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
     void projectsTerminalSessionOptions();
@@ -87,6 +88,11 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
+    QVERIFY(options.selectionClipboard.trimTrailingSpaces);
+    QCOMPARE(options.selectionClipboard.copyOnSelect,
+             TerminalCopyOnSelectMode::Primary);
+    QVERIFY(!options.selectionClipboard.clearOnCopy);
+    QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
     QVERIFY(!options.hold);
@@ -275,6 +281,13 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(50'000'000));
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("always"));
+    snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
+                           false);
+    snapshot.values.insert(QStringLiteral("copy-on-select"),
+                           QStringLiteral("clipboard"));
+    snapshot.values.insert(QStringLiteral("selection-clear-on-copy"), true);
+    snapshot.values.insert(QStringLiteral("middle-click-action"),
+                           QStringLiteral("ignore"));
     snapshot.values.insert(QStringLiteral("link-url"), false);
     snapshot.values.insert(QStringLiteral("link-previews"),
                            QStringLiteral("osc8"));
@@ -337,6 +350,11 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
+    QVERIFY(!cliResult.selectionClipboard.trimTrailingSpaces);
+    QCOMPARE(cliResult.selectionClipboard.copyOnSelect,
+             TerminalCopyOnSelectMode::PrimaryAndClipboard);
+    QVERIFY(cliResult.selectionClipboard.clearOnCopy);
+    QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindings.isEmpty());
@@ -378,6 +396,44 @@ void LaunchOptionsTest::mapsLinkPreviewModes()
     snapshot.values.insert(QStringLiteral("link-previews"), canonical);
 
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).linkPreviews, expected);
+}
+
+void LaunchOptionsTest::mapsClipboardModes()
+{
+    const struct {
+        QString canonical;
+        TerminalCopyOnSelectMode expected;
+    } copyModes[] = {
+        {QStringLiteral("false"), TerminalCopyOnSelectMode::Disabled},
+        {QStringLiteral("true"), TerminalCopyOnSelectMode::Primary},
+        {QStringLiteral("clipboard"),
+         TerminalCopyOnSelectMode::PrimaryAndClipboard},
+    };
+    for (const auto &testCase : copyModes) {
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("copy-on-select"),
+                               testCase.canonical);
+        QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot)
+                     .selectionClipboard.copyOnSelect,
+                 testCase.expected);
+    }
+
+    const struct {
+        QString canonical;
+        MiddleClickAction expected;
+    } middleClickActions[] = {
+        {QStringLiteral("primary-paste"), MiddleClickAction::PrimaryPaste},
+        {QStringLiteral("ignore"), MiddleClickAction::Ignore},
+    };
+    for (const auto &testCase : middleClickActions) {
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("middle-click-action"),
+                               testCase.canonical);
+        QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot).middleClickAction,
+                 testCase.expected);
+    }
 }
 
 void LaunchOptionsTest::restoresNullableAppearanceDefaults()
@@ -448,6 +504,12 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
                            QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("link-previews"),
                            true);
+    snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
+                           QStringLiteral("false"));
+    snapshot.values.insert(QStringLiteral("copy-on-select"), true);
+    snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
+                           QStringLiteral("true"));
+    snapshot.values.insert(QStringLiteral("middle-click-action"), false);
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
 
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -458,6 +520,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
     QCOMPARE(result.linkUrl, base.linkUrl);
     QCOMPARE(result.linkPreviews, base.linkPreviews);
+    QCOMPARE(result.selectionClipboard, base.selectionClipboard);
+    QCOMPARE(result.middleClickAction, base.middleClickAction);
 }
 
 void LaunchOptionsTest::projectsTerminalSessionOptions()
@@ -472,6 +536,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.hold = true;
     options.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
     options.appearance.palette = {QColor(QStringLiteral("#abcdef"))};
+    options.selectionClipboard = {
+        .trimTrailingSpaces = false,
+        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnCopy = true,
+    };
+    options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
 
     const TerminalSessionRuntimeOptions runtime =
@@ -480,6 +550,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         toTerminalSessionLaunchOptions(options);
 
     QCOMPARE(runtime.appearance, options.appearance);
+    QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.program, options.program);
@@ -502,6 +573,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.fontSizeManuallyAdjusted = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
+    frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
     frontendOnlyChanged.keybindings = {QStringLiteral("ctrl+x=ignore")};
     frontendOnlyChanged.keybindingsConfigured = true;
     frontendOnlyChanged.showHelp = true;
@@ -514,6 +586,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.scrollbackLimit = {};
     options.hold = false;
     options.appearance = {};
+    options.selectionClipboard = {};
+    options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
              QStringLiteral("/session/working-directory"));
@@ -523,6 +597,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.scrollbackLimit.value, quint64(42'000));
     QCOMPARE(launch.runtime.appearance.foregroundColor,
              QColor(QStringLiteral("#123456")));
+    const TerminalSelectionClipboardOptions expectedClipboard{
+        .trimTrailingSpaces = false,
+        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnCopy = true,
+    };
+    QCOMPARE(launch.runtime.selectionClipboard, expectedClipboard);
     QVERIFY(!launch.runtime.linkUrl);
 }
 

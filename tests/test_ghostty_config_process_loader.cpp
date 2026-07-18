@@ -42,6 +42,10 @@ QByteArray defaultOutput()
                           "faint-opacity = 0.5\n"
                           "scrollback-limit = 50000000\n"
                           "confirm-close-surface = true\n"
+                          "clipboard-trim-trailing-spaces = true\n"
+                          "copy-on-select = true\n"
+                          "selection-clear-on-copy = false\n"
+                          "middle-click-action = primary-paste\n"
                           "link-url = true\n"
                           "link-previews = true\n"
                           "keybind = ctrl+shift+t=new_tab\n"
@@ -121,6 +125,7 @@ private Q_SLOTS:
     void rejectsMalformedStructuredKeybindJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
     void preservesDefaultAndAcceptsEveryLinkPreviewMode();
+    void preservesDefaultsAndAcceptsEveryClipboardMode();
     void emptyRepeatableChangesResetDefaults();
     void rejectsMalformedCanonicalValues();
     void invokesValidationThenDefaultAndCurrentQueries();
@@ -275,6 +280,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "faint-opacity = 0.25\r\n"
             "scrollback-limit = 123456\r\n"
             "confirm-close-surface = always\r\n"
+            "clipboard-trim-trailing-spaces = false\r\n"
+            "copy-on-select = clipboard\r\n"
+            "selection-clear-on-copy = true\r\n"
+            "middle-click-action = ignore\r\n"
             "link-url = false\r\n"
             "link-previews = osc8\r\n"
             "keybind = alt+n=new_tab\r\n"
@@ -344,6 +353,16 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              quint64(123456));
     QCOMPARE(snapshot.values.value(QStringLiteral("confirm-close-surface")).toString(),
              QStringLiteral("always"));
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("clipboard-trim-trailing-spaces")).toBool(),
+             false);
+    QCOMPARE(snapshot.values.value(QStringLiteral("copy-on-select")).toString(),
+             QStringLiteral("clipboard"));
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("selection-clear-on-copy")).toBool(),
+             true);
+    QCOMPARE(snapshot.values.value(QStringLiteral("middle-click-action")).toString(),
+             QStringLiteral("ignore"));
     QCOMPARE(snapshot.values.value(QStringLiteral("link-url")).toBool(), false);
     QCOMPARE(snapshot.values.value(QStringLiteral("link-previews")).toString(),
              QStringLiteral("osc8"));
@@ -398,6 +417,46 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryLinkPreviewM
         QCOMPARE(changed.snapshot->values
                      .value(QStringLiteral("link-previews")).toString(),
                  QString::fromLatin1(mode));
+    }
+}
+
+void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMode()
+{
+    ConfigFixture fixture;
+    const GhosttyConfigLoadResult unchanged = parseGhosttyConfigShowOutputs(
+        defaultOutput(), {}, fixture.candidates());
+    QVERIFY2(unchanged.succeeded(), qPrintable(unchanged.errorMessage));
+    const QVariantMap &defaults = unchanged.snapshot->values;
+    QVERIFY(defaults.value(
+        QStringLiteral("clipboard-trim-trailing-spaces")).toBool());
+    QCOMPARE(defaults.value(QStringLiteral("copy-on-select")).toString(),
+             QStringLiteral("true"));
+    QVERIFY(!defaults.value(
+        QStringLiteral("selection-clear-on-copy")).toBool());
+    QCOMPARE(defaults.value(QStringLiteral("middle-click-action")).toString(),
+             QStringLiteral("primary-paste"));
+
+    for (const QByteArray &mode : {QByteArrayLiteral("false"),
+                                   QByteArrayLiteral("true"),
+                                   QByteArrayLiteral("clipboard")}) {
+        const GhosttyConfigLoadResult changed = parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("copy-on-select = ") + mode + '\n',
+            fixture.candidates());
+        QVERIFY2(changed.succeeded(), qPrintable(changed.errorMessage));
+        QCOMPARE(changed.snapshot->values
+                     .value(QStringLiteral("copy-on-select")).toString(),
+                 QString::fromLatin1(mode));
+    }
+
+    for (const QByteArray &action : {QByteArrayLiteral("primary-paste"),
+                                     QByteArrayLiteral("ignore")}) {
+        const GhosttyConfigLoadResult changed = parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("middle-click-action = ")
+                + action + '\n', fixture.candidates());
+        QVERIFY2(changed.succeeded(), qPrintable(changed.errorMessage));
+        QCOMPARE(changed.snapshot->values
+                     .value(QStringLiteral("middle-click-action")).toString(),
+                 QString::fromLatin1(action));
     }
 }
 
@@ -500,6 +559,28 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedLinkPreviews.succeeded());
     QCOMPARE(malformedLinkPreviews.errorMessage,
              QStringLiteral("Invalid link-previews in Ghostty config output at line 1"));
+
+    const struct {
+        QByteArray setting;
+        QString error;
+    } malformedClipboard[] = {
+        {QByteArrayLiteral("clipboard-trim-trailing-spaces = yes\n"),
+         QStringLiteral("Invalid clipboard-trim-trailing-spaces in Ghostty config output at line 1")},
+        {QByteArrayLiteral("copy-on-select = primary\n"),
+         QStringLiteral("Invalid copy-on-select in Ghostty config output at line 1")},
+        {QByteArrayLiteral("copy-on-select = TRUE\n"),
+         QStringLiteral("Invalid copy-on-select in Ghostty config output at line 1")},
+        {QByteArrayLiteral("selection-clear-on-copy = yes\n"),
+         QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line 1")},
+        {QByteArrayLiteral("middle-click-action = paste\n"),
+         QStringLiteral("Invalid middle-click-action in Ghostty config output at line 1")},
+    };
+    for (const auto &testCase : malformedClipboard) {
+        const GhosttyConfigLoadResult result = parseGhosttyConfigShowOutputs(
+            defaultOutput(), testCase.setting, fixture.candidates());
+        QVERIFY(!result.succeeded());
+        QCOMPARE(result.errorMessage, testCase.error);
+    }
 
     const GhosttyConfigLoadResult missing = parseGhosttyConfigShowOutputs(
         QByteArrayLiteral("font-size = 13\n"), {}, fixture.candidates());
@@ -652,6 +733,10 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
             "cursor-text = cell-foreground\n"
             "bold-color = bright\n"
             "faint-opacity = 0.25\n"
+            "clipboard-trim-trailing-spaces = 0\n"
+            "copy-on-select = clipboard\n"
+            "selection-clear-on-copy = t\n"
+            "middle-click-action = ignore\n"
             "keybind = clear\n"
             "keybind = ctrl+a=ignore\n"
             "keybind = ctrl+a=unbind\n"
@@ -711,6 +796,16 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
     QCOMPARE(result.snapshot->values.value(QStringLiteral("faint-opacity"))
                  .toDouble(),
              0.25);
+    QVERIFY(!result.snapshot->values.value(
+        QStringLiteral("clipboard-trim-trailing-spaces")).toBool());
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("copy-on-select"))
+                 .toString(),
+             QStringLiteral("clipboard"));
+    QVERIFY(result.snapshot->values.value(
+        QStringLiteral("selection-clear-on-copy")).toBool());
+    QCOMPARE(result.snapshot->values.value(QStringLiteral("middle-click-action"))
+                 .toString(),
+             QStringLiteral("ignore"));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybindings()
