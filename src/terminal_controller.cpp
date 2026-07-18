@@ -21,13 +21,14 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
 
 } // namespace
 
-TerminalController::TerminalController(const LaunchOptions &options, QObject *parent)
+TerminalController::TerminalController(
+    const TerminalSessionLaunchOptions &options, QObject *parent)
     : QObject(parent)
-    , options_(options)
     , currentDirectory_(options.workingDirectory)
     // Treat a starting child conservatively until the worker can identify an
     // idle interactive-shell prompt.
     , activeProcess_(true)
+    , explicitProgram_(!options.program.isEmpty())
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
@@ -40,7 +41,7 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
     qRegisterMetaType<QVector<QPoint>>();
-    qRegisterMetaType<LaunchOptions>();
+    qRegisterMetaType<TerminalSessionRuntimeOptions>();
 
     thread_ = new QThread(this);
     worker_ = new SessionWorker;
@@ -233,7 +234,9 @@ TerminalController::TerminalController(const LaunchOptions &options, QObject *pa
             }, Qt::QueuedConnection);
 
     connect(thread_, &QThread::started, worker_,
-            [worker = worker_, options] { worker->initialize(options); });
+            [worker = worker_, launchOptions = options] {
+                worker->initialize(launchOptions);
+            });
     thread_->start();
 }
 
@@ -257,10 +260,10 @@ void TerminalController::resizeTerminal(int columns, int rows,
                          surfaceWidthPixels, surfaceHeightPixels);
 }
 
-void TerminalController::applyRuntimeOptions(const LaunchOptions &options)
+void TerminalController::applyRuntimeOptions(
+    const TerminalSessionRuntimeOptions &options)
 {
-    options_ = options;
-    Q_EMIT runtimeOptionsRequested(options_);
+    Q_EMIT runtimeOptionsRequested(options);
 }
 
 void TerminalController::beginShutdown()
@@ -388,7 +391,7 @@ void TerminalController::paste(const QString &text)
 
 void TerminalController::notePotentialActivity()
 {
-    if (!running_ || !options_.program.isEmpty() || activeProcess_) {
+    if (!running_ || explicitProgram_ || activeProcess_) {
         return;
     }
     activeProcess_ = true;

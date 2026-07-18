@@ -3,6 +3,7 @@ qt_add_executable(test-launch-options
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/terminal_appearance.h
+    ../src/terminal_session_options.h
 )
 target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
@@ -36,8 +37,7 @@ qt_add_executable(test-session-worker
     ../src/ghostty_vt_adapter.h
     ../src/session_worker.cpp
     ../src/session_worker.h
-    ../src/launch_options.cpp
-    ../src/launch_options.h
+    ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
 target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
@@ -68,6 +68,7 @@ qt_add_executable(test-terminal-pane
     ../src/terminal_pane.h
     ../src/launch_options.cpp
     ../src/launch_options.h
+    ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
 target_include_directories(test-terminal-pane PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
@@ -111,6 +112,7 @@ qt_add_executable(test-terminal-workspace
     ../src/terminal_controller.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
+    ../src/terminal_session_options.h
     ../src/terminal_workspace.cpp
     ../src/terminal_workspace.h
     ../src/terminal_types.h

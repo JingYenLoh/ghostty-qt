@@ -1,6 +1,6 @@
 #pragma once
 
-#include "launch_options.h"
+#include "terminal_session_options.h"
 #include "terminal_types.h"
 
 #include <QByteArray>
@@ -31,11 +31,11 @@ public:
     static bool canonicalTextMayStartProcess(const QByteArray &payload);
 
 public Q_SLOTS:
-    void initialize(const LaunchOptions &options);
-    // Font rendering is owned by TerminalPane. This applies live terminal
-    // colors; scrollback remains fixed for this libghostty terminal and the
-    // reloaded limit is used only when a new pane is constructed.
-    void applyRuntimeOptions(const LaunchOptions &options);
+    void initialize(const TerminalSessionLaunchOptions &options);
+    // Apply the worker-owned live state: terminal appearance and regex URL
+    // matching. Font, keybindings, previews, and future-pane scrollback remain
+    // owned by TerminalPane.
+    void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
@@ -150,7 +150,7 @@ private:
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QString selectedText() const;
 
-    LaunchOptions options_;
+    TerminalSessionLaunchOptions options_;
     std::unique_ptr<GhosttyVtAdapter> vt_;
     std::unique_ptr<GhosttyLinkMatcher> linkMatcher_;
     struct HyperlinkState;
@@ -185,7 +185,6 @@ private:
     QElapsedTimer cursorBlinkResetTimer_;
     bool cursorBlinkResetPending_ = false;
     bool shuttingDown_ = false;
-    bool hold_ = false;
     bool mouseTracking_ = false;
     quint64 terminalContentRevision_ = 1;
     quint64 searchContentRevision_ = 1;

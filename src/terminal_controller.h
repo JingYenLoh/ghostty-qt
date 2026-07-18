@@ -1,6 +1,6 @@
 #pragma once
 
-#include "launch_options.h"
+#include "terminal_session_options.h"
 #include "terminal_types.h"
 
 #include <QByteArray>
@@ -24,7 +24,8 @@ class TerminalController final : public QObject {
     Q_PROPERTY(bool selectionAvailable READ selectionAvailable NOTIFY selectionAvailableChanged)
 
 public:
-    explicit TerminalController(const LaunchOptions &options, QObject *parent = nullptr);
+    explicit TerminalController(const TerminalSessionLaunchOptions &options,
+                                QObject *parent = nullptr);
     ~TerminalController() override;
 
     QString title() const { return title_; }
@@ -40,12 +41,10 @@ public:
     {
         return selectionAvailable_ || pendingSelectAllRequests_ > 0;
     }
-    bool hold() const { return options_.hold; }
-
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
-    void applyRuntimeOptions(const LaunchOptions &options);
+    void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
     // Queue graceful teardown without blocking the UI. Workspace-wide closes
     // call this for every pane first so their grace periods run concurrently.
     void beginShutdown();
@@ -162,7 +161,7 @@ Q_SIGNALS:
     void hyperlinkActivationCommitRequested(
         quint64 requestId, int column, int row);
     void hyperlinkActivationCancellationRequested(quint64 requestId);
-    void runtimeOptionsRequested(const LaunchOptions &options);
+    void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
     void shutdownRequested();
 
 private:
@@ -171,7 +170,6 @@ private:
     quint64 nextSearchGeneration();
     quint64 nextSearchSelectionRequestId();
 
-    LaunchOptions options_;
     QThread *thread_ = nullptr;
     SessionWorker *worker_ = nullptr;
     QString title_;
@@ -179,6 +177,7 @@ private:
     bool mouseTracking_ = false;
     bool running_ = true;
     bool activeProcess_ = false;
+    bool explicitProgram_ = false;
     bool selectionAvailable_ = false;
     int pendingSelectAllRequests_ = 0;
     bool closing_ = false;

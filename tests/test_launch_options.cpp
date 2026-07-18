@@ -40,6 +40,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes_data();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
+    void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
 };
@@ -457,6 +458,72 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
     QCOMPARE(result.linkUrl, base.linkUrl);
     QCOMPARE(result.linkPreviews, base.linkPreviews);
+}
+
+void LaunchOptionsTest::projectsTerminalSessionOptions()
+{
+    LaunchOptions options;
+    options.workingDirectory = QStringLiteral("/session/working-directory");
+    options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
+    options.scrollbackLimit = {
+        .value = 42'000,
+        .unit = ScrollbackLimitUnit::Bytes,
+    };
+    options.hold = true;
+    options.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
+    options.appearance.palette = {QColor(QStringLiteral("#abcdef"))};
+    options.linkUrl = false;
+
+    const TerminalSessionRuntimeOptions runtime =
+        toTerminalSessionRuntimeOptions(options);
+    const TerminalSessionLaunchOptions launch =
+        toTerminalSessionLaunchOptions(options);
+
+    QCOMPARE(runtime.appearance, options.appearance);
+    QCOMPARE(runtime.linkUrl, options.linkUrl);
+    QCOMPARE(launch.workingDirectory, options.workingDirectory);
+    QCOMPARE(launch.program, options.program);
+    QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
+    QCOMPARE(launch.hold, options.hold);
+    QCOMPARE(launch.runtime, runtime);
+
+    QVERIFY(QMetaType::fromType<TerminalSessionLaunchOptions>().isValid());
+    QVERIFY(QMetaType::fromType<TerminalSessionRuntimeOptions>().isValid());
+    QVERIFY(qvariant_cast<TerminalSessionLaunchOptions>(
+                QVariant::fromValue(launch)) == launch);
+    QVERIFY(qvariant_cast<TerminalSessionRuntimeOptions>(
+                QVariant::fromValue(runtime)) == runtime);
+
+    LaunchOptions frontendOnlyChanged = options;
+    frontendOnlyChanged.fontFamily = QStringLiteral("Frontend Font");
+    frontendOnlyChanged.fontSize = 19.0;
+    frontendOnlyChanged.fontFamilyExplicit = true;
+    frontendOnlyChanged.fontSizeExplicit = true;
+    frontendOnlyChanged.fontSizeManuallyAdjusted = true;
+    frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
+    frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
+    frontendOnlyChanged.keybindings = {QStringLiteral("ctrl+x=ignore")};
+    frontendOnlyChanged.keybindingsConfigured = true;
+    frontendOnlyChanged.showHelp = true;
+    frontendOnlyChanged.showVersion = true;
+    QCOMPARE(toTerminalSessionLaunchOptions(frontendOnlyChanged), launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(frontendOnlyChanged), runtime);
+
+    options.workingDirectory.clear();
+    options.program.clear();
+    options.scrollbackLimit = {};
+    options.hold = false;
+    options.appearance = {};
+    options.linkUrl = true;
+    QCOMPARE(launch.workingDirectory,
+             QStringLiteral("/session/working-directory"));
+    QCOMPARE(launch.program,
+             QStringList({QStringLiteral("/bin/program"),
+                          QStringLiteral("arg")}));
+    QCOMPARE(launch.scrollbackLimit.value, quint64(42'000));
+    QCOMPARE(launch.runtime.appearance.foregroundColor,
+             QColor(QStringLiteral("#123456")));
+    QVERIFY(!launch.runtime.linkUrl);
 }
 
 void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()

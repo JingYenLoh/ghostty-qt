@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <utility>
 
 namespace {
@@ -143,21 +142,25 @@ std::optional<double> configClampedUnitInterval(const QVariant &value)
 
 } // namespace
 
-quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns)
+TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
+    const LaunchOptions &options)
 {
-    if (limit.unit == ScrollbackLimitUnit::Bytes) {
-        return limit.value;
-    }
-    const quint64 boundedColumns = static_cast<quint64>(std::max(1, columns));
-    constexpr quint64 EstimatedBytesPerCell = 16;
-    constexpr quint64 MinimumEstimatedRowBytes = 256;
-    const quint64 rowBytes = std::max(
-        MinimumEstimatedRowBytes,
-        boundedColumns * EstimatedBytesPerCell);
-    if (limit.value > std::numeric_limits<quint64>::max() / rowBytes) {
-        return std::numeric_limits<quint64>::max();
-    }
-    return limit.value * rowBytes;
+    return {
+        .appearance = options.appearance,
+        .linkUrl = options.linkUrl,
+    };
+}
+
+TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
+    const LaunchOptions &options)
+{
+    return {
+        .workingDirectory = options.workingDirectory,
+        .program = options.program,
+        .scrollbackLimit = options.scrollbackLimit,
+        .hold = options.hold,
+        .runtime = toTerminalSessionRuntimeOptions(options),
+    };
 }
 
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,

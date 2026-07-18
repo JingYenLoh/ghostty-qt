@@ -48,6 +48,15 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
   -> XDG Global Shortcuts portal (session D-Bus)
 ```
 
+`LaunchOptions` remains on the application, workspace, and pane side because it
+also owns font policy, keybindings, close behavior, link previews, and split
+inheritance. Before a session starts, the pane projects it to
+`TerminalSessionLaunchOptions`, containing only the child process, scrollback,
+appearance, and URL-matching state owned by the session. Live reloads cross the
+queued controller/worker boundary as `TerminalSessionRuntimeOptions`, which is
+limited to appearance and URL matching. Working directory, program, hold, and
+the existing terminal's scrollback allocation are launch-only by construction.
+
 `TerminalWorkspace` is a C++ `QQuickItem` exposed to QML. QML owns only the
 application chrome and dialogs. Each tab owns a recursive binary tree whose
 leaves are `TerminalPane` objects; internal nodes describe horizontal or

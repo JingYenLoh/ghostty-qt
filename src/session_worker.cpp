@@ -555,14 +555,13 @@ bool SessionWorker::canonicalTextMayStartProcess(const QByteArray &payload)
     return text.has_value() && bytesMayStartProcess(*text);
 }
 
-void SessionWorker::initialize(const LaunchOptions &options)
+void SessionWorker::initialize(const TerminalSessionLaunchOptions &options)
 {
     if (vt_ != nullptr || running_) {
         return;
     }
 
     options_ = options;
-    hold_ = options.hold;
     shuttingDown_ = false;
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
@@ -612,13 +611,13 @@ void SessionWorker::initialize(const LaunchOptions &options)
 
     if (!createTerminal()) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to initialize libghostty-vt."));
-        Q_EMIT sessionExited(127, 0, hold_);
+        Q_EMIT sessionExited(127, 0, options_.hold);
         return;
     }
 
     publishFrame();
     if (!spawnChild()) {
-        Q_EMIT sessionExited(127, 0, hold_);
+        Q_EMIT sessionExited(127, 0, options_.hold);
     }
 }
 
@@ -635,7 +634,7 @@ bool SessionWorker::createTerminal()
         },
         .scrollbackBytes = scrollbackLimitInBytes(
             options_.scrollbackLimit, columns_),
-        .appearance = options_.appearance,
+        .appearance = options_.runtime.appearance,
     };
     GhosttyVtAdapter::Callbacks callbacks;
     callbacks.writePty = [this](const QByteArray &data) { queuePtyWrite(data); };
@@ -646,14 +645,15 @@ bool SessionWorker::createTerminal()
     return vt_ != nullptr;
 }
 
-void SessionWorker::applyRuntimeOptions(const LaunchOptions &options)
+void SessionWorker::applyRuntimeOptions(
+    const TerminalSessionRuntimeOptions &options)
 {
-    const bool appearanceChanged = options_.appearance != options.appearance;
-    const bool linkUrlChanged = options_.linkUrl != options.linkUrl;
-    options_ = options;
-    hold_ = options.hold;
+    const bool appearanceChanged =
+        options_.runtime.appearance != options.appearance;
+    const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
+    options_.runtime = options;
 
-    if (linkUrlChanged && !options_.linkUrl) {
+    if (linkUrlChanged && !options_.runtime.linkUrl) {
         if (hyperlinkState_->trackedHover.has_value()
             && std::holds_alternative<GhosttyVtAdapter::TrackedTextRange>(
                 *hyperlinkState_->trackedHover)) {
@@ -684,9 +684,8 @@ void SessionWorker::applyRuntimeOptions(const LaunchOptions &options)
         }
     }
 
-    // libghostty-vt has no API for resizing an existing scrollback allocation.
-    // options_.scrollbackLimit therefore records the desired value for
-    // consistency only; TerminalWorkspace applies it when creating new panes.
+    // libghostty-vt cannot resize an existing scrollback allocation. Reloaded
+    // limits remain pane-owned and apply when a new pane is constructed.
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
             Q_EMIT errorOccurred(
@@ -1814,7 +1813,7 @@ void SessionWorker::processPendingHyperlinkQuery()
         state = TerminalHyperlinkState::Stale;
     } else if (vt_ != nullptr) {
         detected = detectTerminalLinkAt(
-            *vt_, linkMatcher_.get(), options_.linkUrl,
+            *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
             hyperlinkState_->frame, query.column, query.row);
     }
 
@@ -1869,7 +1868,7 @@ void SessionWorker::prepareHyperlinkActivation(
         return;
     }
     auto detected = detectTerminalLinkAt(
-        *vt_, linkMatcher_.get(), options_.linkUrl,
+        *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
         hyperlinkState_->frame, column, row);
     if (!detected.has_value()) {
         return;
@@ -1900,7 +1899,7 @@ void SessionWorker::commitHyperlinkActivation(
         // range cannot silently change the URL opened by this release.
         if (stillMatches && kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
-                *vt_, linkMatcher_.get(), options_.linkUrl,
+                *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
                 hyperlinkState_->frame, column, row);
             stillMatches = current.has_value()
                 && current->resolved.kind == kind
@@ -1960,7 +1959,7 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         bool stillMatches = true;
         if (match->kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
-                *vt_, linkMatcher_.get(), options_.linkUrl,
+                *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
                 hyperlinkState_->frame,
                 match->targetCell.x(), match->targetCell.y());
             stillMatches = current.has_value()
@@ -2149,7 +2148,7 @@ void SessionWorker::checkChild()
         closePty();
         if (!shuttingDown_) {
             Q_EMIT errorOccurred(QStringLiteral("The child process was reaped unexpectedly."));
-            Q_EMIT sessionExited(127, 0, hold_);
+            Q_EMIT sessionExited(127, 0, options_.hold);
         }
     } else if (result < 0 && errno != EINTR) {
         Q_EMIT errorOccurred(QStringLiteral("waitpid failed: %1")
@@ -2233,7 +2232,7 @@ void SessionWorker::handleChildStatus(int status)
         exitCode = 128 + signalNumber;
     }
     if (!shuttingDown_) {
-        Q_EMIT sessionExited(exitCode, signalNumber, hold_);
+        Q_EMIT sessionExited(exitCode, signalNumber, options_.hold);
     }
 }
 

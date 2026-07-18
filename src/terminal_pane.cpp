@@ -482,7 +482,8 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
         update();
     });
 
-    controller_ = new TerminalController(options, this);
+    controller_ = new TerminalController(
+        toTerminalSessionLaunchOptions(options), this);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
                 bool applied = false;
@@ -788,7 +789,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     if (linkUrlChanged) {
         clearHyperlinkHover();
     }
-    controller_->applyRuntimeOptions(options_);
+    controller_->applyRuntimeOptions(
+        toTerminalSessionRuntimeOptions(options_));
     if (linkUrlChanged) {
         recomputeHyperlinkHover();
     }

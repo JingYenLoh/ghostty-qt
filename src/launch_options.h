@@ -1,9 +1,8 @@
 #pragma once
 
 #include "ghostty_config_snapshot.h"
-#include "terminal_appearance.h"
+#include "terminal_session_options.h"
 
-#include <QMetaType>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -16,24 +15,12 @@ enum class ConfirmCloseMode {
     Always,
 };
 
-enum class ScrollbackLimitUnit {
-    Lines,
-    Bytes,
-};
-
 // Mirrors Ghostty's link-previews configuration without leaking its canonical
 // text representation into the terminal UI.
 enum class LinkPreviewMode {
     Never,
     Always,
     Osc8,
-};
-
-struct ScrollbackLimit {
-    quint64 value = 10'000;
-    ScrollbackLimitUnit unit = ScrollbackLimitUnit::Lines;
-
-    bool operator==(const ScrollbackLimit &) const = default;
 };
 
 struct LaunchOptions {
@@ -70,6 +57,13 @@ struct LaunchOptions {
     QStringList program;
 };
 
+// Explicitly project the broad application/pane configuration onto the
+// smaller value types allowed to cross the session-thread boundary.
+TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
+    const LaunchOptions &options);
+TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
+    const LaunchOptions &options);
+
 // Overlay the compatibility slice of an available Ghostty snapshot onto a
 // launch request. The function has no side effects and ignores malformed or
 // unavailable values. A byte-valued Ghostty scrollback-limit is marked as
@@ -80,11 +74,6 @@ struct LaunchOptions {
 // column-aware capacity estimate in scrollbackLimitInBytes().
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot);
-
-// libghostty's max_scrollback is byte-valued. Preserve Ghostty config bytes
-// exactly; convert the legacy line CLI using a conservative storage estimate
-// of max(256, columns * 16) bytes per row, with saturating arithmetic.
-quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns);
 
 // A live child and an active process are deliberately separate. For an
 // interactive shell, the shell remains live at its prompt while only a
@@ -101,5 +90,3 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
 
 bool parseLaunchOptions(QCoreApplication &application, LaunchOptions *options,
                         QString *errorMessage = nullptr);
-
-Q_DECLARE_METATYPE(LaunchOptions)

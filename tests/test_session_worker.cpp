@@ -1,4 +1,3 @@
-#include "launch_options.h"
 #include "session_worker.h"
 #include "terminal_types.h"
 
@@ -111,7 +110,7 @@ void SessionWorkerTest::searchesIncrementallyAndNavigates()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -219,7 +218,7 @@ void SessionWorkerTest::preservesFormattedSearchBoundaries()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -280,7 +279,7 @@ void SessionWorkerTest::runsCommandThroughPty()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -302,6 +301,7 @@ void SessionWorkerTest::runsCommandThroughPty()
              errorSpy.isEmpty() ? "" : qPrintable(errorSpy.constFirst().constFirst().toString()));
 
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY(exitSpy.constFirst().at(2).toBool());
     const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(
@@ -338,7 +338,7 @@ void SessionWorkerTest::resolvesCorrelatedHyperlinkQueries()
         output += QByteArrayLiteral("\r\n");
     }
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.hold = true;
     options.program = {
@@ -523,7 +523,7 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     output += QByteArrayLiteral(
         "\033\\https://visible.test/regex-text\033]8;;\033\\");
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStandardPaths::findExecutable(QStringLiteral("printf")),
@@ -531,7 +531,7 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     };
     QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
-    options.linkUrl = true;
+    options.runtime.linkUrl = true;
     worker.initialize(options);
 
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
@@ -580,7 +580,7 @@ void SessionWorkerTest::resolvesRegexLinksAcrossUtf8WrapsAndOsc8Precedence()
     // Disabling link-url suppresses regex candidates but leaves explicit OSC
     // 8 destinations independently queryable. An OSC 8 label that itself
     // looks like a URL must resolve to the explicit destination.
-    LaunchOptions disabled = options;
+    TerminalSessionRuntimeOptions disabled = options.runtime;
     disabled.linkUrl = false;
     worker.applyRuntimeOptions(disabled);
     frame = accumulatedFrame(updateSpy);
@@ -637,7 +637,7 @@ void SessionWorkerTest::retainsRegexHoverAcrossViewportScrolling()
         output += QByteArrayLiteral("\r\n");
     }
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStandardPaths::findExecutable(QStringLiteral("printf")),
@@ -645,7 +645,7 @@ void SessionWorkerTest::retainsRegexHoverAcrossViewportScrolling()
     };
     QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
-    options.linkUrl = true;
+    options.runtime.linkUrl = true;
     worker.initialize(options);
 
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
@@ -722,13 +722,13 @@ void SessionWorkerTest::revalidatesRegexActivationAcrossUnrelatedOutput()
         "sleep 0.3; "
         "printf '\0337\033[1;1Hhttps://example.test/gone\0338'");
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
     };
     options.hold = true;
-    options.linkUrl = true;
+    options.runtime.linkUrl = true;
     worker.initialize(options);
 
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -797,7 +797,7 @@ void SessionWorkerTest::drainsLargeFinalOutputBeforeClosingPty()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -828,7 +828,7 @@ void SessionWorkerTest::sendsBracketedPasteThroughPty()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -868,7 +868,7 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -946,7 +946,7 @@ void SessionWorkerTest::stagesAndResolvesSequenceBytes()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1010,7 +1010,7 @@ void SessionWorkerTest::stagesSequenceKeysUsingModesAtStageTime()
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1061,7 +1061,7 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1074,27 +1074,27 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
         updatesContain(updateSpy, QStringLiteral("color-reload-ready")), 5000);
     updateSpy.clear();
 
-    options.appearance.foregroundColor = QColor(QStringLiteral("#abcdef"));
-    options.appearance.backgroundColor = QColor(QStringLiteral("#102030"));
-    options.appearance.cursorColor = TerminalColorValue::fromColor(
+    TerminalAppearance &appearance = options.runtime.appearance;
+    appearance.foregroundColor = QColor(QStringLiteral("#abcdef"));
+    appearance.backgroundColor = QColor(QStringLiteral("#102030"));
+    appearance.cursorColor = TerminalColorValue::fromColor(
         QColor(QStringLiteral("#fedcba")));
-    options.appearance.palette.resize(256);
-    for (int index = 0; index < options.appearance.palette.size(); ++index) {
-        options.appearance.palette[index] =
+    appearance.palette.resize(256);
+    for (int index = 0; index < appearance.palette.size(); ++index) {
+        appearance.palette[index] =
             QColor::fromRgb(index, 255 - index, index / 2);
     }
-    options.appearance.cursorStyle = TerminalCursorStyle::Underline;
-    options.appearance.cursorBlink = false;
-    worker.applyRuntimeOptions(options);
+    appearance.cursorStyle = TerminalCursorStyle::Underline;
+    appearance.cursorBlink = false;
+    worker.applyRuntimeOptions(options.runtime);
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        accumulatedFrame(updateSpy).foreground
-            == options.appearance.foregroundColor
+        accumulatedFrame(updateSpy).foreground == appearance.foregroundColor
             && accumulatedFrame(updateSpy).palette.size() == 256,
         2000);
     const TerminalFrame frame = accumulatedFrame(updateSpy);
-    QCOMPARE(frame.background, options.appearance.backgroundColor);
-    QCOMPARE(frame.cursorColor, options.appearance.cursorColor.color);
+    QCOMPARE(frame.background, appearance.backgroundColor);
+    QCOMPARE(frame.cursorColor, appearance.cursorColor.color);
     QVERIFY(frame.cursorColorExplicit);
     QCOMPARE(frame.palette.at(42), QColor::fromRgb(42, 213, 21));
     QCOMPARE(frame.cursorStyle, 2);
@@ -1114,7 +1114,7 @@ void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
     QSignalSpy selectionSpy(&worker,
                             &SessionWorker::selectionAvailableChanged);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1157,7 +1157,7 @@ void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
                                      &SessionWorker::selectAllCompleted);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1223,7 +1223,7 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     QSignalSpy directorySpy(&worker, &SessionWorker::currentDirectoryChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1300,7 +1300,7 @@ void SessionWorkerTest::explicitProgramIsActiveForItsLifetime()
     QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
         QStringLiteral("/bin/sh"),
@@ -1339,7 +1339,7 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
-    LaunchOptions options;
+    TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.hold = true;
     worker.initialize(options);

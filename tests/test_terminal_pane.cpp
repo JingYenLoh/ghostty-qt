@@ -266,12 +266,33 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     options.fontSize = 12.0;
 
     TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy runtimeOptions(
+        controller, &TerminalController::runtimeOptionsRequested);
     LaunchOptions reloaded = options;
     reloaded.fontSize = 14.0;
     reloaded.fontFamily = QStringLiteral("Monospace");
+    reloaded.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
+    reloaded.scrollbackLimit = {
+        .value = 321,
+        .unit = ScrollbackLimitUnit::Bytes,
+    };
+    reloaded.linkUrl = false;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
-    QCOMPARE(pane.splitLaunchOptions().fontFamily, QStringLiteral("Monospace"));
+    const LaunchOptions splitOptions = pane.splitLaunchOptions();
+    QCOMPARE(splitOptions.fontFamily, QStringLiteral("Monospace"));
+    QCOMPARE(splitOptions.workingDirectory, QDir::tempPath());
+    QVERIFY(splitOptions.program.isEmpty());
+    QVERIFY(!splitOptions.hold);
+    QCOMPARE(splitOptions.scrollbackLimit, reloaded.scrollbackLimit);
+    QCOMPARE(splitOptions.appearance, reloaded.appearance);
+    QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
+    QCOMPARE(runtimeOptions.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeOptions.constFirst().constFirst()),
+             toTerminalSessionRuntimeOptions(reloaded));
 
     pane.zoomIn();
     QCOMPARE(pane.fontPointSize(), 15.0);
