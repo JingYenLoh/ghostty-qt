@@ -124,6 +124,10 @@ keybinding actions, and CLI actions. Most entries are intentionally still
 marked as planned; the manifest is a coverage ledger, not a claim of current
 feature parity.
 
+[Features requiring new official Ghostty APIs](REQUIRES_UPSTREAM.md) are
+documented separately. The submodule remains unmodified until those APIs are
+available from an official upstream commit.
+
 Run its source-drift check directly with:
 
 ```sh
