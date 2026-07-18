@@ -2976,7 +2976,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     options.keybindingsConfigured = true;
     options.keybindConfig.root = {
         binding({unicode('m', GhosttyKeybindCtrl)},
-                QStringLiteral("activate_key_table:edit"),
+                QStringLiteral(R"(activate_key_table:edit\xc3\xa9)"),
                 GhosttyKeybindFlags{.performable = true}),
         binding({unicode('o', GhosttyKeybindCtrl)},
                 QStringLiteral("activate_key_table_once:once")),
@@ -2989,7 +2989,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     };
     options.keybindConfig.tables = {
         GhosttyKeybindTable{
-            .name = QStringLiteral("edit"),
+            .name = QStringLiteral("edité"),
             .bindings = {
                 binding({unicode('n')}, QStringLiteral("new_tab")),
                 binding({escape},
@@ -3043,7 +3043,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(forwarded.count(), beforeOrdinary + 1);
 
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
-    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 1);
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(newTab.count(), 1);
@@ -3051,12 +3051,12 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     // A performable activation of the already-innermost table behaves as an
     // absent binding and reaches the terminal.
     QVERIFY(!pane.executeConfiguredAction(
-        QStringLiteral("activate_key_table:edit")));
+        QStringLiteral(R"(activate_key_table:edit\xc3\xa9)")));
     QCOMPARE(tableChanges.count(), 1);
     const int beforeDuplicate = forwarded.count();
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
     QCOMPARE(forwarded.count(), beforeDuplicate + 1);
-    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 1);
 
     // Typed single/all deactivation preserves exact stack and notification
@@ -3064,11 +3064,11 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("activate_key_table_once:once")));
     QCOMPARE(pane.activeKeyTables(),
-             QStringList({QStringLiteral("edit"), QStringLiteral("once")}));
+             QStringList({QStringLiteral("edité"), QStringLiteral("once")}));
     QCOMPARE(tableChanges.count(), 2);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("deactivate_key_table")));
-    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 3);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("activate_key_table_once:once")));
@@ -3101,7 +3101,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(newTab.count(), 2);
 
     press(Qt::Key_M, Qt::ControlModifier, QString(QChar(0x0d)));
-    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 10);
     LaunchOptions reloaded = options;
     reloaded.keybindConfig.tables.clear();

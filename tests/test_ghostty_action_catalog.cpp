@@ -758,6 +758,17 @@ void GhosttyActionCatalogTest::recognizesKeyTableActions()
              TerminalKeyTableRequest::Kind::Activate);
     QCOMPARE(activate.keyTable.name, QStringLiteral("copy:mode"));
 
+    const GhosttyPaneAction escaped = parse(QStringLiteral(
+        R"(activate_key_table:\xc3\xa9\\quoted\")"));
+    QCOMPARE(escaped.keyTable.kind,
+             TerminalKeyTableRequest::Kind::Activate);
+    QCOMPARE(escaped.keyTable.name, QStringLiteral("é\\quoted\""));
+
+    const GhosttyPaneAction leadingBom = parse(QStringLiteral(
+        R"(activate_key_table:\xef\xbb\xbfedit)"));
+    QCOMPARE(leadingBom.keyTable.name,
+             QString(QChar(0xfeff)) + QStringLiteral("edit"));
+
     const GhosttyPaneAction activateOnce =
         parse(QStringLiteral("activate_key_table_once:"));
     QCOMPARE(activateOnce.kind, GhosttyPaneActionKind::KeyTable);
@@ -779,6 +790,8 @@ void GhosttyActionCatalogTest::recognizesKeyTableActions()
 
     const QStringList valid{
         QStringLiteral("activate_key_table:copy:mode"),
+        QStringLiteral(R"(activate_key_table:\xc3\xa9\\quoted\")"),
+        QStringLiteral(R"(activate_key_table:\xef\xbb\xbfedit)"),
         QStringLiteral("activate_key_table_once:"),
         QStringLiteral("deactivate_key_table"),
         QStringLiteral("deactivate_all_key_tables"),
@@ -791,6 +804,9 @@ void GhosttyActionCatalogTest::recognizesKeyTableActions()
     const QStringList invalid{
         QStringLiteral("activate_key_table"),
         QStringLiteral("activate_key_table_once"),
+        QStringLiteral(R"(activate_key_table:bad\q)"),
+        QStringLiteral(R"(activate_key_table:edit\xc3)"),
+        QStringLiteral(R"(activate_key_table:\xff)"),
         QStringLiteral("deactivate_key_table:"),
         QStringLiteral("deactivate_key_table:copy"),
         QStringLiteral("deactivate_all_key_tables:"),

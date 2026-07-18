@@ -48,6 +48,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-action-pipeline
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter

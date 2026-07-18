@@ -927,14 +927,16 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QByteArrayLiteral(
+        QStringLiteral(
             "keybind = clear\n"
             "keybind = unconsumed:performable:ctrl+x>key_y=new_tab\n"
             "keybind = chain=goto_split:left\n"
             "keybind = catch_all=ignore\n"
             "keybind = all:ctrl+g=new_tab\n"
             "keybind = global:ctrl+j=new_tab\n"
-            "keybind = resize/ctrl+h=resize_split:left,10\n"));
+            "keybind = ctrl+m=activate_key_table:modeé\n"
+            "keybind = resize/ctrl+h=resize_split:left,10\n"
+            "keybind = modeé/ctrl+h=resize_split:right,10\n").toUtf8());
 
     GhosttyConfigProcessLoaderOptions options{
         .helperPath = helperPath,
@@ -947,8 +949,8 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     QVERIFY(result->keybindConfig.has_value());
     const GhosttyKeybindConfig &config = *result->keybindConfig;
     QCOMPARE(config.schemaVersion, 1);
-    QCOMPARE(config.root.size(), 4);
-    QCOMPARE(config.tables.size(), 1);
+    QCOMPARE(config.root.size(), 5);
+    QCOMPARE(config.tables.size(), 2);
 
     const auto chained = std::find_if(
         config.root.cbegin(), config.root.cend(),
@@ -993,10 +995,26 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     QVERIFY(all != config.root.cend());
     QVERIFY(global != config.root.cend());
 
-    QCOMPARE(config.tables.constFirst().name, QStringLiteral("resize"));
-    QCOMPARE(config.tables.constFirst().bindings.size(), 1);
-    QCOMPARE(config.tables.constFirst().bindings.constFirst().actions,
+    const auto activation = std::ranges::find(
+        config.root,
+        QStringList({QStringLiteral(
+            R"(activate_key_table:mode\xc3\xa9)")}),
+        &GhosttyKeybindDefinition::actions);
+    QVERIFY(activation != config.root.cend());
+
+    const auto resize = std::ranges::find(
+        config.tables, QStringLiteral("resize"), &GhosttyKeybindTable::name);
+    QVERIFY(resize != config.tables.cend());
+    QCOMPARE(resize->bindings.size(), 1);
+    QCOMPARE(resize->bindings.constFirst().actions,
              QStringList({QStringLiteral("resize_split:left,10")}));
+
+    const auto unicode = std::ranges::find(
+        config.tables, QStringLiteral("modeé"), &GhosttyKeybindTable::name);
+    QVERIFY(unicode != config.tables.cend());
+    QCOMPARE(unicode->bindings.size(), 1);
+    QCOMPARE(unicode->bindings.constFirst().actions,
+             QStringList({QStringLiteral("resize_split:right,10")}));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperCanonicalizesTerminalControlActionPayloads()

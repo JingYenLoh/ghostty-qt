@@ -436,6 +436,8 @@ add_library(ghostty-qt-action-pipeline STATIC
     src/ghostty_action_catalog.h
     src/ghostty_keybind_set.cpp
     src/ghostty_keybind_set.h
+    src/zig_string_escape.cpp
+    src/zig_string_escape.h
 )
 target_include_directories(ghostty-qt-action-pipeline PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

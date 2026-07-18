@@ -1,7 +1,9 @@
 #include "ghostty_action_catalog.h"
+#include "zig_string_escape.h"
 
 #include <QChar>
 #include <QLatin1StringView>
+#include <QStringDecoder>
 #include <QtCore/qnamespace.h>
 
 #include <cmath>
@@ -689,16 +691,26 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
     if (name == QLatin1StringView("activate_key_table")
         || name == QLatin1StringView("activate_key_table_once")) {
         // These fields are []const u8 in Binding.Action. The colon is
-        // required, but an empty or colon-containing table name still parses;
-        // table existence is pane state checked immediately before execution.
+        // required, but an empty or colon-containing table name still parses.
+        // The structured config boundary uses Action.format, so invert its
+        // canonical byte escapes before comparing against decoded table names.
         if (!parameter.has_value()) return std::nullopt;
+        const std::optional<QByteArray> decodedName =
+            decodeGhosttyActionString(parameter->toUtf8());
+        if (!decodedName.has_value()) return std::nullopt;
+        QStringDecoder utf8(
+            QStringDecoder::Utf8,
+            QStringDecoder::Flag::Stateless
+                | QStringDecoder::Flag::ConvertInitialBom);
+        const QString tableName = utf8(*decodedName);
+        if (utf8.hasError()) return std::nullopt;
         GhosttyPaneAction action;
         action.kind = GhosttyPaneActionKind::KeyTable;
         action.keyTable.kind =
             name == QLatin1StringView("activate_key_table")
             ? TerminalKeyTableRequest::Kind::Activate
             : TerminalKeyTableRequest::Kind::ActivateOnce;
-        action.keyTable.name = parameter->toString();
+        action.keyTable.name = tableName;
         return action;
     }
 

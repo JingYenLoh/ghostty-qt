@@ -672,11 +672,11 @@
       "overrides": {
         "activate_key_table": {
           "status": "supported",
-          "note": "Activates a named table in the current pane with Ghostty's duplicate-top and maximum-depth rules."
+          "note": "Decodes Ghostty's canonical action byte escapes and activates the exact named table in the current pane with duplicate-top and maximum-depth rules."
         },
         "activate_key_table_once": {
           "status": "supported",
-          "note": "Activates a pane-local one-shot table and pops it when the innermost table supplies a match."
+          "note": "Decodes Ghostty's canonical action byte escapes, activates the exact pane-local one-shot table, and pops it when the innermost table supplies a match."
         },
         "adjust_selection": {
           "status": "supported",
