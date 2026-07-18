@@ -2,6 +2,7 @@
 /CMakeFiles/
 /.local/
 /.cache/
+/tmp/
 /.qt/
 /compile_commands.json
 __pycache__/
