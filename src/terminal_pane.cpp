@@ -507,18 +507,18 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                         }
                         if (applied) {
                             const bool pendingMatchesFrame =
-                                hasPendingSearchUpdate_
-                                && pendingSearchUpdate_.contentRevision
+                                pendingSearchUpdate_
+                                && pendingSearchUpdate_->contentRevision
                                     == frame_.contentRevision
-                                && pendingSearchUpdate_.columns == frame_.columns
-                                && pendingSearchUpdate_.rows == frame_.rows;
+                                && pendingSearchUpdate_->columns == frame_.columns
+                                && pendingSearchUpdate_->rows == frame_.rows;
                             if (pendingMatchesFrame) {
                                 installSearchDecorationsLocked(
-                                    pendingSearchUpdate_);
+                                    *pendingSearchUpdate_);
                                 clearPendingSearchUpdateLocked();
                             } else {
-                                if (hasPendingSearchUpdate_
-                                    && pendingSearchUpdate_.contentRevision
+                                if (pendingSearchUpdate_
+                                    && pendingSearchUpdate_->contentRevision
                                         <= frame_.contentRevision) {
                                     clearPendingSearchUpdateLocked();
                                 }
@@ -904,8 +904,7 @@ void TerminalPane::clearSearchDecorationsLocked()
 
 void TerminalPane::clearPendingSearchUpdateLocked()
 {
-    pendingSearchUpdate_ = {};
-    hasPendingSearchUpdate_ = false;
+    pendingSearchUpdate_.reset();
 }
 
 void TerminalPane::installSearchDecorationsLocked(
@@ -965,7 +964,6 @@ void TerminalPane::handleSearchUpdate(
         } else if (!hasFrame_
                    || searchUpdate.contentRevision > frame_.contentRevision) {
             pendingSearchUpdate_ = searchUpdate;
-            hasPendingSearchUpdate_ = true;
             clearSearchDecorationsLocked();
         }
     }

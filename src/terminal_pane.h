@@ -250,8 +250,7 @@ private:
     bool searchEngineActive_ = false;
     QString searchUiText_;
     QString searchMatchLabel_ = QStringLiteral("0/0");
-    TerminalSearchUpdate pendingSearchUpdate_;
-    bool hasPendingSearchUpdate_ = false;
+    std::optional<TerminalSearchUpdate> pendingSearchUpdate_;
     QBitArray searchCandidateCellMask_;
     QBitArray searchSelectedCellMask_;
     quint64 searchDecorationRevision_ = 0;
