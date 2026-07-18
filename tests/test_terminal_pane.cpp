@@ -24,6 +24,7 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
 #include <algorithm>
 #include <array>
@@ -129,6 +130,7 @@ private Q_SLOTS:
     void reloadsMiddleClickClipboardPolicy();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
+    void runsCursorBlinkTimerOnlyWhenNeeded();
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
@@ -147,6 +149,119 @@ private Q_SLOTS:
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
+
+void TerminalPaneTest::runsCursorBlinkTimerOnlyWhenNeeded()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(320, 160);
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+    auto *cursorTimer = pane->findChild<QTimer *>(
+        QString(), Qt::FindDirectChildrenOnly);
+    QVERIFY(cursorTimer != nullptr);
+    cursorTimer->setTimerType(Qt::PreciseTimer);
+    cursorTimer->setInterval(100);
+    QSignalSpy timeouts(cursorTimer, &QTimer::timeout);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+
+    const auto updateCursor = [controller](bool visible, bool blinking) {
+        TerminalUpdate update;
+        update.columns = 2;
+        update.rows = 1;
+        update.fullFrame = true;
+        update.foreground = Qt::white;
+        update.background = Qt::black;
+        update.cursorColor = QColor(QStringLiteral("#ff00ff"));
+        update.cursorColorExplicit = true;
+        update.cursorVisible = visible;
+        update.cursorBlinking = blinking;
+        update.cursorStyle = 1;
+        TerminalRowUpdate row;
+        row.row = 0;
+        row.cells.resize(update.columns);
+        for (TerminalCell &cell : row.cells) {
+            cell.foreground = update.foreground;
+            cell.background = update.background;
+        }
+        update.dirtyRows.append(std::move(row));
+        controller->terminalUpdated(update);
+    };
+
+    updateCursor(true, false);
+    QVERIFY(!cursorTimer->isActive());
+
+    updateCursor(true, true);
+    QVERIFY(cursorTimer->isActive());
+    const int activeTimerId = cursorTimer->timerId();
+
+    // An ordinary applied frame preserves the running timer and its deadline.
+    updateCursor(true, true);
+    QCOMPARE(cursorTimer->timerId(), activeTimerId);
+    QTRY_COMPARE_WITH_TIMEOUT(timeouts.count(), 1, 1000);
+
+    // PTY activity resets an off-phase block cursor immediately and restarts
+    // the full timer interval instead of inheriting the previous deadline.
+    cursorTimer->setInterval(10'000);
+    const QImage hiddenCursor = window.grabWindow();
+    QVERIFY(!hiddenCursor.isNull());
+    QVERIFY(approximatelyEqual(hiddenCursor.pixelColor(1, 1), Qt::black));
+    const int staleTimerId = cursorTimer->timerId();
+    TerminalUpdate reset;
+    reset.columns = 2;
+    reset.rows = 1;
+    reset.resetCursorBlink = true;
+    controller->terminalUpdated(reset);
+    QVERIFY(cursorTimer->timerId() != staleTimerId);
+    const QImage resetCursor = window.grabWindow();
+    QVERIFY(!resetCursor.isNull());
+    QVERIFY(approximatelyEqual(resetCursor.pixelColor(1, 1),
+                               QColor(QStringLiteral("#ff00ff"))));
+
+    timeouts.clear();
+    updateCursor(false, true);
+    QVERIFY(!cursorTimer->isActive());
+    cursorTimer->setInterval(50);
+    QTest::qWait(100);
+    QCOMPARE(timeouts.count(), 0);
+
+    cursorTimer->setInterval(10'000);
+    updateCursor(true, true);
+    QVERIFY(cursorTimer->isActive());
+
+    QQuickItem focusTarget(window.contentItem());
+    focusTarget.setFocusPolicy(Qt::StrongFocus);
+    focusTarget.forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(!pane->hasActiveFocus(), 1000);
+    QVERIFY(!cursorTimer->isActive());
+
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+    QVERIFY(cursorTimer->isActive());
+
+    updateCursor(true, false);
+    QVERIFY(!cursorTimer->isActive());
+
+    window.close();
+    delete pane;
+}
 
 void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
 {

@@ -553,11 +553,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     // advancing the broad terminal revision must not flicker
                     // a stable hover or cancel a press gesture.
                     recomputeHyperlinkHover();
-                    if (terminalUpdate.resetCursorBlink && hasActiveFocus()) {
-                        resetCursorBlink();
-                    } else {
-                        update();
-                    }
+                    syncCursorBlink(terminalUpdate.resetCursorBlink);
                 }
             });
     connect(controller_, &TerminalController::searchUpdated, this,
@@ -1445,10 +1441,23 @@ void TerminalPane::updateMetrics()
     baseline_ = std::ceil(metrics.ascent() + (cellHeight_ - metrics.height()) / 2.0);
 }
 
-void TerminalPane::resetCursorBlink()
+void TerminalPane::syncCursorBlink(bool resetPhase)
 {
-    cursorBlinkOn_ = true;
-    cursorTimer_->start();
+    bool shouldBlink = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        shouldBlink = hasFrame_ && frame_.cursorVisible
+            && frame_.cursorBlinking;
+    }
+    shouldBlink = shouldBlink && hasActiveFocus();
+
+    if (!shouldBlink) {
+        cursorTimer_->stop();
+        cursorBlinkOn_ = true;
+    } else if (resetPhase || !cursorTimer_->isActive()) {
+        cursorBlinkOn_ = true;
+        cursorTimer_->start();
+    }
     update();
 }
 
@@ -2872,7 +2881,7 @@ QPoint TerminalPane::cellAt(const QPointF &position) const
 void TerminalPane::focusInEvent(QFocusEvent *event)
 {
     QQuickItem::focusInEvent(event);
-    resetCursorBlink();
+    syncCursorBlink(true);
     controller_->setFocused(true);
     Q_EMIT activated(this);
 }

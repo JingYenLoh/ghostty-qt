@@ -134,7 +134,7 @@ private:
 
     void updateMetrics();
     void updateTerminalSize();
-    void resetCursorBlink();
+    void syncCursorBlink(bool resetPhase);
     void setFontPointSize(qreal points);
     KeyHandling handleShortcut(QKeyEvent *event);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event);
