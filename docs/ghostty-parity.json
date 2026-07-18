@@ -730,6 +730,10 @@
         "inspector": {
           "scope": "qt_mapping"
         },
+        "jump_to_prompt": {
+          "status": "blocked_upstream",
+          "note": "Official libghostty-vt does not expose Ghostty's prompt-delta viewport operation. The required public contract and acceptance evidence are tracked in REQUIRES_UPSTREAM.md; ghostty-qt carries neither a Qt scrollback scan nor a local Ghostty patch."
+        },
         "last_tab": {
           "status": "supported",
           "note": "Selects the final tab, matching Ghostty's non-MRU semantics."
