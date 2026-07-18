@@ -59,12 +59,14 @@ keys into value snapshots.
 
 The snapshot includes the complete canonical 256-entry palette, selection
 colors, cursor color/style/blink/opacity/text, bold-color, faint-opacity, and
-the boolean `link-url` setting. The process-loader tests verify default/current
-merging and malformed canonical values; launch-option tests verify their
+the boolean `link-url` setting plus the three-state `link-previews` policy. The
+process-loader tests verify default/current merging and malformed canonical
+values; launch-option tests verify their
 value-only overlay; adapter tests verify that config-default changes preserve
 OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies the
-frontend-only color/style and live link-matcher rules. This division keeps
-parser, terminal state, and renderer responsibilities independently testable.
+frontend-only color/style, live link-matcher rules, and live preview policy.
+This division keeps parser, terminal state, and renderer responsibilities
+independently testable.
 
 The additional Zig outputs and global package/artifact cache live under:
 
@@ -118,7 +120,11 @@ and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
 latest-request coalescing, stale-result rejection, stable live-output hover,
 logical-line UTF-8 mapping, default-regex matching across graphemes and soft
 wraps, OSC 8 precedence, live `link-url` reload, byte-exact copy, relative-path
-opening, range mutation invalidation, and release-only tracked activation.
+opening, range mutation invalidation, release-only tracked activation, exact
+`link-previews` policy, frontend-only reload without replacement queries while
+the pointer remains on the link, occupied-guard release back to physical hit
+testing, left/right overlay relocation, and bounded/escaped destination
+presentation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
 stable tab reordering/index selection, wrapped split traversal, mutable and
 equalized layouts, and split zoom lifecycle. `ghostty-global-shortcut-portal`

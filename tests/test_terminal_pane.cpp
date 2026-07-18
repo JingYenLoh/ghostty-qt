@@ -82,6 +82,7 @@ private Q_SLOTS:
     void routesTerminalControlActions();
     void interactsWithOsc8Hyperlinks();
     void interactsWithRegexLinksAndReloadsLinkUrl();
+    void previewsLinksAccordingToPolicyAndBoundsDisplay();
     void keepsOsc8InteractionStableAcrossUnrelatedOutput();
     void restoresOsc8HoverAcrossViewportScroll();
     void letsShiftBypassMouseCaptureForHyperlinks();
@@ -1058,10 +1059,31 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     QCOMPARE(hyperlinkQueries.count(), queryCount);
 
     QTest::qWait(50);
+    QVERIFY(!pane->linkPreviewText().isEmpty());
+    QVERIFY(!pane->linkPreviewRect().isEmpty());
     const QImage afterHover = window.grabWindow();
     QVERIFY(!afterHover.isNull());
     const qreal xScale = static_cast<qreal>(afterHover.width()) / window.width();
     const qreal yScale = static_cast<qreal>(afterHover.height()) / window.height();
+    int previewChanges = 0;
+    const QRectF previewRect = pane->linkPreviewRect();
+    const int previewLeft = std::clamp(
+        qFloor(previewRect.left() * xScale), 0, afterHover.width());
+    const int previewRight = std::clamp(
+        qCeil(previewRect.right() * xScale), 0, afterHover.width());
+    const int previewTop = std::clamp(
+        qFloor(previewRect.top() * yScale), 0, afterHover.height());
+    const int previewBottom = std::clamp(
+        qCeil(previewRect.bottom() * yScale), 0, afterHover.height());
+    for (int y = previewTop; y < previewBottom; ++y) {
+        for (int x = previewLeft; x < previewRight; ++x) {
+            if (beforeHover.pixelColor(x, y)
+                != afterHover.pixelColor(x, y)) {
+                ++previewChanges;
+            }
+        }
+    }
+    QVERIFY2(previewChanges > 20, "link preview was not rendered");
     for (int column = 0; column < 2; ++column) {
         int changedPixels = 0;
         const int left = qRound(column * cellWidth * xScale);
@@ -1401,6 +1423,275 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     delete pane;
 }
 
+void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalHyperlinkState>();
+    qRegisterMetaType<TerminalLinkKind>();
+
+    const QByteArray oscUri = QByteArrayLiteral(
+        "https://example.test/explicit-destination");
+    const QByteArray regexUri = QByteArrayLiteral(
+        "https://example.test/detected-destination");
+    QByteArray output = QByteArrayLiteral("\033]8;;");
+    output += oscUri;
+    output += QByteArrayLiteral("\033\\OSC\033]8;;\033\\\r\n");
+    output += regexUri;
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("sh")),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 0.1; printf '%s' \"$1\""),
+        QStringLiteral("ghostty-qt-link-preview"),
+        QString::fromUtf8(output),
+    };
+    QVERIFY(!options.program.constFirst().isEmpty());
+    options.hold = true;
+    options.linkUrl = true;
+    options.linkPreviews = LinkPreviewMode::Always;
+    options.fontFamily =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+
+    QFont font(options.fontFamily);
+    font.setPointSizeF(options.fontSize);
+    font.setFixedPitch(true);
+    font.setStyleHint(QFont::Monospace);
+    const QFontMetricsF metrics(font);
+    const qreal cellWidth = std::max(
+        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
+    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(cellWidth * 120.0, cellHeight * 5.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy queries(
+        controller, &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy resolved(controller, &TerminalController::hyperlinkResolved);
+    QSignalSpy previewChanged(&pane, &TerminalPane::linkPreviewChanged);
+    QSignalSpy activationPreparations(
+        controller,
+        &TerminalController::hyperlinkActivationPreparationRequested);
+    QSignalSpy selections(
+        controller, &TerminalController::beginSelectionRequested);
+    QSignalSpy sessionEnded(&pane, &TerminalPane::sessionEnded);
+
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QString::fromUtf8(regexUri)), 1000);
+
+    const auto sendHover = [&pane](const QPointF &position,
+                                   const QPointF &oldPosition) {
+        QHoverEvent event(QEvent::HoverMove, position, position,
+                          oldPosition, Qt::ControlModifier);
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    const auto lastResolvedIs = [&resolved](TerminalLinkKind kind,
+                                             const QByteArray &uri) {
+        return !resolved.isEmpty()
+            && qvariant_cast<TerminalHyperlinkState>(
+                   resolved.constLast().at(1))
+                == TerminalHyperlinkState::Visible
+            && qvariant_cast<TerminalLinkKind>(
+                   resolved.constLast().at(2))
+                == kind
+            && resolved.constLast().at(3).toByteArray() == uri;
+    };
+    const auto previewIsInsidePane = [&pane] {
+        const QRectF preview = pane.linkPreviewRect();
+        return !preview.isEmpty() && preview.left() >= 0.0
+            && preview.top() >= 0.0
+            && preview.right() <= pane.width()
+            && preview.bottom() <= pane.height();
+    };
+
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    const QPointF oscPosition(cellWidth * 0.5, cellHeight * 0.5);
+    const QPointF regexPosition(cellWidth * 0.5, cellHeight * 1.5);
+    sendHover(oscPosition, oscPosition);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
+    QVERIFY(previewIsInsidePane());
+
+    // Preview policy is frontend-only. Toggling it must preserve the accepted
+    // worker lease, underline/copy behavior, and query count.
+    const int oscQueryCount = queries.count();
+    const int changesBeforePolicy = previewChanged.count();
+    LaunchOptions reloaded = options;
+    reloaded.linkPreviews = LinkPreviewMode::Never;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
+    QCOMPARE(queries.count(), oscQueryCount);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+
+    reloaded.linkPreviews = LinkPreviewMode::Osc8;
+    pane.applyRuntimeOptions(reloaded);
+    QVERIFY(!pane.linkPreviewText().isEmpty());
+    QVERIFY(previewIsInsidePane());
+    QCOMPARE(queries.count(), oscQueryCount);
+    QVERIFY(previewChanged.count() >= changesBeforePolicy + 2);
+
+    // Match GTK's guard behavior without introducing an input-owning child:
+    // entering the original bottom-left rectangle retains the logical hover
+    // and moves the presentation to the opposite edge.
+    const QString previewBeforeRelocation = pane.linkPreviewText();
+    const QRectF leftPreview = pane.linkPreviewRect();
+    QVERIFY(leftPreview.left() < pane.width() / 2.0);
+    sendHover(leftPreview.center(), oscPosition);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane.linkPreviewText(), previewBeforeRelocation, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pane.linkPreviewRect().left() > leftPreview.left(), 1000);
+    QVERIFY(previewIsInsidePane());
+    QCOMPARE(queries.count(), oscQueryCount);
+
+    // The GTK overlay's left label remains the pointer guard while its
+    // transparent copy is replaced on the right. It is non-focusable and has
+    // no action of its own; presses in that occupied guard do not leak through
+    // to a different terminal cell or activate the retained link remotely.
+    QMouseEvent guardPress(
+        QEvent::MouseButtonPress, leftPreview.center(), leftPreview.center(),
+        leftPreview.center(), Qt::LeftButton, Qt::LeftButton,
+        Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &guardPress);
+    QMouseEvent guardRelease(
+        QEvent::MouseButtonRelease, leftPreview.center(), leftPreview.center(),
+        leftPreview.center(), Qt::LeftButton, Qt::NoButton,
+        Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &guardRelease);
+    QCOMPARE(activationPreparations.count(), 0);
+    QCOMPARE(selections.count(), 0);
+
+    // If live policy removes an occupied guard, reconcile the physical
+    // terminal cell immediately instead of leaving the retained source link
+    // active at a pointer position elsewhere in the pane.
+    const int queriesBeforeCapturedDisable = queries.count();
+    reloaded.linkPreviews = LinkPreviewMode::Never;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        queries.count() > queriesBeforeCapturedDisable, 1000);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+
+    // Re-establish the original hover and guard before exercising pointer
+    // motion out of it.
+    reloaded.linkPreviews = LinkPreviewMode::Osc8;
+    pane.applyRuntimeOptions(reloaded);
+    sendHover(oscPosition, leftPreview.center());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
+    const int restoredOscQueryCount = queries.count();
+    const QRectF restoredLeftPreview = pane.linkPreviewRect();
+    sendHover(restoredLeftPreview.center(), oscPosition);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pane.linkPreviewRect().left() > restoredLeftPreview.left(), 1000);
+    QCOMPARE(queries.count(), restoredOscQueryCount);
+
+    // Leaving the original guard returns to ordinary terminal hit testing.
+    // This point is neither the accepted link nor the bottom preview.
+    const QPointF plainPosition(cellWidth * 30.5, cellHeight * 2.5);
+    sendHover(plainPosition, restoredLeftPreview.center());
+    QTRY_VERIFY_WITH_TIMEOUT(pane.linkPreviewText().isEmpty(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        queries.count() > restoredOscQueryCount, 1000);
+
+    // `osc8` suppresses only regex previews; it does not suppress detection,
+    // copy, or the tracked hover itself. Enabling all previews is immediate
+    // and does not enqueue a replacement lookup.
+    sendHover(regexPosition, plainPosition);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lastResolvedIs(TerminalLinkKind::Regex, regexUri), 1000);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+    const int regexQueryCount = queries.count();
+
+    reloaded.linkPreviews = LinkPreviewMode::Always;
+    pane.applyRuntimeOptions(reloaded);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
+    QVERIFY(previewIsInsidePane());
+    QCOMPARE(queries.count(), regexQueryCount);
+
+    reloaded.linkPreviews = LinkPreviewMode::Never;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QCOMPARE(queries.count(), regexQueryCount);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("copy_url_to_clipboard")));
+
+    reloaded.linkPreviews = LinkPreviewMode::Always;
+    pane.applyRuntimeOptions(reloaded);
+    QVERIFY(!pane.linkPreviewText().isEmpty());
+    QCOMPARE(queries.count(), regexQueryCount);
+
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &controlRelease);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
+
+    // The presentation path is bounded and safe for arbitrary OSC 8 bytes.
+    // The exact QByteArray remains owned by hyperlink interaction; only the
+    // overlay escapes controls and replaces malformed UTF-8.
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    sendHover(oscPosition, regexPosition);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        lastResolvedIs(TerminalLinkKind::Osc8, oscUri), 1000);
+    QByteArray unsafeUri;
+    unsafeUri += QByteArrayLiteral("unsafe:");
+    unsafeUri.append('\0');
+    unsafeUri += QByteArrayLiteral("\r\n");
+    unsafeUri += QString(QChar(0x2028)).toUtf8();
+    unsafeUri += QString(QChar(0x202e)).toUtf8();
+    unsafeUri.append(char(0xff));
+    unsafeUri += QByteArray(5000, 'x');
+    const TerminalFrame frame = accumulatedFrame(updates);
+    controller->hyperlinkResolved(
+        frame.contentRevision, TerminalHyperlinkState::Visible,
+        TerminalLinkKind::Osc8, unsafeUri, QPoint(0, 0), {QPoint(0, 0)});
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        pane.linkPreviewText().contains(QStringLiteral("\\x00")), 1000);
+    const QString safePreview = pane.linkPreviewText();
+    QVERIFY(safePreview.contains(QStringLiteral("\\x0D\\x0A")));
+    QVERIFY(safePreview.contains(QStringLiteral("\\u2028")));
+    QVERIFY(safePreview.contains(QStringLiteral("\\u202E")));
+    QVERIFY(safePreview.contains(QChar(0xfffd)));
+    QVERIFY(safePreview.contains(QChar(0x2026)));
+    QVERIFY(!safePreview.contains(QChar(0)));
+    QVERIFY(!safePreview.contains(u'\r'));
+    QVERIFY(!safePreview.contains(u'\n'));
+    QVERIFY(!safePreview.contains(QChar(0x2028)));
+    QVERIFY(!safePreview.contains(QChar(0x202e)));
+    QVERIFY(previewIsInsidePane());
+    QVERIFY(pane.linkPreviewRect().width() <= pane.width());
+    QVERIFY(pane.linkPreviewRect().height() <= pane.height());
+
+    const qreal previewHeightBeforeZoom = pane.linkPreviewRect().height();
+    const int queriesBeforeZoom = queries.count();
+    pane.zoomIn();
+    QVERIFY(pane.linkPreviewRect().height() > previewHeightBeforeZoom);
+    QVERIFY(!pane.linkPreviewText().isEmpty());
+    QCOMPARE(queries.count(), queriesBeforeZoom);
+
+    QHoverEvent leave(QEvent::HoverLeave, QPointF(), QPointF(),
+                      oscPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &leave);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
+}
+
 void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
 {
     qRegisterMetaType<TerminalUpdate>();
@@ -1594,6 +1885,8 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
         1000);
     QTRY_COMPARE_WITH_TIMEOUT(
         pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
+    QVERIFY(!pane.linkPreviewRect().isEmpty());
     const int queryCount = queries.count();
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_bottom")));
@@ -1607,6 +1900,8 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("scroll_to_top")));
     QTRY_VERIFY_WITH_TIMEOUT(
@@ -1617,10 +1912,14 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     QCOMPARE(queries.count(), queryCount);
     QTRY_COMPARE_WITH_TIMEOUT(
         pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.linkPreviewText().isEmpty(), 1000);
+    QVERIFY(!pane.linkPreviewRect().isEmpty());
 
     QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
                              Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &controlRelease);
+    QCOMPARE(pane.linkPreviewText(), QString());
+    QVERIFY(pane.linkPreviewRect().isEmpty());
 }
 
 void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()

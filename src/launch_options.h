@@ -21,6 +21,14 @@ enum class ScrollbackLimitUnit {
     Bytes,
 };
 
+// Mirrors Ghostty's link-previews configuration without leaking its canonical
+// text representation into the terminal UI.
+enum class LinkPreviewMode {
+    Never,
+    Always,
+    Osc8,
+};
+
 struct ScrollbackLimit {
     quint64 value = 10'000;
     ScrollbackLimitUnit unit = ScrollbackLimitUnit::Lines;
@@ -45,6 +53,9 @@ struct LaunchOptions {
     // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
     // available independently of this setting.
     bool linkUrl = true;
+    // Controls whether matched link destinations are shown before activation.
+    // Ghostty defaults to previews for both regex and OSC 8 links.
+    LinkPreviewMode linkPreviews = LinkPreviewMode::Always;
     // The helper publishes Ghostty's finalized structured sets. The explicit
     // bit distinguishes an intentionally empty root from the built-in
     // emergency shortcuts used when configuration is unavailable.

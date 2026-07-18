@@ -41,6 +41,41 @@ namespace {
 
 constexpr qreal kMinimumFontSize = 6.0;
 constexpr qreal kMaximumFontSize = 48.0;
+constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
+constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
+constexpr qreal kLinkPreviewVerticalPadding = 4.0;
+
+QString linkPreviewDisplaySource(const QByteArray &uri)
+{
+    const bool truncated = uri.size() > kMaximumLinkPreviewBytes;
+    const qsizetype byteCount = std::min(uri.size(), kMaximumLinkPreviewBytes);
+    const QString decoded = QString::fromUtf8(uri.constData(), byteCount);
+
+    // Keep arbitrary OSC 8 bytes and regex matches out of layout control
+    // paths. Invalid UTF-8 is already represented visibly by U+FFFD; encode
+    // single-line control characters so a destination cannot reshape the
+    // pane overlay while the exact QByteArray remains available to copy/open.
+    QString display;
+    display.reserve(decoded.size() + (truncated ? 1 : 0));
+    for (const QChar character : decoded) {
+        const ushort value = character.unicode();
+        if (value < 0x20 || (value >= 0x7f && value <= 0x9f)) {
+            display += QStringLiteral("\\x");
+            display += QString::number(value, 16).rightJustified(2, u'0').toUpper();
+        } else if (value == 0x061c || value == 0x200e || value == 0x200f
+                   || (value >= 0x2028 && value <= 0x202e)
+                   || (value >= 0x2066 && value <= 0x2069)) {
+            display += QStringLiteral("\\u");
+            display += QString::number(value, 16).rightJustified(4, u'0').toUpper();
+        } else {
+            display += character;
+        }
+    }
+    if (truncated) {
+        display += u'\u2026';
+    }
+    return display;
+}
 
 struct ColoredRect {
     QRectF rect;
@@ -570,6 +605,18 @@ QStringList TerminalPane::activeKeyTables() const
     return keybinds_.activeTableNames();
 }
 
+QString TerminalPane::linkPreviewText() const
+{
+    QMutexLocker locker(&renderMutex_);
+    return linkPreviewText_;
+}
+
+QRectF TerminalPane::linkPreviewRect() const
+{
+    QMutexLocker locker(&renderMutex_);
+    return linkPreviewRect_;
+}
+
 bool TerminalPane::isRunning() const
 {
     return controller_->running();
@@ -601,7 +648,10 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     LaunchOptions updated = options_;
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     const bool linkUrlChanged = updated.linkUrl != options.linkUrl;
+    const bool linkPreviewModeChanged =
+        updated.linkPreviews != options.linkPreviews;
     updated.fontFamily = options.fontFamily;
     updated.fontSize = options.fontSize;
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
@@ -611,6 +661,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
     updated.confirmCloseMode = options.confirmCloseMode;
     updated.linkUrl = options.linkUrl;
+    updated.linkPreviews = options.linkPreviews;
     updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
@@ -687,6 +738,10 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         updateMetrics();
         updateTerminalSize();
     }
+    if (linkPreviewModeChanged || metricsChanged) {
+        refreshLinkPreview();
+        reconcileReleasedLinkPreview(previewWasPointerCaptured);
+    }
     update();
     if (pointSizeChanged) {
         Q_EMIT fontPointSizeChanged();
@@ -725,6 +780,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QFont baseFont;
     QString preedit;
     QString status;
+    QString linkPreview;
+    QRectF linkPreviewRect;
     QSet<int> hoveredHyperlinkCells;
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
@@ -737,6 +794,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         baseFont = font_;
         preedit = preedit_;
         status = statusMessage_;
+        linkPreview = linkPreviewText_;
+        linkPreviewRect = linkPreviewRect_;
         if (hoveredHyperlinkColumns_ == frame_.columns
             && hoveredHyperlinkRows_ == frame_.rows) {
             hoveredHyperlinkCells = hoveredHyperlinkCellIndexes_;
@@ -1016,6 +1075,50 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                              std::max<qreal>(1.0, width() - 16.0));
             hasOverlayText = overlayText != nullptr;
         }
+
+        if (!linkPreview.isEmpty() && !linkPreviewRect.isEmpty()) {
+            QColor previewBackground = frame.background;
+            previewBackground.setAlpha(242);
+            QColor previewForeground = frame.foreground;
+            previewForeground.setAlpha(255);
+            QColor previewOutline = previewForeground;
+            previewOutline.setAlpha(100);
+            appendRect(overlayBackgrounds, linkPreviewRect,
+                       previewBackground);
+
+            constexpr qreal outlineWidth = 1.0;
+            appendRect(overlayDecorations,
+                       QRectF(linkPreviewRect.left(), linkPreviewRect.top(),
+                              linkPreviewRect.width(), outlineWidth),
+                       previewOutline);
+            appendRect(overlayDecorations,
+                       QRectF(linkPreviewRect.left(),
+                              linkPreviewRect.bottom() - outlineWidth,
+                              linkPreviewRect.width(), outlineWidth),
+                       previewOutline);
+            appendRect(overlayDecorations,
+                       QRectF(linkPreviewRect.left(), linkPreviewRect.top(),
+                              outlineWidth, linkPreviewRect.height()),
+                       previewOutline);
+            appendRect(overlayDecorations,
+                       QRectF(linkPreviewRect.right() - outlineWidth,
+                              linkPreviewRect.top(), outlineWidth,
+                              linkPreviewRect.height()),
+                       previewOutline);
+
+            const QFontMetricsF metrics(baseFont);
+            appendTextLayout(
+                overlayText, linkPreview, baseFont, previewForeground,
+                QPointF(linkPreviewRect.left()
+                            + kLinkPreviewHorizontalPadding,
+                        linkPreviewRect.top()
+                            + kLinkPreviewVerticalPadding),
+                std::ceil(metrics.ascent()),
+                std::max<qreal>(
+                    1.0, linkPreviewRect.width()
+                        - 2.0 * kLinkPreviewHorizontalPadding));
+            hasOverlayText = overlayText != nullptr;
+        }
     }
 
     if (QSGNode *node = createRectNode(baseBackgrounds, softwareRenderer)) {
@@ -1060,9 +1163,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
 void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size()) {
         updateTerminalSize();
+        refreshLinkPreview();
+        reconcileReleasedLinkPreview(previewWasPointerCaptured);
         update();
     }
 }
@@ -1707,6 +1813,12 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
+    if (linkPreviewPointerCaptured_) {
+        cancelPendingHyperlinkActivation();
+        cancelHyperlinkPress();
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton) {
         cancelPendingHyperlinkActivation();
         cancelHyperlinkPress();
@@ -1763,6 +1875,10 @@ void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
+    if (linkPreviewPointerCaptured_) {
+        event->accept();
+        return;
+    }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
         && !modifiers.testFlag(Qt::ShiftModifier);
@@ -1802,6 +1918,10 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
         }
     }
     updateHyperlinkHover(event->position(), event->modifiers());
+    if (linkPreviewPointerCaptured_ && event->buttons() == Qt::NoButton) {
+        event->accept();
+        return;
+    }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const Qt::MouseButtons reportedButtons =
         reportedMouseButtons(event->buttons());
@@ -1872,7 +1992,7 @@ void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    if (controller_->mouseTracking()
+    if (!linkPreviewPointerCaptured_ && controller_->mouseTracking()
         && !modifiers.testFlag(Qt::ShiftModifier)) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
                   Qt::NoButton, modifiers);
@@ -2016,6 +2136,29 @@ void TerminalPane::updateHyperlinkHover(
     hoverInside_ = true;
     hoverPosition_ = position;
     hoverModifiers_ = effectivePointerModifiers(modifiers);
+    if (!hyperlinkModifiersMatch(hoverModifiers_)) {
+        cancelHyperlinkPress();
+        clearHyperlinkHover();
+        return;
+    }
+
+    bool previewCapturesPointer = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        previewCapturesPointer = hyperlinkLeaseActive_
+            && !linkPreviewText_.isEmpty()
+            && linkPreviewGuardRect_.contains(position);
+    }
+    linkPreviewPointerCaptured_ = previewCapturesPointer;
+    if (previewCapturesPointer) {
+        // GTK keeps the accepted link lease while its bottom-left preview
+        // owns the pointer, hides that copy, and exposes a bottom-right copy.
+        // Preserve the logical hover cell until the pointer leaves the
+        // original guard instead of querying the obscured terminal row.
+        refreshLinkPreview();
+        return;
+    }
+
     const std::optional<QPoint> cell = hoverCellAt(position);
     const QPoint nextCell = cell.value_or(QPoint(-1, -1));
     if (nextCell != hoverCell_) {
@@ -2047,12 +2190,8 @@ void TerminalPane::updateHyperlinkHover(
             clearHyperlinkHover();
         }
     }
-    if (!hyperlinkModifiersMatch(hoverModifiers_)) {
-        cancelHyperlinkPress();
-        clearHyperlinkHover();
-        return;
-    }
     refreshHyperlinkHover();
+    refreshLinkPreview();
 }
 
 void TerminalPane::recomputeHyperlinkHover()
@@ -2120,6 +2259,87 @@ void TerminalPane::refreshHyperlinkHover()
                                   contentRevision);
 }
 
+void TerminalPane::refreshLinkPreview()
+{
+    const bool modeAllowsPreview = options_.linkPreviews
+            == LinkPreviewMode::Always
+        || (options_.linkPreviews == LinkPreviewMode::Osc8
+            && hoveredLinkKind_ == TerminalLinkKind::Osc8);
+    const bool visible = modeAllowsPreview && hyperlinkLeaseActive_
+        && hoverInside_ && hyperlinkModifiersMatch(hoverModifiers_)
+        && !hoveredHyperlinkUri_.isEmpty();
+
+    QString text;
+    QRectF guardRect;
+    QRectF previewRect;
+    bool pointerCaptured = false;
+    if (visible && width() > 0.0 && height() > 0.0) {
+        QFont font;
+        {
+            QMutexLocker locker(&renderMutex_);
+            font = font_;
+        }
+        const QFontMetricsF metrics(font);
+        const qreal maximumTextWidth = std::max<qreal>(
+            1.0, width() - 2.0 * kLinkPreviewHorizontalPadding);
+        text = metrics.elidedText(
+            linkPreviewDisplaySource(hoveredHyperlinkUri_),
+            Qt::ElideMiddle, maximumTextWidth);
+        if (!text.isEmpty()) {
+            const qreal previewWidth = std::min(
+                width(), std::ceil(metrics.horizontalAdvance(text))
+                    + 2.0 * kLinkPreviewHorizontalPadding);
+            const qreal previewHeight = std::min(
+                height(), std::ceil(metrics.height())
+                    + 2.0 * kLinkPreviewVerticalPadding);
+            guardRect = QRectF(
+                0.0, std::max(0.0, height() - previewHeight),
+                previewWidth, previewHeight);
+            pointerCaptured = guardRect.contains(hoverPosition_);
+            previewRect = guardRect;
+            if (pointerCaptured) {
+                previewRect.moveLeft(std::max(0.0, width() - previewWidth));
+            }
+        }
+    }
+
+    bool changed = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        changed = linkPreviewText_ != text
+            || linkPreviewRect_ != previewRect;
+        linkPreviewText_ = std::move(text);
+        linkPreviewRect_ = previewRect;
+        linkPreviewGuardRect_ = guardRect;
+    }
+    linkPreviewPointerCaptured_ = pointerCaptured;
+    if (changed) {
+        Q_EMIT linkPreviewChanged();
+        update();
+    }
+}
+
+void TerminalPane::reconcileReleasedLinkPreview(
+    bool wasPointerCaptured, bool forceRequery)
+{
+    if (!wasPointerCaptured || linkPreviewPointerCaptured_ || !hoverInside_) {
+        return;
+    }
+    const QPoint physicalCell = hoverCellAt(hoverPosition_)
+        .value_or(QPoint(-1, -1));
+    if (!forceRequery && physicalCell == hoverCell_) {
+        return;
+    }
+
+    // The left preview guard deliberately preserves the logical source cell
+    // while it owns the pointer. Once the guard disappears, resume hit testing
+    // at the physical position instead of leaving copy/underline state bound
+    // to a link elsewhere in the pane.
+    clearHyperlinkHover();
+    hoverCell_ = QPoint(-1, -1);
+    updateHyperlinkHover(hoverPosition_, hoverModifiers_);
+}
+
 void TerminalPane::clearHyperlinkDecoration()
 {
     hoveredLinkKind_ = TerminalLinkKind::Osc8;
@@ -2127,15 +2347,25 @@ void TerminalPane::clearHyperlinkDecoration()
     hoveredHyperlinkCell_ = QPoint(-1, -1);
 
     bool hadHighlight = false;
+    bool previewChanged = false;
     {
         QMutexLocker locker(&renderMutex_);
         hadHighlight = !hoveredHyperlinkCellIndexes_.isEmpty();
         hoveredHyperlinkCellIndexes_.clear();
         hoveredHyperlinkColumns_ = 0;
         hoveredHyperlinkRows_ = 0;
+        previewChanged = !linkPreviewText_.isEmpty()
+            || !linkPreviewRect_.isEmpty();
+        linkPreviewText_.clear();
+        linkPreviewRect_ = {};
+        linkPreviewGuardRect_ = {};
     }
+    linkPreviewPointerCaptured_ = false;
     unsetCursor();
-    if (hadHighlight) {
+    if (previewChanged) {
+        Q_EMIT linkPreviewChanged();
+    }
+    if (hadHighlight || previewChanged) {
         update();
     }
 }
@@ -2204,6 +2434,7 @@ void TerminalPane::handleHyperlinkResult(
         return;
     }
     const bool hadTrackedLease = hyperlinkLeaseActive_;
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     hyperlinkQueryPending_ = false;
 
     quint64 currentRevision = 0;
@@ -2225,6 +2456,10 @@ void TerminalPane::handleHyperlinkResult(
         hyperlinkLeaseActive_ = true;
         hyperlinkQueryRejected_ = false;
         clearHyperlinkDecoration();
+        if (previewWasPointerCaptured) {
+            reconcileReleasedLinkPreview(true, true);
+            return;
+        }
         if (hyperlinkCellCandidate(hoverCell_)) {
             clearHyperlinkHover();
             refreshHyperlinkHover();
@@ -2236,6 +2471,10 @@ void TerminalPane::handleHyperlinkResult(
         hyperlinkQueryRejected_ = false;
         hyperlinkQueryCell_ = QPoint(-1, -1);
         clearHyperlinkDecoration();
+        if (previewWasPointerCaptured) {
+            reconcileReleasedLinkPreview(true, true);
+            return;
+        }
         if (currentRevision >= contentRevision) {
             refreshHyperlinkHover();
         }
@@ -2245,6 +2484,10 @@ void TerminalPane::handleHyperlinkResult(
         hyperlinkLeaseActive_ = false;
         hyperlinkQueryRejected_ = !hadTrackedLease;
         clearHyperlinkDecoration();
+        if (previewWasPointerCaptured) {
+            reconcileReleasedLinkPreview(true, true);
+            return;
+        }
         if (hadTrackedLease) {
             hyperlinkQueryCell_ = QPoint(-1, -1);
             refreshHyperlinkHover();
@@ -2280,6 +2523,11 @@ void TerminalPane::handleHyperlinkResult(
         hoveredHyperlinkCellIndexes_ = std::move(indexes);
         hoveredHyperlinkColumns_ = columns;
         hoveredHyperlinkRows_ = rows;
+    }
+    refreshLinkPreview();
+    reconcileReleasedLinkPreview(previewWasPointerCaptured);
+    if (!hyperlinkLeaseActive_) {
+        return;
     }
     setCursor(Qt::PointingHandCursor);
     update();
@@ -2384,6 +2632,7 @@ void TerminalPane::pasteText(const QString &text)
 void TerminalPane::setFontPointSize(qreal points)
 {
     points = std::clamp(points, kMinimumFontSize, kMaximumFontSize);
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     {
         QMutexLocker locker(&renderMutex_);
         if (qFuzzyCompare(font_.pointSizeF(), points)) {
@@ -2393,6 +2642,8 @@ void TerminalPane::setFontPointSize(qreal points)
     }
     updateMetrics();
     updateTerminalSize();
+    refreshLinkPreview();
+    reconcileReleasedLinkPreview(previewWasPointerCaptured);
     update();
     Q_EMIT fontPointSizeChanged();
 }

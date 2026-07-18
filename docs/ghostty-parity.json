@@ -330,11 +330,11 @@
     },
     "link": {
       "status": "planned",
-      "note": "User-defined regular expressions and arbitrary link actions are not implemented. The built-in default matcher controlled by link-url is supported independently, alongside explicit OSC 8 destinations."
+      "note": "User-defined regular expressions and arbitrary link actions are not implemented because the pinned Ghostty RepeatableLink.parseCLI returns error.NotImplemented. The built-in default matcher controlled by link-url is supported independently, alongside explicit OSC 8 destinations."
     },
     "link-previews": {
-      "status": "planned",
-      "note": "No link preview UI is implemented for OSC 8 or default-regex destinations."
+      "status": "supported",
+      "note": "The exact true/false/osc8 policy previews all, no, or only OSC 8 accepted destinations. Live reload is pane-local and frontend-only: the bounded, middle-elided overlay safely escapes raw destination controls, replaces invalid UTF-8, relocates from bottom-left to bottom-right when entered, and reuses a hover that remains on the terminal link. Removing an occupied guard resumes physical hit testing and may query the newly exposed cell."
     },
     "link-url": {
       "status": "supported",

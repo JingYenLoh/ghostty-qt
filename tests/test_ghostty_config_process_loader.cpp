@@ -39,6 +39,7 @@ QByteArray defaultOutput()
                           "scrollback-limit = 50000000\n"
                           "confirm-close-surface = true\n"
                           "link-url = true\n"
+                          "link-previews = true\n"
                           "keybind = ctrl+shift+t=new_tab\n"
                           "config-file = \n");
     for (int index = 0; index < 256; ++index) {
@@ -115,6 +116,7 @@ private Q_SLOTS:
     void parsesStructuredKeybindJsonTransactionally();
     void rejectsMalformedStructuredKeybindJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
+    void preservesDefaultAndAcceptsEveryLinkPreviewMode();
     void emptyRepeatableChangesResetDefaults();
     void rejectsMalformedCanonicalValues();
     void invokesValidationThenDefaultAndCurrentQueries();
@@ -266,6 +268,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "scrollback-limit = 123456\r\n"
             "confirm-close-surface = always\r\n"
             "link-url = false\r\n"
+            "link-previews = osc8\r\n"
             "keybind = alt+n=new_tab\r\n"
             "keybind = chain=next_tab\r\n"
             "keybind = ctrl+x>ctrl+y=new_tab\r\n"
@@ -321,6 +324,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(QStringLiteral("confirm-close-surface")).toString(),
              QStringLiteral("always"));
     QCOMPARE(snapshot.values.value(QStringLiteral("link-url")).toBool(), false);
+    QCOMPARE(snapshot.values.value(QStringLiteral("link-previews")).toString(),
+             QStringLiteral("osc8"));
     QCOMPARE(snapshot.values.value(QStringLiteral("keybind")).toStringList(),
              QStringList({QStringLiteral("alt+n=new_tab"),
                           QStringLiteral("chain=next_tab"),
@@ -337,6 +342,29 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QStringList({includePath, QStringLiteral("?") + missingOptional}));
     QCOMPARE(snapshot.sourcePaths,
              QStringList({fixture.legacyPath, fixture.preferredPath, includePath}));
+}
+
+void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryLinkPreviewMode()
+{
+    ConfigFixture fixture;
+    const GhosttyConfigLoadResult unchanged = parseGhosttyConfigShowOutputs(
+        defaultOutput(), {}, fixture.candidates());
+    QVERIFY2(unchanged.succeeded(), qPrintable(unchanged.errorMessage));
+    QCOMPARE(unchanged.snapshot->values
+                 .value(QStringLiteral("link-previews")).toString(),
+             QStringLiteral("true"));
+
+    for (const QByteArray &mode : {QByteArrayLiteral("false"),
+                                   QByteArrayLiteral("true"),
+                                   QByteArrayLiteral("osc8")}) {
+        const GhosttyConfigLoadResult changed = parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("link-previews = ") + mode + '\n',
+            fixture.candidates());
+        QVERIFY2(changed.succeeded(), qPrintable(changed.errorMessage));
+        QCOMPARE(changed.snapshot->values
+                     .value(QStringLiteral("link-previews")).toString(),
+                 QString::fromLatin1(mode));
+    }
 }
 
 void GhosttyConfigProcessLoaderTest::emptyRepeatableChangesResetDefaults()
@@ -414,6 +442,14 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedLinkUrl.succeeded());
     QCOMPARE(malformedLinkUrl.errorMessage,
              QStringLiteral("Invalid link-url in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedLinkPreviews =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("link-previews = yes\n"),
+            fixture.candidates());
+    QVERIFY(!malformedLinkPreviews.succeeded());
+    QCOMPARE(malformedLinkPreviews.errorMessage,
+             QStringLiteral("Invalid link-previews in Ghostty config output at line 1"));
 
     const GhosttyConfigLoadResult missing = parseGhosttyConfigShowOutputs(
         QByteArrayLiteral("font-size = 13\n"), {}, fixture.candidates());

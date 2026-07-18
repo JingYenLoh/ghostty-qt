@@ -267,6 +267,19 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.linkUrl = linkUrl.toBool();
     }
 
+    const QVariant linkPreviews = snapshot.values.value(
+        QStringLiteral("link-previews"));
+    if (linkPreviews.metaType() == QMetaType::fromType<QString>()) {
+        const QString canonical = linkPreviews.toString();
+        if (canonical == QStringLiteral("false")) {
+            result.linkPreviews = LinkPreviewMode::Never;
+        } else if (canonical == QStringLiteral("true")) {
+            result.linkPreviews = LinkPreviewMode::Always;
+        } else if (canonical == QStringLiteral("osc8")) {
+            result.linkPreviews = LinkPreviewMode::Osc8;
+        }
+    }
+
     const auto keybindings = snapshot.value<QStringList>(QStringLiteral("keybind"));
     if (keybindings.has_value()) {
         result.keybindings = *keybindings;

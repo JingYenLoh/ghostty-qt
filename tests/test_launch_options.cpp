@@ -36,6 +36,8 @@ private Q_SLOTS:
     void rejectsUnknownOption();
     void preservesOutputOnFailure();
     void overlaysGhosttySnapshotAndPreservesCliFonts();
+    void mapsLinkPreviewModes();
+    void mapsLinkPreviewModes_data();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
     void convertsLegacyLineCapacityToLibghosttyBytes();
@@ -69,6 +71,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.scrollbackLimitExplicit);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
     QVERIFY(options.linkUrl);
+    QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
     QVERIFY(!options.hold);
     QVERIFY(options.program.isEmpty());
     QVERIFY(error.isEmpty());
@@ -248,6 +251,8 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            QStringLiteral("always"));
     snapshot.values.insert(QStringLiteral("link-url"), false);
+    snapshot.values.insert(QStringLiteral("link-previews"),
+                           QStringLiteral("osc8"));
     snapshot.values.insert(
         QStringLiteral("keybind"),
         QStringList({QStringLiteral("alt+n=new_tab")}));
@@ -296,6 +301,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!cliResult.linkUrl);
+    QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindings.isEmpty());
     QVERIFY(cliResult.keybindingsConfigured);
     QCOMPARE(cliResult.keybindConfig, *snapshot.keybindConfig);
@@ -308,6 +314,33 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(configResult.fontSize, 14.5);
     QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
+}
+
+void LaunchOptionsTest::mapsLinkPreviewModes_data()
+{
+    QTest::addColumn<QString>("canonical");
+    QTest::addColumn<LinkPreviewMode>("expected");
+
+    QTest::newRow("false") << QStringLiteral("false")
+                            << LinkPreviewMode::Never;
+    QTest::newRow("true") << QStringLiteral("true")
+                           << LinkPreviewMode::Always;
+    QTest::newRow("osc8") << QStringLiteral("osc8")
+                           << LinkPreviewMode::Osc8;
+}
+
+void LaunchOptionsTest::mapsLinkPreviewModes()
+{
+    QFETCH(QString, canonical);
+    QFETCH(LinkPreviewMode, expected);
+
+    LaunchOptions base;
+    base.linkPreviews = LinkPreviewMode::Never;
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("link-previews"), canonical);
+
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).linkPreviews, expected);
 }
 
 void LaunchOptionsTest::restoresNullableAppearanceDefaults()
@@ -373,6 +406,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
                            QStringLiteral("sometimes"));
     snapshot.values.insert(QStringLiteral("link-url"),
                            QStringLiteral("false"));
+    snapshot.values.insert(QStringLiteral("link-previews"),
+                           true);
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
 
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -382,6 +417,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.scrollbackLimit, base.scrollbackLimit);
     QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
     QCOMPARE(result.linkUrl, base.linkUrl);
+    QCOMPARE(result.linkPreviews, base.linkPreviews);
 }
 
 void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()

@@ -163,6 +163,10 @@ signals:
   already single-underlined cell becomes double-underlined while hovered. With
   application mouse capture, `Shift` first bypasses capture and is removed
   before modifier matching, so the equivalent gesture is `Ctrl+Shift`.
+- `link-previews = true` shows the accepted raw destination for either link
+  kind, `false` shows neither, and `osc8` shows only explicit OSC 8
+  destinations. This presentation policy does not change link detection,
+  underline, copy, or activation behavior.
 - Focus changes are encoded only when the terminal requests focus reporting.
 - Paste uses Ghostty's safe-paste check and bracketed-paste encoder. Unsafe text
   is held in `TerminalWorkspace` until the QML dialog confirms it.
@@ -240,6 +244,21 @@ file exists. Other byte strings use `QUrl` strict encoded mode; malformed or
 NUL-containing values are rejected before valid URLs are delegated to Qt's
 desktop services.
 
+The preview is a pane-local scene-graph overlay built from the exact accepted
+destination bytes rather than the normalized opener `QUrl`. Its display source
+is capped at 4,096 bytes, decodes malformed UTF-8 with visible replacement,
+escapes C0/C1 controls and bidirectional/line-formatting controls, and is
+middle-elided to the available pane width. Both dimensions are clipped to the
+pane. It normally occupies the bottom-left; entering that original guard keeps
+the logical hover lease and relocates the presentation to the bottom-right,
+avoiding an input-owning child item or a query against the obscured terminal
+row. The overlay consumes the URI and link kind already returned for the
+tracked hover. Showing, hiding, relocating, resizing, or live-reloading its
+policy performs no extra worker query or regex matcher scan while the pointer
+remains over the terminal link. If policy or geometry removes an occupied
+bottom-left guard, the pane resumes hit testing at the physical pointer and may
+query that newly exposed terminal cell.
+
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
 terminal and the kernel PTY with `TIOCSWINSZ`.
@@ -314,8 +333,8 @@ to the workspace.
 
 The current typed compatibility slice contains `font-family`, `font-size`, the
 appearance keys listed below, `scrollback-limit`, `confirm-close-surface`,
-`link-url`, `config-file`, and a versioned dump of the finalized keybinding
-sets.
+`link-url`, `link-previews`, `config-file`, and a versioned dump of the
+finalized keybinding sets.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection colors, cursor color/style/blink/opacity/text,
@@ -332,7 +351,11 @@ DECSCUSR cursor style survives a config reload and its reset selects the newest
 configured style. Selection, cursor aliases/opacity/text, bold-color, and
 faint-opacity are frontend render policy and therefore update without mutating
 terminal-originated state. Close confirmation policy and the built-in regex
-link matcher also update live; toggling `link-url` never disables OSC 8.
+link matcher also update live; toggling `link-url` never disables OSC 8. The
+three-state link-preview policy reloads entirely in each pane's frontend and
+preserves an accepted hover over the terminal link. Removing an occupied
+preview guard instead resumes physical hit testing, as pointer ownership has
+changed.
 
 Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
@@ -500,8 +523,11 @@ part of this frontend's parity target.
 source and rejects revision, schema, ordering, or inventory drift. This keeps
 an upstream snapshot update from silently adding untracked parity work. The
 contract remains conservative: only the typed configuration slice, including
-`link-url`, is marked partial or supported, while custom `link` rules and other
-upstream keys stay explicitly planned.
+`link-url` and `link-previews`, is marked partial or supported, while custom
+`link` rules and other upstream keys stay explicitly planned. In particular,
+the pinned Ghostty `RepeatableLink.parseCLI` still returns
+`error.NotImplemented`, so this frontend does not invent a parallel syntax for
+user-defined expressions and actions.
 
 ## Test boundaries
 
@@ -571,7 +597,9 @@ The default CTest suite has focused layers for each ownership boundary:
   release-only activation through a real PTY-backed pane, including live
   output, viewport hiding/restoration, resize-safe masks, and mouse-capture
   modifier transitions. The same path covers live `link-url` enable/disable,
-  byte-exact regex copy, relative-path opening, and OSC 8 independence.
+  byte-exact regex copy, relative-path opening, OSC 8 independence, all three
+  link-preview policies, live frontend-only reload, no-query relocation, and
+  bounded/escaped display of arbitrary destination bytes.
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
@@ -608,7 +636,8 @@ in a real Wayland session.
 - Split ratios support keybinding resize/equalization, but draggable divider
   interaction is not implemented.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, search, user-defined `link` rules and link previews, multi-window
-  operation, saved sessions, and production packaging remain future work.
-  OSC 8 and the default `link-url` matcher are implemented; OSC grouping stays
-  URI-based until the public C API exposes hyperlink identity.
+  actions, search, user-defined `link` rules, multi-window operation, saved
+  sessions, and production packaging remain future work. OSC 8, the default
+  `link-url` matcher, and link previews are implemented; custom `link` parsing
+  remains unavailable in the pinned parser, and OSC grouping stays URI-based
+  until the public C API exposes hyperlink identity.

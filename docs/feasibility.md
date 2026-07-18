@@ -54,6 +54,9 @@ scaffolding them:
   dependency surface. C++ receives only UTF-8 byte ranges, which the adapter
   maps to tracked logical terminal cells across graphemes, soft wraps, and
   reflow.
+- A pane-local scene-graph link preview reuses the tracked hover destination,
+  safely bounds/escapes/elides arbitrary bytes, and relocates from left to
+  right when entered without another matcher scan.
 - Compiled QML provides tabs, recursive splits, dialogs, and Wayland startup.
 - CTest covers direct libghostty behavior and an end-to-end PTY session.
 
@@ -70,11 +73,14 @@ advanced text/graphics support, and distribution:
   workloads.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
-- Color emoji, ligatures across cells, Kitty graphics, link previews, and search
-  each require explicit UI/render policy beyond VT parsing. OSC 8 and the
+- Color emoji, ligatures across cells, Kitty graphics, and search each require
+  explicit UI/render policy beyond VT parsing. OSC 8 and the
   built-in `link-url` matcher now share tracked hover, copy, and open behavior,
   stable live-output handling, coalesced pointer queries, and mutation-safe
-  activation. User-defined `link` expressions/actions remain separate work;
+  activation. The `true`/`false`/`osc8` preview policy is implemented as a
+  frontend-only overlay and reloads without querying the worker. User-defined
+  `link` expressions/actions remain separate work because the pinned parser's
+  `RepeatableLink.parseCLI` returns `error.NotImplemented`;
   pathological logical lines and regex searches deliberately fail closed at
   bounded cell/byte and Oniguruma retry limits. Exact OSC grouping by hyperlink
   ID also remains limited by the public C API, which exposes only the

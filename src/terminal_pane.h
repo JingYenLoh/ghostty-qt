@@ -10,6 +10,7 @@
 #include <QMutex>
 #include <QPoint>
 #include <QQuickItem>
+#include <QRectF>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -34,6 +35,8 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
     Q_PROPERTY(qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
     Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY activeKeyTablesChanged)
+    Q_PROPERTY(QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
+    Q_PROPERTY(QRectF linkPreviewRect READ linkPreviewRect NOTIFY linkPreviewChanged)
 
 public:
     explicit TerminalPane(const LaunchOptions &options, QQuickItem *parent = nullptr);
@@ -43,6 +46,8 @@ public:
     QString currentDirectory() const;
     qreal fontPointSize() const;
     QStringList activeKeyTables() const;
+    QString linkPreviewText() const;
+    QRectF linkPreviewRect() const;
     bool isRunning() const;
     bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions() const;
@@ -70,6 +75,7 @@ Q_SIGNALS:
     void currentDirectoryChanged();
     void fontPointSizeChanged();
     void activeKeyTablesChanged();
+    void linkPreviewChanged();
     void processStateChanged();
     void requestNewTab();
     void requestSplit(int orientation);
@@ -134,6 +140,9 @@ private:
     void updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers);
     void recomputeHyperlinkHover();
     void refreshHyperlinkHover();
+    void refreshLinkPreview();
+    void reconcileReleasedLinkPreview(bool wasPointerCaptured,
+                                      bool forceRequery = false);
     void clearHyperlinkDecoration();
     void clearHyperlinkHover();
     void cancelHyperlinkPress();
@@ -192,6 +201,10 @@ private:
     QSet<int> hoveredHyperlinkCellIndexes_;
     int hoveredHyperlinkColumns_ = 0;
     int hoveredHyperlinkRows_ = 0;
+    QString linkPreviewText_;
+    QRectF linkPreviewRect_;
+    QRectF linkPreviewGuardRect_;
+    bool linkPreviewPointerCaptured_ = false;
     bool hyperlinkPressArmed_ = false;
     bool hyperlinkPressDragged_ = false;
     QPointF hyperlinkPressPosition_;

@@ -62,6 +62,8 @@ struct ParsedConfig {
     QString confirmCloseSurface;
     bool hasLinkUrl = false;
     bool linkUrl = true;
+    bool hasLinkPreviews = false;
+    QString linkPreviews = QStringLiteral("true");
     bool hasKeybinds = false;
     QStringList keybinds;
     bool hasConfigFiles = false;
@@ -569,6 +571,17 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->hasLinkUrl = true;
+        } else if (key == QStringLiteral("link-previews")) {
+            if (value != QStringLiteral("false")
+                && value != QStringLiteral("true")
+                && value != QStringLiteral("osc8")) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid link-previews in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasLinkPreviews = true;
+            parsed->linkPreviews = value;
         } else if (key == QStringLiteral("keybind")) {
             if (!parsed->hasKeybinds) {
                 parsed->keybinds.clear();
@@ -1064,6 +1077,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
         || !defaults.hasLinkUrl
+        || !defaults.hasLinkPreviews
         || !defaults.hasKeybinds || !defaults.hasConfigFiles) {
         return GhosttyConfigLoadResult::failed(
             QStringLiteral("Ghostty default config output is missing a required compatibility key"));
@@ -1141,6 +1155,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                     defaults.confirmCloseSurface);
     const bool linkUrl =
         mergedValue(changes.hasLinkUrl, changes.linkUrl, defaults.linkUrl);
+    const QString linkPreviews =
+        mergedValue(changes.hasLinkPreviews, changes.linkPreviews,
+                    defaults.linkPreviews);
     const QStringList keybinds =
         mergedValue(changes.hasKeybinds, changes.keybinds,
                     defaults.keybinds);
@@ -1171,6 +1188,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("confirm-close-surface"),
                            confirmCloseSurface);
     snapshot.values.insert(QStringLiteral("link-url"), linkUrl);
+    snapshot.values.insert(QStringLiteral("link-previews"), linkPreviews);
     snapshot.values.insert(QStringLiteral("keybind"), keybinds);
     snapshot.values.insert(QStringLiteral("config-file"), configFiles);
     if (changes.hasKeybinds) {

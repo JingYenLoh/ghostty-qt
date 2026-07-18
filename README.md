@@ -33,7 +33,10 @@ the host-language comparison and remaining engineering risks.
   opening through the desktop URL handler, and the `copy_url_to_clipboard`
   keybinding action. The `link-url` setting applies live to regex links while
   OSC 8 remains independent. Copy preserves the exact destination or matched
-  UTF-8 bytes rather than the Qt URL adapted for opening.
+  UTF-8 bytes rather than the Qt URL adapted for opening. `link-previews`
+  controls a pane-local destination overlay for the already accepted hover;
+  its policy also reloads live without rescanning while the pointer remains on
+  that terminal link.
 - Full-height, fractional, line, absolute-row, top/bottom, and
   selection-targeted scrollback navigation through Ghostty actions.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
@@ -207,6 +210,7 @@ The current compatibility slice applies these keys:
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
 | `link-url` | Enables Ghostty's pinned default regex matcher for scheme URLs and file paths. The default is `true`; live reload recomputes hover state. Explicit OSC 8 hyperlinks are unaffected. |
+| `link-previews` | Controls the destination overlay for an accepted `Ctrl` hover. `true` (the default) previews OSC 8 and regex links, `false` previews neither, and `osc8` previews only explicit OSC 8 destinations. Reload is frontend-only and preserves a hover over the terminal link. Removing a preview while its bottom-left guard owns the pointer resumes physical terminal hit testing and may query that newly exposed cell. |
 | `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
 | `keybind` | Loads Ghostty's finalized structured root and named-table sets. Per-pane table stacks and one-shot tables, shared-prefix sequences, physical/Unicode/catch-all lookup, action chains, `unconsumed`/`performable`, byte-exact invalid-sequence replay, `end_key_sequence`, and process-wide `all`/`global` dispatch are supported for the implemented action subset. Root, direct, single-action `global` bindings are also registered through the Linux XDG Global Shortcuts portal. |
 
@@ -295,7 +299,13 @@ available. Hold `Ctrl` over an OSC 8 hyperlink or a URL/path recognized by
 Ghostty's default matcher to show its pointer and underline, then release the
 left button over the same tracked target without dragging to open it. Relative
 file matches are resolved against the terminal's current working directory
-when that target exists. When an application has captured the mouse, use
+when that target exists. When enabled, the preview shows the accepted raw
+destination in a bounded, middle-elided overlay at the bottom-left of that
+pane. Moving into the overlay retains the logical link hover and relocates the
+overlay to the bottom-right; leaving its original guard resumes terminal hit
+testing. Control and bidirectional formatting characters are escaped, invalid
+UTF-8 is replaced visibly, and long byte strings are capped before layout.
+When an application has captured the mouse, use
 `Ctrl+Shift`: `Shift` releases the capture before the exact `Ctrl` link
 modifier is matched. Middle-click pastes the Wayland primary selection.
 
@@ -352,8 +362,11 @@ wraps, graphemes, and wide cells. The matcher tests run Ghostty's complete
 pinned URL/path corpus against the vendored Oniguruma engine; session and pane
 tests cover OSC 8 precedence, live `link-url` reload, coalesced hover lookup,
 stable live-output rendering, tracked regex reflow and mutation invalidation,
-byte-exact copy, relative-path opening, and release-only activation. Interactive
-pointer selection and unsafe-paste dialog input are not yet fully automated.
+byte-exact copy, relative-path opening, release-only activation, all three
+`link-previews` policies, live frontend-only policy changes, left/right
+relocation, and bounded safe display of arbitrary destination bytes.
+Interactive pointer selection and unsafe-paste dialog input are not yet fully
+automated.
 
 For a headless QML startup smoke test, use the explicitly unsupported-backend
 escape hatch:
@@ -394,8 +407,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   ligature shaping. Per-cell text rendering prioritizes correctness of the MVP
   architecture over advanced typography.
 - Hyperlink interaction covers explicit OSC 8 destinations and the built-in
-  default matcher controlled by `link-url`. User-defined `link` expressions,
-  arbitrary link actions, and link previews remain planned. Public
+  default matcher controlled by `link-url`, including the configured preview
+  policy. User-defined `link` expressions and arbitrary link actions remain
+  planned because the pinned Ghostty `RepeatableLink.parseCLI` returns
+  `error.NotImplemented`. Public
   `libghostty-vt` exposes a hyperlink URI but not its OSC 8 ID, so visible OSC
   8 links with the same destination can be underlined as one group even when
   their IDs differ. Pathological logical lines beyond 131,072 cells or 4 MiB,
