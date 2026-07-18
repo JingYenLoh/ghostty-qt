@@ -24,6 +24,7 @@ enum class WorkspaceAction {
     ResizeSplit,
     EqualizeSplits,
     ToggleSplitZoom,
+    ToggleFullscreen,
     RequestQuit,
 };
 

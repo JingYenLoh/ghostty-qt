@@ -108,6 +108,58 @@ bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
     return true;
 }
 
+bool installFullscreenActionTestHook(QQmlApplicationEngine *engine,
+                                     TerminalWorkspace *workspace)
+{
+    auto *const window = qobject_cast<QQuickWindow *>(
+        engine->rootObjects().constFirst());
+    if (window == nullptr) {
+        qCritical() << "Fullscreen test hook could not find the QML window";
+        return false;
+    }
+
+    const auto exercise = [workspace, window] {
+        const QWindow::Visibility originalVisibility = window->visibility();
+        if (!workspace->executeSurfaceActionOnAllPanes(
+                QStringLiteral("toggle_fullscreen"))) {
+            qCritical() << "Fullscreen test hook could not enter fullscreen";
+            QCoreApplication::exit(1);
+            return;
+        }
+        QTimer::singleShot(0, workspace,
+                           [workspace, window, originalVisibility] {
+            if (window->visibility() != QWindow::FullScreen) {
+                qCritical() << "QML window did not enter fullscreen";
+                QCoreApplication::exit(1);
+                return;
+            }
+            if (!workspace->executeSurfaceActionOnAllPanes(
+                    QStringLiteral("toggle_fullscreen"))) {
+                qCritical() << "Fullscreen test hook could not leave fullscreen";
+                QCoreApplication::exit(1);
+                return;
+            }
+            QTimer::singleShot(0, workspace,
+                               [window, originalVisibility] {
+                if (window->visibility() != originalVisibility) {
+                    qCritical() << "QML window did not restore its visibility";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                QCoreApplication::quit();
+            });
+        });
+    };
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                         workspace, exercise, Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -229,6 +281,12 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
         if (!installCloseDialogTestHook(&engine, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
+        if (!installFullscreenActionTestHook(&engine, workspace)) {
             return 1;
         }
     }

@@ -655,6 +655,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     options.keybindings = {
         QStringLiteral("alt+n=new_tab"),
         QStringLiteral("ctrl+x=increase_font_size:2.5"),
+        QStringLiteral("ctrl+enter=toggle_fullscreen"),
         QStringLiteral("ctrl+w=close_tab:this"),
         QStringLiteral("ctrl+r=reload_config"),
         QStringLiteral("alt+f4=close_window"),
@@ -783,9 +784,29 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     // Performability comes from the typed workspace result, not merely from
     // emitting an action request. With no pane to the left, the binding acts
     // as absent and reaches the terminal.
-    pane.setWorkspaceActionHandler([](WorkspaceActionRequest request) {
+    QVector<WorkspaceActionRequest> workspaceRequests;
+    pane.setWorkspaceActionHandler(
+        [&workspaceRequests](WorkspaceActionRequest request) {
+        workspaceRequests.append(request);
         return request.action != WorkspaceAction::NavigatePane;
     });
+
+    const int beforeFullscreen = forwarded.count();
+    QKeyEvent fullscreenPress(QEvent::KeyPress, Qt::Key_Return,
+                              Qt::ControlModifier, QStringLiteral("\r"));
+    QCoreApplication::sendEvent(&pane, &fullscreenPress);
+    QCOMPARE(workspaceRequests.size(), 1);
+    QCOMPARE(workspaceRequests.constFirst().action,
+             WorkspaceAction::ToggleFullscreen);
+    QCOMPARE(forwarded.count(), beforeFullscreen);
+    QKeyEvent fullscreenRelease(QEvent::KeyRelease, Qt::Key_Return,
+                                Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &fullscreenRelease);
+    QCOMPARE(forwarded.count(), beforeFullscreen);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("toggle_fullscreen:")));
+    QCOMPARE(workspaceRequests.size(), 1);
+
     const int beforeUnavailableNavigation = forwarded.count();
     QKeyEvent unavailableNavigation(QEvent::KeyPress, Qt::Key_G,
                                     Qt::ControlModifier, QString(QChar(0x07)));

@@ -289,6 +289,7 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | `Ctrl+Super+[` / `Ctrl+Super+]` | Focus the previous / next split in tree order. |
 | `Ctrl+Alt+Arrow` | Focus the nearest pane in that direction. |
 | `Super+Ctrl+Shift+Arrow` | Move the nearest matching split divider by 10 pixels. |
+| `Ctrl+Enter` | Toggle fullscreen for the containing window. |
 | `Ctrl+Shift+Enter` | Toggle zoom for the active split. |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Increase, decrease, or reset the active pane's font size. |
 | `Shift+PageUp` / `Shift+PageDown` | Scroll by one terminal page. |

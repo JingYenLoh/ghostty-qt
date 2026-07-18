@@ -859,6 +859,10 @@
         "toggle_command_palette": {
           "scope": "qt_mapping"
         },
+        "toggle_fullscreen": {
+          "status": "supported",
+          "note": "Routes the finalized surface action through the typed workspace pipeline to toggle the containing Qt window; Ghostty's Linux Ctrl+physical Enter default is active."
+        },
         "toggle_quick_terminal": {
           "scope": "wayland"
         },

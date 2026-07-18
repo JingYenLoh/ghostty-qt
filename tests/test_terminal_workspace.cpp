@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QKeyEvent>
 #include <QPointer>
+#include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -72,6 +73,7 @@ private Q_SLOTS:
     void splitResizeAndEqualizeRespectTreeAxes();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
     void broadContainerActionsResolveFromActivePane();
+    void routesFullscreenActionToHostWindow();
     void inactiveTabResizeAppliesWhenActivated();
 };
 
@@ -599,6 +601,54 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
                  QByteArrayLiteral("9:detail"));
         QCOMPARE(resetSpies.at(static_cast<std::size_t>(index))->count(), 1);
     }
+}
+
+void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    window.show();
+
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->window(), &window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+    const TabListEntry *entry = workspace->tabModel()->entryAt(0);
+    QVERIFY(entry != nullptr);
+
+    QSignalSpy requested(workspace.get(),
+                         &TerminalWorkspace::toggleFullscreenRequested);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleFullscreen,
+        {entry->id, entry->activePaneId, 0},
+    }));
+    QCOMPARE(requested.count(), 1);
+
+    QVERIFY(!workspace->dispatchAction({
+        WorkspaceAction::ToggleFullscreen,
+        {entry->id, PaneId(999'999), 0},
+    }));
+    QVERIFY(!workspace->dispatchAction({
+        WorkspaceAction::ToggleFullscreen,
+        {TabId(999'999), entry->activePaneId, 0},
+    }));
+    QCOMPARE(requested.count(), 1);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleFullscreen,
+        {},
+    }));
+    QCOMPARE(requested.count(), 2);
+
+    workspace.reset();
+    window.close();
 }
 
 void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()

@@ -70,6 +70,7 @@ Q_SIGNALS:
     void unsafePasteConfirmationRequested(const QString &preview);
     void configReloadRequested();
     void broadActionsRequested(const QStringList &actions);
+    void toggleFullscreenRequested();
     void quitApproved();
     void searchOverlayComponentChanged();
 

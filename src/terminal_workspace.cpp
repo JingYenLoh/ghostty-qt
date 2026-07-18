@@ -322,6 +322,17 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
                    : currentTabId());
         return toggleSplitZoom(tabId);
     }
+    case WorkspaceAction::ToggleFullscreen:
+        if ((request.context.paneId.isValid()
+             && (paneForId(request.context.paneId) == nullptr
+                 || !contextMatchesPane()))
+            || (request.context.tabId.isValid()
+                && tabById(request.context.tabId) == nullptr)
+            || window() == nullptr) {
+            return false;
+        }
+        Q_EMIT toggleFullscreenRequested();
+        return true;
     case WorkspaceAction::RequestQuit:
         requestQuitImpl();
         return true;

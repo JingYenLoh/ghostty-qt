@@ -73,6 +73,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         {"last_tab", WorkspaceAction::ActivateLastTab, 123},
         {"equalize_splits", WorkspaceAction::EqualizeSplits, 123},
         {"toggle_split_zoom", WorkspaceAction::ToggleSplitZoom, 123},
+        {"toggle_fullscreen", WorkspaceAction::ToggleFullscreen, 123},
         {"quit", WorkspaceAction::RequestQuit, 123},
     };
 
@@ -280,6 +281,12 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
         << Error::InvalidFormat;
     QTest::newRow("void-layout-parameter")
         << QStringLiteral("equalize_splits:") << Error::InvalidFormat;
+    QTest::newRow("fullscreen-empty-parameter")
+        << QStringLiteral("toggle_fullscreen:") << Error::InvalidFormat;
+    QTest::newRow("fullscreen-parameter")
+        << QStringLiteral("toggle_fullscreen:true") << Error::InvalidFormat;
+    QTest::newRow("fullscreen-case")
+        << QStringLiteral("Toggle_fullscreen") << Error::UnsupportedAction;
     QTest::newRow("unknown-action")
         << QStringLiteral("new_window") << Error::UnsupportedAction;
     QTest::newRow("leading-space")
@@ -615,6 +622,9 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("toggle_split_zoom")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("toggle_fullscreen")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("activate_key_table:copy")),

@@ -6,6 +6,16 @@ import GhosttyQt 1.0
 ApplicationWindow {
     id: window
     property bool closeApproved: false
+    property int visibilityBeforeFullscreen: Window.Windowed
+
+    function toggleFullscreen() {
+        if (visibility === Window.FullScreen) {
+            visibility = visibilityBeforeFullscreen
+        } else {
+            visibilityBeforeFullscreen = visibility
+            visibility = Window.FullScreen
+        }
+    }
 
     width: 1100
     height: 720
@@ -164,6 +174,9 @@ ApplicationWindow {
         function onUnsafePasteConfirmationRequested(preview) {
             pastePreview.text = preview
             pasteDialog.open()
+        }
+        function onToggleFullscreenRequested() {
+            window.toggleFullscreen()
         }
         function onQuitApproved() {
             window.closeApproved = true
