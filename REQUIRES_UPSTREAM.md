@@ -10,9 +10,9 @@ commit provides it.
 
 **Status:** blocked on an upstream public API.
 
-ghostty-qt cannot currently implement Ghostty's `jump_to_prompt:<i16>` action
-through public `libghostty-vt`. Ghostty already has the required internal
-prompt traversal:
+Public `libghostty-vt` does not currently expose Ghostty's exact
+`jump_to_prompt:<i16>` operation or its prompt iterator. Ghostty already has
+the required internal prompt traversal:
 
 - `PageList.Scroll.delta_prompt` and `PageList.scrollPrompt` perform the
   compressed-scrollback-safe traversal.
@@ -26,6 +26,27 @@ row-delta, and absolute-row scrolling, but not prompt-delta scrolling. This was
 last verified against official upstream commit
 `f3c9a2b7262a989ba7e9408d00471fda8f788d16` on 2026-07-18. The ghostty-qt
 submodule remains at the revision recorded by the parent repository.
+
+### Why ghostty-qt does not scan prompts itself
+
+A public-API-only Qt implementation is technically possible. The scrollbar
+data exposes the absolute viewport offset, full-screen grid references can
+read historical rows, `GhosttyRowSemanticPrompt` distinguishes prompts from
+continuations, and absolute-row scrolling can move to a discovered row.
+Ghostty also restores compressed pages when those public grid references are
+read.
+
+That fallback would not reuse Ghostty's exact semantic traversal. It would
+duplicate private prompt-grouping and direction rules in C++, repeatedly scan
+the page list without a public iterator, and require the caller to serialize
+the scan against terminal mutations. Public screen-point coordinates are also
+limited to `uint32_t`, while Ghostty's history and scrolling types can represent
+larger offsets. Changes to Ghostty's continuation or orphan-prompt behavior
+could therefore silently diverge from ghostty-qt.
+
+The project intentionally rejects that local scanner in favor of exact,
+maintainable parity. The feature remains blocked until upstream exposes the
+existing prompt-delta operation through the public terminal API.
 
 ### Required upstream contract
 
