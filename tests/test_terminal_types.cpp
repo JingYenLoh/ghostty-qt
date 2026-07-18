@@ -1,4 +1,5 @@
 #include "terminal_clipboard.h"
+#include "terminal_osc8_index.h"
 #include "terminal_types.h"
 
 #include <QTest>
@@ -26,6 +27,18 @@ TerminalRowUpdate textRow(int row, std::initializer_list<QStringView> cells)
     return update;
 }
 
+TerminalRowUpdate hyperlinkRow(
+    int row, int columns, std::initializer_list<int> linkedColumns)
+{
+    TerminalRowUpdate update;
+    update.row = row;
+    update.cells.resize(columns);
+    for (int column : linkedColumns) {
+        update.cells[column].hasHyperlink = true;
+    }
+    return update;
+}
+
 } // namespace
 
 class TerminalTypesTest : public QObject {
@@ -37,6 +50,8 @@ private Q_SLOTS:
     void validatesStrictDirtyRowOrder();
     void preservesCopyOnWriteAcrossIndependentDeltas();
     void rejectsUnrepresentableFrameSize();
+    void indexesOsc8CellsAcrossSparseUpdates();
+    void rejectsMalformedOsc8UpdatesAtomically();
     void ordersSearchCellsByRowThenColumn();
     void resolvesClipboardRoutingWithoutPlatformAssumptions();
 };
@@ -234,6 +249,169 @@ void TerminalTypesTest::rejectsUnrepresentableFrameSize()
     QCOMPARE(frame.columns, 0);
     QCOMPARE(frame.rows, 0);
     QVERIFY(frame.cells.isEmpty());
+}
+
+void TerminalTypesTest::indexesOsc8CellsAcrossSparseUpdates()
+{
+    TerminalOsc8Index index;
+    QVERIFY(!index.hasFrame());
+    QVERIFY(index.candidates().isEmpty());
+
+    TerminalUpdate full;
+    full.columns = 5;
+    full.rows = 4;
+    full.fullFrame = true;
+    full.contentRevision = 7;
+    full.dirtyRows = {
+        hyperlinkRow(0, 5, {1, 4}),
+        hyperlinkRow(1, 5, {}),
+        hyperlinkRow(2, 5, {2}),
+        hyperlinkRow(3, 5, {0}),
+    };
+    QVERIFY(index.apply(full));
+    QVERIFY(index.hasFrame());
+    QCOMPARE(index.columns(), 5);
+    QCOMPARE(index.rows(), 4);
+    QCOMPARE(index.contentRevision(), quint64{7});
+    QCOMPARE(index.candidates(), QVector<QPoint>({
+        QPoint(1, 0), QPoint(4, 0), QPoint(2, 2), QPoint(0, 3),
+    }));
+    QVERIFY(index.containsCoordinate(0, 0));
+    QVERIFY(index.containsCoordinate(4, 3));
+    QVERIFY(!index.containsCoordinate(-1, 0));
+    QVERIFY(!index.containsCoordinate(5, 0));
+    QVERIFY(!index.containsCoordinate(0, 4));
+
+    TerminalUpdate partial;
+    partial.columns = 5;
+    partial.rows = 4;
+    partial.contentRevision = 8;
+    partial.dirtyRows = {
+        hyperlinkRow(1, 5, {0, 3}),
+        hyperlinkRow(2, 5, {1, 4}),
+    };
+    QVERIFY(index.apply(partial));
+    QCOMPARE(index.candidates(), QVector<QPoint>({
+        QPoint(1, 0), QPoint(4, 0),
+        QPoint(0, 1), QPoint(3, 1),
+        QPoint(1, 2), QPoint(4, 2),
+        QPoint(0, 3),
+    }));
+
+    const QPoint *const unchangedStorage = index.candidates().constData();
+    TerminalUpdate unchangedLinks;
+    unchangedLinks.columns = 5;
+    unchangedLinks.rows = 4;
+    unchangedLinks.contentRevision = 9;
+    unchangedLinks.dirtyRows = {hyperlinkRow(2, 5, {1, 4})};
+    QVERIFY(index.apply(unchangedLinks));
+    QCOMPARE(index.contentRevision(), quint64{9});
+    QCOMPARE(index.candidates().constData(), unchangedStorage);
+
+    TerminalUpdate removal;
+    removal.columns = 5;
+    removal.rows = 4;
+    removal.contentRevision = 10;
+    removal.dirtyRows = {hyperlinkRow(1, 5, {})};
+    QVERIFY(index.apply(removal));
+    QCOMPARE(index.candidates(), QVector<QPoint>({
+        QPoint(1, 0), QPoint(4, 0),
+        QPoint(1, 2), QPoint(4, 2),
+        QPoint(0, 3),
+    }));
+
+    const QPoint *const candidateStorage = index.candidates().constData();
+    TerminalUpdate metadataOnly;
+    metadataOnly.columns = 5;
+    metadataOnly.rows = 4;
+    metadataOnly.contentRevision = 12;
+    metadataOnly.cursorChanged = true;
+    QVERIFY(index.apply(metadataOnly));
+    QCOMPARE(index.contentRevision(), quint64{12});
+    QCOMPARE(index.candidates().constData(), candidateStorage);
+
+    TerminalUpdate replacement;
+    replacement.columns = 3;
+    replacement.rows = 2;
+    replacement.fullFrame = true;
+    replacement.contentRevision = 13;
+    replacement.dirtyRows = {
+        hyperlinkRow(0, 3, {}),
+        hyperlinkRow(1, 3, {2}),
+    };
+    QVERIFY(index.apply(replacement));
+    QCOMPARE(index.columns(), 3);
+    QCOMPARE(index.rows(), 2);
+    QCOMPARE(index.candidates(), QVector<QPoint>({QPoint(2, 1)}));
+
+    index.clear();
+    QVERIFY(!index.hasFrame());
+    QVERIFY(index.candidates().isEmpty());
+    QVERIFY(!index.apply(removal));
+    QVERIFY(!index.hasFrame());
+}
+
+void TerminalTypesTest::rejectsMalformedOsc8UpdatesAtomically()
+{
+    TerminalOsc8Index index;
+    TerminalUpdate full;
+    full.columns = 3;
+    full.rows = 2;
+    full.fullFrame = true;
+    full.contentRevision = 4;
+    full.dirtyRows = {
+        hyperlinkRow(0, 3, {0, 2}),
+        hyperlinkRow(1, 3, {1}),
+    };
+    QVERIFY(index.apply(full));
+    const QVector<QPoint> expected = index.candidates();
+
+    const auto verifyRejected = [&index, &expected](TerminalUpdate update) {
+        QVERIFY(!index.apply(update));
+        QVERIFY(index.hasFrame());
+        QCOMPARE(index.columns(), 3);
+        QCOMPARE(index.rows(), 2);
+        QCOMPARE(index.contentRevision(), quint64{4});
+        QCOMPARE(index.candidates(), expected);
+    };
+
+    TerminalUpdate wrongWidth;
+    wrongWidth.columns = 3;
+    wrongWidth.rows = 2;
+    wrongWidth.contentRevision = 5;
+    wrongWidth.dirtyRows = {hyperlinkRow(0, 2, {0})};
+    verifyRejected(wrongWidth);
+
+    TerminalUpdate unordered;
+    unordered.columns = 3;
+    unordered.rows = 2;
+    unordered.contentRevision = 5;
+    unordered.dirtyRows = {
+        hyperlinkRow(1, 3, {}),
+        hyperlinkRow(0, 3, {}),
+    };
+    verifyRejected(unordered);
+
+    TerminalUpdate incompleteFull;
+    incompleteFull.columns = 3;
+    incompleteFull.rows = 2;
+    incompleteFull.fullFrame = true;
+    incompleteFull.contentRevision = 5;
+    incompleteFull.dirtyRows = {hyperlinkRow(0, 3, {})};
+    verifyRejected(incompleteFull);
+
+    TerminalUpdate mismatchedPartial;
+    mismatchedPartial.columns = 4;
+    mismatchedPartial.rows = 2;
+    mismatchedPartial.contentRevision = 5;
+    verifyRejected(mismatchedPartial);
+
+    TerminalUpdate unrepresentable;
+    unrepresentable.columns = std::numeric_limits<int>::max();
+    unrepresentable.rows = std::numeric_limits<int>::max();
+    unrepresentable.fullFrame = true;
+    unrepresentable.contentRevision = 5;
+    verifyRejected(unrepresentable);
 }
 
 void TerminalTypesTest::ordersSearchCellsByRowThenColumn()

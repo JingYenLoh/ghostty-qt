@@ -261,6 +261,13 @@ queued boundary and frees every anchor on the session thread before terminal
 destruction. Disabling `link-url` live cancels a regex lease and recomputes a
 stationary hover; explicit OSC 8 interaction is unaffected.
 
+The worker does not retain a second full `TerminalFrame` for OSC 8 lookup. It
+applies each render delta to a sparse, per-row index of linked columns. Dirty
+rows replace only their own index entries, and the row-major point list needed
+by URI grouping is materialized lazily and reused until indexed positions
+change or a full frame replaces the viewport. Metadata-only revisions therefore
+update the coordinate handshake without allocating or scanning the viewport.
+
 Public `libghostty-vt` exposes the destination URI but not the OSC 8 hyperlink
 ID. OSC 8 hover grouping therefore compares the URI of every visible candidate:
 two separate IDs with the same URI can be underlined together. Regex grouping

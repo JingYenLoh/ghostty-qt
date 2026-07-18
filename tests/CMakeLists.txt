@@ -13,6 +13,7 @@ qt_add_executable(test-terminal-types
     test_terminal_types.cpp
     ../src/terminal_actions.h
     ../src/terminal_clipboard.h
+    ../src/terminal_osc8_index.h
     ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
@@ -37,6 +38,7 @@ qt_add_executable(test-session-worker
     test_session_worker.cpp
     ../src/session_worker.cpp
     ../src/session_worker.h
+    ../src/terminal_osc8_index.h
     ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
@@ -69,6 +71,7 @@ qt_add_executable(test-terminal-pane
     ../src/terminal_pane.h
     ../src/launch_options.cpp
     ../src/launch_options.h
+    ../src/terminal_osc8_index.h
     ../src/terminal_session_options.h
     ../src/terminal_types.h
 )
@@ -113,6 +116,7 @@ qt_add_executable(test-terminal-workspace
     ../src/terminal_clipboard.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
+    ../src/terminal_osc8_index.h
     ../src/terminal_session_options.h
     ../src/terminal_workspace.cpp
     ../src/terminal_workspace.h

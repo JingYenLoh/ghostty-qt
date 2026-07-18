@@ -210,12 +210,11 @@ struct TerminalUpdate {
     }
 };
 
-// Applies an update without exposing terminal handles to the UI. Validation
-// happens before mutation so a malformed or incomplete delta cannot leave the
-// retained frame half-updated. Returns false for an invalid update or a
-// partial update whose dimensions do not match the retained frame.
-[[nodiscard]] inline bool applyTerminalUpdate(
-    TerminalFrame &frame, const TerminalUpdate &update)
+// Validates the value-only shape shared by every retained view of a render
+// update. Keeping one representability ceiling prevents the GUI frame and
+// worker-side indexes from accepting different viewport dimensions.
+[[nodiscard]] inline bool validTerminalUpdateShape(
+    const TerminalUpdate &update)
 {
     if (update.columns <= 0 || update.rows <= 0) {
         return false;
@@ -226,8 +225,6 @@ struct TerminalUpdate {
     if (columnCount > QVector<TerminalCell>::maxSize() / rowCount) {
         return false;
     }
-    const qsizetype cellCount = columnCount * rowCount;
-
     int previousRow = -1;
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         if (row.row <= previousRow || row.row >= update.rows
@@ -240,8 +237,25 @@ struct TerminalUpdate {
         if (update.dirtyRows.size() != update.rows) {
             return false;
         }
-    } else if (frame.columns != update.columns || frame.rows != update.rows
-               || frame.cells.size() != cellCount) {
+    }
+    return true;
+}
+
+// Applies an update without exposing terminal handles to the UI. Validation
+// happens before mutation so a malformed or incomplete delta cannot leave the
+// retained frame half-updated. Returns false for an invalid update or a
+// partial update whose dimensions do not match the retained frame.
+[[nodiscard]] inline bool applyTerminalUpdate(
+    TerminalFrame &frame, const TerminalUpdate &update)
+{
+    if (!validTerminalUpdateShape(update)) {
+        return false;
+    }
+    const qsizetype cellCount = static_cast<qsizetype>(update.columns)
+        * update.rows;
+    if (!update.fullFrame
+        && (frame.columns != update.columns || frame.rows != update.rows
+            || frame.cells.size() != cellCount)) {
         return false;
     }
 
