@@ -72,6 +72,8 @@ struct ParsedConfig {
     bool clipboardTrimTrailingSpaces = true;
     bool hasCopyOnSelect = false;
     QString copyOnSelect = QStringLiteral("true");
+    bool hasSelectionClearOnTyping = false;
+    bool selectionClearOnTyping = true;
     bool hasSelectionClearOnCopy = false;
     bool selectionClearOnCopy = false;
     bool hasMiddleClickAction = false;
@@ -636,6 +638,14 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->hasCopyOnSelect = true;
             parsed->copyOnSelect = value;
+        } else if (key == QStringLiteral("selection-clear-on-typing")) {
+            if (!parseBool(value, &parsed->selectionClearOnTyping)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid selection-clear-on-typing in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->hasSelectionClearOnTyping = true;
         } else if (key == QStringLiteral("selection-clear-on-copy")) {
             if (!parseBool(value, &parsed->selectionClearOnCopy)) {
                 setError(errorMessage,
@@ -1171,7 +1181,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         || !defaults.hasFaintOpacity
         || !defaults.hasScrollbackLimit || !defaults.hasConfirmCloseSurface
         || !defaults.hasClipboardTrimTrailingSpaces
-        || !defaults.hasCopyOnSelect || !defaults.hasSelectionClearOnCopy
+        || !defaults.hasCopyOnSelect || !defaults.hasSelectionClearOnTyping
+        || !defaults.hasSelectionClearOnCopy
         || !defaults.hasMiddleClickAction
         || !defaults.hasLinkUrl
         || !defaults.hasLinkPreviews
@@ -1273,6 +1284,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const QString copyOnSelect =
         mergedValue(changes.hasCopyOnSelect, changes.copyOnSelect,
                     defaults.copyOnSelect);
+    const bool selectionClearOnTyping =
+        mergedValue(changes.hasSelectionClearOnTyping,
+                    changes.selectionClearOnTyping,
+                    defaults.selectionClearOnTyping);
     const bool selectionClearOnCopy =
         mergedValue(changes.hasSelectionClearOnCopy,
                     changes.selectionClearOnCopy,
@@ -1325,6 +1340,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
                            clipboardTrimTrailingSpaces);
     snapshot.values.insert(QStringLiteral("copy-on-select"), copyOnSelect);
+    snapshot.values.insert(QStringLiteral("selection-clear-on-typing"),
+                           selectionClearOnTyping);
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
                            selectionClearOnCopy);
     snapshot.values.insert(QStringLiteral("middle-click-action"),

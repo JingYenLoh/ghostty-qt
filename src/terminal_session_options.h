@@ -37,6 +37,7 @@ enum class TerminalClipboardDestination : quint8 {
 struct TerminalSelectionClipboardOptions {
     bool trimTrailingSpaces = true;
     TerminalCopyOnSelectMode copyOnSelect = TerminalCopyOnSelectMode::Primary;
+    bool clearOnTyping = true;
     bool clearOnCopy = false;
 
     bool operator==(const TerminalSelectionClipboardOptions &) const = default;

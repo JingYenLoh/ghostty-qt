@@ -331,6 +331,12 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         }
     }
 
+    const QVariant clearOnTyping = snapshot.values.value(
+        QStringLiteral("selection-clear-on-typing"));
+    if (clearOnTyping.metaType() == QMetaType::fromType<bool>()) {
+        result.selectionClipboard.clearOnTyping = clearOnTyping.toBool();
+    }
+
     const QVariant clearOnCopy = snapshot.values.value(
         QStringLiteral("selection-clear-on-copy"));
     if (clearOnCopy.metaType() == QMetaType::fromType<bool>()) {

@@ -91,6 +91,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(options.selectionClipboard.copyOnSelect,
              TerminalCopyOnSelectMode::Primary);
+    QVERIFY(options.selectionClipboard.clearOnTyping);
     QVERIFY(!options.selectionClipboard.clearOnCopy);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
@@ -285,6 +286,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
                            false);
     snapshot.values.insert(QStringLiteral("copy-on-select"),
                            QStringLiteral("clipboard"));
+    snapshot.values.insert(QStringLiteral("selection-clear-on-typing"), false);
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"), true);
     snapshot.values.insert(QStringLiteral("middle-click-action"),
                            QStringLiteral("ignore"));
@@ -353,6 +355,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QVERIFY(!cliResult.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(cliResult.selectionClipboard.copyOnSelect,
              TerminalCopyOnSelectMode::PrimaryAndClipboard);
+    QVERIFY(!cliResult.selectionClipboard.clearOnTyping);
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.linkUrl);
@@ -507,6 +510,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
                            QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("copy-on-select"), true);
+    snapshot.values.insert(QStringLiteral("selection-clear-on-typing"),
+                           QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
                            QStringLiteral("true"));
     snapshot.values.insert(QStringLiteral("middle-click-action"), false);
@@ -539,6 +544,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.selectionClipboard = {
         .trimTrailingSpaces = false,
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnTyping = false,
         .clearOnCopy = true,
     };
     options.middleClickAction = MiddleClickAction::Ignore;
@@ -600,6 +606,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     const TerminalSelectionClipboardOptions expectedClipboard{
         .trimTrailingSpaces = false,
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnTyping = false,
         .clearOnCopy = true,
     };
     QCOMPARE(launch.runtime.selectionClipboard, expectedClipboard);

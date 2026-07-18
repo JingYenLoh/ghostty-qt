@@ -284,6 +284,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.selectionClipboard = {
         .trimTrailingSpaces = false,
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnTyping = false,
         .clearOnCopy = true,
     };
     reloaded.middleClickAction = MiddleClickAction::Ignore;

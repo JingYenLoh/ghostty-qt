@@ -44,6 +44,7 @@ QByteArray defaultOutput()
                           "confirm-close-surface = true\n"
                           "clipboard-trim-trailing-spaces = true\n"
                           "copy-on-select = true\n"
+                          "selection-clear-on-typing = true\n"
                           "selection-clear-on-copy = false\n"
                           "middle-click-action = primary-paste\n"
                           "link-url = true\n"
@@ -282,6 +283,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "confirm-close-surface = always\r\n"
             "clipboard-trim-trailing-spaces = false\r\n"
             "copy-on-select = clipboard\r\n"
+            "selection-clear-on-typing = false\r\n"
             "selection-clear-on-copy = true\r\n"
             "middle-click-action = ignore\r\n"
             "link-url = false\r\n"
@@ -359,6 +361,9 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(QStringLiteral("copy-on-select")).toString(),
              QStringLiteral("clipboard"));
     QCOMPARE(snapshot.values.value(
+                 QStringLiteral("selection-clear-on-typing")).toBool(),
+             false);
+    QCOMPARE(snapshot.values.value(
                  QStringLiteral("selection-clear-on-copy")).toBool(),
              true);
     QCOMPARE(snapshot.values.value(QStringLiteral("middle-click-action")).toString(),
@@ -431,6 +436,8 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMo
         QStringLiteral("clipboard-trim-trailing-spaces")).toBool());
     QCOMPARE(defaults.value(QStringLiteral("copy-on-select")).toString(),
              QStringLiteral("true"));
+    QVERIFY(defaults.value(
+        QStringLiteral("selection-clear-on-typing")).toBool());
     QVERIFY(!defaults.value(
         QStringLiteral("selection-clear-on-copy")).toBool());
     QCOMPARE(defaults.value(QStringLiteral("middle-click-action")).toString(),
@@ -570,6 +577,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
          QStringLiteral("Invalid copy-on-select in Ghostty config output at line 1")},
         {QByteArrayLiteral("copy-on-select = TRUE\n"),
          QStringLiteral("Invalid copy-on-select in Ghostty config output at line 1")},
+        {QByteArrayLiteral("selection-clear-on-typing = yes\n"),
+         QStringLiteral("Invalid selection-clear-on-typing in Ghostty config output at line 1")},
         {QByteArrayLiteral("selection-clear-on-copy = yes\n"),
          QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line 1")},
         {QByteArrayLiteral("middle-click-action = paste\n"),
@@ -735,6 +744,7 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
             "faint-opacity = 0.25\n"
             "clipboard-trim-trailing-spaces = 0\n"
             "copy-on-select = clipboard\n"
+            "selection-clear-on-typing = 0\n"
             "selection-clear-on-copy = t\n"
             "middle-click-action = ignore\n"
             "keybind = clear\n"
@@ -801,6 +811,8 @@ void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUn
     QCOMPARE(result.snapshot->values.value(QStringLiteral("copy-on-select"))
                  .toString(),
              QStringLiteral("clipboard"));
+    QVERIFY(!result.snapshot->values.value(
+        QStringLiteral("selection-clear-on-typing")).toBool());
     QVERIFY(result.snapshot->values.value(
         QStringLiteral("selection-clear-on-copy")).toBool());
     QCOMPARE(result.snapshot->values.value(QStringLiteral("middle-click-action"))
