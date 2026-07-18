@@ -301,8 +301,8 @@
       "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups plus a command-submission latch detect external jobs, but long-running shell builtins remain indistinguishable from an idle shell until Ghostty semantic prompt metadata and shell integration are wired."
     },
     "copy-on-select": {
-      "status": "supported",
-      "note": "Linux false, primary-only true, and clipboard modes apply live. Selection release and select-all copy to the primary selection, both clipboards, or neither, with standard-clipboard fallback when the platform lacks a primary selection."
+      "status": "partial",
+      "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies currently contain plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
     },
     "cursor-color": {
       "status": "supported",
@@ -705,7 +705,7 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Configured plain/mixed copy routes to session-thread selection formatting with live trailing-space trimming and optional post-copy clearing; styled VT and HTML formats remain absent."
+          "note": "Plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. The accepted mixed spelling currently emits plain text, while VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "copy_url_to_clipboard": {
           "status": "partial",
@@ -863,7 +863,7 @@
         },
         "select_all": {
           "status": "supported",
-          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction."
+          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction. Automatic-copy MIME format parity is tracked separately by copy-on-select."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",
