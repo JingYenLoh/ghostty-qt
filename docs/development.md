@@ -2,7 +2,8 @@
 
 The checked-in CMake presets are the supported developer entry points. Each
 preset uses the project-local Zig executable at `.local/bin/zig` and builds in
-its own directory:
+its own directory. The top-level build requires C++23 for every C++ target and
+disables compiler-specific language extensions.
 
 | Preset | C++ toolchain | Purpose |
 | --- | --- | --- |

@@ -1,7 +1,7 @@
 # ghostty-qt
 
 `ghostty-qt` is a Linux, Wayland-only terminal emulator MVP built with Qt Quick,
-C++20, and Ghostty's `libghostty-vt` C API. Ghostty supplies terminal parsing,
+C++23, and Ghostty's `libghostty-vt` C API. Ghostty supplies terminal parsing,
 screen state, selection, and input encoding; a separate helper uses the pinned
 Ghostty application parser for configuration; Qt supplies the window, controls,
 scene-graph rendering, clipboard, and input-method integration.
@@ -71,7 +71,7 @@ the host-language comparison and remaining engineering risks.
 - Linux with a Wayland session and the Qt Wayland platform plugin.
 - Qt 6.8 or newer with Core, D-Bus, Gui, Qml, Quick, Quick Controls 2, and Qt
   Test development components.
-- A C++20 compiler, CMake 3.24 or newer, and Ninja.
+- A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
 - `pkg-config` and the libxkbcommon development package.
 - Python 3.10 or newer for the parity-ledger test.
 - Zig **exactly 0.15.2**. `zig version` must print `0.15.2`.

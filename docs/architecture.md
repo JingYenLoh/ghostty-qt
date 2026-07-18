@@ -9,12 +9,12 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | Layer | Technology | Responsibility |
 | --- | --- | --- |
 | Window and chrome | Qt Quick, QML, Quick Controls 2 | Window, tab strip, toolbar, and confirmation dialogs. |
-| Terminal item and workspace | C++20, Qt Quick | Scene-graph rendering, input events, focus, tabs, and a recursive split tree. |
+| Terminal item and workspace | C++23, Qt Quick | Scene-graph rendering, input events, focus, tabs, and a recursive split tree. |
 | Session orchestration | Qt Core/Gui on a dedicated `QThread` per pane | PTY I/O, child lifecycle, immutable frame snapshots, and queued UI communication. |
-| Ghostty adapter | C++20 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, search-snapshot, and deferred-effect operations. |
+| Ghostty adapter | C++23 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, search-snapshot, and deferred-effect operations. |
 | Terminal engine | Zig-built static `libghostty-vt` through its C API | VT parsing, terminal state, render-state iteration, selection, and key/mouse/paste encoding. |
 | Configuration | Qt file-watching service plus a helper process | Uses the exact pinned Ghostty application parser, then exposes only selected typed values to the Qt application. |
-| Application keybindings | C++20 plus Qt D-Bus | Routes app-scoped and all-surface actions, and owns the Linux XDG Global Shortcuts portal session. |
+| Application keybindings | C++23 plus Qt D-Bus | Routes app-scoped and all-surface actions, and owns the Linux XDG Global Shortcuts portal session. |
 | Process boundary | Linux `forkpty`, nonblocking file descriptors, `QSocketNotifier` | Shell or command execution and byte transport. |
 | Build | CMake/Ninja plus Zig 0.15.2 | Qt application build, pinned Ghostty build, generated terminfo, and tests. |
 

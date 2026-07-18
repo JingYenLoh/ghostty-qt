@@ -2,7 +2,7 @@
 
 ## Decision
 
-The practical stack for this Linux-only project is **C++20 + Qt Quick/QML**, with
+The practical stack for this Linux-only project is **C++23 + Qt Quick/QML**, with
 Ghostty built by **Zig 0.15.2** and consumed through the stable C-shaped
 `libghostty-vt` API.
 
@@ -15,7 +15,7 @@ is small and does not require a custom language binding runtime.
 
 | Host stack | Feasibility | Assessment |
 | --- | --- | --- |
-| C++20 + Qt Quick/QML | High | Recommended. Direct access to Qt, straightforward C ABI calls into libghostty, mature Linux PTY APIs, and the least integration code. |
+| C++23 + Qt Quick/QML | High | Recommended. Direct access to Qt, straightforward C ABI calls into libghostty, mature Linux PTY APIs, and the least integration code. |
 | Zig host + Qt C++ shim | Medium-low | Zig is excellent for building Ghostty, but Qt still requires a substantial C++ ownership, signal, and QML registration shim. This adds a second application-level language boundary without removing C++. |
 | Rust + Qt bindings | Medium | Technically workable, but introduces binding/code-generation risk around QQuickItem and Qt's threaded object model while libghostty is already a C ABI. It does not improve the critical render or PTY paths for this scope. |
 | Pure QML/JavaScript | Low | Cannot directly own libghostty handles, nonblocking PTY lifecycle, or a high-throughput terminal render path. A native plugin would recreate the C++ architecture anyway. |
