@@ -2,7 +2,6 @@
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
-#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
@@ -11,19 +10,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <utility>
 
 namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
-
-bool fail(QString *errorMessage, const QString &message)
-{
-    if (errorMessage != nullptr) {
-        *errorMessage = message;
-    }
-    return false;
-}
 
 std::optional<QColor> configColor(const GhosttyConfigSnapshot &snapshot,
                                   const QString &key)
@@ -405,14 +395,12 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
     return true;
 }
 
-bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
-                        QString *errorMessage)
+std::expected<LaunchOptions, QString> parseLaunchOptions(
+    const QStringList &arguments)
 {
-    if (options == nullptr) {
-        return fail(errorMessage, QStringLiteral("No output options object was provided."));
-    }
     if (arguments.isEmpty()) {
-        return fail(errorMessage, QStringLiteral("The argument list must include the application name."));
+        return std::unexpected(
+            QStringLiteral("The argument list must include the application name."));
     }
 
     QCommandLineParser parser;
@@ -452,7 +440,7 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
         QStringLiteral("[program [arguments...]]"));
 
     if (!parser.parse(arguments)) {
-        return fail(errorMessage, parser.errorText());
+        return std::unexpected(parser.errorText());
     }
 
     LaunchOptions parsed;
@@ -462,9 +450,9 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
         const QString directory = QDir::cleanPath(parser.value(workingDirectoryOption));
         const QFileInfo directoryInfo(directory);
         if (!directoryInfo.exists() || !directoryInfo.isDir()) {
-            return fail(errorMessage,
-                        QStringLiteral("Working directory does not exist or is not a directory: %1")
-                            .arg(directory));
+            return std::unexpected(
+                QStringLiteral("Working directory does not exist or is not a directory: %1")
+                    .arg(directory));
         }
         parsed.workingDirectory = directory;
     }
@@ -479,9 +467,9 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
         bool ok = false;
         const double fontSize = QLocale::c().toDouble(value, &ok);
         if (!ok || !std::isfinite(fontSize) || fontSize <= 0.0) {
-            return fail(errorMessage,
-                        QStringLiteral("Invalid font size '%1': expected a finite number greater than 0.")
-                            .arg(value));
+            return std::unexpected(
+                QStringLiteral("Invalid font size '%1': expected a finite number greater than 0.")
+                    .arg(value));
         }
         parsed.fontSize = fontSize;
         parsed.fontSizeExplicit = true;
@@ -492,8 +480,7 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
         bool ok = false;
         const qlonglong scrollbackLines = value.toLongLong(&ok);
         if (!ok || scrollbackLines < 0 || scrollbackLines > kMaximumScrollbackLines) {
-            return fail(
-                errorMessage,
+            return std::unexpected(
                 QStringLiteral("Invalid scrollback line count '%1': expected an integer from 0 to %2.")
                     .arg(value)
                     .arg(kMaximumScrollbackLines));
@@ -510,15 +497,5 @@ bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
     parsed.showVersion = parser.isSet(versionOption);
     parsed.program = parser.positionalArguments();
 
-    *options = std::move(parsed);
-    if (errorMessage != nullptr) {
-        errorMessage->clear();
-    }
-    return true;
-}
-
-bool parseLaunchOptions(QCoreApplication &application, LaunchOptions *options,
-                        QString *errorMessage)
-{
-    return parseLaunchOptions(application.arguments(), options, errorMessage);
+    return parsed;
 }

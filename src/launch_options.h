@@ -7,7 +7,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
-class QCoreApplication;
+#include <expected>
 
 enum class ConfirmCloseMode {
     Never,
@@ -93,10 +93,6 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
                         bool hasActiveProcess);
 
 // The first argument is expected to be the application name, as it is in
-// QCoreApplication::arguments(). This overload keeps option parsing easy to
-// exercise without constructing additional application objects in tests.
-bool parseLaunchOptions(const QStringList &arguments, LaunchOptions *options,
-                        QString *errorMessage = nullptr);
-
-bool parseLaunchOptions(QCoreApplication &application, LaunchOptions *options,
-                        QString *errorMessage = nullptr);
+// QCoreApplication::arguments().
+[[nodiscard]] std::expected<LaunchOptions, QString> parseLaunchOptions(
+    const QStringList &arguments);

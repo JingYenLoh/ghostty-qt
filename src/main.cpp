@@ -19,6 +19,7 @@
 #include <QtQml>
 
 #include <memory>
+#include <utility>
 
 namespace {
 
@@ -182,13 +183,13 @@ int main(int argc, char *argv[])
         arguments.append(QString::fromLocal8Bit(argv[index]));
     }
 
-    LaunchOptions options;
-    QString parseError;
-    if (!parseLaunchOptions(arguments, &options, &parseError)) {
-        QTextStream(stderr) << "ghostty-qt: " << parseError << '\n'
+    auto parsedOptions = parseLaunchOptions(arguments);
+    if (!parsedOptions) {
+        QTextStream(stderr) << "ghostty-qt: " << parsedOptions.error() << '\n'
                             << "Try 'ghostty-qt --help' for usage.\n";
         return 2;
     }
+    LaunchOptions options = std::move(*parsedOptions);
     if (options.showHelp) {
         printHelp();
         return 0;

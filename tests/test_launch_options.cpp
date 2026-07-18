@@ -9,6 +9,12 @@
 
 namespace {
 
+QString errorMessage(
+    const std::expected<LaunchOptions, QString> &result)
+{
+    return result ? QString{} : result.error();
+}
+
 QVariantList testPalette()
 {
     QVariantList palette;
@@ -34,7 +40,7 @@ private Q_SLOTS:
     void rejectsInvalidScrollbackLines_data();
     void rejectsInvalidScrollbackLines();
     void rejectsUnknownOption();
-    void preservesOutputOnFailure();
+    void rejectsMissingApplicationName();
     void overlaysGhosttySnapshotAndPreservesCliFonts();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
@@ -48,11 +54,10 @@ private Q_SLOTS:
 
 void LaunchOptionsTest::defaults()
 {
-    LaunchOptions options;
-    QString error;
-
-    QVERIFY2(parseLaunchOptions({QStringLiteral("ghostty-qt")}, &options, &error),
-             qPrintable(error));
+    const auto result =
+        parseLaunchOptions({QStringLiteral("ghostty-qt")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    const LaunchOptions &options = *result;
     QCOMPARE(options.workingDirectory, QDir::currentPath());
     QVERIFY(options.fontFamily.isEmpty());
     QCOMPARE(options.fontSize, 12.0);
@@ -100,7 +105,6 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
     QVERIFY(!options.hold);
     QVERIFY(options.program.isEmpty());
-    QVERIFY(error.isEmpty());
 }
 
 void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
@@ -108,8 +112,6 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
 
-    LaunchOptions options;
-    QString error;
     const QStringList arguments{
         QStringLiteral("ghostty-qt"),
         QStringLiteral("--working-directory"),
@@ -126,7 +128,9 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
         QStringLiteral("printf hello"),
     };
 
-    QVERIFY2(parseLaunchOptions(arguments, &options, &error), qPrintable(error));
+    const auto result = parseLaunchOptions(arguments);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    const LaunchOptions &options = *result;
     QCOMPARE(options.workingDirectory, QDir::cleanPath(directory.path()));
     QCOMPARE(options.fontFamily, QStringLiteral("Iosevka Term"));
     QCOMPARE(options.fontSize, 15.5);
@@ -147,12 +151,12 @@ void LaunchOptionsTest::rejectsInvalidWorkingDirectory()
     QVERIFY(directory.isValid());
     const QString missingPath = directory.filePath(QStringLiteral("missing"));
 
-    LaunchOptions options;
-    QString error;
-    QVERIFY(!parseLaunchOptions({QStringLiteral("ghostty-qt"),
-                                 QStringLiteral("--working-directory"), missingPath},
-                                &options, &error));
-    QVERIFY(error.contains(QStringLiteral("does not exist or is not a directory")));
+    const auto result = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"),
+         QStringLiteral("--working-directory"), missingPath});
+    QVERIFY(!result.has_value());
+    QVERIFY(result.error().contains(
+        QStringLiteral("does not exist or is not a directory")));
 }
 
 void LaunchOptionsTest::rejectsFileAsWorkingDirectory()
@@ -164,12 +168,12 @@ void LaunchOptionsTest::rejectsFileAsWorkingDirectory()
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
 
-    LaunchOptions options;
-    QString error;
-    QVERIFY(!parseLaunchOptions({QStringLiteral("ghostty-qt"),
-                                 QStringLiteral("--working-directory"), filePath},
-                                &options, &error));
-    QVERIFY(error.contains(QStringLiteral("does not exist or is not a directory")));
+    const auto result = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"),
+         QStringLiteral("--working-directory"), filePath});
+    QVERIFY(!result.has_value());
+    QVERIFY(result.error().contains(
+        QStringLiteral("does not exist or is not a directory")));
 }
 
 void LaunchOptionsTest::rejectsInvalidFontSize_data()
@@ -186,12 +190,11 @@ void LaunchOptionsTest::rejectsInvalidFontSize()
 {
     QFETCH(QString, value);
 
-    LaunchOptions options;
-    QString error;
-    QVERIFY(!parseLaunchOptions({QStringLiteral("ghostty-qt"), QStringLiteral("--font-size"),
-                                 value},
-                                &options, &error));
-    QVERIFY(error.contains(QStringLiteral("Invalid font size")));
+    const auto result = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"), QStringLiteral("--font-size"),
+         value});
+    QVERIFY(!result.has_value());
+    QVERIFY(result.error().contains(QStringLiteral("Invalid font size")));
 }
 
 void LaunchOptionsTest::rejectsInvalidScrollbackLines_data()
@@ -208,33 +211,28 @@ void LaunchOptionsTest::rejectsInvalidScrollbackLines()
 {
     QFETCH(QString, value);
 
-    LaunchOptions options;
-    QString error;
-    QVERIFY(!parseLaunchOptions({QStringLiteral("ghostty-qt"),
-                                 QStringLiteral("--scrollback-lines"), value},
-                                &options, &error));
-    QVERIFY(error.contains(QStringLiteral("Invalid scrollback line count")));
+    const auto result = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"),
+         QStringLiteral("--scrollback-lines"), value});
+    QVERIFY(!result.has_value());
+    QVERIFY(result.error().contains(
+        QStringLiteral("Invalid scrollback line count")));
 }
 
 void LaunchOptionsTest::rejectsUnknownOption()
 {
-    LaunchOptions options;
-    QString error;
-    QVERIFY(!parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"), QStringLiteral("--not-an-option")}, &options, &error));
-    QVERIFY(!error.isEmpty());
+    const auto result = parseLaunchOptions(
+        {QStringLiteral("ghostty-qt"), QStringLiteral("--not-an-option")});
+    QVERIFY(!result.has_value());
+    QVERIFY(!result.error().isEmpty());
 }
 
-void LaunchOptionsTest::preservesOutputOnFailure()
+void LaunchOptionsTest::rejectsMissingApplicationName()
 {
-    LaunchOptions options;
-    options.fontFamily = QStringLiteral("sentinel");
-    options.fontSize = 42.0;
-
-    QVERIFY(!parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"), QStringLiteral("--font-size=0")}, &options));
-    QCOMPARE(options.fontFamily, QStringLiteral("sentinel"));
-    QCOMPARE(options.fontSize, 42.0);
+    const auto result = parseLaunchOptions({});
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(),
+             QStringLiteral("The argument list must include the application name."));
 }
 
 void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
