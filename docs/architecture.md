@@ -118,17 +118,22 @@ pane shutdowns first so grace periods overlap.
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
-6. `TerminalPane::updatePaintNode()` repopulates its retained render-node root. Public
-   `QSGTextNode` objects use `QtRendering`, which stores distance-field glyphs
-   in GPU atlases on hardware RHI backends. Color-batched solid geometry draws cell
-   backgrounds, selections, search results, cursor shapes, text decorations,
-   overlays, and the scrollbar. Cell values retain foreground provenance and bold, faint,
-   inverse, invisible, underline, strike-through, overline, and text-blink
-   attributes so frontend-only appearance rules do not have to be flattened at
-   the worker boundary.
-7. Each nonempty cell is shaped with `QTextLayout` and placed at an explicit
-   grid coordinate before its glyph data is added to a text node. This avoids
-   fallback-font and wide-cell advances shifting later cells.
+6. `TerminalPane::updatePaintNode()` keeps a fixed before-text/main-text/after-text
+   scene-graph root. Main terminal text is retained in one public `QSGTextNode`
+   per visible row; accepted row epochs rebuild only changed rows, while font,
+   geometry, appearance, palette, search, and frame-shape changes rebuild the
+   complete text layer. Old and new block-cursor rows are rebuilt when its text
+   override changes. The row nodes use `QtRendering`, which stores
+   distance-field glyphs in GPU atlases on hardware RHI backends.
+7. Color-batched transient geometry continues to draw cell backgrounds,
+   selections, search results, cursor shapes, text decorations, overlays, and
+   the scrollbar in the same global painter order. Each nonempty cell in a
+   rebuilt row is shaped with `QTextLayout` and placed at an explicit grid
+   coordinate. This avoids fallback-font and wide-cell advances shifting later
+   cells. Cell values retain foreground provenance and bold, faint, inverse,
+   invisible, underline, strike-through, overline, and text-blink attributes so
+   frontend-only appearance rules do not have to be flattened at the worker
+   boundary.
 
 The application-facing adapter header contains only Qt and project value
 types; the Ghostty C header and every Ghostty handle remain in its private
@@ -144,10 +149,13 @@ supplies solid primitives on RHI backends. Qt's software adaptation does not
 render that public vertex-color material, so the test/fallback path uses
 `QSGSimpleRectNode` groups for correctness.
 No intermediate raster-image upload sits between the frame and the scene
-graph. The current implementation retains the root but recreates its children
-for each update and performs a `QTextLayout` per rendered cell, so shaping,
-node construction, and full-frame snapshot copying remain CPU-side performance
-targets.
+graph. Qt's implicitly shared frame snapshot is normally an O(1) reference-count
+operation rather than a deep cell copy. The renderer still scans visible cells
+and rebuilds transient solid geometry on every presented update. During
+ordinary sparse updates, it shapes text and recreates glyph data only for rows
+whose persistent epochs or derived block-cursor text state changed; global
+text-state changes rebuild the complete text layer. Larger compatible text runs
+and retained geometry remain possible CPU-side optimizations.
 
 The renderer resolves configured selection, search, and cursor cell-relative
 aliases against each cell's visual colors, applies Ghostty's bold
@@ -759,9 +767,10 @@ in a real Wayland session.
 ## Deliberate renderer-v1 limits
 
 - Dirty-row value updates keep the thread boundary small for ordinary output,
-  while child-node rebuilding and per-cell `QTextLayout` calls still trade CPU
-  performance for an auditable renderer and exact grid placement. Persistent
-  row nodes and larger compatible text runs remain future optimizations.
+  and persistent row text nodes keep per-cell `QTextLayout` work local to those
+  rows. Transient solid geometry still scans the visible grid and rebuilds by
+  painter layer; larger compatible text runs and retained geometry remain
+  future optimizations.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends, but
   there is no ligature shaping across terminal cells, color-emoji pipeline, or
   Kitty graphics/inline-image renderer.

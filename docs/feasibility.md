@@ -66,11 +66,11 @@ The project is feasible as a terminal MVP, but production parity is a larger
 effort. The main risks are renderer performance, the evolving libghostty API,
 advanced text/graphics support, and distribution:
 
-- Renderer-v1 has the intended QSG/GPU glyph path and dirty-row worker/UI
-  transport, but still rebuilds the retained root's child nodes and lays out
-  text per cell when presenting an update. Persistent row nodes and larger
-  compatible runs will be needed to reduce CPU overhead in high-throughput
-  workloads.
+- Renderer-v1 has the intended QSG/GPU glyph path, dirty-row worker/UI
+  transport, and persistent main-text nodes per visible row. It still scans
+  the visible grid and rebuilds transient geometry for each presented update,
+  and a changed row still lays out text per cell. Larger compatible runs and
+  retained geometry are the remaining high-throughput CPU opportunities.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji, ligatures across cells, Kitty graphics, and search each require

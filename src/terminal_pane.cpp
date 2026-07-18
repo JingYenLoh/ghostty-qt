@@ -3,6 +3,7 @@
 #include "ghostty_action_catalog.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
+#include "terminal_pane_render_probe_p.h"
 
 #include <QClipboard>
 #include <QDesktopServices>
@@ -12,6 +13,9 @@
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+#include <QHash>
+#endif
 #include <QHoverEvent>
 #include <QInputMethod>
 #include <QInputMethodEvent>
@@ -33,6 +37,10 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+#include <atomic>
+#endif
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -339,6 +347,175 @@ void appendTextLayout(QSGTextNode *node, const QString &text, const QFont &font,
     }
 }
 
+void clearNodeChildren(QSGNode *parent)
+{
+    while (QSGNode *child = parent->firstChild()) {
+        parent->removeChildNode(child);
+        delete child;
+    }
+}
+
+struct TerminalTextRenderState {
+    QQuickWindow *window = nullptr;
+    QRectF viewport;
+    QFont font;
+    TerminalAppearance appearance;
+    QColor foreground;
+    QColor background;
+    QVector<QColor> palette;
+    QBitArray searchCandidateCells;
+    QBitArray searchSelectedCells;
+    qreal cellWidth = 0.0;
+    qreal cellHeight = 0.0;
+    qreal baseline = 0.0;
+    qreal devicePixelRatio = 1.0;
+    int graphicsApi = -1;
+    int frameColumns = 0;
+    int frameRows = 0;
+    int visibleColumns = 0;
+    int visibleRows = 0;
+
+    bool operator==(const TerminalTextRenderState &) const = default;
+};
+
+struct BlockCursorTextState {
+    bool active = false;
+    int row = -1;
+    int column = 0;
+    int span = 0;
+    QColor color;
+
+    bool operator==(const BlockCursorTextState &) const = default;
+};
+
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+std::atomic<quint64> nextRenderNodeSerial{1};
+QMutex renderProbeMutex;
+QHash<const TerminalPane *, TerminalPaneRenderProbeSnapshot> renderProbes;
+#endif
+
+class TerminalSceneNode final : public QSGNode {
+public:
+    TerminalSceneNode()
+        : beforeMain(new QSGNode)
+        , mainTextRows(new QSGNode)
+        , afterMain(new QSGNode)
+    {
+        appendChildNode(beforeMain);
+        appendChildNode(mainTextRows);
+        appendChildNode(afterMain);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        rootSerial = nextRenderNodeSerial.fetch_add(
+            1, std::memory_order_relaxed);
+#endif
+    }
+
+    void clearTransientNodes() const
+    {
+        clearNodeChildren(beforeMain);
+        clearNodeChildren(afterMain);
+    }
+
+    void clearMainText()
+    {
+        clearNodeChildren(mainTextRows);
+        rowContainers.clear();
+        rowTextNodes.clear();
+        builtRowEpochs.clear();
+        textState.reset();
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        rowNodeSerials.clear();
+        rowBuildCounts.clear();
+#endif
+    }
+
+    void resetTextRows(int rowCount, const QFont &baseFont)
+    {
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
+#endif
+        clearMainText();
+        rowContainers.reserve(rowCount);
+        rowTextNodes.fill(nullptr, rowCount);
+        builtRowEpochs.fill(0, rowCount);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        rowNodeSerials.fill(0, rowCount);
+        cumulativeBuildCounts.resize(rowCount);
+        rowBuildCounts = std::move(cumulativeBuildCounts);
+#endif
+        for (int row = 0; row < rowCount; ++row) {
+            auto *container = new QSGNode;
+            mainTextRows->appendChildNode(container);
+            rowContainers.append(container);
+        }
+
+        fonts.fill(baseFont);
+        fonts[1].setBold(true);
+        fonts[2].setItalic(true);
+        fonts[3].setBold(true);
+        fonts[3].setItalic(true);
+    }
+
+    QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
+                                const QRectF &viewport,
+                                const QColor &defaultColor)
+    {
+        QSGTextNode *&textNode = rowTextNodes[row];
+        if (textNode == nullptr) {
+            textNode = createTextNode(window, viewport, defaultColor);
+            if (textNode != nullptr) {
+                rowContainers.at(row)->appendChildNode(textNode);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                rowNodeSerials[row] = nextRenderNodeSerial.fetch_add(
+                    1, std::memory_order_relaxed);
+#endif
+            }
+        } else {
+            textNode->clear();
+        }
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+        if (textNode != nullptr) {
+            ++rowBuildCounts[row];
+        }
+#endif
+        return textNode;
+    }
+
+    QSGNode *beforeMain = nullptr;
+    QSGNode *mainTextRows = nullptr;
+    QSGNode *afterMain = nullptr;
+    QVector<QSGNode *> rowContainers;
+    QVector<QSGTextNode *> rowTextNodes;
+    QVector<quint64> builtRowEpochs;
+    std::array<QFont, 4> fonts;
+    std::optional<TerminalTextRenderState> textState;
+    BlockCursorTextState blockCursorTextState;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    quint64 rootSerial = 0;
+    QVector<quint64> rowNodeSerials;
+    QVector<quint64> rowBuildCounts;
+#endif
+};
+
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+void clearRenderProbe(const TerminalPane *pane)
+{
+    QMutexLocker locker(&renderProbeMutex);
+    renderProbes.remove(pane);
+}
+
+void publishRenderProbe(const TerminalPane *pane,
+                        const TerminalSceneNode &root)
+{
+    QMutexLocker locker(&renderProbeMutex);
+    TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
+    ++snapshot.paintSerial;
+    snapshot.rootSerial = root.rootSerial;
+    snapshot.rowNodeSerials = root.rowNodeSerials;
+    snapshot.rowBuildCounts = root.rowBuildCounts;
+}
+#endif
+
 Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
 {
     return modifiers & ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
@@ -442,12 +619,24 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
 
 } // namespace
 
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(
+    const TerminalPane *pane)
+{
+    QMutexLocker locker(&renderProbeMutex);
+    return renderProbes.value(pane);
+}
+#endif
+
 TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
     , defaultFontPointSize_(options.fontSize)
 {
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    clearRenderProbe(this);
+#endif
     setFlag(QQuickItem::ItemHasContents, true);
     setClip(true);
     setAcceptedMouseButtons(Qt::AllButtons);
@@ -499,6 +688,9 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                     if (hasFrame_ || terminalUpdate.fullFrame) {
                         applied = applyTerminalUpdate(frame_, terminalUpdate);
                         hasFrame_ = hasFrame_ || applied;
+                        if (applied) {
+                            markTextRowsChangedLocked(terminalUpdate);
+                        }
                         if (applied && frame_.rows > 0
                             && (!terminalResizePending_
                                 || frame_.rows == terminalRows_)) {
@@ -643,7 +835,12 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
             });
 }
 
-TerminalPane::~TerminalPane() = default;
+TerminalPane::~TerminalPane()
+{
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    clearRenderProbe(this);
+#endif
+}
 
 QString TerminalPane::title() const
 {
@@ -968,16 +1165,13 @@ void TerminalPane::handleSearchUpdate(
 
 QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
-    // Keep the root that Qt already parented into the item scene graph. Returning
-    // a different root on every content update leaves the previous root in the
-    // child container, so stale frames remain visible and nodes accumulate.
-    QSGNode *root = oldNode != nullptr ? oldNode : new QSGNode;
-    while (QSGNode *child = root->firstChild()) {
-        root->removeChildNode(child);
-        delete child;
-    }
+    auto *root = oldNode != nullptr
+        ? static_cast<TerminalSceneNode *>(oldNode)
+        : new TerminalSceneNode;
+    root->clearTransientNodes();
 
     TerminalFrame frame;
+    QVector<quint64> textRowEpochs;
     TerminalAppearance appearance;
     QFont baseFont;
     QString preedit;
@@ -994,6 +1188,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     {
         QMutexLocker locker(&renderMutex_);
         frame = frame_;
+        textRowEpochs = textRowEpochs_;
         appearance = appearance_;
         baseFont = font_;
         preedit = preedit_;
@@ -1039,28 +1234,26 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     // their painter order is identical across Qt render backends.
     appendRect(baseBackgrounds, viewport, background);
 
-    QSGTextNode *mainText = createTextNode(window(), viewport,
-                                           hasFrame ? frame.foreground
-                                                    : QColor(QStringLiteral("#88909d")));
-    QSGTextNode *overlayText = createTextNode(window(), viewport,
-                                              QColor(QStringLiteral("#eceff4")));
-    bool hasMainText = false;
-    bool hasOverlayText = false;
+    QSGTextNode *overlayText = nullptr;
+    const auto ensureOverlayText = [&] {
+        if (overlayText == nullptr) {
+            overlayText = createTextNode(
+                window(), viewport, QColor(QStringLiteral("#eceff4")));
+        }
+        return overlayText;
+    };
 
     if (!hasFrame || frame.columns <= 0 || frame.rows <= 0) {
-        appendTextLayout(mainText, QStringLiteral("Starting terminal…"), baseFont,
+        root->clearMainText();
+        QSGTextNode *startingText = createTextNode(
+            window(), viewport, QColor(QStringLiteral("#88909d")));
+        appendTextLayout(startingText, QStringLiteral("Starting terminal…"), baseFont,
                          QColor(QStringLiteral("#88909d")), QPointF(12.0, 12.0),
                          baseline, std::max<qreal>(1.0, viewport.width() - 24.0));
-        hasMainText = mainText != nullptr;
+        if (startingText != nullptr) {
+            root->mainTextRows->appendChildNode(startingText);
+        }
     } else {
-        QFont normal = baseFont;
-        QFont bold = baseFont;
-        bold.setBold(true);
-        QFont italic = baseFont;
-        italic.setItalic(true);
-        QFont boldItalic = bold;
-        boldItalic.setItalic(true);
-
         const int visibleRows = std::min(frame.rows,
             static_cast<int>(std::ceil(height() / cellHeight)));
         const int visibleColumns = std::min(frame.columns,
@@ -1093,8 +1286,68 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             frame.background);
         blockCursorTextColor.setAlpha(255);
 
+        TerminalTextRenderState textState;
+        textState.window = window();
+        textState.viewport = viewport;
+        textState.font = baseFont;
+        textState.appearance = appearance;
+        textState.foreground = frame.foreground;
+        textState.background = frame.background;
+        textState.palette = frame.palette;
+        textState.searchCandidateCells = searchCandidateCellMask;
+        textState.searchSelectedCells = searchSelectedCellMask;
+        textState.cellWidth = cellWidth;
+        textState.cellHeight = cellHeight;
+        textState.baseline = baseline;
+        textState.devicePixelRatio = window() != nullptr
+            ? window()->devicePixelRatio() : 1.0;
+        textState.graphicsApi = rendererInterface != nullptr
+            ? static_cast<int>(rendererInterface->graphicsApi()) : -1;
+        textState.frameColumns = frame.columns;
+        textState.frameRows = frame.rows;
+        textState.visibleColumns = visibleColumns;
+        textState.visibleRows = visibleRows;
+
+        const bool rebuildAllText = !root->textState.has_value()
+            || *root->textState != textState
+            || root->rowTextNodes.size() != visibleRows;
+        if (rebuildAllText) {
+            root->resetTextRows(visibleRows, baseFont);
+            root->textState = textState;
+        }
+
+        BlockCursorTextState blockCursorTextState;
+        if (blockCursorActive) {
+            blockCursorTextState = {
+                .active = true,
+                .row = frame.cursorRow,
+                .column = frame.cursorColumn,
+                .span = std::max(1, frame.cursorColumnSpan),
+                .color = blockCursorTextColor,
+            };
+        }
+        const BlockCursorTextState previousBlockCursorTextState =
+            root->blockCursorTextState;
+        const bool blockCursorTextChanged = !rebuildAllText
+            && previousBlockCursorTextState != blockCursorTextState;
+
         for (int row = 0; row < visibleRows; ++row) {
             const qreal top = static_cast<qreal>(row) * cellHeight;
+            const quint64 rowEpoch = row < textRowEpochs.size()
+                ? textRowEpochs.at(row) : 0;
+            const bool cursorChangedThisRow = blockCursorTextChanged
+                && ((previousBlockCursorTextState.active
+                     && previousBlockCursorTextState.row == row)
+                    || (blockCursorTextState.active
+                        && blockCursorTextState.row == row));
+            const bool rebuildRowText = rebuildAllText
+                || root->rowTextNodes.at(row) == nullptr
+                || root->builtRowEpochs.at(row) != rowEpoch
+                || cursorChangedThisRow;
+            QSGTextNode *rowText = rebuildRowText
+                ? root->prepareTextRow(row, window(), viewport,
+                                       frame.foreground)
+                : nullptr;
             for (int column = 0; column < visibleColumns; ++column) {
                 const qsizetype index = static_cast<qsizetype>(row)
                     * frame.columns + column;
@@ -1185,14 +1438,13 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     foreground = blockCursorTextColor;
                 }
 
-                if (!cell.invisible && !cell.text.isEmpty() && !cell.spacer) {
-                    const QFont *drawFont = &normal;
-                    if (cell.bold && cell.italic) drawFont = &boldItalic;
-                    else if (cell.bold) drawFont = &bold;
-                    else if (cell.italic) drawFont = &italic;
-                    appendTextLayout(mainText, cell.text, *drawFont, foreground,
+                if (rowText != nullptr && !cell.invisible
+                    && !cell.text.isEmpty() && !cell.spacer) {
+                    const size_t fontIndex = (cell.bold ? 1U : 0U)
+                        | (cell.italic ? 2U : 0U);
+                    appendTextLayout(rowText, cell.text,
+                                     root->fonts[fontIndex], foreground,
                                      QPointF(left, top), baseline, drawWidth);
-                    hasMainText = mainText != nullptr;
                 }
 
                 if (cell.invisible) {
@@ -1234,7 +1486,11 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                foreground);
                 }
             }
+            if (rebuildRowText) {
+                root->builtRowEpochs[row] = rowText != nullptr ? rowEpoch : 0;
+            }
         }
+        root->blockCursorTextState = blockCursorTextState;
 
         if (cursorActive) {
             const qreal left = static_cast<qreal>(frame.cursorColumn) * cellWidth;
@@ -1311,10 +1567,9 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             appendRect(overlayBackgrounds,
                        QRectF(left, top, preeditWidth, cellHeight),
                        QColor(QStringLiteral("#3b4252")));
-            appendTextLayout(overlayText, preedit, baseFont,
+            appendTextLayout(ensureOverlayText(), preedit, baseFont,
                              QColor(QStringLiteral("#eceff4")), QPointF(left, top),
                              baseline, preeditWidth);
-            hasOverlayText = overlayText != nullptr;
             appendRect(overlayDecorations,
                        QRectF(left, top + baseline + 1.0, preeditWidth, 1.0),
                        QColor(QStringLiteral("#eceff4")));
@@ -1327,12 +1582,11 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             appendRect(overlayBackgrounds,
                        QRectF(0.0, statusTop, width(), statusHeight),
                        QColor(46, 52, 64, 230));
-            appendTextLayout(overlayText, status, baseFont,
+            appendTextLayout(ensureOverlayText(), status, baseFont,
                              QColor(QStringLiteral("#e5c07b")),
                              QPointF(8.0, statusTop),
                              statusHeight - 6.0 - metrics.descent(),
                              std::max<qreal>(1.0, width() - 16.0));
-            hasOverlayText = overlayText != nullptr;
         }
 
         if (!linkPreview.isEmpty() && !linkPreviewRect.isEmpty()) {
@@ -1367,7 +1621,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
             const QFontMetricsF metrics(baseFont);
             appendTextLayout(
-                overlayText, linkPreview, baseFont, previewForeground,
+                ensureOverlayText(), linkPreview, baseFont, previewForeground,
                 QPointF(linkPreviewRect.left()
                             + kLinkPreviewHorizontalPadding,
                         linkPreviewRect.top()
@@ -1376,47 +1630,42 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 std::max<qreal>(
                     1.0, linkPreviewRect.width()
                         - 2.0 * kLinkPreviewHorizontalPadding));
-            hasOverlayText = overlayText != nullptr;
         }
     }
 
     if (QSGNode *node = createRectNode(baseBackgrounds, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->beforeMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(backgrounds, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->beforeMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(cursorBackgrounds, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->beforeMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(decorationsBeforeText, softwareRenderer)) {
-        root->appendChildNode(node);
-    }
-    if (hasMainText) {
-        root->appendChildNode(mainText);
-    } else {
-        delete mainText;
+        root->beforeMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(decorationsAfterText, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(cursorDecorations, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(scrollbarDecorations, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(overlayBackgrounds, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->afterMain->appendChildNode(node);
     }
-    if (hasOverlayText) {
-        root->appendChildNode(overlayText);
-    } else {
-        delete overlayText;
+    if (overlayText != nullptr) {
+        root->afterMain->appendChildNode(overlayText);
     }
     if (QSGNode *node = createRectNode(overlayDecorations, softwareRenderer)) {
-        root->appendChildNode(node);
+        root->afterMain->appendChildNode(node);
     }
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    publishRenderProbe(this, *root);
+#endif
     return root;
 }
 
@@ -1439,6 +1688,23 @@ void TerminalPane::updateMetrics()
     cellWidth_ = std::max(1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
     cellHeight_ = std::max(1.0, std::ceil(metrics.height()));
     baseline_ = std::ceil(metrics.ascent() + (cellHeight_ - metrics.height()) / 2.0);
+}
+
+void TerminalPane::markTextRowsChangedLocked(const TerminalUpdate &update)
+{
+    if (!update.fullFrame && update.dirtyRows.isEmpty()) {
+        return;
+    }
+
+    ++textRowEpoch_;
+
+    if (update.fullFrame || textRowEpochs_.size() != frame_.rows) {
+        textRowEpochs_.fill(textRowEpoch_, frame_.rows);
+        return;
+    }
+    for (const TerminalRowUpdate &row : update.dirtyRows) {
+        textRowEpochs_[row.row] = textRowEpoch_;
+    }
 }
 
 void TerminalPane::syncCursorBlink(bool resetPhase)

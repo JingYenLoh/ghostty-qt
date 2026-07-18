@@ -134,6 +134,7 @@ private:
 
     void updateMetrics();
     void updateTerminalSize();
+    void markTextRowsChangedLocked(const TerminalUpdate &update);
     void syncCursorBlink(bool resetPhase);
     void setFontPointSize(qreal points);
     KeyHandling handleShortcut(QKeyEvent *event);
@@ -201,6 +202,10 @@ private:
     qreal defaultFontPointSize_ = 12.0;
     mutable QMutex renderMutex_;
     TerminalFrame frame_;
+    // Persistent generations preserve the union of row changes when Qt
+    // coalesces several GUI updates before one scene-graph synchronization.
+    QVector<quint64> textRowEpochs_;
+    quint64 textRowEpoch_ = 0;
     bool hasFrame_ = false;
     // Mirrors the row count requested from the worker. While a resize is in
     // flight, stale frames must not make page actions use the previous height.

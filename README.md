@@ -430,9 +430,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
 ## Current limitations
 
 - Renderer-v1 sends only dirty rows across the worker/UI boundary after its
-  initial frame, but it still rebuilds scene-graph children and text layouts
-  for each presented update. Persistent row nodes and run batching remain
-  CPU/allocation optimizations.
+  initial frame and retains one main-text scene-graph node per visible row.
+  Transient geometry still scans the visible grid on each presented update;
+  compatible text-run batching and retained geometry remain CPU/allocation
+  optimizations.
 - Split ratios can be resized and equalized through Ghostty keybindings, but
   there are no draggable dividers yet.
 - No X11 backend, multi-window support, theme editor, session

@@ -69,6 +69,7 @@ qt_add_executable(test-terminal-pane
     ../src/terminal_clipboard.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
+    ../src/terminal_pane_render_probe_p.h
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/terminal_osc8_index.h
@@ -78,6 +79,7 @@ qt_add_executable(test-terminal-pane
 target_include_directories(test-terminal-pane PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-terminal-pane PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_RENDER_TEST_PROBE=1
 )
 target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Core
