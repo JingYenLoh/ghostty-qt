@@ -339,7 +339,11 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 
 void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
 {
+    const bool wasTabBarVisible = tabBarVisible();
     effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
+    if (tabBarVisible() != wasTabBarVisible) {
+        Q_EMIT tabBarVisibleChanged();
+    }
     for (SplitDividerItem *divider : std::as_const(splitDividers_)) {
         divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
     }
@@ -351,6 +355,19 @@ void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapsho
         }
     }
     reevaluatePendingClose();
+}
+
+bool TerminalWorkspace::tabBarVisible() const
+{
+    switch (effectiveOptions_.windowShowTabBar) {
+    case WindowShowTabBar::Always:
+        return true;
+    case WindowShowTabBar::Auto:
+        return tabs_.size() >= 2;
+    case WindowShowTabBar::Never:
+        return false;
+    }
+    Q_UNREACHABLE_RETURN(false);
 }
 
 QStringList TerminalWorkspace::tabTitles() const
@@ -734,6 +751,7 @@ void TerminalWorkspace::newTab()
 
 void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
 {
+    const bool wasTabBarVisible = tabBarVisible();
     LaunchOptions options = effectiveOptions_;
     if (initialTabCreated_) {
         TerminalPane *sourcePane = paneForId(sourcePaneId);
@@ -768,6 +786,9 @@ void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
     Q_ASSERT(modelInserted);
     Q_UNUSED(modelInserted);
     Q_EMIT tabTitlesChanged();
+    if (tabBarVisible() != wasTabBarVisible) {
+        Q_EMIT tabBarVisibleChanged();
+    }
     activateTab(tabId);
 }
 
@@ -1077,6 +1098,7 @@ void TerminalWorkspace::removeTab(TabId tabId)
     if (index < 0) {
         return;
     }
+    const bool wasTabBarVisible = tabBarVisible();
     const bool removedCurrentTab = index == currentIndex_;
     std::vector<PaneHandle> panes;
     if (const Node *root = tabs_[static_cast<size_t>(index)]->root.get();
@@ -1092,6 +1114,9 @@ void TerminalWorkspace::removeTab(TabId tabId)
     tabs_.erase(tabs_.begin() + index);
     tabModel_.remove(tabId);
     Q_EMIT tabTitlesChanged();
+    if (tabBarVisible() != wasTabBarVisible) {
+        Q_EMIT tabBarVisibleChanged();
+    }
     resolvePendingTabRemoval(tabId);
 
     if (tabs_.empty()) {

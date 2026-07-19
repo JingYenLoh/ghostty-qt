@@ -256,6 +256,15 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     } else if (newTabPosition == QStringLiteral("end")) {
         result.windowNewTabPosition = WindowNewTabPosition::End;
     }
+    const auto showTabBar = snapshot.value<QString>(
+        QStringLiteral("window-show-tab-bar"));
+    if (showTabBar == QStringLiteral("always")) {
+        result.windowShowTabBar = WindowShowTabBar::Always;
+    } else if (showTabBar == QStringLiteral("auto")) {
+        result.windowShowTabBar = WindowShowTabBar::Auto;
+    } else if (showTabBar == QStringLiteral("never")) {
+        result.windowShowTabBar = WindowShowTabBar::Never;
+    }
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;

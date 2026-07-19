@@ -43,6 +43,7 @@ ApplicationWindow {
 
     header: ToolBar {
         id: windowHeader
+        objectName: "windowToolbar"
 
         RowLayout {
             anchors.fill: parent
@@ -50,8 +51,10 @@ ApplicationWindow {
 
             TabBar {
                 id: tabs
+                objectName: "windowTabBar"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                visible: workspace.tabBarVisible
                 currentIndex: workspace.currentIndex
 
                 Repeater {

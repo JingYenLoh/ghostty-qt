@@ -50,7 +50,8 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 
 `LaunchOptions` remains on the application, workspace, and pane side because it
 also owns font policy, keybindings, close behavior, link previews, the effective
-working-directory and future-surface inheritance policies, and a compact
+working-directory, future-surface inheritance, and tab-strip presentation
+policies, and a compact
 `SplitAppearance` value containing unfocused-pane opacity/fill and the optional
 divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
@@ -435,6 +436,15 @@ tab, or appends when no tab is selected; `end` always appends, and either mode
 selects the new tab. The action-target pane therefore remains the directory and
 font inheritance source without becoming the insertion anchor.
 
+`window-show-tab-bar` is an immediate workspace presentation policy rather than
+a surface-creation option. Its exact `always`, `auto`, and `never` values map to
+the QML `TabBar`: `always` shows it at every tab count, `auto` hides it for one
+tab and shows it at two or more, and `never` hides it. Config reloads and tab
+creation/removal both recompute the property, including the one/two-tab
+boundary. The surrounding Qt toolbar is a separate control surface and remains
+visible, so hiding the tab strip does not remove its new-tab, split, or close
+buttons.
+
 A split starts the default shell using the workspace's effective directory and
 policy: when
 `split-inherit-working-directory` is true, the explicit source pane's latest
@@ -538,8 +548,8 @@ tab/split fallbacks partial.
 
 The current typed compatibility slice contains `working-directory`,
 `split-inherit-working-directory`, `tab-inherit-working-directory`,
-`window-inherit-font-size`, `window-new-tab-position`, `font-family`,
-`font-size`, the
+`window-inherit-font-size`, `window-new-tab-position`,
+`window-show-tab-bar`, `font-family`, `font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -558,8 +568,9 @@ Live reload updates font and appearance on existing panes without overriding a
 pane's manual font zoom. Directory and font inheritance booleans plus tab
 insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
-child as manually zoomed. Palette
-and fixed cursor defaults are updated through
+child as manually zoomed. Tab-strip visibility is workspace-owned presentation
+policy and updates immediately without entering a pane or worker. Palette and
+fixed cursor defaults are updated through
 `libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
@@ -827,7 +838,10 @@ The default CTest suite has focused layers for each ownership boundary:
   preserve stable tab and pane identity. PTY-backed new-tab coverage verifies
   explicit binding sources, empty-context active leaves, broad-fanout source
   stability, local OSC 7/reset fallback, manual font zoom, and future-creation
-  policy reloads. It also sends real pointer gestures
+  policy reloads. Workspace/QML coverage also verifies exact live
+  `always`/`auto`/`never` tab-strip visibility, including one/two-tab
+  transitions while the surrounding toolbar remains visible. It also sends
+  real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,
   focus preservation, endpoint clamping, cancellation, zoom/tab/scene
   lifecycle, ratio persistence, terminal-cell hit regions, and nullable live

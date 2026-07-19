@@ -597,6 +597,11 @@
           "status": "supported",
           "note": "The exact current/end enum defaults to current. Current inserts after the tab selected immediately before each creation, or appends with no selection; end appends, and the new tab is selected. Action-source inheritance remains independent of the insertion anchor, while reload affects future tabs only."
         },
+        "window-show-tab-bar": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact always/auto/never enum defaults to auto. Always shows the QML tab strip at every tab count, auto hides it for one tab and shows it at two or more, and never hides it; config reload and one/two-tab transitions update the property live. Acceptance covers workspace state and real QML visibility while the surrounding toolbar remains available."
+        },
         "working-directory": {
           "status": "partial",
           "note": "The shared-config value supplies initial panes plus new-tab and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, tab/split inheritance, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window inheritance and lossless non-UTF-8 path transport remain incomplete."

@@ -35,6 +35,12 @@ enum class WindowNewTabPosition {
     End,
 };
 
+enum class WindowShowTabBar {
+    Always,
+    Auto,
+    Never,
+};
+
 // Ghostty dims an unfocused pane by compositing this fill over the terminal.
 // A missing fill resolves to the configured terminal background in the
 // frontend; opacity describes the terminal content that remains visible.
@@ -83,6 +89,9 @@ struct LaunchOptions {
     // end of the window's stable tab list.
     WindowNewTabPosition windowNewTabPosition =
         WindowNewTabPosition::Current;
+    // Controls the frontend tab-bar visibility without affecting terminal
+    // session state.
+    WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

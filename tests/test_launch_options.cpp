@@ -48,6 +48,7 @@ private Q_SLOTS:
     void mapsClipboardModes();
     void mapsWorkingDirectoryAndSurfaceInheritance();
     void mapsNewTabPosition();
+    void mapsWindowShowTabBar();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -114,6 +115,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.windowInheritFontSize);
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
+    QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -598,6 +600,41 @@ void LaunchOptionsTest::mapsNewTabPosition()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsWindowShowTabBar()
+{
+    const struct {
+        QString canonical;
+        WindowShowTabBar expected;
+    } modes[] = {
+        {QStringLiteral("always"), WindowShowTabBar::Always},
+        {QStringLiteral("auto"), WindowShowTabBar::Auto},
+        {QStringLiteral("never"), WindowShowTabBar::Never},
+    };
+
+    LaunchOptions base;
+    base.windowShowTabBar = WindowShowTabBar::Never;
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    for (const auto &mode : modes) {
+        snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                               mode.canonical);
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowShowTabBar,
+                 mode.expected);
+    }
+
+    for (const QVariant &invalid : {
+             QVariant(QStringLiteral("sometimes")), QVariant(true),
+         }) {
+        snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                               invalid);
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowShowTabBar,
+                 WindowShowTabBar::Never);
+    }
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
 {
     LaunchOptions base;
@@ -724,6 +761,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
                            QStringLiteral("true"));
     snapshot.values.insert(QStringLiteral("middle-click-action"), false);
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           QStringLiteral("sometimes"));
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            QStringLiteral("not-a-color"));
     snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
@@ -743,6 +782,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.selectionClipboard, base.selectionClipboard);
     QCOMPARE(result.clipboardPaste, base.clipboardPaste);
     QCOMPARE(result.middleClickAction, base.middleClickAction);
+    QCOMPARE(result.windowShowTabBar, base.windowShowTabBar);
     QCOMPARE(result.splitAppearance, base.splitAppearance);
 }
 
@@ -812,6 +852,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowInheritFontSize = false;
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
+    frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
     frontendOnlyChanged.splitAppearance = {
         .unfocusedOpacity = 0.9,
         .unfocusedFill = QColor(QStringLiteral("#fedcba")),

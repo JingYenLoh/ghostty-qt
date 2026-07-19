@@ -62,7 +62,8 @@ keys into value snapshots.
 
 The snapshot includes the finalized working-directory, split/tab directory
 inheritance policies, new-window/tab font-size inheritance policy, and the
-canonical `current`/`end` new-tab position, complete canonical 256-entry
+canonical `current`/`end` new-tab position plus the
+`always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
 palette, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
@@ -144,7 +145,9 @@ mutable and equalized layouts, future-only split working-directory policy reload
 explicit and nested sources, source-stable new-tab directory/font inheritance
 across explicit, QML-style, reset, reload, and broad-fanout paths, exact
 `current`/`end` new-tab placement across live reload and broad fanout, and
-split zoom lifecycle. Adapter and worker tests
+live `always`/`auto`/`never` tab-strip visibility across one/two-tab
+transitions without hiding the surrounding toolbar, and split zoom lifecycle.
+Adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
 directory fallback. They additionally verify same-batch valid/invalid OSC 7
 ordering, inherited logical `PWD`, exact symlink-sensitive concrete paths, and

@@ -41,6 +41,7 @@ struct ParsedConfig {
     std::optional<bool> tabInheritWorkingDirectory;
     std::optional<bool> windowInheritFontSize;
     std::optional<QString> windowNewTabPosition;
+    std::optional<QString> windowShowTabBar;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
     std::optional<QVariant> selectionBackground;
@@ -95,6 +96,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.tabInheritWorkingDirectory,
             parsed.windowInheritFontSize,
             parsed.windowNewTabPosition,
+            parsed.windowShowTabBar,
             parsed.selectionForeground,
             parsed.selectionBackground,
             parsed.searchForeground,
@@ -583,6 +585,17 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->windowNewTabPosition = value;
+        } else if (key == QStringLiteral("window-show-tab-bar")) {
+            if (value != QStringLiteral("always")
+                && value != QStringLiteral("auto")
+                && value != QStringLiteral("never")) {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid window-show-tab-bar in Ghostty config output at line %1")
+                        .arg(displayLine));
+                return false;
+            }
+            parsed->windowShowTabBar = value;
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -1288,6 +1301,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const QString windowNewTabPosition =
         changes.windowNewTabPosition.value_or(
             *defaults.windowNewTabPosition);
+    const QString windowShowTabBar = changes.windowShowTabBar.value_or(
+        *defaults.windowShowTabBar);
     SparsePalette palette = defaults.palette;
     for (std::size_t index = 0; index < palette.size(); ++index) {
         if (changes.palette[index].has_value()) {
@@ -1384,6 +1399,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            windowInheritFontSize);
     snapshot.values.insert(QStringLiteral("window-new-tab-position"),
                            windowNewTabPosition);
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           windowShowTabBar);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            selectionForeground);

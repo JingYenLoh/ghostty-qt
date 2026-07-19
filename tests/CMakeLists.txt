@@ -390,6 +390,21 @@ set_tests_properties(application-fullscreen-action PROPERTIES
         "Binding loop detected;QQmlApplicationEngine failed"
 )
 
+add_test(
+    NAME application-tab-bar-visibility
+    COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+)
+set(_ghostty_qt_tab_bar_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-tab-bar-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_tab_bar_config_home}")
+set_tests_properties(application-tab-bar-visibility PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_tab_bar_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
 set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
     TIMEOUT 20
 )

@@ -173,6 +173,149 @@ bool installFullscreenActionTestHook(QQmlApplicationEngine *engine,
     return true;
 }
 
+bool verifyTabBarTestState(TerminalWorkspace *workspace,
+                           QObject *tabBar,
+                           int expectedCount,
+                           bool expectedVisible,
+                           const char *stage)
+{
+    const bool qmlVisible = tabBar->property("visible").toBool();
+    if (workspace->tabCount() == expectedCount
+        && workspace->tabBarVisible() == expectedVisible
+        && qmlVisible == expectedVisible) {
+        return true;
+    }
+
+    qCritical().nospace()
+        << "Tab-bar test hook mismatch at " << stage
+        << ": count=" << workspace->tabCount()
+        << ", workspace-visible=" << workspace->tabBarVisible()
+        << ", qml-visible=" << qmlVisible;
+    QCoreApplication::exit(1);
+    return false;
+}
+
+bool installTabBarVisibilityTestHook(QQmlApplicationEngine *engine,
+                                     TerminalWorkspace *workspace)
+{
+    QObject *const rootObject = engine->rootObjects().constFirst();
+    QObject *const tabBar =
+        rootObject->findChild<QObject *>(QStringLiteral("windowTabBar"));
+    QObject *const windowToolbar =
+        rootObject->findChild<QObject *>(QStringLiteral("windowToolbar"));
+    if (tabBar == nullptr || windowToolbar == nullptr) {
+        qCritical() << "Tab-bar test hook could not find the QML controls";
+        return false;
+    }
+
+    const auto applyMode = [workspace](const QString &mode) {
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("confirm-close-surface"),
+                               QStringLiteral("false"));
+        snapshot.values.insert(QStringLiteral("window-show-tab-bar"), mode);
+        workspace->applyConfigSnapshot(snapshot);
+    };
+    const auto exercise = [workspace, tabBar, windowToolbar, applyMode] {
+        auto *const timer = new QTimer(workspace);
+        timer->setSingleShot(true);
+        const auto stage = std::make_shared<int>(0);
+        const auto quitObserved = std::make_shared<bool>(false);
+
+        QObject::connect(
+            timer, &QTimer::timeout, workspace,
+            [workspace, tabBar, windowToolbar, applyMode, timer, stage,
+             quitObserved] {
+                switch (*stage) {
+                case 0:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, false, "auto with one tab")) {
+                        return;
+                    }
+                    applyMode(QStringLiteral("auto"));
+                    workspace->newTab();
+                    break;
+                case 1:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 2, true, "auto with two tabs")) {
+                        return;
+                    }
+                    workspace->closeCurrentTab();
+                    break;
+                case 2:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, false,
+                            "auto after returning to one tab")) {
+                        return;
+                    }
+                    applyMode(QStringLiteral("always"));
+                    break;
+                case 3:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, true, "always with one tab")) {
+                        return;
+                    }
+                    applyMode(QStringLiteral("never"));
+                    break;
+                case 4:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, false, "never with one tab")) {
+                        return;
+                    }
+                    if (!windowToolbar->property("visible").toBool()) {
+                        qCritical()
+                            << "Tab-bar test hook hid the surrounding toolbar";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    applyMode(QStringLiteral("auto"));
+                    break;
+                case 5:
+                    if (!verifyTabBarTestState(
+                            workspace, tabBar, 1, false,
+                            "auto restored before shutdown")) {
+                        return;
+                    }
+                    QObject::connect(
+                        workspace, &TerminalWorkspace::quitApproved,
+                        tabBar,
+                        [workspace, tabBar, quitObserved] {
+                            *quitObserved = true;
+                            if (verifyTabBarTestState(
+                                    workspace, tabBar, 0, false,
+                                    "auto during zero-tab shutdown")) {
+                                QCoreApplication::quit();
+                            }
+                        },
+                        Qt::SingleShotConnection);
+                    workspace->closeCurrentTab();
+                    break;
+                default:
+                    if (!*quitObserved) {
+                        qCritical() << "Tab-bar test hook did not observe shutdown";
+                        QCoreApplication::exit(1);
+                    }
+                    return;
+                }
+
+                ++*stage;
+                timer->start(*stage == 6 ? 1000 : 0);
+            });
+        timer->start(0);
+    };
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                         workspace,
+                         [workspace, exercise] {
+            QTimer::singleShot(0, workspace, exercise);
+        }, Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -300,6 +443,12 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
         if (!installFullscreenActionTestHook(&engine, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY") == 1) {
+        if (!installTabBarVisibilityTestHook(&engine, workspace)) {
             return 1;
         }
     }

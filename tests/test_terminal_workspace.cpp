@@ -189,6 +189,7 @@ private Q_SLOTS:
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void newTabPositionReloadsAndKeepsBroadOrder();
+    void tabBarVisibilityTracksPolicyAndCount();
     void splitDirectionsPlaceAndFocusNewPane_data();
     void splitDirectionsPlaceAndFocusNewPane();
     void automaticSplitUsesOriginatingPaneAspect();
@@ -1375,6 +1376,101 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
                  }));
         QCOMPARE(workspace.currentIndex(), 5);
     }
+}
+
+void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.windowShowTabBar = WindowShowTabBar::Auto;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    QVERIFY(!workspace.tabBarVisible());
+    QSignalSpy visibilityChanged(
+        &workspace, &TerminalWorkspace::tabBarVisibleChanged);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 1);
+
+    workspace.closeCurrentTab();
+    QCOMPARE(workspace.tabCount(), 1);
+    QVERIFY(!workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 2);
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           QStringLiteral("always"));
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 3);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 3);
+
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           QStringLiteral("never"));
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(!workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 4);
+
+    workspace.closeCurrentTab();
+    QCOMPARE(workspace.tabCount(), 1);
+    QVERIFY(!workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 4);
+
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           QStringLiteral("auto"));
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(!workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 4);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 5);
+
+    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
+                           QStringLiteral("always"));
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(visibilityChanged.count(), 5);
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    workspace.closeCurrentTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(visibilityChanged.count(), 5);
+
+    // Resolving a pending close during reload must publish the count-driven
+    // auto transition exactly once; the reload path must not duplicate it.
+    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
+                           QStringLiteral("false"));
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(workspace.tabCount(), 1);
+    QVERIFY(!workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 6);
+
+    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
+                           QStringLiteral("always"));
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 7);
+
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    workspace.closeCurrentTab();
+    QCOMPARE(workspace.tabCount(), 0);
+    QVERIFY(workspace.tabBarVisible());
+    QCOMPARE(visibilityChanged.count(), 7);
+    QCOMPARE(quit.count(), 1);
 }
 
 void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()

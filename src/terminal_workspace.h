@@ -24,6 +24,7 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabTitlesChanged)
+    Q_PROPERTY(bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
     Q_PROPERTY(QQmlComponent *searchOverlayComponent
                READ searchOverlayComponent
                WRITE setSearchOverlayComponent
@@ -41,6 +42,7 @@ public:
     TabListModel *tabModel() { return &tabModel_; }
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
+    bool tabBarVisible() const;
     QQmlComponent *searchOverlayComponent() const
     {
         return searchOverlayComponent_;
@@ -66,6 +68,7 @@ public:
 Q_SIGNALS:
     void tabTitlesChanged();
     void currentTitleChanged();
+    void tabBarVisibleChanged();
     void currentIndexChanged();
     void closeConfirmationRequested(const QString &message);
     void closeConfirmationResolved();
