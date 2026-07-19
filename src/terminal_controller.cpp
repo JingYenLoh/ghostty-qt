@@ -23,7 +23,9 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
 TerminalController::TerminalController(
     const TerminalSessionLaunchOptions &options, QObject *parent)
     : QObject(parent)
-    , currentDirectory_(options.workingDirectory)
+    , currentDirectory_(options.inheritWorkingDirectory
+                            ? QString{}
+                            : options.workingDirectory)
     // Treat a starting child conservatively until the worker can identify an
     // idle interactive-shell prompt.
     , activeProcess_(true)

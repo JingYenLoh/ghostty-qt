@@ -409,6 +409,10 @@
       "scope": "qt_mapping",
       "note": "The exact pinned parser supplies the optional RGB override; existing and future exact-gap divider handles recolor live, while unset preserves the Qt frontend default without changing geometry, opacity, or focus."
     },
+    "split-inherit-working-directory": {
+      "status": "partial",
+      "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. Font inheritance remains independent, nested splits consult the newest workspace base, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD. Full parity remains partial because the helper's CLI-shaped invocation cannot reproduce GTK's unset desktop-launch home default for the fallback setting."
+    },
     "theme": {
       "status": "partial",
       "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."
@@ -583,7 +587,7 @@
         },
         "working-directory": {
           "status": "partial",
-          "note": "Launch-time working directory exists without shared-config semantics."
+          "note": "The shared-config value supplies initial panes, new tabs, and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window/tab inheritance and lossless non-UTF-8 path transport also remain incomplete."
         },
         "x11-instance-name": {
           "status": "not_applicable",

@@ -152,6 +152,7 @@ public:
 
     struct Callbacks {
         std::function<void(const QByteArray &)> writePty;
+        std::function<QByteArray()> queryMachineHostName;
     };
 
     struct RenderSnapshot {

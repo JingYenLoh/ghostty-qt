@@ -30,13 +30,15 @@ QString errorMessage(const std::expected<Value, QString> &result)
 QByteArray defaultOutput()
 {
     QByteArray output =
-        QByteArrayLiteral("font-family = \n"
+        QByteArrayLiteral("working-directory = \n"
+                          "font-family = \n"
                           "font-size = 13\n"
                           "foreground = #ffffff\n"
                           "background = #282c34\n"
                           "unfocused-split-opacity = 0.7\n"
                           "unfocused-split-fill = \n"
                           "split-divider-color = \n"
+                          "split-inherit-working-directory = true\n"
                           "selection-foreground = \n"
                           "selection-background = \n"
                           "search-foreground = #000000\n"
@@ -148,6 +150,7 @@ private Q_SLOTS:
     void rejectsConfigThatBecomesInvalidDuringQueries();
     void rejectsConfigThatChangesValidlyDuringQueries();
     void preservesSuccessfulHelperWarnings();
+    void realHelperFinalizesSplitWorkingDirectory();
     void realHelperFinalizesUnfocusedSplitAppearance_data();
     void realHelperFinalizesUnfocusedSplitAppearance();
     void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
@@ -298,6 +301,11 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QVERIFY2(canonicalDefaults.has_value(),
              qPrintable(errorMessage(canonicalDefaults)));
     QCOMPARE(canonicalDefaults->values.value(
+                 QStringLiteral("working-directory")),
+             QVariant(QString{}));
+    QVERIFY(canonicalDefaults->values.value(
+                QStringLiteral("split-inherit-working-directory")).toBool());
+    QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.7);
     QCOMPARE(canonicalDefaults->values.value(
@@ -317,10 +325,12 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "font-family = JetBrains Mono\r\n"
             "font-family = Noto Color Emoji\r\n"
             "font-size = 15.5\r\n"
+            "working-directory = %3\r\n"
             "foreground = #102030\r\n"
             "unfocused-split-opacity = 0.42\r\n"
             "unfocused-split-fill = #778899\r\n"
             "split-divider-color = #a1b2c3\r\n"
+            "split-inherit-working-directory = false\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
@@ -354,7 +364,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "keybind = ctrl+u=open_config\r\n"
             "config-file = %1\r\n"
             "config-file = ?%2\r\n"))
-                                   .arg(includePath, missingOptional)
+                                   .arg(includePath, missingOptional,
+                                        fixture.temporary.path())
                                    .toUtf8();
 
     const GhosttyConfigLoadResult result =
@@ -371,6 +382,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QColor(QStringLiteral("#102030")));
     QCOMPARE(snapshot.values.value(QStringLiteral("background")).value<QColor>(),
              QColor(QStringLiteral("#282c34")));
+    QCOMPARE(snapshot.values.value(QStringLiteral("working-directory")).toString(),
+             fixture.temporary.path());
+    QVERIFY(!snapshot.values.value(
+                 QStringLiteral("split-inherit-working-directory")).toBool());
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.42);
@@ -589,6 +604,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     ConfigFixture fixture;
     const QByteArray defaults = defaultOutput()
         + QByteArrayLiteral(
+            "working-directory = /configured/default\n"
             "unfocused-split-fill = #080706\n"
             "split-divider-color = #090807\n"
             "selection-foreground = #101010\n"
@@ -598,6 +614,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
             "cursor-text = #404040\n"
             "bold-color = #505050\n");
     const QByteArray changes = QByteArrayLiteral(
+        "working-directory = \n"
         "unfocused-split-fill = \n"
         "split-divider-color = \n"
         "selection-foreground = \n"
@@ -625,6 +642,8 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     }
 
     QCOMPARE(result->values.value(QStringLiteral("unfocused-split-fill")),
+             emptyString);
+    QCOMPARE(result->values.value(QStringLiteral("working-directory")),
              emptyString);
 
     QByteArray missingNullableDefault = defaultOutput();
@@ -654,6 +673,8 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QStringLiteral("Ghostty default config output is missing a required compatibility key"));
 
     for (const QByteArray &requiredLine : {
+             QByteArrayLiteral("working-directory = \n"),
+             QByteArrayLiteral("split-inherit-working-directory = true\n"),
              QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
              QByteArrayLiteral("unfocused-split-fill = \n"),
          }) {
@@ -688,6 +709,21 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedDivider.has_value());
     QCOMPARE(malformedDivider.error(),
              QStringLiteral("Invalid split-divider-color in Ghostty config output at line 1"));
+
+    for (const QByteArray &value : {
+             QByteArrayLiteral(""), QByteArrayLiteral("1"),
+             QByteArrayLiteral("yes"), QByteArrayLiteral("TRUE"),
+         }) {
+        const GhosttyConfigLoadResult malformedSplitInheritance =
+            parseGhosttyConfigShowOutputs(
+                defaultOutput(),
+                QByteArrayLiteral("split-inherit-working-directory = ")
+                    + value + QByteArrayLiteral("\n"),
+                fixture.candidates());
+        QVERIFY(!malformedSplitInheritance.has_value());
+        QCOMPARE(malformedSplitInheritance.error(),
+                 QStringLiteral("Invalid split-inherit-working-directory in Ghostty config output at line 1"));
+    }
 
     const GhosttyConfigLoadResult malformedUnfocusedFill =
         parseGhosttyConfigShowOutputs(
@@ -934,6 +970,71 @@ void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
     QCOMPARE(result->diagnostics.constFirst().message,
              QStringLiteral(
                  "Ghostty config helper current query: both standard files exist"));
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperFinalizesSplitWorkingDirectory()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    const QString configuredDirectory = QDir(fixture.temporary.path())
+        .filePath(QStringLiteral("working directory"));
+    QVERIFY(QDir().mkpath(configuredDirectory));
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("working-directory = %1\n"
+                       "split-inherit-working-directory = false\n")
+            .arg(configuredDirectory)
+            .toUtf8());
+
+    const auto load = makeGhosttyConfigProcessLoader({
+        .helperPath = helperPath,
+        .timeoutMilliseconds = 10'000,
+        .environment = QProcessEnvironment::systemEnvironment(),
+    });
+    GhosttyConfigLoadResult result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.value(QStringLiteral("working-directory"))
+                 .toString(),
+             configuredDirectory);
+    QVERIFY(!result->values.value(
+                 QStringLiteral("split-inherit-working-directory")).toBool());
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("working-directory = inherit\n"
+                          "split-inherit-working-directory = true\n"));
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.value(QStringLiteral("working-directory"))
+                 .toString(),
+             QStringLiteral("inherit"));
+    QVERIFY(result->values.value(
+                QStringLiteral("split-inherit-working-directory")).toBool());
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("working-directory = home\n"));
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.value(QStringLiteral("working-directory"))
+                 .toString(),
+             QDir::homePath());
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("working-directory = ~/ghostty-qt-test\n"));
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.value(QStringLiteral("working-directory"))
+                 .toString(),
+             QDir(QDir::homePath())
+                 .filePath(QStringLiteral("ghostty-qt-test")));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperFinalizesUnfocusedSplitAppearance_data()

@@ -149,6 +149,15 @@ void applyNullableConfigColor(const GhosttyConfigSnapshot &snapshot,
     }
 }
 
+void applyConfigBool(const GhosttyConfigSnapshot &snapshot,
+                     const QString &key,
+                     bool &destination)
+{
+    if (const auto value = snapshot.value<bool>(key)) {
+        destination = *value;
+    }
+}
+
 } // namespace
 
 TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
@@ -167,6 +176,7 @@ TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
 {
     return {
         .workingDirectory = options.workingDirectory,
+        .inheritWorkingDirectory = options.inheritWorkingDirectory,
         .program = options.program,
         .scrollbackLimit = options.scrollbackLimit,
         .hold = options.hold,
@@ -180,6 +190,21 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     LaunchOptions result = base;
     if (snapshot.availability != GhosttyConfigAvailability::Available) {
         return result;
+    }
+
+    if (!base.workingDirectoryExplicit) {
+        const auto directory = snapshot.value<QString>(
+            QStringLiteral("working-directory"));
+        if (directory.has_value()) {
+            result.inheritWorkingDirectory = directory->isEmpty()
+                || *directory == QLatin1StringView("inherit");
+            if (!result.inheritWorkingDirectory) {
+                // The helper has already finalized home and tilde expansion.
+                // Preserve the remaining path byte-for-byte at the QString
+                // boundary: lexical cleanup changes `symlink/../...` lookup.
+                result.workingDirectory = *directory;
+            }
+        }
     }
 
     if (!base.fontFamilyExplicit) {
@@ -215,6 +240,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     applyNullableConfigColor(
         snapshot, QStringLiteral("split-divider-color"),
         result.splitAppearance.dividerColor);
+    applyConfigBool(
+        snapshot, QStringLiteral("split-inherit-working-directory"),
+        result.splitInheritWorkingDirectory);
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;
@@ -311,10 +339,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.confirmCloseMode = ConfirmCloseMode::Always;
     }
 
-    const QVariant linkUrl = snapshot.values.value(QStringLiteral("link-url"));
-    if (linkUrl.metaType() == QMetaType::fromType<bool>()) {
-        result.linkUrl = linkUrl.toBool();
-    }
+    applyConfigBool(snapshot, QStringLiteral("link-url"), result.linkUrl);
 
     const QVariant linkPreviews = snapshot.values.value(
         QStringLiteral("link-previews"));
@@ -329,24 +354,15 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         }
     }
 
-    const QVariant trimTrailingSpaces = snapshot.values.value(
-        QStringLiteral("clipboard-trim-trailing-spaces"));
-    if (trimTrailingSpaces.metaType() == QMetaType::fromType<bool>()) {
-        result.selectionClipboard.trimTrailingSpaces =
-            trimTrailingSpaces.toBool();
-    }
-
-    const QVariant pasteProtection = snapshot.values.value(
-        QStringLiteral("clipboard-paste-protection"));
-    if (pasteProtection.metaType() == QMetaType::fromType<bool>()) {
-        result.clipboardPaste.protection = pasteProtection.toBool();
-    }
-
-    const QVariant bracketedPasteSafe = snapshot.values.value(
-        QStringLiteral("clipboard-paste-bracketed-safe"));
-    if (bracketedPasteSafe.metaType() == QMetaType::fromType<bool>()) {
-        result.clipboardPaste.bracketedSafe = bracketedPasteSafe.toBool();
-    }
+    applyConfigBool(
+        snapshot, QStringLiteral("clipboard-trim-trailing-spaces"),
+        result.selectionClipboard.trimTrailingSpaces);
+    applyConfigBool(
+        snapshot, QStringLiteral("clipboard-paste-protection"),
+        result.clipboardPaste.protection);
+    applyConfigBool(
+        snapshot, QStringLiteral("clipboard-paste-bracketed-safe"),
+        result.clipboardPaste.bracketedSafe);
 
     const QVariant copyOnSelect = snapshot.values.value(
         QStringLiteral("copy-on-select"));
@@ -364,17 +380,12 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         }
     }
 
-    const QVariant clearOnTyping = snapshot.values.value(
-        QStringLiteral("selection-clear-on-typing"));
-    if (clearOnTyping.metaType() == QMetaType::fromType<bool>()) {
-        result.selectionClipboard.clearOnTyping = clearOnTyping.toBool();
-    }
-
-    const QVariant clearOnCopy = snapshot.values.value(
-        QStringLiteral("selection-clear-on-copy"));
-    if (clearOnCopy.metaType() == QMetaType::fromType<bool>()) {
-        result.selectionClipboard.clearOnCopy = clearOnCopy.toBool();
-    }
+    applyConfigBool(
+        snapshot, QStringLiteral("selection-clear-on-typing"),
+        result.selectionClipboard.clearOnTyping);
+    applyConfigBool(
+        snapshot, QStringLiteral("selection-clear-on-copy"),
+        result.selectionClipboard.clearOnCopy);
 
     const QVariant middleClickAction = snapshot.values.value(
         QStringLiteral("middle-click-action"));
@@ -475,9 +486,10 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
 
     LaunchOptions parsed;
     parsed.workingDirectory = QDir::currentPath();
+    parsed.inheritWorkingDirectory = true;
 
     if (parser.isSet(workingDirectoryOption)) {
-        const QString directory = QDir::cleanPath(parser.value(workingDirectoryOption));
+        const QString directory = parser.value(workingDirectoryOption);
         const QFileInfo directoryInfo(directory);
         if (!directoryInfo.exists() || !directoryInfo.isDir()) {
             return std::unexpected(
@@ -485,6 +497,8 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
                     .arg(directory));
         }
         parsed.workingDirectory = directory;
+        parsed.inheritWorkingDirectory = false;
+        parsed.workingDirectoryExplicit = true;
     }
 
     if (parser.isSet(fontFamilyOption)) {

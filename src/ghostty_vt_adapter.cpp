@@ -3,14 +3,17 @@
 #include <ghostty/vt.h>
 
 #include <QSet>
-#include <QUrl>
 
 #include <algorithm>
 #include <array>
 #include <climits>
 #include <compare>
+#include <expected>
 #include <linux/input-event-codes.h>
 #include <limits>
+#include <optional>
+#include <string_view>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -41,6 +44,309 @@ struct TextMapData final {
 
 constexpr quint64 maximumLogicalLineCells = 131'072;
 constexpr qsizetype maximumLogicalLineBytes = 4 * 1024 * 1024;
+
+bool isMacAddress(std::string_view value)
+{
+    if (value.size() != 17) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < value.size(); ++index) {
+        const char character = value[index];
+        if (index % 3 == 2) {
+            if (character != ':') {
+                return false;
+            }
+        } else if (!((character >= '0' && character <= '9')
+                     || (character >= 'A' && character <= 'F')
+                     || (character >= 'a' && character <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<quint16> parseZigPort(std::string_view value)
+{
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    bool negative = false;
+    if (value.front() == '+' || value.front() == '-') {
+        negative = value.front() == '-';
+        value.remove_prefix(1);
+    }
+    if (value.empty() || value.front() == '_'
+        || value.back() == '_') {
+        return std::nullopt;
+    }
+
+    quint32 result = 0;
+    for (const char character : value) {
+        if (character == '_') {
+            continue;
+        }
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        const quint32 digit = static_cast<quint32>(character - '0');
+        if (negative) {
+            if (digit != 0) {
+                return std::nullopt;
+            }
+            continue;
+        }
+        if (result > (std::numeric_limits<quint16>::max() - digit) / 10) {
+            return std::nullopt;
+        }
+        result = result * 10 + digit;
+    }
+    return static_cast<quint16>(result);
+}
+
+int hexDigit(char value)
+{
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'A' && value <= 'F') {
+        return value - 'A' + 10;
+    }
+    if (value >= 'a' && value <= 'f') {
+        return value - 'a' + 10;
+    }
+    return -1;
+}
+
+std::optional<quint8> parseZigHexByte(char first, char second)
+{
+    if (first == '+') {
+        const int digit = hexDigit(second);
+        return digit >= 0 ? std::optional<quint8>(digit) : std::nullopt;
+    }
+    if (first == '-') {
+        return second == '0' ? std::optional<quint8>(0) : std::nullopt;
+    }
+    const int high = hexDigit(first);
+    const int low = hexDigit(second);
+    if (high < 0 || low < 0) {
+        return std::nullopt;
+    }
+    return static_cast<quint8>(high * 16 + low);
+}
+
+QByteArray percentDecode(std::string_view value)
+{
+    QByteArray decoded;
+    decoded.reserve(static_cast<qsizetype>(value.size()));
+    for (std::size_t index = 0; index < value.size();) {
+        if (value[index] == '%' && index + 2 < value.size()) {
+            if (const auto byte = parseZigHexByte(
+                    value[index + 1], value[index + 2])) {
+                decoded.append(static_cast<char>(*byte));
+                index += 3;
+                continue;
+            }
+        }
+        decoded.append(value[index]);
+        ++index;
+    }
+    return decoded;
+}
+
+enum class Osc7ParseError {
+    InvalidFormat,
+    InvalidPort,
+};
+
+struct ParsedOsc7Uri {
+    std::optional<std::string_view> host;
+    std::string_view path;
+    std::optional<quint16> port;
+    std::size_t hostStart = 0;
+    std::size_t pathStart = 0;
+};
+
+std::expected<ParsedOsc7Uri, Osc7ParseError> parseOsc7AfterScheme(
+    std::string_view value, std::size_t textStart)
+{
+    ParsedOsc7Uri result;
+    std::size_t pathStart = textStart;
+    if (value.substr(textStart).starts_with("//")) {
+        const std::size_t authorityStart = textStart + 2;
+        const std::size_t delimiter = value.find_first_of(
+            "/?#", authorityStart);
+        const std::size_t authorityEnd = delimiter == std::string_view::npos
+            ? value.size()
+            : delimiter;
+        const std::string_view authority = value.substr(
+            authorityStart, authorityEnd - authorityStart);
+        pathStart = authorityEnd;
+        if (authority.empty()) {
+            if (authorityStart >= value.size()
+                || value[authorityStart] != '/') {
+                return std::unexpected(Osc7ParseError::InvalidFormat);
+            }
+        } else {
+            std::size_t hostStart = 0;
+            if (const std::size_t userInfoEnd = authority.find('@');
+                userInfoEnd != std::string_view::npos) {
+                hostStart = userInfoEnd + 1;
+            }
+            if (hostStart < authority.size()) {
+                std::size_t hostEnd = authority.size();
+                if (authority[hostStart] == ']') {
+                    return std::unexpected(Osc7ParseError::InvalidFormat);
+                }
+                if (authority[hostStart] == '[') {
+                    const std::size_t closingBracket = authority.rfind(']');
+                    if (closingBracket == std::string_view::npos) {
+                        return std::unexpected(Osc7ParseError::InvalidFormat);
+                    }
+                    hostEnd = closingBracket + 1;
+                    const std::size_t lastColon = authority.rfind(':');
+                    if (lastColon != std::string_view::npos
+                        && lastColon >= hostEnd) {
+                        const auto port = parseZigPort(
+                            authority.substr(lastColon + 1));
+                        if (!port) {
+                            return std::unexpected(Osc7ParseError::InvalidPort);
+                        }
+                        result.port = *port;
+                    }
+                } else if (const std::size_t lastColon = authority.rfind(':');
+                           lastColon != std::string_view::npos
+                           && lastColon >= hostStart) {
+                    hostEnd = lastColon;
+                    const auto port = parseZigPort(
+                        authority.substr(lastColon + 1));
+                    if (!port) {
+                        return std::unexpected(Osc7ParseError::InvalidPort);
+                    }
+                    result.port = *port;
+                }
+                if (hostStart >= hostEnd) {
+                    return std::unexpected(Osc7ParseError::InvalidFormat);
+                }
+                result.hostStart = authorityStart + hostStart;
+                result.host = value.substr(
+                    result.hostStart, hostEnd - hostStart);
+            }
+        }
+    }
+
+    result.pathStart = pathStart;
+    const std::size_t delimiter = value.find_first_of("?#", pathStart);
+    const std::size_t pathEnd = delimiter == std::string_view::npos
+        ? value.size()
+        : delimiter;
+    result.path = value.substr(pathStart, pathEnd - pathStart);
+    return result;
+}
+
+std::optional<ParsedOsc7Uri> parseOsc7Uri(std::string_view value,
+                                          std::size_t schemeEnd)
+{
+    auto parsed = parseOsc7AfterScheme(value, schemeEnd + 1);
+    if (!parsed) {
+        if (parsed.error() != Osc7ParseError::InvalidPort) {
+            return std::nullopt;
+        }
+
+        const std::size_t hostStart = schemeEnd + 3;
+        const std::size_t slash = value.find('/', hostStart);
+        const std::size_t hostEnd = slash == std::string_view::npos
+            ? value.size()
+            : slash;
+        const std::string_view macAddress = value.substr(
+            hostStart, hostEnd - hostStart);
+        if (!isMacAddress(macAddress)) {
+            return std::nullopt;
+        }
+
+        parsed = parseOsc7AfterScheme(value, hostEnd);
+        if (!parsed) {
+            return std::nullopt;
+        }
+        parsed->hostStart = hostStart;
+        parsed->host = macAddress;
+    }
+
+    if (!parsed->host) {
+        return std::nullopt;
+    }
+    const std::string_view host = *parsed->host;
+    if (host.size() == 14
+        && std::count(host.begin(), host.end(), ':') == 4
+        && parsed->port && *parsed->port <= 99) {
+        const std::string_view macAddress = value.substr(
+            parsed->hostStart, parsed->pathStart - parsed->hostStart);
+        if (!isMacAddress(macAddress)) {
+            return std::nullopt;
+        }
+        parsed->host = macAddress;
+        parsed->port.reset();
+    }
+    return *parsed;
+}
+
+QByteArray machineHostName()
+{
+    std::array<char, HOST_NAME_MAX + 1> buffer{};
+    if (::gethostname(buffer.data(), buffer.size() - 1) != 0) {
+        return {};
+    }
+    return QByteArray(buffer.data());
+}
+
+std::optional<QString> validatedOsc7Directory(
+    std::string_view reported,
+    const std::function<QByteArray()> &queryMachineHostName)
+{
+    if (reported.empty()) {
+        return QStringLiteral("");
+    }
+
+    constexpr std::string_view filePrefix = "file://";
+    constexpr std::string_view kittyPrefix = "kitty-shell-cwd://";
+    const bool encodedFilePath = reported.starts_with(filePrefix);
+    const bool rawKittyPath = reported.starts_with(kittyPrefix);
+    if (!encodedFilePath && !rawKittyPath) {
+        return std::nullopt;
+    }
+    const std::size_t schemeEnd = encodedFilePath
+        ? filePrefix.size() - 3
+        : kittyPrefix.size() - 3;
+    const auto uri = parseOsc7Uri(reported, schemeEnd);
+    if (!uri) {
+        return std::nullopt;
+    }
+
+    const QByteArray decodedHost = percentDecode(*uri->host);
+    if (decodedHost.isEmpty() || decodedHost.size() > 255) {
+        return std::nullopt;
+    }
+    if (decodedHost != QByteArrayLiteral("localhost")
+        && decodedHost != queryMachineHostName()) {
+        return std::nullopt;
+    }
+
+    if (!rawKittyPath) {
+        const QByteArray path = percentDecode(uri->path);
+        return path.isEmpty()
+            ? QStringLiteral("")
+            : QString::fromUtf8(path);
+    }
+
+    // Ghostty's kitty-shell-cwd variant intentionally treats the URI path as
+    // raw text. Preserve literal percent sequences instead of URL-decoding
+    // them a second time.
+    const std::string_view path = reported.substr(uri->pathStart);
+    return path.empty()
+        ? QStringLiteral("")
+        : QString::fromUtf8(path.data(), static_cast<qsizetype>(path.size()));
+}
 
 QColor toQColor(GhosttyColorRgb color)
 {
@@ -511,6 +817,9 @@ public:
         , callbacks_(std::move(callbacks))
         , ownerToken_(std::make_shared<AdapterOwnerToken>())
     {
+        if (!callbacks_.queryMachineHostName) {
+            callbacks_.queryMachineHostName = machineHostName;
+        }
     }
 
     ~Impl()
@@ -745,7 +1054,7 @@ public:
         // their OSC callbacks. Publish explicit empty effects so frontend
         // caches and working-directory inheritance cannot retain stale state.
         titleDirty_ = true;
-        pwdDirty_ = true;
+        pendingCurrentDirectory_ = QStringLiteral("");
 
         // Do not rely on the C API's dirty-state implementation detail. A
         // reset discards screen and scrollback contents, so the next update
@@ -2740,21 +3049,9 @@ public:
                           static_cast<qsizetype>(title.len));
             }
         }
-        if (pwdDirty_) {
-            pwdDirty_ = false;
-            GhosttyString pwd{};
-            if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_PWD, &pwd)
-                == GHOSTTY_SUCCESS) {
-                effects.currentDirectory = pwd.len == 0
-                    ? QStringLiteral("")
-                    : QString::fromUtf8(
-                          reinterpret_cast<const char *>(pwd.ptr),
-                          static_cast<qsizetype>(pwd.len));
-                const QUrl url(effects.currentDirectory);
-                if (url.isLocalFile()) {
-                    effects.currentDirectory = url.toLocalFile();
-                }
-            }
+        if (auto directory = std::exchange(
+                pendingCurrentDirectory_, std::nullopt)) {
+            effects.currentDirectory = std::move(*directory);
         }
         effects.bell = std::exchange(bellPending_, false);
         return effects;
@@ -2821,10 +3118,28 @@ private:
         }
     }
 
-    static void pwdCallback(GhosttyTerminal, void *userdata)
+    static void pwdCallback(GhosttyTerminal terminal, void *userdata)
     {
         if (auto *impl = static_cast<Impl *>(userdata)) {
-            impl->pwdDirty_ = true;
+            GhosttyString pwd{};
+            if (ghostty_terminal_get(
+                    terminal, GHOSTTY_TERMINAL_DATA_PWD, &pwd)
+                != GHOSTTY_SUCCESS) {
+                return;
+            }
+            std::string_view reported;
+            if (pwd.len != 0) {
+                reported = {
+                    reinterpret_cast<const char *>(pwd.ptr),
+                    static_cast<std::size_t>(pwd.len),
+                };
+            }
+            if (const auto directory = validatedOsc7Directory(
+                    reported, impl->callbacks_.queryMachineHostName)) {
+                // Retain the newest accepted report at callback time. A later
+                // invalid URI in the same VT batch must not overwrite it.
+                impl->pendingCurrentDirectory_ = *directory;
+            }
         }
     }
 
@@ -2888,7 +3203,7 @@ private:
     TerminalFrame publishedMetadata_;
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
-    bool pwdDirty_ = false;
+    std::optional<QString> pendingCurrentDirectory_;
     bool bellPending_ = false;
     uint32_t mouseModeFingerprint_ = 0;
     bool mouseEncoderConfigured_ = false;

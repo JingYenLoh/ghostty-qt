@@ -630,6 +630,8 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+    QSignalSpy runtimeOptions(
+        controller, &TerminalController::runtimeOptionsRequested);
 
     window.show();
     window.requestActivate();
@@ -710,6 +712,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     reloaded.splitAppearance.unfocusedOpacity = 0.676;
     reloaded.splitAppearance.unfocusedFill = secondFill;
     pane->applyRuntimeOptions(reloaded);
+    QCOMPARE(runtimeOptions.count(), 0);
     const QImage reloadedImage = window.grabWindow();
     QVERIFY(!reloadedImage.isNull());
     const TerminalPaneRenderProbeSnapshot reloadedProbe =
@@ -725,6 +728,7 @@ void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
     const QColor configuredBackground(QStringLiteral("#102030"));
     reloaded.appearance.backgroundColor = configuredBackground;
     pane->applyRuntimeOptions(reloaded);
+    QCOMPARE(runtimeOptions.count(), 1);
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot explicitBackgroundReload =
         terminalPaneRenderProbe(pane);
@@ -1156,7 +1160,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.linkUrl = false;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
-    const LaunchOptions splitOptions = pane.splitLaunchOptions();
+    const LaunchOptions splitOptions = pane.splitLaunchOptions(reloaded);
     QCOMPARE(splitOptions.fontFamily, QStringLiteral("Monospace"));
     QCOMPARE(splitOptions.fontSize, 14.0);
     QCOMPARE(splitOptions.workingDirectory, QDir::tempPath());
@@ -1168,17 +1172,35 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
+    QCOMPARE(splitOptions.splitInheritWorkingDirectory,
+             reloaded.splitInheritWorkingDirectory);
     QCOMPARE(runtimeOptions.count(), 1);
     QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
                  runtimeOptions.constFirst().constFirst()),
              toTerminalSessionRuntimeOptions(reloaded));
+
+    LaunchOptions splitBase = reloaded;
+    splitBase.workingDirectory = QDir::currentPath();
+    splitBase.inheritWorkingDirectory = true;
+    splitBase.splitInheritWorkingDirectory = false;
+    const LaunchOptions fallback = pane.splitLaunchOptions(splitBase);
+    QCOMPARE(fallback.workingDirectory, QDir::currentPath());
+    QVERIFY(fallback.inheritWorkingDirectory);
+    QCOMPARE(fallback.fontFamily, QStringLiteral("Monospace"));
+    QCOMPARE(fallback.fontSize, 14.0);
+
+    splitBase.splitInheritWorkingDirectory = true;
+    const LaunchOptions directoryInherited =
+        pane.splitLaunchOptions(splitBase);
+    QCOMPARE(directoryInherited.workingDirectory, QDir::tempPath());
+    QVERIFY(!directoryInherited.inheritWorkingDirectory);
 
     pane.zoomIn();
     QCOMPARE(pane.fontPointSize(), 15.0);
     reloaded.fontSize = 10.0;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 15.0);
-    const LaunchOptions inherited = pane.splitLaunchOptions();
+    const LaunchOptions inherited = pane.splitLaunchOptions(reloaded);
     QCOMPARE(inherited.fontSize, 15.0);
 
     // A split inherits the effective size as its initial config/reset target,
@@ -3617,7 +3639,7 @@ void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()
         QStringLiteral("-c"),
         QStringLiteral(
             "printf '\\033]0;metadata-title\\007"
-            "\\033]7;file:///\\007metadata-ready\\n'; sleep 5"),
+            "\\033]7;file://localhost/\\007metadata-ready\\n'; sleep 5"),
     };
     options.hold = true;
 
@@ -3636,7 +3658,8 @@ void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset")));
     QTRY_VERIFY_WITH_TIMEOUT(pane.currentDirectory().isEmpty(), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(pane.title(), QStringLiteral("sh"), 1000);
-    QCOMPARE(pane.splitLaunchOptions().workingDirectory, QDir::tempPath());
+    QCOMPARE(pane.splitLaunchOptions(options).workingDirectory,
+             QDir::tempPath());
 }
 
 void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 namespace {
 
@@ -87,6 +88,72 @@ bool maskIsSubset(const QBitArray &subset, const QBitArray &superset)
     return true;
 }
 
+bool writeExecutableScript(const QString &path, QByteArrayView contents)
+{
+    QFile script(path);
+    if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || script.write(contents.data(), contents.size()) != contents.size()) {
+        return false;
+    }
+    script.close();
+    return QFile::setPermissions(
+        path,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+            | QFileDevice::ExeOwner);
+}
+
+class ScopedEnvironmentVariable final {
+public:
+    ScopedEnvironmentVariable(QByteArray name, const QByteArray &value)
+        : name_(std::move(name))
+        , wasSet_(qEnvironmentVariableIsSet(name_.constData()))
+        , previousValue_(qgetenv(name_.constData()))
+    {
+        qputenv(name_.constData(), value);
+    }
+
+    explicit ScopedEnvironmentVariable(QByteArray name)
+        : name_(std::move(name))
+        , wasSet_(qEnvironmentVariableIsSet(name_.constData()))
+        , previousValue_(qgetenv(name_.constData()))
+    {
+        qunsetenv(name_.constData());
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        if (wasSet_) {
+            qputenv(name_.constData(), previousValue_);
+        } else {
+            qunsetenv(name_.constData());
+        }
+    }
+
+    Q_DISABLE_COPY_MOVE(ScopedEnvironmentVariable)
+
+private:
+    QByteArray name_;
+    bool wasSet_ = false;
+    QByteArray previousValue_;
+};
+
+class CurrentDirectoryRestore final {
+public:
+    CurrentDirectoryRestore()
+        : previousDirectory_(QDir::currentPath())
+    {}
+
+    ~CurrentDirectoryRestore()
+    {
+        QDir::setCurrent(previousDirectory_);
+    }
+
+    Q_DISABLE_COPY_MOVE(CurrentDirectoryRestore)
+
+private:
+    QString previousDirectory_;
+};
+
 } // namespace
 
 class SessionWorkerTest : public QObject {
@@ -94,6 +161,15 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void fallsBackFromUnavailableWorkingDirectory_data();
+    void fallsBackFromUnavailableWorkingDirectory();
+    void preservesInheritedLogicalPwd();
+    void preservesSymlinkSensitiveWorkingDirectory();
+    void resolvesRelativePathEntriesFromChildWorkingDirectory_data();
+    void resolvesRelativePathEntriesFromChildWorkingDirectory();
+    void skipsEmptyPathEntries();
+    void continuesPathLookupAfterMissingInterpreter();
+    void usesPinnedDefaultPathWhenUnset();
     void drainsLargeFinalOutputBeforeClosingPty();
     void sendsBracketedPasteThroughPty();
     void protectsPasteWithCorrelatedWorkerConfirmation();
@@ -393,6 +469,406 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory_data()
+{
+    QTest::addColumn<bool>("existingNonDirectory");
+    QTest::newRow("missing") << false;
+    QTest::newRow("existing-non-directory") << true;
+}
+
+void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory()
+{
+    QFETCH(bool, existingNonDirectory);
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 4, 8, 16, 1920, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QSignalSpy directorySpy(&worker,
+                            &SessionWorker::currentDirectoryChanged);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/working-directory-fallback-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString requested =
+        directory.filePath(QStringLiteral("no-longer-present"));
+    if (existingNonDirectory) {
+        QFile file(requested);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+    }
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = requested;
+    options.program = {
+        QStringLiteral("/usr/bin/printenv"),
+        QStringLiteral("PWD"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QCOMPARE(directorySpy.count(), 1);
+    QCOMPARE(directorySpy.constFirst().constFirst().toString(),
+             requested);
+    QVERIFY2(contents.contains(requested), qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesInheritedLogicalPwd()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 4, 8, 16, 1920, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QSignalSpy directorySpy(&worker,
+                            &SessionWorker::currentDirectoryChanged);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/inherited-pwd-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString logicalDirectory =
+        directory.filePath(QStringLiteral("logical-cwd"));
+    QVERIFY(QFile::link(QDir::currentPath(), logicalDirectory));
+
+    const ScopedEnvironmentVariable pwd(
+        QByteArrayLiteral("PWD"), QFile::encodeName(logicalDirectory));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QStringLiteral("/ignored-in-inherit-mode");
+    options.inheritWorkingDirectory = true;
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'environment=%s\\nactual=' \"$PWD\"; /bin/pwd -P"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY(directorySpy.isEmpty());
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("environment=%1").arg(logicalDirectory)),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("actual=%1").arg(QDir::currentPath())),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesSymlinkSensitiveWorkingDirectory()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 4, 8, 16, 1920, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QSignalSpy directorySpy(&worker,
+                            &SessionWorker::currentDirectoryChanged);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/symlink-working-directory-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString base = root.filePath(QStringLiteral("base"));
+    const QString linkedDirectory =
+        root.filePath(QStringLiteral("other/directory"));
+    const QString actualTarget =
+        root.filePath(QStringLiteral("other/target"));
+    const QString lexicallyCleanedTarget =
+        root.filePath(QStringLiteral("base/target"));
+    for (const QString &path : {
+             base, linkedDirectory, actualTarget, lexicallyCleanedTarget,
+         }) {
+        QVERIFY(QDir().mkpath(path));
+    }
+    QVERIFY(QFile::link(linkedDirectory,
+                        QDir(base).filePath(QStringLiteral("link"))));
+    const QString requested =
+        QDir(base).filePath(QStringLiteral("link/../target"));
+
+    constexpr QLatin1StringView reporterName("report-location.sh");
+    QVERIFY(writeExecutableScript(
+        QDir(actualTarget).filePath(reporterName),
+        QByteArrayLiteral(
+            "#!/bin/sh\nprintf 'marker=kernel\\nenvironment=%s\\nactual=' \"$PWD\"\n/bin/pwd -P\n")));
+    QVERIFY(writeExecutableScript(
+        QDir(lexicallyCleanedTarget).filePath(reporterName),
+        QByteArrayLiteral(
+            "#!/bin/sh\nprintf 'marker=lexical\\nenvironment=%s\\nactual=' \"$PWD\"\n/bin/pwd -P\n")));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = requested;
+    options.program = {
+        QStringLiteral("./report-location.sh"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QCOMPARE(directorySpy.count(), 1);
+    QCOMPARE(directorySpy.constFirst().constFirst().toString(), requested);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("marker=kernel")),
+             qPrintable(contents));
+    QVERIFY2(!contents.contains(QStringLiteral("marker=lexical")),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("environment=%1").arg(requested)),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("actual=%1").arg(actualTarget)),
+             qPrintable(contents));
+    QVERIFY2(!contents.contains(lexicallyCleanedTarget),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::resolvesRelativePathEntriesFromChildWorkingDirectory_data()
+{
+    QTest::addColumn<QByteArray>("pathValue");
+    QTest::addColumn<QString>("toolDirectory");
+    QTest::newRow("dot")
+        << QByteArrayLiteral(".") << QString{};
+    QTest::newRow("relative-directory")
+        << QByteArrayLiteral("tools") << QStringLiteral("tools");
+}
+
+void SessionWorkerTest::resolvesRelativePathEntriesFromChildWorkingDirectory()
+{
+    QFETCH(QByteArray, pathValue);
+    QFETCH(QString, toolDirectory);
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/relative-path-entry-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString parentDirectory =
+        root.filePath(QStringLiteral("parent"));
+    const QString childDirectory =
+        QDir(parentDirectory).filePath(QStringLiteral("child"));
+    QVERIFY(QDir().mkpath(childDirectory));
+    const QString parentToolDirectory = toolDirectory.isEmpty()
+        ? parentDirectory
+        : QDir(parentDirectory).filePath(toolDirectory);
+    const QString childToolDirectory = toolDirectory.isEmpty()
+        ? childDirectory
+        : QDir(childDirectory).filePath(toolDirectory);
+    QVERIFY(QDir().mkpath(parentToolDirectory));
+    QVERIFY(QDir().mkpath(childToolDirectory));
+    constexpr QLatin1StringView toolName("working-directory-tool");
+    QVERIFY(writeExecutableScript(
+        QDir(parentToolDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=parent\\n'\n")));
+    QVERIFY(writeExecutableScript(
+        QDir(childToolDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=child\\n'\n")));
+
+    const CurrentDirectoryRestore currentDirectory;
+    QVERIFY(QDir::setCurrent(parentDirectory));
+    const ScopedEnvironmentVariable path(
+        QByteArrayLiteral("PATH"), pathValue);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = childDirectory;
+    options.program = {toolName.toString()};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("selected=child")),
+             qPrintable(contents));
+    QVERIFY2(!contents.contains(QStringLiteral("selected=parent")),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::skipsEmptyPathEntries()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/empty-path-entry-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString childDirectory = root.filePath(QStringLiteral("child"));
+    const QString fallbackDirectory =
+        root.filePath(QStringLiteral("absolute-fallback"));
+    QVERIFY(QDir().mkpath(childDirectory));
+    QVERIFY(QDir().mkpath(fallbackDirectory));
+    constexpr QLatin1StringView toolName("empty-entry-tool");
+    QVERIFY(writeExecutableScript(
+        QDir(childDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=child\\n'\n")));
+    QVERIFY(writeExecutableScript(
+        QDir(fallbackDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=fallback\\n'\n")));
+
+    const ScopedEnvironmentVariable path(
+        QByteArrayLiteral("PATH"),
+        QByteArrayLiteral(":") + QFile::encodeName(fallbackDirectory));
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = childDirectory;
+    options.program = {toolName.toString()};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("selected=fallback")),
+             qPrintable(contents));
+    QVERIFY2(!contents.contains(QStringLiteral("selected=child")),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::continuesPathLookupAfterMissingInterpreter()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/path-exec-fallback-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString childDirectory = root.filePath(QStringLiteral("child"));
+    const QString firstDirectory =
+        QDir(childDirectory).filePath(QStringLiteral("first"));
+    const QString secondDirectory =
+        QDir(childDirectory).filePath(QStringLiteral("second"));
+    QVERIFY(QDir().mkpath(firstDirectory));
+    QVERIFY(QDir().mkpath(secondDirectory));
+    constexpr QLatin1StringView toolName("exec-fallback-tool");
+    QVERIFY(writeExecutableScript(
+        QDir(firstDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/definitely/missing\n")));
+    QVERIFY(writeExecutableScript(
+        QDir(secondDirectory).filePath(toolName),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=second\\n'\n")));
+
+    const ScopedEnvironmentVariable path(
+        QByteArrayLiteral("PATH"), QByteArrayLiteral("first:second"));
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = childDirectory;
+    options.program = {toolName.toString()};
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("selected=second")),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::usesPinnedDefaultPathWhenUnset()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/unset-path-default-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString childDirectory =
+        QDir(directory.path()).filePath(QStringLiteral("child"));
+    QVERIFY(QDir().mkpath(childDirectory));
+    QVERIFY(writeExecutableScript(
+        QDir(childDirectory).filePath(QStringLiteral("sh")),
+        QByteArrayLiteral("#!/bin/sh\nprintf 'selected=child\\n'\n")));
+    const ScopedEnvironmentVariable path(QByteArrayLiteral("PATH"));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = childDirectory;
+    options.program = {
+        QStringLiteral("sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'default-path-selected\\n'"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral("default-path-selected")),
+             qPrintable(contents));
+    QVERIFY2(!contents.contains(QStringLiteral("selected=child")),
+             qPrintable(contents));
     worker.shutdown();
 }
 
@@ -1815,7 +2291,7 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
             "i=0; while [ $i -lt 40 ]; do "
             "printf 'reset-row-%03d\\r\\n' \"$i\"; i=$((i + 1)); done; "
             "printf '\\033]0;reset-worker-title\\007"
-            "\\033]7;file:///tmp/reset-worker-cwd\\007"
+            "\\033]7;file://localhost/tmp/reset-worker-cwd\\007"
             "\\033[?1049h\\033[?1003hreset-alt-ready\\r\\n'; "
             "reset_byte=$(dd bs=1 count=1 2>/dev/null | "
             "od -An -v -tx1 | tr -d ' \\n'); "

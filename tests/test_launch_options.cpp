@@ -33,6 +33,7 @@ class LaunchOptionsTest : public QObject {
 private Q_SLOTS:
     void defaults();
     void parsesEveryOptionAndProgramArguments();
+    void preservesSymlinkSensitiveExplicitWorkingDirectory();
     void rejectsInvalidWorkingDirectory();
     void rejectsFileAsWorkingDirectory();
     void rejectsInvalidFontSize_data();
@@ -45,6 +46,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
+    void mapsWorkingDirectoryAndSplitInheritance();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -60,6 +62,8 @@ void LaunchOptionsTest::defaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.workingDirectory, QDir::currentPath());
+    QVERIFY(options.inheritWorkingDirectory);
+    QVERIFY(!options.workingDirectoryExplicit);
     QVERIFY(options.fontFamily.isEmpty());
     QCOMPARE(options.fontSize, 12.0);
     QVERIFY(!options.fontFamilyExplicit);
@@ -104,6 +108,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.splitAppearance.unfocusedOpacity, 0.7);
     QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
     QVERIFY(!options.splitAppearance.dividerColor.has_value());
+    QVERIFY(options.splitInheritWorkingDirectory);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -136,6 +141,8 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.workingDirectory, QDir::cleanPath(directory.path()));
+    QVERIFY(!options.inheritWorkingDirectory);
+    QVERIFY(options.workingDirectoryExplicit);
     QCOMPARE(options.fontFamily, QStringLiteral("Iosevka Term"));
     QCOMPARE(options.fontSize, 15.5);
     QVERIFY(options.fontFamilyExplicit);
@@ -147,6 +154,37 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.program,
              QStringList({QStringLiteral("/bin/sh"), QStringLiteral("-lc"),
                           QStringLiteral("printf hello")}));
+}
+
+void LaunchOptionsTest::preservesSymlinkSensitiveExplicitWorkingDirectory()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/explicit-working-directory-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString base = root.filePath(QStringLiteral("base"));
+    const QString linkedDirectory =
+        root.filePath(QStringLiteral("other/directory"));
+    const QString actualTarget =
+        root.filePath(QStringLiteral("other/target"));
+    for (const QString &path : {base, linkedDirectory, actualTarget}) {
+        QVERIFY(QDir().mkpath(path));
+    }
+    QVERIFY(QFile::link(linkedDirectory,
+                        QDir(base).filePath(QStringLiteral("link"))));
+    const QString requested =
+        QDir(base).filePath(QStringLiteral("link/../target"));
+
+    const auto result = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--working-directory"),
+        requested,
+    });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->workingDirectory, requested);
+    QVERIFY(!result->inheritWorkingDirectory);
+    QVERIFY(result->workingDirectoryExplicit);
 }
 
 void LaunchOptionsTest::rejectsInvalidWorkingDirectory()
@@ -458,6 +496,55 @@ void LaunchOptionsTest::mapsClipboardModes()
     }
 }
 
+void LaunchOptionsTest::mapsWorkingDirectoryAndSplitInheritance()
+{
+    LaunchOptions base;
+    base.workingDirectory = QStringLiteral("/launch-directory");
+    base.splitInheritWorkingDirectory = true;
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           QStringLiteral("/base/link/../target"));
+    snapshot.values.insert(
+        QStringLiteral("split-inherit-working-directory"), false);
+
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.workingDirectory,
+             QStringLiteral("/base/link/../target"));
+    QVERIFY(!result.inheritWorkingDirectory);
+    QVERIFY(!result.splitInheritWorkingDirectory);
+
+    base.workingDirectoryExplicit = true;
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.workingDirectory, QStringLiteral("/launch-directory"));
+    QVERIFY(!result.inheritWorkingDirectory);
+    QVERIFY(!result.splitInheritWorkingDirectory);
+
+    base.workingDirectoryExplicit = false;
+    for (const QString &fallback : {
+             QString{}, QStringLiteral("inherit"),
+         }) {
+        snapshot.values.insert(QStringLiteral("working-directory"), fallback);
+        result = applyGhosttyConfigSnapshot(base, snapshot);
+        QCOMPARE(result.workingDirectory,
+                 QStringLiteral("/launch-directory"));
+        QVERIFY(result.inheritWorkingDirectory);
+    }
+
+    snapshot.values.insert(QStringLiteral("working-directory"), false);
+    snapshot.values.insert(
+        QStringLiteral("split-inherit-working-directory"),
+        QStringLiteral("false"));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.workingDirectory, QStringLiteral("/launch-directory"));
+    QVERIFY(!result.inheritWorkingDirectory);
+    QVERIFY(result.splitInheritWorkingDirectory);
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
 {
     LaunchOptions base;
@@ -610,6 +697,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 {
     LaunchOptions options;
     options.workingDirectory = QStringLiteral("/session/working-directory");
+    options.workingDirectoryExplicit = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
     options.scrollbackLimit = {
         .value = 42'000,
@@ -645,6 +733,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
+    QCOMPARE(launch.inheritWorkingDirectory,
+             options.inheritWorkingDirectory);
     QCOMPARE(launch.program, options.program);
     QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
     QCOMPARE(launch.hold, options.hold);
@@ -663,6 +753,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.fontFamilyExplicit = true;
     frontendOnlyChanged.fontSizeExplicit = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
+    frontendOnlyChanged.workingDirectoryExplicit = false;
+    frontendOnlyChanged.splitInheritWorkingDirectory = false;
     frontendOnlyChanged.splitAppearance = {
         .unfocusedOpacity = 0.9,
         .unfocusedFill = QColor(QStringLiteral("#fedcba")),
@@ -677,6 +769,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.showVersion = true;
     QCOMPARE(toTerminalSessionLaunchOptions(frontendOnlyChanged), launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(frontendOnlyChanged), runtime);
+
+    LaunchOptions inheritedDirectory = options;
+    inheritedDirectory.inheritWorkingDirectory = true;
+    QVERIFY(toTerminalSessionLaunchOptions(inheritedDirectory) != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(inheritedDirectory), runtime);
 
     options.workingDirectory.clear();
     options.program.clear();

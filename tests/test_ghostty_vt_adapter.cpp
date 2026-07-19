@@ -4,7 +4,9 @@
 #error "ghostty_vt_adapter.h must not expose the libghostty-vt C API"
 #endif
 
+#include <QSysInfo>
 #include <QTest>
+#include <QUrl>
 
 #include <linux/input-event-codes.h>
 
@@ -68,6 +70,7 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void encodesUsingTerminalModes();
@@ -105,13 +108,115 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
 
     adapter->writeVt(
         QByteArrayLiteral("\033]2;adapter-title\007"
-                          "\033]7;file:///tmp\007"
+                          "\033]7;file://localhost/tmp\007"
                           "\007A\033[31mB\033[c"));
     const GhosttyVtAdapter::DeferredEffects effects = adapter->takeDeferredEffects();
     QCOMPARE(effects.title, QStringLiteral("adapter-title"));
     QCOMPARE(effects.currentDirectory, QStringLiteral("/tmp"));
     QVERIFY(effects.bell);
     QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22c"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://definitely-remote.invalid/remote/path\007"));
+    const GhosttyVtAdapter::DeferredEffects remoteEffects =
+        adapter->takeDeferredEffects();
+    QVERIFY(remoteEffects.currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://LOCALHOST/case-mismatch\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://localhost/tmp/encoded%20directory\007"));
+    const GhosttyVtAdapter::DeferredEffects localEffects =
+        adapter->takeDeferredEffects();
+    QCOMPARE(localEffects.currentDirectory,
+             QStringLiteral("/tmp/encoded directory"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://localhost/tmp/literal space/%zz/line%+Afeed\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/literal space/%zz/line\nfeed"));
+
+    for (const QByteArray &port : {
+             QByteArrayLiteral("+80"),
+             QByteArrayLiteral("8_0"),
+             QByteArrayLiteral("-0"),
+         }) {
+        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:")
+                         + port
+                         + QByteArrayLiteral("/tmp/zig-port\007"));
+        QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+                 QStringLiteral("/tmp/zig-port"));
+    }
+    for (const QByteArray &port : {
+             QByteArrayLiteral("_80"),
+             QByteArrayLiteral("-1"),
+             QByteArrayLiteral("65536"),
+         }) {
+        adapter->writeVt(QByteArrayLiteral("\033]7;file://localhost:")
+                         + port
+                         + QByteArrayLiteral("/tmp/invalid-port\007"));
+        QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+    }
+
+    const QString machineHost = QSysInfo::machineHostName();
+    QVERIFY(!machineHost.isEmpty());
+    QUrl machineUrl;
+    machineUrl.setScheme(QStringLiteral("file"));
+    machineUrl.setHost(machineHost);
+    machineUrl.setPath(QStringLiteral("/tmp/machine-host"));
+    adapter->writeVt(QByteArrayLiteral("\033]7;")
+                     + machineUrl.toEncoded()
+                     + QByteArrayLiteral("\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/machine-host"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://localhost/tmp/literal%20 raw??#fragment\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/literal%20 raw??#fragment"));
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file:///missing-host\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;file://localhost\007"));
+    const QString emptyPath =
+        adapter->takeDeferredEffects().currentDirectory;
+    QVERIFY(!emptyPath.isNull());
+    QVERIFY(emptyPath.isEmpty());
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033]7;https://localhost/not-a-file\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://localhost/tmp/batched-local\007"
+        "\033]7;file://remote.invalid/ignored\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/batched-local"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;\007"
+        "\033]7;file://remote.invalid/ignored\007"));
+    const QString batchedClear =
+        adapter->takeDeferredEffects().currentDirectory;
+    QVERIFY(!batchedClear.isNull());
+    QVERIFY(batchedClear.isEmpty());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://remote.invalid/ignored\007"
+        "\033]7;file://localhost/tmp/final-local\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/final-local"));
+
+    adapter->writeVt(QByteArrayLiteral("\033]7;\007"));
+    const GhosttyVtAdapter::DeferredEffects clearedEffects =
+        adapter->takeDeferredEffects();
+    QVERIFY(!clearedEffects.currentDirectory.isNull());
+    QVERIFY(clearedEffects.currentDirectory.isEmpty());
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
@@ -181,6 +286,116 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()
+{
+    QByteArray machineHost = QByteArrayLiteral("00:12:34:56:78:90");
+    auto adapter = GhosttyVtAdapter::create(
+        {}, {.queryMachineHostName = [&machineHost] { return machineHost; }});
+    QVERIFY(adapter != nullptr);
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://00:12:34:56:78:90/tmp/mac-host\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/mac-host"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://user@00:12:34:56:78:90/tmp/mac-userinfo\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/mac-userinfo"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://00:12:34:56:78:90:999/tmp/raw%20path??#fragment\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/raw%20path??#fragment"));
+
+    machineHost = QByteArrayLiteral("replacement-host");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://00:12:34:56:78:90/tmp/stale-host\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://replacement-host/tmp/current-host\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/current-host"));
+
+    machineHost = QByteArrayLiteral("b@localhost");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://a@b@localhost/tmp/first-userinfo-separator\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/first-userinfo-separator"));
+
+    machineHost = QByteArray(1, static_cast<char>(0x81));
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://%80/tmp/distinct-non-utf8-host\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+    machineHost = QByteArray(1, static_cast<char>(0x80));
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://%80/tmp/exact-non-utf8-host\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/exact-non-utf8-host"));
+
+    machineHost = QByteArray::fromHex(QByteArrayLiteral("efbfbd"));
+    QByteArray rawInvalidHost = QByteArrayLiteral("\033]7;file://");
+    rawInvalidHost.append(static_cast<char>(0x80));
+    rawInvalidHost += QByteArrayLiteral("/tmp/raw-invalid-host\007");
+    adapter->writeVt(rawInvalidHost);
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+    machineHost = QByteArray(1, static_cast<char>(0x80));
+    adapter->writeVt(rawInvalidHost);
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/raw-invalid-host"));
+
+    machineHost = QByteArrayLiteral("[::1]");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://[::1]/tmp/bracketed-host\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/bracketed-host"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://[::1]ignored/tmp/bracket-trailing-text\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/bracket-trailing-text"));
+
+    machineHost = QByteArrayLiteral("::1");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://[::1]/tmp/unbracketed-mismatch\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    machineHost = QByteArrayLiteral("ab:cd:ef:ab:cd:ef");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://user@ab:cd:ef:ab:cd:ef/tmp/fallback-userinfo\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://user@ab:cd:ef:ab:cd:ef:+9_99/tmp/standard-userinfo\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/standard-userinfo"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://ab:cd:ef:ab:cd:ef?raw\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://ab:cd:ef:ab:cd:ef/tmp/raw?path\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/raw?path"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://ab:cd:ef:ab:cd:ef//ignored/tmp/reparsed?raw\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/reparsed?raw"));
+
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;kitty-shell-cwd://ab:cd:ef:ab:cd:ef//userinfo@/tmp/no-host-authority\007"));
+    QCOMPARE(adapter->takeDeferredEffects().currentDirectory,
+             QStringLiteral("/tmp/no-host-authority"));
+
+    machineHost = QByteArrayLiteral("00:12:34:56:78:90");
+    adapter->writeVt(QByteArrayLiteral(
+        "\033]7;file://00:12:34:56:78:9g/tmp/invalid-mac\007"));
+    QVERIFY(adapter->takeDeferredEffects().currentDirectory.isNull());
 }
 
 void GhosttyVtAdapterTest::resolvesOsc8HyperlinksAcrossViewportState()
@@ -1187,7 +1402,8 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
         "primary-0\r\nprimary-1\r\nprimary-2\r\nprimary-3\r\n"
         "primary-4\r\nprimary-5\033[?1049halternate"
         "\033[?1003h\033[?2004h\033[?1004h"
-        "\033]0;reset-title\a\033]7;file:///tmp/reset-cwd\a\033[c"));
+        "\033]0;reset-title\a"
+        "\033]7;file://localhost/tmp/reset-cwd\a\033[c"));
     adapter->synchronizeInputModes();
     QVERIFY(adapter->selectAll());
     QVERIFY(adapter->hasSelection());

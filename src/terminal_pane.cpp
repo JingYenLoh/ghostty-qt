@@ -939,12 +939,13 @@ bool TerminalPane::hasActiveProcess() const
     return controller_->activeProcess();
 }
 
-LaunchOptions TerminalPane::splitLaunchOptions() const
+LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
 {
-    LaunchOptions result = options_;
+    LaunchOptions result = base;
     const QString directory = currentDirectory();
-    if (!directory.isEmpty() && QFileInfo(directory).isDir()) {
+    if (base.splitInheritWorkingDirectory && !directory.isEmpty()) {
         result.workingDirectory = directory;
+        result.inheritWorkingDirectory = false;
     }
     {
         QMutexLocker locker(&renderMutex_);
@@ -959,18 +960,11 @@ LaunchOptions TerminalPane::splitLaunchOptions() const
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     LaunchOptions updated = options_;
-    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
-    const bool linkUrlChanged = updated.linkUrl != options.linkUrl;
-    const bool linkPreviewModeChanged =
-        updated.linkPreviews != options.linkPreviews;
     updated.fontFamily = options.fontFamily;
     updated.fontSize = options.fontSize;
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
-    updated.scrollbackLimit = options.scrollbackLimit;
-    updated.scrollbackLimitExplicit = options.scrollbackLimitExplicit;
-    updated.confirmCloseMode = options.confirmCloseMode;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
@@ -980,6 +974,18 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
+    if (updated == options_) {
+        return;
+    }
+
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
+    const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
+    const bool linkPreviewModeChanged =
+        options_.linkPreviews != updated.linkPreviews;
+    const TerminalSessionRuntimeOptions previousRuntime =
+        toTerminalSessionRuntimeOptions(options_);
+    const TerminalSessionRuntimeOptions updatedRuntime =
+        toTerminalSessionRuntimeOptions(updated);
 
     const QString family = updated.fontFamily.isEmpty()
         ? QFontDatabase::systemFont(QFontDatabase::FixedFont).family()
@@ -1047,8 +1053,9 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     if (linkUrlChanged) {
         clearHyperlinkHover();
     }
-    controller_->applyRuntimeOptions(
-        toTerminalSessionRuntimeOptions(options_));
+    if (previousRuntime != updatedRuntime) {
+        controller_->applyRuntimeOptions(updatedRuntime);
+    }
     if (linkUrlChanged) {
         recomputeHyperlinkHover();
     }

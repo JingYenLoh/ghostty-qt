@@ -874,7 +874,8 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
     }
 
     TerminalPane *oldPane = node->pane;
-    const PaneHandle newPane = createPane(oldPane->splitLaunchOptions());
+    const PaneHandle newPane = createPane(
+        oldPane->splitLaunchOptions(effectiveOptions_));
     // Ghostty resets split zoom whenever the tree structure is split.
     tab->zoomedPaneId = {};
     const PaneHandle oldHandle{node->paneId, oldPane};

@@ -44,6 +44,12 @@ struct SplitAppearance {
 
 struct LaunchOptions {
     QString workingDirectory;
+    // `inherit` preserves the process cwd and its logical PWD spelling. A
+    // concrete CLI, config, or OSC-derived directory clears this bit.
+    bool inheritWorkingDirectory = false;
+    // Distinguishes the process default from an explicit Qt command-line
+    // override, which takes precedence over Ghostty's shared config.
+    bool workingDirectoryExplicit = false;
     QString fontFamily;
     double fontSize = 12.0;
     // These bits distinguish parser defaults from an explicit command-line
@@ -59,6 +65,9 @@ struct LaunchOptions {
     // Split appearance belongs to the Qt pane/workspace renderers and never
     // crosses the terminal session-thread boundary.
     SplitAppearance splitAppearance;
+    // New splits inherit the source pane's reported directory when enabled;
+    // otherwise the workspace's effective working-directory is used.
+    bool splitInheritWorkingDirectory = true;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
@@ -80,6 +89,8 @@ struct LaunchOptions {
     bool showHelp = false;
     bool showVersion = false;
     QStringList program;
+
+    bool operator==(const LaunchOptions &) const = default;
 };
 
 // Explicitly project the broad application/pane configuration onto the

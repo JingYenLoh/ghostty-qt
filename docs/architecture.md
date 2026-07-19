@@ -49,9 +49,10 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 ```
 
 `LaunchOptions` remains on the application, workspace, and pane side because it
-also owns font policy, keybindings, close behavior, link previews, split
-inheritance, and a compact `SplitAppearance` value containing unfocused-pane
-opacity/fill and the optional divider color. Split appearance stays
+also owns font policy, keybindings, close behavior, link previews, the effective
+working-directory and future-split inheritance policy, and a compact
+`SplitAppearance` value containing unfocused-pane opacity/fill and the optional
+divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
 session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
@@ -59,6 +60,12 @@ appearance, and URL-matching state owned by the session. Live reloads cross the
 queued controller/worker boundary as `TerminalSessionRuntimeOptions`, which is
 limited to appearance and URL matching. Working directory, program, hold, and
 the existing terminal's scrollback allocation are launch-only by construction.
+A separate launch bit distinguishes process-cwd inheritance from a concrete
+CLI, config, or OSC-derived directory; this prevents a display path from
+silently turning `inherit` into a `chdir` and `PWD` rewrite.
+A pane reload first compares its pane-owned value state, then compares the
+projected worker runtime state; an identical update does no work, and a
+frontend-only change does not enqueue a worker request.
 
 `TerminalWorkspace` is a C++ `QQuickItem` exposed to QML. QML owns only the
 application chrome and dialogs. Each tab owns a recursive binary tree whose
@@ -412,10 +419,40 @@ other terminal access remain serialized on the pane's worker thread.
 
 The first pane receives the parsed command-line options. Without a command,
 the worker starts executable `$SHELL` or `/bin/sh`. A new tab starts the default
-shell in the original working directory. A split starts the default shell using
-the source pane's latest reported directory, font, and effective font size. The
+shell in the effective `working-directory`. A split starts the default shell
+using the workspace's effective directory and policy: when
+`split-inherit-working-directory` is true, the explicit source pane's latest
+nonempty reported directory takes precedence; when false, or when the source
+has no terminal-owned directory, the workspace directory is retained. In both
+modes the source contributes its current font and effective font size. The
 inherited size is the child's reset target until a later config reload replaces
 it; the child starts unadjusted, so that reload also updates its visible size.
+
+The libghostty-vt terminal callback exposes raw OSC 7 data because Ghostty's
+application stream handler normally performs the surrounding policy. The Qt
+adapter mirrors that policy at its boundary: a direct C++23 port of the pinned
+`std.Uri` branch structure accepts only `file` and `kitty-shell-cwd` URIs naming
+`localhost` or the dynamically queried current machine. It preserves Zig's
+userinfo, bracketed-host, port, percent-decoding, and path boundaries; Linux
+MAC-shaped hostnames then use Ghostty's six-octet standard-parse/fallback
+repairs. File paths are decoded while kitty's raw-path form is preserved. A
+remote, parser-rejected, missing-host, or unsupported URI therefore cannot
+become a child launch directory. Validation occurs for every callback, so a
+later invalid URI in one coalesced VT batch cannot erase an earlier accepted
+local update.
+`inherit` performs no `chdir` and leaves the host `PWD` untouched. A concrete
+request is copied verbatim to `PWD`. Immediately before spawning, a missing
+directory drops the child `chdir`; any existing path is attempted, but a child
+`chdir` failure is non-fatal. The command therefore starts in the application
+process directory while the requested logical `PWD` and GUI directory remain
+stale until a later accepted OSC 7 update, matching pinned Ghostty. Concrete
+strings are not lexically normalized, because removing `..` across a symlink
+can select a different directory.
+Relative explicit programs and relative `PATH` entries are likewise resolved
+from the effective child directory without lexical normalization. Matching the
+pinned Zig launcher, empty `PATH` components are skipped, an unset `PATH` uses
+`/usr/local/bin:/bin/:/usr/bin`, and `ENOENT`/`ENOTDIR` candidates fall through
+to the next entry after the child changes directory.
 
 The child inherits the host environment with these terminal-specific values:
 
@@ -425,6 +462,7 @@ TERMINFO=<resolved private database>
 COLORTERM=truecolor
 TERM_PROGRAM=ghostty-qt
 TERM_PROGRAM_VERSION=<project version>
+PWD=<exact concrete request, even on cwd fallback; inherited unchanged for inherit mode>
 ```
 
 When a child exits, its final PTY output is drained and one last frame is
@@ -474,7 +512,16 @@ to discover newly created required includes. Failure still leaves the last
 good snapshot active when one exists; a successful changed snapshot is applied
 to the workspace.
 
-The current typed compatibility slice contains `font-family`, `font-size`, the
+The helper process necessarily has Ghostty action arguments, so the pinned
+parser classifies it as a probable CLI launch. An otherwise unset
+`working-directory` therefore finalizes to `inherit`; the GTK desktop-launch
+heuristic that would choose `home` cannot be reconstructed from the current
+text protocol. Explicit `inherit`, `home`, tilde, and concrete path values are
+still preserved, and the parity ledger keeps this setting and the dependent
+split fallback partial.
+
+The current typed compatibility slice contains `working-directory`,
+`split-inherit-working-directory`, `font-family`, `font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -486,7 +533,8 @@ palette defaults, selection and candidate/selected search colors, cursor
 color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed colors and
 Ghostty's cell-foreground and cell-background aliases remain distinct until
 the renderer has the target cell. Only the first configured font family is
-rendered. Explicit font and scrollback CLI options retain precedence.
+rendered. Explicit working-directory, font, and scrollback CLI options retain
+precedence.
 
 Live reload updates font and appearance on existing panes without overriding a
 pane's manual font zoom. Palette and fixed cursor defaults are updated through
@@ -512,6 +560,12 @@ The three-state link-preview policy reloads entirely in each pane's frontend and
 preserves an accepted hover over the terminal link. Removing an occupied
 preview guard instead resumes physical hit testing, as pointer ownership has
 changed.
+
+Working-directory and split-inheritance reloads are workspace-owned launch
+policy. They do not replace a running pane's directory, rebuild its rendering,
+or cross the session thread boundary; they are consulted only when a later tab
+or split is constructed. Building split options from the newest workspace base
+also prevents a nested split from retaining an older configured fallback.
 
 Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes

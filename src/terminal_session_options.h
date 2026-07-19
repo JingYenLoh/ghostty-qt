@@ -67,6 +67,7 @@ struct TerminalSessionRuntimeOptions {
 // composed here so initialization and reload use the same representation.
 struct TerminalSessionLaunchOptions {
     QString workingDirectory;
+    bool inheritWorkingDirectory = false;
     QStringList program;
     ScrollbackLimit scrollbackLimit;
     bool hold = false;

@@ -52,7 +52,7 @@ struct GhosttyConfigSnapshot {
     {
         const auto it = values.constFind(key);
         if (it == values.cend() || !it->isValid()
-            || !it->canConvert(QMetaType::fromType<T>())) {
+            || it->metaType() != QMetaType::fromType<T>()) {
             return std::nullopt;
         }
         return it->template value<T>();

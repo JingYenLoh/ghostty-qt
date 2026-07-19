@@ -56,8 +56,9 @@ the host-language comparison and remaining engineering risks.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
-- OSC title and working-directory updates, used for tab titles and as the
-  starting directory of a new split.
+- OSC title and local-host-validated working-directory updates, used for tab
+  titles and—when `split-inherit-working-directory` permits it—as the starting
+  directory of a new split.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
   by the pinned Ghostty code, watched-file reload, and a deliberately small set
   of applied appearance/session keys.
@@ -214,6 +215,8 @@ The current compatibility slice applies these keys:
 
 | Key | Current behavior |
 | --- | --- |
+| `working-directory` | Sets the default directory for initial panes, new tabs, and split fallback. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
+| `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. Explicit `--font-size` wins. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |

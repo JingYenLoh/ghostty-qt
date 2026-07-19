@@ -29,6 +29,7 @@ constexpr auto PreferredConfigName = "config.ghostty";
 using SparsePalette = std::array<std::optional<QColor>, 256>;
 
 struct ParsedConfig {
+    std::optional<QString> workingDirectory;
     std::optional<QStringList> fontFamilies;
     std::optional<double> fontSize;
     std::optional<QColor> foreground;
@@ -36,6 +37,7 @@ struct ParsedConfig {
     std::optional<double> unfocusedSplitOpacity;
     std::optional<QVariant> unfocusedSplitFill;
     std::optional<QVariant> splitDividerColor;
+    std::optional<bool> splitInheritWorkingDirectory;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
     std::optional<QVariant> selectionBackground;
@@ -78,6 +80,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
         [](const auto &color) { return color.has_value(); });
     return hasPaletteEntry
         && allPresent(
+            parsed.workingDirectory,
             parsed.fontFamilies,
             parsed.fontSize,
             parsed.foreground,
@@ -85,6 +88,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.unfocusedSplitOpacity,
             parsed.unfocusedSplitFill,
             parsed.splitDividerColor,
+            parsed.splitInheritWorkingDirectory,
             parsed.selectionForeground,
             parsed.selectionBackground,
             parsed.searchForeground,
@@ -468,7 +472,23 @@ bool parseDump(const QByteArray &dump,
         const QString key = line.left(separator).trimmed();
         const QString value = line.mid(separator + 1).trimmed();
         const int displayLine = lineIndex + 1;
-        if (key == QStringLiteral("font-family")) {
+        const auto parseRequiredBool = [&](std::optional<bool> &destination) {
+            bool parsedValue = false;
+            if (!parseBool(value, &parsedValue)) {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid %1 in Ghostty config output at line %2")
+                        .arg(key)
+                        .arg(displayLine));
+                return false;
+            }
+            destination = parsedValue;
+            return true;
+        };
+
+        if (key == QStringLiteral("working-directory")) {
+            parsed->workingDirectory = value;
+        } else if (key == QStringLiteral("font-family")) {
             if (!parsed->fontFamilies.has_value()) {
                 parsed->fontFamilies.emplace();
             }
@@ -535,6 +555,10 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->splitDividerColor = std::move(color);
+        } else if (key == QStringLiteral("split-inherit-working-directory")) {
+            if (!parseRequiredBool(parsed->splitInheritWorkingDirectory)) {
+                return false;
+            }
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -699,34 +723,17 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->confirmCloseSurface = value;
         } else if (key == QStringLiteral("clipboard-trim-trailing-spaces")) {
-            bool clipboardTrimTrailingSpaces = false;
-            if (!parseBool(value, &clipboardTrimTrailingSpaces)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid clipboard-trim-trailing-spaces in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->clipboardTrimTrailingSpaces)) {
                 return false;
             }
-            parsed->clipboardTrimTrailingSpaces =
-                clipboardTrimTrailingSpaces;
         } else if (key == QStringLiteral("clipboard-paste-protection")) {
-            bool clipboardPasteProtection = false;
-            if (!parseBool(value, &clipboardPasteProtection)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid clipboard-paste-protection in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->clipboardPasteProtection)) {
                 return false;
             }
-            parsed->clipboardPasteProtection = clipboardPasteProtection;
         } else if (key == QStringLiteral("clipboard-paste-bracketed-safe")) {
-            bool clipboardPasteBracketedSafe = false;
-            if (!parseBool(value, &clipboardPasteBracketedSafe)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid clipboard-paste-bracketed-safe in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->clipboardPasteBracketedSafe)) {
                 return false;
             }
-            parsed->clipboardPasteBracketedSafe =
-                clipboardPasteBracketedSafe;
         } else if (key == QStringLiteral("copy-on-select")) {
             if (value != QStringLiteral("false")
                 && value != QStringLiteral("true")
@@ -738,23 +745,13 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->copyOnSelect = value;
         } else if (key == QStringLiteral("selection-clear-on-typing")) {
-            bool selectionClearOnTyping = false;
-            if (!parseBool(value, &selectionClearOnTyping)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid selection-clear-on-typing in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->selectionClearOnTyping)) {
                 return false;
             }
-            parsed->selectionClearOnTyping = selectionClearOnTyping;
         } else if (key == QStringLiteral("selection-clear-on-copy")) {
-            bool selectionClearOnCopy = false;
-            if (!parseBool(value, &selectionClearOnCopy)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->selectionClearOnCopy)) {
                 return false;
             }
-            parsed->selectionClearOnCopy = selectionClearOnCopy;
         } else if (key == QStringLiteral("middle-click-action")) {
             if (value != QStringLiteral("primary-paste")
                 && value != QStringLiteral("ignore")) {
@@ -765,14 +762,9 @@ bool parseDump(const QByteArray &dump,
             }
             parsed->middleClickAction = value;
         } else if (key == QStringLiteral("link-url")) {
-            bool linkUrl = false;
-            if (!parseBool(value, &linkUrl)) {
-                setError(errorMessage,
-                         QStringLiteral("Invalid link-url in Ghostty config output at line %1")
-                             .arg(displayLine));
+            if (!parseRequiredBool(parsed->linkUrl)) {
                 return false;
             }
-            parsed->linkUrl = linkUrl;
         } else if (key == QStringLiteral("link-previews")) {
             if (value != QStringLiteral("false")
                 && value != QStringLiteral("true")
@@ -1245,6 +1237,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         return std::unexpected(std::move(parseError));
     }
 
+    const QString workingDirectory =
+        changes.workingDirectory.value_or(*defaults.workingDirectory);
     const QStringList fontFamilies =
         changes.fontFamilies.value_or(*defaults.fontFamilies);
     const double fontSize = changes.fontSize.value_or(*defaults.fontSize);
@@ -1259,6 +1253,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         changes.unfocusedSplitFill.value_or(*defaults.unfocusedSplitFill);
     const QVariant splitDividerColor = changes.splitDividerColor.value_or(
         *defaults.splitDividerColor);
+    const bool splitInheritWorkingDirectory =
+        changes.splitInheritWorkingDirectory.value_or(
+            *defaults.splitInheritWorkingDirectory);
     SparsePalette palette = defaults.palette;
     for (std::size_t index = 0; index < palette.size(); ++index) {
         if (changes.palette[index].has_value()) {
@@ -1335,6 +1332,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
 
     GhosttyConfigSnapshot snapshot;
     snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           workingDirectory);
     snapshot.values.insert(QStringLiteral("font-family"), fontFamilies);
     snapshot.values.insert(QStringLiteral("font-size"), fontSize);
     snapshot.values.insert(QStringLiteral("foreground"), foreground);
@@ -1345,6 +1344,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            unfocusedSplitFill);
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            splitDividerColor);
+    snapshot.values.insert(QStringLiteral("split-inherit-working-directory"),
+                           splitInheritWorkingDirectory);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            selectionForeground);

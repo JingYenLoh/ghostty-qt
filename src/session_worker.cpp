@@ -11,7 +11,7 @@
 #include <QFileInfo>
 #include <QProcessEnvironment>
 #include <QSocketNotifier>
-#include <QStandardPaths>
+#include <QStringTokenizer>
 #include <QThread>
 #include <QTimer>
 
@@ -49,6 +49,59 @@ constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
+
+QString appendPath(QString directory, QStringView path)
+{
+    if (!directory.endsWith(QLatin1Char('/'))) {
+        directory += QLatin1Char('/');
+    }
+    directory += path;
+    return directory;
+}
+
+QString absolutePathFromWorkingDirectory(
+    QString workingDirectory, QStringView relativePath)
+{
+    if (QDir::isRelativePath(workingDirectory)) {
+        workingDirectory = appendPath(QDir::currentPath(), workingDirectory);
+    }
+    return appendPath(std::move(workingDirectory), relativePath);
+}
+
+QStringList executableCandidates(QStringView name)
+{
+    if (name.contains(QLatin1Char('/'))) {
+        return {name.toString()};
+    }
+
+    const QString path = qEnvironmentVariableIsSet("PATH")
+        ? qEnvironmentVariable("PATH")
+        : QStringLiteral("/usr/local/bin:/bin/:/usr/bin");
+    // Pinned Zig's tokenizeScalar skips empty entries rather than treating
+    // them as the current directory.
+    QStringList candidates;
+    candidates.reserve(path.count(QDir::listSeparator()) + 1);
+    for (const QStringView directory : QStringView(path).tokenize(
+             QDir::listSeparator(), Qt::SkipEmptyParts)) {
+        QString candidate = directory.toString();
+        candidate += QLatin1Char('/');
+        candidate += name;
+        candidates.append(std::move(candidate));
+    }
+    return candidates;
+}
+
+bool hasExecutableCandidate(
+    const QStringList &candidates, const QString &workingDirectory)
+{
+    return std::ranges::any_of(candidates, [&](const QString &candidate) {
+        const QString validationPath = QDir::isRelativePath(candidate)
+            ? absolutePathFromWorkingDirectory(workingDirectory, candidate)
+            : candidate;
+        const QFileInfo info(validationPath);
+        return info.isFile() && info.isExecutable();
+    });
+}
 
 char foldSearchByte(char value)
 {
@@ -542,7 +595,7 @@ void SessionWorker::applyRuntimeOptions(
     }
 
     // libghostty-vt cannot resize an existing scrollback allocation. Reloaded
-    // limits remain pane-owned and apply when a new pane is constructed.
+    // limits remain workspace-owned and apply when a new pane is constructed.
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
             Q_EMIT errorOccurred(
@@ -555,38 +608,71 @@ void SessionWorker::applyRuntimeOptions(
 
 bool SessionWorker::spawnChild()
 {
-    QString executable;
+    const QString processWorkingDirectory = QDir::currentPath();
+    const QString requestedWorkingDirectory = options_.workingDirectory;
+    QString childWorkingDirectory = processWorkingDirectory;
+    QByteArray requestedWorkingDirectoryBytes;
+    bool attemptWorkingDirectory = false;
+    if (!options_.inheritWorkingDirectory) {
+        requestedWorkingDirectoryBytes = QFile::encodeName(
+            requestedWorkingDirectory);
+        // Pinned Ghostty drops a missing cwd but passes any existing path to
+        // the child, where chdir failure is deliberately non-fatal.
+        attemptWorkingDirectory = !requestedWorkingDirectory.isEmpty()
+            && ::access(requestedWorkingDirectoryBytes.constData(), F_OK) == 0;
+        if (attemptWorkingDirectory
+            && QFileInfo(requestedWorkingDirectory).isDir()
+            && ::access(requestedWorkingDirectoryBytes.constData(), X_OK) == 0) {
+            // This expected effective directory is used only for the
+            // synchronous executable diagnostic. The child still attempts
+            // the exact requested spelling below.
+            childWorkingDirectory = requestedWorkingDirectory;
+        }
+    }
+
+    QString requestedExecutable;
     QStringList arguments = options_.program;
     interactiveShell_ = arguments.isEmpty();
 
     if (interactiveShell_) {
-        executable = qEnvironmentVariable("SHELL");
-        if (executable.isEmpty() || !QFileInfo(executable).isExecutable()) {
-            executable = QStringLiteral("/bin/sh");
+        requestedExecutable = qEnvironmentVariable("SHELL");
+        if (requestedExecutable.isEmpty()) {
+            requestedExecutable = QStringLiteral("/bin/sh");
         }
         // Force interactive mode. Relying only on isatty can leave shells
         // without job control during startup races, which in turn prevents
         // the PTY foreground group from identifying active jobs.
-        arguments = {executable, QStringLiteral("-i")};
+        arguments = {requestedExecutable, QStringLiteral("-i")};
     } else {
-        executable = arguments.constFirst();
-        if (executable.contains(QLatin1Char('/'))) {
-            QFileInfo executableInfo(executable);
-            if (executableInfo.isRelative()) {
-                executable = QDir(options_.workingDirectory).absoluteFilePath(executable);
-            }
-        } else {
-            executable = QStandardPaths::findExecutable(executable);
-        }
+        requestedExecutable = arguments.constFirst();
     }
 
-    if (executable.isEmpty() || !QFileInfo(executable).isExecutable()) {
+    QStringList executablePaths = executableCandidates(requestedExecutable);
+    // Preserve the existing synchronous diagnostic, but do not preselect a
+    // candidate: the child still attempts the complete ordered list below.
+    bool executableAvailable = hasExecutableCandidate(
+        executablePaths, childWorkingDirectory);
+    if (interactiveShell_ && !executableAvailable
+        && requestedExecutable != QLatin1StringView("/bin/sh")) {
+        requestedExecutable = QStringLiteral("/bin/sh");
+        arguments[0] = requestedExecutable;
+        executablePaths = executableCandidates(requestedExecutable);
+        executableAvailable = hasExecutableCandidate(
+            executablePaths, childWorkingDirectory);
+    }
+    if (requestedExecutable.isEmpty() || !executableAvailable) {
         Q_EMIT errorOccurred(QStringLiteral("Program is not executable: %1")
-                               .arg(options_.program.value(0, executable)));
+                               .arg(options_.program.value(
+                                   0, requestedExecutable)));
         return false;
     }
 
-    arguments[0] = executable;
+    QVector<QByteArray> executableStorage;
+    executableStorage.reserve(executablePaths.size());
+    for (const QString &path : executablePaths) {
+        executableStorage.push_back(QFile::encodeName(path));
+    }
+
     QVector<QByteArray> argumentStorage;
     argumentStorage.reserve(arguments.size());
     for (const QString &argument : std::as_const(arguments)) {
@@ -611,6 +697,11 @@ bool SessionWorker::spawnChild()
     environment.insert(QStringLiteral("TERM_PROGRAM"), QStringLiteral("ghostty-qt"));
     environment.insert(QStringLiteral("TERM_PROGRAM_VERSION"),
                        QStringLiteral(GHOSTTY_QT_VERSION));
+    if (!options_.inheritWorkingDirectory) {
+        // Match pinned Ghostty's logical-path behavior: PWD retains the
+        // request even if cwd validation or chdir later falls back.
+        environment.insert(QStringLiteral("PWD"), requestedWorkingDirectory);
+    }
 
     const QStringList environmentList = environment.toStringList();
     QVector<QByteArray> environmentStorage;
@@ -624,9 +715,9 @@ bool SessionWorker::spawnChild()
         envp.push_back(entry.data());
     }
     envp.push_back(nullptr);
+    char *const *const argvData = argv.constData();
+    char *const *const envpData = envp.constData();
 
-    const QByteArray executableBytes = QFile::encodeName(executable);
-    const QByteArray workingDirectoryBytes = QFile::encodeName(options_.workingDirectory);
     struct winsize size {};
     size.ws_col = boundedU16(columns_);
     size.ws_row = boundedU16(rows_);
@@ -642,11 +733,29 @@ bool SessionWorker::spawnChild()
     }
 
     if (pid == 0) {
-        if (::chdir(workingDirectoryBytes.constData()) != 0) {
+        if (attemptWorkingDirectory) {
+            // Ghostty treats the directory as a hint. An existing file,
+            // permission failure, or post-preflight race must not prevent the
+            // command from starting in the inherited process directory.
+            (void)::chdir(requestedWorkingDirectoryBytes.constData());
+        }
+        // Search after chdir, just like pinned Zig's execvpeZ. A stat-only
+        // parent lookup cannot detect an executable whose interpreter is
+        // missing, so try every candidate and preserve its fallback rules.
+        bool sawAccessDenied = false;
+        for (const QByteArray &path : std::as_const(executableStorage)) {
+            ::execve(path.constData(), argvData, envpData);
+            const int execError = errno;
+            if (execError == EACCES) {
+                sawAccessDenied = true;
+                continue;
+            }
+            if (execError == ENOENT || execError == ENOTDIR) {
+                continue;
+            }
             _exit(126);
         }
-        ::execve(executableBytes.constData(), argv.data(), envp.data());
-        _exit(errno == ENOENT ? 127 : 126);
+        _exit(sawAccessDenied ? 126 : 127);
     }
 
     masterFd_ = ptyFd;
@@ -675,7 +784,9 @@ bool SessionWorker::spawnChild()
     connect(writeNotifier_, &QSocketNotifier::activated, this, &SessionWorker::flushPtyWrites);
 
     childTimer_->start();
-    Q_EMIT currentDirectoryChanged(options_.workingDirectory);
+    if (!options_.inheritWorkingDirectory) {
+        Q_EMIT currentDirectoryChanged(requestedWorkingDirectory);
+    }
     Q_EMIT started(childPid_);
     return true;
 }

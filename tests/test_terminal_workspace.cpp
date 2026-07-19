@@ -15,6 +15,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QUrl>
 
 #include <algorithm>
 #include <cmath>
@@ -196,6 +197,7 @@ private Q_SLOTS:
     void dragsExactNestedSplitDividerAndPreservesFocus();
     void splitDividerColorReloadsWithoutRelayout();
     void dimsUnfocusedSplitPanesAcrossLifecycle();
+    void splitWorkingDirectoryPolicyReloadsForFutureNestedSplits();
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
     void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
@@ -2259,6 +2261,162 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     workspace.reset();
     secondWindow.close();
     window.close();
+}
+
+void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSplits()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/split-working-directory-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString baseDirectory = root.filePath(QStringLiteral("base"));
+    const QString sourceDirectory =
+        root.filePath(QStringLiteral("source directory"));
+    const QString configuredFallback =
+        root.filePath(QStringLiteral("configured fallback"));
+    const QString reloadedFallback =
+        root.filePath(QStringLiteral("reloaded fallback"));
+    for (const QString &path : {
+             baseDirectory, sourceDirectory, configuredFallback,
+             reloadedFallback,
+         }) {
+        QVERIFY(QDir().mkpath(path));
+    }
+
+    const QString childLog = root.filePath(QStringLiteral("child-pwds"));
+    const QString shellPath = root.filePath(QStringLiteral("record-pwd.sh"));
+    QFile shell(shellPath);
+    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    shell.write(QByteArrayLiteral("#!/bin/sh\npwd >> \"")
+                + QFile::encodeName(childLog)
+                + QByteArrayLiteral("\"\nexec /bin/sleep 5\n"));
+    shell.close();
+    QVERIFY(QFile::setPermissions(
+        shellPath,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+            | QFileDevice::ExeOwner));
+    ShellEnvironment shellEnvironment(QFile::encodeName(shellPath));
+
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = baseDirectory;
+    QUrl sourceUrl;
+    sourceUrl.setScheme(QStringLiteral("file"));
+    sourceUrl.setHost(QStringLiteral("localhost"));
+    sourceUrl.setPath(sourceDirectory);
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033]7;%s\\007' \"$1\"; sleep 5"),
+        QStringLiteral("ghostty-qt-osc7"),
+        sourceUrl.toString(QUrl::FullyEncoded),
+    };
+    options.hold = true;
+    options.fontSize = 12.0;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId sourceId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *sourcePane = workspace.findChild<TerminalPane *>();
+    QVERIFY(sourcePane != nullptr);
+    auto *sourceController =
+        sourcePane->findChild<TerminalController *>();
+    QVERIFY(sourceController != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(),
+                              sourceDirectory, 3000);
+    sourcePane->zoomIn();
+    QCOMPARE(sourcePane->fontPointSize(), 13.0);
+    QSignalSpy sourceRuntime(
+        sourceController, &TerminalController::runtimeOptionsRequested);
+
+    const auto recordedDirectories = [&] {
+        QFile log(childLog);
+        if (!log.open(QIODevice::ReadOnly)) {
+            return QStringList{};
+        }
+        return QString::fromUtf8(log.readAll())
+            .split(u'\n', Qt::SkipEmptyParts);
+    };
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           configuredFallback);
+    snapshot.values.insert(
+        QStringLiteral("split-inherit-working-directory"), false);
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(sourceRuntime.count(), 0);
+    QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
+    QCOMPARE(sourcePane->findChild<TerminalController *>(), sourceController);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, sourceId, 0},
+    }));
+    const PaneId fallbackChildId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *fallbackChild = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != sourcePane) {
+            fallbackChild = pane;
+        }
+    }
+    QVERIFY(fallbackChild != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 1, 3000);
+    QCOMPARE(recordedDirectories().constFirst(), configuredFallback);
+    QCOMPARE(fallbackChild->currentDirectory(), configuredFallback);
+    QCOMPARE(fallbackChild->fontPointSize(), 13.0);
+    auto *fallbackController =
+        fallbackChild->findChild<TerminalController *>();
+    QVERIFY(fallbackController != nullptr);
+    QSignalSpy fallbackRuntime(
+        fallbackController, &TerminalController::runtimeOptionsRequested);
+
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           reloadedFallback);
+    snapshot.values.insert(
+        QStringLiteral("split-inherit-working-directory"), true);
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(sourceRuntime.count(), 0);
+    QCOMPARE(fallbackRuntime.count(), 0);
+    QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
+    QCOMPARE(fallbackChild->currentDirectory(), configuredFallback);
+
+    // The explicit source matters: fallbackChild is active, but this nested
+    // split still inherits the original pane's live directory and zoom.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, sourceId, 0},
+    }));
+    const PaneId inheritedChildId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(inheritedChildId != fallbackChildId);
+    TerminalPane *inheritedChild = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != sourcePane && pane != fallbackChild) {
+            inheritedChild = pane;
+        }
+    }
+    QVERIFY(inheritedChild != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 2, 3000);
+    QCOMPARE(recordedDirectories().at(1), sourceDirectory);
+    QCOMPARE(inheritedChild->currentDirectory(), sourceDirectory);
+    QCOMPARE(inheritedChild->fontPointSize(), 13.0);
+
+    // Clearing terminal-owned PWD makes true-mode inheritance fall back to
+    // the newest global working-directory without mutating existing panes.
+    QVERIFY(sourcePane->executeConfiguredAction(QStringLiteral("reset")));
+    QTRY_VERIFY_WITH_TIMEOUT(sourcePane->currentDirectory().isEmpty(), 1000);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitLeft,
+        {tabId, sourceId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 3, 3000);
+    QCOMPARE(recordedDirectories().at(2), reloadedFallback);
+    QCOMPARE(sourcePane->findChild<TerminalController *>(), sourceController);
 }
 
 void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()
