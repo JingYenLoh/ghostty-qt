@@ -429,6 +429,11 @@ terminal-owned directory, the workspace `working-directory` is retained.
 size, including manual zoom, or retains configured `font-size` when false. The
 font family always comes from the newest configuration. The tab child starts
 unadjusted, so a later font-size reload replaces its inherited visible size.
+`window-new-tab-position` is resolved independently against the workspace
+selection immediately before creation. `current` inserts after that selected
+tab, or appends when no tab is selected; `end` always appends, and either mode
+selects the new tab. The action-target pane therefore remains the directory and
+font inheritance source without becoming the insertion anchor.
 
 A split starts the default shell using the workspace's effective directory and
 policy: when
@@ -533,7 +538,8 @@ tab/split fallbacks partial.
 
 The current typed compatibility slice contains `working-directory`,
 `split-inherit-working-directory`, `tab-inherit-working-directory`,
-`window-inherit-font-size`, `font-family`, `font-size`, the
+`window-inherit-font-size`, `window-new-tab-position`, `font-family`,
+`font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -549,9 +555,10 @@ rendered. Explicit working-directory, font, and scrollback CLI options retain
 precedence.
 
 Live reload updates font and appearance on existing panes without overriding a
-pane's manual font zoom. Directory and font inheritance booleans are
-workspace-owned creation policy: they affect future tabs/splits without moving
-an existing process or marking an inherited child as manually zoomed. Palette
+pane's manual font zoom. Directory and font inheritance booleans plus tab
+insertion position are workspace-owned creation policy: they affect future
+tabs/splits without moving existing tabs or processes or marking an inherited
+child as manually zoomed. Palette
 and fixed cursor defaults are updated through
 `libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
@@ -576,11 +583,12 @@ preserves an accepted hover over the terminal link. Removing an occupied
 preview guard instead resumes physical hit testing, as pointer ownership has
 changed.
 
-Working-directory and split-inheritance reloads are workspace-owned launch
-policy. They do not replace a running pane's directory, rebuild its rendering,
-or cross the session thread boundary; they are consulted only when a later tab
-or split is constructed. Building split options from the newest workspace base
-also prevents a nested split from retaining an older configured fallback.
+Working-directory, inheritance, and tab-position reloads are workspace-owned
+creation policy. They do not replace a running pane's directory, reorder an
+existing tab, rebuild rendering, or cross the session thread boundary; they are
+consulted only when a later tab or split is constructed. Building split options
+from the newest workspace base also prevents a nested split from retaining an
+older configured fallback.
 
 Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
@@ -679,8 +687,11 @@ fanout, matching the pinned GTK split-tree action boundary. Automatic split
 direction is resolved from each originating surface before that placement
 redirect. New-tab actions instead retain every pane in the stable fanout
 snapshot as their creation source, so activating one new tab cannot redirect
-the next action's inherited directory or font size. A fullscreen surface
-action is coalesced once per workspace during
+the next action's inherited directory or font size. Placement still resolves
+against the selected tab before each creation, matching Ghostty: in `current`
+mode the advancing selection produces one contiguous block in stable source
+order, while `end` appends that block. A fullscreen surface action is coalesced
+once per workspace during
 broad fanout because every pane maps to the same synchronously toggled Qt host
 window; separate workspaces still receive independent transitions.
 

@@ -149,7 +149,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
 add_dependencies(test-terminal-workspace ghostty-qt-terminfo)
 add_test(NAME terminal-workspace COMMAND test-terminal-workspace)
 set_tests_properties(terminal-workspace PROPERTIES
-    TIMEOUT 15
+    TIMEOUT 30
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
 )

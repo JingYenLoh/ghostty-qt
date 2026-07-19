@@ -47,6 +47,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
     void mapsWorkingDirectoryAndSurfaceInheritance();
+    void mapsNewTabPosition();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -111,6 +112,8 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.splitInheritWorkingDirectory);
     QVERIFY(options.tabInheritWorkingDirectory);
     QVERIFY(options.windowInheritFontSize);
+    QCOMPARE(options.windowNewTabPosition,
+             WindowNewTabPosition::Current);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -564,6 +567,37 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsNewTabPosition()
+{
+    LaunchOptions base;
+    base.windowNewTabPosition = WindowNewTabPosition::End;
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                           QStringLiteral("current"));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
+             WindowNewTabPosition::Current);
+
+    snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                           QStringLiteral("end"));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
+             WindowNewTabPosition::End);
+
+    for (const QVariant &invalid : {
+             QVariant(QStringLiteral("after")), QVariant(false),
+         }) {
+        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                               invalid);
+        QCOMPARE(
+            applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
+            WindowNewTabPosition::End);
+    }
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
 {
     LaunchOptions base;
@@ -776,6 +810,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.splitInheritWorkingDirectory = false;
     frontendOnlyChanged.tabInheritWorkingDirectory = false;
     frontendOnlyChanged.windowInheritFontSize = false;
+    frontendOnlyChanged.windowNewTabPosition =
+        WindowNewTabPosition::End;
     frontendOnlyChanged.splitAppearance = {
         .unfocusedOpacity = 0.9,
         .unfocusedFill = QColor(QStringLiteral("#fedcba")),

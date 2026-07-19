@@ -749,15 +749,24 @@ void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
     }
     initialTabCreated_ = true;
 
+    const int insertionIndex =
+        options.windowNewTabPosition == WindowNewTabPosition::Current
+            && currentIndex_ >= 0
+        ? currentIndex_ + 1
+        : static_cast<int>(tabs_.size());
+
     const PaneHandle pane = createPane(options);
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);
     tab->root = std::make_unique<Node>(pane);
     tab->activePaneId = pane.id;
     const TabId tabId = tab->id;
-    tabs_.push_back(std::move(tab));
+    const TabListEntry entry = tabListEntry(*tab);
+    tabs_.insert(tabs_.begin() + insertionIndex, std::move(tab));
 
-    tabModel_.append(tabListEntry(*tabs_.back()));
+    const bool modelInserted = tabModel_.insert(insertionIndex, entry);
+    Q_ASSERT(modelInserted);
+    Q_UNUSED(modelInserted);
     Q_EMIT tabTitlesChanged();
     activateTab(tabId);
 }

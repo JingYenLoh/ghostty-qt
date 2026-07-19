@@ -188,6 +188,7 @@ private Q_SLOTS:
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
+    void newTabPositionReloadsAndKeepsBroadOrder();
     void splitDirectionsPlaceAndFocusNewPane_data();
     void splitDirectionsPlaceAndFocusNewPane();
     void automaticSplitUsesOriginatingPaneAspect();
@@ -1249,6 +1250,131 @@ void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
         {},
     }));
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+}
+
+void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const auto tabIds = [](TerminalWorkspace &workspace) {
+        QVector<TabId> result;
+        result.reserve(workspace.tabCount());
+        for (int index = 0; index < workspace.tabCount(); ++index) {
+            result.append(workspace.tabModel()->idAt(index));
+        }
+        return result;
+    };
+
+    {
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        workspace.newTab();
+        workspace.newTab();
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({TabId(1), TabId(2), TabId(3)}));
+        const PaneId thirdPaneId =
+            workspace.tabModel()->entryAt(2)->activePaneId;
+
+        // The default current mode inserts after the selected first tab.
+        workspace.setCurrentIndex(0);
+        workspace.newTab();
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(4), TabId(2), TabId(3),
+                 }));
+        QCOMPARE(workspace.currentIndex(), 1);
+
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                               QStringLiteral("end"));
+        workspace.applyConfigSnapshot(snapshot);
+        const QVector<TabId> beforeEndInsert = tabIds(workspace);
+
+        // Placement follows the selected tab policy, independently of the
+        // explicit inactive pane retained as the inheritance source.
+        QVERIFY(workspace.dispatchAction({
+            WorkspaceAction::NewTab,
+            {TabId(3), thirdPaneId, 0},
+        }));
+        QCOMPARE(beforeEndInsert,
+                 QVector<TabId>({
+                     TabId(1), TabId(4), TabId(2), TabId(3),
+                 }));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(4), TabId(2), TabId(3), TabId(5),
+                 }));
+        QCOMPARE(workspace.currentIndex(), 4);
+
+        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                               QStringLiteral("current"));
+        workspace.applyConfigSnapshot(snapshot);
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(4), TabId(2), TabId(3), TabId(5),
+                 }));
+        workspace.setCurrentIndex(1);
+        QVERIFY(workspace.dispatchAction({
+            WorkspaceAction::NewTab,
+            {TabId(3), thirdPaneId, 0},
+        }));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(4), TabId(6), TabId(2), TabId(3),
+                     TabId(5),
+                 }));
+        QCOMPARE(workspace.currentIndex(), 2);
+    }
+
+    {
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        workspace.newTab();
+        workspace.newTab();
+        workspace.setCurrentIndex(1);
+
+        // Broad fanout retains the three original pane sources. Each new tab
+        // becomes selected, so current mode inserts the next one immediately
+        // after it and leaves one contiguous block in snapshot order.
+        QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("new_tab")));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(2), TabId(4), TabId(5), TabId(6),
+                     TabId(3),
+                 }));
+        QCOMPARE(workspace.currentIndex(), 4);
+    }
+
+    {
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        workspace.newTab();
+        workspace.newTab();
+        workspace.setCurrentIndex(1);
+
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                               QStringLiteral("end"));
+        workspace.applyConfigSnapshot(snapshot);
+
+        // End mode appends the stable broad source snapshot in order even
+        // though every creation advances the selected tab.
+        QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("new_tab")));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({
+                     TabId(1), TabId(2), TabId(3), TabId(4), TabId(5),
+                     TabId(6),
+                 }));
+        QCOMPARE(workspace.currentIndex(), 5);
+    }
 }
 
 void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()

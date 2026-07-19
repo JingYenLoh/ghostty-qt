@@ -249,6 +249,13 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     applyConfigBool(
         snapshot, QStringLiteral("window-inherit-font-size"),
         result.windowInheritFontSize);
+    const auto newTabPosition = snapshot.value<QString>(
+        QStringLiteral("window-new-tab-position"));
+    if (newTabPosition == QStringLiteral("current")) {
+        result.windowNewTabPosition = WindowNewTabPosition::Current;
+    } else if (newTabPosition == QStringLiteral("end")) {
+        result.windowNewTabPosition = WindowNewTabPosition::End;
+    }
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;

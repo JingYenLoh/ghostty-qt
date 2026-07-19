@@ -40,6 +40,7 @@ struct ParsedConfig {
     std::optional<bool> splitInheritWorkingDirectory;
     std::optional<bool> tabInheritWorkingDirectory;
     std::optional<bool> windowInheritFontSize;
+    std::optional<QString> windowNewTabPosition;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
     std::optional<QVariant> selectionBackground;
@@ -93,6 +94,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.splitInheritWorkingDirectory,
             parsed.tabInheritWorkingDirectory,
             parsed.windowInheritFontSize,
+            parsed.windowNewTabPosition,
             parsed.selectionForeground,
             parsed.selectionBackground,
             parsed.searchForeground,
@@ -571,6 +573,16 @@ bool parseDump(const QByteArray &dump,
             if (!parseRequiredBool(parsed->windowInheritFontSize)) {
                 return false;
             }
+        } else if (key == QStringLiteral("window-new-tab-position")) {
+            if (value != QStringLiteral("current")
+                && value != QStringLiteral("end")) {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid window-new-tab-position in Ghostty config output at line %1")
+                        .arg(displayLine));
+                return false;
+            }
+            parsed->windowNewTabPosition = value;
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -1273,6 +1285,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
             *defaults.tabInheritWorkingDirectory);
     const bool windowInheritFontSize = changes.windowInheritFontSize.value_or(
         *defaults.windowInheritFontSize);
+    const QString windowNewTabPosition =
+        changes.windowNewTabPosition.value_or(
+            *defaults.windowNewTabPosition);
     SparsePalette palette = defaults.palette;
     for (std::size_t index = 0; index < palette.size(); ++index) {
         if (changes.palette[index].has_value()) {
@@ -1367,6 +1382,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            tabInheritWorkingDirectory);
     snapshot.values.insert(QStringLiteral("window-inherit-font-size"),
                            windowInheritFontSize);
+    snapshot.values.insert(QStringLiteral("window-new-tab-position"),
+                           windowNewTabPosition);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            selectionForeground);

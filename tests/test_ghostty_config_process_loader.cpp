@@ -41,6 +41,7 @@ QByteArray defaultOutput()
                           "split-inherit-working-directory = true\n"
                           "tab-inherit-working-directory = true\n"
                           "window-inherit-font-size = true\n"
+                          "window-new-tab-position = current\n"
                           "selection-foreground = \n"
                           "selection-background = \n"
                           "search-foreground = #000000\n"
@@ -312,6 +313,9 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QVERIFY(canonicalDefaults->values.value(
                 QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(canonicalDefaults->values.value(
+                 QStringLiteral("window-new-tab-position")).toString(),
+             QStringLiteral("current"));
+    QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.7);
     QCOMPARE(canonicalDefaults->values.value(
@@ -339,6 +343,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "split-inherit-working-directory = false\r\n"
             "tab-inherit-working-directory = false\r\n"
             "window-inherit-font-size = false\r\n"
+            "window-new-tab-position = end\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
@@ -398,6 +403,9 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
                  QStringLiteral("tab-inherit-working-directory")).toBool());
     QVERIFY(!snapshot.values.value(
                  QStringLiteral("window-inherit-font-size")).toBool());
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("window-new-tab-position")).toString(),
+             QStringLiteral("end"));
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.42);
@@ -689,6 +697,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QByteArrayLiteral("split-inherit-working-directory = true\n"),
              QByteArrayLiteral("tab-inherit-working-directory = true\n"),
              QByteArrayLiteral("window-inherit-font-size = true\n"),
+             QByteArrayLiteral("window-new-tab-position = current\n"),
              QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
              QByteArrayLiteral("unfocused-split-fill = \n"),
          }) {
@@ -743,6 +752,21 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
                      QStringLiteral("Invalid %1 in Ghostty config output at line 1")
                          .arg(QString::fromLatin1(key)));
         }
+    }
+
+    for (const QByteArray &value : {
+             QByteArrayLiteral(""), QByteArrayLiteral("after"),
+             QByteArrayLiteral("END"), QByteArrayLiteral("current-tab"),
+         }) {
+        const GhosttyConfigLoadResult malformedPosition =
+            parseGhosttyConfigShowOutputs(
+                defaultOutput(),
+                QByteArrayLiteral("window-new-tab-position = ")
+                    + value + QByteArrayLiteral("\n"),
+                fixture.candidates());
+        QVERIFY(!malformedPosition.has_value());
+        QCOMPARE(malformedPosition.error(),
+                 QStringLiteral("Invalid window-new-tab-position in Ghostty config output at line 1"));
     }
 
     const GhosttyConfigLoadResult malformedUnfocusedFill =
@@ -1010,7 +1034,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
         QStringLiteral("working-directory = %1\n"
                        "split-inherit-working-directory = false\n"
                        "tab-inherit-working-directory = false\n"
-                       "window-inherit-font-size = false\n")
+                       "window-inherit-font-size = false\n"
+                       "window-new-tab-position = end\n")
             .arg(configuredDirectory)
             .toUtf8());
 
@@ -1030,13 +1055,17 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                  QStringLiteral("tab-inherit-working-directory")).toBool());
     QVERIFY(!result->values.value(
                  QStringLiteral("window-inherit-font-size")).toBool());
+    QCOMPARE(result->values.value(
+                 QStringLiteral("window-new-tab-position")).toString(),
+             QStringLiteral("end"));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral("working-directory = inherit\n"
                           "split-inherit-working-directory = true\n"
                           "tab-inherit-working-directory = true\n"
-                          "window-inherit-font-size = true\n"));
+                          "window-inherit-font-size = true\n"
+                          "window-new-tab-position = current\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.value(QStringLiteral("working-directory"))
@@ -1048,6 +1077,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                 QStringLiteral("tab-inherit-working-directory")).toBool());
     QVERIFY(result->values.value(
                 QStringLiteral("window-inherit-font-size")).toBool());
+    QCOMPARE(result->values.value(
+                 QStringLiteral("window-new-tab-position")).toString(),
+             QStringLiteral("current"));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,

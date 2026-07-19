@@ -61,8 +61,9 @@ Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
 keys into value snapshots.
 
 The snapshot includes the finalized working-directory, split/tab directory
-inheritance policies, and new-window/tab font-size inheritance policy, complete
-canonical 256-entry palette, selection colors, cursor
+inheritance policies, new-window/tab font-size inheritance policy, and the
+canonical `current`/`end` new-tab position, complete canonical 256-entry
+palette, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, and
@@ -138,11 +139,12 @@ the pointer remains on the link, occupied-guard release back to physical hit
 testing, left/right overlay relocation, and bounded/escaped destination
 presentation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
-stable tab reordering/index selection, wrapped split traversal, mutable and
-equalized layouts, future-only split working-directory policy reloads with
+stable tab insertion/reordering/index selection, wrapped split traversal,
+mutable and equalized layouts, future-only split working-directory policy reloads with
 explicit and nested sources, source-stable new-tab directory/font inheritance
-across explicit, QML-style, reset, reload, and broad-fanout paths, and split
-zoom lifecycle. Adapter and worker tests
+across explicit, QML-style, reset, reload, and broad-fanout paths, exact
+`current`/`end` new-tab placement across live reload and broad fanout, and
+split zoom lifecycle. Adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
 directory fallback. They additionally verify same-batch valid/invalid OSC 7
 ordering, inherited logical `PWD`, exact symlink-sensitive concrete paths, and

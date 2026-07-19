@@ -89,11 +89,22 @@ int TabListModel::indexOf(TabId id) const
 
 void TabListModel::append(TabListEntry entry)
 {
-    const int index = static_cast<int>(entries_.size());
+    const bool inserted = insert(static_cast<int>(entries_.size()),
+                                 std::move(entry));
+    Q_ASSERT(inserted);
+    Q_UNUSED(inserted);
+}
+
+bool TabListModel::insert(int index, TabListEntry entry)
+{
+    if (index < 0 || index > entries_.size()) {
+        return false;
+    }
     beginInsertRows(QModelIndex(), index, index);
-    entries_.append(std::move(entry));
+    entries_.insert(index, std::move(entry));
     endInsertRows();
     Q_EMIT countChanged();
+    return true;
 }
 
 bool TabListModel::replace(TabId id, TabListEntry entry)

@@ -593,6 +593,10 @@
           "status": "partial",
           "note": "The exact default-true boolean controls new tabs: true copies only the action source's current point size, including manual zoom, while false keeps the newest effective font-size with CLI precedence. Children remain unadjusted and follow later font-size reloads. New-window inheritance is pending multi-window support; pinned GTK also currently ignores the false setting despite the documented contract and embedded frontend honoring it."
         },
+        "window-new-tab-position": {
+          "status": "supported",
+          "note": "The exact current/end enum defaults to current. Current inserts after the tab selected immediately before each creation, or appends with no selection; end appends, and the new tab is selected. Action-source inheritance remains independent of the insertion anchor, while reload affects future tabs only."
+        },
         "working-directory": {
           "status": "partial",
           "note": "The shared-config value supplies initial panes plus new-tab and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, tab/split inheritance, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window inheritance and lossless non-UTF-8 path transport remain incomplete."
@@ -808,8 +812,8 @@
           "note": "Supports left/right/up/down placement plus omitted and explicit auto. Auto uses the originating surface's effective pixel aspect, choosing right only when width is greater and down otherwise; every split focuses the new pane and clears split zoom."
         },
         "new_tab": {
-          "status": "partial",
-          "note": "Local, QML, and broad triggers create and select a tab through the typed workspace while retaining the correct source pane for working-directory and font-size inheritance. Configurable insertion position and the remaining tab lifecycle options are not implemented."
+          "status": "supported",
+          "note": "Local, QML, and broad triggers create and select a tab through the typed workspace, retain each original source pane for directory/font inheritance, and honor the live current/end insertion policy."
         },
         "next_tab": {
           "status": "partial",

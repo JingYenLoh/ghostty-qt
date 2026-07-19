@@ -11,6 +11,7 @@ class WorkspaceFoundationTest : public QObject {
 
 private Q_SLOTS:
     void tabIdsRemainStableWhenRowsMoveAfterRemoval();
+    void tabModelInsertsStableEntries();
     void tabModelMovesStableEntries();
     void tabModelPublishesRoleChanges();
     void dispatcherPreservesTypedActionContext();
@@ -37,6 +38,44 @@ void WorkspaceFoundationTest::tabIdsRemainStableWhenRowsMoveAfterRemoval()
     QCOMPARE(model.count(), 1);
     QCOMPARE(model.idAt(0).value(), quint64(22));
     QCOMPARE(model.indexOf(TabId(22)), 0);
+}
+
+void WorkspaceFoundationTest::tabModelInsertsStableEntries()
+{
+    TabListModel model;
+    for (const quint64 value : {quint64(1), quint64(3)}) {
+        TabListEntry entry;
+        entry.id = TabId(value);
+        entry.title = QString::number(value);
+        model.append(entry);
+    }
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy countChanged(&model, &TabListModel::countChanged);
+
+    TabListEntry middle;
+    middle.id = TabId(2);
+    middle.title = QStringLiteral("2");
+    QVERIFY(model.insert(1, middle));
+    TabListEntry first;
+    first.id = TabId(0);
+    first.title = QStringLiteral("0");
+    QVERIFY(model.insert(0, first));
+    TabListEntry last;
+    last.id = TabId(4);
+    last.title = QStringLiteral("4");
+    QVERIFY(model.insert(model.count(), last));
+
+    QCOMPARE(inserted.count(), 3);
+    QCOMPARE(countChanged.count(), 3);
+    QCOMPARE(model.count(), 5);
+    for (int index = 0; index < model.count(); ++index) {
+        QCOMPARE(model.idAt(index), TabId(static_cast<quint64>(index)));
+    }
+
+    QVERIFY(!model.insert(-1, {}));
+    QVERIFY(!model.insert(model.count() + 1, {}));
+    QCOMPARE(inserted.count(), 3);
+    QCOMPARE(countChanged.count(), 3);
 }
 
 void WorkspaceFoundationTest::tabModelMovesStableEntries()

@@ -52,6 +52,7 @@ public:
     int indexOf(TabId id) const;
 
     void append(TabListEntry entry);
+    bool insert(int index, TabListEntry entry);
     bool replace(TabId id, TabListEntry entry);
     bool move(TabId id, int destination);
     bool remove(TabId id);
