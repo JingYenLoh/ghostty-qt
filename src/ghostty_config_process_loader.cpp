@@ -38,6 +38,8 @@ struct ParsedConfig {
     std::optional<QVariant> unfocusedSplitFill;
     std::optional<QVariant> splitDividerColor;
     std::optional<bool> splitInheritWorkingDirectory;
+    std::optional<bool> tabInheritWorkingDirectory;
+    std::optional<bool> windowInheritFontSize;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
     std::optional<QVariant> selectionBackground;
@@ -89,6 +91,8 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.unfocusedSplitFill,
             parsed.splitDividerColor,
             parsed.splitInheritWorkingDirectory,
+            parsed.tabInheritWorkingDirectory,
+            parsed.windowInheritFontSize,
             parsed.selectionForeground,
             parsed.selectionBackground,
             parsed.searchForeground,
@@ -557,6 +561,14 @@ bool parseDump(const QByteArray &dump,
             parsed->splitDividerColor = std::move(color);
         } else if (key == QStringLiteral("split-inherit-working-directory")) {
             if (!parseRequiredBool(parsed->splitInheritWorkingDirectory)) {
+                return false;
+            }
+        } else if (key == QStringLiteral("tab-inherit-working-directory")) {
+            if (!parseRequiredBool(parsed->tabInheritWorkingDirectory)) {
+                return false;
+            }
+        } else if (key == QStringLiteral("window-inherit-font-size")) {
+            if (!parseRequiredBool(parsed->windowInheritFontSize)) {
                 return false;
             }
         } else if (key == QStringLiteral("palette")) {
@@ -1256,6 +1268,11 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const bool splitInheritWorkingDirectory =
         changes.splitInheritWorkingDirectory.value_or(
             *defaults.splitInheritWorkingDirectory);
+    const bool tabInheritWorkingDirectory =
+        changes.tabInheritWorkingDirectory.value_or(
+            *defaults.tabInheritWorkingDirectory);
+    const bool windowInheritFontSize = changes.windowInheritFontSize.value_or(
+        *defaults.windowInheritFontSize);
     SparsePalette palette = defaults.palette;
     for (std::size_t index = 0; index < palette.size(); ++index) {
         if (changes.palette[index].has_value()) {
@@ -1346,6 +1363,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            splitDividerColor);
     snapshot.values.insert(QStringLiteral("split-inherit-working-directory"),
                            splitInheritWorkingDirectory);
+    snapshot.values.insert(QStringLiteral("tab-inherit-working-directory"),
+                           tabInheritWorkingDirectory);
+    snapshot.values.insert(QStringLiteral("window-inherit-font-size"),
+                           windowInheritFontSize);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            selectionForeground);

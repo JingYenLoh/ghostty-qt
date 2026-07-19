@@ -1203,6 +1203,28 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions inherited = pane.splitLaunchOptions(reloaded);
     QCOMPARE(inherited.fontSize, 15.0);
 
+    LaunchOptions tabBase = reloaded;
+    tabBase.workingDirectory = QDir::currentPath();
+    tabBase.inheritWorkingDirectory = true;
+    tabBase.fontFamily = QStringLiteral("Configured Family");
+    tabBase.tabInheritWorkingDirectory = false;
+    tabBase.windowInheritFontSize = false;
+    const LaunchOptions tabFallback = pane.tabLaunchOptions(tabBase);
+    QCOMPARE(tabFallback.workingDirectory, QDir::currentPath());
+    QVERIFY(tabFallback.inheritWorkingDirectory);
+    QCOMPARE(tabFallback.fontFamily, QStringLiteral("Configured Family"));
+    QCOMPARE(tabFallback.fontSize, 10.0);
+    QVERIFY(tabFallback.program.isEmpty());
+    QVERIFY(!tabFallback.hold);
+
+    tabBase.tabInheritWorkingDirectory = true;
+    tabBase.windowInheritFontSize = true;
+    const LaunchOptions tabInherited = pane.tabLaunchOptions(tabBase);
+    QCOMPARE(tabInherited.workingDirectory, QDir::tempPath());
+    QVERIFY(!tabInherited.inheritWorkingDirectory);
+    QCOMPARE(tabInherited.fontFamily, QStringLiteral("Configured Family"));
+    QCOMPARE(tabInherited.fontSize, 15.0);
+
     // A split inherits the effective size as its initial config/reset target,
     // but starts unadjusted so the next live reload replaces that target.
     LaunchOptions childOptions = inherited;

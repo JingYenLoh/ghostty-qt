@@ -68,6 +68,12 @@ struct LaunchOptions {
     // New splits inherit the source pane's reported directory when enabled;
     // otherwise the workspace's effective working-directory is used.
     bool splitInheritWorkingDirectory = true;
+    // New tabs inherit the source pane's reported directory when enabled;
+    // otherwise the workspace's effective working-directory is used.
+    bool tabInheritWorkingDirectory = true;
+    // Ghostty uses one setting for new windows and tabs. The current
+    // single-window frontend applies it to the source pane of a new tab.
+    bool windowInheritFontSize = true;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

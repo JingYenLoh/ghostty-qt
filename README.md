@@ -57,8 +57,8 @@ the host-language comparison and remaining engineering risks.
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
 - OSC title and local-host-validated working-directory updates, used for tab
-  titles and—when `split-inherit-working-directory` permits it—as the starting
-  directory of a new split.
+  titles and—when the corresponding tab/split inheritance policy permits
+  it—as the starting directory of a new surface.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
   by the pinned Ghostty code, watched-file reload, and a deliberately small set
   of applied appearance/session keys.
@@ -215,10 +215,12 @@ The current compatibility slice applies these keys:
 
 | Key | Current behavior |
 | --- | --- |
-| `working-directory` | Sets the default directory for initial panes, new tabs, and split fallback. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
+| `working-directory` | Sets the default directory for initial panes and the fallback for new tabs and splits. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
 | `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
+| `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
+| `window-inherit-font-size` | Defaults to `true`. New tabs inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. New-window behavior awaits multi-window support. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
-| `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. Explicit `--font-size` wins. |
+| `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. New tabs may initially inherit their source's actual size as described above. Explicit `--font-size` wins. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
 | `unfocused-split-opacity` | Sets the retained content opacity of unfocused panes in a split, clamped to Ghostty's `0.15`–`1.0` range. The Qt renderer composites the complementary fill alpha and updates existing panes live. |
 | `unfocused-split-fill` | Sets the optional fixed RGB dimming fill. Unset resolves live to the configured `background`, independently of terminal OSC 11 overrides. Search suppresses dimming for its pane. |
@@ -395,7 +397,8 @@ physical-key locations, named-table stacks, process-wide fanout, portal
 race/reload coverage, and PTY-backed sequence replay, helper-process
 protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
-application's short-lived process/window lifecycle, and staged relocation of
+application's short-lived process/window lifecycle, source-stable new-tab
+working-directory/font inheritance, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
 exercised headlessly; workspace tab ordering, split layout, navigation, and
 zoom are covered through typed actions. Adapter/session tests cover absolute,

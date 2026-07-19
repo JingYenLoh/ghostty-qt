@@ -46,7 +46,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
-    void mapsWorkingDirectoryAndSplitInheritance();
+    void mapsWorkingDirectoryAndSurfaceInheritance();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -109,6 +109,8 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
     QVERIFY(!options.splitAppearance.dividerColor.has_value());
     QVERIFY(options.splitInheritWorkingDirectory);
+    QVERIFY(options.tabInheritWorkingDirectory);
+    QVERIFY(options.windowInheritFontSize);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -496,11 +498,13 @@ void LaunchOptionsTest::mapsClipboardModes()
     }
 }
 
-void LaunchOptionsTest::mapsWorkingDirectoryAndSplitInheritance()
+void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
 {
     LaunchOptions base;
     base.workingDirectory = QStringLiteral("/launch-directory");
     base.splitInheritWorkingDirectory = true;
+    base.tabInheritWorkingDirectory = true;
+    base.windowInheritFontSize = true;
 
     GhosttyConfigSnapshot snapshot;
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -508,18 +512,25 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSplitInheritance()
                            QStringLiteral("/base/link/../target"));
     snapshot.values.insert(
         QStringLiteral("split-inherit-working-directory"), false);
+    snapshot.values.insert(
+        QStringLiteral("tab-inherit-working-directory"), false);
+    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), false);
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.workingDirectory,
              QStringLiteral("/base/link/../target"));
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(!result.splitInheritWorkingDirectory);
+    QVERIFY(!result.tabInheritWorkingDirectory);
+    QVERIFY(!result.windowInheritFontSize);
 
     base.workingDirectoryExplicit = true;
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.workingDirectory, QStringLiteral("/launch-directory"));
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(!result.splitInheritWorkingDirectory);
+    QVERIFY(!result.tabInheritWorkingDirectory);
+    QVERIFY(!result.windowInheritFontSize);
 
     base.workingDirectoryExplicit = false;
     for (const QString &fallback : {
@@ -536,10 +547,18 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSplitInheritance()
     snapshot.values.insert(
         QStringLiteral("split-inherit-working-directory"),
         QStringLiteral("false"));
+    snapshot.values.insert(
+        QStringLiteral("tab-inherit-working-directory"),
+        QStringLiteral("false"));
+    snapshot.values.insert(
+        QStringLiteral("window-inherit-font-size"),
+        QStringLiteral("false"));
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.workingDirectory, QStringLiteral("/launch-directory"));
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(result.splitInheritWorkingDirectory);
+    QVERIFY(result.tabInheritWorkingDirectory);
+    QVERIFY(result.windowInheritFontSize);
 
     snapshot.availability = GhosttyConfigAvailability::Unavailable;
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
@@ -755,6 +774,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
     frontendOnlyChanged.workingDirectoryExplicit = false;
     frontendOnlyChanged.splitInheritWorkingDirectory = false;
+    frontendOnlyChanged.tabInheritWorkingDirectory = false;
+    frontendOnlyChanged.windowInheritFontSize = false;
     frontendOnlyChanged.splitAppearance = {
         .unfocusedOpacity = 0.9,
         .unfocusedFill = QColor(QStringLiteral("#fedcba")),

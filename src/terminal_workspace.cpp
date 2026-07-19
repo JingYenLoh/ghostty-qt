@@ -444,9 +444,22 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             || tabIdForPane(request.context.paneId) == request.context.tabId;
     };
     switch (request.action) {
-    case WorkspaceAction::NewTab:
-        createNewTab();
+    case WorkspaceAction::NewTab: {
+        PaneId sourcePaneId;
+        if (request.context.paneId.isValid()) {
+            if (paneForId(request.context.paneId) == nullptr
+                || !contextMatchesPane()) {
+                return false;
+            }
+            sourcePaneId = request.context.paneId;
+        } else if (request.context.tabId.isValid()) {
+            const Tab *tab = tabById(request.context.tabId);
+            if (tab == nullptr) return false;
+            sourcePaneId = tab->activePaneId;
+        }
+        createNewTab(sourcePaneId);
         return true;
+    }
     case WorkspaceAction::ActivateTab:
         if (tabById(request.context.tabId) == nullptr) return false;
         activateTab(request.context.tabId);
@@ -664,7 +677,10 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 reevaluatePendingClose();
             });
     connect(pane, &TerminalPane::requestNewTab, this,
-            [this] { dispatchAction({WorkspaceAction::NewTab, {}}); });
+            [this, paneId] {
+                dispatchAction({WorkspaceAction::NewTab,
+                                {tabIdForPane(paneId), paneId, 0}});
+            });
     connect(pane, &TerminalPane::requestSplit, this,
             [this, paneId](WorkspaceAction action) {
                 dispatchAction({action,
@@ -716,12 +732,20 @@ void TerminalWorkspace::newTab()
     dispatchAction({WorkspaceAction::NewTab, {}});
 }
 
-void TerminalWorkspace::createNewTab()
+void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
 {
     LaunchOptions options = effectiveOptions_;
     if (initialTabCreated_) {
-        options.program.clear();
-        options.hold = false;
+        TerminalPane *sourcePane = paneForId(sourcePaneId);
+        if (sourcePane == nullptr) {
+            sourcePane = paneForId(currentPaneId());
+        }
+        if (sourcePane != nullptr) {
+            options = sourcePane->tabLaunchOptions(effectiveOptions_);
+        } else {
+            options.program.clear();
+            options.hold = false;
+        }
     }
     initialTabCreated_ = true;
 

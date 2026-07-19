@@ -957,6 +957,23 @@ LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
     return result;
 }
 
+LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
+{
+    LaunchOptions result = base;
+    const QString directory = currentDirectory();
+    if (base.tabInheritWorkingDirectory && !directory.isEmpty()) {
+        result.workingDirectory = directory;
+        result.inheritWorkingDirectory = false;
+    }
+    if (base.windowInheritFontSize) {
+        QMutexLocker locker(&renderMutex_);
+        result.fontSize = font_.pointSizeF();
+    }
+    result.program.clear();
+    result.hold = false;
+    return result;
+}
+
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     LaunchOptions updated = options_;

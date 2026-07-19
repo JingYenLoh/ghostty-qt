@@ -198,6 +198,7 @@ private Q_SLOTS:
     void splitDividerColorReloadsWithoutRelayout();
     void dimsUnfocusedSplitPanesAcrossLifecycle();
     void splitWorkingDirectoryPolicyReloadsForFutureNestedSplits();
+    void newTabInheritanceUsesStableSourceAndReloadedPolicies();
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
     void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
@@ -2417,6 +2418,247 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 3, 3000);
     QCOMPARE(recordedDirectories().at(2), reloadedFallback);
     QCOMPARE(sourcePane->findChild<TerminalController *>(), sourceController);
+}
+
+void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/tab-inheritance-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QDir root(directory.path());
+    const QString baseDirectory = root.filePath(QStringLiteral("base"));
+    const QString sourceDirectory =
+        root.filePath(QStringLiteral("source directory"));
+    const QString childReportedDirectory =
+        root.filePath(QStringLiteral("child reported directory"));
+    const QString disabledFallback =
+        root.filePath(QStringLiteral("disabled fallback"));
+    const QString reloadedFallback =
+        root.filePath(QStringLiteral("reloaded fallback"));
+    for (const QString &path : {
+             baseDirectory, sourceDirectory, childReportedDirectory,
+             disabledFallback, reloadedFallback,
+         }) {
+        QVERIFY(QDir().mkpath(path));
+    }
+
+    const QString childLog = root.filePath(QStringLiteral("child-pwds"));
+    QUrl childReportedUrl;
+    childReportedUrl.setScheme(QStringLiteral("file"));
+    childReportedUrl.setHost(QStringLiteral("localhost"));
+    childReportedUrl.setPath(childReportedDirectory);
+    const QString shellPath = root.filePath(QStringLiteral("record-pwd.sh"));
+    QFile shell(shellPath);
+    QVERIFY(shell.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    shell.write(QByteArrayLiteral("#!/bin/sh\npwd >> \"")
+                + QFile::encodeName(childLog)
+                + QByteArrayLiteral("\"\nprintf '\\033]7;%s\\007' '")
+                + childReportedUrl.toEncoded()
+                + QByteArrayLiteral("'\nexec /bin/sleep 5\n"));
+    shell.close();
+    QVERIFY(QFile::setPermissions(
+        shellPath,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner
+            | QFileDevice::ExeOwner));
+    ShellEnvironment shellEnvironment(QFile::encodeName(shellPath));
+
+    QUrl sourceUrl;
+    sourceUrl.setScheme(QStringLiteral("file"));
+    sourceUrl.setHost(QStringLiteral("localhost"));
+    sourceUrl.setPath(sourceDirectory);
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = baseDirectory;
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033]7;%s\\007' \"$1\"; sleep 5"),
+        QStringLiteral("ghostty-qt-osc7"),
+        sourceUrl.toString(QUrl::FullyEncoded),
+    };
+    options.hold = true;
+    options.fontSize = 12.0;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId sourceTabId = workspace.tabModel()->idAt(0);
+    const PaneId sourcePaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *sourcePane = workspace.findChild<TerminalPane *>();
+    QVERIFY(sourcePane != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(sourcePane->currentDirectory(),
+                              sourceDirectory, 3000);
+    sourcePane->zoomIn();
+    QCOMPARE(sourcePane->fontPointSize(), 13.0);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NewTab,
+        {sourceTabId, PaneId(999'999), 0},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NewTab,
+        {TabId(999'999), sourcePaneId, 0},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NewTab,
+        {TabId(999'999), PaneId{}, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 1);
+
+    const auto recordedDirectories = [&] {
+        QFile log(childLog);
+        if (!log.open(QIODevice::ReadOnly)) {
+            return QStringList{};
+        }
+        return QString::fromUtf8(log.readAll())
+            .split(u'\n', Qt::SkipEmptyParts);
+    };
+    const auto onlyVisiblePane = [&]() -> TerminalPane * {
+        TerminalPane *result = nullptr;
+        for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+            if (!pane->isVisible()) continue;
+            if (result != nullptr) return nullptr;
+            result = pane;
+        }
+        return result;
+    };
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           reloadedFallback);
+    snapshot.values.insert(
+        QStringLiteral("tab-inherit-working-directory"), true);
+    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), true);
+    snapshot.values.insert(QStringLiteral("font-size"), 10.0);
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(sourcePane->fontPointSize(), 13.0);
+    QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
+
+    // Create a second source in the original tab. Its terminal report and
+    // manual zoom differ from the first pane so broad fanout can prove that
+    // every new tab retains its explicit action source.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {sourceTabId, sourcePaneId, 0},
+    }));
+    const PaneId splitPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(splitPaneId != sourcePaneId);
+    TerminalPane *splitPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != sourcePane) splitPane = pane;
+    }
+    QVERIFY(splitPane != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 1, 3000);
+    QCOMPARE(recordedDirectories().constFirst(), sourceDirectory);
+    QTRY_COMPARE_WITH_TIMEOUT(splitPane->currentDirectory(),
+                              childReportedDirectory, 3000);
+    QCOMPARE(splitPane->fontPointSize(), 13.0);
+    splitPane->zoomIn();
+    QCOMPARE(splitPane->fontPointSize(), 14.0);
+
+    QFile clearLog(childLog);
+    QVERIFY(clearLog.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    clearLog.close();
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("new_tab")));
+    QCOMPARE(workspace.tabCount(), 3);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 2, 3000);
+    QStringList broadDirectories = recordedDirectories();
+    QStringList expectedBroadDirectories{
+        sourceDirectory, childReportedDirectory,
+    };
+    broadDirectories.sort();
+    expectedBroadDirectories.sort();
+    QCOMPARE(broadDirectories, expectedBroadDirectories);
+
+    workspace.setCurrentIndex(1);
+    TerminalPane *firstBroadChild = onlyVisiblePane();
+    QVERIFY(firstBroadChild != nullptr);
+    QCOMPARE(firstBroadChild->fontPointSize(), 13.0);
+    workspace.setCurrentIndex(2);
+    TerminalPane *secondBroadChild = onlyVisiblePane();
+    QVERIFY(secondBroadChild != nullptr);
+    QCOMPARE(secondBroadChild->fontPointSize(), 14.0);
+
+    // Reloaded false policies affect only subsequent inheritance decisions.
+    // Existing working-directory reports remain intact; unadjusted children
+    // still follow the ordinary live font-size setting.
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           disabledFallback);
+    snapshot.values.insert(
+        QStringLiteral("tab-inherit-working-directory"), false);
+    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), false);
+    snapshot.values.insert(QStringLiteral("font-size"), 9.0);
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
+    QCOMPARE(splitPane->currentDirectory(), childReportedDirectory);
+    QCOMPARE(sourcePane->fontPointSize(), 13.0);
+    QCOMPARE(splitPane->fontPointSize(), 14.0);
+    QCOMPARE(firstBroadChild->fontPointSize(), 9.0);
+    QCOMPARE(secondBroadChild->fontPointSize(), 9.0);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 4);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 3, 3000);
+    QCOMPARE(recordedDirectories().at(2), disabledFallback);
+    TerminalPane *disabledChild = onlyVisiblePane();
+    QVERIFY(disabledChild != nullptr);
+    QCOMPARE(disabledChild->fontPointSize(), 9.0);
+
+    // Re-enable both policies, then use the original split tab. Empty-context
+    // creation mirrors the QML button and must select its recorded active leaf.
+    snapshot.values.insert(QStringLiteral("working-directory"),
+                           reloadedFallback);
+    snapshot.values.insert(
+        QStringLiteral("tab-inherit-working-directory"), true);
+    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), true);
+    snapshot.values.insert(QStringLiteral("font-size"), 8.0);
+    workspace.applyConfigSnapshot(snapshot);
+    QCOMPARE(disabledChild->fontPointSize(), 8.0);
+    workspace.setCurrentIndex(0);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, splitPaneId);
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 5);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 4, 3000);
+    QCOMPARE(recordedDirectories().at(3), childReportedDirectory);
+    TerminalPane *activeLeafChild = onlyVisiblePane();
+    QVERIFY(activeLeafChild != nullptr);
+    QCOMPARE(activeLeafChild->fontPointSize(), 14.0);
+
+    // An explicitly cleared OSC 7 report falls back to the newest configured
+    // directory while the independent font-size policy still inherits.
+    QVERIFY(activeLeafChild->executeConfiguredAction(QStringLiteral("reset")));
+    QTRY_VERIFY_WITH_TIMEOUT(activeLeafChild->currentDirectory().isEmpty(),
+                             1000);
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 6);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 5, 3000);
+    QCOMPARE(recordedDirectories().at(4), reloadedFallback);
+    TerminalPane *clearedFallbackChild = onlyVisiblePane();
+    QVERIFY(clearedFallbackChild != nullptr);
+    QCOMPARE(clearedFallbackChild->fontPointSize(), 14.0);
+
+    // The built-in binding emits a signal rather than a typed action. Send it
+    // to the non-active source pane and prove its identity is not discarded.
+    workspace.setCurrentIndex(0);
+    QKeyEvent newTabPress(
+        QEvent::KeyPress, Qt::Key_T,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QCoreApplication::sendEvent(sourcePane, &newTabPress);
+    QKeyEvent newTabRelease(
+        QEvent::KeyRelease, Qt::Key_T,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QCoreApplication::sendEvent(sourcePane, &newTabRelease);
+    QCOMPARE(workspace.tabCount(), 7);
+    QTRY_COMPARE_WITH_TIMEOUT(recordedDirectories().size(), 6, 3000);
+    QCOMPARE(recordedDirectories().at(5), sourceDirectory);
+    TerminalPane *bindingChild = onlyVisiblePane();
+    QVERIFY(bindingChild != nullptr);
+    QCOMPARE(bindingChild->fontPointSize(), 13.0);
 }
 
 void TerminalWorkspaceTest::splitDividerHitRegionPreservesTerminalInputAndZoom()

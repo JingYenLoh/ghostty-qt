@@ -50,7 +50,7 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 
 `LaunchOptions` remains on the application, workspace, and pane side because it
 also owns font policy, keybindings, close behavior, link previews, the effective
-working-directory and future-split inheritance policy, and a compact
+working-directory and future-surface inheritance policies, and a compact
 `SplitAppearance` value containing unfocused-pane opacity/fill and the optional
 divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
@@ -418,9 +418,20 @@ other terminal access remain serialized on the pane's worker thread.
 ## Session and environment
 
 The first pane receives the parsed command-line options. Without a command,
-the worker starts executable `$SHELL` or `/bin/sh`. A new tab starts the default
-shell in the effective `working-directory`. A split starts the default shell
-using the workspace's effective directory and policy: when
+the worker starts executable `$SHELL` or `/bin/sh`. Later surfaces start the
+default shell and derive launch-only values from the newest workspace options.
+A new tab retains the exact action-target pane; an empty-context QML request
+uses the current tab's recorded active pane. When
+`tab-inherit-working-directory` is true, that source's latest nonempty reported
+directory takes precedence; when false, or when the source has no
+terminal-owned directory, the workspace `working-directory` is retained.
+`window-inherit-font-size` independently copies only the source's actual point
+size, including manual zoom, or retains configured `font-size` when false. The
+font family always comes from the newest configuration. The tab child starts
+unadjusted, so a later font-size reload replaces its inherited visible size.
+
+A split starts the default shell using the workspace's effective directory and
+policy: when
 `split-inherit-working-directory` is true, the explicit source pane's latest
 nonempty reported directory takes precedence; when false, or when the source
 has no terminal-owned directory, the workspace directory is retained. In both
@@ -518,10 +529,11 @@ parser classifies it as a probable CLI launch. An otherwise unset
 heuristic that would choose `home` cannot be reconstructed from the current
 text protocol. Explicit `inherit`, `home`, tilde, and concrete path values are
 still preserved, and the parity ledger keeps this setting and the dependent
-split fallback partial.
+tab/split fallbacks partial.
 
 The current typed compatibility slice contains `working-directory`,
-`split-inherit-working-directory`, `font-family`, `font-size`, the
+`split-inherit-working-directory`, `tab-inherit-working-directory`,
+`window-inherit-font-size`, `font-family`, `font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -537,7 +549,10 @@ rendered. Explicit working-directory, font, and scrollback CLI options retain
 precedence.
 
 Live reload updates font and appearance on existing panes without overriding a
-pane's manual font zoom. Palette and fixed cursor defaults are updated through
+pane's manual font zoom. Directory and font inheritance booleans are
+workspace-owned creation policy: they affect future tabs/splits without moving
+an existing process or marking an inherited child as manually zoomed. Palette
+and fixed cursor defaults are updated through
 `libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
@@ -662,7 +677,10 @@ surface actions over a stable pane snapshot, action-major across the chain;
 container actions resolve from each tab's current active pane during that
 fanout, matching the pinned GTK split-tree action boundary. Automatic split
 direction is resolved from each originating surface before that placement
-redirect. A fullscreen surface action is coalesced once per workspace during
+redirect. New-tab actions instead retain every pane in the stable fanout
+snapshot as their creation source, so activating one new tab cannot redirect
+the next action's inherited directory or font size. A fullscreen surface
+action is coalesced once per workspace during
 broad fanout because every pane maps to the same synchronously toggled Qt host
 window; separate workspaces still receive independent transitions.
 
@@ -795,7 +813,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
-  preserve stable tab and pane identity. It also sends real pointer gestures
+  preserve stable tab and pane identity. PTY-backed new-tab coverage verifies
+  explicit binding sources, empty-context active leaves, broad-fanout source
+  stability, local OSC 7/reset fallback, manual font zoom, and future-creation
+  policy reloads. It also sends real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,
   focus preservation, endpoint clamping, cancellation, zoom/tab/scene
   lifecycle, ratio persistence, terminal-cell hit regions, and nullable live

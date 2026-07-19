@@ -413,6 +413,10 @@
       "status": "partial",
       "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. Font inheritance remains independent, nested splits consult the newest workspace base, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD. Full parity remains partial because the helper's CLI-shaped invocation cannot reproduce GTK's unset desktop-launch home default for the fallback setting."
     },
+    "tab-inherit-working-directory": {
+      "status": "partial",
+      "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
+    },
     "theme": {
       "status": "partial",
       "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."
@@ -585,9 +589,13 @@
           "status": "not_applicable",
           "scope": "x11"
         },
+        "window-inherit-font-size": {
+          "status": "partial",
+          "note": "The exact default-true boolean controls new tabs: true copies only the action source's current point size, including manual zoom, while false keeps the newest effective font-size with CLI precedence. Children remain unadjusted and follow later font-size reloads. New-window inheritance is pending multi-window support; pinned GTK also currently ignores the false setting despite the documented contract and embedded frontend honoring it."
+        },
         "working-directory": {
           "status": "partial",
-          "note": "The shared-config value supplies initial panes, new tabs, and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window/tab inheritance and lossless non-UTF-8 path transport also remain incomplete."
+          "note": "The shared-config value supplies initial panes plus new-tab and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, tab/split inheritance, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window inheritance and lossless non-UTF-8 path transport remain incomplete."
         },
         "x11-instance-name": {
           "status": "not_applicable",
@@ -801,7 +809,7 @@
         },
         "new_tab": {
           "status": "partial",
-          "note": "Local root triggers route the action through the typed catalog and workspace."
+          "note": "Local, QML, and broad triggers create and select a tab through the typed workspace while retaining the correct source pane for working-directory and font-size inheritance. Configurable insertion position and the remaining tab lifecycle options are not implemented."
         },
         "next_tab": {
           "status": "partial",

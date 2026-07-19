@@ -39,6 +39,8 @@ QByteArray defaultOutput()
                           "unfocused-split-fill = \n"
                           "split-divider-color = \n"
                           "split-inherit-working-directory = true\n"
+                          "tab-inherit-working-directory = true\n"
+                          "window-inherit-font-size = true\n"
                           "selection-foreground = \n"
                           "selection-background = \n"
                           "search-foreground = #000000\n"
@@ -150,7 +152,7 @@ private Q_SLOTS:
     void rejectsConfigThatBecomesInvalidDuringQueries();
     void rejectsConfigThatChangesValidlyDuringQueries();
     void preservesSuccessfulHelperWarnings();
-    void realHelperFinalizesSplitWorkingDirectory();
+    void realHelperFinalizesSurfaceInheritance();
     void realHelperFinalizesUnfocusedSplitAppearance_data();
     void realHelperFinalizesUnfocusedSplitAppearance();
     void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
@@ -305,6 +307,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QVariant(QString{}));
     QVERIFY(canonicalDefaults->values.value(
                 QStringLiteral("split-inherit-working-directory")).toBool());
+    QVERIFY(canonicalDefaults->values.value(
+                QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(canonicalDefaults->values.value(
+                QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.7);
@@ -331,6 +337,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "unfocused-split-fill = #778899\r\n"
             "split-divider-color = #a1b2c3\r\n"
             "split-inherit-working-directory = false\r\n"
+            "tab-inherit-working-directory = false\r\n"
+            "window-inherit-font-size = false\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
@@ -386,6 +394,10 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              fixture.temporary.path());
     QVERIFY(!snapshot.values.value(
                  QStringLiteral("split-inherit-working-directory")).toBool());
+    QVERIFY(!snapshot.values.value(
+                 QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(!snapshot.values.value(
+                 QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.42);
@@ -675,6 +687,8 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     for (const QByteArray &requiredLine : {
              QByteArrayLiteral("working-directory = \n"),
              QByteArrayLiteral("split-inherit-working-directory = true\n"),
+             QByteArrayLiteral("tab-inherit-working-directory = true\n"),
+             QByteArrayLiteral("window-inherit-font-size = true\n"),
              QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
              QByteArrayLiteral("unfocused-split-fill = \n"),
          }) {
@@ -710,19 +724,25 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QCOMPARE(malformedDivider.error(),
              QStringLiteral("Invalid split-divider-color in Ghostty config output at line 1"));
 
-    for (const QByteArray &value : {
-             QByteArrayLiteral(""), QByteArrayLiteral("1"),
-             QByteArrayLiteral("yes"), QByteArrayLiteral("TRUE"),
+    for (const QByteArray &key : {
+             QByteArrayLiteral("split-inherit-working-directory"),
+             QByteArrayLiteral("tab-inherit-working-directory"),
+             QByteArrayLiteral("window-inherit-font-size"),
          }) {
-        const GhosttyConfigLoadResult malformedSplitInheritance =
-            parseGhosttyConfigShowOutputs(
-                defaultOutput(),
-                QByteArrayLiteral("split-inherit-working-directory = ")
-                    + value + QByteArrayLiteral("\n"),
-                fixture.candidates());
-        QVERIFY(!malformedSplitInheritance.has_value());
-        QCOMPARE(malformedSplitInheritance.error(),
-                 QStringLiteral("Invalid split-inherit-working-directory in Ghostty config output at line 1"));
+        for (const QByteArray &value : {
+                 QByteArrayLiteral(""), QByteArrayLiteral("1"),
+                 QByteArrayLiteral("yes"), QByteArrayLiteral("TRUE"),
+             }) {
+            const GhosttyConfigLoadResult malformedInheritance =
+                parseGhosttyConfigShowOutputs(
+                    defaultOutput(), key + QByteArrayLiteral(" = ")
+                        + value + QByteArrayLiteral("\n"),
+                    fixture.candidates());
+            QVERIFY(!malformedInheritance.has_value());
+            QCOMPARE(malformedInheritance.error(),
+                     QStringLiteral("Invalid %1 in Ghostty config output at line 1")
+                         .arg(QString::fromLatin1(key)));
+        }
     }
 
     const GhosttyConfigLoadResult malformedUnfocusedFill =
@@ -972,7 +992,7 @@ void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
                  "Ghostty config helper current query: both standard files exist"));
 }
 
-void GhosttyConfigProcessLoaderTest::realHelperFinalizesSplitWorkingDirectory()
+void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
 {
     const QString helperPath =
         QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
@@ -988,7 +1008,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSplitWorkingDirectory()
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QStringLiteral("working-directory = %1\n"
-                       "split-inherit-working-directory = false\n")
+                       "split-inherit-working-directory = false\n"
+                       "tab-inherit-working-directory = false\n"
+                       "window-inherit-font-size = false\n")
             .arg(configuredDirectory)
             .toUtf8());
 
@@ -1004,11 +1026,17 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSplitWorkingDirectory()
              configuredDirectory);
     QVERIFY(!result->values.value(
                  QStringLiteral("split-inherit-working-directory")).toBool());
+    QVERIFY(!result->values.value(
+                 QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(!result->values.value(
+                 QStringLiteral("window-inherit-font-size")).toBool());
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral("working-directory = inherit\n"
-                          "split-inherit-working-directory = true\n"));
+                          "split-inherit-working-directory = true\n"
+                          "tab-inherit-working-directory = true\n"
+                          "window-inherit-font-size = true\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.value(QStringLiteral("working-directory"))
@@ -1016,6 +1044,10 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSplitWorkingDirectory()
              QStringLiteral("inherit"));
     QVERIFY(result->values.value(
                 QStringLiteral("split-inherit-working-directory")).toBool());
+    QVERIFY(result->values.value(
+                QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(result->values.value(
+                QStringLiteral("window-inherit-font-size")).toBool());
 
     ConfigFixture::writeFile(
         fixture.preferredPath,

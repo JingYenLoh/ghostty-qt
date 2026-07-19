@@ -109,7 +109,7 @@ private:
     PaneHandle createPane(const LaunchOptions &options);
     void createSearchOverlay(TerminalPane *pane);
     bool executeAction(const WorkspaceActionRequest &request);
-    void createNewTab();
+    void createNewTab(PaneId sourcePaneId = {});
     void activateTab(TabId id);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);

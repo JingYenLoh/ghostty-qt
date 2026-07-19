@@ -60,6 +60,7 @@ public:
     bool isRunning() const;
     bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
+    LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     void applyRuntimeOptions(const LaunchOptions &options);
     // The workspace owns split topology; the pane owns actual focus and
     // search visibility, which complete Ghostty's dimming predicate.

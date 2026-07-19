@@ -243,6 +243,12 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     applyConfigBool(
         snapshot, QStringLiteral("split-inherit-working-directory"),
         result.splitInheritWorkingDirectory);
+    applyConfigBool(
+        snapshot, QStringLiteral("tab-inherit-working-directory"),
+        result.tabInheritWorkingDirectory);
+    applyConfigBool(
+        snapshot, QStringLiteral("window-inherit-font-size"),
+        result.windowInheritFontSize);
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;
