@@ -50,8 +50,9 @@ GhosttyApplicationKeybindings (UI thread, process lifetime)
 
 `LaunchOptions` remains on the application, workspace, and pane side because it
 also owns font policy, keybindings, close behavior, link previews, split
-inheritance, and the optional split-divider color. The divider setting stays
-workspace-owned and never crosses the session-worker boundary. Before a
+inheritance, and a compact `SplitAppearance` value containing unfocused-pane
+opacity/fill and the optional divider color. Split appearance stays
+frontend-owned and never crosses the session-worker boundary. Before a
 session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
 appearance, and URL-matching state owned by the session. Live reloads cross the
@@ -137,13 +138,18 @@ pane shutdowns first so grace periods overlap.
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
-6. `TerminalPane::updatePaintNode()` keeps a fixed before-text/main-text/after-text
-   scene-graph root. Main terminal text is retained in one public `QSGTextNode`
-   per visible row; accepted row epochs rebuild only changed rows, while font,
-   geometry, appearance, palette, search, and frame-shape changes rebuild the
-   complete text layer. Old and new block-cursor rows are rebuilt when its text
-   override changes. The row nodes use `QtRendering`, which stores
-   distance-field glyphs in GPU atlases on hardware RHI backends.
+6. `TerminalPane::updatePaintNode()` keeps fixed before-text/main-text/after-text
+   groups followed by one persistent full-pane unfocused-split rectangle. Main
+   terminal text is retained in one public `QSGTextNode` per visible row;
+   accepted row epochs rebuild only changed rows, while font, geometry,
+   appearance, palette, search, and frame-shape changes rebuild the complete
+   text layer. Old and new block-cursor rows are rebuilt when its text override
+   changes. The row nodes use `QtRendering`, which stores distance-field glyphs
+   in GPU atlases on hardware RHI backends. The final rectangle keeps an empty
+   extent while inactive and updates without scene-graph allocation. Dimming
+   state is absent from the retained text-state key. Existing focus-driven
+   block-cursor changes keep their targeted row rebuilds, while search
+   decoration changes retain their full text-state invalidation.
 7. Color-batched transient geometry continues to draw cell backgrounds,
    selections, search results, cursor shapes, text decorations, overlays, and
    the scrollbar in the same global painter order. Each nonempty cell in a
@@ -469,7 +475,8 @@ good snapshot active when one exists; a successful changed snapshot is applied
 to the workspace.
 
 The current typed compatibility slice contains `font-family`, `font-size`, the
-appearance keys listed below, the frontend-only `split-divider-color`,
+appearance keys listed below, the frontend-only `unfocused-split-opacity`,
+`unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
 `link-url`, `link-previews`, `config-file`, and a versioned dump of the
 finalized keybinding sets.
@@ -493,6 +500,14 @@ regex link matcher also update live; toggling `link-url` never disables OSC 8.
 The nullable divider color likewise reloads entirely on the UI thread: a fixed
 RGB value paints the exact reserved gaps, while an empty canonical value
 removes those nodes without relayout, focus changes, or terminal-state work.
+Unfocused split appearance also reloads entirely on the UI/render side. A pane
+is dimmed only while its tab root is structurally split, its actual terminal
+and window focus is absent, and its own search UI is closed. The nullable fill
+resolves at presentation time to the configured background rather than the
+terminal frame's OSC 11 state; the retained rectangle uses the complement of
+Ghostty's finalized pane opacity. Split membership changes only when a split
+is created or collapsed, remaining true through zoom and staying out of the
+divider-drag layout path.
 The three-state link-preview policy reloads entirely in each pane's frontend and
 preserves an accepted hover over the terminal link. Removing an occupied
 preview guard instead resumes physical hit testing, as pointer ownership has

@@ -131,6 +131,7 @@ private:
     void closeTab(TabId tabId, bool force = false);
     void removeTab(TabId tabId);
     void refreshTab(TabId tabId);
+    void updateSplitMembership(Tab &tab);
     TabListEntry tabListEntry(const Tab &tab) const;
     void layoutCurrentTab();
     void updateNodeGeometry(Node *node, const QRectF &geometry);

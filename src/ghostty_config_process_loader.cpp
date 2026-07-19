@@ -33,6 +33,8 @@ struct ParsedConfig {
     std::optional<double> fontSize;
     std::optional<QColor> foreground;
     std::optional<QColor> background;
+    std::optional<double> unfocusedSplitOpacity;
+    std::optional<QVariant> unfocusedSplitFill;
     std::optional<QVariant> splitDividerColor;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
@@ -80,6 +82,8 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.fontSize,
             parsed.foreground,
             parsed.background,
+            parsed.unfocusedSplitOpacity,
+            parsed.unfocusedSplitFill,
             parsed.splitDividerColor,
             parsed.selectionForeground,
             parsed.selectionBackground,
@@ -344,6 +348,20 @@ bool parseColor(const QString &value, QColor *destination)
     return true;
 }
 
+bool parseOptionalColor(const QString &value, QVariant *destination)
+{
+    if (value.isEmpty()) {
+        *destination = value;
+        return true;
+    }
+    QColor color;
+    if (!parseColor(value, &color)) {
+        return false;
+    }
+    *destination = color;
+    return true;
+}
+
 bool parseTerminalColor(const QString &value, QVariant *destination)
 {
     if (value.isEmpty()
@@ -487,19 +505,36 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->background = std::move(background);
-        } else if (key == QStringLiteral("split-divider-color")) {
-            if (value.isEmpty()) {
-                parsed->splitDividerColor = QString{};
-            } else {
-                QColor color;
-                if (!parseColor(value, &color)) {
-                    setError(errorMessage,
-                             QStringLiteral("Invalid split-divider-color in Ghostty config output at line %1")
-                                 .arg(displayLine));
-                    return false;
-                }
-                parsed->splitDividerColor = color;
+        } else if (key == QStringLiteral("unfocused-split-opacity")) {
+            double opacity = 0.0;
+            // Ghostty finalizes this value before +show-config publishes it.
+            // Reject output outside that finalized contract so a helper/API
+            // mismatch cannot silently reach the frontend.
+            if (!parseUnitInterval(value, &opacity) || opacity < 0.15) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid unfocused-split-opacity in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
             }
+            parsed->unfocusedSplitOpacity = opacity;
+        } else if (key == QStringLiteral("unfocused-split-fill")) {
+            QVariant fill;
+            if (!parseOptionalColor(value, &fill)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid unfocused-split-fill in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->unfocusedSplitFill = std::move(fill);
+        } else if (key == QStringLiteral("split-divider-color")) {
+            QVariant color;
+            if (!parseOptionalColor(value, &color)) {
+                setError(errorMessage,
+                         QStringLiteral("Invalid split-divider-color in Ghostty config output at line %1")
+                             .arg(displayLine));
+                return false;
+            }
+            parsed->splitDividerColor = std::move(color);
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -1217,6 +1252,11 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
         changes.foreground.value_or(*defaults.foreground);
     const QColor background =
         changes.background.value_or(*defaults.background);
+    const double unfocusedSplitOpacity =
+        changes.unfocusedSplitOpacity.value_or(
+            *defaults.unfocusedSplitOpacity);
+    const QVariant unfocusedSplitFill =
+        changes.unfocusedSplitFill.value_or(*defaults.unfocusedSplitFill);
     const QVariant splitDividerColor = changes.splitDividerColor.value_or(
         *defaults.splitDividerColor);
     SparsePalette palette = defaults.palette;
@@ -1299,6 +1339,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     snapshot.values.insert(QStringLiteral("font-size"), fontSize);
     snapshot.values.insert(QStringLiteral("foreground"), foreground);
     snapshot.values.insert(QStringLiteral("background"), background);
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
+                           unfocusedSplitOpacity);
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
+                           unfocusedSplitFill);
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            splitDividerColor);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);

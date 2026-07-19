@@ -7,6 +7,7 @@
 
 #include <QByteArray>
 #include <QFont>
+#include <QMetaObject>
 #include <QMutex>
 #include <QPoint>
 #include <QQuickItem>
@@ -60,6 +61,9 @@ public:
     bool hasActiveProcess() const;
     LaunchOptions splitLaunchOptions() const;
     void applyRuntimeOptions(const LaunchOptions &options);
+    // The workspace owns split topology; the pane owns actual focus and
+    // search visibility, which complete Ghostty's dimming predicate.
+    void setSplit(bool split);
     void beginShutdown();
     void setWorkspaceActionHandler(
         std::function<bool(WorkspaceActionRequest)> handler);
@@ -183,6 +187,7 @@ private:
                                    const QByteArray &uri);
     QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
     void startSearchUi();
+    void setSearchUiActive(bool active);
     void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
     void installSearchDecorationsLocked(
         const TerminalSearchUpdate &searchUpdate);
@@ -193,6 +198,7 @@ private:
     // Mirrored separately so the render thread can take a value-only snapshot
     // under renderMutex_ while live configuration updates options_.
     TerminalAppearance appearance_;
+    SplitAppearance splitAppearance_;
     GhosttyKeybindSet keybinds_;
     TerminalController *controller_ = nullptr;
     QFont font_;
@@ -217,6 +223,7 @@ private:
     bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
+    QMetaObject::Connection windowActiveConnection_;
     QSet<quint64> consumedKeys_;
     quint64 activeSequenceToken_ = 0;
     bool hoverInside_ = false;
@@ -252,6 +259,7 @@ private:
     std::function<bool(const QUrl &)> urlOpener_;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
     bool searchUiActive_ = false;
+    bool split_ = false;
     bool searchEngineActive_ = false;
     QString searchUiText_;
     QString searchMatchLabel_ = QStringLiteral("0/0");

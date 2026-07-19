@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <initializer_list>
 #include <utility>
 
@@ -72,6 +73,32 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
         && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+QColor sourceOver(const QColor &underlying, const QColor &fill, double alpha)
+{
+    const auto channel = [alpha](int under, int over) {
+        return qRound(static_cast<double>(under) * (1.0 - alpha)
+                      + static_cast<double>(over) * alpha);
+    };
+    return QColor(channel(underlying.red(), fill.red()),
+                  channel(underlying.green(), fill.green()),
+                  channel(underlying.blue(), fill.blue()));
+}
+
+QColor itemPixel(const QQuickWindow &window, const QQuickItem &item,
+                 const QImage &image, const QPointF &position)
+{
+    const QPointF scene = item.mapToScene(position);
+    const qreal xScale = static_cast<qreal>(image.width()) / window.width();
+    const qreal yScale = static_cast<qreal>(image.height()) / window.height();
+    const int x = std::clamp(
+        static_cast<int>(std::floor(scene.x() * xScale)),
+        0, image.width() - 1);
+    const int y = std::clamp(
+        static_cast<int>(std::floor(scene.y() * yScale)),
+        0, image.height() - 1);
+    return image.pixelColor(x, y);
 }
 
 bool allVisibleRowsRebuilt(
@@ -150,6 +177,7 @@ private Q_SLOTS:
     void routesUnsafePasteConfirmationThroughWorker();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
+    void retainsTextWhileDimmingUnfocusedSplits();
     void rebuildsMainTextRowsAfterWindowChange();
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
@@ -566,6 +594,237 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         terminalPaneRenderProbe(pane);
     QCOMPARE(resized.rootSerial, reloadedFont.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(reloadedFont, resized));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::retainsTextWhileDimmingUnfocusedSplits()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    const QColor background(QStringLiteral("#204060"));
+    const QColor firstFill(QStringLiteral("#d08020"));
+    const QColor secondFill(QStringLiteral("#20c080"));
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = background;
+    options.splitAppearance = {
+        .unfocusedOpacity = 0.7,
+        .unfocusedFill = firstFill,
+    };
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(360, 180);
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *focusSink = new QQuickItem(window.contentItem());
+    focusSink->setSize(QSizeF(1.0, 1.0));
+    focusSink->setPosition(QPointF(window.width() - 1.0,
+                                   window.height() - 1.0));
+    focusSink->setFocusPolicy(Qt::StrongFocus);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+
+    window.show();
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+
+    TerminalUpdate frame;
+    frame.columns = 5;
+    frame.rows = 3;
+    frame.fullFrame = true;
+    frame.foreground = Qt::white;
+    frame.background = background;
+    frame.cursorVisible = false;
+    frame.contentRevision = 1;
+    for (int row = 0; row < frame.rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(frame.columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.foreground = Qt::white;
+            cell.background = background;
+        }
+        rowUpdate.cells[0].text = QStringLiteral("x");
+        frame.dirtyRows.append(std::move(rowUpdate));
+    }
+    controller->terminalUpdated(frame);
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+
+    const QImage baselineImage = window.grabWindow();
+    QVERIFY(!baselineImage.isNull());
+    const TerminalPaneRenderProbeSnapshot baseline =
+        terminalPaneRenderProbe(pane);
+    QVERIFY(baseline.rootSerial != 0);
+    QVERIFY(baseline.unfocusedSplitOverlaySerial != 0);
+    QVERIFY(baseline.unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(!baseline.rowNodeSerials.isEmpty());
+
+    const QPointF quietPoint(pane->width() - 20.0, 20.0);
+    const QPointF statusPoint(pane->width() - 20.0,
+                              pane->height() - 10.0);
+    const QColor quietBaseline = itemPixel(
+        window, *pane, baselineImage, quietPoint);
+    const QColor statusBaseline = itemPixel(
+        window, *pane, baselineImage, statusPoint);
+
+    const auto verifyTextRetained = [](const auto &before,
+                                       const auto &after) {
+        QCOMPARE(after.rootSerial, before.rootSerial);
+        QCOMPARE(after.unfocusedSplitOverlaySerial,
+                 before.unfocusedSplitOverlaySerial);
+        QCOMPARE(after.rowNodeSerials, before.rowNodeSerials);
+        QCOMPARE(after.rowBuildCounts, before.rowBuildCounts);
+        QVERIFY(after.paintSerial > before.paintSerial);
+    };
+
+    pane->setSplit(true);
+    const QImage dimmedImage = window.grabWindow();
+    QVERIFY(!dimmedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot dimmed =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(baseline, dimmed);
+    QCOMPARE(dimmed.unfocusedSplitOverlayRect, pane->boundingRect());
+    QColor expectedNodeColor = firstFill;
+    expectedNodeColor.setAlphaF(0.3);
+    QCOMPARE(dimmed.unfocusedSplitOverlayColor, expectedNodeColor);
+    QVERIFY(approximatelyEqual(
+        itemPixel(window, *pane, dimmedImage, quietPoint),
+        sourceOver(quietBaseline, firstFill, 0.3)));
+    QVERIFY(approximatelyEqual(
+        itemPixel(window, *pane, dimmedImage, statusPoint),
+        sourceOver(statusBaseline, firstFill, 0.3)));
+
+    LaunchOptions reloaded = options;
+    // GTK serializes the complementary alpha to two decimals: 1 - 0.676
+    // becomes 0.32, rather than the unquantized 0.324.
+    reloaded.splitAppearance.unfocusedOpacity = 0.676;
+    reloaded.splitAppearance.unfocusedFill = secondFill;
+    pane->applyRuntimeOptions(reloaded);
+    const QImage reloadedImage = window.grabWindow();
+    QVERIFY(!reloadedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot reloadedProbe =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(dimmed, reloadedProbe);
+    expectedNodeColor = secondFill;
+    expectedNodeColor.setAlphaF(0.32);
+    QCOMPARE(reloadedProbe.unfocusedSplitOverlayColor, expectedNodeColor);
+    QVERIFY(approximatelyEqual(
+        itemPixel(window, *pane, reloadedImage, quietPoint),
+        sourceOver(quietBaseline, secondFill, 0.32)));
+
+    const QColor configuredBackground(QStringLiteral("#102030"));
+    reloaded.appearance.backgroundColor = configuredBackground;
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot explicitBackgroundReload =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(explicitBackgroundReload.rootSerial,
+             reloadedProbe.rootSerial);
+    QCOMPARE(explicitBackgroundReload.unfocusedSplitOverlaySerial,
+             reloadedProbe.unfocusedSplitOverlaySerial);
+    QCOMPARE(explicitBackgroundReload.unfocusedSplitOverlayColor,
+             expectedNodeColor);
+
+    reloaded.splitAppearance.unfocusedFill.reset();
+    pane->applyRuntimeOptions(reloaded);
+    const QImage fallbackImage = window.grabWindow();
+    QVERIFY(!fallbackImage.isNull());
+    const TerminalPaneRenderProbeSnapshot fallback =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(explicitBackgroundReload, fallback);
+    expectedNodeColor = configuredBackground;
+    expectedNodeColor.setAlphaF(0.32);
+    QCOMPARE(fallback.unfocusedSplitOverlayColor, expectedNodeColor);
+    QVERIFY(approximatelyEqual(
+        itemPixel(window, *pane, fallbackImage, quietPoint),
+        sourceOver(quietBaseline, configuredBackground, 0.32)));
+
+    const QColor latestBackground(QStringLiteral("#301020"));
+    reloaded.appearance.backgroundColor = latestBackground;
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot latestFallback =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(latestFallback.rootSerial, fallback.rootSerial);
+    QCOMPARE(latestFallback.unfocusedSplitOverlaySerial,
+             fallback.unfocusedSplitOverlaySerial);
+    expectedNodeColor = latestBackground;
+    expectedNodeColor.setAlphaF(0.32);
+    QCOMPARE(latestFallback.unfocusedSplitOverlayColor,
+             expectedNodeColor);
+
+    reloaded.splitAppearance.unfocusedFill = secondFill;
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot explicitAgain =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(latestFallback, explicitAgain);
+    expectedNodeColor = secondFill;
+    expectedNodeColor.setAlphaF(0.32);
+    QCOMPARE(explicitAgain.unfocusedSplitOverlayColor,
+             expectedNodeColor);
+
+    reloaded.splitAppearance.unfocusedOpacity = 1.0;
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot disabled =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(explicitAgain, disabled);
+    QVERIFY(disabled.unfocusedSplitOverlayRect.isEmpty());
+
+    reloaded.splitAppearance.unfocusedOpacity =
+        std::numeric_limits<double>::quiet_NaN();
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot defensiveDefault =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(disabled, defensiveDefault);
+    expectedNodeColor = secondFill;
+    expectedNodeColor.setAlphaF(0.3);
+    QCOMPARE(defensiveDefault.unfocusedSplitOverlayColor,
+             expectedNodeColor);
+
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot searching =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(defensiveDefault, searching);
+    QVERIFY(searching.unfocusedSplitOverlayRect.isEmpty());
+
+    pane->endSearchUi();
+    QVERIFY(!pane->searchUiActive());
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot searchEnded =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(searching, searchEnded);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), pane, 1000);
+    QVERIFY(searchEnded.unfocusedSplitOverlayRect.isEmpty());
+
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot externallyFocused =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(searchEnded, externallyFocused);
+    QCOMPARE(externallyFocused.unfocusedSplitOverlayRect,
+             pane->boundingRect());
+
+    pane->setSplit(false);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot unsplit =
+        terminalPaneRenderProbe(pane);
+    verifyTextRetained(externallyFocused, unsplit);
+    QVERIFY(unsplit.unfocusedSplitOverlayRect.isEmpty());
 
     window.close();
     delete pane;

@@ -2,6 +2,7 @@
 #include "launch_options.h"
 #include "terminal_controller.h"
 #include "terminal_pane.h"
+#include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
 
 #include <QDir>
@@ -75,6 +76,30 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
         && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+QColor sourceOver(const QColor &underlying, const QColor &fill, double alpha)
+{
+    const auto channel = [alpha](int under, int over) {
+        return qRound(static_cast<double>(under) * (1.0 - alpha)
+                      + static_cast<double>(over) * alpha);
+    };
+    return QColor(channel(underlying.red(), fill.red()),
+                  channel(underlying.green(), fill.green()),
+                  channel(underlying.blue(), fill.blue()));
+}
+
+QColor itemPixel(const QQuickWindow &window, const QQuickItem &item,
+                 const QImage &image, const QPointF &position)
+{
+    const QPointF scene = item.mapToScene(position);
+    const qreal xScale = static_cast<qreal>(image.width()) / window.width();
+    const qreal yScale = static_cast<qreal>(image.height()) / window.height();
+    return image.pixelColor(
+        std::clamp(static_cast<int>(std::floor(scene.x() * xScale)),
+                   0, image.width() - 1),
+        std::clamp(static_cast<int>(std::floor(scene.y() * yScale)),
+                   0, image.height() - 1));
 }
 
 bool dividerPaintsExactColor(QQuickWindow *window, QQuickItem *divider,
@@ -170,6 +195,7 @@ private Q_SLOTS:
     void splitResizeAndEqualizeRespectTreeAxes();
     void dragsExactNestedSplitDividerAndPreservesFocus();
     void splitDividerColorReloadsWithoutRelayout();
+    void dimsUnfocusedSplitPanesAcrossLifecycle();
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
     void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
@@ -1847,6 +1873,388 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
             dividerPaintsExactColor(&secondWindow, divider, secondColor),
             2000);
     }
+
+    workspace.reset();
+    secondWindow.close();
+    window.close();
+}
+
+void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    const QColor background(QStringLiteral("#204060"));
+    const QColor firstFill(QStringLiteral("#c04080"));
+    const QColor secondFill(QStringLiteral("#20c080"));
+    const QColor dividerColor(QStringLiteral("#00ff00"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = background;
+    options.splitAppearance = {
+        .unfocusedOpacity = 0.5,
+        .unfocusedFill = firstFill,
+        .dividerColor = dividerColor,
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const QColor windowColor(QStringLiteral("#07111b"));
+    QQuickWindow window;
+    window.setColor(windowColor);
+    window.resize(604, 404);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    auto *focusSink = new QQuickItem(window.contentItem());
+    focusSink->setSize(QSizeF(1.0, 1.0));
+    focusSink->setPosition(QPointF(window.width() - 1.0,
+                                   window.height() - 1.0));
+    focusSink->setFocusPolicy(Qt::StrongFocus);
+    focusSink->setZ(2.0);
+
+    window.show();
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 1000);
+    if (qEnvironmentVariableIsSet("GHOSTTY_QT_EXPECT_HIDPI")) {
+        QVERIFY(window.devicePixelRatio() >= 2.0);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId splitTabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId =
+        workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *firstController = firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+
+    // A single leaf never dims, even when another frontend item owns focus.
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {splitTabId, firstId, 0},
+    }));
+    const PaneId secondId =
+        workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) {
+            secondPane = pane;
+        }
+    }
+    QVERIFY(secondPane != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), secondPane, 1000);
+
+    const QImage firstSplitImage = window.grabWindow();
+    QVERIFY(!firstSplitImage.isNull());
+    const TerminalPaneRenderProbeSnapshot firstDimmed =
+        terminalPaneRenderProbe(firstPane);
+    const TerminalPaneRenderProbeSnapshot secondFocused =
+        terminalPaneRenderProbe(secondPane);
+    QCOMPARE(firstDimmed.unfocusedSplitOverlayRect,
+             firstPane->boundingRect());
+    QVERIFY(secondFocused.unfocusedSplitOverlayRect.isEmpty());
+    QColor firstOverlay = firstFill;
+    firstOverlay.setAlphaF(0.5);
+    QCOMPARE(firstDimmed.unfocusedSplitOverlayColor, firstOverlay);
+    const qreal quietY = firstPane->height() / 2.0;
+    const QPointF firstLeft(20.0, quietY);
+    const QPointF secondLeft(1.0, quietY);
+    QTRY_VERIFY_WITH_TIMEOUT([&] {
+        const QImage image = window.grabWindow();
+        if (image.isNull()) {
+            return false;
+        }
+        const QColor activePixel = itemPixel(
+            window, *secondPane, image, secondLeft);
+        const QColor expectedDimmed = sourceOver(
+            activePixel, firstFill, 0.5);
+        const qreal xScale = static_cast<qreal>(image.width())
+            / window.width();
+        const qreal yScale = static_cast<qreal>(image.height())
+            / window.height();
+        const qreal firstRightScene = firstPane->mapToScene(
+            QPointF(firstPane->width(), quietY)).x();
+        const qreal secondLeftScene = secondPane->mapToScene(
+            QPointF(0.0, quietY)).x();
+        const qreal sampleYScene = firstPane->mapToScene(
+            QPointF(0.0, quietY)).y();
+        const int firstLastPixel = std::clamp(
+            static_cast<int>(std::ceil(firstRightScene * xScale)) - 1,
+            0, image.width() - 1);
+        const int secondFirstPixel = std::clamp(
+            static_cast<int>(std::floor(secondLeftScene * xScale)),
+            0, image.width() - 1);
+        const int sampleY = std::clamp(
+            static_cast<int>(std::floor(sampleYScene * yScale)),
+            0, image.height() - 1);
+        return approximatelyEqual(
+                itemPixel(window, *firstPane, image, firstLeft),
+                expectedDimmed)
+            && approximatelyEqual(
+                image.pixelColor(firstLastPixel, sampleY), expectedDimmed)
+            && approximatelyEqual(
+                image.pixelColor(secondFirstPixel, sampleY), activePixel);
+    }(), 2000);
+    const QList<QQuickItem *> initialDividers =
+        splitDividerItems(workspace.get());
+    QCOMPARE(initialDividers.size(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        dividerPaintsExactColor(
+            &window, initialDividers.constFirst(), dividerColor),
+        2000);
+
+    const QRectF firstGeometry(firstPane->position(), firstPane->size());
+    const QRectF secondGeometry(secondPane->position(), secondPane->size());
+    const QRectF dividerGeometry(initialDividers.constFirst()->position(),
+                                 initialDividers.constFirst()->size());
+
+    firstPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    // Logical active-pane identity is deliberately insufficient: moving
+    // actual focus outside the terminal dims every visible split pane.
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QCOMPARE(terminalPaneRenderProbe(firstPane)
+                 .unfocusedSplitOverlayRect,
+             firstPane->boundingRect());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    // Search suppression is pane-local and applies even with an empty query.
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(firstPane->searchUiActive());
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+    firstPane->endSearchUi();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    const TerminalPaneRenderProbeSnapshot beforeReload =
+        terminalPaneRenderProbe(secondPane);
+    QSignalSpy firstActivated(firstPane, &TerminalPane::activated);
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 0.2);
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), secondFill);
+    workspace->applyConfigSnapshot(snapshot);
+    const QImage reloadedImage = window.grabWindow();
+    QVERIFY(!reloadedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot afterReload =
+        terminalPaneRenderProbe(secondPane);
+    QCOMPARE(afterReload.rootSerial, beforeReload.rootSerial);
+    QCOMPARE(afterReload.unfocusedSplitOverlaySerial,
+             beforeReload.unfocusedSplitOverlaySerial);
+    QCOMPARE(afterReload.rowNodeSerials, beforeReload.rowNodeSerials);
+    QCOMPARE(afterReload.rowBuildCounts, beforeReload.rowBuildCounts);
+    QColor secondOverlay = secondFill;
+    secondOverlay.setAlphaF(0.8);
+    QCOMPARE(afterReload.unfocusedSplitOverlayColor, secondOverlay);
+    QCOMPARE(QRectF(firstPane->position(), firstPane->size()), firstGeometry);
+    QCOMPARE(QRectF(secondPane->position(), secondPane->size()), secondGeometry);
+    QCOMPARE(QRectF(initialDividers.constFirst()->position(),
+                    initialDividers.constFirst()->size()),
+             dividerGeometry);
+    QCOMPARE(window.activeFocusItem(), firstPane);
+    QCOMPARE(firstActivated.count(), 0);
+    QCOMPARE(firstPane->findChild<TerminalController *>(), firstController);
+
+    // A pane created after reload inherits the newest frontend appearance.
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitDown,
+        {splitTabId, firstId, 0},
+    }));
+    const PaneId thirdId =
+        workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane) {
+            thirdPane = pane;
+        }
+    }
+    QVERIFY(thirdPane != nullptr);
+    QPointer<TerminalPane> thirdGuard(thirdPane);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), thirdPane, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    for (TerminalPane *pane : {firstPane, secondPane}) {
+        QCOMPARE(terminalPaneRenderProbe(pane)
+                     .unfocusedSplitOverlayColor,
+                 secondOverlay);
+    }
+    QVERIFY(terminalPaneRenderProbe(thirdPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+
+    firstPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot futurePaneDimmed =
+        terminalPaneRenderProbe(thirdPane);
+    QCOMPARE(futurePaneDimmed.unfocusedSplitOverlayRect,
+             thirdPane->boundingRect());
+    QCOMPARE(futurePaneDimmed.unfocusedSplitOverlayColor, secondOverlay);
+
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ClosePane,
+        {splitTabId, thirdId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(thirdGuard.isNull(), 2000);
+    QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 2);
+
+    // An unsplit tab remains clear; returning restores the split predicate.
+    workspace->newTab();
+    QCOMPARE(workspace->currentIndex(), 1);
+    TerminalPane *singleTabPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane) {
+            singleTabPane = pane;
+        }
+    }
+    QVERIFY(singleTabPane != nullptr);
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(singleTabPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ActivateTab,
+        {splitTabId, PaneId{}, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    // Zoom changes presentation but not structural split membership.
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {splitTabId, firstId, 0},
+    }));
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+    QCOMPARE(firstPane->size(), workspace->size());
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QCOMPARE(terminalPaneRenderProbe(firstPane)
+                 .unfocusedSplitOverlayRect,
+             firstPane->boundingRect());
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {splitTabId, firstId, 0},
+    }));
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+    QVERIFY(!window.grabWindow().isNull());
+    QCOMPARE(terminalPaneRenderProbe(firstPane)
+                 .unfocusedSplitOverlayRect,
+             firstPane->boundingRect());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+    firstPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), firstPane, 1000);
+
+    // Window activity is part of actual GTK-style surface focus. The retained
+    // activeFocusItem alone must not keep the old window's pane clear.
+    QQuickWindow secondWindow;
+    secondWindow.setColor(QColor(QStringLiteral("#281008")));
+    secondWindow.resize(window.size());
+    secondWindow.show();
+    secondWindow.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isActive(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isActive(), 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QCOMPARE(terminalPaneRenderProbe(firstPane)
+                 .unfocusedSplitOverlayRect,
+             firstPane->boundingRect());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 1000);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(terminalPaneRenderProbe(secondPane)
+                 .unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+
+    const quint64 firstRootBeforeSceneMove =
+        terminalPaneRenderProbe(firstPane).rootSerial;
+    const quint64 secondRootBeforeSceneMove =
+        terminalPaneRenderProbe(secondPane).rootSerial;
+    secondWindow.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isActive(), 1000);
+    workspace->setParentItem(secondWindow.contentItem());
+    workspace->setSize(secondWindow.size());
+    firstPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(secondWindow.activeFocusItem(), firstPane, 1000);
+    const QImage movedImage = secondWindow.grabWindow();
+    QVERIFY(!movedImage.isNull());
+    const TerminalPaneRenderProbeSnapshot movedFirst =
+        terminalPaneRenderProbe(firstPane);
+    const TerminalPaneRenderProbeSnapshot movedSecond =
+        terminalPaneRenderProbe(secondPane);
+    QVERIFY(movedFirst.rootSerial != firstRootBeforeSceneMove);
+    QVERIFY(movedSecond.rootSerial != secondRootBeforeSceneMove);
+    QVERIFY(movedFirst.unfocusedSplitOverlayRect.isEmpty());
+    QCOMPARE(movedSecond.unfocusedSplitOverlayRect,
+             secondPane->boundingRect());
+    const QImage oldWindowImage = window.grabWindow();
+    QVERIFY(!oldWindowImage.isNull());
+    QVERIFY(approximatelyEqual(
+        oldWindowImage.pixelColor(oldWindowImage.width() / 2,
+                                  oldWindowImage.height() / 2),
+        windowColor));
+
+    // Collapsing to one leaf clears split membership immediately, including
+    // when actual focus belongs to another frontend item.
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ClosePane,
+        {splitTabId, secondId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 2000);
+    // The second remaining object is the inactive tab's single pane.
+    auto *secondFocusSink = new QQuickItem(secondWindow.contentItem());
+    secondFocusSink->setSize(QSizeF(1.0, 1.0));
+    secondFocusSink->setFocusPolicy(Qt::StrongFocus);
+    secondFocusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(secondWindow.activeFocusItem(), secondFocusSink,
+                              1000);
+    QVERIFY(!secondWindow.grabWindow().isNull());
+    QVERIFY(terminalPaneRenderProbe(firstPane)
+                .unfocusedSplitOverlayRect.isEmpty());
+    QVERIFY(splitDividerItems(workspace.get()).isEmpty());
 
     workspace.reset();
     secondWindow.close();

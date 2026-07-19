@@ -62,15 +62,18 @@ keys into value snapshots.
 
 The snapshot includes the complete canonical 256-entry palette, selection
 colors, cursor color/style/blink/opacity/text, bold-color, faint-opacity, the
-nullable frontend-only split-divider color, and
+nullable frontend-only unfocused-split fill, finalized unfocused-split opacity,
+split-divider color, and
 the boolean `link-url` setting plus the three-state `link-previews` policy. The
 process-loader tests verify default/current merging and malformed canonical
 values and nullable resets; launch-option tests verify their value-only overlay
 and worker-boundary projection; adapter tests verify that config-default changes
-preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies the
-frontend-only terminal color/style, live link-matcher rules, and live preview
-policy. Workspace render tests cover divider recoloring, unset restoration,
-handle lifecycle, and logical-to-physical scaling.
+preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies
+frontend-only terminal color/style, retained split dimming, live link-matcher
+rules, and live preview policy. Workspace render tests cover dimming's actual
+focus and search predicate, configured-background fallback, live reload,
+split/tab/zoom/window/scene lifecycle, divider recoloring, unset restoration,
+handle lifecycle, and logical-to-physical scaling at 1× and 2×.
 This division keeps parser, terminal state, and renderer responsibilities
 independently testable.
 

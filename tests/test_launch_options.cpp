@@ -45,6 +45,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
+    void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
     void projectsTerminalSessionOptions();
@@ -100,7 +101,9 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.selectionClipboard.clearOnCopy);
     QVERIFY(options.clipboardPaste.protection);
     QVERIFY(options.clipboardPaste.bracketedSafe);
-    QVERIFY(!options.splitDividerColor.has_value());
+    QCOMPARE(options.splitAppearance.unfocusedOpacity, 0.7);
+    QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
+    QVERIFY(!options.splitAppearance.dividerColor.has_value());
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -256,6 +259,9 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("font-size"), 14.5);
     snapshot.values.insert(QStringLiteral("foreground"), QColor(QStringLiteral("#112233")));
     snapshot.values.insert(QStringLiteral("background"), QColor(QStringLiteral("#445566")));
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 0.42);
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
+                           QColor(QStringLiteral("#778899")));
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            QColor(QStringLiteral("#a1b2c3")));
     snapshot.values.insert(QStringLiteral("palette"), testPalette());
@@ -321,7 +327,10 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
              QColor(QStringLiteral("#112233")));
     QCOMPARE(cliResult.appearance.backgroundColor,
              QColor(QStringLiteral("#445566")));
-    QCOMPARE(cliResult.splitDividerColor,
+    QCOMPARE(cliResult.splitAppearance.unfocusedOpacity, 0.42);
+    QCOMPARE(cliResult.splitAppearance.unfocusedFill,
+             std::optional<QColor>(QColor(QStringLiteral("#778899"))));
+    QCOMPARE(cliResult.splitAppearance.dividerColor,
              std::optional<QColor>(QColor(QStringLiteral("#a1b2c3"))));
     QCOMPARE(cliResult.appearance.palette.size(), 256);
     QCOMPARE(cliResult.appearance.palette.at(42),
@@ -449,6 +458,44 @@ void LaunchOptionsTest::mapsClipboardModes()
     }
 }
 
+void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
+{
+    LaunchOptions base;
+    base.splitAppearance = {
+        .unfocusedOpacity = 0.4,
+        .unfocusedFill = QColor(Qt::red),
+    };
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), -2.0);
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
+                           QColor(QStringLiteral("#123456")));
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.splitAppearance.unfocusedOpacity, 0.15);
+    QCOMPARE(result.splitAppearance.unfocusedFill,
+             std::optional<QColor>(QColor(QStringLiteral("#123456"))));
+
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 2.0);
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), QString());
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.splitAppearance.unfocusedOpacity, 1.0);
+    QVERIFY(!result.splitAppearance.unfocusedFill.has_value());
+
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
+                           QStringLiteral("not-a-number"));
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
+                           QStringLiteral("not-a-color"));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.splitAppearance, base.splitAppearance);
+
+    snapshot.values.insert(
+        QStringLiteral("unfocused-split-opacity"),
+        std::numeric_limits<double>::quiet_NaN());
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.splitAppearance, base.splitAppearance);
+}
+
 void LaunchOptionsTest::restoresNullableAppearanceDefaults()
 {
     LaunchOptions base;
@@ -466,7 +513,8 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     base.appearance.boldColor = {
         .kind = TerminalBoldColorKind::Bright,
     };
-    base.splitDividerColor = QColor(Qt::blue);
+    base.splitAppearance.unfocusedFill = QColor(Qt::cyan);
+    base.splitAppearance.dividerColor = QColor(Qt::blue);
 
     GhosttyConfigSnapshot snapshot;
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -476,6 +524,7 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     snapshot.values.insert(QStringLiteral("cursor-style-blink"), QString());
     snapshot.values.insert(QStringLiteral("cursor-text"), QString());
     snapshot.values.insert(QStringLiteral("bold-color"), QString());
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), QString());
     snapshot.values.insert(QStringLiteral("split-divider-color"), QString());
 
     const TerminalAppearance appearance =
@@ -487,7 +536,9 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     QCOMPARE(appearance.cursorTextColor.kind, TerminalColorKind::Unset);
     QCOMPARE(appearance.boldColor.kind, TerminalBoldColorKind::Unset);
     QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
-                 .splitDividerColor.has_value());
+                 .splitAppearance.unfocusedFill.has_value());
+    QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
+                 .splitAppearance.dividerColor.has_value());
 }
 
 void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
@@ -535,6 +586,10 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("middle-click-action"), false);
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            QStringLiteral("not-a-color"));
+    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
+                           QStringLiteral("not-a-number"));
+    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
+                           QStringLiteral("not-a-color"));
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
 
     snapshot.availability = GhosttyConfigAvailability::Available;
@@ -548,7 +603,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.selectionClipboard, base.selectionClipboard);
     QCOMPARE(result.clipboardPaste, base.clipboardPaste);
     QCOMPARE(result.middleClickAction, base.middleClickAction);
-    QCOMPARE(result.splitDividerColor, base.splitDividerColor);
+    QCOMPARE(result.splitAppearance, base.splitAppearance);
 }
 
 void LaunchOptionsTest::projectsTerminalSessionOptions()
@@ -575,6 +630,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     };
     options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
+    options.splitAppearance = {
+        .unfocusedOpacity = 0.35,
+        .unfocusedFill = QColor(QStringLiteral("#123456")),
+    };
 
     const TerminalSessionRuntimeOptions runtime =
         toTerminalSessionRuntimeOptions(options);
@@ -604,7 +663,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.fontFamilyExplicit = true;
     frontendOnlyChanged.fontSizeExplicit = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
-    frontendOnlyChanged.splitDividerColor = QColor(QStringLiteral("#abcdef"));
+    frontendOnlyChanged.splitAppearance = {
+        .unfocusedOpacity = 0.9,
+        .unfocusedFill = QColor(QStringLiteral("#fedcba")),
+    };
+    frontendOnlyChanged.splitAppearance.dividerColor =
+        QColor(QStringLiteral("#abcdef"));
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
     frontendOnlyChanged.keybindings = {QStringLiteral("ctrl+x=ignore")};

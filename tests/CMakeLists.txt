@@ -131,6 +131,7 @@ target_include_directories(test-terminal-workspace PRIVATE
 )
 target_compile_definitions(test-terminal-workspace PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_RENDER_TEST_PROBE=1
 )
 target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Core
@@ -157,6 +158,7 @@ add_test(
     COMMAND test-terminal-workspace
             dragsExactNestedSplitDividerAndPreservesFocus
             splitDividerColorReloadsWithoutRelayout
+            dimsUnfocusedSplitPanesAcrossLifecycle
 )
 set_tests_properties(terminal-workspace-divider-hidpi PROPERTIES
     TIMEOUT 15

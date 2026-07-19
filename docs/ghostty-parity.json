@@ -413,6 +413,16 @@
       "status": "partial",
       "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."
     },
+    "unfocused-split-fill": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "The nullable fixed RGB fill resolves live to the configured background rather than OSC 11 state. One retained, input-transparent final pane rectangle appears only for actually unfocused surfaces in structurally split tabs, and that pane's active search UI suppresses it across tab, zoom, window, and scene lifecycle changes."
+    },
+    "unfocused-split-opacity": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "Ghostty's finalized pane opacity is clamped to [0.15, 1.0] and mapped live to its complementary two-decimal overlay alpha. The GUI-only retained rectangle updates existing and future panes without worker projection, text-row rebuilds, or layout work."
+    },
         "gtk-custom-css": {
           "status": "not_applicable",
           "scope": "gtk_only"

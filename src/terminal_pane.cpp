@@ -54,6 +54,19 @@ constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
 constexpr qreal kLinkPreviewVerticalPadding = 4.0;
 
+float unfocusedSplitOverlayOpacity(double paneOpacity)
+{
+    if (!std::isfinite(paneOpacity)) {
+        paneOpacity = SplitAppearance{}.unfocusedOpacity;
+    }
+    paneOpacity = std::clamp(paneOpacity, 0.15, 1.0);
+    // Pinned GTK writes the complementary opacity into runtime CSS with two
+    // decimals. Preserve that observable composition rather than treating
+    // this setting as the rectangle's opacity directly.
+    return static_cast<float>(
+        std::round((1.0 - paneOpacity) * 100.0) / 100.0);
+}
+
 float clampFontActionValue(float value, float minimum)
 {
     // Zig's @min/@max select the numeric operand when the other is NaN.
@@ -400,14 +413,34 @@ public:
         : beforeMain(new QSGNode)
         , mainTextRows(new QSGNode)
         , afterMain(new QSGNode)
+        , unfocusedSplitOverlay(new QSGSimpleRectNode)
     {
         appendChildNode(beforeMain);
         appendChildNode(mainTextRows);
         appendChildNode(afterMain);
+        appendChildNode(unfocusedSplitOverlay);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         rootSerial = nextRenderNodeSerial.fetch_add(
             1, std::memory_order_relaxed);
+        unfocusedSplitOverlaySerial = nextRenderNodeSerial.fetch_add(
+            1, std::memory_order_relaxed);
 #endif
+    }
+
+    void setUnfocusedSplitOverlay(const QRectF &rect, QColor color) const
+    {
+        QRectF effectiveRect = rect;
+        if (effectiveRect.isEmpty() || !color.isValid()
+            || color.alpha() == 0) {
+            effectiveRect = {};
+            color = Qt::transparent;
+        }
+        if (unfocusedSplitOverlay->rect() != effectiveRect) {
+            unfocusedSplitOverlay->setRect(effectiveRect);
+        }
+        if (unfocusedSplitOverlay->color() != color) {
+            unfocusedSplitOverlay->setColor(color);
+        }
     }
 
     void clearTransientNodes() const
@@ -484,6 +517,7 @@ public:
     QSGNode *beforeMain = nullptr;
     QSGNode *mainTextRows = nullptr;
     QSGNode *afterMain = nullptr;
+    QSGSimpleRectNode *unfocusedSplitOverlay = nullptr;
     QVector<QSGNode *> rowContainers;
     QVector<QSGTextNode *> rowTextNodes;
     QVector<quint64> builtRowEpochs;
@@ -492,6 +526,7 @@ public:
     BlockCursorTextState blockCursorTextState;
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     quint64 rootSerial = 0;
+    quint64 unfocusedSplitOverlaySerial = 0;
     QVector<quint64> rowNodeSerials;
     QVector<quint64> rowBuildCounts;
 #endif
@@ -511,6 +546,12 @@ void publishRenderProbe(const TerminalPane *pane,
     TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
     ++snapshot.paintSerial;
     snapshot.rootSerial = root.rootSerial;
+    snapshot.unfocusedSplitOverlaySerial =
+        root.unfocusedSplitOverlaySerial;
+    snapshot.unfocusedSplitOverlayRect =
+        root.unfocusedSplitOverlay->rect();
+    snapshot.unfocusedSplitOverlayColor =
+        root.unfocusedSplitOverlay->color();
     snapshot.rowNodeSerials = root.rowNodeSerials;
     snapshot.rowBuildCounts = root.rowBuildCounts;
 }
@@ -632,6 +673,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
+    , splitAppearance_(options.splitAppearance)
     , defaultFontPointSize_(options.fontSize)
 {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -643,6 +685,18 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     setAcceptHoverEvents(true);
     setFlag(QQuickItem::ItemAcceptsInputMethod, true);
     setFocusPolicy(Qt::StrongFocus);
+    const auto watchWindow = [this](QQuickWindow *quickWindow) {
+        QObject::disconnect(windowActiveConnection_);
+        windowActiveConnection_ = {};
+        if (quickWindow != nullptr) {
+            windowActiveConnection_ = connect(
+                quickWindow, &QWindow::activeChanged,
+                this, [this] { update(); });
+        }
+        update();
+    };
+    connect(this, &QQuickItem::windowChanged, this, watchWindow);
+    watchWindow(window());
     urlOpener_ = [](const QUrl &url) {
         return QDesktopServices::openUrl(url);
     };
@@ -755,13 +809,9 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 if (!available) {
                     return;
                 }
-                const bool activeChanged = !searchUiActive_;
                 const bool textChanged = searchUiText_ != text;
-                searchUiActive_ = true;
                 searchUiText_ = text;
-                if (activeChanged) {
-                    Q_EMIT searchUiActiveChanged();
-                }
+                setSearchUiActive(true);
                 if (textChanged) {
                     Q_EMIT searchUiTextChanged();
                 }
@@ -805,10 +855,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
                 cancelPendingHyperlinkActivation();
                 // TerminalController invalidates worker progress and pending
                 // search_selection replies before forwarding sessionExited.
-                if (searchUiActive_) {
-                    searchUiActive_ = false;
-                    Q_EMIT searchUiActiveChanged();
-                }
+                setSearchUiActive(false);
                 searchEngineActive_ = false;
                 searchMatchLabel_ = QStringLiteral("0/0");
                 Q_EMIT searchMatchLabelChanged();
@@ -926,7 +973,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.confirmCloseMode = options.confirmCloseMode;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
-    updated.splitDividerColor = options.splitDividerColor;
+    updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
@@ -966,6 +1013,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
                 : updated.appearance.foregroundColor;
         }
         appearance_ = updated.appearance;
+        splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
     if (activeSequenceToken_ != 0) {
@@ -1019,6 +1067,15 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     }
 }
 
+void TerminalPane::setSplit(bool split)
+{
+    if (split_ == split) {
+        return;
+    }
+    split_ = split;
+    update();
+}
+
 void TerminalPane::setWorkspaceActionHandler(
     std::function<bool(WorkspaceActionRequest)> handler)
 {
@@ -1037,16 +1094,24 @@ void TerminalPane::beginShutdown()
 
 void TerminalPane::startSearchUi()
 {
-    const bool wasInactive = !searchUiActive_;
-    if (wasInactive) {
-        searchUiActive_ = true;
-        Q_EMIT searchUiActiveChanged();
+    if (!searchUiActive_) {
+        setSearchUiActive(true);
         // Ghostty retains the last entry text. Reopening the UI starts a fresh
         // generation so results cannot outlive terminal mutations that
         // happened while the overlay was hidden.
         controller_->search(searchUiText_);
     }
     Q_EMIT searchUiFocusRequested();
+}
+
+void TerminalPane::setSearchUiActive(bool active)
+{
+    if (searchUiActive_ == active) {
+        return;
+    }
+    searchUiActive_ = active;
+    update();
+    Q_EMIT searchUiActiveChanged();
 }
 
 void TerminalPane::setSearchUiText(const QString &text)
@@ -1061,10 +1126,7 @@ void TerminalPane::setSearchUiText(const QString &text)
 
 void TerminalPane::endSearchUi()
 {
-    if (searchUiActive_) {
-        searchUiActive_ = false;
-        Q_EMIT searchUiActiveChanged();
-    }
+    setSearchUiActive(false);
     searchEngineActive_ = false;
     if (searchMatchLabel_ != QLatin1StringView("0/0")) {
         searchMatchLabel_ = QStringLiteral("0/0");
@@ -1174,6 +1236,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     TerminalFrame frame;
     QVector<quint64> textRowEpochs;
     TerminalAppearance appearance;
+    SplitAppearance splitAppearance;
     QFont baseFont;
     QString preedit;
     QString status;
@@ -1191,6 +1254,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         frame = frame_;
         textRowEpochs = textRowEpochs_;
         appearance = appearance_;
+        splitAppearance = splitAppearance_;
         baseFont = font_;
         preedit = preedit_;
         status = statusMessage_;
@@ -1664,6 +1728,22 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     if (QSGNode *node = createRectNode(overlayDecorations, softwareRenderer)) {
         root->afterMain->appendChildNode(node);
     }
+
+    QColor unfocusedSplitColor;
+    const bool surfaceFocused = hasActiveFocus()
+        && window() != nullptr && window()->isActive();
+    if (split_ && !surfaceFocused && !searchUiActive_) {
+        unfocusedSplitColor = splitAppearance.unfocusedFill.has_value()
+                && splitAppearance.unfocusedFill->isValid()
+            ? *splitAppearance.unfocusedFill
+            : appearance.backgroundColor;
+        if (unfocusedSplitColor.isValid()) {
+            unfocusedSplitColor.setAlphaF(
+                unfocusedSplitOverlayOpacity(
+                    splitAppearance.unfocusedOpacity));
+        }
+    }
+    root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     publishRenderProbe(this, *root);
 #endif

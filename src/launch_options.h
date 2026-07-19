@@ -30,6 +30,18 @@ enum class MiddleClickAction {
     Ignore,
 };
 
+// Ghostty dims an unfocused pane by compositing this fill over the terminal.
+// A missing fill resolves to the configured terminal background in the
+// frontend; opacity describes the terminal content that remains visible.
+struct SplitAppearance {
+    double unfocusedOpacity = 0.7;
+    std::optional<QColor> unfocusedFill;
+    // An unset divider preserves the Qt frontend's ordinary reserved gap.
+    std::optional<QColor> dividerColor;
+
+    bool operator==(const SplitAppearance &) const = default;
+};
+
 struct LaunchOptions {
     QString workingDirectory;
     QString fontFamily;
@@ -44,10 +56,9 @@ struct LaunchOptions {
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
     TerminalClipboardPasteOptions clipboardPaste;
-    // Split dividers belong to the Qt workspace, not the worker-owned
-    // terminal renderer. An unset value leaves the toolkit background in the
-    // reserved divider gap, matching Ghostty's nullable frontend override.
-    std::optional<QColor> splitDividerColor;
+    // Split appearance belongs to the Qt pane/workspace renderers and never
+    // crosses the terminal session-thread boundary.
+    SplitAppearance splitAppearance;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

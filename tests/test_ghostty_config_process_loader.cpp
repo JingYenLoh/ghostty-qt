@@ -34,6 +34,8 @@ QByteArray defaultOutput()
                           "font-size = 13\n"
                           "foreground = #ffffff\n"
                           "background = #282c34\n"
+                          "unfocused-split-opacity = 0.7\n"
+                          "unfocused-split-fill = \n"
                           "split-divider-color = \n"
                           "selection-foreground = \n"
                           "selection-background = \n"
@@ -146,6 +148,8 @@ private Q_SLOTS:
     void rejectsConfigThatBecomesInvalidDuringQueries();
     void rejectsConfigThatChangesValidlyDuringQueries();
     void preservesSuccessfulHelperWarnings();
+    void realHelperFinalizesUnfocusedSplitAppearance_data();
+    void realHelperFinalizesUnfocusedSplitAppearance();
     void realHelperPreservesAppearanceAndEffectiveUnbindSemantics();
     void realHelperExportsFinalizedStructuredKeybindings();
     void realHelperCanonicalizesTerminalControlActionPayloads();
@@ -288,6 +292,18 @@ void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
 void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
 {
     ConfigFixture fixture;
+    const GhosttyConfigLoadResult canonicalDefaults =
+        parseGhosttyConfigShowOutputs(defaultOutput(), {},
+                                      fixture.candidates());
+    QVERIFY2(canonicalDefaults.has_value(),
+             qPrintable(errorMessage(canonicalDefaults)));
+    QCOMPARE(canonicalDefaults->values.value(
+                 QStringLiteral("unfocused-split-opacity")).toDouble(),
+             0.7);
+    QCOMPARE(canonicalDefaults->values.value(
+                 QStringLiteral("unfocused-split-fill")),
+             QVariant(QString{}));
+
     const QString includePath =
         QDir(fixture.temporary.path()).filePath(QStringLiteral("included.conf"));
     ConfigFixture::writeFile(includePath,
@@ -302,6 +318,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "font-family = Noto Color Emoji\r\n"
             "font-size = 15.5\r\n"
             "foreground = #102030\r\n"
+            "unfocused-split-opacity = 0.42\r\n"
+            "unfocused-split-fill = #778899\r\n"
             "split-divider-color = #a1b2c3\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
@@ -353,6 +371,12 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              QColor(QStringLiteral("#102030")));
     QCOMPARE(snapshot.values.value(QStringLiteral("background")).value<QColor>(),
              QColor(QStringLiteral("#282c34")));
+    QCOMPARE(snapshot.values.value(
+                 QStringLiteral("unfocused-split-opacity")).toDouble(),
+             0.42);
+    QCOMPARE(snapshot.values.value(QStringLiteral("unfocused-split-fill"))
+                 .value<QColor>(),
+             QColor(QStringLiteral("#778899")));
     QCOMPARE(snapshot.values.value(QStringLiteral("split-divider-color"))
                  .value<QColor>(),
              QColor(QStringLiteral("#a1b2c3")));
@@ -565,6 +589,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     ConfigFixture fixture;
     const QByteArray defaults = defaultOutput()
         + QByteArrayLiteral(
+            "unfocused-split-fill = #080706\n"
             "split-divider-color = #090807\n"
             "selection-foreground = #101010\n"
             "selection-background = #202020\n"
@@ -573,6 +598,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
             "cursor-text = #404040\n"
             "bold-color = #505050\n");
     const QByteArray changes = QByteArrayLiteral(
+        "unfocused-split-fill = \n"
         "split-divider-color = \n"
         "selection-foreground = \n"
         "selection-background = \n"
@@ -597,6 +623,9 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
          }) {
         QCOMPARE(result->values.value(key), emptyString);
     }
+
+    QCOMPARE(result->values.value(QStringLiteral("unfocused-split-fill")),
+             emptyString);
 
     QByteArray missingNullableDefault = defaultOutput();
     const QByteArray nullableLine = QByteArrayLiteral("cursor-color = \n");
@@ -623,6 +652,22 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
     QVERIFY(!missingDivider.has_value());
     QCOMPARE(missingDivider.error(),
              QStringLiteral("Ghostty default config output is missing a required compatibility key"));
+
+    for (const QByteArray &requiredLine : {
+             QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
+             QByteArrayLiteral("unfocused-split-fill = \n"),
+         }) {
+        QByteArray missingDefault = defaultOutput();
+        const qsizetype offset = missingDefault.indexOf(requiredLine);
+        QVERIFY(offset >= 0);
+        missingDefault.remove(offset, requiredLine.size());
+        const GhosttyConfigLoadResult missingUnfocused =
+            parseGhosttyConfigShowOutputs(
+                missingDefault, {}, fixture.candidates());
+        QVERIFY(!missingUnfocused.has_value());
+        QCOMPARE(missingUnfocused.error(),
+                 QStringLiteral("Ghostty default config output is missing a required compatibility key"));
+    }
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
@@ -643,6 +688,31 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     QVERIFY(!malformedDivider.has_value());
     QCOMPARE(malformedDivider.error(),
              QStringLiteral("Invalid split-divider-color in Ghostty config output at line 1"));
+
+    const GhosttyConfigLoadResult malformedUnfocusedFill =
+        parseGhosttyConfigShowOutputs(
+            defaultOutput(),
+            QByteArrayLiteral("unfocused-split-fill = not-a-color\n"),
+            fixture.candidates());
+    QVERIFY(!malformedUnfocusedFill.has_value());
+    QCOMPARE(malformedUnfocusedFill.error(),
+             QStringLiteral("Invalid unfocused-split-fill in Ghostty config output at line 1"));
+
+    for (const QByteArray &value : {
+             QByteArrayLiteral("not-a-number"), QByteArrayLiteral("nan"),
+             QByteArrayLiteral("inf"), QByteArrayLiteral("-inf"),
+             QByteArrayLiteral("0.149"), QByteArrayLiteral("1.001"),
+         }) {
+        const GhosttyConfigLoadResult malformedUnfocusedOpacity =
+            parseGhosttyConfigShowOutputs(
+                defaultOutput(),
+                QByteArrayLiteral("unfocused-split-opacity = ")
+                    + value + QByteArrayLiteral("\n"),
+                fixture.candidates());
+        QVERIFY(!malformedUnfocusedOpacity.has_value());
+        QCOMPARE(malformedUnfocusedOpacity.error(),
+                 QStringLiteral("Invalid unfocused-split-opacity in Ghostty config output at line 1"));
+    }
 
     const GhosttyConfigLoadResult malformedPalette =
         parseGhosttyConfigShowOutputs(
@@ -864,6 +934,67 @@ void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
     QCOMPARE(result->diagnostics.constFirst().message,
              QStringLiteral(
                  "Ghostty config helper current query: both standard files exist"));
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperFinalizesUnfocusedSplitAppearance_data()
+{
+    QTest::addColumn<QString>("sourceFill");
+    QTest::addColumn<double>("sourceOpacity");
+    QTest::addColumn<double>("expectedOpacity");
+    QTest::addColumn<QColor>("expectedFill");
+
+    QTest::newRow("hash-rgb-and-low-clamp")
+        << QStringLiteral("#123456") << -1.0 << 0.15
+        << QColor(QStringLiteral("#123456"));
+    QTest::newRow("bare-rgb-and-high-clamp")
+        << QStringLiteral("123456") << 2.0 << 1.0
+        << QColor(QStringLiteral("#123456"));
+    QTest::newRow("x11-and-in-range")
+        << QStringLiteral("AliceBlue") << 0.42 << 0.42
+        << QColor(QStringLiteral("#f0f8ff"));
+    QTest::newRow("nullable-default")
+        << QString{} << 0.7 << 0.7 << QColor{};
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperFinalizesUnfocusedSplitAppearance()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+    QFETCH(QString, sourceFill);
+    QFETCH(double, sourceOpacity);
+    QFETCH(double, expectedOpacity);
+    QFETCH(QColor, expectedFill);
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("unfocused-split-opacity = %1\n"
+                       "unfocused-split-fill = %2\n")
+            .arg(sourceOpacity, 0, 'g', 17)
+            .arg(sourceFill)
+            .toUtf8());
+
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader({
+            .helperPath = helperPath,
+            .timeoutMilliseconds = 10'000,
+            .environment = QProcessEnvironment::systemEnvironment(),
+        })(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.value(
+                 QStringLiteral("unfocused-split-opacity")).toDouble(),
+             expectedOpacity);
+    const QVariant fill = result->values.value(
+        QStringLiteral("unfocused-split-fill"));
+    if (expectedFill.isValid()) {
+        QCOMPARE(fill.value<QColor>(), expectedFill);
+    } else {
+        QCOMPARE(fill, QVariant(QString{}));
+    }
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperPreservesAppearanceAndEffectiveUnbindSemantics()

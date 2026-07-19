@@ -130,6 +130,25 @@ std::optional<double> configClampedUnitInterval(const QVariant &value)
     return std::clamp(result, 0.0, 1.0);
 }
 
+void applyNullableConfigColor(const GhosttyConfigSnapshot &snapshot,
+                              const QString &key,
+                              std::optional<QColor> &destination)
+{
+    const auto value = snapshot.values.constFind(key);
+    if (value == snapshot.values.cend()) {
+        return;
+    }
+    if (value->metaType() == QMetaType::fromType<QString>()
+        && value->toString().isEmpty()) {
+        destination.reset();
+        return;
+    }
+    const QColor color = value->value<QColor>();
+    if (color.isValid()) {
+        destination = color;
+    }
+}
+
 } // namespace
 
 TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
@@ -185,19 +204,17 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             snapshot, QStringLiteral("background"))) {
         result.appearance.backgroundColor = *background;
     }
-    const auto splitDividerColor = snapshot.values.constFind(
-        QStringLiteral("split-divider-color"));
-    if (splitDividerColor != snapshot.values.cend()) {
-        if (splitDividerColor->metaType() == QMetaType::fromType<QString>()
-            && splitDividerColor->toString().isEmpty()) {
-            result.splitDividerColor.reset();
-        } else {
-            const QColor color = splitDividerColor->value<QColor>();
-            if (color.isValid()) {
-                result.splitDividerColor = color;
-            }
-        }
+    if (const auto opacity = configClampedUnitInterval(
+            snapshot.values.value(QStringLiteral("unfocused-split-opacity")))) {
+        result.splitAppearance.unfocusedOpacity =
+            std::clamp(*opacity, 0.15, 1.0);
     }
+    applyNullableConfigColor(
+        snapshot, QStringLiteral("unfocused-split-fill"),
+        result.splitAppearance.unfocusedFill);
+    applyNullableConfigColor(
+        snapshot, QStringLiteral("split-divider-color"),
+        result.splitAppearance.dividerColor);
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;

@@ -50,8 +50,9 @@ the host-language comparison and remaining engineering risks.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
   directional and aspect-selected automatic splits with wrapped spatial and
   tree-order navigation, keybinding resize/equalize, exact-gap pointer-dragged
-  dividers, split zoom, and close confirmation that distinguishes an idle
-  interactive shell from a foreground job on its PTY.
+  dividers, live Ghostty-compatible unfocused-pane dimming, split zoom, and
+  close confirmation that distinguishes an idle interactive shell from a
+  foreground job on its PTY.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
@@ -216,6 +217,8 @@ The current compatibility slice applies these keys:
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. Explicit `--font-size` wins. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
+| `unfocused-split-opacity` | Sets the retained content opacity of unfocused panes in a split, clamped to Ghostty's `0.15`–`1.0` range. The Qt renderer composites the complementary fill alpha and updates existing panes live. |
+| `unfocused-split-fill` | Sets the optional fixed RGB dimming fill. Unset resolves live to the configured `background`, independently of terminal OSC 11 overrides. Search suppresses dimming for its pane. |
 | `split-divider-color` | Applies Ghostty's optional fixed RGB color live to existing and future split dividers. Unset preserves the Qt frontend's ordinary two-pixel gap color. |
 | `palette` | Applies Ghostty's complete 256-color default palette. Terminal OSC 4 overrides survive a config reload; OSC 104 resets an entry to the newest configured default. |
 | `selection-foreground`, `selection-background` | Apply fixed colors or Ghostty's cell foreground/background aliases. Unset values retain Ghostty's default terminal-foreground/terminal-background selection pairing. |
@@ -490,9 +493,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   event can still race a blank select-all completion or terminal-driven
   selection change; worker-authoritative performability remains planned.
 - The first appearance slice covers the full palette, selection, cursor,
-  bold, faint, and split-divider settings documented above. Dynamic light/dark
-  theme switching, font fallback lists, palette generation/harmonization, and the
-  rest of Ghostty's appearance model remain planned. The pinned
+  bold, faint, and split appearance settings documented above. Dynamic
+  light/dark theme switching, font fallback lists, palette
+  generation/harmonization, and the rest of Ghostty's appearance model remain
+  planned. The pinned
   `+show-config` text boundary does not expose the derived palette and explicit
   entry mask needed to reproduce `palette-generate` or `palette-harmonious`
   exactly.

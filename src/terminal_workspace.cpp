@@ -341,7 +341,7 @@ void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapsho
 {
     effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
     for (SplitDividerItem *divider : std::as_const(splitDividers_)) {
-        divider->setColor(effectiveOptions_.splitDividerColor);
+        divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
     }
     for (const std::unique_ptr<Tab> &tab : tabs_) {
         std::vector<PaneHandle> panes;
@@ -890,6 +890,7 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
     node->second = std::make_unique<Node>(
         placeNewPaneFirst ? oldHandle : newPane);
     tab->activePaneId = newPane.id;
+    updateSplitMembership(*tab);
     const bool targetIsCurrent = tabId == currentTabId();
     if (targetIsCurrent) {
         layoutCurrentTab();
@@ -972,6 +973,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     if (removedActivePane || paneForId(tab->activePaneId) == nullptr) {
         tab->activePaneId = firstPaneId(tab->root.get());
     }
+    updateSplitMembership(*tab);
     if (tabIndex == currentIndex_) {
         layoutCurrentTab();
         if (TerminalPane *activePane = paneForId(tab->activePaneId);
@@ -1383,6 +1385,18 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     return entry;
 }
 
+void TerminalWorkspace::updateSplitMembership(Tab &tab)
+{
+    const bool split = tab.root != nullptr && !tab.root->isLeaf();
+    std::vector<PaneHandle> panes;
+    if (tab.root != nullptr) {
+        tab.root->collectPanes(panes);
+    }
+    for (const PaneHandle &handle : panes) {
+        handle.pane->setSplit(split);
+    }
+}
+
 void TerminalWorkspace::refreshTab(TabId tabId)
 {
     const Tab *tab = tabById(tabId);
@@ -1539,7 +1553,7 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
         SplitDividerItem *divider = splitDividers_.value(node->splitId);
         if (divider == nullptr) {
             divider = new SplitDividerItem(node->splitId, this);
-            divider->setColor(effectiveOptions_.splitDividerColor);
+            divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
             splitDividers_.insert(node->splitId, divider);
         }
         divider->markCurrent(generation);
