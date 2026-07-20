@@ -13,7 +13,7 @@
 // generation. Milliseconds intentionally match Duration.asMilliseconds(),
 // which is the conversion used by the pinned Linux GTK frontend.
 struct GhosttyConfigExport {
-    static constexpr int CurrentSchemaVersion = 2;
+    static constexpr int CurrentSchemaVersion = 3;
     static_assert(GhosttyKeybindConfig::CurrentSchemaVersion
                   == CurrentSchemaVersion);
 
@@ -21,6 +21,7 @@ struct GhosttyConfigExport {
     GhosttyKeybindConfig keybindings;
     bool quitAfterLastWindowClosed = true;
     std::optional<quint32> quitAfterLastWindowClosedDelayMilliseconds;
+    bool initialWindow = true;
     // Raw false/true/detect is retained because the config helper is built
     // with app-runtime=none; only the originating GUI process has the argv
     // and TERM_PROGRAM context needed to resolve detect.

@@ -44,7 +44,7 @@ QString SingleInstanceActivation::defaultServiceName()
 }
 
 SingleInstanceActivation::StartResult SingleInstanceActivation::start(
-    std::chrono::milliseconds timeout)
+    StartOptions options)
 {
     if (started_) {
         return {
@@ -86,7 +86,7 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
     };
 
     const auto deadline = std::chrono::steady_clock::now()
-        + std::max(timeout, std::chrono::milliseconds(1));
+        + std::max(options.timeout, std::chrono::milliseconds(1));
     for (std::size_t transition = 0;
          transition <= MaximumOwnerTransitions; ++transition) {
         ClaimResult claim = tryClaimService();
@@ -95,6 +95,11 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         }
         if (claim.status == ClaimStatus::Failed) {
             return fail(std::move(claim.diagnostic));
+        }
+        if (options.existingInstanceAction
+            == ExistingInstanceAction::DoNotActivate) {
+            unregisterObject();
+            return {.role = Role::ExistingInstance, .diagnostic = {}};
         }
 
         const std::expected<QString, QString> owner = currentOwner();

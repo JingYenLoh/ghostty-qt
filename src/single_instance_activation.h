@@ -25,6 +25,7 @@ public:
     enum class Role {
         Primary,
         ActivatedExisting,
+        ExistingInstance,
         Independent,
         Failed,
     };
@@ -33,6 +34,17 @@ public:
     struct StartResult {
         Role role = Role::Independent;
         QString diagnostic;
+    };
+
+    enum class ExistingInstanceAction {
+        Activate,
+        DoNotActivate,
+    };
+
+    struct StartOptions {
+        std::chrono::milliseconds timeout = std::chrono::seconds(10);
+        ExistingInstanceAction existingInstanceAction =
+            ExistingInstanceAction::Activate;
     };
 
     using ActivationHandler = std::move_only_function<bool()>;
@@ -50,8 +62,7 @@ public:
     ~SingleInstanceActivation() override;
 
     [[nodiscard]] static QString defaultServiceName();
-    [[nodiscard]] StartResult start(
-        std::chrono::milliseconds timeout = std::chrono::seconds(10));
+    [[nodiscard]] StartResult start(StartOptions options);
     void setActivationHandler(ActivationHandler handler);
     void release();
 

@@ -96,6 +96,7 @@ class SingleInstanceActivationTest : public QObject {
 private Q_SLOTS:
     void firstRegistrantBecomesPrimary();
     void secondaryActivatesPrimaryExactlyOnce();
+    void secondaryCanExitWithoutActivatingPrimary();
     void activationWaitsUntilHandlerIsInstalled();
     void queuedActivationReportsHandlerFailure();
     void activationFollowsAnOwnerHandoff();
@@ -112,7 +113,11 @@ void SingleInstanceActivationTest::firstRegistrantBecomesPrimary()
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
     SingleInstanceActivation activation(bus.server(), uniqueServiceName());
-    const auto result = activation.start(1s);
+    const auto result = activation.start({
+        .timeout = 1s,
+        .existingInstanceAction =
+            SingleInstanceActivation::ExistingInstanceAction::DoNotActivate,
+    });
     QCOMPARE(result.role, SingleInstanceActivation::Role::Primary);
     QVERIFY(result.diagnostic.isEmpty());
     QVERIFY(activation.isPrimary());
@@ -128,7 +133,7 @@ void SingleInstanceActivationTest::secondaryActivatesPrimaryExactlyOnce()
 
     const QString service = uniqueServiceName();
     SingleInstanceActivation primary(bus.server(), service);
-    QCOMPARE(primary.start(1s).role,
+    QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
     int activations = 0;
     primary.setActivationHandler([&activations] {
@@ -138,7 +143,7 @@ void SingleInstanceActivationTest::secondaryActivatesPrimaryExactlyOnce()
 
     auto future = std::async(std::launch::async, [&bus, service] {
         SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start(2s);
+        return secondary.start({.timeout = 2s});
     });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,
@@ -147,6 +152,35 @@ void SingleInstanceActivationTest::secondaryActivatesPrimaryExactlyOnce()
     QCOMPARE(result.role,
              SingleInstanceActivation::Role::ActivatedExisting);
     QCOMPARE(activations, 1);
+}
+
+void SingleInstanceActivationTest::secondaryCanExitWithoutActivatingPrimary()
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+
+    const QString service = uniqueServiceName();
+    SingleInstanceActivation primary(bus.server(), service);
+    QCOMPARE(primary.start({.timeout = 1s}).role,
+             SingleInstanceActivation::Role::Primary);
+    int activations = 0;
+    primary.setActivationHandler([&activations] {
+        ++activations;
+        return true;
+    });
+
+    SingleInstanceActivation secondary(bus.client(), service);
+    const auto result = secondary.start({
+        .timeout = 1s,
+        .existingInstanceAction =
+            SingleInstanceActivation::ExistingInstanceAction::DoNotActivate,
+    });
+    QCOMPARE(result.role, SingleInstanceActivation::Role::ExistingInstance);
+    QVERIFY(result.diagnostic.isEmpty());
+    QCOMPARE(activations, 0);
 }
 
 void SingleInstanceActivationTest::activationWaitsUntilHandlerIsInstalled()
@@ -159,12 +193,12 @@ void SingleInstanceActivationTest::activationWaitsUntilHandlerIsInstalled()
 
     const QString service = uniqueServiceName();
     SingleInstanceActivation primary(bus.server(), service);
-    QCOMPARE(primary.start(1s).role,
+    QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
 
     auto future = std::async(std::launch::async, [&bus, service] {
         SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start(2s);
+        return secondary.start({.timeout = 2s});
     });
     QTest::qWait(100);
     QCOMPARE(future.wait_for(0ms), std::future_status::timeout);
@@ -191,12 +225,12 @@ void SingleInstanceActivationTest::queuedActivationReportsHandlerFailure()
 
     const QString service = uniqueServiceName();
     SingleInstanceActivation primary(bus.server(), service);
-    QCOMPARE(primary.start(1s).role,
+    QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
 
     auto future = std::async(std::launch::async, [&bus, service] {
         SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start(2s);
+        return secondary.start({.timeout = 2s});
     });
     QTest::qWait(100);
     QCOMPARE(future.wait_for(0ms), std::future_status::timeout);
@@ -240,7 +274,7 @@ void SingleInstanceActivationTest::activationFollowsAnOwnerHandoff()
     auto future = std::async(
         std::launch::async, [thirdClient, service] {
             SingleInstanceActivation activation(thirdClient, service);
-            return activation.start(2s);
+            return activation.start({.timeout = 2s});
         });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,
@@ -262,7 +296,7 @@ void SingleInstanceActivationTest::rejectsUnknownProtocolAndReleasesOwnership()
 
     const QString service = uniqueServiceName();
     SingleInstanceActivation primary(bus.server(), service);
-    QCOMPARE(primary.start(1s).role,
+    QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
     int activations = 0;
     primary.setActivationHandler([&activations] {
@@ -291,7 +325,7 @@ void SingleInstanceActivationTest::rejectsUnknownProtocolAndReleasesOwnership()
     primary.release();
     QVERIFY(!primary.isPrimary());
     SingleInstanceActivation replacement(bus.client(), service);
-    QCOMPARE(replacement.start(1s).role,
+    QCOMPARE(replacement.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
 }
 
@@ -309,7 +343,7 @@ void SingleInstanceActivationTest::disconnectedBusFallsBackAndNoReplyFailsClosed
                 QStringLiteral("unix:path=%1").arg(missingSocket),
                 connectionName),
             uniqueServiceName());
-        const auto result = disconnected.start(50ms);
+        const auto result = disconnected.start({.timeout = 50ms});
         QCOMPARE(result.role,
                  SingleInstanceActivation::Role::Independent);
         QVERIFY(!result.diagnostic.isEmpty());
@@ -332,7 +366,7 @@ void SingleInstanceActivationTest::disconnectedBusFallsBackAndNoReplyFailsClosed
 
     auto future = std::async(std::launch::async, [&bus, service] {
         SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start(50ms);
+        return secondary.start({.timeout = 50ms});
     });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,

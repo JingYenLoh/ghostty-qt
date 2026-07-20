@@ -283,6 +283,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     applyConfigBool(
         snapshot, QStringLiteral("quit-after-last-window-closed"),
         result.quitAfterLastWindowClosed);
+    applyConfigBool(snapshot, QStringLiteral("initial-window"),
+                    result.initialWindow);
     const auto delay = snapshot.values.constFind(
         QStringLiteral("quit-after-last-window-closed-delay"));
     if (delay != snapshot.values.cend()) {

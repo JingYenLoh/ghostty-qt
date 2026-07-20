@@ -49,6 +49,10 @@ public:
 
     [[nodiscard]] std::expected<ApplicationWindow, QString>
     createInitialWindow();
+    // Completes the one-shot startup decision without requesting a surface.
+    // A later explicit or remote new-window action can still create the first
+    // surface and consume the current initial command.
+    [[nodiscard]] bool startWithoutInitialWindow();
     // Handles a source-less process activation synchronously so the caller
     // can acknowledge only after a replacement window is registered. Ghostty
     // inherits the focused surface's cwd for this path, but not its font size.
@@ -119,7 +123,8 @@ private:
     QPointer<TerminalWorkspace> quitDialogHost_;
     QSet<TerminalWorkspace *> awaitingShutdown_;
     QuitState quitState_ = QuitState::Idle;
-    bool initialWindowCreated_ = false;
+    bool startupWindowHandled_ = false;
+    bool hasCreatedSurface_ = false;
     bool startingApplicationShutdown_ = false;
     bool quitRehostScheduled_ = false;
     bool destroying_ = false;

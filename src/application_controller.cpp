@@ -105,14 +105,21 @@ ApplicationController::qmlWindowFactory(QQmlEngine &engine)
 std::expected<ApplicationWindow, QString>
 ApplicationController::createInitialWindow()
 {
-    if (initialWindowCreated_) {
+    if (startupWindowHandled_) {
         return std::unexpected(
-            QStringLiteral("The initial application window was already created"));
+            QStringLiteral("The initial application window was already handled"));
     }
 
     auto created = createWindow(effectiveOptions_);
-    if (created.has_value()) initialWindowCreated_ = true;
+    if (created.has_value()) startupWindowHandled_ = true;
     return created;
+}
+
+bool ApplicationController::startWithoutInitialWindow()
+{
+    if (startupWindowHandled_) return false;
+    startupWindowHandled_ = true;
+    return true;
 }
 
 bool ApplicationController::activateNoCommand()
@@ -160,6 +167,10 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral("The window workspace was already initialized"));
     }
+    // Match Ghostty's App.first lifecycle. Once a surface has successfully
+    // initialized, even a later GUI registration failure must not allow a
+    // future surface to consume the one-shot initial command again.
+    hasCreatedSurface_ = true;
     if (!lifetime_.registerWindow(created->window)) {
         discardCreated();
         return std::unexpected(
@@ -217,6 +228,8 @@ LaunchOptions ApplicationController::nextWindowOptions(
     TerminalWorkspace *sourceWorkspace,
     PaneId sourcePaneId) const
 {
+    if (!hasCreatedSurface_) return effectiveOptions_;
+
     TerminalWorkspace *const fallback = activeWorkspace();
     TerminalWorkspace *source = sourceWorkspace;
     if (!containsWorkspace(source)) {
@@ -246,6 +259,8 @@ LaunchOptions ApplicationController::nextWindowOptions(
 
 LaunchOptions ApplicationController::activationWindowOptions() const
 {
+    if (!hasCreatedSurface_) return effectiveOptions_;
+
     LaunchOptions result = effectiveOptions_;
     if (TerminalWorkspace *const source = focusedWorkspace();
         source != nullptr && result.windowInheritWorkingDirectory) {

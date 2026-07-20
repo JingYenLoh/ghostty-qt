@@ -38,6 +38,7 @@ class ApplicationLifetimeTest : public QObject {
 
 private Q_SLOTS:
     void initTestCase();
+    void ignoresLastWindowSignalUntilAWindowWasVisible_data();
     void ignoresLastWindowSignalUntilAWindowWasVisible();
     void disabledPolicyKeepsTheApplicationResident();
     void immediatePolicyQueuesOneQuit();
@@ -56,14 +57,32 @@ void ApplicationLifetimeTest::initTestCase()
 
 void ApplicationLifetimeTest::ignoresLastWindowSignalUntilAWindowWasVisible()
 {
+    QFETCH(bool, enabled);
+    QFETCH(int, delayMilliseconds);
+
     ApplicationLifetimeController controller;
+    controller.applyLaunchOptions(lifetimeOptions(
+        enabled,
+        delayMilliseconds < 0
+            ? std::nullopt
+            : std::optional(std::chrono::milliseconds(delayMilliseconds))));
     QSignalSpy quit(&controller,
                     &ApplicationLifetimeController::quitRequested);
 
     controller.lastWindowClosed();
-    QTest::qWait(20);
+    QTest::qWait(30);
     QCOMPARE(quit.count(), 0);
     QVERIFY(!controller.quitPending());
+}
+
+void ApplicationLifetimeTest::ignoresLastWindowSignalUntilAWindowWasVisible_data()
+{
+    QTest::addColumn<bool>("enabled");
+    QTest::addColumn<int>("delayMilliseconds");
+
+    QTest::newRow("disabled") << false << 1;
+    QTest::newRow("immediate") << true << -1;
+    QTest::newRow("delayed") << true << 1;
 }
 
 void ApplicationLifetimeTest::disabledPolicyKeepsTheApplicationResident()

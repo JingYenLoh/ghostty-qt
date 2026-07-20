@@ -143,7 +143,7 @@ GhosttyConfigProcessLoaderOptions fakeOptions(const ConfigFixture &fixture,
     environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},"keybindings":{"root":[{"sequence":[{"kind":"unicode","codepoint":116,"mods":3}],"actions":["new_tab"],"flags":{"consumed":true,"all":false,"global":false,"performable":false}}],"tables":[]}})json"));
+            R"json({"version":3,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},"keybindings":{"root":[{"sequence":[{"kind":"unicode","codepoint":116,"mods":3}],"actions":["new_tab"],"flags":{"consumed":true,"all":false,"global":false,"performable":false}}],"tables":[]}})json"));
     if (!mode.isEmpty()) {
         environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_MODE"), mode);
     }
@@ -218,10 +218,11 @@ private Q_SLOTS:
 void GhosttyConfigProcessLoaderTest::parsesStructuredConfigJson()
 {
     const QByteArray json = QByteArrayLiteral(R"json({
-        "version": 2,
+        "version": 3,
         "application": {
             "quit-after-last-window-closed": false,
             "quit-after-last-window-closed-delay-ms": 1500,
+            "initial-window": false,
             "gtk-single-instance": "false"
         },
         "keybindings": {
@@ -260,6 +261,7 @@ void GhosttyConfigProcessLoaderTest::parsesStructuredConfigJson()
     QVERIFY(!parsed->quitAfterLastWindowClosed);
     QCOMPARE(parsed->quitAfterLastWindowClosedDelayMilliseconds,
              std::optional<quint32>(1500));
+    QVERIFY(!parsed->initialWindow);
     QCOMPARE(parsed->singleInstanceMode, QStringLiteral("false"));
     const GhosttyKeybindConfig &config = parsed->keybindings;
     QCOMPARE(config.schemaVersion,
@@ -291,12 +293,13 @@ void GhosttyConfigProcessLoaderTest::parsesStructuredConfigJson()
 void GhosttyConfigProcessLoaderTest::parsesEmptyStructuredConfigJson()
 {
     const auto parsed = parseGhosttyConfigExportJson(
-        QByteArrayLiteral(R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
+        QByteArrayLiteral(R"json({"version":3,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
     QCOMPARE(parsed->schemaVersion,
              GhosttyConfigExport::CurrentSchemaVersion);
     QVERIFY(parsed->quitAfterLastWindowClosed);
     QVERIFY(!parsed->quitAfterLastWindowClosedDelayMilliseconds.has_value());
+    QVERIFY(parsed->initialWindow);
     QCOMPARE(parsed->singleInstanceMode, QStringLiteral("detect"));
     QVERIFY(parsed->keybindings.root.isEmpty());
     QVERIFY(parsed->keybindings.tables.isEmpty());
@@ -312,8 +315,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
 
     parsed = parseGhosttyConfigExportJson(
         QByteArrayLiteral(R"json({
-            "version":2,
-            "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},
+            "version":3,
+            "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},
             "keybindings":{"root":[{
                     "sequence":[{"kind":"unicode","codepoint":55296,"mods":0}],
                     "actions":["ignore"],
@@ -324,14 +327,14 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
     QVERIFY(parsed.error().contains(QStringLiteral("Unicode scalar")));
 
     parsed = parseGhosttyConfigExportJson(
-        QByteArrayLiteral(R"json({"version":3,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
+        QByteArrayLiteral(R"json({"version":4,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
     QVERIFY(!parsed.has_value());
     QCOMPARE(parsed.error(),
              QStringLiteral(
                  "Unsupported Ghostty structured config JSON schema version"));
 
     parsed = parseGhosttyConfigExportJson(
-        QByteArrayLiteral(R"json({"version":1,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
+        QByteArrayLiteral(R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
     QVERIFY(!parsed.has_value());
     QCOMPARE(parsed.error(),
              QStringLiteral(
@@ -339,8 +342,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
 
     parsed = parseGhosttyConfigExportJson(
         QByteArrayLiteral(R"json({
-            "version":2,
-            "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},
+            "version":3,
+            "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},
             "keybindings":{"root":[],"tables":[
                     {"name":"modal","bindings":[]},
                     {"name":"modal","bindings":[]}
@@ -351,8 +354,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
              QStringLiteral("Duplicate Ghostty keybinding table 'modal'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":"true","quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},
+        "version":3,
+        "application":{"quit-after-last-window-closed":"true","quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -360,8 +363,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.quit-after-last-window-closed must be a boolean"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":4294967296,"gtk-single-instance":"detect"},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":4294967296,"initial-window":true,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -369,8 +372,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.quit-after-last-window-closed-delay-ms must be null or a uint32 integer"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":true},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":true},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -378,8 +381,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.gtk-single-instance must be false, true, or detect"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"desktop"},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"desktop"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -387,8 +390,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.gtk-single-instance must be false, true, or detect"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -399,10 +402,10 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
              QByteArrayLiteral("-1"), QByteArrayLiteral("1.5"),
          }) {
         const QByteArray json = QByteArrayLiteral(
-            R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":)json")
+            R"json({"version":3,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":)json")
             + invalidDelay
             + QByteArrayLiteral(
-                R"json(,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json");
+                R"json(,"initial-window":true,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json");
         parsed = parseGhosttyConfigExportJson(json);
         QVERIFY(!parsed.has_value());
         QCOMPARE(parsed.error(), QStringLiteral(
@@ -410,8 +413,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
     }
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"gtk-single-instance":"detect"},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"initial-window":true,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
@@ -419,13 +422,31 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application is missing field 'quit-after-last-window-closed-delay-ms'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":2,
-        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect","extra":false},
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"detect","extra":false},
         "keybindings":{"root":[],"tables":[]}
     })json"));
     QVERIFY(!parsed.has_value());
     QCOMPARE(parsed.error(),
              QStringLiteral("application has unexpected field 'extra'"));
+
+    parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":"true","gtk-single-instance":"detect"},
+        "keybindings":{"root":[],"tables":[]}
+    })json"));
+    QVERIFY(!parsed.has_value());
+    QCOMPARE(parsed.error(), QStringLiteral(
+        "application.initial-window must be a boolean"));
+
+    parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
+        "version":3,
+        "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"detect"},
+        "keybindings":{"root":[],"tables":[]}
+    })json"));
+    QVERIFY(!parsed.has_value());
+    QCOMPARE(parsed.error(), QStringLiteral(
+        "application is missing field 'initial-window'"));
 }
 
 void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
@@ -1181,6 +1202,7 @@ void GhosttyConfigProcessLoaderTest::invokesValidationThenDefaultAndCurrentQueri
     QVERIFY(!result->values.value(
                  QStringLiteral("quit-after-last-window-closed-delay"))
                  .isValid());
+    QVERIFY(result->values.value(QStringLiteral("initial-window")).toBool());
 
     QFile log(invocationLog);
     QVERIFY(log.open(QIODevice::ReadOnly));
@@ -1201,7 +1223,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
     options.environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":2,"application":{"quit-after-last-window-closed":false,"quit-after-last-window-closed-delay-ms":1500,"gtk-single-instance":"false"},"keybindings":{"root":[],"tables":[]}})json"));
+            R"json({"version":3,"application":{"quit-after-last-window-closed":false,"quit-after-last-window-closed-delay-ms":1500,"initial-window":false,"gtk-single-instance":"false"},"keybindings":{"root":[],"tables":[]}})json"));
 
     GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(options)(fixture.candidates());
@@ -1212,6 +1234,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
         QStringLiteral("quit-after-last-window-closed-delay"));
     QCOMPARE(delay.metaType(), QMetaType::fromType<quint32>());
     QCOMPARE(delay.value<quint32>(), quint32(1'500));
+    QVERIFY(!result->values.value(QStringLiteral("initial-window")).toBool());
     QCOMPARE(result->values.value(
                  QStringLiteral("gtk-single-instance")).toString(),
              QStringLiteral("false"));
@@ -1219,7 +1242,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
     options.environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"gtk-single-instance":"true"},"keybindings":{"root":[],"tables":[]}})json"));
+            R"json({"version":3,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"gtk-single-instance":"true"},"keybindings":{"root":[],"tables":[]}})json"));
     result = makeGhosttyConfigProcessLoader(options)(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.value(
@@ -1229,6 +1252,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
     QVERIFY(!result->values.value(
                  QStringLiteral("quit-after-last-window-closed-delay"))
                  .isValid());
+    QVERIFY(result->values.value(QStringLiteral("initial-window")).toBool());
     QCOMPARE(result->values.value(
                  QStringLiteral("gtk-single-instance")).toString(),
              QStringLiteral("true"));
@@ -1607,6 +1631,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
         fixture.preferredPath,
         QByteArrayLiteral(
             "gtk-single-instance = false\n"
+            "initial-window = false\n"
             "quit-after-last-window-closed = false\n"
             "quit-after-last-window-closed-delay = 1s 250ms 999us\n"));
     auto result = queryRealConfigExport(helperPath, fixture);
@@ -1615,12 +1640,14 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QVERIFY(!exported.quitAfterLastWindowClosed);
     QCOMPARE(exported.quitAfterLastWindowClosedDelayMilliseconds,
              std::optional<quint32>(1'250));
+    QVERIFY(!exported.initialWindow);
     QCOMPARE(exported.singleInstanceMode, QStringLiteral("false"));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral(
             "gtk-single-instance = true\n"
+            "initial-window = true\n"
             "quit-after-last-window-closed-delay = 0\n"));
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
@@ -1628,6 +1655,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QVERIFY(exported.quitAfterLastWindowClosed);
     QCOMPARE(exported.quitAfterLastWindowClosedDelayMilliseconds,
              std::optional<quint32>(0));
+    QVERIFY(exported.initialWindow);
     QCOMPARE(exported.singleInstanceMode, QStringLiteral("true"));
 
     ConfigFixture::writeFile(
@@ -1656,6 +1684,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     exported = *result;
     QVERIFY(exported.quitAfterLastWindowClosed);
     QVERIFY(!exported.quitAfterLastWindowClosedDelayMilliseconds.has_value());
+    QVERIFY(exported.initialWindow);
     QCOMPARE(exported.singleInstanceMode, QStringLiteral("detect"));
 }
 

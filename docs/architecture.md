@@ -233,8 +233,11 @@ or controller threads.
 `new_window`, `reload_config`, and `quit` use a typed process-action vocabulary
 that remains available with zero workspaces. Window creation is queued to the
 GUI event loop, reuses one `QQmlComponent`, initializes the new workspace from
-the latest process options before presentation, and clears the initial
-one-shot command and hold state. A surface source is the composite live
+the latest process options before presentation, and consumes the initial
+one-shot command and hold state only when the first-ever surface initializes.
+Suppressed startup can therefore retain those values for its first later local
+or remote window; every subsequent window clears them permanently. A surface
+source is the composite live
 workspace plus stable `PaneId`, because pane IDs are only workspace-local;
 stale sources fall back to the focused or most recently active workspace, then
 to process defaults. Explicit `quit` read-only-assesses every live workspace,
@@ -253,13 +256,22 @@ reload preserves the current deadline, while a changed value cancels and
 reconciles it against the current window state. This deliberately repairs the
 pinned GTK frontend's stale-timer reload edge cases. The false policy can keep
 a zero-window application resident; process and portal actions can reload it
-or construct another window.
+or construct another window. Independently, the pinned GTK runtime does not
+arm this timer before any surface has ever been requested: its generic startup
+hook is conditional on a method that the GTK `App` does not expose. The
+controller therefore preserves the same never-requested state for
+`initial-window=false`; last-window policy begins only after a real surface has
+existed and closed. This differs from the prose comment on the pinned config
+field, but matches its executable GTK control flow.
 
 Bare Linux process activation uses a separate versioned session-D-Bus
 component with a project-owned application ID; Debug adds its own suffix so a
 developer build cannot activate an installed Release build. The endpoint is
 exported on the connection before an atomic, non-queued, non-replaceable name
-claim. A secondary sends only the protocol version—never argv, environment,
+claim. The launching process's typed `initial-window` decision determines what
+happens when another owner exists: true sends the protocol-version-only
+activation, while false unregisters its temporary endpoint and exits normally
+without contacting the owner. No activation ever forwards argv, environment,
 cwd, or shell text. Calls that arrive before primary startup installs the
 handler retain a delayed reply; they are acknowledged only after their
 synchronous source-less window creation finishes. An unavailable bus starts
@@ -269,13 +281,18 @@ owner during process handoff. An ambiguous no-reply fails closed because the
 owner may already have created the window. This creation acknowledgement is a
 deliberate strengthening of pinned Ghostty's fire-and-forget normal activation.
 
-The private structured config export retains Ghostty's raw
-`gtk-single-instance` false/true/detect enum. The GUI process resolves detect
+The private structured config export retains Ghostty's boolean
+`initial-window` value and raw `gtk-single-instance` false/true/detect enum.
+The GUI process resolves detect
 from its real argv and `TERM_PROGRAM`; the first protocol slice deliberately
 excludes every argument-bearing launch. Role and name ownership stay fixed
-across live reload, matching GApplication construction-time policy. An
+across live reload, matching GApplication construction-time policy. Reloading
+`initial-window` changes no current window; a fresh launcher samples its own
+new value. The primary activation handler itself remains unconditional, so a
+true launcher can create the first window in a primary that began false. An
 accepted activation creates synchronously from the primary's latest process
-options, clears the one-shot program and hold, overlays only an actually
+options, retains one-shot program and hold only for the first-ever surface,
+and overlays only an actually
 focused or still-valid last-focused pane cwd when configured, and keeps the
 configured font size. With no valid focus it keeps configured cwd rather than
 choosing an arbitrary live pane. That cwd/font asymmetry matches the pinned GTK
@@ -714,8 +731,8 @@ appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `scrollback-limit`, `confirm-close-surface`,
 `link-url`, `link-previews`, `config-file`, and a versioned dump of the
 finalized keybinding sets. The same structured envelope carries
-`quit-after-last-window-closed` and the exact nullable-millisecond form of
-`quit-after-last-window-closed-delay`.
+`initial-window`, `quit-after-last-window-closed`, and the exact
+nullable-millisecond form of `quit-after-last-window-closed-delay`.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection and candidate/selected search colors, cursor
@@ -789,8 +806,9 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v2 envelope containing
-application lifetime and raw single-instance values plus Ghostty's finalized
+The config helper exposes a project-private JSON v3 envelope containing
+application lifetime, `initial-window`, and raw single-instance values plus
+Ghostty's finalized
 binding sets after defaults, includes, `clear`, overrides, chains, and
 `unbind` have been resolved by the pinned Zig implementation. It retains full
 root sequences, named tables, physical/Unicode/catch-all triggers, canonical
@@ -1097,6 +1115,9 @@ The default CTest suite has focused layers for each ownership boundary:
   isolated bus, retires the primary's initial QML root to resident zero-window
   state, verifies the bare secondary exits successfully after recreating one
   primary-owned window, then confirms clean retirement and explicit shutdown.
+  A second flow starts directly with no QML roots, proves a false secondary is
+  an inert successful launch, then uses a true secondary to create exactly one
+  first surface in the false-started primary.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived

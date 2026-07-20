@@ -40,6 +40,37 @@ QString processFailure(QProcess &process, const QByteArray &output)
              QString::fromUtf8(process.readAllStandardError()));
 }
 
+bool writeGhosttyConfig(const QString &configHome,
+                        const QByteArray &contents)
+{
+    const QString ghosttyDirectory =
+        QDir(configHome).filePath(QStringLiteral("ghostty"));
+    if (!QDir().mkpath(ghosttyDirectory)) return false;
+    QFile config(QDir(ghosttyDirectory).filePath(
+        QStringLiteral("config.ghostty")));
+    return config.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && config.write(contents) == contents.size();
+}
+
+QProcessEnvironment applicationEnvironment(
+    const PrivateSessionBus &bus,
+    const QString &configHome)
+{
+    QProcessEnvironment environment =
+        QProcessEnvironment::systemEnvironment();
+    environment.remove(QStringLiteral("TERM_PROGRAM"));
+    environment.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"),
+                       bus.address());
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"), configHome);
+    environment.insert(QStringLiteral("GHOSTTY_QT_ALLOW_NON_WAYLAND"),
+                       QStringLiteral("1"));
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"),
+                       QStringLiteral("offscreen"));
+    environment.insert(QStringLiteral("QT_QUICK_BACKEND"),
+                       QStringLiteral("software"));
+    return environment;
+}
+
 } // namespace
 
 class ApplicationSingleInstanceTest : public QObject {
@@ -47,6 +78,7 @@ class ApplicationSingleInstanceTest : public QObject {
 
 private Q_SLOTS:
     void residentPrimaryIsReactivatedByBareSecondLaunch();
+    void falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates();
 };
 
 void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaunch()
@@ -59,38 +91,21 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
         QDir::current().filePath(
             QStringLiteral("tmp/application-single-instance-XXXXXX")));
     QVERIFY(configHome.isValid());
-    const QString ghosttyDirectory =
-        QDir(configHome.path()).filePath(QStringLiteral("ghostty"));
-    QVERIFY(QDir().mkpath(ghosttyDirectory));
-    QFile config(QDir(ghosttyDirectory).filePath(
-        QStringLiteral("config.ghostty")));
-    QVERIFY(config.open(QIODevice::WriteOnly));
     const QByteArray configContents =
         "gtk-single-instance = true\n"
+        "initial-window = true\n"
         "quit-after-last-window-closed = false\n"
         "confirm-close-surface = false\n";
-    QCOMPARE(config.write(configContents), configContents.size());
-    config.close();
+    QVERIFY(writeGhosttyConfig(configHome.path(), configContents));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
-    QProcessEnvironment environment =
-        QProcessEnvironment::systemEnvironment();
-    environment.remove(QStringLiteral("TERM_PROGRAM"));
-    environment.insert(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"),
-                       bus.address());
-    environment.insert(QStringLiteral("XDG_CONFIG_HOME"),
-                       configHome.path());
-    environment.insert(QStringLiteral("GHOSTTY_QT_ALLOW_NON_WAYLAND"),
-                       QStringLiteral("1"));
+    QProcessEnvironment environment = applicationEnvironment(
+        bus, configHome.path());
     environment.insert(
         QStringLiteral("GHOSTTY_QT_TEST_APPLICATION_LIFETIME"),
         QStringLiteral("external-activation"));
-    environment.insert(QStringLiteral("QT_QPA_PLATFORM"),
-                       QStringLiteral("offscreen"));
-    environment.insert(QStringLiteral("QT_QUICK_BACKEND"),
-                       QStringLiteral("software"));
 
     QProcess primary;
     primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
@@ -122,6 +137,96 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
 
     const QByteArrayView accepted("GHOSTTY_QT_ACTIVATION_ACCEPTED");
     QVERIFY2(waitForMarker(primary, primaryOutput, accepted, 10'000),
+             qPrintable(processFailure(primary, primaryOutput)));
+    QVERIFY2(primary.waitForFinished(10'000),
+             qPrintable(processFailure(primary, primaryOutput)));
+    QCOMPARE(primary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(primary.exitCode(), 0);
+}
+
+void ApplicationSingleInstanceTest::falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates()
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir falseConfigHome(
+        QDir::current().filePath(
+            QStringLiteral("tmp/application-initial-window-false-XXXXXX")));
+    QTemporaryDir trueConfigHome(
+        QDir::current().filePath(
+            QStringLiteral("tmp/application-initial-window-true-XXXXXX")));
+    QVERIFY(falseConfigHome.isValid());
+    QVERIFY(trueConfigHome.isValid());
+    QVERIFY(writeGhosttyConfig(
+        falseConfigHome.path(),
+        QByteArrayLiteral(
+            "gtk-single-instance = true\n"
+            "initial-window = false\n"
+            "quit-after-last-window-closed = true\n"
+            "confirm-close-surface = false\n")));
+    QVERIFY(writeGhosttyConfig(
+        trueConfigHome.path(),
+        QByteArrayLiteral(
+            "gtk-single-instance = true\n"
+            "initial-window = true\n"
+            "quit-after-last-window-closed = false\n"
+            "confirm-close-surface = false\n")));
+
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+
+    QProcessEnvironment primaryEnvironment = applicationEnvironment(
+        bus, falseConfigHome.path());
+    primaryEnvironment.insert(QStringLiteral("GHOSTTY_QT_TEST_INITIAL_WINDOW"),
+                              QStringLiteral("1"));
+    QProcess primary;
+    primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    primary.setProcessEnvironment(primaryEnvironment);
+    primary.start();
+    QVERIFY(primary.waitForStarted(3000));
+    const auto cleanup = qScopeGuard([&primary] {
+        if (primary.state() == QProcess::NotRunning) return;
+        primary.kill();
+        primary.waitForFinished(3000);
+    });
+
+    QByteArray primaryOutput;
+    const QByteArrayView ready("GHOSTTY_QT_INITIAL_WINDOW_READY");
+    QVERIFY2(waitForMarker(primary, primaryOutput, ready, 10'000),
+             qPrintable(processFailure(primary, primaryOutput)));
+    QCOMPARE(primary.state(), QProcess::Running);
+
+    QProcess falseSecondary;
+    falseSecondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    falseSecondary.setProcessEnvironment(applicationEnvironment(
+        bus, falseConfigHome.path()));
+    falseSecondary.start();
+    QVERIFY(falseSecondary.waitForStarted(3000));
+    QVERIFY2(falseSecondary.waitForFinished(10'000),
+             qPrintable(processFailure(
+                 falseSecondary, falseSecondary.readAllStandardOutput())));
+    QCOMPARE(falseSecondary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(falseSecondary.exitCode(), 0);
+    QTest::qWait(100);
+    primaryOutput += primary.readAllStandardOutput();
+    QVERIFY(!primaryOutput.contains("GHOSTTY_QT_INITIAL_WINDOW_CREATED"));
+    QCOMPARE(primary.state(), QProcess::Running);
+
+    QProcess trueSecondary;
+    trueSecondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    trueSecondary.setProcessEnvironment(applicationEnvironment(
+        bus, trueConfigHome.path()));
+    trueSecondary.start();
+    QVERIFY(trueSecondary.waitForStarted(3000));
+    QVERIFY2(trueSecondary.waitForFinished(10'000),
+             qPrintable(processFailure(
+                 trueSecondary, trueSecondary.readAllStandardOutput())));
+    QCOMPARE(trueSecondary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(trueSecondary.exitCode(), 0);
+
+    const QByteArrayView created("GHOSTTY_QT_INITIAL_WINDOW_CREATED");
+    QVERIFY2(waitForMarker(primary, primaryOutput, created, 10'000),
              qPrintable(processFailure(primary, primaryOutput)));
     QVERIFY2(primary.waitForFinished(10'000),
              qPrintable(processFailure(primary, primaryOutput)));

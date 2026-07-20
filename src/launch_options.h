@@ -113,6 +113,9 @@ struct LaunchOptions {
     bool quitAfterLastWindowClosed = true;
     std::optional<std::chrono::milliseconds>
         quitAfterLastWindowClosedDelay;
+    // Whether this process requests a window during initial application
+    // activation. Explicit new-window actions remain available when false.
+    bool initialWindow = true;
     // This first transport slice accepts only bare, no-command activation.
     // Detect additionally excludes launches from a terminal advertising
     // TERM_PROGRAM. The structured helper preserves Ghostty's raw mode so the

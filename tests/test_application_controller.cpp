@@ -81,6 +81,8 @@ private Q_SLOTS:
     void initTestCase();
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
+    void suppressedStartupPreservesFirstSurfaceOptions();
+    void failedLazyCreationDoesNotConsumeFirstSurfaceOptions();
     void ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy();
     void successfulReplacementCancelsDelayedQuit();
     void sourceLessActivationMatchesUpstreamInheritance();
@@ -230,6 +232,98 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
     QVERIFY(controller.dispatch(ApplicationAction::Quit));
     QCOMPARE(committed.count(), 1);
     QCOMPARE(quit.count(), 1);
+}
+
+void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
+{
+    WindowFactoryHarness localHarness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.initialWindow = false;
+    options.quitAfterLastWindowClosed = true;
+    options.quitAfterLastWindowClosedDelay = std::chrono::milliseconds(25);
+    ApplicationController local(options, localHarness.factory(), false);
+
+    QVERIFY(local.startWithoutInitialWindow());
+    QCOMPARE(localHarness.calls, 0);
+    QCOMPARE(local.windowCount(), 0);
+    QVERIFY(!local.startWithoutInitialWindow());
+    QVERIFY(!local.createInitialWindow().has_value());
+    QTest::qWait(50);
+    QVERIFY(!local.lifetimeController()->quitPending());
+    QVERIFY(!local.lifetimeController()->hasRequestedQuit());
+
+    LaunchOptions reloaded = options;
+    reloaded.initialWindow = true;
+    reloaded.fontSize = 19.0;
+    reloaded.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("exit 0"),
+    };
+    reloaded.hold = true;
+    local.applyLaunchOptions(reloaded);
+    QCOMPARE(local.windowCount(), 0);
+    QCOMPARE(localHarness.calls, 0);
+
+    QVERIFY(local.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(local.windowCount(), 1, 1000);
+    const TerminalWorkspace *const first =
+        local.windows().constFirst().workspace;
+    QCOMPARE(first->effectiveLaunchOptions().program, reloaded.program);
+    QVERIFY(first->effectiveLaunchOptions().hold);
+    QCOMPARE(first->effectiveLaunchOptions().fontSize, 19.0);
+
+    reloaded.initialWindow = false;
+    local.applyLaunchOptions(reloaded);
+    QCOMPARE(local.windowCount(), 1);
+    QVERIFY(local.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(local.windowCount(), 2, 1000);
+    const TerminalWorkspace *const second =
+        local.windows().constLast().workspace;
+    QVERIFY(second->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!second->effectiveLaunchOptions().hold);
+
+    WindowFactoryHarness activationHarness;
+    ApplicationController activated(
+        options, activationHarness.factory(), false);
+    QVERIFY(activated.startWithoutInitialWindow());
+    QVERIFY(activated.activateNoCommand());
+    QCOMPARE(activated.windowCount(), 1);
+    const TerminalWorkspace *const activatedFirst =
+        activated.windows().constFirst().workspace;
+    QCOMPARE(activatedFirst->effectiveLaunchOptions().program,
+             options.program);
+    QVERIFY(activatedFirst->effectiveLaunchOptions().hold);
+    QVERIFY(activated.activateNoCommand());
+    QCOMPARE(activated.windowCount(), 2);
+    QVERIFY(activated.windows().constLast().workspace
+                ->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!activated.windows().constLast().workspace
+                 ->effectiveLaunchOptions().hold);
+}
+
+void ApplicationControllerTest::failedLazyCreationDoesNotConsumeFirstSurfaceOptions()
+{
+    WindowFactoryHarness harness;
+    harness.failOnCall = 1;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.initialWindow = false;
+    ApplicationController controller(options, harness.factory(), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+
+    QSignalSpy failure(&controller,
+                       &ApplicationController::windowCreationFailed);
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QCOMPARE(harness.calls, 1);
+    QCOMPARE(controller.windowCount(), 0);
+
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(harness.calls, 2);
+    QCOMPARE(controller.windowCount(), 1);
+    const LaunchOptions &actual = controller.windows().constFirst().workspace
+                                      ->effectiveLaunchOptions();
+    QCOMPARE(actual.program, options.program);
+    QVERIFY(actual.hold);
 }
 
 void ApplicationControllerTest::ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy()

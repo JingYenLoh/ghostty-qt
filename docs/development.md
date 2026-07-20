@@ -82,7 +82,8 @@ color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the raw false/true/detect `gtk-single-instance` mode,
-and the exact boolean/nullable-millisecond application lifetime policy. The
+the boolean `initial-window` startup decision, and the exact
+boolean/nullable-millisecond application lifetime policy. The
 process-loader tests verify default/current merging, malformed canonical
 values, and nullable resets; launch-option tests verify their value-only overlay
 and worker-boundary projection; adapter tests verify that config-default changes
@@ -182,9 +183,12 @@ Qt last-writer behavior without focus or selection changes. Application tests
 exercise both headings and exact Unicode text through the shared real QML
 dialog and verify focus restoration. Process-controller tests cover duplicate
 PaneIds in separate windows, live and stale source inheritance, one-shot
-command removal, live/replacement config, delayed-exit cancellation and factory
-failure, clean zero-window residence, application-wide confirmation and
-shutdown, cancellation, and dialog re-hosting.
+command removal including the first lazy surface after suppressed startup,
+live/replacement config, delayed-exit cancellation and factory failure, clean
+zero-window residence, application-wide confirmation and shutdown,
+cancellation, and dialog re-hosting. Private session-D-Bus integration also
+covers a false launcher that leaves a false-started primary at zero windows,
+followed by a true launcher that creates exactly one primary-owned surface.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

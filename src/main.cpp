@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QTextStream>
 #include <QTimer>
 #include <QtQml>
@@ -314,6 +315,83 @@ bool installApplicationLifetimeTestHook(
             workspace, &TerminalWorkspace::tabTitlesChanged,
             workspace, request, Qt::SingleShotConnection);
     }
+    return true;
+}
+
+bool installSuppressedStartupTestHook(
+    ApplicationController *controller,
+    const LaunchOptions &options,
+    bool *completed)
+{
+    ApplicationLifetimeController *const lifetime =
+        controller->lifetimeController();
+    if (options.initialWindow || controller->windowCount() != 0
+        || lifetime->registeredWindowCount() != 0
+        || lifetime->hasOpenWindow() || lifetime->quitPending()
+        || lifetime->hasRequestedQuit()) {
+        qCritical()
+            << "Suppressed-startup test hook did not begin with an idle zero-window application";
+        return false;
+    }
+
+    QObject::connect(
+        controller, &ApplicationController::windowCreationFailed,
+        controller, [](const QString &message) {
+            qCritical().noquote()
+                << "Suppressed-startup test could not create its first window:"
+                << message;
+            QCoreApplication::exit(1);
+        },
+        Qt::SingleShotConnection);
+    QObject::connect(
+        controller, &ApplicationController::windowCreated,
+        controller,
+        [controller, lifetime, options, completed](
+            QQuickWindow *, TerminalWorkspace *workspace) {
+            const LaunchOptions &actual =
+                workspace->effectiveLaunchOptions();
+            if (controller->windowCount() != 1
+                || !lifetime->hasOpenWindow()
+                || actual.program != options.program
+                || actual.hold != options.hold) {
+                qCritical()
+                    << "Suppressed-startup test did not preserve first-surface options";
+                QCoreApplication::exit(1);
+                return;
+            }
+
+            QTextStream(stdout)
+                << "GHOSTTY_QT_INITIAL_WINDOW_CREATED\n" << Qt::flush;
+            QObject::connect(
+                controller, &ApplicationController::windowRetired,
+                controller, [controller, lifetime, completed] {
+                    if (controller->windowCount() != 0
+                        || lifetime->hasOpenWindow()) {
+                        qCritical()
+                            << "Suppressed-startup test did not retire its first window";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    *completed = true;
+                },
+                Qt::SingleShotConnection);
+
+            const auto closeFirstWindow = [workspace] {
+                workspace->requestWindowClose();
+            };
+            if (workspace->tabCount() > 0) {
+                QTimer::singleShot(0, workspace, closeFirstWindow);
+            } else {
+                QObject::connect(
+                    workspace, &TerminalWorkspace::tabTitlesChanged,
+                    workspace, closeFirstWindow,
+                    Qt::SingleShotConnection);
+            }
+        },
+        Qt::SingleShotConnection);
+
+    QTextStream(stdout)
+        << "GHOSTTY_QT_INITIAL_WINDOW_READY\n" << Qt::flush;
     return true;
 }
 
@@ -751,9 +829,14 @@ int main(int argc, char *argv[])
             QByteArrayView(qgetenv("TERM_PROGRAM")))) {
         auto candidate = std::make_unique<SingleInstanceActivation>();
         const SingleInstanceActivation::StartResult activation =
-            candidate->start();
+            candidate->start({
+                .existingInstanceAction = effectiveApplicationOptions.initialWindow
+                    ? SingleInstanceActivation::ExistingInstanceAction::Activate
+                    : SingleInstanceActivation::ExistingInstanceAction::DoNotActivate,
+            });
         switch (activation.role) {
         case SingleInstanceActivation::Role::ActivatedExisting:
+        case SingleInstanceActivation::Role::ExistingInstance:
             return 0;
         case SingleInstanceActivation::Role::Failed:
             qCritical().noquote() << activation.diagnostic;
@@ -801,11 +884,19 @@ int main(int argc, char *argv[])
         &configService, &GhosttyConfigService::requestReload);
 #endif
 
-    const std::expected<ApplicationWindow, QString> initialWindow =
-        applicationController.createInitialWindow();
-    if (!initialWindow.has_value()) {
-        qCritical().noquote() << "Could not create the primary application window:"
-                              << initialWindow.error();
+    std::optional<ApplicationWindow> initialWindow;
+    if (effectiveApplicationOptions.initialWindow) {
+        const std::expected<ApplicationWindow, QString> created =
+            applicationController.createInitialWindow();
+        if (!created.has_value()) {
+            qCritical().noquote()
+                << "Could not create the primary application window:"
+                << created.error();
+            return 1;
+        }
+        initialWindow = *created;
+    } else if (!applicationController.startWithoutInitialWindow()) {
+        qCritical() << "Could not start without an initial application window";
         return 1;
     }
     if (activationEndpoint) {
@@ -815,16 +906,38 @@ int main(int argc, char *argv[])
                     && controller->activateNoCommand();
             });
     }
-    QQuickWindow *const applicationWindow = initialWindow->window;
-    TerminalWorkspace *const workspace = initialWindow->workspace;
+    const auto activationHandlerGuard = qScopeGuard([&activationEndpoint] {
+        if (activationEndpoint) {
+            activationEndpoint->setActivationHandler({});
+        }
+    });
+    QQuickWindow *const applicationWindow = initialWindow
+        ? initialWindow->window
+        : nullptr;
+    TerminalWorkspace *const workspace = initialWindow
+        ? initialWindow->workspace
+        : nullptr;
 
     const ApplicationLifetimeTestMode lifetimeTestMode =
         applicationLifetimeTestMode();
     bool lifetimeTestCompleted = false;
-    if (!installApplicationLifetimeTestHook(
+    if ((lifetimeTestMode != ApplicationLifetimeTestMode::None
+         && !initialWindow)
+        || !installApplicationLifetimeTestHook(
             applicationWindow, workspace, &applicationController,
             effectiveApplicationOptions, lifetimeTestMode,
             &lifetimeTestCompleted)) {
+        return 1;
+    }
+
+    const bool suppressedStartupTest = qEnvironmentVariableIntValue(
+        "GHOSTTY_QT_TEST_INITIAL_WINDOW") == 1;
+    bool suppressedStartupTestCompleted = false;
+    if (suppressedStartupTest
+        && (initialWindow
+            || !installSuppressedStartupTestHook(
+                &applicationController, effectiveApplicationOptions,
+                &suppressedStartupTestCompleted))) {
         return 1;
     }
 
@@ -833,33 +946,36 @@ int main(int argc, char *argv[])
     // every normal launch.
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
-        if (!installCloseDialogTestHook(applicationWindow, workspace)) {
+        if (!initialWindow
+            || !installCloseDialogTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_TAB_TITLE_PROMPT") == 1) {
-        if (!installTitlePromptTestHook(
+        if (!initialWindow || !installTitlePromptTestHook(
                 applicationWindow, workspace, TitlePromptTestTarget::Tab)) {
             return 1;
         }
     }
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_SURFACE_TITLE_PROMPT") == 1) {
-        if (!installTitlePromptTestHook(
+        if (!initialWindow || !installTitlePromptTestHook(
                 applicationWindow, workspace, TitlePromptTestTarget::Surface)) {
             return 1;
         }
     }
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
-        if (!installFullscreenActionTestHook(applicationWindow, workspace)) {
+        if (!initialWindow
+            || !installFullscreenActionTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY") == 1) {
-        if (!installTabBarVisibilityTestHook(applicationWindow, workspace)) {
+        if (!initialWindow
+            || !installTabBarVisibilityTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }
@@ -868,6 +984,10 @@ int main(int argc, char *argv[])
     if (lifetimeTestMode != ApplicationLifetimeTestMode::None
         && !lifetimeTestCompleted) {
         qCritical() << "Application-lifetime test hook did not complete";
+        return 1;
+    }
+    if (suppressedStartupTest && !suppressedStartupTestCompleted) {
+        qCritical() << "Suppressed-startup test hook did not complete";
         return 1;
     }
     return exitCode;

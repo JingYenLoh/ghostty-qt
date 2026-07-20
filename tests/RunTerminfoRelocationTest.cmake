@@ -80,16 +80,25 @@ if(CONFIG_HELPER_NAME)
         TYPE "${structured_helper_output}" keybindings root)
     string(JSON single_instance ERROR_VARIABLE single_instance_json_error
         GET "${structured_helper_output}" application gtk-single-instance)
+    string(JSON initial_window_type ERROR_VARIABLE initial_window_json_error
+        TYPE "${structured_helper_output}" application initial-window)
+    string(JSON initial_window ERROR_VARIABLE initial_window_value_json_error
+        GET "${structured_helper_output}" application initial-window)
     if(structured_json_error OR lifetime_json_error OR keybind_json_error
        OR single_instance_json_error
-       OR NOT structured_schema EQUAL 2
+       OR initial_window_json_error
+       OR initial_window_value_json_error
+       OR NOT structured_schema EQUAL 3
        OR NOT lifetime_type STREQUAL "BOOLEAN"
+       OR NOT initial_window_type STREQUAL "BOOLEAN"
+       OR NOT initial_window
        OR NOT single_instance STREQUAL "detect"
        OR NOT keybind_root_type STREQUAL "ARRAY")
         message(FATAL_ERROR
             "Relocated helper returned invalid structured config JSON: "
             "${structured_json_error};${lifetime_json_error};"
-            "${keybind_json_error};${single_instance_json_error}\n"
+            "${keybind_json_error};${single_instance_json_error};"
+            "${initial_window_json_error};${initial_window_value_json_error}\n"
             "${structured_helper_output}")
     endif()
 endif()

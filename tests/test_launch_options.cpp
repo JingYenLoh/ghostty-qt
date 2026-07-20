@@ -123,6 +123,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QVERIFY(options.quitAfterLastWindowClosed);
     QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
+    QVERIFY(options.initialWindow);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
@@ -703,11 +704,13 @@ void LaunchOptionsTest::mapsApplicationLifetime()
     snapshot.values.insert(
         QStringLiteral("quit-after-last-window-closed-delay"),
         QVariant::fromValue<quint32>(1'500));
+    snapshot.values.insert(QStringLiteral("initial-window"), false);
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(!result.quitAfterLastWindowClosed);
     QCOMPARE(result.quitAfterLastWindowClosedDelay,
              std::optional(std::chrono::milliseconds(1'500)));
+    QVERIFY(!result.initialWindow);
 
     snapshot.values.insert(
         QStringLiteral("quit-after-last-window-closed-delay"),
@@ -729,17 +732,22 @@ void LaunchOptionsTest::mapsApplicationLifetime()
     snapshot.values.insert(
         QStringLiteral("quit-after-last-window-closed-delay"),
         QStringLiteral("1500"));
+    snapshot.values.insert(QStringLiteral("initial-window"),
+                           QStringLiteral("false"));
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 
     base.program = {QStringLiteral("/bin/true")};
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(result.quitAfterLastWindowClosed);
     QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+    QVERIFY(result.initialWindow);
 
+    base.initialWindow = false;
     snapshot.availability = GhosttyConfigAvailability::Unavailable;
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(result.quitAfterLastWindowClosed);
     QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+    QVERIFY(!result.initialWindow);
 }
 
 void LaunchOptionsTest::mapsSingleInstancePolicy()
