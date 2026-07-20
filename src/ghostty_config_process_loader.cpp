@@ -1,5 +1,6 @@
 #include "ghostty_config_process_loader.h"
 #include "ghostty_action_catalog.h"
+#include "ghostty_config_export.h"
 #include "ghostty_keybind_set.h"
 
 #include <QColor>
@@ -288,10 +289,10 @@ QString unsupportedKeybindReason(GhosttyKeybindUnsupportedReason reason)
     switch (reason) {
     case GhosttyKeybindUnsupportedReason::KeyTable:
         return QStringLiteral(
-            "named key tables require the structured binding export");
+            "named key tables require the structured config export");
     case GhosttyKeybindUnsupportedReason::NonLocal:
         return QStringLiteral(
-            "all-surface/global triggers require the structured binding export");
+            "all-surface/global triggers require the structured config export");
     case GhosttyKeybindUnsupportedReason::ClearDirective:
         return QStringLiteral("an unresolved clear directive reached the flattened set");
     case GhosttyKeybindUnsupportedReason::OrphanChain:
@@ -1159,29 +1160,29 @@ bool parseKeybindDefinitions(const QJsonValue &value,
 
 } // namespace
 
-std::expected<GhosttyKeybindConfig, QString>
-parseGhosttyKeybindConfigJson(const QByteArray &json)
+std::expected<GhosttyConfigExport, QString>
+parseGhosttyConfigExportJson(const QByteArray &json)
 {
     QJsonParseError jsonError;
     const QJsonDocument document = QJsonDocument::fromJson(json, &jsonError);
     if (jsonError.error != QJsonParseError::NoError) {
         return std::unexpected(
-            QStringLiteral("Invalid Ghostty keybinding JSON at offset %1: %2")
+            QStringLiteral("Invalid Ghostty structured config JSON at offset %1: %2")
                 .arg(jsonError.offset)
                 .arg(jsonError.errorString()));
     }
     if (!document.isObject()) {
         return std::unexpected(
-            QStringLiteral("Ghostty keybinding JSON root must be an object"));
+            QStringLiteral("Ghostty structured config JSON root must be an object"));
     }
 
     QString parseError;
     const QJsonObject object = document.object();
     if (!exactObjectKeys(object,
                          {QLatin1StringView("version"),
-                          QLatin1StringView("root"),
-                          QLatin1StringView("tables")},
-                         QStringLiteral("Ghostty keybinding JSON root"),
+                          QLatin1StringView("application"),
+                          QLatin1StringView("keybindings")},
+                         QStringLiteral("Ghostty structured config JSON root"),
                          &parseError)) {
         return std::unexpected(std::move(parseError));
     }
@@ -1189,28 +1190,80 @@ parseGhosttyKeybindConfigJson(const QByteArray &json)
     if (!unsignedJsonInteger(object.value(QStringLiteral("version")),
                              std::numeric_limits<int>::max(),
                              &schemaVersion)
-        || schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
+        || schemaVersion != GhosttyConfigExport::CurrentSchemaVersion) {
         return std::unexpected(
-            QStringLiteral("Unsupported Ghostty keybinding JSON schema version"));
+            QStringLiteral("Unsupported Ghostty structured config JSON schema version"));
     }
 
-    GhosttyKeybindConfig parsed;
+    GhosttyConfigExport parsed;
     parsed.schemaVersion = static_cast<int>(schemaVersion);
-    if (!parseKeybindDefinitions(object.value(QStringLiteral("root")),
-                                 QStringLiteral("root"), &parsed.root,
+
+    const QJsonValue applicationValue =
+        object.value(QStringLiteral("application"));
+    if (!applicationValue.isObject()) {
+        return std::unexpected(QStringLiteral("application must be an object"));
+    }
+    const QJsonObject application = applicationValue.toObject();
+    if (!exactObjectKeys(
+            application,
+            {QLatin1StringView("quit-after-last-window-closed"),
+             QLatin1StringView("quit-after-last-window-closed-delay-ms")},
+            QStringLiteral("application"), &parseError)) {
+        return std::unexpected(std::move(parseError));
+    }
+    const QJsonValue quitAfterLastWindow = application.value(
+        QStringLiteral("quit-after-last-window-closed"));
+    if (!quitAfterLastWindow.isBool()) {
+        return std::unexpected(QStringLiteral(
+            "application.quit-after-last-window-closed must be a boolean"));
+    }
+    parsed.quitAfterLastWindowClosed = quitAfterLastWindow.toBool();
+
+    const QJsonValue delay = application.value(
+        QStringLiteral("quit-after-last-window-closed-delay-ms"));
+    if (!delay.isNull()) {
+        quint64 milliseconds = 0;
+        if (!unsignedJsonInteger(delay, std::numeric_limits<quint32>::max(),
+                                 &milliseconds)) {
+            return std::unexpected(QStringLiteral(
+                "application.quit-after-last-window-closed-delay-ms must be null or a uint32 integer"));
+        }
+        parsed.quitAfterLastWindowClosedDelayMilliseconds =
+            static_cast<quint32>(milliseconds);
+    }
+
+    const QJsonValue keybindingsValue =
+        object.value(QStringLiteral("keybindings"));
+    if (!keybindingsValue.isObject()) {
+        return std::unexpected(QStringLiteral("keybindings must be an object"));
+    }
+    const QJsonObject keybindings = keybindingsValue.toObject();
+    if (!exactObjectKeys(keybindings,
+                         {QLatin1StringView("root"),
+                          QLatin1StringView("tables")},
+                         QStringLiteral("keybindings"), &parseError)) {
+        return std::unexpected(std::move(parseError));
+    }
+    // The envelope version is the sole wire-schema authority.
+    parsed.keybindings.schemaVersion = parsed.schemaVersion;
+    if (!parseKeybindDefinitions(keybindings.value(QStringLiteral("root")),
+                                 QStringLiteral("keybindings.root"),
+                                 &parsed.keybindings.root,
                                  &parseError)) {
         return std::unexpected(std::move(parseError));
     }
 
-    const QJsonValue tablesValue = object.value(QStringLiteral("tables"));
+    const QJsonValue tablesValue = keybindings.value(QStringLiteral("tables"));
     if (!tablesValue.isArray()) {
-        return std::unexpected(QStringLiteral("tables must be an array"));
+        return std::unexpected(
+            QStringLiteral("keybindings.tables must be an array"));
     }
     const QJsonArray tables = tablesValue.toArray();
-    parsed.tables.reserve(tables.size());
+    parsed.keybindings.tables.reserve(tables.size());
     QSet<QString> tableNames;
     for (qsizetype index = 0; index < tables.size(); ++index) {
-        const QString context = QStringLiteral("tables[%1]").arg(index);
+        const QString context =
+            QStringLiteral("keybindings.tables[%1]").arg(index);
         if (!tables.at(index).isObject()) {
             return std::unexpected(
                 QStringLiteral("%1 must be an object").arg(context));
@@ -1244,7 +1297,7 @@ parseGhosttyKeybindConfigJson(const QByteArray &json)
                                      &parsedTable.bindings, &parseError)) {
             return std::unexpected(std::move(parseError));
         }
-        parsed.tables.append(std::move(parsedTable));
+        parsed.keybindings.tables.append(std::move(parsedTable));
     }
 
     return parsed;
@@ -1550,14 +1603,15 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                                   operationTimeout);
         }
 
-        // Unlike +show-config's lossy formatter, this application-specific
-        // action exports the complete effective root set and named tables.
-        const ProcessResult keybinds =
-            run({QStringLiteral("+show-keybinds-json")});
-        if (keybinds.status != ProcessResult::Status::Completed
-            || keybinds.exitCode != 0) {
-            return processFailure(QStringLiteral("keybinding query"), keybinds,
-                                  operationTimeout);
+        // Unlike +show-config's lossy formatter, this project-specific action
+        // exports one versioned generation containing exact keybindings and
+        // application values such as nullable durations.
+        const ProcessResult structuredConfig =
+            run({QStringLiteral("+show-config-json")});
+        if (structuredConfig.status != ProcessResult::Status::Completed
+            || structuredConfig.exitCode != 0) {
+            return processFailure(QStringLiteral("structured config query"),
+                                  structuredConfig, operationTimeout);
         }
 
         // `+show-config` deliberately prints even when its independently
@@ -1586,16 +1640,17 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                 QStringLiteral("config consistency query"), verifiedChanges,
                 operationTimeout);
         }
-        const ProcessResult verifiedKeybinds =
-            run({QStringLiteral("+show-keybinds-json")});
-        if (verifiedKeybinds.status != ProcessResult::Status::Completed
-            || verifiedKeybinds.exitCode != 0) {
+        const ProcessResult verifiedStructuredConfig =
+            run({QStringLiteral("+show-config-json")});
+        if (verifiedStructuredConfig.status != ProcessResult::Status::Completed
+            || verifiedStructuredConfig.exitCode != 0) {
             return processFailure(
-                QStringLiteral("keybinding consistency query"),
-                verifiedKeybinds, operationTimeout);
+                QStringLiteral("structured config consistency query"),
+                verifiedStructuredConfig, operationTimeout);
         }
         if (changes.standardOutput != verifiedChanges.standardOutput
-            || keybinds.standardOutput != verifiedKeybinds.standardOutput) {
+            || structuredConfig.standardOutput
+                != verifiedStructuredConfig.standardOutput) {
             return std::unexpected(QStringLiteral(
                 "Ghostty config changed while it was being queried; reload will retry"));
         }
@@ -1605,14 +1660,28 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         if (!parsed) {
             return parsed;
         }
-        auto keybindConfig =
-            parseGhosttyKeybindConfigJson(keybinds.standardOutput);
-        if (!keybindConfig) {
+        auto exportedConfig =
+            parseGhosttyConfigExportJson(structuredConfig.standardOutput);
+        if (!exportedConfig) {
             return std::unexpected(
-                QStringLiteral("Ghostty keybinding query returned malformed data: %1")
-                    .arg(keybindConfig.error()));
+                QStringLiteral("Ghostty structured config query returned malformed data: %1")
+                    .arg(exportedConfig.error()));
         }
-        parsed->keybindConfig = std::move(*keybindConfig);
+        parsed->keybindConfig = std::move(exportedConfig->keybindings);
+        parsed->values.insert(
+            QStringLiteral("quit-after-last-window-closed"),
+            exportedConfig->quitAfterLastWindowClosed);
+        if (exportedConfig->quitAfterLastWindowClosedDelayMilliseconds) {
+            parsed->values.insert(
+                QStringLiteral("quit-after-last-window-closed-delay"),
+                *exportedConfig->quitAfterLastWindowClosedDelayMilliseconds);
+        } else {
+            // An invalid QVariant represents Ghostty's nullable unset value;
+            // retaining the key lets a live reload clear an earlier delay.
+            parsed->values.insert(
+                QStringLiteral("quit-after-last-window-closed-delay"),
+                QVariant{});
+        }
 
         // Config values belong on stdout; any successful stderr and validator
         // stdout are warnings from the pinned parser and must remain visible
@@ -1630,8 +1699,8 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                                  QStringLiteral("current query"),
                                  changes.standardError);
         appendProcessDiagnostics(&*parsed,
-                                 QStringLiteral("keybinding query"),
-                                 keybinds.standardError);
+                                 QStringLiteral("structured config query"),
+                                 structuredConfig.standardError);
         appendProcessDiagnostics(&*parsed,
                                  QStringLiteral("post-query validation"),
                                  postQueryValidation.standardOutput);

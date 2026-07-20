@@ -2421,9 +2421,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         return true;
     }
     if (name == QLatin1StringView("close_window")) {
-        // ghostty-qt currently has exactly one window, so closing that window
-        // follows the same confirmed shutdown path as application quit.
-        Q_EMIT requestQuit();
+        Q_EMIT requestCloseWindow();
         return true;
     }
     if (name == QLatin1StringView("ignore")) {

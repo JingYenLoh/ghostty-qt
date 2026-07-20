@@ -1,3 +1,4 @@
+#include "application_lifetime.h"
 #include "launch_options.h"
 #include "ghostty_application_keybindings.h"
 #include "terminal_pane.h"
@@ -103,7 +104,7 @@ bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
             });
         });
     QObject::connect(
-        workspace, &TerminalWorkspace::quitApproved,
+        workspace, &TerminalWorkspace::windowCloseApproved,
         closeDialog, [acceptanceInvoked] {
             if (!*acceptanceInvoked) {
                 qCritical() << "Close-dialog test hook quit without QML acceptance";
@@ -138,6 +139,94 @@ enum class TitlePromptTestTarget {
     Surface,
     Tab,
 };
+
+enum class ApplicationLifetimeTestMode {
+    None,
+    ResidentAfterWindowClose,
+    ExplicitQuit,
+};
+
+ApplicationLifetimeTestMode applicationLifetimeTestMode()
+{
+    const QByteArray mode = qgetenv("GHOSTTY_QT_TEST_APPLICATION_LIFETIME");
+    if (mode == "resident") {
+        return ApplicationLifetimeTestMode::ResidentAfterWindowClose;
+    }
+    if (mode == "explicit-quit") {
+        return ApplicationLifetimeTestMode::ExplicitQuit;
+    }
+    return ApplicationLifetimeTestMode::None;
+}
+
+bool installApplicationLifetimeTestHook(
+    QGuiApplication *application,
+    QWindow *applicationWindow,
+    TerminalWorkspace *workspace,
+    ApplicationLifetimeController *lifetime,
+    const LaunchOptions &options,
+    ApplicationLifetimeTestMode mode,
+    bool *completed)
+{
+    if (mode == ApplicationLifetimeTestMode::None) return true;
+    if (options.quitAfterLastWindowClosed) {
+        qCritical()
+            << "Application-lifetime test hook requires the resident policy";
+        return false;
+    }
+
+    if (mode == ApplicationLifetimeTestMode::ResidentAfterWindowClose) {
+        const QPointer<QWindow> retiredWindow(applicationWindow);
+        const QPointer<TerminalWorkspace> retiredWorkspace(workspace);
+        QObject::connect(
+            application, &QGuiApplication::lastWindowClosed,
+            lifetime,
+            [lifetime, completed, retiredWindow, retiredWorkspace] {
+                QTimer::singleShot(
+                    50, lifetime,
+                    [lifetime, completed, retiredWindow,
+                     retiredWorkspace] {
+                        if (lifetime->hasOpenWindow()
+                            || lifetime->quitPending()
+                            || lifetime->hasRequestedQuit()
+                            || !retiredWindow.isNull()
+                            || !retiredWorkspace.isNull()) {
+                            qCritical()
+                                << "Resident lifetime policy did not retire the final window cleanly";
+                            QCoreApplication::exit(1);
+                            return;
+                        }
+                        *completed = true;
+                        lifetime->requestQuitNow();
+                    });
+            },
+            Qt::SingleShotConnection);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::applicationQuitApproved,
+            lifetime, [completed] { *completed = true; },
+            Qt::SingleShotConnection);
+    }
+
+    const auto request = [workspace, mode] {
+        if (mode == ApplicationLifetimeTestMode::ExplicitQuit) {
+            if (!workspace->executeApplicationConfiguredAction(
+                    QStringLiteral("quit"))) {
+                qCritical() << "Could not execute the explicit quit test action";
+                QCoreApplication::exit(1);
+            }
+            return;
+        }
+        workspace->requestWindowClose();
+    };
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, request);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged,
+            workspace, request, Qt::SingleShotConnection);
+    }
+    return true;
+}
 
 bool installTitlePromptTestHook(QQmlApplicationEngine *engine,
                                 TerminalWorkspace *workspace,
@@ -452,7 +541,7 @@ bool installTabBarVisibilityTestHook(QQmlApplicationEngine *engine,
                         return;
                     }
                     QObject::connect(
-                        workspace, &TerminalWorkspace::quitApproved,
+                        workspace, &TerminalWorkspace::windowCloseApproved,
                         tabBar,
                         [workspace, tabBar, quitObserved] {
                             *quitObserved = true;
@@ -522,6 +611,9 @@ int main(int argc, char *argv[])
     }
 
     QGuiApplication application(argc, argv);
+    // Ghostty owns last-window process lifetime, including disabled and
+    // delayed modes. Qt's implicit auto-quit would bypass that policy.
+    application.setQuitOnLastWindowClosed(false);
     QCoreApplication::setApplicationName(QStringLiteral("ghostty-qt"));
     QCoreApplication::setApplicationVersion(QStringLiteral(GHOSTTY_QT_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
@@ -577,11 +669,52 @@ int main(int argc, char *argv[])
     LaunchOptions effectiveApplicationOptions = options;
 #if GHOSTTY_QT_CONFIG_ENABLED
     if (configService.hasSnapshot()) {
-        workspace->applyConfigSnapshot(configService.snapshot());
         effectiveApplicationOptions = applyGhosttyConfigSnapshot(
             options, configService.snapshot());
+        workspace->applyLaunchOptions(effectiveApplicationOptions);
     }
 #endif
+
+    auto *const applicationWindow = qobject_cast<QQuickWindow *>(
+        engine.rootObjects().constFirst());
+    if (applicationWindow == nullptr) {
+        qCritical() << "QML root is not an application window";
+        return 1;
+    }
+
+    ApplicationLifetimeController applicationLifetime;
+    applicationLifetime.applyLaunchOptions(effectiveApplicationOptions);
+    if (!applicationLifetime.registerWindow(applicationWindow)) {
+        qCritical() << "Could not register the primary application window";
+        return 1;
+    }
+    QObject::connect(
+        &applicationLifetime, &ApplicationLifetimeController::quitRequested,
+        &application, &QCoreApplication::quit);
+    QObject::connect(
+        &application, &QGuiApplication::lastWindowClosed,
+        &applicationLifetime,
+        &ApplicationLifetimeController::lastWindowClosed);
+    QObject::connect(
+        workspace, &TerminalWorkspace::applicationQuitApproved,
+        &applicationLifetime, &ApplicationLifetimeController::requestQuitNow);
+    QObject::connect(
+        workspace, &TerminalWorkspace::windowCloseApproved,
+        applicationWindow, [applicationWindow] {
+            // QML closes on the next event turn after setting its approval
+            // latch. Retire the engine-owned root only after that close makes
+            // it invisible, so a resident or delayed process does not retain
+            // a dead workspace and its controller threads indefinitely.
+            QObject::connect(
+                applicationWindow, &QWindow::visibleChanged,
+                applicationWindow, [applicationWindow](bool visible) {
+                    if (!visible) applicationWindow->deleteLater();
+                });
+            if (!applicationWindow->isVisible()) {
+                applicationWindow->deleteLater();
+            }
+        },
+        Qt::SingleShotConnection);
 
     // Declared after the QML engine so the process-level portal and event
     // filter are torn down before any registered workspace objects.
@@ -590,21 +723,35 @@ int main(int argc, char *argv[])
     applicationKeybindings.registerWorkspace(workspace);
 
 #if GHOSTTY_QT_CONFIG_ENABLED
-    QObject::connect(&configService, &GhosttyConfigService::changed,
-                     workspace, &TerminalWorkspace::applyConfigSnapshot);
+    const QPointer<TerminalWorkspace> liveWorkspace(workspace);
     QObject::connect(
         &configService, &GhosttyConfigService::changed,
         &applicationKeybindings,
-        [&applicationKeybindings, options](
-            const GhosttyConfigSnapshot &snapshot) {
-            applicationKeybindings.applyLaunchOptions(
-                applyGhosttyConfigSnapshot(options, snapshot));
+        [liveWorkspace, &applicationKeybindings, &applicationLifetime,
+         options](const GhosttyConfigSnapshot &snapshot) {
+            const LaunchOptions effective =
+                applyGhosttyConfigSnapshot(options, snapshot);
+            if (liveWorkspace != nullptr) {
+                liveWorkspace->applyLaunchOptions(effective);
+            }
+            applicationKeybindings.applyLaunchOptions(effective);
+            applicationLifetime.applyLaunchOptions(effective);
         });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
     QObject::connect(workspace, &TerminalWorkspace::configReloadRequested,
                      &configService, &GhosttyConfigService::requestReload);
 #endif
+
+    const ApplicationLifetimeTestMode lifetimeTestMode =
+        applicationLifetimeTestMode();
+    bool lifetimeTestCompleted = false;
+    if (!installApplicationLifetimeTestHook(
+            &application, applicationWindow, workspace, &applicationLifetime,
+            effectiveApplicationOptions, lifetimeTestMode,
+            &lifetimeTestCompleted)) {
+        return 1;
+    }
 
     // Headless regression hook: exercise the real QML confirmation dialog and
     // complete shutdown without synthesizing compositor input. It is inert in
@@ -642,5 +789,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    return application.exec();
+    const int exitCode = application.exec();
+    if (lifetimeTestMode != ApplicationLifetimeTestMode::None
+        && !lifetimeTestCompleted) {
+        qCritical() << "Application-lifetime test hook did not complete";
+        return 1;
+    }
+    return exitCode;
 }

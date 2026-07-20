@@ -43,7 +43,7 @@ ApplicationWindow {
             return
         }
         close.accepted = false
-        workspace.requestQuit()
+        workspace.requestWindowClose()
     }
 
     header: ToolBar {
@@ -254,7 +254,7 @@ ApplicationWindow {
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()
         }
-        function onQuitApproved() {
+        function onWindowCloseApproved() {
             window.closeApproved = true
             Qt.callLater(window.close)
         }

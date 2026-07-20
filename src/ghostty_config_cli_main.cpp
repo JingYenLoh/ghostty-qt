@@ -4,25 +4,25 @@
 #include <cstring>
 #include <cstdint>
 
-extern "C" ghostty_string_s ghostty_qt_config_keybinds_json(bool defaults);
+extern "C" ghostty_string_s ghostty_qt_config_json(bool defaults);
 
 namespace {
 
-constexpr auto kShowKeybindsJsonAction = "+show-keybinds-json";
+constexpr auto kShowConfigJsonAction = "+show-config-json";
 
-bool isShowKeybindsJsonAction(const char *argument)
+bool isShowConfigJsonAction(const char *argument)
 {
-    return std::strcmp(argument, kShowKeybindsJsonAction) == 0;
+    return std::strcmp(argument, kShowConfigJsonAction) == 0;
 }
 
-int showKeybindsJson(int argc, char **argv)
+int showConfigJson(int argc, char **argv)
 {
     bool defaults = false;
     bool foundAction = false;
     for (int index = 1; index < argc; ++index) {
-        if (isShowKeybindsJsonAction(argv[index])) {
+        if (isShowConfigJsonAction(argv[index])) {
             if (foundAction) {
-                std::fputs("ghostty-qt-config-helper: duplicate +show-keybinds-json action\n",
+                std::fputs("ghostty-qt-config-helper: duplicate +show-config-json action\n",
                            stderr);
                 return 64;
             }
@@ -36,7 +36,7 @@ int showKeybindsJson(int argc, char **argv)
         } else {
             std::fprintf(stderr,
                          "ghostty-qt-config-helper: unsupported option for "
-                         "+show-keybinds-json: %s\n",
+                         "+show-config-json: %s\n",
                          argv[index]);
             return 64;
         }
@@ -51,9 +51,10 @@ int showKeybindsJson(int argc, char **argv)
         return initializationResult;
     }
 
-    const ghostty_string_s json = ghostty_qt_config_keybinds_json(defaults);
+    const ghostty_string_s json = ghostty_qt_config_json(defaults);
     if (json.ptr == nullptr) {
-        std::fputs("ghostty-qt-config-helper: failed to export keybindings\n", stderr);
+        std::fputs("ghostty-qt-config-helper: failed to export structured config\n",
+                   stderr);
         return 1;
     }
 
@@ -68,8 +69,8 @@ int showKeybindsJson(int argc, char **argv)
 int main(int argc, char **argv)
 {
     for (int index = 1; index < argc; ++index) {
-        if (isShowKeybindsJsonAction(argv[index])) {
-            return showKeybindsJson(argc, argv);
+        if (isShowConfigJsonAction(argv[index])) {
+            return showConfigJson(argc, argv);
         }
     }
 

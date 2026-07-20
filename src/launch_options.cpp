@@ -158,6 +158,14 @@ void applyConfigBool(const GhosttyConfigSnapshot &snapshot,
     }
 }
 
+void enforceExplicitCommandLifetime(const LaunchOptions &base,
+                                    LaunchOptions &destination)
+{
+    if (base.program.isEmpty()) return;
+    destination.quitAfterLastWindowClosed = true;
+    destination.quitAfterLastWindowClosedDelay.reset();
+}
+
 } // namespace
 
 TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
@@ -188,6 +196,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot)
 {
     LaunchOptions result = base;
+    enforceExplicitCommandLifetime(base, result);
     if (snapshot.availability != GhosttyConfigAvailability::Available) {
         return result;
     }
@@ -268,6 +277,22 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     } else if (showTabBar == QStringLiteral("never")) {
         result.windowShowTabBar = WindowShowTabBar::Never;
     }
+    applyConfigBool(
+        snapshot, QStringLiteral("quit-after-last-window-closed"),
+        result.quitAfterLastWindowClosed);
+    const auto delay = snapshot.values.constFind(
+        QStringLiteral("quit-after-last-window-closed-delay"));
+    if (delay != snapshot.values.cend()) {
+        if (!delay->isValid()) {
+            result.quitAfterLastWindowClosedDelay.reset();
+        } else if (delay->metaType() == QMetaType::fromType<quint32>()) {
+            result.quitAfterLastWindowClosedDelay =
+                std::chrono::milliseconds(delay->value<quint32>());
+        }
+    }
+    // Match Ghostty's `-e` contract: an explicitly supplied command always
+    // exits with its final window and never inherits a lingering delay.
+    enforceExplicitCommandLifetime(base, result);
     if (const auto palette = configPalette(
             snapshot.values.value(QStringLiteral("palette")))) {
         result.appearance.palette = *palette;

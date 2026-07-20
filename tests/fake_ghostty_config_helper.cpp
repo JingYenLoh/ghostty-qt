@@ -98,16 +98,16 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (action == "+show-keybinds-json") {
-        if (mode == "keybinding-query-failure") {
-            std::cerr << "keybinding query failed";
+    if (action == "+show-config-json") {
+        if (mode == "structured-query-failure") {
+            std::cerr << "structured config query failed";
             return 8;
         }
-        if (mode == "keybinding-query-malformed") {
+        if (mode == "structured-query-malformed") {
             std::cout << "{not-json";
             return 0;
         }
-        std::cout << environmentValue("GHOSTTY_QT_FAKE_KEYBIND_OUTPUT");
+        std::cout << environmentValue("GHOSTTY_QT_FAKE_CONFIG_JSON");
         return 0;
     }
 

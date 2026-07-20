@@ -2391,6 +2391,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QSignalSpy closeSurface(&pane, &TerminalPane::requestClose);
     QSignalSpy closeTab(&pane, &TerminalPane::requestCloseTab);
     QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
+    QSignalSpy closeWindowRequested(&pane,
+                                    &TerminalPane::requestCloseWindow);
     QSignalSpy quit(&pane, &TerminalPane::requestQuit);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
@@ -2438,7 +2440,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent closeWindow(QEvent::KeyPress, Qt::Key_F4,
                           Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &closeWindow);
-    QCOMPARE(quit.count(), 1);
+    QCOMPARE(closeWindowRequested.count(), 1);
+    QCOMPARE(quit.count(), 0);
 
     const int beforeUnsupported = forwarded.count();
     QKeyEvent unsupported(QEvent::KeyPress, Qt::Key_Y,
@@ -2493,7 +2496,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent quitChain(QEvent::KeyPress, Qt::Key_O,
                         Qt::ControlModifier, QString(QChar(0x0f)));
     QCoreApplication::sendEvent(&pane, &quitChain);
-    QCOMPARE(quit.count(), 2);
+    QCOMPARE(quit.count(), 1);
     QCOMPARE(forwarded.count(), beforeQuitChain);
     QKeyEvent quitRelease(QEvent::KeyRelease, Qt::Key_O,
                           Qt::ControlModifier, QString(QChar(0x0f)));

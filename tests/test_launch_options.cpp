@@ -50,6 +50,7 @@ private Q_SLOTS:
     void mapsSplitPreserveZoom();
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
+    void mapsApplicationLifetime();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -118,6 +119,8 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
+    QVERIFY(options.quitAfterLastWindowClosed);
+    QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -678,6 +681,55 @@ void LaunchOptionsTest::mapsWindowShowTabBar()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsApplicationLifetime()
+{
+    LaunchOptions base;
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed"), false);
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed-delay"),
+        QVariant::fromValue<quint32>(1'500));
+
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(!result.quitAfterLastWindowClosed);
+    QCOMPARE(result.quitAfterLastWindowClosedDelay,
+             std::optional(std::chrono::milliseconds(1'500)));
+
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed-delay"),
+        QVariant::fromValue<quint32>(0));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.quitAfterLastWindowClosedDelay,
+             std::optional(std::chrono::milliseconds::zero()));
+
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed-delay"), QVariant{});
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+
+    base.quitAfterLastWindowClosed = false;
+    base.quitAfterLastWindowClosedDelay = std::chrono::milliseconds(75);
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed"),
+        QStringLiteral("false"));
+    snapshot.values.insert(
+        QStringLiteral("quit-after-last-window-closed-delay"),
+        QStringLiteral("1500"));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+
+    base.program = {QStringLiteral("/bin/true")};
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(result.quitAfterLastWindowClosed);
+    QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(result.quitAfterLastWindowClosed);
+    QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+}
+
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
 {
     LaunchOptions base;
@@ -900,6 +952,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.quitAfterLastWindowClosed = false;
+    frontendOnlyChanged.quitAfterLastWindowClosedDelay =
+        std::chrono::milliseconds(250);
     frontendOnlyChanged.splitAppearance = {
         .unfocusedOpacity = 0.9,
         .unfocusedFill = QColor(QStringLiteral("#fedcba")),

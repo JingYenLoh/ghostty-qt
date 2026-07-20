@@ -3,7 +3,7 @@
 //! CMake copies this file over `src/config/CApi.zig` in an isolated source
 //! shadow and preserves the pinned implementation as `CApi_upstream.zig`.
 //! Importing that file keeps every upstream export intact while the code below
-//! adds the structured keybinding boundary needed by the Qt frontend.
+//! adds the structured configuration boundary needed by the Qt frontend.
 
 const std = @import("std");
 const inputpkg = @import("../input.zig");
@@ -17,17 +17,17 @@ comptime {
     _ = @import("CApi_upstream.zig");
 }
 
-/// Export the effective Ghostty keybindings as the project-private JSON v1
-/// schema. The returned allocation follows ghostty_string_s ownership and is
-/// released by the existing ghostty_string_free API.
-export fn ghostty_qt_config_keybinds_json(defaults: bool) String {
-    return keybindsJson(defaults) catch |err| {
-        std.log.err("error exporting keybindings as JSON err={}", .{err});
+/// Export values that Ghostty's text formatter cannot represent losslessly as
+/// the project-private JSON v1 schema. The returned allocation follows
+/// ghostty_string_s ownership and is released by ghostty_string_free.
+export fn ghostty_qt_config_json(defaults: bool) String {
+    return configJson(defaults) catch |err| {
+        std.log.err("error exporting structured config as JSON err={}", .{err});
         return .empty;
     };
 }
 
-fn keybindsJson(defaults: bool) !String {
+fn configJson(defaults: bool) !String {
     var config = if (defaults)
         try Config.default(state.alloc)
     else
@@ -42,9 +42,25 @@ fn keybindsJson(defaults: bool) !String {
     try json.objectField("version");
     try json.write(@as(u8, 1));
 
+    try json.objectField("application");
+    try json.beginObject();
+    try json.objectField("quit-after-last-window-closed");
+    try json.write(config.@"quit-after-last-window-closed");
+    try json.objectField("quit-after-last-window-closed-delay-ms");
+    if (config.@"quit-after-last-window-closed-delay") |duration| {
+        // This is the exact conversion used by the pinned GTK frontend:
+        // truncate sub-millisecond precision and saturate at c_uint.
+        try json.write(duration.asMilliseconds());
+    } else {
+        try json.write(null);
+    }
+    try json.endObject();
+
     var sequence: std.ArrayList(Binding.Trigger) = .empty;
     defer sequence.deinit(state.alloc);
 
+    try json.objectField("keybindings");
+    try json.beginObject();
     try json.objectField("root");
     try json.beginArray();
     try writeSet(&json, state.alloc, &config.keybind.set, &sequence);
@@ -64,6 +80,7 @@ fn keybindsJson(defaults: bool) !String {
         try json.endObject();
     }
     try json.endArray();
+    try json.endObject();
     try json.endObject();
 
     return .fromSlice(try output.toOwnedSlice());

@@ -180,11 +180,20 @@ nest another topology action inside that commit. Broad unsafe
 paste batches every stable target behind one confirmation. Broad actions that
 close their own source converge on one confirmation-aware shutdown request per
 workspace, while `close_tab:other` and `close_tab:right` keep ordinary
-per-surface fanout and its stable source order. Quit approval is an irreversible
-workspace lifecycle state: subsequent typed workspace actions are rejected,
-so no new worker can appear after the shutdown sweep, while non-structural
-application or pane-local steps remain eligible to finish the Ghostty action
-chain that approved the quit.
+per-surface fanout and its stable source order. Window-close approval is an
+irreversible workspace lifecycle state: subsequent structural typed workspace
+actions are rejected, so no new worker can appear after the shutdown sweep.
+An application-quit escalation, non-structural application action, or
+pane-local step remains eligible to finish the Ghostty action chain that
+approved the close. Application quit is sticky for the duration of a close
+transaction: it upgrades an existing window confirmation in place, replaces a
+narrower pane/tab confirmation with a freshly correlated window request, and
+survives final-tab convergence. Cancelling that window request clears the quit
+intent before publishing dialog resolution so a synchronous newer quit wins.
+Quit requests received during a guarded topology commit latch immediately and
+reconcile on the next event turn if that commit does not itself close the
+window.
+
 One typed title-prompt FIFO retains a stable `PaneId` for surface prompts or
 `TabId` for tab prompts plus a nonzero request identity. Pane removal cancels
 its surface prompts but leaves a tab request alive when the containing tab
@@ -204,6 +213,32 @@ item. Pending dialogs are re-evaluated when state changes. Destruction sends
 `SIGHUP` to the child's process group, allows a two-second grace period, and
 uses `SIGKILL` if the group does not exit; workspace/tab teardown starts all
 pane shutdowns first so grace periods overlap.
+
+Process lifetime is application-owned rather than a side effect of QML window
+destruction. Qt's implicit `quitOnLastWindowClosed` behavior is disabled, and
+one GUI-thread `ApplicationLifetimeController` registers primary windows and
+observes `QGuiApplication::lastWindowClosed`. After an ordinary confirmed
+window close, the controller either remains resident, queues an immediate exit
+for the next event turn, or starts one single-shot `QChronoTimer`. Opening a
+primary window cancels an active timer. Transient dialogs are not registered.
+Explicit `quit` from a live workspace retains a separate confirmation intent
+and, once approved, bypasses both the disabled policy and any delay. A command
+supplied after `--` matches Ghostty's `-e` lifetime rule by forcing immediate
+last-window exit.
+After an approved close makes the engine-owned root window invisible, that
+window and its latched workspace are deleted; delayed or resident operation
+therefore retains no dead panes or controller threads.
+
+The nullable delay crosses the structured config boundary after Ghostty's own
+`Duration.asMilliseconds()` conversion, preserving configured zero separately
+from null, truncating sub-millisecond components, and saturating at `c_uint`.
+Successful live reloads compare the two effective policy values: an identical
+reload preserves the current deadline, while a changed value cancels and
+reconciles it against the current window state. This deliberately repairs the
+pinned GTK frontend's stale-timer reload edge cases. The false policy can keep
+the current single-window application resident after its window closes, but
+activation/new-window and zero-window global-action paths are not implemented
+yet.
 
 ## Output path
 
@@ -581,23 +616,23 @@ Ghostty's application configuration API is not part of the stable
 `libghostty-vt` surface. The Qt executable therefore does not link or retain
 handles from that API. Instead, `ghostty-qt-config-helper` links the pinned
 `ghostty-internal` shared library. It preserves Ghostty's existing command-line
-actions and adds one project-private structured binding export. For each load
+actions and adds one project-private structured config export. For each load
 the Qt-side process adapter invokes, in order:
 
 ```text
 +validate-config
 +show-config --default
 +show-config
-+show-keybinds-json
++show-config-json
 +validate-config
 +show-config
-+show-keybinds-json
++show-config-json
 ```
 
 The helper runs with the selected `XDG_CONFIG_HOME`, so Ghostty itself owns
 standard-file discovery, legacy/preferred-file precedence, include handling,
 validation, defaults, and canonical formatting. The final two queries must
-byte-match the first current-config and binding outputs, preventing a valid
+byte-match the first current-config and structured outputs, preventing a valid
 A-to-B edit from publishing a mixed snapshot. The adapter merges the default
 and changed-value output into a value-only `GhosttyConfigSnapshot`. This keeps
 the unstable application API and all of its state outside the long-lived Qt
@@ -616,7 +651,9 @@ valid concurrent edit, successful helper
 warnings enter the typed diagnostic list, and failed loads retry periodically
 to discover newly created required includes. Failure still leaves the last
 good snapshot active when one exists; a successful changed snapshot is applied
-to the workspace.
+once to the live workspace, process keybindings, and application lifetime
+controller. The latter two consumers continue receiving watched reloads after
+resident window retirement.
 
 The helper process necessarily has Ghostty action arguments, so the pinned
 parser classifies it as a probable CLI launch. An otherwise unset
@@ -634,7 +671,9 @@ appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
 `link-url`, `link-previews`, `config-file`, and a versioned dump of the
-finalized keybinding sets.
+finalized keybinding sets. The same structured envelope carries
+`quit-after-last-window-closed` and the exact nullable-millisecond form of
+`quit-after-last-window-closed-delay`.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection and candidate/selected search colors, cursor
@@ -708,8 +747,9 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v1 dump of Ghostty's finalized
-binding sets, after defaults, includes, `clear`, overrides, chains, and
+The config helper exposes a project-private JSON v1 envelope containing
+application lifetime values and Ghostty's finalized binding sets after
+defaults, includes, `clear`, overrides, chains, and
 `unbind` have been resolved by the pinned Zig implementation. It retains full
 root sequences, named tables, physical/Unicode/catch-all triggers, canonical
 action chains, and every binding flag. The C++ parser is strict and
@@ -845,7 +885,7 @@ reuse them safely. The main executable sees only the Qt-valued C++ wrapper.
 With `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON` (the default), CMake also asks the
 pinned Ghostty build for `ghostty-internal.so` with its application runtime
 disabled. A revision-scoped source shadow overlays the one private structured
-binding export without modifying the pinned submodule; shadow creation and the
+config export without modifying the pinned submodule; shadow creation and the
 shared Zig install transaction are lock-protected across build trees. Its Zig
 artifacts live in ignored project-local
 `.cache/ghostty-internal` and `.cache/zig-global` directories. Only the small
@@ -976,10 +1016,11 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-config-service` verifies standard paths, file/directory and include
   watches, atomic replacement, debounce, and retention of the last good value.
 - `ghostty-config-process-loader` verifies canonical and structured snapshot
-  parsing, the validation/default/current/keybinding/post-validation protocol,
+  parsing, the validation/default/current/structured/post-validation protocol,
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
-  and nullable X11 divider-color canonicalization.
+  plus exact nullable/capped application-lifetime duration export and nullable
+  X11 divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
@@ -998,6 +1039,12 @@ The default CTest suite has focused layers for each ownership boundary:
 - `application-lifecycle` starts the complete QML application on Qt's offscreen
   software backend, verifies a short-lived child closes the window cleanly,
   and fails on QML binding-loop diagnostics.
+- `application-lifetime-controller` covers immediate, delayed, disabled,
+  cancellation, idempotent and changed reload, stale-timeout, transient-window,
+  and explicit-quit behavior without wall-clock process orchestration.
+- `application-lifetime-resident` and `application-lifetime-explicit-quit`
+  exercise the real QML window and application wiring under a disabled
+  last-window policy.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived

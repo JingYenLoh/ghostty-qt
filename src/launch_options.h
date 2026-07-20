@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
+#include <chrono>
 #include <expected>
 #include <optional>
 
@@ -95,6 +96,12 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Linux process lifetime is application-owned. Closing the final primary
+    // window either quits on the next event turn, waits for the optional
+    // Ghostty duration, or leaves the process alive when disabled.
+    bool quitAfterLastWindowClosed = true;
+    std::optional<std::chrono::milliseconds>
+        quitAfterLastWindowClosedDelay;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

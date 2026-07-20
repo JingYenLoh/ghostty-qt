@@ -283,6 +283,8 @@ class TerminalWorkspaceTest : public QObject {
 
 private Q_SLOTS:
     void runningProgramPromptsThenResolvesOnceOnExit();
+    void distinguishesWindowCloseFromApplicationQuit();
+    void applicationQuitEscalatesCloseLifecycle();
     void closingOnlyPaneRemovesTab();
     void closeSurfaceUsesStableOriginsAndAdjacentFocus();
     void closeSurfaceConfirmationIsStableAndAtomic();
@@ -354,10 +356,10 @@ void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
                             &TerminalWorkspace::closeConfirmationRequested);
     QSignalSpy resolved(&workspace,
                         &TerminalWorkspace::closeConfirmationResolved);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
 
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
 
@@ -365,6 +367,311 @@ void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 3000);
     QTest::qWait(100);
     QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+        workspace.requestWindowClose();
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 0);
+    }
+
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("close_window")));
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 0);
+    }
+
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    options.confirmCloseMode = ConfirmCloseMode::Always;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+    TerminalWorkspace workspace;
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy windowClose(
+        &workspace, &TerminalWorkspace::windowCloseApproved);
+    QSignalSpy applicationQuit(
+        &workspace, &TerminalWorkspace::applicationQuitApproved);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QVERIFY(workspace.executeApplicationConfiguredAction(
+        QStringLiteral("quit")));
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(windowClose.count(), 0);
+    QCOMPARE(applicationQuit.count(), 0);
+    workspace.cancelClose(closeConfirmationId(confirmation));
+    QCOMPARE(windowClose.count(), 0);
+    QCOMPARE(applicationQuit.count(), 0);
+
+    QVERIFY(workspace.executeApplicationConfiguredAction(
+        QStringLiteral("quit")));
+    QCOMPARE(confirmation.count(), 2);
+    workspace.confirmClose(closeConfirmationId(confirmation));
+    QCOMPARE(windowClose.count(), 1);
+    QCOMPARE(applicationQuit.count(), 1);
+}
+
+void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    // A close_window,quit chain must retain the explicit application intent
+    // even when the ordinary close approved synchronously first.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("close_window")));
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 0);
+        QVERIFY(workspace.dispatchAction({WorkspaceAction::RequestQuit, {}}));
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    // Escalating an already pending window close reuses its one confirmation.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("close_window")));
+        QCOMPARE(confirmation.count(), 1);
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(confirmation.count(), 1);
+        workspace.confirmClose(closeConfirmationId(confirmation));
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    // A process-wide quit supersedes a narrower dialog instead of being
+    // swallowed by it. The replacement has a new ID and window-level copy.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(
+            &workspace, &TerminalWorkspace::closeConfirmationResolved);
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("close_surface")));
+        QCOMPARE(confirmation.count(), 1);
+        const quint64 paneConfirmation = closeConfirmationId(confirmation);
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(resolved.count(), 1);
+        QCOMPARE(closeConfirmationId(resolved), paneConfirmation);
+        QCOMPARE(confirmation.count(), 2);
+        const quint64 windowConfirmation = closeConfirmationId(confirmation);
+        QVERIFY(windowConfirmation != paneConfirmation);
+        QCOMPARE(confirmation.constLast().at(1).toString(),
+                 QStringLiteral(
+                     "This window contains a read-only pane. Quit?"));
+
+        workspace.cancelClose(paneConfirmation);
+        QCOMPARE(windowClose.count(), 0);
+        workspace.confirmClose(windowConfirmation);
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    // If another lifecycle event removes the final tab while the quit dialog
+    // is pending, final-window convergence must preserve the application
+    // intent rather than demoting it to an ordinary close.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(
+            &workspace, &TerminalWorkspace::closeConfirmationResolved);
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(confirmation.count(), 1);
+        {
+            QSignalBlocker suppressPolicyReevaluation(pane);
+            QVERIFY(pane->executeConfiguredAction(
+                QStringLiteral("toggle_readonly")));
+        }
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("close_surface")));
+        QCOMPARE(workspace.tabCount(), 0);
+        QCOMPARE(resolved.count(), 1);
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    // Cancelling publishes resolution synchronously. A fresh quit requested
+    // by that observer is newer than the cancelled intent and must not be
+    // cleared when the original cancel call resumes.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QVERIFY(pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+
+        QVERIFY(workspace.executeApplicationConfiguredAction(
+            QStringLiteral("quit")));
+        QCOMPARE(confirmation.count(), 1);
+        const quint64 cancelledConfirmation =
+            closeConfirmationId(confirmation);
+        bool reentrantQuitAccepted = false;
+        connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
+                &workspace, [&](quint64 confirmationId) {
+                    if (confirmationId == cancelledConfirmation) {
+                        reentrantQuitAccepted =
+                            workspace.executeApplicationConfiguredAction(
+                                QStringLiteral("quit"));
+                    }
+                });
+
+        workspace.cancelClose(cancelledConfirmation);
+        QVERIFY(reentrantQuitAccepted);
+        QCOMPARE(confirmation.count(), 2);
+        const quint64 replacementConfirmation =
+            closeConfirmationId(confirmation);
+        QVERIFY(replacementConfirmation != cancelledConfirmation);
+        workspace.confirmClose(replacementConfirmation);
+        QCOMPARE(windowClose.count(), 1);
+        QCOMPARE(applicationQuit.count(), 1);
+    }
+
+    // Quit is lifecycle state, not a structural topology mutation. Requests
+    // from a guarded close commit latch synchronously and reconcile once the
+    // surviving topology is stable.
+    {
+        TerminalWorkspace workspace;
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy windowClose(
+            &workspace, &TerminalWorkspace::windowCloseApproved);
+        QSignalSpy applicationQuit(
+            &workspace, &TerminalWorkspace::applicationQuitApproved);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        const CurrentTabProbe source = splitRightProbe(workspace);
+        QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 2);
+        QVERIFY(source.pane);
+        QVERIFY(source.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+        QVERIFY(source.pane->executeConfiguredAction(
+            QStringLiteral("close_surface")));
+        QCOMPARE(confirmation.count(), 1);
+        const quint64 paneConfirmation = closeConfirmationId(confirmation);
+
+        bool applicationActionAccepted = false;
+        bool typedActionAccepted = false;
+        connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
+                &workspace, [&](quint64 confirmationId) {
+                    if (confirmationId != paneConfirmation) return;
+                    applicationActionAccepted =
+                        workspace.executeApplicationConfiguredAction(
+                            QStringLiteral("quit"));
+                    typedActionAccepted = workspace.dispatchAction(
+                        {WorkspaceAction::RequestQuit, {}});
+                });
+
+        workspace.confirmClose(paneConfirmation);
+        QVERIFY(applicationActionAccepted);
+        QVERIFY(typedActionAccepted);
+        QCOMPARE(workspace.tabCount(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(applicationQuit.count(), 1, 1000);
+        QCOMPARE(windowClose.count(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(source.pane.isNull(), 1000);
+    }
 }
 
 void TerminalWorkspaceTest::closingOnlyPaneRemovesTab()
@@ -377,7 +684,7 @@ void TerminalWorkspaceTest::closingOnlyPaneRemovesTab()
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId tabId = workspace.tabModel()->idAt(0);
     const PaneId paneId = workspace.tabModel()->entryAt(0)->activePaneId;
@@ -405,7 +712,7 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
     workspace.setParentItem(window.contentItem());
     workspace.setSize(window.size());
     window.show();
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const CurrentTabProbe first = currentTabProbe(workspace);
     const CurrentTabProbe second = splitRightProbe(workspace);
@@ -645,7 +952,7 @@ void TerminalWorkspaceTest::closeSurfaceConfirmsRunningProcess()
         &workspace, &TerminalWorkspace::closeConfirmationRequested);
     QSignalSpy resolved(
         &workspace, &TerminalWorkspace::closeConfirmationResolved);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QPointer<TerminalPane> guardedPane(pane);
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("close_surface")));
@@ -706,7 +1013,7 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
         bindings.registerWorkspace(&workspace);
         QSignalSpy confirmation(
             &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         QSignalSpy reload(&workspace,
                           &TerminalWorkspace::configReloadRequested);
         int confirmationsAtFirstReload = -1;
@@ -724,7 +1031,7 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
 
         bool quitObserverRan = false;
         bool nestedActionPerformed = true;
-        connect(&workspace, &TerminalWorkspace::quitApproved,
+        connect(&workspace, &TerminalWorkspace::windowCloseApproved,
                 &workspace, [&] {
                     quitObserverRan = true;
                     nestedActionPerformed = workspace.dispatchAction({
@@ -793,9 +1100,9 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
     bindings.registerWorkspace(&firstWorkspace);
     bindings.registerWorkspace(&secondWorkspace);
     QSignalSpy firstQuit(&firstWorkspace,
-                         &TerminalWorkspace::quitApproved);
+                         &TerminalWorkspace::windowCloseApproved);
     QSignalSpy secondQuit(&secondWorkspace,
-                          &TerminalWorkspace::quitApproved);
+                          &TerminalWorkspace::windowCloseApproved);
     bindings.dispatchBroadActions({QStringLiteral("close_surface")});
     QCOMPARE(firstQuit.count(), 1);
     QCOMPARE(secondQuit.count(), 1);
@@ -810,11 +1117,11 @@ void TerminalWorkspaceTest::idleShellDoesNotPromptInRunningProcessesMode()
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     QTest::qWait(350);
 
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 0);
     QCOMPARE(quit.count(), 1);
 }
@@ -828,7 +1135,7 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     QTest::qWait(350);
 
@@ -840,7 +1147,7 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
 
     // The UI-side latch closes the polling race: a close requested in the
     // same event turn as command submission must still protect active work.
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
@@ -848,7 +1155,7 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     // An empty command settles back to an idle prompt after the conservative
     // grace interval and no longer needs confirmation.
     QTest::qWait(500);
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 1);
 }
@@ -862,7 +1169,7 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     QTest::qWait(350);
 
@@ -881,7 +1188,7 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\n)")));
     QVERIFY(controller->activeProcess());
 
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
@@ -896,7 +1203,7 @@ void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
 
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
@@ -920,7 +1227,7 @@ void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
     QVERIFY(!controller->activeProcess());
 
     // Read-only has close-policy precedence even though the shell is idle.
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
@@ -1071,14 +1378,14 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
                             &TerminalWorkspace::closeConfirmationRequested);
     QSignalSpy resolved(&workspace,
                         &TerminalWorkspace::closeConfirmationResolved);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
 
     // An inactive read-only pane protects its containing tab and window.
     workspace.closeCurrentTab();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(workspace.tabCount(), 1);
     workspace.cancelClose(closeConfirmationId(confirmation));
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 2);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
@@ -1099,7 +1406,7 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     QCOMPARE(resolved.count(), 3);
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 1);
 
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 3);
     QCOMPARE(quit.count(), 1);
 }
@@ -1119,7 +1426,7 @@ void TerminalWorkspaceTest::readOnlyNaturalExitPromptsExactlyOnce()
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
@@ -1381,11 +1688,11 @@ void TerminalWorkspaceTest::alwaysModePromptsForIdleShell()
     TerminalWorkspace workspace;
     QSignalSpy confirmation(&workspace,
                             &TerminalWorkspace::closeConfirmationRequested);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     QTest::qWait(350);
 
-    workspace.requestQuit();
+    workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose(closeConfirmationId(confirmation));
@@ -1417,7 +1724,7 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
     QTRY_COMPARE_WITH_TIMEOUT(resistantShell.readyProcessCount(), 3, 5000);
     QSignalSpy confirmation(workspace.get(),
                             &TerminalWorkspace::closeConfirmationRequested);
-    workspace->requestQuit();
+    workspace->requestWindowClose();
     QCOMPARE(confirmation.count(), 1);
 
     QElapsedTimer elapsed;
@@ -1465,7 +1772,7 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         workspace.setCurrentIndex(0);
         QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
                                   first.pane.data(), 1000);
-        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
 
         WorkspaceActionContext mismatched;
         mismatched.tabId = first.tabId;
@@ -1530,7 +1837,7 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         workspace.setCurrentIndex(1);
         QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
                                   second.pane.data(), 1000);
-        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:other")));
         QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId}));
@@ -1581,7 +1888,7 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
 
         QSignalSpy confirmation(
             &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
 
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("close_tab:other")));
@@ -2027,7 +2334,7 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
         bindings.registerWorkspace(&workspace);
         QSignalSpy confirmation(
             &workspace, &TerminalWorkspace::closeConfirmationRequested);
-        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
         TerminalController *const controller =
             third.pane->findChild<TerminalController *>();
         QVERIFY(controller != nullptr);
@@ -2299,7 +2606,7 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     // Other/right remain ordinary surface fanout, not the special broad
     // close-every-surface path. The first stable source keeps its own tab.
     const TabId firstTabId = workspace.tabModel()->idAt(0);
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     applicationBindings.dispatchBroadActions(
         {QStringLiteral("close_tab:other")});
     QCOMPARE(quit.count(), 0);
@@ -4073,7 +4380,7 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 7);
 
-    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
     workspace.closeCurrentTab();
     QCOMPARE(workspace.tabCount(), 0);
     QVERIFY(workspace.tabBarVisible());

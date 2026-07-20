@@ -41,6 +41,7 @@ public:
     ~TerminalWorkspace() override;
 
     static void setDefaultLaunchOptions(const LaunchOptions &options);
+    void applyLaunchOptions(const LaunchOptions &options);
     void applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot);
 
     QStringList tabTitles() const;
@@ -70,7 +71,7 @@ public:
     Q_INVOKABLE void splitRight();
     Q_INVOKABLE void splitDown();
     Q_INVOKABLE void closeActivePane();
-    Q_INVOKABLE void requestQuit();
+    Q_INVOKABLE void requestWindowClose();
     Q_INVOKABLE void confirmClose(quint64 confirmationId);
     Q_INVOKABLE void cancelClose(quint64 confirmationId);
     Q_INVOKABLE void confirmPaste(quint64 confirmationId);
@@ -96,7 +97,8 @@ Q_SIGNALS:
     void configReloadRequested();
     void broadActionsRequested(const QStringList &actions);
     void toggleFullscreenRequested();
-    void quitApproved();
+    void windowCloseApproved();
+    void applicationQuitApproved();
     void searchOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
 
@@ -139,11 +141,16 @@ private:
         std::vector<TabId> targets;
         quint64 requestId = 0;
     };
-    struct PendingQuit {
+    enum class WindowCloseIntent {
+        WindowOnly,
+        QuitApplication,
+    };
+    struct PendingWindowClose {
         quint64 requestId = 0;
     };
     using PendingClose = std::variant<
-        std::monostate, PendingPaneClose, PendingTabClose, PendingQuit>;
+        std::monostate, PendingPaneClose, PendingTabClose,
+        PendingWindowClose>;
     struct CloseAssessment {
         bool needsConfirmation = false;
         bool hasReadOnlyPane = false;
@@ -164,8 +171,10 @@ private:
     void activatePane(
         PaneId id,
         PaneActivationReason reason = PaneActivationReason::Direct);
-    void requestQuitImpl();
-    void approveQuit();
+    void requestWindowCloseImpl(WindowCloseIntent intent);
+    void approveWindowClose();
+    void approveApplicationQuit();
+    void scheduleApplicationQuitReconciliation();
     void beginCloseConfirmation(PendingClose close, const QString &message);
     quint64 pendingCloseRequestId(const PendingClose &close) const;
     PendingClose takePendingClose();
@@ -257,7 +266,10 @@ private:
     quint64 splitDividerGeneration_ = 0;
     QHash<quint64, SplitDividerItem *> splitDividers_;
     bool initialTabCreated_ = false;
-    bool quitApprovedEmitted_ = false;
+    bool windowCloseApprovedEmitted_ = false;
+    bool applicationQuitRequested_ = false;
+    bool applicationQuitApprovedEmitted_ = false;
+    bool applicationQuitReconciliationScheduled_ = false;
     PendingClose pendingClose_;
     quint64 nextCloseConfirmationId_ = 0;
     QVector<PendingPaste> pendingPastes_;

@@ -426,8 +426,13 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 
 void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
 {
+    applyLaunchOptions(applyGhosttyConfigSnapshot(defaultOptions_, snapshot));
+}
+
+void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options)
+{
     const bool wasTabBarVisible = tabBarVisible();
-    effectiveOptions_ = applyGhosttyConfigSnapshot(defaultOptions_, snapshot);
+    effectiveOptions_ = options;
     if (tabBarVisible() != wasTabBarVisible) {
         Q_EMIT tabBarVisibleChanged();
     }
@@ -484,13 +489,15 @@ bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
 
 bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
 {
-    if (topologyMutation_) return false;
     if (!GhosttyActionCatalog::isImplemented(action)) {
         return false;
     }
     const GhosttySerializedActionView parsed =
         GhosttyActionCatalog::parseSerializedAction(action);
     const QStringView name = parsed.name;
+    if (topologyMutation_ && name != QLatin1StringView("quit")) {
+        return false;
+    }
     if (name == QLatin1StringView("ignore")) {
         return true;
     }
@@ -499,7 +506,7 @@ bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
         return true;
     }
     if (name == QLatin1StringView("quit")) {
-        requestQuitImpl();
+        requestWindowCloseImpl(WindowCloseIntent::QuitApplication);
         return true;
     }
     return false;
@@ -549,7 +556,10 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     // Model and workspace signals are synchronous. Reject nested actions while
     // a stable-ID batch is being committed so observers cannot invalidate the
     // topology between its pane shutdown and row-removal phases.
-    if (topologyMutation_ || quitApprovedEmitted_) return false;
+    if ((topologyMutation_ || windowCloseApprovedEmitted_)
+        && request.action != WorkspaceAction::RequestQuit) {
+        return false;
+    }
 
     const auto contextMatchesPane = [this, &request] {
         return !request.context.tabId.isValid()
@@ -739,7 +749,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         Q_EMIT toggleFullscreenRequested();
         return true;
     case WorkspaceAction::RequestQuit:
-        requestQuitImpl();
+        requestWindowCloseImpl(WindowCloseIntent::QuitApplication);
         return true;
     }
     return false;
@@ -879,6 +889,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::requestQuit, this, [this] {
         dispatchAction({WorkspaceAction::RequestQuit, {}});
     });
+    connect(pane, &TerminalPane::requestCloseWindow, this,
+            &TerminalWorkspace::requestWindowClose);
     connect(pane, &TerminalPane::requestConfigReload,
             this, &TerminalWorkspace::configReloadRequested);
     connect(pane, &TerminalPane::broadActionsRequested,
@@ -1454,7 +1466,7 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
     }
 
     if (becameEmpty) {
-        approveQuit();
+        approveWindowClose();
     } else {
         reevaluatePendingClose();
     }
@@ -1548,7 +1560,9 @@ void TerminalWorkspace::performPendingClose(PendingClose close)
         closeTabs(std::move(*tabs), true);
         return;
     }
-    if (std::holds_alternative<PendingQuit>(close)) approveQuit();
+    if (std::holds_alternative<PendingWindowClose>(close)) {
+        approveWindowClose();
+    }
 }
 
 void TerminalWorkspace::reevaluatePendingClose()
@@ -1566,7 +1580,7 @@ void TerminalWorkspace::reevaluatePendingClose()
         if (assessTabsClose(pendingTabs->targets).needsConfirmation) {
             return;
         }
-    } else if (std::holds_alternative<PendingQuit>(pendingClose_)) {
+    } else if (std::holds_alternative<PendingWindowClose>(pendingClose_)) {
         if (assessWorkspaceClose().needsConfirmation) return;
     } else {
         return;
@@ -1575,40 +1589,65 @@ void TerminalWorkspace::reevaluatePendingClose()
     commitPendingClose();
 }
 
-void TerminalWorkspace::requestQuit()
+void TerminalWorkspace::requestWindowClose()
 {
-    dispatchAction({WorkspaceAction::RequestQuit, {}});
+    requestWindowCloseImpl(WindowCloseIntent::WindowOnly);
 }
 
-void TerminalWorkspace::requestQuitImpl()
+void TerminalWorkspace::requestWindowCloseImpl(WindowCloseIntent intent)
 {
-    if (topologyMutation_) return;
-    if (!std::holds_alternative<std::monostate>(pendingClose_)) return;
+    if (intent == WindowCloseIntent::QuitApplication) {
+        applicationQuitRequested_ = true;
+    }
+    if (windowCloseApprovedEmitted_) {
+        approveApplicationQuit();
+        return;
+    }
+    if (topologyMutation_) {
+        if (intent == WindowCloseIntent::QuitApplication) {
+            scheduleApplicationQuitReconciliation();
+        }
+        return;
+    }
+
+    if (!std::holds_alternative<std::monostate>(pendingClose_)) {
+        if (intent == WindowCloseIntent::WindowOnly
+            || std::holds_alternative<PendingWindowClose>(pendingClose_)) {
+            return;
+        }
+
+        // A process-wide quit supersedes a narrower pane or tab dialog. Give
+        // the frontend a correctly scoped window confirmation with a fresh
+        // correlation ID; responses from the replaced dialog stay harmless.
+        QScopedValueRollback<bool> replacement(topologyMutation_, true);
+        (void) takePendingClose();
+    }
 
     const CloseAssessment assessment = assessWorkspaceClose();
     if (assessment.needsConfirmation) {
         beginCloseConfirmation(
-            PendingQuit{},
+            PendingWindowClose{},
             assessment.hasReadOnlyPane
                 ? QStringLiteral("This window contains a read-only pane. Quit?")
                 : QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
         return;
     }
-    approveQuit();
+    approveWindowClose();
 }
 
-void TerminalWorkspace::approveQuit()
+void TerminalWorkspace::approveWindowClose()
 {
-    if (quitApprovedEmitted_) {
+    if (windowCloseApprovedEmitted_) {
+        approveApplicationQuit();
         return;
     }
-    // This is an irreversible lifecycle boundary. Typed workspace actions
-    // are rejected after the latch is set, including during synchronous
-    // observers and before the host's deferred window close, so every worker
-    // is covered by this one shutdown sweep. Non-structural application and
-    // pane-local actions may still finish the Ghostty action chain that
-    // approved the quit.
-    quitApprovedEmitted_ = true;
+    // This is an irreversible lifecycle boundary. Structural typed workspace
+    // actions are rejected after the latch is set, including during
+    // synchronous observers and before the host's deferred window close, so
+    // every worker is covered by this one shutdown sweep. An application-quit
+    // escalation, non-structural application action, or pane-local action may
+    // still finish the Ghostty action chain that approved the ordinary close.
+    windowCloseApprovedEmitted_ = true;
     // Start every worker shutdown before QObject hierarchy teardown. The
     // per-process grace periods then overlap on their independent threads
     // instead of accumulating serially on the GUI thread.
@@ -1619,7 +1658,30 @@ void TerminalWorkspace::approveQuit()
             handle.pane->beginShutdown();
         }
     }
-    Q_EMIT quitApproved();
+    Q_EMIT windowCloseApproved();
+    approveApplicationQuit();
+}
+
+void TerminalWorkspace::approveApplicationQuit()
+{
+    if (!applicationQuitRequested_ || applicationQuitApprovedEmitted_) return;
+    applicationQuitApprovedEmitted_ = true;
+    Q_EMIT applicationQuitApproved();
+}
+
+void TerminalWorkspace::scheduleApplicationQuitReconciliation()
+{
+    if (applicationQuitReconciliationScheduled_
+        || applicationQuitApprovedEmitted_) {
+        return;
+    }
+    applicationQuitReconciliationScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        applicationQuitReconciliationScheduled_ = false;
+        if (applicationQuitRequested_ && !applicationQuitApprovedEmitted_) {
+            requestWindowCloseImpl(WindowCloseIntent::QuitApplication);
+        }
+    });
 }
 
 void TerminalWorkspace::confirmClose(quint64 confirmationId)
@@ -1648,6 +1710,11 @@ void TerminalWorkspace::cancelClose(quint64 confirmationId)
     if (confirmationId == 0
         || pendingCloseRequestId(pendingClose_) != confirmationId) {
         return;
+    }
+    if (std::holds_alternative<PendingWindowClose>(pendingClose_)) {
+        // Clear the cancelled intent before publishing resolution. A direct
+        // observer may synchronously issue a new quit request, which must win.
+        applicationQuitRequested_ = false;
     }
     (void) takePendingClose();
 }

@@ -61,22 +61,32 @@ if(CONFIG_HELPER_NAME)
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=LD_LIBRARY_PATH
             "XDG_CONFIG_HOME=${relocated_config_home}"
-            "${relocated_config_helper}" +show-keybinds-json
-        RESULT_VARIABLE keybind_helper_result
-        OUTPUT_VARIABLE keybind_helper_output
-        ERROR_VARIABLE keybind_helper_error)
-    if(NOT keybind_helper_result EQUAL 0)
+            "${relocated_config_helper}" +show-config-json
+        RESULT_VARIABLE structured_helper_result
+        OUTPUT_VARIABLE structured_helper_output
+        ERROR_VARIABLE structured_helper_error)
+    if(NOT structured_helper_result EQUAL 0)
         message(FATAL_ERROR
-            "Relocated structured keybinding export failed "
-            "(${keybind_helper_result})\n${keybind_helper_output}\n"
-            "${keybind_helper_error}")
+            "Relocated structured config export failed "
+            "(${structured_helper_result})\n${structured_helper_output}\n"
+            "${structured_helper_error}")
     endif()
-    string(JSON keybind_schema ERROR_VARIABLE keybind_json_error
-        GET "${keybind_helper_output}" version)
-    if(keybind_json_error OR NOT keybind_schema EQUAL 1)
+    string(JSON structured_schema ERROR_VARIABLE structured_json_error
+        GET "${structured_helper_output}" version)
+    string(JSON lifetime_type ERROR_VARIABLE lifetime_json_error
+        TYPE "${structured_helper_output}" application
+            quit-after-last-window-closed)
+    string(JSON keybind_root_type ERROR_VARIABLE keybind_json_error
+        TYPE "${structured_helper_output}" keybindings root)
+    if(structured_json_error OR lifetime_json_error OR keybind_json_error
+       OR NOT structured_schema EQUAL 1
+       OR NOT lifetime_type STREQUAL "BOOLEAN"
+       OR NOT keybind_root_type STREQUAL "ARRAY")
         message(FATAL_ERROR
-            "Relocated helper returned invalid keybinding JSON: "
-            "${keybind_json_error}\n${keybind_helper_output}")
+            "Relocated helper returned invalid structured config JSON: "
+            "${structured_json_error};${lifetime_json_error};"
+            "${keybind_json_error}\n"
+            "${structured_helper_output}")
     endif()
 endif()
 

@@ -30,7 +30,7 @@ Configure, build, and test a preset as one sequence:
 ```sh
 cmake --preset dev
 cmake --build --preset dev -j"$(nproc)"
-ctest --preset dev
+ctest --preset dev -j8 --output-on-failure
 ```
 
 The suite includes focused contracts for the libghostty adapter, workspace
@@ -56,7 +56,7 @@ relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-lifetime|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -67,7 +67,7 @@ parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
 `ghostty-qt-config-helper`. The main process talks to that helper through
 Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
-`+show-keybinds-json` action, and converts only the documented compatibility
+`+show-config-json` action, and converts only the documented compatibility
 keys into value snapshots.
 
 The snapshot includes the finalized working-directory, split/tab directory
@@ -78,9 +78,10 @@ palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
 selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
-split-divider color, and
-the boolean `link-url` setting plus the three-state `link-previews` policy. The
-process-loader tests verify default/current merging and malformed canonical
+split-divider color, the boolean `link-url` setting plus the three-state
+`link-previews` policy, and the exact boolean/nullable-millisecond application
+lifetime policy. The process-loader tests verify default/current merging and
+malformed canonical
 values and nullable resets; launch-option tests verify their value-only overlay
 and worker-boundary projection; adapter tests verify that config-default changes
 preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies
@@ -227,7 +228,7 @@ For a sanitizer run, install Clang and use:
 cmake --preset sanitize
 cmake --build --preset sanitize --target clean -j"$(nproc)"
 cmake --build --preset sanitize -j"$(nproc)"
-ctest --preset sanitize
+ctest --preset sanitize -j8 --output-on-failure
 ```
 
 LeakSanitizer itself requires ptrace support. In a restricted container that
@@ -237,7 +238,7 @@ the test preset's overriding environment:
 ```sh
 ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:strict_string_checks=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-ctest --test-dir build/sanitize --output-on-failure
+ctest --test-dir build/sanitize -j8 --output-on-failure
 ```
 
 The sanitizer preset instruments the project's C and C++ targets with ASan and

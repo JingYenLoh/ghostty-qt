@@ -1,12 +1,9 @@
 #pragma once
 
-#include <QByteArray>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 #include <QtGlobal>
-
-#include <expected>
 
 enum class GhosttyKeybindKeyKind {
     Physical,
@@ -65,9 +62,3 @@ struct GhosttyKeybindConfig {
 
     bool operator==(const GhosttyKeybindConfig &) const = default;
 };
-
-// Parses the exact versioned JSON contract emitted by
-// `ghostty-qt-config-helper +show-keybinds-json`. Failure carries a diagnostic
-// and cannot expose a partially parsed configuration.
-[[nodiscard]] std::expected<GhosttyKeybindConfig, QString>
-parseGhosttyKeybindConfigJson(const QByteArray &json);

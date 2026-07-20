@@ -118,6 +118,7 @@ Q_SIGNALS:
     void requestCloseTab(CloseTabMode mode);
     void requestNavigate(int direction);
     void requestTabChange(int delta);
+    void requestCloseWindow();
     void requestQuit();
     void requestConfigReload();
     void broadActionsRequested(const QStringList &actions);

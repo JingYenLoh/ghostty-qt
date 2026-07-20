@@ -218,10 +218,11 @@ $XDG_CONFIG_HOME/ghostty/config.ghostty
 
 If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
 `ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` and
-`+show-config` actions and a project-private structured keybinding export, so
+`+show-config` actions and a project-private structured config export, so
 syntax, file precedence, `config-file` includes, canonical values, and the
-finalized binding trie come from the exact pinned Ghostty parser rather than a
-Qt-side reimplementation. The main process receives only typed value snapshots.
+finalized binding trie and lossless nullable lifetime values come from the exact
+pinned Ghostty parser rather than a Qt-side reimplementation. The main process
+receives only typed value snapshots.
 
 The current compatibility slice applies these keys:
 
@@ -234,6 +235,8 @@ The current compatibility slice applies these keys:
 | `window-inherit-font-size` | Defaults to `true`. New tabs inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. New-window behavior awaits multi-window support. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
 | `window-show-tab-bar` | Supports Ghostty's exact `always`, `auto`, and `never` values and defaults to `auto`. `always` shows the tab strip with any tab count, `auto` hides it for one tab and shows it at two or more, and `never` hides it. Reload and the one/two-tab boundary update visibility live. This Qt mapping hides only the QML `TabBar`; the surrounding toolbar and its new-tab, split, and close controls remain available. |
+| `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so ordinary confirmed window closure follows this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` closes the window and keeps the process resident. Reload reconciles the windowless state. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. Resident mode is currently of limited practical use because activation/new-window and multiwindow support are not implemented. |
+| `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A new primary window cancels the single application timer; identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit` from a live workspace or an explicit command bypasses it. A zero-window global-action path awaits activation/new-window support. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. New tabs may initially inherit their source's actual size as described above. Explicit `--font-size` wins. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
@@ -459,7 +462,7 @@ error rather than falling back silently to another database.
 ## Tests
 
 ```sh
-ctest --preset dev
+ctest --preset dev -j8 --output-on-failure
 ```
 
 The suite covers option and config-overlay parsing, core `libghostty-vt`
@@ -472,7 +475,8 @@ physical-key locations, named-table stacks, process-wide fanout, portal
 race/reload coverage, and PTY-backed sequence replay, helper-process
 protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
-application's short-lived process/window lifecycle, source-stable new-tab
+application's immediate, delayed, disabled, cancelled, reloaded, and explicit
+process/window lifetime, source-stable new-tab
 working-directory/font inheritance, per-pane read-only input suppression and
 close protection, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also

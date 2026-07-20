@@ -223,7 +223,7 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
         // pending-close dialog state during fanout.
         if (closesEverySurface(action)) {
             for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-                if (workspace != nullptr) workspace->requestQuit();
+                if (workspace != nullptr) workspace->requestWindowClose();
             }
             continue;
         }

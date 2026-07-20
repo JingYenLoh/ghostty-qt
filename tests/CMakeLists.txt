@@ -9,6 +9,27 @@ target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-application-lifetime
+    test_application_lifetime.cpp
+    ../src/application_lifetime.cpp
+    ../src/application_lifetime.h
+    ../src/launch_options.h
+)
+target_include_directories(test-application-lifetime PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-application-lifetime PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME application-lifetime-controller
+    COMMAND test-application-lifetime)
+set_tests_properties(application-lifetime-controller PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(test-terminal-types
     test_terminal_types.cpp
     ../src/terminal_actions.h
@@ -360,6 +381,30 @@ set_tests_properties(application-lifecycle PROPERTIES
     FAIL_REGULAR_EXPRESSION
         "Binding loop detected;QQmlApplicationEngine failed"
 )
+
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    set(_ghostty_qt_resident_lifecycle_config_home
+        "${CMAKE_CURRENT_BINARY_DIR}/application-resident-lifecycle-config")
+    file(MAKE_DIRECTORY
+        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty")
+    file(WRITE
+        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty/config.ghostty"
+        "quit-after-last-window-closed = false\nconfirm-close-surface = false\n")
+    foreach(_ghostty_qt_lifetime_mode IN ITEMS resident explicit-quit)
+        add_test(
+            NAME application-lifetime-${_ghostty_qt_lifetime_mode}
+            COMMAND $<TARGET_FILE:ghostty-qt>
+        )
+        set_tests_properties(
+            application-lifetime-${_ghostty_qt_lifetime_mode} PROPERTIES
+            TIMEOUT 5
+            ENVIRONMENT
+                "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_APPLICATION_LIFETIME=${_ghostty_qt_lifetime_mode};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_resident_lifecycle_config_home}"
+            FAIL_REGULAR_EXPRESSION
+                "Binding loop detected;QQmlApplicationEngine failed"
+        )
+    endforeach()
+endif()
 
 add_test(
     NAME application-close-dialog

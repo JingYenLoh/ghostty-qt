@@ -376,6 +376,16 @@
       "status": "planned",
       "note": "The pinned +show-config text output does not expose the derived palette and explicit-entry mask required for exact harmonization."
     },
+    "quit-after-last-window-closed": {
+      "status": "partial",
+      "scope": "portable",
+      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, closes the final window immediately, and either exits on the next event turn or remains resident when false. Reload reconciles the active state and an explicit command forces true. Practical parity remains partial because the resident process has no activation/new-window path and the frontend is still single-window."
+    },
+    "quit-after-last-window-closed-delay": {
+      "status": "supported",
+      "scope": "linux",
+      "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer is cancelled by a new primary window, bypassed by explicit quit and explicit-command launches, and reconciled on live reload without moving an identical deadline. Reload intentionally repairs pinned GTK's stale-timer edge behavior instead of reproducing it."
+    },
     "search-background": {
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."
@@ -737,7 +747,7 @@
         },
         "close_surface": {
           "status": "partial",
-          "note": "Accepts only the exact void spelling and targets the originating stable PaneId plus its containing TabId. Local closure preserves an unrelated active pane, otherwise focuses the previous tree-order leaf except that the leftmost target selects the next leaf; it recursively collapses the split tree, clears only a removed zoom target, removes a final-leaf tab, and approves shutdown after the final tab. Pinned GTK also selects the target's neighbor for an inactive programmatic close, whereas Qt deliberately preserves the unrelated active pane. Read-only/running confirmation uses correlated nonzero IDs, revalidates the stable target, and resolves plus commits atomically against synchronous topology observers; quit approval permanently rejects later typed workspace actions so no worker can miss the shutdown sweep, while non-structural application or pane-local chain steps remain eligible to finish. Real all:/global: bindings are consumed without PTY input and intentionally converge on one atomic confirmation/quit per Qt workspace. Pinned Ghostty instead fans broad actions to each surface in creation/swap-remove order: GTK closes safe leaves immediately and requests per-surface confirmation for unsafe leaves, while retaining only one pending split-close handle rather than independent stable requests. Full parity also remains limited by the separately tracked prompt-marker approximation, configurable last-window lifetime, and absent multiwindow behavior."
+          "note": "Accepts only the exact void spelling and targets the originating stable PaneId plus its containing TabId. Local closure preserves an unrelated active pane, otherwise focuses the previous tree-order leaf except that the leftmost target selects the next leaf; it recursively collapses the split tree, clears only a removed zoom target, removes a final-leaf tab, and approves ordinary window shutdown after the final tab. Pinned GTK also selects the target's neighbor for an inactive programmatic close, whereas Qt deliberately preserves the unrelated active pane. Read-only/running confirmation uses correlated nonzero IDs, revalidates the stable target, and resolves plus commits atomically against synchronous topology observers; window-close approval permanently rejects later structural typed workspace actions so no worker can miss the shutdown sweep, while application-quit escalation and non-structural application or pane-local chain steps remain eligible to finish. Final closure then enters the application-owned last-window policy rather than being treated as explicit quit. Real all:/global: bindings are consumed without PTY input and intentionally converge on one atomic confirmation/window close per Qt workspace. Pinned Ghostty instead fans broad actions to each surface in creation/swap-remove order: GTK closes safe leaves immediately and requests per-surface confirmation for unsafe leaves, while retaining only one pending split-close handle rather than independent stable requests. Full parity also remains limited by the separately tracked prompt-marker approximation and absent multiwindow behavior."
         },
         "close_tab": {
           "status": "partial",
@@ -745,7 +755,7 @@
         },
         "close_window": {
           "status": "partial",
-          "note": "The current single-window application maps this action to its confirmed quit path; multiwindow semantics remain planned."
+          "note": "The exact void action requests ordinary closure of the originating Qt window, shares stable confirmation and concurrent worker shutdown with window chrome, and then enters the configured last-window resident/immediate/delayed policy. The current frontend has only one window, so multiwindow targeting remains planned."
         },
         "copy_to_clipboard": {
           "status": "partial",
@@ -858,7 +868,7 @@
         },
         "quit": {
           "status": "partial",
-          "note": "Local root triggers route application quit; multiwindow semantics are absent."
+          "note": "Local root and typed application actions retain a distinct confirmed application-quit intent. The intent escalates an ordinary close already approved or awaiting confirmation, replaces a narrower pane/tab dialog with a freshly correlated window request, survives final-tab convergence, and latches during guarded topology callbacks for deferred reconciliation. Cancellation clears the old intent before publishing resolution so a synchronous newer quit wins. After approval it closes the current window and bypasses both a disabled last-window policy and any configured delay. Multiwindow coordination and a zero-window activation/global-action path remain absent."
         },
         "reload_config": {
           "status": "partial",
