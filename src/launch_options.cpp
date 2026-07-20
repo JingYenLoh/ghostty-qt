@@ -259,6 +259,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         snapshot, QStringLiteral("tab-inherit-working-directory"),
         result.tabInheritWorkingDirectory);
     applyConfigBool(
+        snapshot, QStringLiteral("window-inherit-working-directory"),
+        result.windowInheritWorkingDirectory);
+    applyConfigBool(
         snapshot, QStringLiteral("window-inherit-font-size"),
         result.windowInheritFontSize);
     const auto newTabPosition = snapshot.value<QString>(

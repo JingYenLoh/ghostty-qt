@@ -44,6 +44,7 @@ QByteArray defaultOutput()
                           "split-inherit-working-directory = true\n"
                           "split-preserve-zoom = no-navigation\n"
                           "tab-inherit-working-directory = true\n"
+                          "window-inherit-working-directory = true\n"
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
                           "window-show-tab-bar = auto\n"
@@ -425,6 +426,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QVERIFY(canonicalDefaults->values.value(
                 QStringLiteral("tab-inherit-working-directory")).toBool());
     QVERIFY(canonicalDefaults->values.value(
+                QStringLiteral("window-inherit-working-directory")).toBool());
+    QVERIFY(canonicalDefaults->values.value(
                 QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("window-new-tab-position")).toString(),
@@ -460,6 +463,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "split-inherit-working-directory = false\r\n"
             "split-preserve-zoom = navigation\r\n"
             "tab-inherit-working-directory = false\r\n"
+            "window-inherit-working-directory = false\r\n"
             "window-inherit-font-size = false\r\n"
             "window-new-tab-position = end\r\n"
             "window-show-tab-bar = never\r\n"
@@ -523,6 +527,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
                 QStringLiteral("split-preserve-zoom")).toBool());
     QVERIFY(!snapshot.values.value(
                  QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(!snapshot.values.value(
+                 QStringLiteral("window-inherit-working-directory")).toBool());
     QVERIFY(!snapshot.values.value(
                  QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(snapshot.values.value(
@@ -861,6 +867,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QByteArrayLiteral("split-inherit-working-directory = true\n"),
              QByteArrayLiteral("split-preserve-zoom = no-navigation\n"),
              QByteArrayLiteral("tab-inherit-working-directory = true\n"),
+             QByteArrayLiteral("window-inherit-working-directory = true\n"),
              QByteArrayLiteral("window-inherit-font-size = true\n"),
              QByteArrayLiteral("window-new-tab-position = current\n"),
              QByteArrayLiteral("window-show-tab-bar = auto\n"),
@@ -903,6 +910,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
     for (const QByteArray &key : {
              QByteArrayLiteral("split-inherit-working-directory"),
              QByteArrayLiteral("tab-inherit-working-directory"),
+             QByteArrayLiteral("window-inherit-working-directory"),
              QByteArrayLiteral("window-inherit-font-size"),
          }) {
         for (const QByteArray &value : {
@@ -1278,6 +1286,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                        "split-inherit-working-directory = false\n"
                        "split-preserve-zoom = navigation\n"
                        "tab-inherit-working-directory = false\n"
+                       "window-inherit-working-directory = false\n"
                        "window-inherit-font-size = false\n"
                        "window-new-tab-position = end\n"
                        "window-show-tab-bar = never\n")
@@ -1301,6 +1310,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
     QVERIFY(!result->values.value(
                  QStringLiteral("tab-inherit-working-directory")).toBool());
     QVERIFY(!result->values.value(
+                 QStringLiteral("window-inherit-working-directory")).toBool());
+    QVERIFY(!result->values.value(
                  QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(result->values.value(
                  QStringLiteral("window-new-tab-position")).toString(),
@@ -1315,6 +1326,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                           "split-inherit-working-directory = true\n"
                           "split-preserve-zoom = no-navigation\n"
                           "tab-inherit-working-directory = true\n"
+                          "window-inherit-working-directory = true\n"
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
                           "window-show-tab-bar = always\n"));
@@ -1329,6 +1341,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                  QStringLiteral("split-preserve-zoom")).toBool());
     QVERIFY(result->values.value(
                 QStringLiteral("tab-inherit-working-directory")).toBool());
+    QVERIFY(result->values.value(
+                QStringLiteral("window-inherit-working-directory")).toBool());
     QVERIFY(result->values.value(
                 QStringLiteral("window-inherit-font-size")).toBool());
     QCOMPARE(result->values.value(

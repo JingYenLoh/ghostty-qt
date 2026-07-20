@@ -2341,6 +2341,17 @@ void TerminalPaneTest::routesEmergencyTabShortcuts()
 
     TerminalPane pane(options);
     QSignalSpy tabChange(&pane, &TerminalPane::requestTabChange);
+    QSignalSpy applicationActions(
+        &pane, &TerminalPane::applicationActionRequested);
+
+    QKeyEvent newWindow(
+        QEvent::KeyPress, Qt::Key_N,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("N"));
+    QCoreApplication::sendEvent(&pane, &newWindow);
+    QCOMPARE(applicationActions.count(), 1);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 applicationActions.constFirst().constFirst()),
+             ApplicationAction::NewWindow);
 
     QKeyEvent next(QEvent::KeyPress, Qt::Key_Tab,
                    Qt::ControlModifier, QStringLiteral("\t"));
@@ -2390,10 +2401,18 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
     QSignalSpy closeSurface(&pane, &TerminalPane::requestClose);
     QSignalSpy closeTab(&pane, &TerminalPane::requestCloseTab);
-    QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
+    QSignalSpy applicationActions(
+        &pane, &TerminalPane::applicationActionRequested);
     QSignalSpy closeWindowRequested(&pane,
                                     &TerminalPane::requestCloseWindow);
-    QSignalSpy quit(&pane, &TerminalPane::requestQuit);
+    const auto applicationActionCount = [&applicationActions](
+                                            ApplicationAction action) {
+        return static_cast<int>(std::ranges::count_if(
+            applicationActions, [action](const QList<QVariant> &arguments) {
+                return qvariant_cast<ApplicationAction>(arguments.constFirst())
+                    == action;
+            }));
+    };
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
@@ -2435,13 +2454,13 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent reloadEvent(QEvent::KeyPress, Qt::Key_R,
                           Qt::ControlModifier, QStringLiteral("r"));
     QCoreApplication::sendEvent(&pane, &reloadEvent);
-    QCOMPARE(reload.count(), 1);
+    QCOMPARE(applicationActionCount(ApplicationAction::ReloadConfig), 1);
 
     QKeyEvent closeWindow(QEvent::KeyPress, Qt::Key_F4,
                           Qt::AltModifier);
     QCoreApplication::sendEvent(&pane, &closeWindow);
     QCOMPARE(closeWindowRequested.count(), 1);
-    QCOMPARE(quit.count(), 0);
+    QCOMPARE(applicationActionCount(ApplicationAction::Quit), 0);
 
     const int beforeUnsupported = forwarded.count();
     QKeyEvent unsupported(QEvent::KeyPress, Qt::Key_Y,
@@ -2461,7 +2480,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent unconsumedReload(QEvent::KeyPress, Qt::Key_L,
                                Qt::ControlModifier, QString(QChar(0x0c)));
     QCoreApplication::sendEvent(&pane, &unconsumedReload);
-    QCOMPARE(reload.count(), 2);
+    QCOMPARE(applicationActionCount(ApplicationAction::ReloadConfig), 2);
     QCOMPARE(forwarded.count(), beforeUnconsumedReload + 1);
 
     // Ghostty's ignore action always suppresses encoding, even if the
@@ -2496,7 +2515,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QKeyEvent quitChain(QEvent::KeyPress, Qt::Key_O,
                         Qt::ControlModifier, QString(QChar(0x0f)));
     QCoreApplication::sendEvent(&pane, &quitChain);
-    QCOMPARE(quit.count(), 1);
+    QCOMPARE(applicationActionCount(ApplicationAction::Quit), 1);
     QCOMPARE(forwarded.count(), beforeQuitChain);
     QKeyEvent quitRelease(QEvent::KeyRelease, Qt::Key_O,
                           Qt::ControlModifier, QString(QChar(0x0f)));
@@ -4236,7 +4255,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
                         &TerminalController::sequenceResolutionRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
-    QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
+    QSignalSpy applicationActions(
+        &pane, &TerminalPane::applicationActionRequested);
 
     const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
                                QString text) {
@@ -4280,7 +4300,10 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     // Unconsumed leaves run their action and replay the entire sequence.
     leader();
     press(Qt::Key_U, Qt::NoModifier, QStringLiteral("u"));
-    QCOMPARE(reload.count(), 1);
+    QCOMPARE(applicationActions.count(), 1);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 applicationActions.constFirst().constFirst()),
+             ApplicationAction::ReloadConfig);
     QCOMPARE(resolution(),
              TerminalSequenceResolution::FlushAndSendCurrent);
 
@@ -4567,8 +4590,8 @@ void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
     QVERIFY(controller != nullptr);
     QSignalSpy copied(controller, &TerminalController::copyRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
-    QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
-    QSignalSpy quit(&pane, &TerminalPane::requestQuit);
+    QSignalSpy applicationActions(
+        &pane, &TerminalPane::applicationActionRequested);
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
@@ -4601,8 +4624,7 @@ void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
 
     QCOMPARE(copied.count(), 0);
     QCOMPARE(pasted.count(), 0);
-    QCOMPARE(reload.count(), 0);
-    QCOMPARE(quit.count(), 0);
+    QCOMPARE(applicationActions.count(), 0);
     QCOMPARE(pane.fontPointSize(), originalFontSize);
     clipboard->clear();
 }

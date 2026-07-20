@@ -1,5 +1,6 @@
 #pragma once
 
+#include "application_action.h"
 #include "ghostty_keybind_set.h"
 #include "launch_options.h"
 #include "terminal_types.h"
@@ -71,6 +72,7 @@ public:
     bool isReadOnly() const;
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
+    LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
     void applyRuntimeOptions(const LaunchOptions &options);
     // The workspace owns split topology; the pane owns actual focus and
     // search visibility, which complete Ghostty's dimming predicate.
@@ -119,8 +121,7 @@ Q_SIGNALS:
     void requestNavigate(int direction);
     void requestTabChange(int delta);
     void requestCloseWindow();
-    void requestQuit();
-    void requestConfigReload();
+    void applicationActionRequested(ApplicationAction action);
     void broadActionsRequested(const QStringList &actions);
     void unsafePasteRequested(quint64 requestId, const QString &text,
                               TerminalPane *pane);

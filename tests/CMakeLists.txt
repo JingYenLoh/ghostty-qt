@@ -30,6 +30,66 @@ set_tests_properties(application-lifetime-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-application-controller
+    test_application_controller.cpp
+    ../src/application_action.h
+    ../src/application_controller.cpp
+    ../src/application_controller.h
+    ../src/application_lifetime.cpp
+    ../src/application_lifetime.h
+    ../src/ghostty_application_keybindings.cpp
+    ../src/ghostty_application_keybindings.h
+    ../src/ghostty_global_shortcut_portal.cpp
+    ../src/ghostty_global_shortcut_portal.h
+    ../src/launch_options.cpp
+    ../src/launch_options.h
+    ../src/session_worker.cpp
+    ../src/session_worker.h
+    ../src/tab_list_model.cpp
+    ../src/tab_list_model.h
+    ../src/terminal_controller.cpp
+    ../src/terminal_controller.h
+    ../src/terminal_clipboard.cpp
+    ../src/terminal_clipboard.h
+    ../src/terminal_pane.cpp
+    ../src/terminal_pane.h
+    ../src/terminal_workspace.cpp
+    ../src/terminal_workspace.h
+    ../src/terminal_osc8_index.h
+    ../src/terminal_session_options.h
+    ../src/terminal_types.h
+    ../src/workspace_action.h
+    ../src/workspace_ids.h
+)
+target_include_directories(test-application-controller PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-application-controller PRIVATE
+    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_RENDER_TEST_PROBE=1
+)
+target_link_libraries(test-application-controller PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::Test
+    PkgConfig::XKBCommon
+    ghostty-qt-action-pipeline
+    ghostty-qt-link-matcher
+    ghostty-qt-runtime-paths
+    ghostty-qt-vt-adapter
+    util
+)
+add_dependencies(test-application-controller ghostty-qt-terminfo)
+add_test(NAME application-controller COMMAND test-application-controller)
+set_tests_properties(application-controller PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+)
+
 qt_add_executable(test-terminal-types
     test_terminal_types.cpp
     ../src/terminal_actions.h

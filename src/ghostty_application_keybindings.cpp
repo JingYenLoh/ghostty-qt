@@ -7,9 +7,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QEvent>
-#include <QGuiApplication>
 #include <QKeyEvent>
-#include <QQuickWindow>
 
 #include <algorithm>
 #include <cstdint>
@@ -171,29 +169,15 @@ GhosttyApplicationKeybindings::workspaceSnapshot() const
     return result;
 }
 
-TerminalWorkspace *GhosttyApplicationKeybindings::activeWorkspace() const
-{
-    QWindow *focusWindow = QGuiApplication::focusWindow();
-    for (const QPointer<TerminalWorkspace> &workspace : workspaces_) {
-        if (workspace != nullptr && workspace->window() == focusWindow) {
-            return workspace;
-        }
-    }
-    for (const QPointer<TerminalWorkspace> &workspace : workspaces_) {
-        if (workspace != nullptr) return workspace;
-    }
-    return nullptr;
-}
-
 bool GhosttyApplicationKeybindings::executeApplicationActions(
     const QStringList &actions)
 {
-    TerminalWorkspace *workspace = activeWorkspace();
     bool performed = false;
     for (const QString &action : actions) {
-        if (workspace != nullptr) {
-            performed = workspace->executeApplicationConfiguredAction(action)
-                || performed;
+        if (const std::optional<ApplicationAction> parsed =
+                GhosttyActionCatalog::parseApplicationAction(action)) {
+            Q_EMIT applicationActionRequested(*parsed);
+            performed = true;
         }
     }
     return performed;
@@ -207,9 +191,9 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
     for (const QString &action : actions) {
         if (GhosttyActionCatalog::scope(action)
             == GhosttyActionScope::Application) {
-            if (TerminalWorkspace *workspace = activeWorkspace();
-                workspace != nullptr) {
-                (void) workspace->executeApplicationConfiguredAction(action);
+            if (const std::optional<ApplicationAction> parsed =
+                    GhosttyActionCatalog::parseApplicationAction(action)) {
+                Q_EMIT applicationActionRequested(*parsed);
             }
             continue;
         }

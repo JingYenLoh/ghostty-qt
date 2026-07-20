@@ -377,14 +377,14 @@
       "note": "The pinned +show-config text output does not expose the derived palette and explicit-entry mask required for exact harmonization."
     },
     "quit-after-last-window-closed": {
-      "status": "partial",
+      "status": "supported",
       "scope": "portable",
-      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, closes the final window immediately, and either exits on the next event turn or remains resident when false. Reload reconciles the active state and an explicit command forces true. Practical parity remains partial because the resident process has no activation/new-window path and the frontend is still single-window."
+      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, and applies only after the final registered primary window closes. False leaves the process-level config, shortcuts, reload, quit, and new-window factory alive with zero QML roots; a replacement window is fully registered before presentation. Reload reconciles active state, an explicit command forces true, and explicit quit bypasses the policy. External single-instance activation remains tracked separately."
     },
     "quit-after-last-window-closed-delay": {
       "status": "supported",
       "scope": "linux",
-      "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer is cancelled by a new primary window, bypassed by explicit quit and explicit-command launches, and reconciled on live reload without moving an identical deadline. Reload intentionally repairs pinned GTK's stale-timer edge behavior instead of reproducing it."
+      "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer is cancelled by a successfully presented replacement window, remains armed after factory failure, is bypassed by explicit quit and explicit-command launches, and is reconciled on live reload without moving an identical deadline. Reload intentionally repairs pinned GTK's stale-timer edge behavior instead of reproducing it."
     },
     "search-background": {
       "status": "supported",
@@ -609,7 +609,11 @@
         },
         "window-inherit-font-size": {
           "status": "partial",
-          "note": "The exact default-true boolean controls new tabs: true copies only the action source's current point size, including manual zoom, while false keeps the newest effective font-size with CLI precedence. Children remain unadjusted and follow later font-size reloads. New-window inheritance is pending multi-window support; pinned GTK also currently ignores the false setting despite the documented contract and embedded frontend honoring it."
+          "note": "The exact default-true boolean controls new tabs and windows: true copies only the exact action source's current point size, including manual zoom, while false keeps the newest application font-size with CLI precedence. Composite workspace/PaneId identity distinguishes equal pane IDs in different windows; children remain unadjusted and follow later font-size reloads. Status remains partial because pinned GTK currently ignores the false setting despite the documented contract and embedded frontend honoring it."
+        },
+        "window-inherit-working-directory": {
+          "status": "partial",
+          "note": "The exact default-true boolean reloads for future windows. True uses the explicit originating workspace and stable PaneId, or the process controller's focused/last-active pane for application actions, and inherits its newest accepted local OSC 7 directory; stale or zero-window sources safely use the newest application fallback. False always uses that fallback. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
         },
         "window-new-tab-position": {
           "status": "supported",
@@ -622,7 +626,7 @@
         },
         "working-directory": {
           "status": "partial",
-          "note": "The shared-config value supplies initial panes plus new-tab and split fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, tab/split inheritance, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; window inheritance and lossless non-UTF-8 path transport remain incomplete."
+          "note": "The shared-config value supplies initial panes plus new-tab, split, and new-window fallback; explicit home/tilde paths, process-cwd and logical-PWD inherit behavior, symlink-sensitive concrete spelling, explicit Qt CLI precedence, live future-surface updates, composite source identity, and pinned stale-PWD/non-fatal-chdir fallback are tested. The helper always appears CLI-launched, so an unset GTK desktop default resolves to inherit rather than context-dependent home; lossless non-UTF-8 path transport remains incomplete."
         },
         "x11-instance-name": {
           "status": "not_applicable",
@@ -747,15 +751,15 @@
         },
         "close_surface": {
           "status": "partial",
-          "note": "Accepts only the exact void spelling and targets the originating stable PaneId plus its containing TabId. Local closure preserves an unrelated active pane, otherwise focuses the previous tree-order leaf except that the leftmost target selects the next leaf; it recursively collapses the split tree, clears only a removed zoom target, removes a final-leaf tab, and approves ordinary window shutdown after the final tab. Pinned GTK also selects the target's neighbor for an inactive programmatic close, whereas Qt deliberately preserves the unrelated active pane. Read-only/running confirmation uses correlated nonzero IDs, revalidates the stable target, and resolves plus commits atomically against synchronous topology observers; window-close approval permanently rejects later structural typed workspace actions so no worker can miss the shutdown sweep, while application-quit escalation and non-structural application or pane-local chain steps remain eligible to finish. Final closure then enters the application-owned last-window policy rather than being treated as explicit quit. Real all:/global: bindings are consumed without PTY input and intentionally converge on one atomic confirmation/window close per Qt workspace. Pinned Ghostty instead fans broad actions to each surface in creation/swap-remove order: GTK closes safe leaves immediately and requests per-surface confirmation for unsafe leaves, while retaining only one pending split-close handle rather than independent stable requests. Full parity also remains limited by the separately tracked prompt-marker approximation and absent multiwindow behavior."
+          "note": "Accepts only the exact void spelling and targets the originating stable PaneId plus its containing TabId. Local closure preserves an unrelated active pane, otherwise focuses the previous tree-order leaf except that the leftmost target selects the next leaf; it recursively collapses the split tree, clears only a removed zoom target, removes a final-leaf tab, and approves ordinary shutdown of only that pane's window after the final tab. Pinned GTK also selects the target's neighbor for an inactive programmatic close, whereas Qt deliberately preserves the unrelated active pane. Read-only/running confirmation uses correlated nonzero IDs, revalidates the stable target, and resolves plus commits atomically against synchronous topology observers; window-close approval permanently rejects later structural typed workspace actions so no worker can miss the shutdown sweep, while application-quit escalation and non-structural application or pane-local chain steps remain eligible to finish. Final closure then enters the application-owned last-window policy only if no other primary window remains. Real all:/global: bindings are consumed without PTY input and intentionally converge on one atomic confirmation/window close per Qt workspace. Pinned Ghostty instead fans broad actions to each surface in creation/swap-remove order: GTK closes safe leaves immediately and requests per-surface confirmation for unsafe leaves, while retaining only one pending split-close handle rather than independent stable requests. Full parity also remains limited by the separately tracked prompt-marker approximation."
         },
         "close_tab": {
           "status": "partial",
           "note": "Accepts the exact omitted/this/other/right grammar through a typed mode, anchors to the originating pane's stable containing tab, treats valid no-target modes as performed, correlates dialog responses, and freezes TabId membership across confirmation, reordering, insertion, focus restoration, and overlapping worker shutdown. Commit traverses those frozen members in the then-current reverse visual order. Qt matches Ghostty macOS only in grouping a multi-tab close behind one atomic confirmation: macOS recomputes membership after confirmation and traverses ascending, while Qt retains the original membership. Pinned GTK instead confirms each unsafe target independently and immediately closes safe targets. Broad fanout also follows Qt's tab/tree snapshot order rather than Ghostty's surface creation/swap-remove order, while broad default/this retains the pre-existing single-workspace coalescing."
         },
         "close_window": {
-          "status": "partial",
-          "note": "The exact void action requests ordinary closure of the originating Qt window, shares stable confirmation and concurrent worker shutdown with window chrome, and then enters the configured last-window resident/immediate/delayed policy. The current frontend has only one window, so multiwindow targeting remains planned."
+          "status": "supported",
+          "note": "The exact void surface action requests ordinary closure of only the originating Qt window, aggregates that window's stable panes behind one confirmation, and starts all of its worker shutdowns concurrently. Non-final closure leaves process lifetime untouched; final closure enters the resident/immediate/delayed application policy. Broad fanout resolves unique registered workspaces so each window receives one close request."
         },
         "copy_to_clipboard": {
           "status": "partial",
@@ -842,6 +846,10 @@
           "status": "supported",
           "note": "Local, QML, and broad triggers create and select a tab through the typed workspace, retain each original source pane for directory/font inheritance, and honor the live current/end insertion policy."
         },
+        "new_window": {
+          "status": "partial",
+          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. Every subsequent window clears the one-shot initial program and hold state, initializes one workspace before presentation, registers lifetime/keybindings/config fanout, and can recreate a resident process after every old root and worker is retired. External single-instance/DBus/CLI activation, initial geometry inheritance, and compositor-dependent activation tokens remain incomplete."
+        },
         "next_tab": {
           "status": "partial",
           "note": "Local root triggers route the action through the typed catalog and workspace."
@@ -867,12 +875,12 @@
           "note": "Accepts only the exact void spelling with no colon and targets the source surface's tab by stable identity. Each request snapshots the raw override when present or the current display title otherwise, including the modeled zoom prefix; the focused field places its caret at the end without selecting all. OK preserves text exactly, blank clears the override, and Cancel is inert. Requests share one FIFO with surface-title prompts, with all/global retaining one request per surface and no split-tab deduplication. Source-pane removal is harmless while its tab survives; target deletion resolves or prunes its requests, and stale completions cannot rename another tab."
         },
         "quit": {
-          "status": "partial",
-          "note": "Local root and typed application actions retain a distinct confirmed application-quit intent. The intent escalates an ordinary close already approved or awaiting confirmation, replaces a narrower pane/tab dialog with a freshly correlated window request, survives final-tab convergence, and latches during guarded topology callbacks for deferred reconciliation. Cancellation clears the old intent before publishing resolution so a synchronous newer quit wins. After approval it closes the current window and bypasses both a disabled last-window policy and any configured delay. Multiwindow coordination and a zero-window activation/global-action path remain absent."
+          "status": "supported",
+          "note": "The exact void action is process-scoped and available with zero windows. It snapshots every live workspace before mutation, lets a safe active window host one confirmation when an inactive pane is running or read-only, leaves every window untouched on cancellation, then starts every workspace's worker shutdown before committing one irreversible process quit. It bypasses disabled/delayed last-window policy, handles an already approved host, rehosts if the dialog workspace disappears, and remains idempotent after commitment."
         },
         "reload_config": {
           "status": "partial",
-          "note": "A configured local trigger requests debounced asynchronous reload through the exact pinned parser; frontend notifications remain absent."
+          "note": "The process-scoped exact void action requests one debounced asynchronous reload even with zero windows. A successful snapshot updates process keybindings, lifetime, every live workspace, and the defaults consumed by future windows; failure retains the last valid state. Frontend notifications remain absent."
         },
         "reset": {
           "status": "supported",

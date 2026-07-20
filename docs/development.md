@@ -46,7 +46,8 @@ exact-source close-surface grammar, adjacent split focus, recursive collapse,
 stable correlated read-only/running pane confirmation, atomic resolution,
 final-tab escalation, irreversible typed-workspace quit gating,
 application/pane-local chain completion, and atomic all/global workspace-close
-events,
+events, composite process-level window sources, zero-window recreation,
+multiwindow lifetime and aggregate quit coordination,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
@@ -56,7 +57,7 @@ relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-lifetime|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -70,9 +71,9 @@ Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
 `+show-config-json` action, and converts only the documented compatibility
 keys into value snapshots.
 
-The snapshot includes the finalized working-directory, split/tab directory
-inheritance policies, new-window/tab font-size inheritance policy, and the
-canonical `current`/`end` new-tab position plus the
+The snapshot includes the finalized working-directory, split/tab/window
+directory inheritance policies, new-window/tab font-size inheritance policy,
+and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
 palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
 selection colors, cursor
@@ -178,7 +179,11 @@ and explicit-empty no-ops, exact Unicode/whitespace, override/base precedence,
 tab/fallback exclusion, standard-versus-primary destination, and stable broad
 Qt last-writer behavior without focus or selection changes. Application tests
 exercise both headings and exact Unicode text through the shared real QML
-dialog and verify focus restoration.
+dialog and verify focus restoration. Process-controller tests cover duplicate
+PaneIds in separate windows, live and stale source inheritance, one-shot
+command removal, live/replacement config, delayed-exit cancellation and factory
+failure, clean zero-window residence, application-wide confirmation and
+shutdown, cancellation, and dialog re-hosting.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

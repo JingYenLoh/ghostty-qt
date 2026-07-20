@@ -25,18 +25,22 @@ runtime boundary for this MVP.
 
 ## Runtime structure
 
-Each terminal pane has the following ownership and data flow:
+The process controller owns every primary window; each terminal pane then has
+the following ownership and data flow:
 
 ```text
-Main.qml
-  -> TerminalWorkspace (UI thread, recursive tabs/splits)
-     -> TerminalPane (QQuickItem with scene-graph contents)
-        -> TerminalController (UI thread)
-           <queued signals>
-           -> SessionWorker (one dedicated QThread)
-              -> GhosttyVtAdapter
-                 -> libghostty-vt terminal/render/input handles
-              -> PTY master <-> child process group
+ApplicationController (UI thread, process lifetime)
+  -> reusable Main.qml component -> zero or more primary windows
+     -> TerminalWorkspace (UI thread, recursive tabs/splits)
+        -> TerminalPane (QQuickItem with scene-graph contents)
+           -> TerminalController (UI thread)
+              <queued signals>
+              -> SessionWorker (one dedicated QThread)
+                 -> GhosttyVtAdapter
+                    -> libghostty-vt terminal/render/input handles
+                 -> PTY master <-> child process group
+  -> ApplicationLifetimeController
+  -> GhosttyApplicationKeybindings
 
 GhosttyConfigService (UI thread)
   -> ghostty-qt-config-helper (short-lived child process)
@@ -215,19 +219,31 @@ uses `SIGKILL` if the group does not exit; workspace/tab teardown starts all
 pane shutdowns first so grace periods overlap.
 
 Process lifetime is application-owned rather than a side effect of QML window
-destruction. Qt's implicit `quitOnLastWindowClosed` behavior is disabled, and
-one GUI-thread `ApplicationLifetimeController` registers primary windows and
-observes `QGuiApplication::lastWindowClosed`. After an ordinary confirmed
-window close, the controller either remains resident, queues an immediate exit
-for the next event turn, or starts one single-shot `QChronoTimer`. Opening a
-primary window cancels an active timer. Transient dialogs are not registered.
-Explicit `quit` from a live workspace retains a separate confirmation intent
-and, once approved, bypasses both the disabled policy and any delay. A command
-supplied after `--` matches Ghostty's `-e` lifetime rule by forcing immediate
-last-window exit.
-After an approved close makes the engine-owned root window invisible, that
-window and its latched workspace are deleted; delayed or resident operation
-therefore retains no dead panes or controller threads.
+destruction. Qt's implicit `quitOnLastWindowClosed` behavior is disabled.
+`ApplicationController` maintains a `QPointer` registry of C++-owned QML roots,
+and its embedded `ApplicationLifetimeController` registers each primary window.
+Retiring a non-final root leaves process lifetime untouched; retiring the final
+root either keeps the process resident, queues an immediate exit for the next
+event turn, or starts one single-shot `QChronoTimer`. Successfully presenting a
+replacement cancels an active timer, while factory failure leaves it armed.
+Transient dialogs are not registered. Each approved root and its workspace are
+deleted after closing, so delayed or resident operation retains no dead panes
+or controller threads.
+
+`new_window`, `reload_config`, and `quit` use a typed process-action vocabulary
+that remains available with zero workspaces. Window creation is queued to the
+GUI event loop, reuses one `QQmlComponent`, initializes the new workspace from
+the latest process options before presentation, and clears the initial
+one-shot command and hold state. A surface source is the composite live
+workspace plus stable `PaneId`, because pane IDs are only workspace-local;
+stale sources fall back to the focused or most recently active workspace, then
+to process defaults. Explicit `quit` read-only-assesses every live workspace,
+hosts at most one confirmation on the active window, changes no window on
+cancel, re-hosts if that dialog window disappears, and begins every workspace
+shutdown before emitting one irreversible process quit. It bypasses both the
+disabled last-window policy and any delay, including with zero windows. A
+command supplied after `--` matches Ghostty's `-e` lifetime rule by forcing
+immediate last-window exit.
 
 The nullable delay crosses the structured config boundary after Ghostty's own
 `Duration.asMilliseconds()` conversion, preserving configured zero separately
@@ -236,9 +252,9 @@ Successful live reloads compare the two effective policy values: an identical
 reload preserves the current deadline, while a changed value cancels and
 reconciles it against the current window state. This deliberately repairs the
 pinned GTK frontend's stale-timer reload edge cases. The false policy can keep
-the current single-window application resident after its window closes, but
-activation/new-window and zero-window global-action paths are not implemented
-yet.
+a zero-window application resident; process and portal actions can reload it
+or construct another window. External single-instance/secondary-process
+activation is not implemented yet.
 
 ## Output path
 
@@ -651,8 +667,9 @@ valid concurrent edit, successful helper
 warnings enter the typed diagnostic list, and failed loads retry periodically
 to discover newly created required includes. Failure still leaves the last
 good snapshot active when one exists; a successful changed snapshot is applied
-once to the live workspace, process keybindings, and application lifetime
-controller. The latter two consumers continue receiving watched reloads after
+once by the application controller to every live workspace, process
+keybindings, and the application lifetime policy, then retained for future
+windows. All process consumers continue receiving watched reloads after
 resident window retirement.
 
 The helper process necessarily has Ghostty action arguments, so the pinned
@@ -833,7 +850,7 @@ the same stable process snapshot used by other surface actions.
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
 focused pane lookup, matching Ghostty's app/surface split while leaving leaders
 and mixed-scope chains to the pane. A pane that matches `all` or `global`
-forwards the chain to that process controller. It executes app actions once and
+forwards the chain to the application controller. It executes app actions once and
 surface actions over a stable pane snapshot, action-major across the chain;
 `unconsumed` and `performable` do not alter broad-binding consumption. Split
 container actions resolve from each tab's current active pane during that
@@ -1042,9 +1059,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `application-lifetime-controller` covers immediate, delayed, disabled,
   cancellation, idempotent and changed reload, stale-timeout, transient-window,
   and explicit-quit behavior without wall-clock process orchestration.
-- `application-lifetime-resident` and `application-lifetime-explicit-quit`
-  exercise the real QML window and application wiring under a disabled
-  last-window policy.
+- `application-lifetime-resident` closes and retires a real QML root, recreates
+  one through the zero-window process action, retires it again, and explicitly
+  quits; `application-lifetime-explicit-quit` exercises the real application
+  wiring under a disabled last-window policy.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived
@@ -1062,9 +1080,11 @@ non-bracketed policy, live options, control-byte encoding, confirmation-time
 mode changes, accepted-only activity and viewport changes, all GUI paste entry
 points, immutable worker IDs, multi-pane dialog correlation, queued payloads,
 stale responses, session/pane teardown, and preview bounds.
-Typed-action tests cover tab and split state transitions; the offscreen tests
-validate QML startup, close-dialog shutdown, and scene-graph frame replacement
-in a headless environment, but they do not validate the hardware RHI path.
+Typed-action tests cover tab and split state transitions; process-controller
+tests cover multiwindow creation, inheritance, lifetime, and aggregate quit;
+the offscreen tests validate QML startup, close/recreate shutdown, dialog
+shutdown, and scene-graph frame replacement in a headless environment, but
+they do not validate the hardware RHI path.
 `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
 supported runtime configuration; GPU output must also be checked interactively
 in a real Wayland session.
@@ -1084,9 +1104,9 @@ in a real Wayland session.
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, user-defined `link` rules, multi-window operation, saved sessions,
-  and production packaging remain future work. OSC 8, the default `link-url`
-  matcher, link previews, and the incremental search foundation are
+  actions, user-defined `link` rules, external single-instance activation,
+  saved sessions, and production packaging remain future work. OSC 8, the
+  default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen
   results are not retained independently, and the overlay is not draggable.

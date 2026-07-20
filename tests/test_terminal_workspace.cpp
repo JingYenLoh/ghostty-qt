@@ -415,8 +415,8 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
             &workspace, &TerminalWorkspace::applicationQuitApproved);
         QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
 
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(windowClose.count(), 1);
         QCOMPARE(applicationQuit.count(), 1);
     }
@@ -436,8 +436,7 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("toggle_readonly")));
 
-    QVERIFY(workspace.executeApplicationConfiguredAction(
-        QStringLiteral("quit")));
+    workspace.requestApplicationQuitConfirmation(workspace.closeAssessment());
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(windowClose.count(), 0);
     QCOMPARE(applicationQuit.count(), 0);
@@ -445,8 +444,7 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
     QCOMPARE(windowClose.count(), 0);
     QCOMPARE(applicationQuit.count(), 0);
 
-    QVERIFY(workspace.executeApplicationConfiguredAction(
-        QStringLiteral("quit")));
+    workspace.requestApplicationQuitConfirmation(workspace.closeAssessment());
     QCOMPARE(confirmation.count(), 2);
     workspace.confirmClose(closeConfirmationId(confirmation));
     QCOMPARE(windowClose.count(), 1);
@@ -478,11 +476,12 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
             QStringLiteral("close_window")));
         QCOMPARE(windowClose.count(), 1);
         QCOMPARE(applicationQuit.count(), 0);
-        QVERIFY(workspace.dispatchAction({WorkspaceAction::RequestQuit, {}}));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(windowClose.count(), 1);
         QCOMPARE(applicationQuit.count(), 1);
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(applicationQuit.count(), 1);
     }
 
@@ -504,8 +503,8 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("close_window")));
         QCOMPARE(confirmation.count(), 1);
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(confirmation.count(), 1);
         workspace.confirmClose(closeConfirmationId(confirmation));
         QCOMPARE(windowClose.count(), 1);
@@ -534,8 +533,8 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
             QStringLiteral("close_surface")));
         QCOMPARE(confirmation.count(), 1);
         const quint64 paneConfirmation = closeConfirmationId(confirmation);
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(resolved.count(), 1);
         QCOMPARE(closeConfirmationId(resolved), paneConfirmation);
         QCOMPARE(confirmation.count(), 2);
@@ -543,7 +542,7 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         QVERIFY(windowConfirmation != paneConfirmation);
         QCOMPARE(confirmation.constLast().at(1).toString(),
                  QStringLiteral(
-                     "This window contains a read-only pane. Quit?"));
+                     "A terminal window contains a read-only pane. Quit the application?"));
 
         workspace.cancelClose(paneConfirmation);
         QCOMPARE(windowClose.count(), 0);
@@ -571,8 +570,8 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
 
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(confirmation.count(), 1);
         {
             QSignalBlocker suppressPolicyReevaluation(pane);
@@ -604,8 +603,8 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
 
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("quit")));
+        workspace.requestApplicationQuitConfirmation(
+            workspace.closeAssessment());
         QCOMPARE(confirmation.count(), 1);
         const quint64 cancelledConfirmation =
             closeConfirmationId(confirmation);
@@ -613,9 +612,9 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
                 &workspace, [&](quint64 confirmationId) {
                     if (confirmationId == cancelledConfirmation) {
-                        reentrantQuitAccepted =
-                            workspace.executeApplicationConfiguredAction(
-                                QStringLiteral("quit"));
+                        workspace.requestApplicationQuitConfirmation(
+                            workspace.closeAssessment());
+                        reentrantQuitAccepted = true;
                     }
                 });
 
@@ -657,11 +656,10 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
         connect(&workspace, &TerminalWorkspace::closeConfirmationResolved,
                 &workspace, [&](quint64 confirmationId) {
                     if (confirmationId != paneConfirmation) return;
-                    applicationActionAccepted =
-                        workspace.executeApplicationConfiguredAction(
-                            QStringLiteral("quit"));
-                    typedActionAccepted = workspace.dispatchAction(
-                        {WorkspaceAction::RequestQuit, {}});
+                    workspace.requestApplicationQuitConfirmation({});
+                    applicationActionAccepted = true;
+                    workspace.requestApplicationQuitConfirmation({});
+                    typedActionAccepted = true;
                 });
 
         workspace.confirmClose(paneConfirmation);
@@ -804,7 +802,7 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
 
     // Closing the final pane of an inactive tab removes that source tab but
     // leaves the selected tab unchanged. Closing the final remaining pane
-    // then follows the single-window quit path exactly once.
+    // then requests shutdown of its containing window exactly once.
     QPointer<TerminalPane> thirdPane(third.pane);
     QVERIFY(third.pane->executeConfiguredAction(
         QStringLiteral("close_surface")));
@@ -1014,12 +1012,15 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
         QSignalSpy confirmation(
             &workspace, &TerminalWorkspace::closeConfirmationRequested);
         QSignalSpy quit(&workspace, &TerminalWorkspace::windowCloseApproved);
-        QSignalSpy reload(&workspace,
-                          &TerminalWorkspace::configReloadRequested);
+        QSignalSpy reload(
+            &bindings,
+            &GhosttyApplicationKeybindings::applicationActionRequested);
         int confirmationsAtFirstReload = -1;
         int quitsAtFirstReload = -1;
-        connect(&workspace, &TerminalWorkspace::configReloadRequested,
-                &workspace, [&] {
+        connect(&bindings,
+                &GhosttyApplicationKeybindings::applicationActionRequested,
+                &workspace, [&](ApplicationAction action) {
+                    if (action != ApplicationAction::ReloadConfig) return;
                     if (confirmationsAtFirstReload >= 0) return;
                     confirmationsAtFirstReload = confirmation.count();
                     quitsAtFirstReload = quit.count();
@@ -1071,8 +1072,7 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
             WorkspaceAction::NewTab,
             {source.tabId, source.paneId, 0},
         }));
-        QVERIFY(workspace.executeApplicationConfiguredAction(
-            QStringLiteral("reload_config")));
+        bindings.dispatchBroadActions({QStringLiteral("reload_config")});
         QCOMPARE(reload.count(), 2);
         QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("new_tab")));
@@ -1851,7 +1851,7 @@ void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
         QCOMPARE(quit.count(), 0);
 
         // Other on a sole tab is also a successful no-op and never widens to
-        // the frontend's single-window quit path.
+        // the containing-window shutdown path.
         QVERIFY(second.pane->executeConfiguredAction(
             QStringLiteral("toggle_readonly")));
         QSignalSpy confirmation(
@@ -2459,8 +2459,9 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     TerminalWorkspace workspace;
     GhosttyApplicationKeybindings applicationBindings(options, false);
     applicationBindings.registerWorkspace(&workspace);
-    QSignalSpy reload(&workspace,
-                      &TerminalWorkspace::configReloadRequested);
+    QSignalSpy reload(
+        &applicationBindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     TerminalPane *pane = workspace.findChild<TerminalPane *>();
     QVERIFY(pane != nullptr);
@@ -2592,8 +2593,9 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
 
     // An app-scoped all: action runs once in the root pre-pass rather than
     // once per surface.
-    QSignalSpy reload(&workspace,
-                      &TerminalWorkspace::configReloadRequested);
+    QSignalSpy reload(
+        &applicationBindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
     QKeyEvent allReload(QEvent::KeyPress, Qt::Key_R,
                         Qt::ControlModifier, QString(QChar(0x12)));
     QCoreApplication::sendEvent(activePane, &allReload);
@@ -2601,7 +2603,21 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
                                Qt::ControlModifier);
     QCoreApplication::sendEvent(activePane, &allReloadRelease);
     QCOMPARE(reload.count(), 1);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 reload.constFirst().constFirst()),
+             ApplicationAction::ReloadConfig);
     QCOMPARE(forwarded.count(), 0);
+
+    // Application-scoped broad actions execute once, not once per pane.
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("new_window")});
+    QCOMPARE(reload.count(), 2);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 reload.constLast().constFirst()),
+             ApplicationAction::NewWindow);
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("new_window")));
+    QCOMPARE(reload.count(), 2);
 
     // Other/right remain ordinary surface fanout, not the special broad
     // close-every-surface path. The first stable source keeps its own tab.

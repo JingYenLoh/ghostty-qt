@@ -26,6 +26,7 @@ private Q_SLOTS:
     void rejectsMalformedPaneActions();
     void rejectsMalformedFontSizePaneActions();
     void rejectsMalformedSearchPaneActions();
+    void parsesApplicationActionsExactly();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
 };
@@ -79,7 +80,6 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         {"toggle_fullscreen", WorkspaceAction::ToggleFullscreen, 123},
         {"prompt_surface_title", WorkspaceAction::PromptSurfaceTitle, 123},
         {"prompt_tab_title", WorkspaceAction::PromptTabTitle, 123},
-        {"quit", WorkspaceAction::RequestQuit, 123},
     };
 
     for (const auto &testCase : cases) {
@@ -327,8 +327,6 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
     QTest::newRow("empty-name") << QStringLiteral(":right") << Error::InvalidFormat;
     QTest::newRow("void-empty-parameter")
         << QStringLiteral("new_tab:") << Error::InvalidFormat;
-    QTest::newRow("void-parameter")
-        << QStringLiteral("quit:now") << Error::InvalidFormat;
     QTest::newRow("close-surface-empty-parameter")
         << QStringLiteral("close_surface:") << Error::InvalidFormat;
     QTest::newRow("close-surface-parameter")
@@ -384,10 +382,44 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
         << QStringLiteral("toggle_fullscreen:true") << Error::InvalidFormat;
     QTest::newRow("fullscreen-case")
         << QStringLiteral("Toggle_fullscreen") << Error::UnsupportedAction;
-    QTest::newRow("unknown-action")
+    QTest::newRow("application-action-is-not-workspace-action")
         << QStringLiteral("new_window") << Error::UnsupportedAction;
     QTest::newRow("leading-space")
         << QStringLiteral(" new_tab") << Error::UnsupportedAction;
+}
+
+void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
+{
+    const struct {
+        const char *serialized;
+        ApplicationAction action;
+    } accepted[] = {
+        {"ignore", ApplicationAction::Ignore},
+        {"new_window", ApplicationAction::NewWindow},
+        {"reload_config", ApplicationAction::ReloadConfig},
+        {"quit", ApplicationAction::Quit},
+    };
+    for (const auto &testCase : accepted) {
+        const QString serialized = QString::fromLatin1(testCase.serialized);
+        QCOMPARE(GhosttyActionCatalog::parseApplicationAction(serialized),
+                 std::optional{testCase.action});
+        QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
+    }
+
+    for (const QString &rejected : {
+             QStringLiteral("ignore:"),
+             QStringLiteral("ignore:anything"),
+             QStringLiteral("new_window:"),
+             QStringLiteral("new_window:now"),
+             QStringLiteral("reload_config:"),
+             QStringLiteral("reload_config:soft"),
+             QStringLiteral("quit:"),
+             QStringLiteral("quit:now"),
+             QStringLiteral("Quit"),
+         }) {
+        QVERIFY(!GhosttyActionCatalog::parseApplicationAction(rejected));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(rejected));
+    }
 }
 
 void GhosttyActionCatalogTest::matchesPinnedIntegerParsing_data()

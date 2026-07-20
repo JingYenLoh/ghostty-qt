@@ -41,6 +41,7 @@ struct ParsedConfig {
     std::optional<bool> splitInheritWorkingDirectory;
     std::optional<bool> splitPreserveZoomNavigation;
     std::optional<bool> tabInheritWorkingDirectory;
+    std::optional<bool> windowInheritWorkingDirectory;
     std::optional<bool> windowInheritFontSize;
     std::optional<QString> windowNewTabPosition;
     std::optional<QString> windowShowTabBar;
@@ -98,6 +99,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.splitInheritWorkingDirectory,
             parsed.splitPreserveZoomNavigation,
             parsed.tabInheritWorkingDirectory,
+            parsed.windowInheritWorkingDirectory,
             parsed.windowInheritFontSize,
             parsed.windowNewTabPosition,
             parsed.windowShowTabBar,
@@ -586,6 +588,11 @@ bool parseDump(const QByteArray &dump,
             }
         } else if (key == QStringLiteral("tab-inherit-working-directory")) {
             if (!parseRequiredBool(parsed->tabInheritWorkingDirectory)) {
+                return false;
+            }
+        } else if (key
+                   == QStringLiteral("window-inherit-working-directory")) {
+            if (!parseRequiredBool(parsed->windowInheritWorkingDirectory)) {
                 return false;
             }
         } else if (key == QStringLiteral("window-inherit-font-size")) {
@@ -1372,6 +1379,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const bool tabInheritWorkingDirectory =
         changes.tabInheritWorkingDirectory.value_or(
             *defaults.tabInheritWorkingDirectory);
+    const bool windowInheritWorkingDirectory =
+        changes.windowInheritWorkingDirectory.value_or(
+            *defaults.windowInheritWorkingDirectory);
     const bool windowInheritFontSize = changes.windowInheritFontSize.value_or(
         *defaults.windowInheritFontSize);
     const QString windowNewTabPosition =
@@ -1475,6 +1485,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            splitPreserveZoomNavigation);
     snapshot.values.insert(QStringLiteral("tab-inherit-working-directory"),
                            tabInheritWorkingDirectory);
+    snapshot.values.insert(
+        QStringLiteral("window-inherit-working-directory"),
+        windowInheritWorkingDirectory);
     snapshot.values.insert(QStringLiteral("window-inherit-font-size"),
                            windowInheritFontSize);
     snapshot.values.insert(QStringLiteral("window-new-tab-position"),

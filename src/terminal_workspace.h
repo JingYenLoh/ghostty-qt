@@ -1,5 +1,6 @@
 #pragma once
 
+#include "application_action.h"
 #include "launch_options.h"
 #include "tab_list_model.h"
 #include "workspace_action.h"
@@ -18,6 +19,19 @@
 
 class QQmlComponent;
 class TerminalPane;
+
+struct WorkspaceCloseAssessment {
+    bool needsConfirmation = false;
+    bool hasReadOnlyPane = false;
+
+    WorkspaceCloseAssessment &operator|=(
+        const WorkspaceCloseAssessment &other) noexcept
+    {
+        needsConfirmation |= other.needsConfirmation;
+        hasReadOnlyPane |= other.hasReadOnlyPane;
+        return *this;
+    }
+};
 
 class TerminalWorkspace : public QQuickItem {
     Q_OBJECT
@@ -41,6 +55,10 @@ public:
     ~TerminalWorkspace() override;
 
     static void setDefaultLaunchOptions(const LaunchOptions &options);
+    // QML constructs the item before the process controller can supply the
+    // per-window launch request. Initialization is one-shot and creates the
+    // first tab only after those options and QML components are ready.
+    bool initialize(const LaunchOptions &options);
     void applyLaunchOptions(const LaunchOptions &options);
     void applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot);
 
@@ -50,6 +68,21 @@ public:
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
     bool tabBarVisible() const;
+    [[nodiscard]] const LaunchOptions &effectiveLaunchOptions() const
+    {
+        return effectiveOptions_;
+    }
+    [[nodiscard]] std::optional<LaunchOptions> newWindowLaunchOptions(
+        const LaunchOptions &applicationOptions,
+        PaneId sourcePaneId = {}) const;
+    [[nodiscard]] WorkspaceCloseAssessment closeAssessment() const;
+    void requestApplicationQuitConfirmation(
+        WorkspaceCloseAssessment applicationAssessment);
+    void forceShutdownForApplicationQuit();
+    [[nodiscard]] bool isWindowCloseApproved() const
+    {
+        return windowCloseApprovedEmitted_;
+    }
     QQmlComponent *searchOverlayComponent() const
     {
         return searchOverlayComponent_;
@@ -62,7 +95,6 @@ public:
     void setReadOnlyOverlayComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
-    bool executeApplicationConfiguredAction(QStringView action);
     bool executeSurfaceActionOnAllPanes(QStringView action);
 
     Q_INVOKABLE void setCurrentIndex(int index);
@@ -94,11 +126,14 @@ Q_SIGNALS:
     void titlePromptRequested(quint64 promptId, const QString &heading,
                               const QString &initialTitle);
     void titlePromptResolved(quint64 promptId);
-    void configReloadRequested();
+    void applicationActionRequested(ApplicationAction action,
+                                    PaneId sourcePaneId);
     void broadActionsRequested(const QStringList &actions);
+    void workspaceActivated();
     void toggleFullscreenRequested();
     void windowCloseApproved();
     void applicationQuitApproved();
+    void applicationQuitCancelled();
     void searchOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
 
@@ -151,10 +186,6 @@ private:
     using PendingClose = std::variant<
         std::monostate, PendingPaneClose, PendingTabClose,
         PendingWindowClose>;
-    struct CloseAssessment {
-        bool needsConfirmation = false;
-        bool hasReadOnlyPane = false;
-    };
     enum class PaneActivationReason {
         Direct,
         SplitNavigation,
@@ -228,9 +259,10 @@ private:
     bool toggleSplitZoom(TabId tabId);
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
-    CloseAssessment assessTabClose(const Tab &tab) const;
-    CloseAssessment assessTabsClose(const std::vector<TabId> &tabIds) const;
-    CloseAssessment assessWorkspaceClose() const;
+    WorkspaceCloseAssessment assessTabClose(const Tab &tab) const;
+    WorkspaceCloseAssessment assessTabsClose(
+        const std::vector<TabId> &tabIds) const;
+    WorkspaceCloseAssessment assessWorkspaceClose() const;
     bool shouldConfirmPaneClose(const TerminalPane &pane) const;
     int tabIndexForId(TabId tabId) const;
     int tabIndexForPane(PaneId paneId) const;
@@ -266,10 +298,13 @@ private:
     quint64 splitDividerGeneration_ = 0;
     QHash<quint64, SplitDividerItem *> splitDividers_;
     bool initialTabCreated_ = false;
+    bool initialized_ = false;
     bool windowCloseApprovedEmitted_ = false;
     bool applicationQuitRequested_ = false;
     bool applicationQuitApprovedEmitted_ = false;
     bool applicationQuitReconciliationScheduled_ = false;
+    bool forceApplicationQuitShutdownScheduled_ = false;
+    std::optional<WorkspaceCloseAssessment> applicationQuitAssessment_;
     PendingClose pendingClose_;
     quint64 nextCloseConfirmationId_ = 0;
     QVector<PendingPaste> pendingPastes_;

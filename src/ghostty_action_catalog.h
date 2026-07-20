@@ -1,5 +1,6 @@
 #pragma once
 
+#include "application_action.h"
 #include "terminal_types.h"
 #include "workspace_action.h"
 
@@ -147,6 +148,12 @@ public:
     // conversion.
     [[nodiscard]] static std::optional<GhosttyPaneAction> parsePaneAction(
         QStringView serializedAction);
+
+    // Parse the exact parameterless application actions supported by this
+    // frontend. The optional is empty for malformed spellings as well as
+    // application actions that are not implemented yet.
+    [[nodiscard]] static std::optional<ApplicationAction>
+    parseApplicationAction(QStringView serializedAction);
 
     // Mirrors Binding.Action.scope() in the pinned Ghostty revision. This is
     // intentionally independent of WorkspaceAction: actions such as new_tab

@@ -1,0 +1,511 @@
+#include "application_controller.h"
+
+#include "ghostty_application_keybindings.h"
+#include "terminal_workspace.h"
+
+#include <QGuiApplication>
+#include <QPointer>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QQuickWindow>
+#include <QTimer>
+
+#include <algorithm>
+#include <ranges>
+#include <utility>
+
+ApplicationController::ApplicationController(
+    QQmlEngine &engine,
+    LaunchOptions effectiveOptions,
+    bool enableGlobalShortcutsPortal,
+    QObject *parent)
+    : ApplicationController(std::move(effectiveOptions),
+                            qmlWindowFactory(engine),
+                            enableGlobalShortcutsPortal,
+                            parent)
+{
+}
+
+ApplicationController::ApplicationController(
+    LaunchOptions effectiveOptions,
+    WindowFactory windowFactory,
+    bool enableGlobalShortcutsPortal,
+    QObject *parent)
+    : QObject(parent)
+    , windowFactory_(std::move(windowFactory))
+    , effectiveOptions_(std::move(effectiveOptions))
+    , keybindings_(std::make_unique<GhosttyApplicationKeybindings>(
+          effectiveOptions_, enableGlobalShortcutsPortal))
+{
+    TerminalWorkspace::setDefaultLaunchOptions(effectiveOptions_);
+    lifetime_.applyLaunchOptions(effectiveOptions_);
+
+    connect(&lifetime_, &ApplicationLifetimeController::quitRequested,
+            this, &ApplicationController::quitRequested);
+    connect(keybindings_.get(),
+            &GhosttyApplicationKeybindings::applicationActionRequested,
+            this, [this](ApplicationAction action) {
+                (void) dispatch(action);
+            });
+}
+
+ApplicationController::~ApplicationController()
+{
+    destroying_ = true;
+    keybindings_.reset();
+
+    // Start all worker grace periods before QObject destruction waits for any
+    // one of them. The QML roots are C++-owned factory results.
+    const auto workspaces = workspaceSnapshot();
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr) {
+            workspace->forceShutdownForApplicationQuit();
+        }
+    }
+    QVector<QPointer<QQuickWindow>> roots;
+    roots.reserve(static_cast<qsizetype>(windows_.size()));
+    for (const WindowRecord &record : std::as_const(windows_)) {
+        if (record.window != nullptr) roots.append(record.window);
+    }
+    for (const QPointer<QQuickWindow> &root : std::as_const(roots)) {
+        delete root.data();
+    }
+    windows_.clear();
+}
+
+ApplicationController::WindowFactory
+ApplicationController::qmlWindowFactory(QQmlEngine &engine)
+{
+    auto component = std::make_shared<QQmlComponent>(&engine);
+    component->loadFromModule(
+        QStringLiteral("GhosttyQt"), QStringLiteral("Main"));
+
+    return [component = std::move(component)]()
+        -> std::expected<ApplicationWindow, QString> {
+        if (!component->isReady()) {
+            return std::unexpected(component->errorString());
+        }
+
+        QObject *const root = component->create();
+        if (root == nullptr) {
+            return std::unexpected(component->errorString());
+        }
+        auto *const window = qobject_cast<QQuickWindow *>(root);
+        TerminalWorkspace *const workspace =
+            root->findChild<TerminalWorkspace *>();
+        if (window == nullptr || workspace == nullptr) {
+            delete root;
+            return std::unexpected(
+                QStringLiteral("Main.qml must create a QQuickWindow containing a TerminalWorkspace"));
+        }
+        return ApplicationWindow{window, workspace};
+    };
+}
+
+std::expected<ApplicationWindow, QString>
+ApplicationController::createInitialWindow()
+{
+    if (initialWindowCreated_) {
+        return std::unexpected(
+            QStringLiteral("The initial application window was already created"));
+    }
+
+    auto created = createWindow(effectiveOptions_);
+    if (created.has_value()) initialWindowCreated_ = true;
+    return created;
+}
+
+std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
+    const LaunchOptions &options)
+{
+    if (!windowFactory_) {
+        return std::unexpected(QStringLiteral("No window factory is available"));
+    }
+    if (lifetime_.hasRequestedQuit()
+        || quitState_ == QuitState::ClosingWindows) {
+        return std::unexpected(
+            QStringLiteral("The application is already quitting"));
+    }
+
+    std::expected<ApplicationWindow, QString> created = windowFactory_();
+    if (!created.has_value()) return created;
+    const auto discardCreated = [&created] {
+        const QPointer<TerminalWorkspace> guardedWorkspace(
+            created->workspace);
+        delete created->window;
+        if (guardedWorkspace != nullptr) delete guardedWorkspace.data();
+        *created = {};
+    };
+    if (created->window == nullptr || created->workspace == nullptr) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral("The window factory returned an incomplete window"));
+    }
+    if (created->workspace->window() != created->window) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral("The window factory returned an unowned workspace"));
+    }
+
+    const QPointer<QQuickWindow> guardedWindow(created->window);
+    if (!created->workspace->initialize(options)) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral("The window workspace was already initialized"));
+    }
+    if (!lifetime_.registerWindow(created->window)) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral("Could not register the primary application window"));
+    }
+
+    registerWindow(*created);
+    created->window->show();
+    created->window->requestActivate();
+    if (guardedWindow == nullptr) {
+        return std::unexpected(
+            QStringLiteral("The application window was destroyed during creation"));
+    }
+    Q_EMIT windowCreated(created->window, created->workspace);
+    if (guardedWindow == nullptr) {
+        return std::unexpected(
+            QStringLiteral("The application window was destroyed by its creation observer"));
+    }
+    return created;
+}
+
+bool ApplicationController::dispatch(ApplicationAction action,
+                                     TerminalWorkspace *sourceWorkspace,
+                                     PaneId sourcePaneId)
+{
+    switch (action) {
+    case ApplicationAction::Ignore:
+        return true;
+    case ApplicationAction::ReloadConfig:
+        Q_EMIT configReloadRequested();
+        return true;
+    case ApplicationAction::NewWindow: {
+        if (quitState_ != QuitState::Idle || lifetime_.hasRequestedQuit()) {
+            return false;
+        }
+        const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
+        QTimer::singleShot(
+            0, this, [this, guardedSource, sourcePaneId] {
+                auto created = createWindow(
+                    nextWindowOptions(guardedSource, sourcePaneId));
+                if (!created.has_value()) {
+                    Q_EMIT windowCreationFailed(created.error());
+                }
+            });
+        return true;
+    }
+    case ApplicationAction::Quit:
+        requestApplicationQuit();
+        return true;
+    }
+    return false;
+}
+
+LaunchOptions ApplicationController::nextWindowOptions(
+    TerminalWorkspace *sourceWorkspace,
+    PaneId sourcePaneId) const
+{
+    TerminalWorkspace *const fallback = activeWorkspace();
+    TerminalWorkspace *source = sourceWorkspace;
+    if (!containsWorkspace(source)) {
+        source = fallback;
+        sourcePaneId = {};
+    }
+
+    if (source != nullptr) {
+        if (const std::optional<LaunchOptions> inherited =
+                source->newWindowLaunchOptions(
+                    effectiveOptions_, sourcePaneId)) {
+            return *inherited;
+        }
+        if (source != fallback && fallback != nullptr) {
+            if (const std::optional<LaunchOptions> inherited =
+                    fallback->newWindowLaunchOptions(effectiveOptions_)) {
+                return *inherited;
+            }
+        }
+    }
+
+    LaunchOptions result = effectiveOptions_;
+    result.program.clear();
+    result.hold = false;
+    return result;
+}
+
+void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
+{
+    effectiveOptions_ = options;
+    TerminalWorkspace::setDefaultLaunchOptions(effectiveOptions_);
+    lifetime_.applyLaunchOptions(effectiveOptions_);
+    keybindings_->applyLaunchOptions(effectiveOptions_);
+    for (const QPointer<TerminalWorkspace> &workspace : workspaceSnapshot()) {
+        if (workspace != nullptr) {
+            workspace->applyLaunchOptions(effectiveOptions_);
+        }
+    }
+}
+
+TerminalWorkspace *ApplicationController::activeWorkspace() const
+{
+    QWindow *const focusWindow = QGuiApplication::focusWindow();
+    if (focusWindow != nullptr) {
+        for (const WindowRecord &record : windows_) {
+            if (record.window == focusWindow && record.workspace != nullptr) {
+                return record.workspace;
+            }
+        }
+    }
+    if (containsWorkspace(lastActiveWorkspace_)) {
+        return lastActiveWorkspace_;
+    }
+    for (auto record = windows_.crbegin(); record != windows_.crend();
+         ++record) {
+        if (record->window != nullptr && record->workspace != nullptr) {
+            return record->workspace;
+        }
+    }
+    return nullptr;
+}
+
+int ApplicationController::windowCount() const
+{
+    return static_cast<int>(std::ranges::count_if(
+        windows_, [](const WindowRecord &record) {
+            return record.window != nullptr && record.workspace != nullptr;
+        }));
+}
+
+QVector<ApplicationWindow> ApplicationController::windows() const
+{
+    QVector<ApplicationWindow> result;
+    result.reserve(static_cast<qsizetype>(windows_.size()));
+    for (const WindowRecord &record : windows_) {
+        if (record.window != nullptr && record.workspace != nullptr) {
+            result.append({record.window, record.workspace});
+        }
+    }
+    return result;
+}
+
+bool ApplicationController::containsWorkspace(
+    const TerminalWorkspace *workspace) const
+{
+    return workspace != nullptr
+        && std::ranges::any_of(windows_, [workspace](const WindowRecord &record) {
+               return record.workspace == workspace && record.window != nullptr;
+           });
+}
+
+std::vector<QPointer<TerminalWorkspace>>
+ApplicationController::workspaceSnapshot() const
+{
+    std::vector<QPointer<TerminalWorkspace>> result;
+    result.reserve(windows_.size());
+    for (const WindowRecord &record : windows_) {
+        if (record.workspace != nullptr) result.push_back(record.workspace);
+    }
+    return result;
+}
+
+void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
+{
+    QQuickWindow *const window = applicationWindow.window;
+    TerminalWorkspace *const workspace = applicationWindow.workspace;
+    windows_.push_back({window, workspace});
+    if (!containsWorkspace(lastActiveWorkspace_)) {
+        lastActiveWorkspace_ = workspace;
+    }
+    keybindings_->registerWorkspace(workspace);
+
+    connect(workspace, &TerminalWorkspace::applicationActionRequested,
+            this, [this, guarded = QPointer(workspace)](
+                      ApplicationAction action, PaneId paneId) {
+                if (guarded != nullptr) {
+                    (void) dispatch(action, guarded, paneId);
+                }
+            });
+    connect(workspace, &TerminalWorkspace::workspaceActivated,
+            this, [this, guarded = QPointer(workspace)] {
+                noteWorkspaceActivated(guarded);
+            });
+    connect(window, &QWindow::activeChanged, this,
+            [this, guardedWindow = QPointer(window),
+             guardedWorkspace = QPointer(workspace)] {
+                if (guardedWindow != nullptr && guardedWindow->isActive()) {
+                    noteWorkspaceActivated(guardedWorkspace);
+                }
+            });
+    connect(workspace, &TerminalWorkspace::applicationQuitApproved,
+            this, [this, guarded = QPointer(workspace)] {
+                commitApplicationQuit(guarded);
+            });
+    connect(workspace, &TerminalWorkspace::applicationQuitCancelled,
+            this, [this, guarded = QPointer(workspace)] {
+                applicationQuitCancelled(guarded);
+            });
+    connect(workspace, &TerminalWorkspace::windowCloseApproved,
+            this, [this, guardedWindow = QPointer(window),
+                   guardedWorkspace = QPointer(workspace)] {
+                workspaceShutdownApproved(guardedWorkspace);
+                if (guardedWindow == nullptr) return;
+                guardedWindow->setProperty("closeApproved", true);
+                connect(guardedWindow, &QWindow::visibleChanged,
+                        guardedWindow,
+                        [guardedWindow](bool visible) {
+                            if (!visible && guardedWindow != nullptr) {
+                                guardedWindow->deleteLater();
+                            }
+                        },
+                        Qt::SingleShotConnection);
+                QTimer::singleShot(0, guardedWindow, [guardedWindow] {
+                    if (guardedWindow == nullptr) return;
+                    guardedWindow->close();
+                    if (!guardedWindow->isVisible()) {
+                        guardedWindow->deleteLater();
+                    }
+                });
+            },
+            Qt::SingleShotConnection);
+    connect(workspace, &QObject::destroyed, this,
+            [this, workspace] { workspaceDestroyed(workspace); });
+    connect(window, &QObject::destroyed, this,
+            [this, window] { retireWindow(window); });
+}
+
+void ApplicationController::noteWorkspaceActivated(
+    TerminalWorkspace *workspace)
+{
+    if (containsWorkspace(workspace)) lastActiveWorkspace_ = workspace;
+}
+
+void ApplicationController::retireWindow(QQuickWindow *window)
+{
+    const auto previousSize = windows_.size();
+    std::erase_if(windows_, [window](const WindowRecord &record) {
+        return record.window == nullptr || record.window == window;
+    });
+    if (previousSize == windows_.size()) return;
+    if (windows_.empty()) lifetime_.lastWindowClosed();
+    Q_EMIT windowRetired();
+}
+
+void ApplicationController::workspaceDestroyed(TerminalWorkspace *workspace)
+{
+    if (lastActiveWorkspace_.isNull()
+        || lastActiveWorkspace_ == workspace) {
+        lastActiveWorkspace_.clear();
+    }
+    awaitingShutdown_.remove(workspace);
+
+    if (quitState_ == QuitState::AwaitingConfirmation
+        && (quitDialogHost_.isNull() || quitDialogHost_ == workspace)
+        && !destroying_) {
+        quitDialogHost_.clear();
+        rehostApplicationQuit();
+    } else if (quitState_ == QuitState::ClosingWindows) {
+        finishApplicationQuitIfReady();
+    }
+}
+
+void ApplicationController::requestApplicationQuit()
+{
+    if (quitState_ != QuitState::Idle || lifetime_.hasRequestedQuit()) return;
+
+    const auto workspaces = workspaceSnapshot();
+    if (workspaces.empty()) {
+        quitState_ = QuitState::ClosingWindows;
+        Q_EMIT applicationQuitCommitted();
+        lifetime_.requestQuitNow();
+        return;
+    }
+
+    WorkspaceCloseAssessment assessment;
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr) assessment |= workspace->closeAssessment();
+    }
+
+    TerminalWorkspace *host = activeWorkspace();
+    if (host == nullptr) {
+        host = workspaces.front();
+    }
+    quitState_ = QuitState::AwaitingConfirmation;
+    quitDialogHost_ = host;
+    host->requestApplicationQuitConfirmation(assessment);
+}
+
+void ApplicationController::commitApplicationQuit(TerminalWorkspace *host)
+{
+    if (quitState_ != QuitState::AwaitingConfirmation
+        || quitDialogHost_ != host) {
+        return;
+    }
+
+    quitState_ = QuitState::ClosingWindows;
+    quitDialogHost_.clear();
+    awaitingShutdown_.clear();
+    const auto workspaces = workspaceSnapshot();
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr && !workspace->isWindowCloseApproved()) {
+            awaitingShutdown_.insert(workspace);
+        }
+    }
+
+    startingApplicationShutdown_ = true;
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr && !workspace->isWindowCloseApproved()) {
+            workspace->forceShutdownForApplicationQuit();
+        }
+    }
+    startingApplicationShutdown_ = false;
+    finishApplicationQuitIfReady();
+}
+
+void ApplicationController::applicationQuitCancelled(
+    TerminalWorkspace *host)
+{
+    if (quitState_ != QuitState::AwaitingConfirmation
+        || quitDialogHost_ != host) {
+        return;
+    }
+    quitDialogHost_.clear();
+    quitState_ = QuitState::Idle;
+}
+
+void ApplicationController::workspaceShutdownApproved(
+    TerminalWorkspace *workspace)
+{
+    awaitingShutdown_.remove(workspace);
+    finishApplicationQuitIfReady();
+}
+
+void ApplicationController::finishApplicationQuitIfReady()
+{
+    if (destroying_ || startingApplicationShutdown_
+        || quitState_ != QuitState::ClosingWindows
+        || !awaitingShutdown_.isEmpty()
+        || lifetime_.hasRequestedQuit()) {
+        return;
+    }
+    Q_EMIT applicationQuitCommitted();
+    lifetime_.requestQuitNow();
+}
+
+void ApplicationController::rehostApplicationQuit()
+{
+    if (quitRehostScheduled_) return;
+    quitRehostScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        quitRehostScheduled_ = false;
+        if (destroying_ || quitState_ != QuitState::AwaitingConfirmation
+            || quitDialogHost_ != nullptr) {
+            return;
+        }
+        quitState_ = QuitState::Idle;
+        requestApplicationQuit();
+    });
+}

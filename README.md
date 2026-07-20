@@ -203,8 +203,8 @@ back to `/bin/sh`. To run a specific command, put it after `--`:
 ```
 
 `--hold` leaves the exited pane visible with its exit status. A command supplied
-on the command line applies to the initial pane only; later tabs and splits start
-the default shell.
+on the command line applies to the initial pane only; later tabs, splits, and
+windows start the default shell.
 
 ## Ghostty configuration
 
@@ -228,15 +228,16 @@ The current compatibility slice applies these keys:
 
 | Key | Current behavior |
 | --- | --- |
-| `working-directory` | Sets the default directory for initial panes and the fallback for new tabs and splits. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
+| `working-directory` | Sets the default directory for initial panes and the fallback for new tabs, splits, and windows. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
 | `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
 | `split-preserve-zoom` | Ghostty's canonical `no-navigation` default clears split zoom after a successful `goto_split`. Canonical `navigation` instead transfers the zoomed presentation to the newly focused pane for successful previous/next or spatial navigation. Reload affects subsequent navigation immediately. A direction with no target changes neither focus nor zoom; direct activation of another pane and structural changes such as creating a split retain their existing unzoom behavior. |
 | `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
-| `window-inherit-font-size` | Defaults to `true`. New tabs inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. New-window behavior awaits multi-window support. |
+| `window-inherit-working-directory` | Defaults to `true`. A pane-originated new window inherits that exact pane's latest accepted local OSC 7 directory; an application/global action uses the focused or most recently active live pane, and a stale or zero-window source uses the newest `working-directory`. `false` always uses that application fallback. Reload affects future windows only. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
+| `window-inherit-font-size` | Defaults to `true`. New tabs and pane-originated windows inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. An application/global new-window action uses the focused or most recently active pane. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
 | `window-show-tab-bar` | Supports Ghostty's exact `always`, `auto`, and `never` values and defaults to `auto`. `always` shows the tab strip with any tab count, `auto` hides it for one tab and shows it at two or more, and `never` hides it. Reload and the one/two-tab boundary update visibility live. This Qt mapping hides only the QML `TabBar`; the surrounding toolbar and its new-tab, split, and close controls remain available. |
-| `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so ordinary confirmed window closure follows this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` closes the window and keeps the process resident. Reload reconciles the windowless state. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. Resident mode is currently of limited practical use because activation/new-window and multiwindow support are not implemented. |
-| `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A new primary window cancels the single application timer; identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit` from a live workspace or an explicit command bypasses it. A zero-window global-action path awaits activation/new-window support. |
+| `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so only the final ordinary confirmed window closure enters this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` retires every root and worker but keeps process configuration, actions, and global shortcuts resident. An in-process or portal `new_window` action can then create a fresh QML window, and reload updates both all live windows and the next replacement. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. External secondary-process/single-instance activation remains separate future work. |
+| `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A successfully created replacement window cancels the single application timer; a failed factory attempt leaves it armed, identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit`—including with zero windows—bypasses it. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. New tabs may initially inherit their source's actual size as described above. Explicit `--font-size` wins. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
@@ -282,8 +283,9 @@ keybind = modal/escape=deactivate_key_table
 ```
 
 `all:` runs an action over every surface in the process; app-scoped actions
-such as `reload_config` run once. `global:` has the same fanout semantics and,
-for eligible root bindings, additionally registers with the desktop portal:
+such as `new_window`, `reload_config`, and `quit` run once. `global:` has the
+same fanout semantics and, for eligible root bindings, additionally registers
+with the desktop portal:
 
 ```ini
 keybind = all:ctrl+shift+f=increase_font_size:1
@@ -476,8 +478,9 @@ race/reload coverage, and PTY-backed sequence replay, helper-process
 protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
 application's immediate, delayed, disabled, cancelled, reloaded, and explicit
-process/window lifetime, source-stable new-tab
-working-directory/font inheritance, per-pane read-only input suppression and
+multiwindow lifetime, zero-window recreation, source-stable new-tab/new-window
+working-directory/font inheritance, aggregate quit coordination, per-pane
+read-only input suppression and
 close protection, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
 exercised headlessly; workspace tab ordering, split layout, navigation, and
@@ -524,10 +527,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   Transient geometry still scans the visible grid on each presented update;
   compatible text-run batching and retained geometry remain CPU/allocation
   optimizations.
-- No X11 backend, multi-window support, theme editor, session
-  persistence, or production package metadata yet. Configuration support is
-  limited to the documented compatibility slice; most Ghostty keys remain
-  planned.
+- No X11 backend, external single-instance/secondary-launch activation bridge,
+  theme editor, session persistence, or production package metadata yet.
+  Configuration support is limited to the documented compatibility slice;
+  most Ghostty keys remain planned.
 - Search is an incremental compatibility foundation rather than the upstream
   engine. The public `libghostty-vt` artifact exposes no search thread because
   Ghostty's implementation currently depends on `xev`. This frontend therefore

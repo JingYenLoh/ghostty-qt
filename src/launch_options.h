@@ -86,8 +86,12 @@ struct LaunchOptions {
     // New tabs inherit the source pane's reported directory when enabled;
     // otherwise the workspace's effective working-directory is used.
     bool tabInheritWorkingDirectory = true;
+    // New windows inherit the originating/focused pane's reported directory
+    // when enabled. With no live source, the application working-directory is
+    // retained as the fallback.
+    bool windowInheritWorkingDirectory = true;
     // Ghostty uses one setting for new windows and tabs. The current
-    // single-window frontend applies it to the source pane of a new tab.
+    // frontend applies it to the source pane of a new tab or window.
     bool windowInheritFontSize = true;
     // Controls whether a new tab is inserted after the selected tab or at the
     // end of the window's stable tab list.

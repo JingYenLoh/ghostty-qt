@@ -1,5 +1,6 @@
 #pragma once
 
+#include "application_action.h"
 #include "ghostty_keybind_set.h"
 #include "launch_options.h"
 
@@ -33,11 +34,16 @@ public:
     // Shared by focused all:/global: matches and XDG portal activations.
     void dispatchBroadActions(const QStringList &actions);
 
+Q_SIGNALS:
+    // Process actions deliberately have no workspace dependency. The
+    // application controller can therefore execute them while resident with
+    // zero windows.
+    void applicationActionRequested(ApplicationAction action);
+
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    TerminalWorkspace *activeWorkspace() const;
     QVector<QPointer<TerminalWorkspace>> workspaceSnapshot() const;
     bool executeApplicationActions(const QStringList &actions);
 

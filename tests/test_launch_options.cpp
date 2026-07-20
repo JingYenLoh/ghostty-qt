@@ -115,6 +115,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.splitInheritWorkingDirectory);
     QVERIFY(!options.splitPreserveZoomNavigation);
     QVERIFY(options.tabInheritWorkingDirectory);
+    QVERIFY(options.windowInheritWorkingDirectory);
     QVERIFY(options.windowInheritFontSize);
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
@@ -526,6 +527,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     base.workingDirectory = QStringLiteral("/launch-directory");
     base.splitInheritWorkingDirectory = true;
     base.tabInheritWorkingDirectory = true;
+    base.windowInheritWorkingDirectory = true;
     base.windowInheritFontSize = true;
 
     GhosttyConfigSnapshot snapshot;
@@ -536,6 +538,8 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
         QStringLiteral("split-inherit-working-directory"), false);
     snapshot.values.insert(
         QStringLiteral("tab-inherit-working-directory"), false);
+    snapshot.values.insert(
+        QStringLiteral("window-inherit-working-directory"), false);
     snapshot.values.insert(QStringLiteral("window-inherit-font-size"), false);
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
@@ -544,6 +548,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(!result.splitInheritWorkingDirectory);
     QVERIFY(!result.tabInheritWorkingDirectory);
+    QVERIFY(!result.windowInheritWorkingDirectory);
     QVERIFY(!result.windowInheritFontSize);
 
     base.workingDirectoryExplicit = true;
@@ -552,6 +557,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(!result.splitInheritWorkingDirectory);
     QVERIFY(!result.tabInheritWorkingDirectory);
+    QVERIFY(!result.windowInheritWorkingDirectory);
     QVERIFY(!result.windowInheritFontSize);
 
     base.workingDirectoryExplicit = false;
@@ -573,6 +579,9 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
         QStringLiteral("tab-inherit-working-directory"),
         QStringLiteral("false"));
     snapshot.values.insert(
+        QStringLiteral("window-inherit-working-directory"),
+        QStringLiteral("false"));
+    snapshot.values.insert(
         QStringLiteral("window-inherit-font-size"),
         QStringLiteral("false"));
     result = applyGhosttyConfigSnapshot(base, snapshot);
@@ -580,6 +589,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(result.splitInheritWorkingDirectory);
     QVERIFY(result.tabInheritWorkingDirectory);
+    QVERIFY(result.windowInheritWorkingDirectory);
     QVERIFY(result.windowInheritFontSize);
 
     snapshot.availability = GhosttyConfigAvailability::Unavailable;
@@ -948,6 +958,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.splitInheritWorkingDirectory = false;
     frontendOnlyChanged.splitPreserveZoomNavigation = true;
     frontendOnlyChanged.tabInheritWorkingDirectory = false;
+    frontendOnlyChanged.windowInheritWorkingDirectory = false;
     frontendOnlyChanged.windowInheritFontSize = false;
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;

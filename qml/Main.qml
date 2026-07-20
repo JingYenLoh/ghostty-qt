@@ -21,7 +21,9 @@ ApplicationWindow {
     height: 720
     minimumWidth: 480
     minimumHeight: 320
-    visible: true
+    // The process controller presents the window only after its workspace,
+    // lifetime tracking, process actions, and retirement wiring are complete.
+    visible: false
     title: workspace.currentTitle.length > 0
            ? workspace.currentTitle + " — ghostty-qt"
            : "ghostty-qt"
@@ -256,7 +258,6 @@ ApplicationWindow {
         }
         function onWindowCloseApproved() {
             window.closeApproved = true
-            Qt.callLater(window.close)
         }
     }
 }

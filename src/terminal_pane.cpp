@@ -1011,6 +1011,26 @@ LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
     return result;
 }
 
+LaunchOptions TerminalPane::windowLaunchOptions(
+    const LaunchOptions &base) const
+{
+    LaunchOptions result = base;
+    const QString directory = currentDirectory();
+    if (base.windowInheritWorkingDirectory && !directory.isEmpty()) {
+        result.workingDirectory = directory;
+        result.inheritWorkingDirectory = false;
+    }
+    if (base.windowInheritFontSize) {
+        QMutexLocker locker(&renderMutex_);
+        result.fontSize = font_.pointSizeF();
+    }
+    // The command supplied to the original process is a one-shot initial
+    // command. New windows use the configured shell/session command.
+    result.program.clear();
+    result.hold = false;
+    return result;
+}
+
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     LaunchOptions updated = options_;
@@ -1966,13 +1986,18 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
             }
             return KeyHandling::ConsumePressAndRelease;
         }
+        case Qt::Key_N:
+            Q_EMIT applicationActionRequested(ApplicationAction::NewWindow);
+            return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_T: Q_EMIT requestNewTab(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_O: Q_EMIT requestSplit(WorkspaceAction::SplitRight); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_E: Q_EMIT requestSplit(WorkspaceAction::SplitDown); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_W:
             Q_EMIT requestCloseTab(CloseTabMode::This);
             return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_Q: Q_EMIT requestQuit(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_Q:
+            Q_EMIT applicationActionRequested(ApplicationAction::Quit);
+            return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_F: startSearchUi(); return KeyHandling::ConsumePressAndRelease;
         default: break;
         }
@@ -2178,6 +2203,9 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
 
 bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
 {
+    if (GhosttyActionCatalog::parseApplicationAction(action).has_value()) {
+        return true;
+    }
     const std::optional<GhosttyPaneAction> paneAction =
         GhosttyActionCatalog::parsePaneAction(action);
     if (paneAction.has_value()) {
@@ -2244,10 +2272,8 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         return !QGuiApplication::clipboard()->text(
             QClipboard::Selection).isEmpty();
     }
-    if (name == QLatin1StringView("reload_config")
-        || name == QLatin1StringView("close_window")
-        || name == QLatin1StringView("end_key_sequence")
-        || name == QLatin1StringView("ignore")) {
+    if (name == QLatin1StringView("close_window")
+        || name == QLatin1StringView("end_key_sequence")) {
         return true;
     }
 
@@ -2265,6 +2291,12 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     // Broad action fanout calls this public boundary without the normal
     // performability preflight. Apply the catalog grammar before any action
     // can mutate pane or application state.
+    if (const std::optional<ApplicationAction> applicationAction =
+            GhosttyActionCatalog::parseApplicationAction(action)) {
+        Q_EMIT applicationActionRequested(*applicationAction);
+        return true;
+    }
+
     const std::optional<GhosttyPaneAction> paneAction =
         GhosttyActionCatalog::parsePaneAction(action);
     if (paneAction.has_value()) {
@@ -2407,10 +2439,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         pasteText(text);
         return true;
     }
-    if (name == QLatin1StringView("reload_config")) {
-        Q_EMIT requestConfigReload();
-        return true;
-    }
     if (name == QLatin1StringView("end_key_sequence")) {
         keybinds_.resetSequence();
         if (activeSequenceToken_ != 0) {
@@ -2424,10 +2452,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         Q_EMIT requestCloseWindow();
         return true;
     }
-    if (name == QLatin1StringView("ignore")) {
-        return true;
-    }
-
     const GhosttyActionTranslation translated =
         GhosttyActionCatalog::translate(action);
     if (!translated.accepted()) {
@@ -2471,9 +2495,6 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         return true;
     case WorkspaceAction::ChangeTabRelative:
         Q_EMIT requestTabChange(static_cast<int>(request.context.value));
-        return true;
-    case WorkspaceAction::RequestQuit:
-        Q_EMIT requestQuit();
         return true;
     case WorkspaceAction::SetSurfaceTitle:
         setSurfaceTitle(std::move(request.payload));

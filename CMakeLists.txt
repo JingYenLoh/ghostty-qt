@@ -470,6 +470,9 @@ target_compile_options(ghostty-qt-vt-adapter PRIVATE
 
 qt_add_executable(ghostty-qt
     src/main.cpp
+    src/application_action.h
+    src/application_controller.cpp
+    src/application_controller.h
     src/application_lifetime.cpp
     src/application_lifetime.h
     src/ghostty_application_keybindings.cpp

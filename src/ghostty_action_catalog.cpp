@@ -318,8 +318,7 @@ bool isVoidAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("toggle_fullscreen"))
         || equals(actionName, QLatin1StringView("equalize_splits"))
         || equals(actionName, QLatin1StringView("prompt_surface_title"))
-        || equals(actionName, QLatin1StringView("prompt_tab_title"))
-        || equals(actionName, QLatin1StringView("quit"));
+        || equals(actionName, QLatin1StringView("prompt_tab_title"));
 }
 
 bool isCatalogAction(QStringView actionName)
@@ -451,13 +450,6 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                       actionName,
                       parameter);
     }
-    if (equals(actionName, QLatin1StringView("quit"))) {
-        return accept(WorkspaceAction::RequestQuit,
-                      context,
-                      actionName,
-                      parameter);
-    }
-
     if (equals(actionName, QLatin1StringView("goto_tab"))) {
         if (!parameter.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
@@ -922,6 +914,9 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
 
 bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
 {
+    if (parseApplicationAction(serializedAction).has_value()) {
+        return true;
+    }
     if (parsePaneAction(serializedAction).has_value()) {
         return true;
     }
@@ -940,13 +935,33 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
         || name == QLatin1StringView("paste_from_selection")
         || name == QLatin1StringView("copy_url_to_clipboard")
         || name == QLatin1StringView("copy_title_to_clipboard")
-        || name == QLatin1StringView("reload_config")
         || name == QLatin1StringView("end_key_sequence")
-        || name == QLatin1StringView("close_window")
-        || name == QLatin1StringView("ignore")) {
+        || name == QLatin1StringView("close_window")) {
         return !parameter.has_value();
     }
     return translate(serializedAction).accepted();
+}
+
+std::optional<ApplicationAction>
+GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
+{
+    const GhosttySerializedActionView parsed =
+        parseSerializedAction(serializedAction);
+    if (parsed.parameter.has_value()) return std::nullopt;
+
+    if (parsed.name == QLatin1StringView("ignore")) {
+        return ApplicationAction::Ignore;
+    }
+    if (parsed.name == QLatin1StringView("new_window")) {
+        return ApplicationAction::NewWindow;
+    }
+    if (parsed.name == QLatin1StringView("reload_config")) {
+        return ApplicationAction::ReloadConfig;
+    }
+    if (parsed.name == QLatin1StringView("quit")) {
+        return ApplicationAction::Quit;
+    }
+    return std::nullopt;
 }
 
 GhosttyActionScope GhosttyActionCatalog::scope(
