@@ -747,6 +747,10 @@
           "status": "partial",
           "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
+        "copy_title_to_clipboard": {
+          "status": "partial",
+          "note": "Local behavior is exact: only the void spelling is accepted, and the originating pane's raw persistent surface override or optional base is copied synchronously and byte-for-QString exact to the standard clipboard. Absent/empty titles return false; tab overrides, zoom/fallback labels, primary, trimming, selection clearing, focus, and terminal selection are excluded. All/global last-writer order follows Qt's tab/tree traversal rather than Ghostty's creation/swap-remove surface vector. Qt also models a direct program name as presentation fallback where pinned Ghostty may initialize it as a copyable base title."
+        },
         "copy_url_to_clipboard": {
           "status": "partial",
           "note": "Copies either the hovered OSC 8 destination or pinned default-regex match byte-exact as the text/plain MIME payload without QUrl normalization. Custom link rules/actions remain unavailable; malformed explicit destinations can be copied but are rejected before Qt desktop-service activation."

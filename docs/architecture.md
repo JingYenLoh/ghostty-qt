@@ -111,7 +111,15 @@ terminal selection. The strict void `prompt_surface_title` snapshots the raw
 surface override or base by stable `PaneId`, excluding tab and fallback text.
 Non-empty confirmation preserves the exact text as a persistent override;
 empty confirmation clears it, and Cancel is inert. Base updates remain cached
-while masked, so clearing reveals the newest OSC or action value. A non-empty
+while masked, so clearing reveals the newest OSC or action value. The strict
+void `copy_title_to_clipboard` consumes the same raw effective surface value;
+absence and explicit empty return false, while non-empty Unicode is written
+exactly to the standard clipboard on the GUI thread. It never consumes the tab
+override, zoom/fallback presentation, primary selection, or terminal
+selection lifecycle. Broad fanout retains the existing stable tab/tree order,
+so its last non-empty pane is the final standard-clipboard writer. This
+frontend order differs from Ghostty's process-wide creation/swap-remove
+surface vector after reordering or deletion. A non-empty
 `set_tab_title` payload installs a per-tab display-title override by stable tab
 identity; an empty payload clears it. Pane focus changes and OSC title updates
 continue to update the base title without replacing the override, so clearing
@@ -295,11 +303,14 @@ signals:
   typed intent cross to a queued GUI receiver, so only the GUI thread
   reads or writes `QClipboard`. Linux copy-on-select commits on left-button
   release and select-all, with primary-selection fallback resolved from Qt's
-  GUI-thread capability. Libghostty's tracked selection-gesture state keeps
-  the drag anchor stable across output, scrolling, resize, and automatic
-  selection clearing. Raw binding actions, paste, mouse/focus reports, and
-  replayed sequence leaders bypass clear-on-typing. OSC-driven clipboard writes
-  from terminal applications are denied by the host callback.
+  GUI-thread capability. The pane-local `copy_title_to_clipboard` action also
+  writes through that GUI adapter, but always targets only the standard
+  clipboard and bypasses every selection policy. Libghostty's tracked
+  selection-gesture state keeps the drag anchor stable across output,
+  scrolling, resize, and automatic selection clearing. Raw binding actions,
+  paste, mouse/focus reports, and replayed sequence leaders bypass
+  clear-on-typing. OSC-driven clipboard writes from terminal applications are
+  denied by the host callback.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain

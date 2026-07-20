@@ -2223,6 +2223,10 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
             && hoveredCellIsLinked
             && hyperlinkModifiersMatch(hoverModifiers_);
     }
+    if (name == QLatin1StringView("copy_title_to_clipboard")) {
+        const std::optional<QString> title = effectiveSurfaceTitle();
+        return title && !title->isEmpty();
+    }
     if (name == QLatin1StringView("paste_from_clipboard")) {
         return !QGuiApplication::clipboard()->text().isEmpty();
     }
@@ -2364,6 +2368,16 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         mimeData->setData(QStringLiteral("text/plain"),
                           hoveredHyperlinkUri_);
         QGuiApplication::clipboard()->setMimeData(mimeData);
+        return true;
+    }
+    if (name == QLatin1StringView("copy_title_to_clipboard")) {
+        const std::optional<QString> title = effectiveSurfaceTitle();
+        QClipboard *const clipboard = QGuiApplication::clipboard();
+        if (!title || title->isEmpty() || clipboard == nullptr) {
+            return false;
+        }
+        writeTerminalClipboard(
+            clipboard, *title, TerminalClipboardDestination::Standard);
         return true;
     }
     if (name == QLatin1StringView("paste_from_clipboard")) {

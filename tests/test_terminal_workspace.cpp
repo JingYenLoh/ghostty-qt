@@ -5,9 +5,11 @@
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
 
+#include <QClipboard>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
 #include <QPointer>
@@ -23,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -1546,6 +1549,8 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
     };
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     QQuickWindow window;
@@ -1677,6 +1682,90 @@ void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
         {QStringLiteral(R"(set_surface_title:\xff)")});
     QCOMPARE(firstTitleChanges.count(), 1);
     QCOMPARE(secondTitleChanges.count(), 1);
+
+    // Title copying consumes only each pane's raw surface layer. It neither
+    // exposes the tab override nor disturbs focus, selection, or primary.
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const bool supportsPrimary = clipboard->supportsSelection();
+    const QString standardSentinel = QStringLiteral("standard sentinel");
+    const QString primarySentinel = QStringLiteral("primary sentinel");
+    const QString copyAction = QStringLiteral("copy_title_to_clipboard");
+    const QString firstCopyTitle = QStringLiteral("  first 👻  ");
+    const QString secondCopyTitle = QStringLiteral("  second 🌐  ");
+    QStringList clipboardWrites;
+    const QMetaObject::Connection clipboardConnection = connect(
+        clipboard, &QClipboard::changed, &workspace,
+        [&clipboardWrites, clipboard](QClipboard::Mode mode) {
+            if (mode == QClipboard::Clipboard) {
+                clipboardWrites.append(
+                    clipboard->text(QClipboard::Clipboard));
+            }
+        });
+    const auto resetClipboards = [&] {
+        clipboard->setText(standardSentinel, QClipboard::Clipboard);
+        if (supportsPrimary) {
+            clipboard->setText(primarySentinel, QClipboard::Selection);
+        }
+        clipboardWrites.clear();
+    };
+    const auto verifyInteractionState = [&] {
+        QCOMPARE(workspace.currentIndex(), selectedIndex);
+        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
+                 secondPaneId);
+        QCOMPARE(firstController->selectionAvailable(), firstSelection);
+        QCOMPARE(secondController->selectionAvailable(), secondSelection);
+        QCOMPARE(window.activeFocusItem(), focusedItem);
+        if (supportsPrimary) {
+            QCOMPARE(clipboard->text(QClipboard::Selection), primarySentinel);
+        }
+    };
+
+    firstPane->setSurfaceTitle(firstCopyTitle);
+    secondPane->setSurfaceTitle(QStringLiteral("hidden second base"));
+    secondPane->setSurfaceTitleOverride(
+        std::optional<QString>{secondCopyTitle});
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:tab copy mask")));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab copy mask"));
+
+    resetClipboards();
+    QVERIFY(firstPane->executeConfiguredAction(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), firstCopyTitle);
+    verifyInteractionState();
+    QVERIFY(secondPane->executeConfiguredAction(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), secondCopyTitle);
+    verifyInteractionState();
+
+    // Broad fanout overwrites in its stable pane order. Empty later panes are
+    // no-ops, and an all-empty fanout reports that nothing was performed.
+    resetClipboards();
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), secondCopyTitle);
+    QCOMPARE(clipboardWrites,
+             QStringList({firstCopyTitle, secondCopyTitle}));
+    verifyInteractionState();
+
+    secondPane->setSurfaceTitleOverride(std::nullopt);
+    secondPane->setSurfaceTitle(QString{});
+    resetClipboards();
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), firstCopyTitle);
+    QCOMPARE(clipboardWrites, QStringList({firstCopyTitle}));
+    verifyInteractionState();
+
+    firstPane->setSurfaceTitle(QString{});
+    resetClipboards();
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(copyAction));
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
+    QVERIFY(clipboardWrites.isEmpty());
+    verifyInteractionState();
+
+    disconnect(clipboardConnection);
+    clipboard->clear(QClipboard::Clipboard);
+    if (supportsPrimary) {
+        clipboard->clear(QClipboard::Selection);
+    }
 
     QPointer<TerminalPane> removedPane(firstPane);
     QVERIFY(workspace.dispatchAction({

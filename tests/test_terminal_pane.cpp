@@ -31,6 +31,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -172,6 +173,7 @@ private Q_SLOTS:
     void executesTypedFontSizeActions();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
+    void copiesRawEffectiveSurfaceTitle();
     void reloadsMiddleClickClipboardPolicy();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
@@ -1460,6 +1462,77 @@ void TerminalPaneTest::writesClipboardDestinations()
     }
 }
 
+void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::PrimaryAndClipboard;
+
+    TerminalPane pane(options);
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const bool supportsPrimary = clipboard->supportsSelection();
+    const QString standardSentinel = QStringLiteral("standard sentinel");
+    const QString primarySentinel = QStringLiteral("primary sentinel");
+    const QString copyAction = QStringLiteral("copy_title_to_clipboard");
+    const auto resetClipboards = [&] {
+        clipboard->setText(standardSentinel, QClipboard::Clipboard);
+        if (supportsPrimary) {
+            clipboard->setText(primarySentinel, QClipboard::Selection);
+        }
+    };
+    const auto verifyPrimaryUnchanged = [&] {
+        if (supportsPrimary) {
+            QCOMPARE(clipboard->text(QClipboard::Selection), primarySentinel);
+        }
+    };
+
+    // The visible argv[0] fallback is presentation only and is not copyable.
+    resetClipboards();
+    QCOMPARE(pane.title(), QStringLiteral("true"));
+    QVERIFY(!pane.effectiveSurfaceTitle().has_value());
+    QVERIFY(!pane.executeConfiguredAction(copyAction));
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
+    verifyPrimaryUnchanged();
+
+    // An explicit empty base remains a title-layer value, but upstream treats
+    // it as a copy no-op just like absence.
+    pane.setSurfaceTitle(QString{});
+    QVERIFY(pane.effectiveSurfaceTitle().has_value());
+    QVERIFY(pane.effectiveSurfaceTitle()->isEmpty());
+    QVERIFY(!pane.executeConfiguredAction(copyAction));
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
+    verifyPrimaryUnchanged();
+
+    const QString baseTitle = QStringLiteral("  base 👻  ");
+    pane.setSurfaceTitle(baseTitle);
+    QVERIFY(pane.executeConfiguredAction(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), baseTitle);
+    verifyPrimaryUnchanged();
+
+    const QString overrideTitle = QStringLiteral("  override 🌐  ");
+    pane.setSurfaceTitleOverride(
+        std::optional<QString>{overrideTitle});
+    pane.setSurfaceTitle(QStringLiteral("new hidden base"));
+    QVERIFY(pane.executeConfiguredAction(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), overrideTitle);
+    verifyPrimaryUnchanged();
+
+    pane.setSurfaceTitleOverride(std::nullopt);
+    QVERIFY(pane.executeConfiguredAction(copyAction));
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard),
+                 QStringLiteral("new hidden base"));
+    verifyPrimaryUnchanged();
+
+    clipboard->clear(QClipboard::Clipboard);
+    if (supportsPrimary) {
+        clipboard->clear(QClipboard::Selection);
+    }
+}
+
 void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
 {
     LaunchOptions options;
@@ -2049,6 +2122,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("ctrl+o=quit"),
         QStringLiteral("chain=ignore"),
         QStringLiteral("performable:ctrl+c=copy_to_clipboard:mixed"),
+        QStringLiteral("performable:ctrl+d=copy_title_to_clipboard"),
     };
 
     TerminalPane pane(options);
@@ -2158,6 +2232,35 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                         Qt::ControlModifier, QString(QChar(0x03)));
     QCoreApplication::sendEvent(&pane, &emptyCopy);
     QCOMPARE(forwarded.count(), beforeEmptyCopy + 1);
+
+    // The title action follows the same performable contract: absent or
+    // explicit-empty raw titles pass through, while a non-empty base consumes
+    // the key and synchronously writes the standard clipboard.
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const int beforeEmptyTitleCopy = forwarded.count();
+    QKeyEvent emptyTitleCopy(QEvent::KeyPress, Qt::Key_D,
+                             Qt::ControlModifier, QString(QChar(0x04)));
+    QCoreApplication::sendEvent(&pane, &emptyTitleCopy);
+    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 1);
+
+    pane.setSurfaceTitle(QString{});
+    QKeyEvent explicitEmptyTitleCopy(
+        QEvent::KeyPress, Qt::Key_D,
+        Qt::ControlModifier, QString(QChar(0x04)));
+    QCoreApplication::sendEvent(&pane, &explicitEmptyTitleCopy);
+    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 2);
+
+    const QString performableTitle = QStringLiteral("performable title");
+    pane.setSurfaceTitle(performableTitle);
+    clipboard->setText(QStringLiteral("performable sentinel"),
+                       QClipboard::Clipboard);
+    QKeyEvent titleCopy(QEvent::KeyPress, Qt::Key_D,
+                        Qt::ControlModifier, QString(QChar(0x04)));
+    QCoreApplication::sendEvent(&pane, &titleCopy);
+    QCOMPARE(forwarded.count(), beforeEmptyTitleCopy + 2);
+    QTRY_COMPARE(clipboard->text(QClipboard::Clipboard), performableTitle);
+    clipboard->clear(QClipboard::Clipboard);
 
     // Performability comes from the typed workspace result, not merely from
     // emitting an action request. With no pane to the left, the binding acts
@@ -4083,6 +4186,8 @@ void TerminalPaneTest::rejectsMalformedFrontendActionsWithoutSideEffects()
     const QStringList malformed{
         QStringLiteral("copy_to_clipboard:"),
         QStringLiteral("copy_to_clipboard:bogus"),
+        QStringLiteral("copy_title_to_clipboard:"),
+        QStringLiteral("copy_title_to_clipboard:bogus"),
         QStringLiteral("paste_from_clipboard:"),
         QStringLiteral("paste_from_clipboard:bogus"),
         QStringLiteral("reset_font_size:bogus"),

@@ -110,6 +110,12 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("copy_url_to_clipboard:")));
     QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("copy_title_to_clipboard")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("copy_title_to_clipboard:")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("copy_title_to_clipboard:ignored")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
         QStringLiteral("prompt_surface_title")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("prompt_surface_title:")));
@@ -827,6 +833,9 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("prompt_surface_title")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("copy_title_to_clipboard")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("set_tab_title:project")),

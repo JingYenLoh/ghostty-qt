@@ -160,12 +160,16 @@ and preservation across pane focus, OSC title updates, tab insertion, and
 reordering. Surface and tab prompt coverage verifies exact void grammars,
 raw override/base versus current-display snapshots (including modeled tab
 zoom), exclusion of tab/fallback text from surface prompts, focused
-caret-at-end editing without select-all,
-exact OK/blank/Cancel behavior, masked live base updates, stable targets across
-tab movement and pane removal, target deletion and stale-ID safety, and one
-mixed FIFO with one request per broad-target surface and no split-tab
-deduplication. Application tests exercise both headings and exact Unicode text
-through the shared real QML dialog and verify focus restoration.
+caret-at-end editing without select-all, exact OK/blank/Cancel behavior,
+masked live base updates, stable targets across tab movement and pane removal,
+target deletion and stale-ID safety, and one mixed FIFO with one request per
+broad-target surface and no split-tab deduplication. Title-copy coverage checks
+strict grammar and finalized helper transport, local performability, absent
+and explicit-empty no-ops, exact Unicode/whitespace, override/base precedence,
+tab/fallback exclusion, standard-versus-primary destination, and stable broad
+Qt last-writer behavior without focus or selection changes. Application tests
+exercise both headings and exact Unicode text through the shared real QML
+dialog and verify focus restoration.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

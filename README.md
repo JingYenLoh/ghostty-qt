@@ -63,9 +63,11 @@ the host-language comparison and remaining engineering risks.
   strings into that action layer. `set_surface_title` replaces the originating
   pane's base title, including with an explicit empty value, until the next
   terminal title update. `prompt_surface_title` adds a persistent per-pane
-  override above that base. The direct `set_tab_title` action applies a still
-  higher persistent override to the source pane's tab by stable identity. Both
-  prompt actions share one modal Qt dialog and stable FIFO scheduler.
+  override above that base, and `copy_title_to_clipboard` consumes exactly
+  those two raw surface layers. The direct `set_tab_title` action applies a
+  still higher persistent override to the source pane's tab by stable
+  identity. Both prompt actions share one modal Qt dialog and stable FIFO
+  scheduler.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
@@ -342,6 +344,14 @@ raw surface override, base title, or empty value—never its tab or launch
 fallback. Non-empty OK text becomes a persistent per-pane override without
 trimming; empty OK clears it and Cancel is inert. OSC and `set_surface_title`
 continue updating the hidden base until that override is cleared.
+`copy_title_to_clipboard` is also a strict void action. It copies that same raw
+surface override-or-base value exactly to the standard clipboard, preserving
+Unicode and surrounding whitespace. An absent or empty title is a no-op; tab
+overrides, zoom and fallback labels, selection-copy trimming/clearing, and the
+primary selection do not participate. Broad fanout visits every pane in the
+existing stable tab/tree order, so the last non-empty surface title wins. That
+order is deterministic but differs from Ghostty's process-wide
+creation/swap-remove surface vector after tab reordering or pane deletion.
 `set_tab_title:<title>` installs a stable override on the source pane's tab;
 `set_tab_title:` clears it and reveals the active pane's effective surface
 title. `prompt_tab_title` is a strict void action—spellings with a colon are
@@ -355,8 +365,8 @@ FIFO order shared with surface-title prompts; `all:` and `global:` enqueue one
 request per surface without deduplicating split panes in the same tab. A
 surface prompt is cancelled if its exact pane closes. Closing only the
 originating pane does not redirect a tab prompt when its tab survives, while
-deleting the target
-tab cancels its queued prompts and makes stale dialog completions inert.
+deleting the target tab cancels its queued prompts and makes stale dialog
+completions inert.
 Successful `goto_split` actions consult the live `split-preserve-zoom` policy:
 `navigation` transfers an existing zoom to the destination, while the default
 `no-navigation` clears it. An unsuccessful navigation is inert.
