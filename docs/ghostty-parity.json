@@ -934,6 +934,10 @@
           "status": "supported",
           "note": "Routes the finalized surface action through the typed workspace pipeline to toggle the containing Qt window; broad all/global fanout applies one transition per workspace, and Ghostty's Linux Ctrl+physical Enter default is active."
         },
+        "toggle_readonly": {
+          "status": "supported",
+          "note": "Toggles read-only state per source surface, including stable all/global fanout. Worker-ordered policy suppresses surface-originated key, IME, mouse-report, paste, and raw-action bytes while output, terminal-generated protocol replies, focus bookkeeping, and terminal-local selection, copy, search, and native scrolling remain active; toggling off resumes input without replay. An input-transparent top-right Read-only badge and active-pane model role publish the state. Read-only forces pane, tab, and workspace close confirmation regardless of confirm-close-surface, foreground activity, or child-exit state."
+        },
         "toggle_quick_terminal": {
           "scope": "wayland"
         },

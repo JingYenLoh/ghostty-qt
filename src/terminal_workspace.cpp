@@ -25,6 +25,8 @@ namespace {
 
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
+constexpr auto readOnlyOverlayProperty =
+    "_ghosttyQtReadOnlyOverlayAttached";
 
 struct AxisWeights {
     [[nodiscard]] std::size_t along(
@@ -330,6 +332,78 @@ void TerminalWorkspace::createSearchOverlay(TerminalPane *pane)
     overlay->setParent(pane);
     overlayItem->setParentItem(pane);
     pane->setProperty(attachedProperty, true);
+}
+
+void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
+{
+    if (readOnlyOverlayComponent_ == component) {
+        return;
+    }
+
+    // Unlike the app's normal one-time assignment, the public QML property
+    // may be replaced. Tear down the old factory's products so every existing
+    // pane can attach an object created by the replacement.
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        std::vector<PaneHandle> panes;
+        tab->root->collectPanes(panes);
+        for (const PaneHandle &handle : panes) {
+            QObject *overlay = handle.pane
+                ->property(readOnlyOverlayProperty).value<QObject *>();
+            handle.pane->setProperty(readOnlyOverlayProperty, {});
+            delete overlay;
+        }
+    }
+
+    readOnlyOverlayComponent_ = component;
+    if (component != nullptr) {
+        connect(component, &QObject::destroyed, this, [this, component] {
+            if (readOnlyOverlayComponent_ == component) {
+                setReadOnlyOverlayComponent(nullptr);
+            }
+        });
+
+        for (const std::unique_ptr<Tab> &tab : tabs_) {
+            std::vector<PaneHandle> panes;
+            tab->root->collectPanes(panes);
+            for (const PaneHandle &handle : panes) {
+                createReadOnlyOverlay(handle.pane);
+            }
+        }
+    }
+
+    Q_EMIT readOnlyOverlayComponentChanged();
+}
+
+void TerminalWorkspace::createReadOnlyOverlay(TerminalPane *pane)
+{
+    if (pane == nullptr || readOnlyOverlayComponent_ == nullptr
+        || pane->property(readOnlyOverlayProperty).value<QObject *>()
+            != nullptr) {
+        return;
+    }
+
+    QObject *overlay = readOnlyOverlayComponent_->createWithInitialProperties({
+        {QStringLiteral("terminalPane"),
+         QVariant::fromValue(static_cast<QObject *>(pane))},
+    });
+    if (overlay == nullptr) {
+        qWarning().noquote()
+            << "Could not create terminal read-only overlay:"
+            << readOnlyOverlayComponent_->errorString();
+        return;
+    }
+
+    auto *overlayItem = qobject_cast<QQuickItem *>(overlay);
+    if (overlayItem == nullptr) {
+        qWarning() << "Terminal read-only overlay component did not create a QQuickItem";
+        delete overlay;
+        return;
+    }
+
+    overlay->setParent(pane);
+    overlayItem->setParentItem(pane);
+    pane->setProperty(readOnlyOverlayProperty,
+                      QVariant::fromValue(overlay));
 }
 
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
@@ -693,6 +767,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 refreshTab(tabIdForPane(paneId));
                 reevaluatePendingClose();
             });
+    connect(pane, &TerminalPane::readOnlyChanged, this,
+            [this, paneId] {
+                refreshTab(tabIdForPane(paneId));
+                reevaluatePendingClose();
+            });
     connect(pane, &TerminalPane::requestNewTab, this,
             [this, paneId] {
                 dispatchAction({WorkspaceAction::NewTab,
@@ -741,6 +820,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 beginUnsafePaste(requestId, text, paneId);
             });
     createSearchOverlay(pane);
+    createReadOnlyOverlay(pane);
     return {paneId, pane};
 }
 
@@ -1002,14 +1082,14 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     if (tabIndex < 0) {
         return;
     }
-    if (!force && shouldConfirmClose(effectiveOptions_.confirmCloseMode,
-                                     pane->isRunning(),
-                                     pane->hasActiveProcess())) {
+    if (!force && shouldConfirmPaneClose(*pane)) {
         pendingClose_ = PendingClose::Pane;
         pendingPaneId_ = paneId;
         pendingTabId_ = tabs_[static_cast<size_t>(tabIndex)]->id;
         Q_EMIT closeConfirmationRequested(
-            QStringLiteral("A process is still running in this pane. Close it?"));
+            pane->isReadOnly()
+                ? QStringLiteral("This pane is read-only. Close it?")
+                : QStringLiteral("A process is still running in this pane. Close it?"));
         return;
     }
 
@@ -1086,7 +1166,9 @@ void TerminalWorkspace::closeTab(TabId tabId, bool force)
         pendingPaneId_ = {};
         pendingTabId_ = tabId;
         Q_EMIT closeConfirmationRequested(
-            QStringLiteral("Processes are still running in this tab. Close the tab?"));
+            tabHasReadOnlyPane(*tab)
+                ? QStringLiteral("This tab contains a read-only pane. Close the tab?")
+                : QStringLiteral("Processes are still running in this tab. Close the tab?"));
         return;
     }
     removeTab(tabId);
@@ -1181,10 +1263,7 @@ void TerminalWorkspace::reevaluatePendingClose()
     const TabId tabId = pendingTabId_;
     if (action == PendingClose::Pane) {
         TerminalPane *pane = paneForId(paneId);
-        if (pane != nullptr
-            && shouldConfirmClose(effectiveOptions_.confirmCloseMode,
-                                  pane->isRunning(),
-                                  pane->hasActiveProcess())) {
+        if (pane != nullptr && shouldConfirmPaneClose(*pane)) {
             return;
         }
     } else if (action == PendingClose::Tab) {
@@ -1226,7 +1305,9 @@ void TerminalWorkspace::requestQuitImpl()
         pendingPaneId_ = {};
         pendingTabId_ = {};
         Q_EMIT closeConfirmationRequested(
-            QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
+            workspaceHasReadOnlyPane()
+                ? QStringLiteral("This window contains a read-only pane. Quit?")
+                : QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
         return;
     }
     approveQuit();
@@ -1441,6 +1522,7 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
         ? activePane->currentDirectory()
         : QString{};
     entry.running = running;
+    entry.readOnly = activePane != nullptr && activePane->isReadOnly();
     return entry;
 }
 
@@ -2009,6 +2091,9 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
 
 bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
 {
+    if (tabHasReadOnlyPane(tab)) {
+        return true;
+    }
     std::vector<PaneHandle> panes;
     tab.root->collectPanes(panes);
     const bool childRunning = std::ranges::any_of(
@@ -2023,6 +2108,23 @@ bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
                               childRunning, activeProcess);
 }
 
+bool TerminalWorkspace::tabHasReadOnlyPane(const Tab &tab) const
+{
+    std::vector<PaneHandle> panes;
+    tab.root->collectPanes(panes);
+    return std::ranges::any_of(
+        panes,
+        [](const PaneHandle &handle) { return handle.pane->isReadOnly(); });
+}
+
+bool TerminalWorkspace::shouldConfirmPaneClose(
+    const TerminalPane &pane) const
+{
+    return pane.isReadOnly()
+        || shouldConfirmClose(effectiveOptions_.confirmCloseMode,
+                              pane.isRunning(), pane.hasActiveProcess());
+}
+
 bool TerminalWorkspace::shouldConfirmWorkspaceClose() const
 {
     for (const std::unique_ptr<Tab> &tab : tabs_) {
@@ -2031,6 +2133,15 @@ bool TerminalWorkspace::shouldConfirmWorkspaceClose() const
         }
     }
     return false;
+}
+
+bool TerminalWorkspace::workspaceHasReadOnlyPane() const
+{
+    return std::ranges::any_of(
+        tabs_,
+        [this](const std::unique_ptr<Tab> &tab) {
+            return tabHasReadOnlyPane(*tab);
+        });
 }
 
 int TerminalWorkspace::tabIndexForId(TabId tabId) const

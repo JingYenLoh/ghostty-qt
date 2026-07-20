@@ -449,6 +449,11 @@ void GhosttyActionCatalogTest::parsesPaneActions()
     QCOMPARE(parse(R"(text:\q)").payload, QStringLiteral(R"(\q)"));
     QCOMPARE(parse("reset").kind, GhosttyPaneActionKind::Reset);
 
+    const GhosttyPaneAction readOnly = parse("toggle_readonly");
+    QCOMPARE(readOnly.kind, GhosttyPaneActionKind::ToggleReadOnly);
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("toggle_readonly")));
+
     const QStringList implementedControls{
         QStringLiteral("csi:"),
         QStringLiteral("csi:0m"),
@@ -641,6 +646,8 @@ void GhosttyActionCatalogTest::rejectsMalformedPaneActions()
         QStringLiteral("text"),
         QStringLiteral("reset:"),
         QStringLiteral("reset:now"),
+        QStringLiteral("toggle_readonly:"),
+        QStringLiteral("toggle_readonly:on"),
         QStringLiteral("adjust_selection"),
         QStringLiteral("adjust_selection:"),
         QStringLiteral("adjust_selection:LEFT"),
@@ -729,6 +736,9 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("activate_key_table:copy")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("toggle_readonly")),
              GhosttyActionScope::Surface);
 
     const QStringList searchActions{

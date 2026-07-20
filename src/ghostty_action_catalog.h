@@ -53,6 +53,7 @@ enum class GhosttyPaneActionKind {
     Esc,
     Text,
     Reset,
+    ToggleReadOnly,
 };
 
 struct TerminalFontSizeRequest {

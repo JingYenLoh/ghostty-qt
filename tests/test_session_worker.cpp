@@ -174,6 +174,7 @@ private Q_SLOTS:
     void sendsBracketedPasteThroughPty();
     void protectsPasteWithCorrelatedWorkerConfirmation();
     void sendsTerminalControlActionsThroughPty();
+    void readOnlyBlocksSurfaceInputButPreservesProtocolReplies();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
@@ -1631,6 +1632,148 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
     worker.shutdown();
 }
 
+void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
+    QSignalSpy unsafeSpy(
+        &worker, &SessionWorker::unsafePasteConfirmationRequested);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/readonly-pty-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString startMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("start"));
+    const QString readyMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("ready"));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[?1000h\\033[?1004hreadonly-ready'; "
+            ": > \"$2\"; "
+            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+            "printf '\\033[H\\033[6n'; "
+            "payload=$(dd bs=1 count=6 2>/dev/null); "
+            "printf '\\r\\ncpr-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nfocus-ready'; "
+            "payload=$(dd bs=1 count=6 2>/dev/null); "
+            "printf '\\r\\nfocus-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\ninput-ready'; "
+            "payload=$(dd bs=1 count=1 2>/dev/null); "
+            "printf '\\r\\ninput-byte:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nreadonly-done\\r\\n'"),
+        QStringLiteral("readonly-pty-test"),
+        startMarker,
+        readyMarker,
+    };
+    options.hold = true;
+    options.runtime.clipboardPaste.bracketedSafe = false;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(readyMarker), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, true), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("readonly-ready")), 1000);
+
+    worker.setReadOnly(true);
+    QFile marker(startMarker);
+    QVERIFY(marker.open(QIODevice::WriteOnly));
+    marker.close();
+
+    // Device-status replies are emitted by the terminal stream itself rather
+    // than by a surface input action. Pinned Ghostty lets them cross the PTY
+    // boundary in read-only mode so applications cannot deadlock on a query.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("cpr-bytes:1b5b313b3152")),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("focus-ready")), 1000);
+
+    // Focus is likewise a non-write Surface message upstream. Termio may turn
+    // it into focus-report bytes, but read-only mode must not suppress them.
+    worker.setFocused(false);
+    worker.setFocused(true);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("focus-bytes:1b5b4f1b5b49")),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("input-ready")), 1000);
+
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.text = QStringLiteral("\r");
+    enter.pressed = true;
+    worker.sendKey(enter);
+
+    const auto letter = [](QChar character) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.unshiftedCodepoint = character.toLower().unicode();
+        input.pressed = true;
+        return input;
+    };
+    worker.stageSequenceKey(1, letter(u's'));
+    worker.resolveSequence(1,
+                           TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, letter(u'q'));
+    worker.sendInputMethod({.commitText = QStringLiteral("blocked-ime")});
+    worker.sendCsi(QByteArrayLiteral("31m"));
+    worker.sendEscape(QByteArrayLiteral("7"));
+    worker.sendRawText(QByteArrayLiteral(R"(blocked-raw\\n)"));
+    worker.sendMouse({
+        .action = TerminalMouseInput::Press,
+        .button = 1,
+        .x = 8.0F,
+        .y = 8.0F,
+    });
+    worker.paste(QStringLiteral("blocked-safe-paste"));
+    worker.paste(QStringLiteral("blocked\npaste"));
+    QCOMPARE(unsafeSpy.count(), 1);
+    const quint64 pasteId = unsafeSpy.constFirst().at(0).toULongLong();
+    QVERIFY(pasteId != 0);
+    worker.confirmPaste(pasteId);
+
+    // The child is already waiting for one byte. If any surface-originated
+    // path above escaped the policy boundary it would finish immediately.
+    QTest::qWait(100);
+    QVERIFY(exitSpy.isEmpty());
+    QVERIFY(!updatesContain(updateSpy, QStringLiteral("input-byte:")));
+
+    // Re-enabling input accepts new data but never replays bytes rejected by
+    // the preceding read-only interval. Z must therefore be the first byte.
+    worker.setReadOnly(false);
+    worker.sendRawText(QByteArrayLiteral("Z"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("input-byte:5a")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("readonly-done")), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
 void SessionWorkerTest::stagesAndResolvesSequenceBytes()
 {
     qRegisterMetaType<TerminalUpdate>();
@@ -2434,22 +2577,49 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
         3000);
     activitySpy.clear();
 
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.pressed = true;
+
+    // Rejected read-only input must not trip either the worker's grace timer
+    // or its active-process signal, across every newline-aware input path.
+    worker.setReadOnly(true);
+    worker.sendKey(enter);
+    worker.stageSequenceKey(1, enter);
+    worker.resolveSequence(1, TerminalSequenceResolution::Flush, false, {});
+    worker.sendInputMethod({.commitText = QStringLiteral("\n")});
+    worker.sendRawText(QByteArrayLiteral(R"(\\n)"));
+    worker.paste(QStringLiteral("\n"));
+    QCOMPARE(unsafeSpy.count(), 3);
+    worker.confirmPaste(unsafeSpy.constLast().at(0).toULongLong());
+    QTest::qWait(50);
+    QVERIFY(!spyContainsBool(activitySpy, true));
+
+    // Staging is terminal-local and remains live. If read-only is lifted
+    // before resolution, the accepted flush must regain normal activity.
+    worker.stageSequenceKey(2, enter);
+    worker.setReadOnly(false);
+    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        3000);
+    activitySpy.clear();
+
     const QString command = QStringLiteral("sleep 1");
     for (const QChar character : command) {
         worker.sendInputMethod({.commitText = QString(character)});
     }
-    TerminalKeyInput enter;
-    enter.key = Qt::Key_Return;
-    enter.pressed = true;
-    worker.stageSequenceKey(1, enter);
+    worker.stageSequenceKey(3, enter);
     QTest::qWait(50);
     QVERIFY(!spyContainsBool(activitySpy, true));
-    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    worker.resolveSequence(3, TerminalSequenceResolution::Drop, false, {});
     QVERIFY(!spyContainsBool(activitySpy, true));
 
-    worker.stageSequenceKey(2, enter);
+    worker.stageSequenceKey(4, enter);
     QVERIFY(!spyContainsBool(activitySpy, true));
-    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    worker.resolveSequence(4, TerminalSequenceResolution::Flush, false, {});
     // The activity hint is synchronous at flush, closing in the interval
     // before the next tcgetpgrp poll cannot lose foreground-job confirmation.
     QVERIFY(spyContainsBool(activitySpy, true));

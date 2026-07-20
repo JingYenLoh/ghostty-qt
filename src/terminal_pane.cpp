@@ -840,6 +840,8 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
             this, &TerminalPane::processStateChanged);
     connect(controller_, &TerminalController::activeProcessChanged,
             this, &TerminalPane::processStateChanged);
+    connect(controller_, &TerminalController::readOnlyChanged,
+            this, &TerminalPane::readOnlyChanged);
     connect(controller_, &TerminalController::errorOccurred, this,
             [this](const QString &message) {
                 {
@@ -937,6 +939,11 @@ bool TerminalPane::isRunning() const
 bool TerminalPane::hasActiveProcess() const
 {
     return controller_->activeProcess();
+}
+
+bool TerminalPane::isReadOnly() const
+{
+    return controller_->readOnly();
 }
 
 LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
@@ -2300,6 +2307,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             return true;
         case GhosttyPaneActionKind::Reset:
             controller_->resetTerminal();
+            return true;
+        case GhosttyPaneActionKind::ToggleReadOnly:
+            controller_->setReadOnly(!controller_->readOnly());
             return true;
         }
     }

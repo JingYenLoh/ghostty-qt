@@ -929,6 +929,18 @@ void SessionWorker::queuePtyWrite(const QByteArray &data)
     flushPtyWrites();
 }
 
+void SessionWorker::queueInputWrite(const QByteArray &data)
+{
+    if (!readOnly_) {
+        queuePtyWrite(data);
+    }
+}
+
+void SessionWorker::setReadOnly(bool readOnly)
+{
+    readOnly_ = readOnly;
+}
+
 void SessionWorker::flushPtyWrites()
 {
     while (masterFd_ >= 0 && !pendingWrites_.isEmpty()) {
@@ -959,7 +971,7 @@ void SessionWorker::flushPtyWrites()
 
 void SessionWorker::sendKey(const TerminalKeyInput &input)
 {
-    if (input.pressed
+    if (!readOnly_ && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
         notePotentialActivity();
@@ -971,7 +983,7 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
     if (encoded.bytes.isEmpty()) {
         return;
     }
-    queuePtyWrite(encoded.bytes);
+    queueInputWrite(encoded.bytes);
     clearSelectionAfterKey(encoded.modifier, encoded.escape);
 }
 
@@ -1047,10 +1059,10 @@ void SessionWorker::resolveSequence(quint64 token,
     // Append once so the staged leaders and the resolving key cannot be
     // interleaved by another queued operation on this worker thread.
     if (!bytes.isEmpty() && masterFd_ >= 0) {
-        if (potentialActivity) {
+        if (!readOnly_ && potentialActivity) {
             notePotentialActivity();
         }
-        queuePtyWrite(bytes);
+        queueInputWrite(bytes);
         if (currentEncoded) {
             clearSelectionAfterKey(currentModifier, currentEscape);
         }
@@ -1067,8 +1079,9 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     if (input.commitText.isEmpty() || vt_ == nullptr || masterFd_ < 0) {
         return;
     }
-    if (input.commitText.contains(u'\n')
-        || input.commitText.contains(u'\r')) {
+    if (!readOnly_
+        && (input.commitText.contains(u'\n')
+            || input.commitText.contains(u'\r'))) {
         notePotentialActivity();
     }
     TerminalKeyInput key;
@@ -1079,7 +1092,7 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     if (encoded.bytes.isEmpty()) {
         return;
     }
-    queuePtyWrite(encoded.bytes);
+    queueInputWrite(encoded.bytes);
     clearSelectionAfterKey(encoded.modifier, encoded.escape);
 }
 
@@ -1131,10 +1144,10 @@ void SessionWorker::sendRawText(const QByteArray &serializedText)
 
 void SessionWorker::sendRawAction(const QByteArray &data)
 {
-    if (bytesMayStartProcess(data)) {
+    if (!readOnly_ && bytesMayStartProcess(data)) {
         notePotentialActivity();
     }
-    queuePtyWrite(data);
+    queueInputWrite(data);
     scrollToBottomForInput();
 }
 
@@ -1175,7 +1188,7 @@ void SessionWorker::clearSelectionAfterKey(bool modifier, bool escape)
 
 void SessionWorker::sendMouse(const TerminalMouseInput &input)
 {
-    queuePtyWrite(encodeMouse(input));
+    queueInputWrite(encodeMouse(input));
 }
 
 QByteArray SessionWorker::encodeMouse(const TerminalMouseInput &input)
@@ -1254,13 +1267,14 @@ void SessionWorker::commitPaste(const QString &text,
     if (encoded.isEmpty()) {
         return;
     }
-    if (text.contains(u'\n') || text.contains(u'\r')) {
+    if (!readOnly_
+        && (text.contains(u'\n') || text.contains(u'\r'))) {
         notePotentialActivity();
     }
     // Ghostty returns to the active screen before making accepted paste data
     // visible to the child. Rejected and cancelled requests never get here.
     scrollToBottomForInput();
-    queuePtyWrite(encoded);
+    queueInputWrite(encoded);
 }
 
 void SessionWorker::scrollToBottomForInput()
@@ -2289,7 +2303,7 @@ void SessionWorker::updateProcessActivity()
 
 void SessionWorker::notePotentialActivity()
 {
-    if (!running_ || !interactiveShell_) {
+    if (readOnly_ || !running_ || !interactiveShell_) {
         return;
     }
     potentialActivityTimer_.restart();

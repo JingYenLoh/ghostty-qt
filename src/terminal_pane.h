@@ -43,6 +43,7 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(bool searchUiActive READ searchUiActive NOTIFY searchUiActiveChanged)
     Q_PROPERTY(QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
     Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY searchMatchLabelChanged)
+    Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
 
 public:
     explicit TerminalPane(const LaunchOptions &options, QQuickItem *parent = nullptr);
@@ -59,6 +60,7 @@ public:
     QString searchMatchLabel() const { return searchMatchLabel_; }
     bool isRunning() const;
     bool hasActiveProcess() const;
+    bool isReadOnly() const;
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     void applyRuntimeOptions(const LaunchOptions &options);
@@ -99,6 +101,7 @@ Q_SIGNALS:
     void searchMatchLabelChanged();
     void searchUiFocusRequested();
     void processStateChanged();
+    void readOnlyChanged(bool readOnly);
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();

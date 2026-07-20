@@ -137,6 +137,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Core
     Qt6::DBus
     Qt6::Gui
+    Qt6::Qml
     Qt6::Quick
     Qt6::Test
     PkgConfig::XKBCommon

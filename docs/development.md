@@ -144,10 +144,14 @@ stable tab insertion/reordering/index selection, wrapped split traversal,
 mutable and equalized layouts, future-only split working-directory policy reloads with
 explicit and nested sources, source-stable new-tab directory/font inheritance
 across explicit, QML-style, reset, reload, and broad-fanout paths, exact
-`current`/`end` new-tab placement across live reload and broad fanout, and
-live `always`/`auto`/`never` tab-strip visibility across one/two-tab
-transitions without hiding the surrounding toolbar, and split zoom lifecycle.
-Adapter and worker tests
+`current`/`end` new-tab placement across live reload and broad fanout, live
+`always`/`auto`/`never` tab-strip visibility across one/two-tab transitions
+without hiding the surrounding toolbar, and split zoom lifecycle.
+Per-pane read-only coverage exercises local and stable broad toggles, active-pane
+model and input-transparent badge publication, suppressed keyboard/IME/mouse,
+paste, and raw-action writes, live terminal replies and focus bookkeeping,
+clean input resumption, and unconditional pane/tab/workspace close confirmation
+for idle and exited children. Adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
 directory fallback. They additionally verify same-batch valid/invalid OSC 7
 ordering, inherited logical `PWD`, exact symlink-sensitive concrete paths, and

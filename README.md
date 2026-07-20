@@ -52,7 +52,11 @@ the host-language comparison and remaining engineering risks.
   tree-order navigation, keybinding resize/equalize, exact-gap pointer-dragged
   dividers, live Ghostty-compatible unfocused-pane dimming, split zoom, and
   close confirmation that distinguishes an idle interactive shell from a
-  foreground job on its PTY.
+  foreground job on its PTY. Per-pane read-only mode blocks surface-originated
+  user input while output, terminal protocol replies, focus bookkeeping, and
+  terminal-local selection, copy, search, and scrolling remain available; an
+  input-transparent top-right badge exposes the state, which always protects
+  that pane during close.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer.
@@ -318,7 +322,9 @@ These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `new_split:left|right|up|down|auto` (with an omitted direction also selecting
 `auto`), `goto_split`, `resize_split`, `equalize_splits`, and
-`toggle_split_zoom` directly. Viewport/selection bindings additionally support
+`toggle_split_zoom` directly. `toggle_readonly` applies independently to its
+source pane; `all:` or `global:` applies it once to every stable pane target.
+Viewport/selection bindings additionally support
 `scroll_to_top`, `scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`,
 `scroll_page_down`, `scroll_page_fractional`, `scroll_page_lines`,
 `scroll_to_selection`, `select_all`, and `adjust_selection`. Terminal-control
@@ -400,7 +406,8 @@ race/reload coverage, and PTY-backed sequence replay, helper-process
 protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
 application's short-lived process/window lifecycle, source-stable new-tab
-working-directory/font inheritance, and staged relocation of
+working-directory/font inheritance, per-pane read-only input suppression and
+close protection, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
 exercised headlessly; workspace tab ordering, split layout, navigation, and
 zoom are covered through typed actions. Adapter/session tests cover absolute,

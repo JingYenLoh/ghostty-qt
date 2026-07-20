@@ -22,6 +22,7 @@ class TerminalController final : public QObject {
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
     Q_PROPERTY(bool activeProcess READ activeProcess NOTIFY activeProcessChanged)
     Q_PROPERTY(bool selectionAvailable READ selectionAvailable NOTIFY selectionAvailableChanged)
+    Q_PROPERTY(bool readOnly READ readOnly NOTIFY readOnlyChanged)
 
 public:
     explicit TerminalController(const TerminalSessionLaunchOptions &options,
@@ -34,6 +35,7 @@ public:
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
     bool selectionAvailable() const { return selectionAvailable_; }
+    bool readOnly() const { return readOnly_; }
     // True while an earlier queued select-all may establish a selection.
     // This lets a Ghostty action chain enqueue its dependent actions in order
     // without exposing speculative state through the Q_PROPERTY.
@@ -48,6 +50,7 @@ public:
     // Queue graceful teardown without blocking the UI. Workspace-wide closes
     // call this for every pane first so their grace periods run concurrently.
     void beginShutdown();
+    void setReadOnly(bool readOnly);
     void sendKey(const TerminalKeyInput &input);
     // Sequence leaders cross to SessionWorker immediately for mode-sensitive
     // VT encoding, but their bytes remain staged until the UI resolves the
@@ -103,6 +106,7 @@ Q_SIGNALS:
     void runningChanged(bool running);
     void activeProcessChanged(bool active);
     void selectionAvailableChanged(bool available);
+    void readOnlyChanged(bool readOnly);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
     void bell();
@@ -166,6 +170,7 @@ Q_SIGNALS:
         quint64 requestId, int column, int row);
     void hyperlinkActivationCancellationRequested(quint64 requestId);
     void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
+    void readOnlyRequested(bool readOnly);
     void shutdownRequested();
 
 private:
@@ -183,6 +188,7 @@ private:
     bool activeProcess_ = false;
     bool explicitProgram_ = false;
     bool selectionAvailable_ = false;
+    bool readOnly_ = false;
     int pendingSelectAllRequests_ = 0;
     bool closing_ = false;
     quint64 nextSequenceToken_ = 0;

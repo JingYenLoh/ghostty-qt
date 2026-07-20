@@ -11,6 +11,8 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QPointer>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QQuickWindow>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -180,6 +182,9 @@ private Q_SLOTS:
     void idleShellDoesNotPromptInRunningProcessesMode();
     void submittedCommandPromptsBeforeForegroundPoll();
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
+    void readOnlyBlocksUiActivityLatchAndProtectsClose();
+    void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
+    void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
     void alwaysModePromptsForIdleShell();
@@ -344,6 +349,259 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
     workspace.cancelClose();
+}
+
+void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    TerminalPane *pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 1500);
+
+    QSignalSpy readOnlyChanged(pane, &TerminalPane::readOnlyChanged);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(pane->isReadOnly());
+    QCOMPARE(readOnlyChanged.count(), 1);
+    QVERIFY(workspace.tabModel()->entryAt(0)->readOnly);
+
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return,
+                    Qt::NoModifier, QStringLiteral("\r"));
+    QCoreApplication::sendEvent(pane, &enter);
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\n)")));
+    QVERIFY(!controller->activeProcess());
+
+    // Read-only has close-policy precedence even though the shell is idle.
+    workspace.requestQuit();
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(quit.count(), 0);
+    workspace.cancelClose();
+
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(!pane->isReadOnly());
+    QCOMPARE(readOnlyChanged.count(), 2);
+    QVERIFY(!workspace.tabModel()->entryAt(0)->readOnly);
+
+    // The same action immediately regains the normal UI-side activity latch.
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral(R"(text:\\n)")));
+    QVERIFY(controller->activeProcess());
+}
+
+void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath =
+        QFINDTESTDATA("../qml/ReadOnlyOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(
+        &engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    window.show();
+    TerminalWorkspace workspace;
+    workspace.setParentItem(window.contentItem());
+    workspace.setSize(window.size());
+    workspace.setReadOnlyOverlayComponent(&overlayComponent);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        workspace.findChildren<TerminalPane *>().size(), 2, 1000);
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(secondId != firstId);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    workspace.setReadOnlyOverlayComponent(nullptr);
+    QVERIFY(firstPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalReadOnlyOverlay"),
+                Qt::FindDirectChildrenOnly)
+            == nullptr);
+    QVERIFY(secondPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalReadOnlyOverlay"),
+                Qt::FindDirectChildrenOnly)
+            == nullptr);
+    workspace.setReadOnlyOverlayComponent(&overlayComponent);
+
+    auto *firstOverlay = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalReadOnlyOverlay"),
+        Qt::FindDirectChildrenOnly);
+    auto *secondOverlay = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalReadOnlyOverlay"),
+        Qt::FindDirectChildrenOnly);
+    QVERIFY(firstOverlay != nullptr);
+    QVERIFY(secondOverlay != nullptr);
+    QVERIFY(!firstOverlay->isEnabled());
+    QVERIFY(!secondOverlay->isEnabled());
+    QCOMPARE(firstOverlay->parentItem(), firstPane);
+    QCOMPARE(secondOverlay->parentItem(), secondPane);
+
+    QSignalSpy firstChanged(firstPane, &TerminalPane::readOnlyChanged);
+    QSignalSpy secondChanged(secondPane, &TerminalPane::readOnlyChanged);
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(firstPane->isReadOnly());
+    QVERIFY(secondPane->isReadOnly());
+    QCOMPARE(firstChanged.count(), 1);
+    QCOMPARE(secondChanged.count(), 1);
+    QVERIFY(workspace.tabModel()->entryAt(0)->readOnly);
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondOverlay->isVisible(), 1000);
+    QCOMPARE(firstOverlay->y(), 8.0);
+    QCOMPARE(secondOverlay->y(), 8.0);
+    QCOMPARE(firstOverlay->x(),
+             std::max(0.0, firstPane->width() - firstOverlay->width() - 8.0));
+    QCOMPARE(secondOverlay->x(),
+             std::max(0.0, secondPane->width() - secondOverlay->width() - 8.0));
+
+    // Read-only filters PTY-directed input, not terminal-local work.
+    TerminalController *firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QSignalSpy viewport(firstController,
+                        &TerminalController::scrollRequested);
+    QSignalSpy reset(firstController,
+                     &TerminalController::resetTerminalRequested);
+    QSignalSpy search(firstController,
+                      &TerminalController::serializedSearchRequested);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("scroll_to_top")));
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("reset")));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("search:still-local")));
+    QCOMPARE(viewport.count(), 1);
+    QCOMPARE(reset.count(), 1);
+    QCOMPARE(search.count(), 1);
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(!firstPane->isReadOnly());
+    QVERIFY(!secondPane->isReadOnly());
+    QCOMPARE(firstChanged.count(), 2);
+    QCOMPARE(secondChanged.count(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!secondOverlay->isVisible(), 1000);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(firstPane->isReadOnly());
+    QVERIFY(!secondPane->isReadOnly());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->readOnly);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->readOnly);
+
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(&workspace,
+                        &TerminalWorkspace::closeConfirmationResolved);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+
+    // An inactive read-only pane protects its containing tab and window.
+    workspace.closeCurrentTab();
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(workspace.tabCount(), 1);
+    workspace.cancelClose();
+    workspace.requestQuit();
+    QCOMPARE(confirmation.count(), 2);
+    QCOMPARE(quit.count(), 0);
+    workspace.cancelClose();
+
+    // It also protects its own pane. Removing read-only while that request is
+    // pending re-evaluates and completes the now-safe close exactly once.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, firstId, 0},
+    }));
+    QCOMPARE(confirmation.count(), 3);
+    QPointer<TerminalPane> removedPane(firstPane);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 1);
+
+    workspace.requestQuit();
+    QCOMPARE(confirmation.count(), 3);
+    QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::readOnlyNaturalExitPromptsExactlyOnce()
+{
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 0.4"),
+    };
+    options.hold = false;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QSignalSpy confirmation(&workspace,
+                            &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    QSignalSpy ended(pane, &TerminalPane::sessionEnded);
+    QPointer<TerminalPane> guardedPane(pane);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QTRY_COMPARE_WITH_TIMEOUT(ended.count(), 1, 3000);
+    QVERIFY(!guardedPane.isNull());
+    QVERIFY(guardedPane->isReadOnly());
+    QTRY_COMPARE_WITH_TIMEOUT(confirmation.count(), 1, 1000);
+    QCOMPARE(workspace.tabCount(), 1);
+    QTest::qWait(150);
+    QCOMPARE(confirmation.count(), 1);
+    QCOMPARE(quit.count(), 0);
+
+    workspace.confirmClose();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 0, 1000);
+    QCOMPARE(quit.count(), 1);
 }
 
 void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()

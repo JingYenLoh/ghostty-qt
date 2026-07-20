@@ -32,6 +32,11 @@ ApplicationWindow {
         SearchOverlay {}
     }
 
+    Component {
+        id: terminalReadOnlyOverlayFactory
+        ReadOnlyOverlay {}
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -114,6 +119,7 @@ ApplicationWindow {
             id: workspace
             anchors.fill: parent
             searchOverlayComponent: terminalSearchOverlayFactory
+            readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
         }
     }
 

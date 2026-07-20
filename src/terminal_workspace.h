@@ -29,6 +29,10 @@ class TerminalWorkspace : public QQuickItem {
                READ searchOverlayComponent
                WRITE setSearchOverlayComponent
                NOTIFY searchOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *readOnlyOverlayComponent
+               READ readOnlyOverlayComponent
+               WRITE setReadOnlyOverlayComponent
+               NOTIFY readOnlyOverlayComponentChanged)
 
 public:
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
@@ -48,6 +52,11 @@ public:
         return searchOverlayComponent_;
     }
     void setSearchOverlayComponent(QQmlComponent *component);
+    QQmlComponent *readOnlyOverlayComponent() const
+    {
+        return readOnlyOverlayComponent_;
+    }
+    void setReadOnlyOverlayComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeApplicationConfiguredAction(QStringView action);
@@ -80,6 +89,7 @@ Q_SIGNALS:
     void toggleFullscreenRequested();
     void quitApproved();
     void searchOverlayComponentChanged();
+    void readOnlyOverlayComponentChanged();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -111,6 +121,7 @@ private:
 
     PaneHandle createPane(const LaunchOptions &options);
     void createSearchOverlay(TerminalPane *pane);
+    void createReadOnlyOverlay(TerminalPane *pane);
     bool executeAction(const WorkspaceActionRequest &request);
     void createNewTab(PaneId sourcePaneId = {});
     void activateTab(TabId id);
@@ -161,7 +172,10 @@ private:
     bool toggleSplitZoom(TabId tabId);
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
+    bool shouldConfirmPaneClose(const TerminalPane &pane) const;
+    bool tabHasReadOnlyPane(const Tab &tab) const;
     bool shouldConfirmTabClose(const Tab &tab) const;
+    bool workspaceHasReadOnlyPane() const;
     bool shouldConfirmWorkspaceClose() const;
     int tabIndexForId(TabId tabId) const;
     int tabIndexForPane(PaneId paneId) const;
@@ -197,4 +211,5 @@ private:
     quint64 activePasteConfirmationId_ = 0;
     bool broadActionFanout_ = false;
     QQmlComponent *searchOverlayComponent_ = nullptr;
+    QQmlComponent *readOnlyOverlayComponent_ = nullptr;
 };

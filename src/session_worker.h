@@ -37,6 +37,9 @@ public Q_SLOTS:
     // matching. Font, keybindings, previews, and future-pane scrollback remain
     // owned by TerminalPane.
     void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
+    // Ordered with input on the worker event queue so bytes submitted before
+    // and after a toggle cannot cross the policy boundary.
+    void setReadOnly(bool readOnly);
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
@@ -133,6 +136,7 @@ private:
     void destroyTerminal();
     void closePty();
     void queuePtyWrite(const QByteArray &data);
+    void queueInputWrite(const QByteArray &data);
     void sendRawAction(const QByteArray &data);
     void scheduleFrame();
     void noteCompressionActivity();
@@ -194,6 +198,7 @@ private:
     bool interactiveShell_ = false;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
+    bool readOnly_ = false;
     QElapsedTimer potentialActivityTimer_;
     QElapsedTimer cursorBlinkResetTimer_;
     bool cursorBlinkResetPending_ = false;

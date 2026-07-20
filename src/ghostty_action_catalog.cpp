@@ -815,6 +815,15 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("toggle_readonly")) {
+        // Read-only is a per-surface void action. An explicit colon, even
+        // with an empty value, is not an alternate spelling.
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::ToggleReadOnly;
+        return action;
+    }
+
     if (name != QLatin1StringView("adjust_selection")) {
         return std::nullopt;
     }

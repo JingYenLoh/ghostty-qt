@@ -124,6 +124,8 @@ TerminalController::TerminalController(
             Qt::QueuedConnection);
     connect(this, &TerminalController::runtimeOptionsRequested,
             worker_, &SessionWorker::applyRuntimeOptions, Qt::QueuedConnection);
+    connect(this, &TerminalController::readOnlyRequested,
+            worker_, &SessionWorker::setReadOnly, Qt::QueuedConnection);
     connect(this, &TerminalController::shutdownRequested,
             worker_, &SessionWorker::shutdown, Qt::QueuedConnection);
 
@@ -283,9 +285,19 @@ void TerminalController::beginShutdown()
     }
 }
 
+void TerminalController::setReadOnly(bool readOnly)
+{
+    if (readOnly_ == readOnly) {
+        return;
+    }
+    readOnly_ = readOnly;
+    Q_EMIT readOnlyChanged(readOnly_);
+    Q_EMIT readOnlyRequested(readOnly_);
+}
+
 void TerminalController::sendKey(const TerminalKeyInput &input)
 {
-    if (input.pressed
+    if (!readOnly_ && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
         notePotentialActivity();
@@ -339,7 +351,7 @@ void TerminalController::resolveSequence(
     stagedSequencePotentialActivity_ = false;
     Q_EMIT sequenceResolutionRequested(
         token, resolution, current.has_value(), current.value_or(TerminalKeyInput{}));
-    if (potentialActivity) {
+    if (!readOnly_ && potentialActivity) {
         notePotentialActivity();
     }
 }
@@ -347,8 +359,9 @@ void TerminalController::resolveSequence(
 void TerminalController::sendInputMethod(
     const TerminalInputMethodInput &input)
 {
-    if (input.commitText.contains(u'\n')
-        || input.commitText.contains(u'\r')) {
+    if (!readOnly_
+        && (input.commitText.contains(u'\n')
+            || input.commitText.contains(u'\r'))) {
         notePotentialActivity();
     }
     Q_EMIT inputMethodRequested(input);
@@ -356,7 +369,8 @@ void TerminalController::sendInputMethod(
 
 void TerminalController::sendCsi(const QByteArray &payload)
 {
-    if (SessionWorker::canonicalBytesMayStartProcess(payload)) {
+    if (!readOnly_
+        && SessionWorker::canonicalBytesMayStartProcess(payload)) {
         notePotentialActivity();
     }
     Q_EMIT csiRequested(payload);
@@ -364,7 +378,8 @@ void TerminalController::sendCsi(const QByteArray &payload)
 
 void TerminalController::sendEscape(const QByteArray &payload)
 {
-    if (SessionWorker::canonicalBytesMayStartProcess(payload)) {
+    if (!readOnly_
+        && SessionWorker::canonicalBytesMayStartProcess(payload)) {
         notePotentialActivity();
     }
     Q_EMIT escapeRequested(payload);
@@ -372,7 +387,8 @@ void TerminalController::sendEscape(const QByteArray &payload)
 
 void TerminalController::sendRawText(const QByteArray &serializedText)
 {
-    if (SessionWorker::canonicalTextMayStartProcess(serializedText)) {
+    if (!readOnly_
+        && SessionWorker::canonicalTextMayStartProcess(serializedText)) {
         notePotentialActivity();
     }
     Q_EMIT rawTextRequested(serializedText);
@@ -414,7 +430,7 @@ void TerminalController::cancelPaste(quint64 requestId)
 
 void TerminalController::notePotentialActivity()
 {
-    if (!running_ || explicitProgram_ || activeProcess_) {
+    if (readOnly_ || !running_ || explicitProgram_ || activeProcess_) {
         return;
     }
     activeProcess_ = true;

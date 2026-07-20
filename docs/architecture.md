@@ -103,9 +103,11 @@ Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
 vector rows or raw pane pointers across deferred operations. A
 `QAbstractListModel` publishes tab identity, title, active pane, working
-directory, running state, zoom, attention, progress, and read-only roles to QML. The
-current tab strip consumes that model; several roles are foundations for later
-parity work rather than user-visible features today.
+directory, running state, zoom, attention, progress, and read-only roles to
+QML. The current tab strip consumes that model. The read-only role follows each
+tab's active pane; the pane also exposes the state directly for its visible
+status badge. Several other roles remain foundations for later parity work
+rather than user-visible features today.
 
 Workspace commands pass through a typed `WorkspaceActionDispatcher` with an
 explicit tab/pane context. Keyboard, pane, and QML entry points can therefore
@@ -687,6 +689,25 @@ The controller also performs a pure decode preview for newline-bearing actions
 so an immediate close request cannot outrun the worker's active-process signal;
 the actual terminal mutation remains worker-owned.
 
+Read-only mode is a per-pane surface action with ordered UI and worker state.
+The pane publishes the new value immediately, refreshes its tab-model role, and
+queues the same transition ahead of subsequent input on the session thread.
+While enabled, surface-originated keyboard and IME data, encoded mouse reports,
+paste, and raw `csi`/`esc`/`text` actions are discarded before reaching the PTY;
+the controller also avoids turning those suppressed bytes into speculative
+foreground-process activity. PTY output, terminal-generated protocol replies,
+resize/focus lifecycle, selection and copy, search, native scrolling, and other
+terminal-local actions remain available. Toggling the mode off resumes later
+input without replaying anything discarded while it was enabled.
+
+The visible state mirrors pinned GTK with an input-transparent top-right
+`Read-only` badge on the affected pane, so the indicator never captures the
+selection or scrolling gestures it describes. Close policy checks read-only
+before child-exit, configured confirmation mode, or foreground activity: a
+read-only pane therefore requires confirmation directly and when included in
+a tab or workspace close. Broad `all`/`global` dispatch toggles each pane from
+the same stable process snapshot used by other surface actions.
+
 `GhosttyApplicationKeybindings` performs root app-scoped leaves before the
 focused pane lookup, matching Ghostty's app/surface split while leaving leaders
 and mixed-scope chains to the pane. A pane that matches `all` or `global`
@@ -823,23 +844,29 @@ The default CTest suite has focused layers for each ownership boundary:
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, byte-exact terminal-control action writes, reset cache
   synchronization, process exit, explicit-program activity, and an interactive
-  shell's idle/job/idle foreground transitions. It also verifies coalesced OSC
-  8 hover queries, stale-coordinate retry signaling, tracked targets across
-  viewport hiding/restoration, and independent hover and activation leases. It
-  also verifies regex lookup across UTF-8 graphemes and soft wraps, OSC 8
-  precedence, range reflow, viewport hiding/restoration, stable unrelated
-  output, and activation invalidation after covered-text replacement. Search
+  shell's idle/job/idle foreground transitions. Read-only cases cover ordered
+  toggles, suppressed key/IME/mouse/paste/raw user input, continued output,
+  protocol replies, focus bookkeeping, terminal-local work, and clean
+  resumption without replay. It also verifies
+  coalesced OSC 8 hover queries, stale-coordinate retry signaling, tracked
+  targets across viewport hiding/restoration, and independent hover and
+  activation leases; regex lookup across UTF-8 graphemes and soft wraps; OSC 8
+  precedence; range reflow; viewport hiding/restoration; stable unrelated
+  output; and activation invalidation after covered-text replacement. Search
   tests exercise bounded progressive scans, superseding generations, content
   mutation restarts, overlapping ASCII-insensitive matches, navigation, and
   selection-derived needles.
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
-  preserve stable tab and pane identity. PTY-backed new-tab coverage verifies
-  explicit binding sources, empty-context active leaves, broad-fanout source
-  stability, local OSC 7/reset fallback, manual font zoom, and future-creation
-  policy reloads. Workspace/QML coverage also verifies exact live
-  `always`/`auto`/`never` tab-strip visibility, including one/two-tab
+  preserve stable tab and pane identity. Read-only coverage verifies local and
+  broad per-pane state, the active-pane model role and non-hit-testing badge,
+  plus forced pane/tab/workspace confirmation for idle and exited children even
+  when configured confirmation is disabled. PTY-backed new-tab coverage
+  verifies explicit binding sources, empty-context active leaves, broad-fanout
+  source stability, local OSC 7/reset fallback, manual font zoom, and
+  future-creation policy reloads. Workspace/QML coverage also verifies exact
+  live `always`/`auto`/`never` tab-strip visibility, including one/two-tab
   transitions while the surrounding toolbar remains visible. It also sends
   real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,
