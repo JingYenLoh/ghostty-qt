@@ -38,7 +38,8 @@ identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
-split placement, stable per-tab title overrides, terminal appearance,
+split placement, stable per-tab title overrides and queued title prompts,
+terminal appearance,
 OSC 8/default-regex interaction
 rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
@@ -156,7 +157,13 @@ Direct tab-title coverage verifies Ghostty's canonical byte-string escape
 grammar and UTF-8 validation, inactive and broad-action source-tab targeting by
 stable identity, empty payload reset, effective/raw model-role notifications,
 and preservation across pane focus, OSC title updates, tab insertion, and
-reordering.
+reordering. Prompt coverage verifies the exact void grammar, raw
+override-or-current display-title snapshots (including modeled zoom), focused
+caret-at-end editing without select-all, exact OK/blank/Cancel behavior,
+stable targets across tab movement and source-pane removal, target deletion
+and stale-ID safety, and FIFO one-request-per-surface broad fanout without
+split-tab deduplication. The application test exercises the real QML dialog
+and commits a Unicode title through its OK path.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

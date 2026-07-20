@@ -840,6 +840,10 @@
           "status": "partial",
           "note": "Local root triggers route the action through the typed catalog and workspace."
         },
+        "prompt_tab_title": {
+          "status": "supported",
+          "note": "Accepts only the exact void spelling with no colon and targets the source surface's tab by stable identity. Each request snapshots the raw override when present or the current display title otherwise, including the modeled zoom prefix; the focused field places its caret at the end without selecting all. OK preserves text exactly, blank clears the override, and Cancel is inert. Requests are shown FIFO, with all/global retaining one request per surface and no split-tab deduplication. Source-pane removal is harmless while its tab survives; target deletion resolves or prunes its requests, and stale completions cannot rename another tab."
+        },
         "quit": {
           "status": "partial",
           "note": "Local root triggers route application quit; multiwindow semantics are absent."

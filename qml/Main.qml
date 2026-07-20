@@ -172,6 +172,50 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: tabTitleDialog
+        objectName: "tabTitleDialog"
+        property var promptId: 0
+        anchors.centerIn: parent
+        width: Math.max(320, Math.min(520, window.width - 32))
+        modal: true
+        title: "Change Tab Title"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onOpened: {
+            tabTitleField.forceActiveFocus()
+            tabTitleField.cursorPosition = tabTitleField.length
+        }
+        onAccepted: {
+            const acceptedPromptId = promptId
+            promptId = 0
+            workspace.confirmTabTitlePrompt(acceptedPromptId,
+                                            tabTitleField.text)
+        }
+        onRejected: {
+            const rejectedPromptId = promptId
+            promptId = 0
+            workspace.cancelTabTitlePrompt(rejectedPromptId)
+        }
+
+        ColumnLayout {
+            width: tabTitleDialog.availableWidth
+
+            Label {
+                Layout.fillWidth: true
+                text: "Leave blank to restore the default title."
+                wrapMode: Text.WordWrap
+            }
+
+            TextField {
+                id: tabTitleField
+                objectName: "tabTitleField"
+                Layout.fillWidth: true
+                selectByMouse: true
+                onAccepted: tabTitleDialog.accept()
+            }
+        }
+    }
+
     Connections {
         target: workspace
         function onCloseConfirmationRequested(message) {
@@ -191,6 +235,17 @@ ApplicationWindow {
                 return
             pasteDialog.confirmationId = 0
             pasteDialog.close()
+        }
+        function onTabTitlePromptRequested(promptId, initialTitle) {
+            tabTitleDialog.promptId = promptId
+            tabTitleField.text = initialTitle
+            tabTitleDialog.open()
+        }
+        function onTabTitlePromptResolved(promptId) {
+            if (tabTitleDialog.promptId !== promptId)
+                return
+            tabTitleDialog.promptId = 0
+            tabTitleDialog.close()
         }
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()

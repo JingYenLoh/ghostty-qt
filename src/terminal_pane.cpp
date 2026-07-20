@@ -2427,6 +2427,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     case WorkspaceAction::ActivateTabByIndex:
     case WorkspaceAction::ActivateLastTab:
     case WorkspaceAction::MoveTab:
+    case WorkspaceAction::PromptTabTitle:
     case WorkspaceAction::SetTabTitle:
     case WorkspaceAction::ResizeSplit:
     case WorkspaceAction::EqualizeSplits:

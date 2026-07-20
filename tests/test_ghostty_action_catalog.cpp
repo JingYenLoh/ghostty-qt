@@ -79,6 +79,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         {"equalize_splits", WorkspaceAction::EqualizeSplits, 123},
         {"toggle_split_zoom", WorkspaceAction::ToggleSplitZoom, 123},
         {"toggle_fullscreen", WorkspaceAction::ToggleFullscreen, 123},
+        {"prompt_tab_title", WorkspaceAction::PromptTabTitle, 123},
         {"quit", WorkspaceAction::RequestQuit, 123},
     };
 
@@ -107,6 +108,12 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QStringLiteral("copy_url_to_clipboard")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("copy_url_to_clipboard:")));
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("prompt_tab_title")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("prompt_tab_title:")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("prompt_tab_title:project")));
 }
 
 void GhosttyActionCatalogTest::translatesParameterizedActions_data()
@@ -795,6 +802,9 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("set_tab_title:project")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("prompt_tab_title")),
              GhosttyActionScope::Surface);
 
     const QStringList searchActions{

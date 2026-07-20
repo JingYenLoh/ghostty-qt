@@ -110,6 +110,108 @@ bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
     return true;
 }
 
+bool installTabTitlePromptTestHook(QQmlApplicationEngine *engine,
+                                   TerminalWorkspace *workspace)
+{
+    QObject *const rootObject = engine->rootObjects().constFirst();
+    QObject *const dialog =
+        rootObject->findChild<QObject *>(QStringLiteral("tabTitleDialog"));
+    QObject *const field =
+        rootObject->findChild<QObject *>(QStringLiteral("tabTitleField"));
+    if (dialog == nullptr || field == nullptr) {
+        qCritical() << "Tab-title test hook could not find the QML controls";
+        return false;
+    }
+
+    const QString seed = QStringLiteral("existing title");
+    const QString replacement = QStringLiteral("QML 👻 title");
+    const auto activePromptId = std::make_shared<quint64>(0);
+    const auto acceptanceInvoked = std::make_shared<bool>(false);
+    QObject::connect(
+        workspace, &TerminalWorkspace::tabTitlePromptRequested,
+        dialog,
+        [dialog, field, seed, replacement, activePromptId,
+         acceptanceInvoked](quint64 promptId, const QString &initialTitle) {
+            if (*activePromptId != 0 || promptId == 0
+                || initialTitle != seed) {
+                qCritical() << "Tab-title test hook observed an invalid request";
+                QCoreApplication::exit(1);
+                return;
+            }
+            *activePromptId = promptId;
+            QTimer::singleShot(
+                0, dialog,
+                [dialog, field, replacement, acceptanceInvoked] {
+                    if (!dialog->property("visible").toBool()
+                        || field->property("text").toString()
+                            != QStringLiteral("existing title")
+                        || !field->property("activeFocus").toBool()) {
+                        qCritical()
+                            << "Tab-title test hook observed invalid QML state";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    field->setProperty("text", replacement);
+                    *acceptanceInvoked = true;
+                    if (!QMetaObject::invokeMethod(dialog, "accept")) {
+                        *acceptanceInvoked = false;
+                        qCritical()
+                            << "Tab-title test hook could not accept the dialog";
+                        QCoreApplication::exit(1);
+                    }
+                });
+        });
+    QObject::connect(
+        workspace, &TerminalWorkspace::tabTitlePromptResolved,
+        dialog,
+        [workspace, dialog, replacement, activePromptId,
+         acceptanceInvoked](quint64 promptId) {
+            if (!*acceptanceInvoked || promptId != *activePromptId) {
+                qCritical() << "Tab-title test hook resolved the wrong request";
+                QCoreApplication::exit(1);
+                return;
+            }
+            *activePromptId = 0;
+            QTimer::singleShot(0, dialog, [workspace, dialog, replacement] {
+                const TabListEntry *entry = workspace->tabModel()->entryAt(
+                    workspace->currentIndex());
+                if (dialog->property("visible").toBool()
+                    || entry == nullptr
+                    || entry->titleOverride != replacement
+                    || workspace->currentTitle() != replacement) {
+                    qCritical()
+                        << "Tab-title test hook did not commit through QML";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                QCoreApplication::quit();
+            });
+        });
+
+    const auto exercise = [workspace, seed] {
+        if (!workspace->executeSurfaceActionOnAllPanes(
+                QStringLiteral("set_tab_title:existing title"))
+            || workspace->currentTitle() != seed
+            || !workspace->executeSurfaceActionOnAllPanes(
+                QStringLiteral("prompt_tab_title"))) {
+            qCritical() << "Tab-title test hook could not start the prompt";
+            QCoreApplication::exit(1);
+        }
+    };
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged,
+            workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 bool installFullscreenActionTestHook(QQmlApplicationEngine *engine,
                                      TerminalWorkspace *workspace)
 {
@@ -437,6 +539,12 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
         if (!installCloseDialogTestHook(&engine, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_TAB_TITLE_PROMPT") == 1) {
+        if (!installTabTitlePromptTestHook(&engine, workspace)) {
             return 1;
         }
     }

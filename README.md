@@ -62,7 +62,9 @@ the host-language comparison and remaining engineering risks.
   a catalog translates the currently implemented subset of Ghostty action
   strings into that action layer. The direct `set_tab_title` action applies a
   persistent override to the source pane's tab by stable identity; an empty
-  title restores the active pane's terminal-supplied title.
+  title restores the active pane's terminal-supplied title. The
+  `prompt_tab_title` action edits the same stable override through a modal Qt
+  dialog.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
@@ -330,7 +332,17 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 source pane; `all:` or `global:` applies it once to every stable pane target.
 `set_tab_title:<title>` installs a stable override on the source pane's tab;
 `set_tab_title:` clears it and reveals the active pane's current terminal
-title.
+title. `prompt_tab_title` is a strict void action—spellings with a colon are
+invalid—and targets the source pane's tab even if tabs are selected or moved
+while its dialog is open. The field snapshots the raw override when present;
+otherwise it snapshots the current display title, including the modeled zoom
+prefix. It receives focus with the caret at the end without selecting the
+existing text. OK preserves the entered text exactly, an empty value clears
+the override, and Cancel leaves it unchanged. Requests run one at a time in
+FIFO order; `all:` and `global:` enqueue one request per surface without
+deduplicating split panes in the same tab. Closing only the originating pane
+does not redirect the request when its tab survives, while deleting the target
+tab cancels its queued prompts and makes stale dialog completions inert.
 Successful `goto_split` actions consult the live `split-preserve-zoom` policy:
 `navigation` transfers an existing zoom to the destination, while the default
 `no-navigation` clears it. An unsuccessful navigation is inert.

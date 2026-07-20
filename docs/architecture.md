@@ -97,7 +97,13 @@ title and receives toolbar and directional-focus actions. A non-empty
 identity; an empty payload clears it. Pane focus changes and OSC title updates
 continue to update the base title without replacing the override, so clearing
 it reveals the then-current active-pane title. Tab insertion and reordering do
-not redirect or discard the override.
+not redirect or discard the override. The strict void `prompt_tab_title`
+action captures that source tab's stable identity and its raw override, or the
+current display-title snapshot when no override exists. The latter includes
+the modeled zoom prefix; an override is presented raw. Its modal QML text
+field takes focus with the caret at the end and does not select all. OK applies
+the exact entered text through `set_tab_title`, including surrounding spaces;
+blank therefore clears the override, while Cancel performs no mutation.
 
 A successful `goto_split` first resolves its destination, then applies focus
 and zoom as one workspace transition. The canonical
@@ -129,7 +135,12 @@ converge on the same action vocabulary as more Ghostty keybindings are added.
 Pending close and unsafe-paste operations retain stable IDs, so a model row
 moving before confirmation cannot redirect the operation to another pane or
 tab. Broad unsafe paste batches every stable target behind one confirmation;
-broad close converges on one confirmed shutdown request per workspace.
+broad close converges on one confirmed shutdown request per workspace. Tab
+title prompts likewise retain stable tab and nonzero request identities. Pane
+removal leaves a request alive when its containing tab survives; tab removal
+prunes every queued request for that identity, resolves an active dialog, and
+advances asynchronously. A completion carrying a stale request ID cannot
+rename either a replacement row or the currently selected tab.
 
 Close policy tracks the live child separately from active foreground work. For
 an interactive shell, `tcgetpgrp` detects jobs in a separate foreground process
@@ -743,7 +754,11 @@ mode the advancing selection produces one contiguous block in stable source
 order, while `end` appends that block. A fullscreen surface action is coalesced
 once per workspace during
 broad fanout because every pane maps to the same synchronously toggled Qt host
-window; separate workspaces still receive independent transitions.
+window; separate workspaces still receive independent transitions. In
+contrast, `prompt_tab_title` preserves pinned per-surface invocation: every
+surface in the stable fanout snapshot contributes one independently captured
+request, including multiple leaves of the same split tab. The workspace shows
+those requests one at a time in FIFO order without deduplication.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions

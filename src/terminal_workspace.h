@@ -73,6 +73,9 @@ public:
     Q_INVOKABLE void cancelClose();
     Q_INVOKABLE void confirmPaste(quint64 confirmationId);
     Q_INVOKABLE void cancelPaste(quint64 confirmationId);
+    Q_INVOKABLE void confirmTabTitlePrompt(quint64 promptId,
+                                           const QString &title);
+    Q_INVOKABLE void cancelTabTitlePrompt(quint64 promptId);
 
 Q_SIGNALS:
     void tabTitlesChanged();
@@ -84,6 +87,9 @@ Q_SIGNALS:
     void unsafePasteConfirmationRequested(quint64 confirmationId,
                                           const QString &preview);
     void unsafePasteConfirmationResolved(quint64 confirmationId);
+    void tabTitlePromptRequested(quint64 promptId,
+                                 const QString &initialTitle);
+    void tabTitlePromptResolved(quint64 promptId);
     void configReloadRequested();
     void broadActionsRequested(const QStringList &actions);
     void toggleFullscreenRequested();
@@ -111,6 +117,11 @@ private:
     struct PendingPaste {
         QString text;
         QVector<PendingPasteTarget> targets;
+    };
+    struct PendingTabTitlePrompt {
+        quint64 requestId = 0;
+        TabId tabId;
+        QString initialTitle;
     };
     enum class PendingClose {
         None,
@@ -194,6 +205,13 @@ private:
     void schedulePendingPastePreview();
     void showPendingPastePreview();
     static QString pastePreview(const QString &text);
+    bool enqueueTabTitlePrompt(TabId tabId);
+    void showNextTabTitlePrompt();
+    void scheduleNextTabTitlePrompt();
+    void finishTabTitlePrompt(quint64 promptId,
+                              const std::optional<QString> &title);
+    void removeTabTitlePromptsForTab(TabId tabId);
+    QString tabTitlePromptInitialValue(const Tab &tab) const;
 
     static LaunchOptions defaultOptions_;
     LaunchOptions effectiveOptions_;
@@ -215,6 +233,10 @@ private:
     bool pendingPastePreviewScheduled_ = false;
     quint64 nextPasteConfirmationId_ = 0;
     quint64 activePasteConfirmationId_ = 0;
+    QVector<PendingTabTitlePrompt> pendingTabTitlePrompts_;
+    std::optional<PendingTabTitlePrompt> activeTabTitlePrompt_;
+    quint64 nextTabTitlePromptId_ = 0;
+    bool tabTitlePromptAdvanceScheduled_ = false;
     bool broadActionFanout_ = false;
     QQmlComponent *searchOverlayComponent_ = nullptr;
     QQmlComponent *readOnlyOverlayComponent_ = nullptr;

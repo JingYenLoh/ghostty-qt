@@ -194,6 +194,8 @@ private Q_SLOTS:
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void tabTitleOverridesFollowStableSourcesAndReset();
+    void tabTitlePromptsPreserveStableTargetsAndReset();
+    void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
     void newTabPositionReloadsAndKeepsBroadOrder();
     void tabBarVisibilityTracksPolicyAndCount();
     void splitDirectionsPlaceAndFocusNewPane_data();
@@ -1669,6 +1671,208 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
              selectedBeforeBroad);
     QCOMPARE(workspace.currentTitle(), entry(secondTabId)->title);
+}
+
+void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    const auto entry = [&workspace](TabId id) {
+        return workspace.tabModel()->entryAt(
+            workspace.tabModel()->indexOf(id));
+    };
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:existing title")));
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("existing title"));
+
+    QSignalSpy requested(
+        &workspace, &TerminalWorkspace::tabTitlePromptRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::tabTitlePromptResolved);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 1);
+    const quint64 firstPromptId =
+        requested.at(0).at(0).toULongLong();
+    QVERIFY(firstPromptId != 0);
+    QCOMPARE(requested.at(0).at(1).toString(),
+             QStringLiteral("existing title"));
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const TabId secondTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    const QString secondTitle = workspace.currentTitle();
+    QVERIFY(secondTabId != firstTabId);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {firstTabId, firstPaneId, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(1), firstTabId);
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             secondTabId);
+
+    const QString renamed = QStringLiteral("  renamed 👻  ");
+    workspace.confirmTabTitlePrompt(firstPromptId, renamed);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.at(0).at(0).toULongLong(), firstPromptId);
+    QCOMPARE(entry(firstTabId)->titleOverride, renamed);
+    QCOMPARE(workspace.currentTitle(), secondTitle);
+
+    // A late completion cannot mutate either the original target or the tab
+    // currently occupying its former row.
+    workspace.confirmTabTitlePrompt(firstPromptId,
+                                    QStringLiteral("stale"));
+    QCOMPARE(entry(firstTabId)->titleOverride, renamed);
+    QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 2);
+    const quint64 cancelPromptId =
+        requested.at(1).at(0).toULongLong();
+    QCOMPARE(requested.at(1).at(1).toString(), renamed);
+    workspace.cancelTabTitlePrompt(cancelPromptId);
+    QCOMPARE(resolved.count(), 2);
+    QCOMPARE(entry(firstTabId)->titleOverride, renamed);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 3);
+    const quint64 clearPromptId =
+        requested.at(2).at(0).toULongLong();
+    workspace.confirmTabTitlePrompt(clearPromptId, QString{});
+    QCOMPARE(resolved.count(), 3);
+    QVERIFY(entry(firstTabId)->titleOverride.isEmpty());
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 4);
+    const quint64 basePromptId =
+        requested.at(3).at(0).toULongLong();
+    QCOMPARE(requested.at(3).at(1).toString(),
+             entry(firstTabId)->title);
+    workspace.cancelTabTitlePrompt(basePromptId);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::PromptTabTitle,
+        {secondTabId, firstPaneId, 0},
+    }));
+    QCOMPARE(requested.count(), 4);
+}
+
+void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, firstPaneId, 0},
+    }));
+    const PaneId secondPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(secondPaneId.isValid());
+    QVERIFY(secondPaneId != firstPaneId);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {firstTabId, secondPaneId, 0},
+    }));
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const TabId secondTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    QVERIFY(secondTabId != firstTabId);
+    const QString firstPromptInitial =
+        QStringLiteral("🔍 ")
+        + workspace.tabModel()
+              ->entryAt(workspace.tabModel()->indexOf(firstTabId))->title;
+    const QString secondPromptInitial =
+        workspace.tabModel()
+            ->entryAt(workspace.tabModel()->indexOf(secondTabId))->title;
+
+    QSignalSpy requested(
+        &workspace, &TerminalWorkspace::tabTitlePromptRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::tabTitlePromptResolved);
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(requested.at(0).at(1).toString(), firstPromptInitial);
+    const quint64 firstPromptId =
+        requested.at(0).at(0).toULongLong();
+
+    // Removing the originating split leaf does not cancel a prompt whose
+    // stable containing tab still exists.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {firstTabId, firstPaneId, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 2);
+    workspace.confirmTabTitlePrompt(firstPromptId,
+                                    QStringLiteral("first tab"));
+    QCOMPARE(workspace.tabModel()
+                 ->entryAt(workspace.tabModel()->indexOf(firstTabId))
+                 ->titleOverride,
+             QStringLiteral("first tab"));
+
+    // Pinned all/global dispatch invokes the action once per surface. The
+    // second split's request retains the title snapshot captured before the
+    // first prompt was accepted.
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 2, 1000);
+    QCOMPARE(requested.at(1).at(1).toString(), firstPromptInitial);
+    const quint64 removedPromptId =
+        requested.at(1).at(0).toULongLong();
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::CloseTab,
+        {firstTabId, PaneId{}, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 1);
+    QCOMPARE(resolved.count(), 2);
+
+    // Removing the active target resolves it and advances to the queued
+    // request for the next stable tab. A stale callback is harmless.
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 3, 1000);
+    QCOMPARE(requested.at(2).at(1).toString(), secondPromptInitial);
+    const quint64 finalPromptId =
+        requested.at(2).at(0).toULongLong();
+    workspace.confirmTabTitlePrompt(removedPromptId,
+                                    QStringLiteral("stale"));
+    QVERIFY(workspace.tabModel()->entryAt(0)->titleOverride.isEmpty());
+
+    workspace.confirmTabTitlePrompt(finalPromptId,
+                                    QStringLiteral("second tab"));
+    QCOMPARE(resolved.count(), 3);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->id, secondTabId);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->titleOverride,
+             QStringLiteral("second tab"));
+    QCoreApplication::processEvents();
+    QCOMPARE(requested.count(), 3);
 }
 
 void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()

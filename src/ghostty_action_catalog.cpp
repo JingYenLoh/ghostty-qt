@@ -317,6 +317,7 @@ bool isVoidAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("toggle_split_zoom"))
         || equals(actionName, QLatin1StringView("toggle_fullscreen"))
         || equals(actionName, QLatin1StringView("equalize_splits"))
+        || equals(actionName, QLatin1StringView("prompt_tab_title"))
         || equals(actionName, QLatin1StringView("quit"));
 }
 
@@ -432,6 +433,12 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
     }
     if (equals(actionName, QLatin1StringView("equalize_splits"))) {
         return accept(WorkspaceAction::EqualizeSplits,
+                      context,
+                      actionName,
+                      parameter);
+    }
+    if (equals(actionName, QLatin1StringView("prompt_tab_title"))) {
+        return accept(WorkspaceAction::PromptTabTitle,
                       context,
                       actionName,
                       parameter);

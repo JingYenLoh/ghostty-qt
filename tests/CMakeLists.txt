@@ -377,6 +377,21 @@ set_tests_properties(application-close-dialog PROPERTIES
 )
 
 add_test(
+    NAME application-tab-title-prompt
+    COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+)
+set(_ghostty_qt_tab_title_prompt_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-tab-title-prompt-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_tab_title_prompt_config_home}")
+set_tests_properties(application-tab-title-prompt PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TAB_TITLE_PROMPT=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_tab_title_prompt_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
+add_test(
     NAME application-fullscreen-action
     COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
 )
