@@ -1387,6 +1387,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
             "keybind = global:ctrl+j=new_tab\n"
             "keybind = ctrl+m=activate_key_table:modeé\n"
             "keybind = ctrl+p=prompt_tab_title\n"
+            "keybind = ctrl+u=prompt_surface_title\n"
             "keybind = ctrl+s=set_surface_title:🌐 surface:detail\n"
             "keybind = ctrl+t=set_tab_title:👻 main:detail\n"
             "keybind = resize/ctrl+h=resize_split:left,10\n"
@@ -1403,7 +1404,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     QVERIFY(result->keybindConfig.has_value());
     const GhosttyKeybindConfig &config = *result->keybindConfig;
     QCOMPARE(config.schemaVersion, 1);
-    QCOMPARE(config.root.size(), 8);
+    QCOMPARE(config.root.size(), 9);
     QCOMPARE(config.tables.size(), 2);
 
     const auto chained = std::find_if(
@@ -1462,6 +1463,12 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
             R"(set_surface_title:\xf0\x9f\x8c\x90 surface:detail)")}),
         &GhosttyKeybindDefinition::actions);
     QVERIFY(surfaceTitle != config.root.cend());
+
+    const auto surfaceTitlePrompt = std::ranges::find(
+        config.root,
+        QStringList({QStringLiteral("prompt_surface_title")}),
+        &GhosttyKeybindDefinition::actions);
+    QVERIFY(surfaceTitlePrompt != config.root.cend());
 
     const auto tabTitle = std::ranges::find(
         config.root,

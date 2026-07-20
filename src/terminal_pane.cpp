@@ -827,8 +827,11 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
             &TerminalPane::handleHyperlinkResult);
     connect(controller_, &TerminalController::hyperlinkActivationResolved,
             this, &TerminalPane::handleHyperlinkActivation);
-    connect(controller_, &TerminalController::titleChanged,
-            this, &TerminalPane::titleChanged);
+    connect(controller_, &TerminalController::titleChanged, this, [this] {
+        if (!surfaceTitleOverride_.has_value()) {
+            Q_EMIT titleChanged();
+        }
+    });
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
     connect(controller_, &TerminalController::mouseTrackingChanged, this,
@@ -893,8 +896,9 @@ TerminalPane::~TerminalPane()
 
 QString TerminalPane::title() const
 {
-    if (controller_->hasTitle()) {
-        return controller_->title();
+    if (const std::optional<QString> effective = effectiveSurfaceTitle();
+        effective.has_value()) {
+        return *effective;
     }
     if (!options_.program.isEmpty()) {
         return QFileInfo(options_.program.constFirst()).fileName();
@@ -902,9 +906,29 @@ QString TerminalPane::title() const
     return QStringLiteral("Terminal");
 }
 
+std::optional<QString> TerminalPane::effectiveSurfaceTitle() const
+{
+    if (surfaceTitleOverride_.has_value()) {
+        return surfaceTitleOverride_;
+    }
+    if (controller_->hasTitle()) {
+        return controller_->title();
+    }
+    return std::nullopt;
+}
+
 void TerminalPane::setSurfaceTitle(QString title)
 {
     controller_->setSurfaceTitle(std::move(title));
+}
+
+void TerminalPane::setSurfaceTitleOverride(std::optional<QString> title)
+{
+    if (surfaceTitleOverride_ == title) {
+        return;
+    }
+    surfaceTitleOverride_ = std::move(title);
+    Q_EMIT titleChanged();
 }
 
 QString TerminalPane::currentDirectory() const
@@ -2434,6 +2458,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     case WorkspaceAction::ActivateTabByIndex:
     case WorkspaceAction::ActivateLastTab:
     case WorkspaceAction::MoveTab:
+    case WorkspaceAction::PromptSurfaceTitle:
     case WorkspaceAction::PromptTabTitle:
     case WorkspaceAction::SetTabTitle:
     case WorkspaceAction::ResizeSplit:

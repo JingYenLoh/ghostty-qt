@@ -636,6 +636,12 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         pane->setSurfaceTitle(request.payload);
         return true;
     }
+    case WorkspaceAction::PromptSurfaceTitle:
+        if (paneForId(request.context.paneId) == nullptr
+            || !contextMatchesPane()) {
+            return false;
+        }
+        return enqueueTitlePrompt(request.context.paneId);
     case WorkspaceAction::PromptTabTitle: {
         if (request.context.paneId.isValid()
             && (paneForId(request.context.paneId) == nullptr
@@ -647,7 +653,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             : (request.context.tabId.isValid()
                    ? request.context.tabId
                    : currentTabId());
-        return enqueueTabTitlePrompt(tabId);
+        return enqueueTitlePrompt(tabId);
     }
     case WorkspaceAction::SetTabTitle: {
         if (request.context.paneId.isValid()
@@ -1287,6 +1293,7 @@ void TerminalWorkspace::removeTab(TabId tabId)
 void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
 {
     removePendingPastesForPane(handle);
+    removeTitlePrompts(TitlePromptTarget{handle.id});
     if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != handle.id) {
         return;
     }
@@ -1298,7 +1305,7 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
 
 void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)
 {
-    removeTabTitlePromptsForTab(tabId);
+    removeTitlePrompts(TitlePromptTarget{tabId});
     if (pendingClose_ != PendingClose::Tab || pendingTabId_ != tabId) {
         return;
     }
@@ -1511,117 +1518,164 @@ QString TerminalWorkspace::tabTitlePromptInitialValue(const Tab &tab) const
     return title;
 }
 
-bool TerminalWorkspace::enqueueTabTitlePrompt(TabId tabId)
+bool TerminalWorkspace::enqueueTitlePrompt(PaneId paneId)
+{
+    TerminalPane *pane = paneForId(paneId);
+    if (pane == nullptr) {
+        return false;
+    }
+    const std::optional<QString> effective = pane->effectiveSurfaceTitle();
+    return enqueueTitlePrompt(
+        TitlePromptTarget{paneId},
+        effective.has_value() ? *effective : QString{});
+}
+
+bool TerminalWorkspace::enqueueTitlePrompt(TabId tabId)
 {
     const Tab *tab = tabById(tabId);
     if (tab == nullptr) {
         return false;
     }
 
+    return enqueueTitlePrompt(
+        TitlePromptTarget{tabId}, tabTitlePromptInitialValue(*tab));
+}
+
+bool TerminalWorkspace::enqueueTitlePrompt(TitlePromptTarget target,
+                                           QString initialTitle)
+{
+    if (!titlePromptTargetExists(target)) {
+        return false;
+    }
+
     do {
-        ++nextTabTitlePromptId_;
-    } while (nextTabTitlePromptId_ == 0);
-    pendingTabTitlePrompts_.append({
-        nextTabTitlePromptId_,
-        tabId,
-        tabTitlePromptInitialValue(*tab),
+        ++nextTitlePromptId_;
+    } while (nextTitlePromptId_ == 0);
+    pendingTitlePrompts_.push_back({
+        nextTitlePromptId_,
+        std::move(target),
+        std::move(initialTitle),
     });
 
-    if (!activeTabTitlePrompt_.has_value()
-        && !tabTitlePromptAdvanceScheduled_) {
-        showNextTabTitlePrompt();
+    if (!activeTitlePrompt_.has_value()
+        && !titlePromptAdvanceScheduled_) {
+        showNextTitlePrompt();
     }
     return true;
 }
 
-void TerminalWorkspace::showNextTabTitlePrompt()
+bool TerminalWorkspace::titlePromptTargetExists(
+    const TitlePromptTarget &target) const
 {
-    if (activeTabTitlePrompt_.has_value()) {
+    if (const auto *paneId = std::get_if<PaneId>(&target)) {
+        return paneForId(*paneId) != nullptr;
+    }
+    return tabById(std::get<TabId>(target)) != nullptr;
+}
+
+void TerminalWorkspace::showNextTitlePrompt()
+{
+    if (activeTitlePrompt_.has_value()) {
         return;
     }
 
-    while (!pendingTabTitlePrompts_.isEmpty()) {
-        PendingTabTitlePrompt prompt =
-            std::move(pendingTabTitlePrompts_.front());
-        pendingTabTitlePrompts_.removeFirst();
-        if (tabById(prompt.tabId) == nullptr) {
+    while (!pendingTitlePrompts_.empty()) {
+        PendingTitlePrompt prompt =
+            std::move(pendingTitlePrompts_.front());
+        pendingTitlePrompts_.pop_front();
+        if (!titlePromptTargetExists(prompt.target)) {
             continue;
         }
 
-        activeTabTitlePrompt_ = std::move(prompt);
-        Q_EMIT tabTitlePromptRequested(
-            activeTabTitlePrompt_->requestId,
-            activeTabTitlePrompt_->initialTitle);
+        activeTitlePrompt_ = std::move(prompt);
+        const QString heading = std::holds_alternative<PaneId>(
+            activeTitlePrompt_->target)
+            ? QStringLiteral("Change Terminal Title")
+            : QStringLiteral("Change Tab Title");
+        Q_EMIT titlePromptRequested(
+            activeTitlePrompt_->requestId,
+            heading,
+            activeTitlePrompt_->initialTitle);
         return;
     }
 }
 
-void TerminalWorkspace::scheduleNextTabTitlePrompt()
+void TerminalWorkspace::scheduleNextTitlePrompt()
 {
-    if (activeTabTitlePrompt_.has_value()
-        || pendingTabTitlePrompts_.isEmpty()
-        || tabTitlePromptAdvanceScheduled_) {
+    if (activeTitlePrompt_.has_value()
+        || pendingTitlePrompts_.empty()
+        || titlePromptAdvanceScheduled_) {
         return;
     }
 
-    tabTitlePromptAdvanceScheduled_ = true;
+    titlePromptAdvanceScheduled_ = true;
     QTimer::singleShot(0, this, [this] {
-        tabTitlePromptAdvanceScheduled_ = false;
-        showNextTabTitlePrompt();
+        titlePromptAdvanceScheduled_ = false;
+        showNextTitlePrompt();
     });
 }
 
-void TerminalWorkspace::confirmTabTitlePrompt(quint64 promptId,
-                                              const QString &title)
+void TerminalWorkspace::confirmTitlePrompt(quint64 promptId,
+                                           const QString &title)
 {
-    finishTabTitlePrompt(promptId, title);
+    finishTitlePrompt(promptId, title);
 }
 
-void TerminalWorkspace::cancelTabTitlePrompt(quint64 promptId)
+void TerminalWorkspace::cancelTitlePrompt(quint64 promptId)
 {
-    finishTabTitlePrompt(promptId, std::nullopt);
+    finishTitlePrompt(promptId, std::nullopt);
 }
 
-void TerminalWorkspace::finishTabTitlePrompt(
+void TerminalWorkspace::finishTitlePrompt(
     quint64 promptId,
     const std::optional<QString> &title)
 {
-    if (promptId == 0 || !activeTabTitlePrompt_.has_value()
-        || activeTabTitlePrompt_->requestId != promptId) {
+    if (promptId == 0 || !activeTitlePrompt_.has_value()
+        || activeTitlePrompt_->requestId != promptId) {
         return;
     }
 
-    const PendingTabTitlePrompt prompt =
-        std::move(*activeTabTitlePrompt_);
-    activeTabTitlePrompt_.reset();
-    if (title.has_value() && tabById(prompt.tabId) != nullptr) {
-        dispatchAction({
-            WorkspaceAction::SetTabTitle,
-            {prompt.tabId, PaneId{}, 0},
-            *title,
-        });
-    }
-    Q_EMIT tabTitlePromptResolved(promptId);
-    scheduleNextTabTitlePrompt();
-}
-
-void TerminalWorkspace::removeTabTitlePromptsForTab(TabId tabId)
-{
-    for (qsizetype index = pendingTabTitlePrompts_.size(); index-- > 0;) {
-        if (pendingTabTitlePrompts_[index].tabId == tabId) {
-            pendingTabTitlePrompts_.removeAt(index);
+    const PendingTitlePrompt prompt = std::move(*activeTitlePrompt_);
+    activeTitlePrompt_.reset();
+    if (title.has_value()) {
+        if (const auto *paneId = std::get_if<PaneId>(&prompt.target)) {
+            if (TerminalPane *pane = paneForId(*paneId); pane != nullptr) {
+                std::optional<QString> titleOverride;
+                if (!title->isEmpty()) {
+                    titleOverride = *title;
+                }
+                pane->setSurfaceTitleOverride(std::move(titleOverride));
+            }
+        } else {
+            const TabId tabId = std::get<TabId>(prompt.target);
+            if (tabById(tabId) != nullptr) {
+                dispatchAction({
+                    WorkspaceAction::SetTabTitle,
+                    {tabId, PaneId{}, 0},
+                    *title,
+                });
+            }
         }
     }
+    Q_EMIT titlePromptResolved(promptId);
+    scheduleNextTitlePrompt();
+}
 
-    if (!activeTabTitlePrompt_.has_value()
-        || activeTabTitlePrompt_->tabId != tabId) {
+void TerminalWorkspace::removeTitlePrompts(TitlePromptTarget target)
+{
+    std::erase_if(pendingTitlePrompts_, [&target](const auto &prompt) {
+        return prompt.target == target;
+    });
+
+    if (!activeTitlePrompt_.has_value()
+        || activeTitlePrompt_->target != target) {
         return;
     }
 
-    const quint64 promptId = activeTabTitlePrompt_->requestId;
-    activeTabTitlePrompt_.reset();
-    Q_EMIT tabTitlePromptResolved(promptId);
-    scheduleNextTabTitlePrompt();
+    const quint64 promptId = activeTitlePrompt_->requestId;
+    activeTitlePrompt_.reset();
+    Q_EMIT titlePromptResolved(promptId);
+    scheduleNextTitlePrompt();
 }
 
 void TerminalWorkspace::finishPendingPaste(quint64 confirmationId,

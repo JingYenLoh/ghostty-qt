@@ -840,9 +840,13 @@
           "status": "partial",
           "note": "Local root triggers route the action through the typed catalog and workspace."
         },
+        "prompt_surface_title": {
+          "status": "supported",
+          "note": "Accepts only the exact void spelling and targets the originating stable PaneId. The field snapshots the raw non-empty surface override when present, otherwise the optional base title or empty text; tab overrides, zoom decoration, and Qt launch fallbacks are excluded. OK preserves non-empty text exactly as a persistent per-pane override, blank clears only that override, and Cancel is inert. OSC, set_surface_title, and reset retain the hidden base while an override masks it. Surface and tab prompts share one modal FIFO; all/global enqueues once per pane, removed targets are resolved or pruned, and stale completions are inert."
+        },
         "prompt_tab_title": {
           "status": "supported",
-          "note": "Accepts only the exact void spelling with no colon and targets the source surface's tab by stable identity. Each request snapshots the raw override when present or the current display title otherwise, including the modeled zoom prefix; the focused field places its caret at the end without selecting all. OK preserves text exactly, blank clears the override, and Cancel is inert. Requests are shown FIFO, with all/global retaining one request per surface and no split-tab deduplication. Source-pane removal is harmless while its tab survives; target deletion resolves or prunes its requests, and stale completions cannot rename another tab."
+          "note": "Accepts only the exact void spelling with no colon and targets the source surface's tab by stable identity. Each request snapshots the raw override when present or the current display title otherwise, including the modeled zoom prefix; the focused field places its caret at the end without selecting all. OK preserves text exactly, blank clears the override, and Cancel is inert. Requests share one FIFO with surface-title prompts, with all/global retaining one request per surface and no split-tab deduplication. Source-pane removal is harmless while its tab survives; target deletion resolves or prunes its requests, and stale completions cannot rename another tab."
         },
         "quit": {
           "status": "partial",
@@ -922,7 +926,7 @@
         },
         "set_tab_title": {
           "status": "supported",
-          "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's current base title; focus and base-title changes plus tab insertion and reordering preserve the override."
+          "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's effective surface title; focus and surface/base-title changes plus tab insertion and reordering preserve the override."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",

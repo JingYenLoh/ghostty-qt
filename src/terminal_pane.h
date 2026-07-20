@@ -50,6 +50,14 @@ public:
     ~TerminalPane() override;
 
     QString title() const;
+    // The application-visible surface title intentionally excludes the Qt
+    // launch fallback and any containing-tab override. Clipboard and prompt
+    // actions consume this exact layer.
+    [[nodiscard]] std::optional<QString> effectiveSurfaceTitle() const;
+    [[nodiscard]] const std::optional<QString> &surfaceTitleOverride() const
+    {
+        return surfaceTitleOverride_;
+    }
     QString currentDirectory() const;
     qreal fontPointSize() const;
     QStringList activeKeyTables() const;
@@ -76,6 +84,7 @@ public:
 
     void focusTerminal();
     void setSurfaceTitle(QString title);
+    void setSurfaceTitleOverride(std::optional<QString> title);
     void copySelection();
     void pasteText(const QString &text);
     void confirmPaste(quint64 requestId);
@@ -206,6 +215,7 @@ private:
     SplitAppearance splitAppearance_;
     GhosttyKeybindSet keybinds_;
     TerminalController *controller_ = nullptr;
+    std::optional<QString> surfaceTitleOverride_;
     QFont font_;
     qreal cellWidth_ = 8.0;
     qreal cellHeight_ = 16.0;

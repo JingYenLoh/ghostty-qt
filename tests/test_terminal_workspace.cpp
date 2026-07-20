@@ -195,6 +195,8 @@ private Q_SLOTS:
     void indexedLastAndMovedTabsPreserveStableIds();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
     void tabTitleOverridesFollowStableSourcesAndReset();
+    void surfaceTitlePromptsPreserveStableTargetsAndLayers();
+    void broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes();
     void tabTitlePromptsPreserveStableTargetsAndReset();
     void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
     void newTabPositionReloadsAndKeepsBroadOrder();
@@ -1848,6 +1850,445 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     QCOMPARE(workspace.currentTitle(), entry(secondTabId)->title);
 }
 
+void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/surface-title-prompt-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString firstRelease =
+        directory.filePath(QStringLiteral("first-release"));
+    const QString secondRelease =
+        directory.filePath(QStringLiteral("second-release"));
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;base-a\\007'; "
+            "while [ ! -e \"$2\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;base-a\\007'; sleep 30"),
+        QStringLiteral("surface-prompt-test"),
+        firstRelease,
+        secondRelease,
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *controller = firstPane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QSignalSpy requested(
+        &workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::titlePromptResolved);
+
+    // Neither the launch fallback nor a containing-tab override seeds the
+    // raw per-surface prompt when no base title exists.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:tab mask")));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(requested.at(0).at(1).toString(),
+             QStringLiteral("Change Terminal Title"));
+    QVERIFY(requested.at(0).at(2).toString().isEmpty());
+    const quint64 absentPromptId =
+        requested.at(0).at(0).toULongLong();
+    workspace.cancelTitlePrompt(absentPromptId);
+    QCOMPARE(resolved.count(), 1);
+
+    QFile release(firstRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(controller->title(), QStringLiteral("base-a"),
+                              3000);
+    QCOMPARE(firstPane->title(), QStringLiteral("base-a"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 2);
+    QCOMPARE(requested.at(1).at(2).toString(), QStringLiteral("base-a"));
+    const QString override = QStringLiteral("  override 👻  ");
+    const quint64 overridePromptId =
+        requested.at(1).at(0).toULongLong();
+    workspace.confirmTitlePrompt(overridePromptId, override);
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{override});
+    QCOMPARE(firstPane->title(), override);
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
+
+    // Reset and both base-title writers remain hidden by the persistent
+    // override. The repeated OSC restores the terminal's pre-action cache.
+    QSignalSpy terminalUpdates(controller,
+                               &TerminalController::terminalUpdated);
+    const int updatesBeforeReset = terminalUpdates.count();
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("reset")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        terminalUpdates.count() > updatesBeforeReset, 1000);
+    QCOMPARE(controller->title(), QStringLiteral("base-a"));
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{override});
+    QCOMPARE(firstPane->title(), override);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:base-b")));
+    QCOMPARE(controller->title(), QStringLiteral("base-b"));
+    QCOMPARE(firstPane->title(), override);
+    release.setFileName(secondRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(controller->title(), QStringLiteral("base-a"),
+                              3000);
+    QCOMPARE(firstPane->title(), override);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:base-c")));
+    QCOMPARE(controller->title(), QStringLiteral("base-c"));
+    QCOMPARE(firstPane->title(), override);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 3);
+    QCOMPARE(requested.at(2).at(2).toString(), override);
+    const quint64 cancelPromptId =
+        requested.at(2).at(0).toULongLong();
+    workspace.cancelTitlePrompt(cancelPromptId);
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{override});
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:")));
+    QCOMPARE(workspace.currentTitle(), override);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 4);
+    const quint64 clearPromptId =
+        requested.at(3).at(0).toULongLong();
+    workspace.confirmTitlePrompt(clearPromptId, QString{});
+    QVERIFY(!firstPane->surfaceTitleOverride().has_value());
+    QCOMPARE(firstPane->title(), QStringLiteral("base-c"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("base-c"));
+
+    // A present empty base remains distinct from the visible launch fallback,
+    // while its prompt field is still correctly empty.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:")));
+    QVERIFY(firstPane->title().isEmpty());
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 5);
+    QVERIFY(requested.at(4).at(2).toString().isEmpty());
+    workspace.cancelTitlePrompt(
+        requested.at(4).at(0).toULongLong());
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::PromptSurfaceTitle,
+        {TabId(999'999), firstPaneId, 0},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::PromptSurfaceTitle,
+        {firstTabId, PaneId{}, 0},
+    }));
+    QCOMPARE(requested.count(), 5);
+
+    // Surface and tab prompts share one FIFO. Both snapshot their stable raw
+    // target before tab selection and ordering change underneath the dialog.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:stable base")));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 6);
+    const quint64 stablePromptId =
+        requested.at(5).at(0).toULongLong();
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 6);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const TabId secondTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    const QString secondTitle = workspace.currentTitle();
+    QVERIFY(secondTabId != firstTabId);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {firstTabId, firstPaneId, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             secondTabId);
+
+    const QString stableOverride = QStringLiteral("inactive override");
+    workspace.confirmTitlePrompt(stablePromptId, stableOverride);
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{stableOverride});
+    QCOMPARE(workspace.currentTitle(), secondTitle);
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 7, 1000);
+    QCOMPARE(requested.at(6).at(1).toString(),
+             QStringLiteral("Change Tab Title"));
+    QCOMPARE(requested.at(6).at(2).toString(),
+             QStringLiteral("stable base"));
+    const quint64 tabPromptId = requested.at(6).at(0).toULongLong();
+    workspace.cancelTitlePrompt(tabPromptId);
+
+    // Removing the exact stable pane resolves its active prompt even when a
+    // newly created sibling keeps the containing tab alive. Late OK is inert.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, firstPaneId, 0},
+    }));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 8, 1000);
+    const quint64 removedPromptId =
+        requested.at(7).at(0).toULongLong();
+    QPointer<TerminalPane> removedPane(firstPane);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {firstTabId, firstPaneId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    QCOMPARE(resolved.count(), 8);
+    workspace.confirmTitlePrompt(removedPromptId,
+                                 QStringLiteral("stale"));
+    QCOMPARE(workspace.currentTitle(), secondTitle);
+}
+
+void TerminalWorkspaceTest::broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/broad-surface-title-prompt-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString releasePath =
+        directory.filePath(QStringLiteral("release"));
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+            "printf 'broad-selection-marker\\r\\n"
+            "\\033]0;broad-ready\\007'; sleep 30"),
+        QStringLiteral("broad-surface-prompt-test"),
+        releasePath,
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace;
+    workspace.setParentItem(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.window(), &window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, firstPaneId, 0},
+    }));
+    const PaneId secondPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    QVERIFY(secondPaneId != firstPaneId);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {firstTabId, secondPaneId, 0},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+
+    workspace.newTab();
+    const TabId secondTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    const PaneId thirdPaneId =
+        workspace.tabModel()->entryAt(workspace.currentIndex())->activePaneId;
+    TerminalPane *thirdPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane) thirdPane = pane;
+    }
+    QVERIFY(thirdPane != nullptr);
+    QVERIFY(secondTabId != firstTabId);
+
+    QFile release(releasePath);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(firstController->title(),
+                              QStringLiteral("broad-ready"), 3000);
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("select_all")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstController->selectionAvailable(), 1000);
+    firstPane->setSurfaceTitleOverride(
+        std::optional<QString>{QStringLiteral("first seed")});
+    secondPane->setSurfaceTitleOverride(
+        std::optional<QString>{QStringLiteral("second override")});
+    thirdPane->setSurfaceTitleOverride(
+        std::optional<QString>{QStringLiteral("third override")});
+    thirdPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), thirdPane, 1000);
+
+    const int selectedIndex = workspace.currentIndex();
+    const PaneId selectedPaneId =
+        workspace.tabModel()->entryAt(selectedIndex)->activePaneId;
+    QSignalSpy requested(
+        &workspace, &TerminalWorkspace::titlePromptRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::titlePromptResolved);
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(requested.at(0).at(1).toString(),
+             QStringLiteral("Change Terminal Title"));
+    QCOMPARE(requested.at(0).at(2).toString(),
+             QStringLiteral("first seed"));
+    QCOMPARE(workspace.currentIndex(), selectedIndex);
+    QCOMPARE(workspace.tabModel()->entryAt(selectedIndex)->activePaneId,
+             selectedPaneId);
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+    QVERIFY(firstController->selectionAvailable());
+
+    const quint64 firstPromptId =
+        requested.at(0).at(0).toULongLong();
+    workspace.confirmTitlePrompt(firstPromptId,
+                                 QStringLiteral("first override"));
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{QStringLiteral("first override")});
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 2, 1000);
+    QCOMPARE(requested.at(1).at(2).toString(),
+             QStringLiteral("second override"));
+    workspace.cancelTitlePrompt(
+        requested.at(1).at(0).toULongLong());
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 3, 1000);
+    QCOMPARE(requested.at(2).at(2).toString(),
+             QStringLiteral("third override"));
+    workspace.confirmTitlePrompt(
+        requested.at(2).at(0).toULongLong(), QString{});
+    QCOMPARE(resolved.count(), 3);
+    QVERIFY(!thirdPane->surfaceTitleOverride().has_value());
+    QCOMPARE(workspace.currentIndex(), selectedIndex);
+    QCOMPARE(window.activeFocusItem(), thirdPane);
+    QVERIFY(firstController->selectionAvailable());
+
+    // A surface request followed by a tab request shares the same modal FIFO.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 4);
+    const quint64 mixedSurfacePromptId =
+        requested.at(3).at(0).toULongLong();
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_tab_title")));
+    QCOMPARE(requested.count(), 4);
+    workspace.confirmTitlePrompt(mixedSurfacePromptId,
+                                 QStringLiteral("mixed surface"));
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 5, 1000);
+    QCOMPARE(requested.at(4).at(1).toString(),
+             QStringLiteral("Change Tab Title"));
+    QCOMPARE(requested.at(4).at(2).toString(),
+             QStringLiteral("🔍 second override"));
+    workspace.cancelTitlePrompt(
+        requested.at(4).at(0).toULongLong());
+
+    // Add a fourth pane after the zoom assertion so removing its queued
+    // request can exercise exact-pane pruning while the tab remains alive.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, secondPaneId, 0},
+    }));
+    const PaneId queuedPaneId =
+        workspace.tabModel()
+            ->entryAt(workspace.tabModel()->indexOf(firstTabId))
+            ->activePaneId;
+    TerminalPane *queuedPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane && pane != secondPane && pane != thirdPane) {
+            queuedPane = pane;
+        }
+    }
+    QVERIFY(queuedPane != nullptr);
+    QVERIFY(queuedPaneId != firstPaneId);
+    QVERIFY(queuedPaneId != secondPaneId);
+
+    // Removing an active pane prompt advances to the next stable pane. Queued
+    // requests for an exact removed pane and a later removed tab are pruned.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 6);
+    const quint64 removedPromptId =
+        requested.at(5).at(0).toULongLong();
+    QVERIFY(secondPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QVERIFY(queuedPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QVERIFY(thirdPane->executeConfiguredAction(
+        QStringLiteral("prompt_surface_title")));
+    QCOMPARE(requested.count(), 6);
+
+    QPointer<TerminalPane> removedQueuedPane(queuedPane);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {firstTabId, queuedPaneId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(removedQueuedPane.isNull(), 1000);
+    QCOMPARE(requested.count(), 6);
+
+    QPointer<TerminalPane> removedPane(firstPane);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {firstTabId, firstPaneId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 7, 1000);
+    QCOMPARE(requested.at(6).at(2).toString(),
+             QStringLiteral("second override"));
+    workspace.confirmTitlePrompt(removedPromptId,
+                                 QStringLiteral("stale"));
+    QCOMPARE(secondPane->surfaceTitleOverride(),
+             std::optional<QString>{QStringLiteral("second override")});
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::CloseTab,
+        {secondTabId, thirdPaneId, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 1);
+    workspace.cancelTitlePrompt(
+        requested.at(6).at(0).toULongLong());
+    QCoreApplication::processEvents();
+    QCOMPARE(requested.count(), 7);
+    QCOMPARE(resolved.count(), 7);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
+             secondPaneId);
+}
+
 void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
@@ -1875,9 +2316,9 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
              QStringLiteral("existing title"));
 
     QSignalSpy requested(
-        &workspace, &TerminalWorkspace::tabTitlePromptRequested);
+        &workspace, &TerminalWorkspace::titlePromptRequested);
     QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::tabTitlePromptResolved);
+        &workspace, &TerminalWorkspace::titlePromptResolved);
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 1);
@@ -1885,6 +2326,8 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
         requested.at(0).at(0).toULongLong();
     QVERIFY(firstPromptId != 0);
     QCOMPARE(requested.at(0).at(1).toString(),
+             QStringLiteral("Change Tab Title"));
+    QCOMPARE(requested.at(0).at(2).toString(),
              QStringLiteral("existing title"));
 
     workspace.newTab();
@@ -1902,7 +2345,7 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
              secondTabId);
 
     const QString renamed = QStringLiteral("  renamed 👻  ");
-    workspace.confirmTabTitlePrompt(firstPromptId, renamed);
+    workspace.confirmTitlePrompt(firstPromptId, renamed);
     QCOMPARE(resolved.count(), 1);
     QCOMPARE(resolved.at(0).at(0).toULongLong(), firstPromptId);
     QCOMPARE(entry(firstTabId)->titleOverride, renamed);
@@ -1910,8 +2353,7 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
 
     // A late completion cannot mutate either the original target or the tab
     // currently occupying its former row.
-    workspace.confirmTabTitlePrompt(firstPromptId,
-                                    QStringLiteral("stale"));
+    workspace.confirmTitlePrompt(firstPromptId, QStringLiteral("stale"));
     QCOMPARE(entry(firstTabId)->titleOverride, renamed);
     QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
 
@@ -1920,8 +2362,8 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
     QCOMPARE(requested.count(), 2);
     const quint64 cancelPromptId =
         requested.at(1).at(0).toULongLong();
-    QCOMPARE(requested.at(1).at(1).toString(), renamed);
-    workspace.cancelTabTitlePrompt(cancelPromptId);
+    QCOMPARE(requested.at(1).at(2).toString(), renamed);
+    workspace.cancelTitlePrompt(cancelPromptId);
     QCOMPARE(resolved.count(), 2);
     QCOMPARE(entry(firstTabId)->titleOverride, renamed);
 
@@ -1930,7 +2372,7 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
     QCOMPARE(requested.count(), 3);
     const quint64 clearPromptId =
         requested.at(2).at(0).toULongLong();
-    workspace.confirmTabTitlePrompt(clearPromptId, QString{});
+    workspace.confirmTitlePrompt(clearPromptId, QString{});
     QCOMPARE(resolved.count(), 3);
     QVERIFY(entry(firstTabId)->titleOverride.isEmpty());
 
@@ -1939,9 +2381,9 @@ void TerminalWorkspaceTest::tabTitlePromptsPreserveStableTargetsAndReset()
     QCOMPARE(requested.count(), 4);
     const quint64 basePromptId =
         requested.at(3).at(0).toULongLong();
-    QCOMPARE(requested.at(3).at(1).toString(),
+    QCOMPARE(requested.at(3).at(2).toString(),
              entry(firstTabId)->title);
-    workspace.cancelTabTitlePrompt(basePromptId);
+    workspace.cancelTitlePrompt(basePromptId);
 
     QVERIFY(!workspace.dispatchAction({
         WorkspaceAction::PromptTabTitle,
@@ -1991,13 +2433,15 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
             ->entryAt(workspace.tabModel()->indexOf(secondTabId))->title;
 
     QSignalSpy requested(
-        &workspace, &TerminalWorkspace::tabTitlePromptRequested);
+        &workspace, &TerminalWorkspace::titlePromptRequested);
     QSignalSpy resolved(
-        &workspace, &TerminalWorkspace::tabTitlePromptResolved);
+        &workspace, &TerminalWorkspace::titlePromptResolved);
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("prompt_tab_title")));
     QCOMPARE(requested.count(), 1);
-    QCOMPARE(requested.at(0).at(1).toString(), firstPromptInitial);
+    QCOMPARE(requested.at(0).at(1).toString(),
+             QStringLiteral("Change Tab Title"));
+    QCOMPARE(requested.at(0).at(2).toString(), firstPromptInitial);
     const quint64 firstPromptId =
         requested.at(0).at(0).toULongLong();
 
@@ -2008,8 +2452,8 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
         {firstTabId, firstPaneId, 0},
     }));
     QCOMPARE(workspace.tabCount(), 2);
-    workspace.confirmTabTitlePrompt(firstPromptId,
-                                    QStringLiteral("first tab"));
+    workspace.confirmTitlePrompt(firstPromptId,
+                                 QStringLiteral("first tab"));
     QCOMPARE(workspace.tabModel()
                  ->entryAt(workspace.tabModel()->indexOf(firstTabId))
                  ->titleOverride,
@@ -2019,7 +2463,7 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     // second split's request retains the title snapshot captured before the
     // first prompt was accepted.
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 2, 1000);
-    QCOMPARE(requested.at(1).at(1).toString(), firstPromptInitial);
+    QCOMPARE(requested.at(1).at(2).toString(), firstPromptInitial);
     const quint64 removedPromptId =
         requested.at(1).at(0).toULongLong();
 
@@ -2033,15 +2477,15 @@ void TerminalWorkspaceTest::broadTabTitlePromptsQueueEverySurfaceAndSurviveRemov
     // Removing the active target resolves it and advances to the queued
     // request for the next stable tab. A stale callback is harmless.
     QTRY_COMPARE_WITH_TIMEOUT(requested.count(), 3, 1000);
-    QCOMPARE(requested.at(2).at(1).toString(), secondPromptInitial);
+    QCOMPARE(requested.at(2).at(2).toString(), secondPromptInitial);
     const quint64 finalPromptId =
         requested.at(2).at(0).toULongLong();
-    workspace.confirmTabTitlePrompt(removedPromptId,
-                                    QStringLiteral("stale"));
+    workspace.confirmTitlePrompt(removedPromptId,
+                                 QStringLiteral("stale"));
     QVERIFY(workspace.tabModel()->entryAt(0)->titleOverride.isEmpty());
 
-    workspace.confirmTabTitlePrompt(finalPromptId,
-                                    QStringLiteral("second tab"));
+    workspace.confirmTitlePrompt(finalPromptId,
+                                 QStringLiteral("second tab"));
     QCOMPARE(resolved.count(), 3);
     QCOMPARE(workspace.tabModel()->entryAt(0)->id, secondTabId);
     QCOMPARE(workspace.tabModel()->entryAt(0)->titleOverride,

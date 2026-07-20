@@ -95,6 +95,10 @@ tab's panes and dividers are exposed. The active pane supplies the tab's base
 title and receives toolbar and directional-focus actions. Each controller
 stores that base as an optional value so absence selects the launch-program or
 `Terminal` fallback while `set_surface_title:` remains a present empty title.
+Each pane separately stores the optional manual override produced by
+`prompt_surface_title`; effective surface display is override, then base, then
+the Qt fallback. Raw surface consumers stop before the fallback, and a tab
+override remains a still-higher presentation layer.
 The parameterized action decodes the structured helper's canonical escaped
 UTF-8, requires the originating stable `PaneId`, and mutates only this
 GUI-thread cache. A later worker title event replaces it; comparing the full
@@ -103,7 +107,11 @@ action. An empty OSC update returns to absence and the fallback. Reset
 preserves the current base title regardless of its latest writer because the
 pinned Ghostty action publishes no application title update. All/global fanout
 uses the existing stable pane snapshot and neither activates a pane nor touches
-terminal selection. A non-empty
+terminal selection. The strict void `prompt_surface_title` snapshots the raw
+surface override or base by stable `PaneId`, excluding tab and fallback text.
+Non-empty confirmation preserves the exact text as a persistent override;
+empty confirmation clears it, and Cancel is inert. Base updates remain cached
+while masked, so clearing reveals the newest OSC or action value. A non-empty
 `set_tab_title` payload installs a per-tab display-title override by stable tab
 identity; an empty payload clears it. Pane focus changes and OSC title updates
 continue to update the base title without replacing the override, so clearing
@@ -146,12 +154,13 @@ converge on the same action vocabulary as more Ghostty keybindings are added.
 Pending close and unsafe-paste operations retain stable IDs, so a model row
 moving before confirmation cannot redirect the operation to another pane or
 tab. Broad unsafe paste batches every stable target behind one confirmation;
-broad close converges on one confirmed shutdown request per workspace. Tab
-title prompts likewise retain stable tab and nonzero request identities. Pane
-removal leaves a request alive when its containing tab survives; tab removal
-prunes every queued request for that identity, resolves an active dialog, and
-advances asynchronously. A completion carrying a stale request ID cannot
-rename either a replacement row or the currently selected tab.
+broad close converges on one confirmed shutdown request per workspace. One
+typed title-prompt FIFO retains a stable `PaneId` for surface prompts or
+`TabId` for tab prompts plus a nonzero request identity. Pane removal cancels
+its surface prompts but leaves a tab request alive when the containing tab
+survives; tab removal prunes that tab's queued requests. Removing an active
+target resolves its dialog and advances asynchronously. A completion carrying
+a stale request ID cannot rename a replacement pane, model row, or current tab.
 
 Close policy tracks the live child separately from active foreground work. For
 an interactive shell, `tcgetpgrp` detects jobs in a separate foreground process
@@ -766,10 +775,10 @@ order, while `end` appends that block. A fullscreen surface action is coalesced
 once per workspace during
 broad fanout because every pane maps to the same synchronously toggled Qt host
 window; separate workspaces still receive independent transitions. In
-contrast, `prompt_tab_title` preserves pinned per-surface invocation: every
-surface in the stable fanout snapshot contributes one independently captured
-request, including multiple leaves of the same split tab. The workspace shows
-those requests one at a time in FIFO order without deduplication.
+contrast, both title prompt actions preserve pinned per-surface invocation:
+every surface in the stable fanout snapshot contributes one independently
+captured request, including multiple leaves of the same split tab. Surface and
+tab requests share one modal FIFO and are shown without deduplication.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions

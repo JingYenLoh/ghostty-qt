@@ -26,6 +26,7 @@ enum class WorkspaceAction {
     ActivateLastTab,
     MoveTab,
     SetSurfaceTitle,
+    PromptSurfaceTitle,
     PromptTabTitle,
     SetTabTitle,
     ResizeSplit,

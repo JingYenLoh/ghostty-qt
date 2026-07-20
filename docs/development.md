@@ -40,6 +40,7 @@ matching, named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
 split placement, stable per-tab title overrides and queued title prompts,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
+stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
@@ -156,13 +157,15 @@ Direct tab-title coverage verifies Ghostty's canonical byte-string escape
 grammar and UTF-8 validation, inactive and broad-action source-tab targeting by
 stable identity, empty payload reset, effective/raw model-role notifications,
 and preservation across pane focus, OSC title updates, tab insertion, and
-reordering. Prompt coverage verifies the exact void grammar, raw
-override-or-current display-title snapshots (including modeled zoom), focused
-caret-at-end editing without select-all, exact OK/blank/Cancel behavior,
-stable targets across tab movement and source-pane removal, target deletion
-and stale-ID safety, and FIFO one-request-per-surface broad fanout without
-split-tab deduplication. The application test exercises the real QML dialog
-and commits a Unicode title through its OK path.
+reordering. Surface and tab prompt coverage verifies exact void grammars,
+raw override/base versus current-display snapshots (including modeled tab
+zoom), exclusion of tab/fallback text from surface prompts, focused
+caret-at-end editing without select-all,
+exact OK/blank/Cancel behavior, masked live base updates, stable targets across
+tab movement and pane removal, target deletion and stale-ID safety, and one
+mixed FIFO with one request per broad-target surface and no split-tab
+deduplication. Application tests exercise both headings and exact Unicode text
+through the shared real QML dialog and verify focus restoration.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

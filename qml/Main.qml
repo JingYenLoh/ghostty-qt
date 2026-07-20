@@ -173,32 +173,30 @@ ApplicationWindow {
     }
 
     Dialog {
-        id: tabTitleDialog
-        objectName: "tabTitleDialog"
+        id: titleDialog
+        objectName: "titleDialog"
         property var promptId: 0
         anchors.centerIn: parent
         width: Math.max(320, Math.min(520, window.width - 32))
         modal: true
-        title: "Change Tab Title"
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: {
-            tabTitleField.forceActiveFocus()
-            tabTitleField.cursorPosition = tabTitleField.length
+            titleField.forceActiveFocus()
+            titleField.cursorPosition = titleField.length
         }
         onAccepted: {
             const acceptedPromptId = promptId
             promptId = 0
-            workspace.confirmTabTitlePrompt(acceptedPromptId,
-                                            tabTitleField.text)
+            workspace.confirmTitlePrompt(acceptedPromptId, titleField.text)
         }
         onRejected: {
             const rejectedPromptId = promptId
             promptId = 0
-            workspace.cancelTabTitlePrompt(rejectedPromptId)
+            workspace.cancelTitlePrompt(rejectedPromptId)
         }
 
         ColumnLayout {
-            width: tabTitleDialog.availableWidth
+            width: titleDialog.availableWidth
 
             Label {
                 Layout.fillWidth: true
@@ -207,11 +205,11 @@ ApplicationWindow {
             }
 
             TextField {
-                id: tabTitleField
-                objectName: "tabTitleField"
+                id: titleField
+                objectName: "titleField"
                 Layout.fillWidth: true
                 selectByMouse: true
-                onAccepted: tabTitleDialog.accept()
+                onAccepted: titleDialog.accept()
             }
         }
     }
@@ -236,16 +234,17 @@ ApplicationWindow {
             pasteDialog.confirmationId = 0
             pasteDialog.close()
         }
-        function onTabTitlePromptRequested(promptId, initialTitle) {
-            tabTitleDialog.promptId = promptId
-            tabTitleField.text = initialTitle
-            tabTitleDialog.open()
+        function onTitlePromptRequested(promptId, heading, initialTitle) {
+            titleDialog.promptId = promptId
+            titleDialog.title = heading
+            titleField.text = initialTitle
+            titleDialog.open()
         }
-        function onTabTitlePromptResolved(promptId) {
-            if (tabTitleDialog.promptId !== promptId)
+        function onTitlePromptResolved(promptId) {
+            if (titleDialog.promptId !== promptId)
                 return
-            tabTitleDialog.promptId = 0
-            tabTitleDialog.close()
+            titleDialog.promptId = 0
+            titleDialog.close()
         }
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()
