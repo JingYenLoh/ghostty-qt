@@ -92,12 +92,17 @@ release any delivery-agent grab, then recreates them from the stable split IDs.
 Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
 geometry remain intact, while divider handles are absent. Only the current
 tab's panes and dividers are exposed. The active pane supplies the tab title
-and receives toolbar and directional-focus actions. A new split can be placed
-on any side of its source; left/up insert the new leaf before the source and
-right/down insert it after. The omitted or explicit `auto` direction compares
-the source pane's effective surface-pixel width and height, choosing right only
-when width is greater and down otherwise. Every split focuses the new leaf and
-clears split zoom.
+and receives toolbar and directional-focus actions. A successful `goto_split`
+first resolves its destination, then applies focus and zoom as one workspace
+transition. The canonical `split-preserve-zoom = navigation` policy transfers
+an existing zoom to that destination; the canonical `no-navigation` default
+clears it. A direction with no destination changes neither focus nor zoom.
+Direct activation of a different pane still clears zoom. A new split can be
+placed on any side of its source; left/up insert the new leaf before the source
+and right/down insert it after. The omitted or explicit `auto` direction
+compares the source pane's effective surface-pixel width and height, choosing
+right only when width is greater and down otherwise. Every split focuses the
+new leaf and clears split zoom.
 
 Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
@@ -571,7 +576,11 @@ pane's manual font zoom. Directory and font inheritance booleans plus tab
 insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
 child as manually zoomed. Tab-strip visibility is workspace-owned presentation
-policy and updates immediately without entering a pane or worker. Palette and
+policy and updates immediately without entering a pane or worker. The
+workspace-owned `split-preserve-zoom` navigation bit also reloads without a
+pane or worker update and is consulted by each subsequent successful
+`goto_split`; it never changes the current zoom merely because configuration
+reloaded. Palette and
 fixed cursor defaults are updated through
 `libghostty-vt`, which preserves terminal-originated OSC 4/OSC 12 overrides;
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active

@@ -1036,30 +1036,46 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
     refreshTab(tabId);
 }
 
-void TerminalWorkspace::activatePane(PaneId paneId)
+void TerminalWorkspace::activatePane(PaneId paneId,
+                                     PaneActivationReason reason)
 {
     const int tabIndex = tabIndexForPane(paneId);
     if (tabIndex < 0) {
         return;
     }
     Tab *targetTab = tabs_[static_cast<size_t>(tabIndex)].get();
+    bool zoomChanged = false;
     if (targetTab->zoomedPaneId.isValid()
         && targetTab->zoomedPaneId != paneId) {
-        // A tab must never advertise a hidden active pane. Default Ghostty
-        // behavior clears zoom when focus moves to another split.
-        targetTab->zoomedPaneId = {};
-        refreshTab(targetTab->id);
-        if (tabIndex == currentIndex_) {
-            layoutCurrentTab();
-        }
+        // Only split navigation participates in split-preserve-zoom. Direct
+        // activation and structural operations retain Ghostty's ordinary
+        // unzoom behavior.
+        targetTab->zoomedPaneId =
+            reason == PaneActivationReason::SplitNavigation
+                && effectiveOptions_.splitPreserveZoomNavigation
+            ? paneId
+            : PaneId{};
+        zoomChanged = true;
     }
+    const bool activePaneChanged = targetTab->activePaneId != paneId;
+    targetTab->activePaneId = paneId;
+
     if (tabIndex != currentIndex_) {
+        if (zoomChanged || activePaneChanged) {
+            refreshTab(targetTab->id);
+        }
         activateTab(targetTab->id);
+        return;
     }
-    Tab *tab = currentTab();
-    if (tab != nullptr && tab->activePaneId != paneId) {
-        tab->activePaneId = paneId;
-        refreshTab(tab->id);
+
+    // Publish a single coherent tab-model update after the presentation has
+    // switched. Direct signal observers never see the old active pane paired
+    // with a zoom that has already moved to the destination.
+    if (zoomChanged) {
+        layoutCurrentTab();
+    }
+    if (zoomChanged || activePaneChanged) {
+        refreshTab(targetTab->id);
     }
     if (TerminalPane *pane = paneForId(paneId); pane != nullptr) {
         pane->focusTerminal();
@@ -1952,12 +1968,7 @@ bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
     }
     if (!target.isValid()) return false;
 
-    if (tab->zoomedPaneId.isValid()) {
-        tab->zoomedPaneId = {};
-        refreshTab(tab->id);
-        if (tab->id == currentTabId()) layoutCurrentTab();
-    }
-    activatePane(target);
+    activatePane(target, PaneActivationReason::SplitNavigation);
     return true;
 }
 
@@ -1979,12 +1990,8 @@ bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
         (source + offset + count) % count);
     if (destination == static_cast<size_t>(source)) return false;
 
-    if (tab->zoomedPaneId.isValid()) {
-        tab->zoomedPaneId = {};
-        refreshTab(tab->id);
-        if (tab->id == currentTabId()) layoutCurrentTab();
-    }
-    activatePane(panes[destination].id);
+    activatePane(panes[destination].id,
+                 PaneActivationReason::SplitNavigation);
     return true;
 }
 

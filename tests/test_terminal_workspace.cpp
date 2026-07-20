@@ -209,6 +209,7 @@ private Q_SLOTS:
     void splitDividerHitRegionPreservesTerminalInputAndZoom();
     void splitDividerDragClampsPersistsAndCancels();
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
+    void splitZoomNavigationPolicyReloadsLive();
     void broadContainerActionsResolveFromActivePane();
     void routesFullscreenActionToHostWindow();
     void inactiveTabResizeAppliesWhenActivated();
@@ -3648,6 +3649,132 @@ void TerminalWorkspaceTest::splitZoomPreservesLayoutAndResetsOnNavigationAndSpli
     QCOMPARE(survivingTab->activePaneId, zoomTarget);
     QVERIFY(!zoomedPaneGuard.isNull());
     QVERIFY(zoomedPaneGuard->isVisible());
+}
+
+void TerminalWorkspaceTest::splitZoomNavigationPolicyReloadsLive()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.splitPreserveZoomNavigation = false;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    const PaneId secondId = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
+    workspace.applyConfigSnapshot(snapshot);
+
+    // Reload changes policy only. The currently zoomed pane and logical split
+    // tree remain untouched until a successful navigation occurs.
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, firstId, 1},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondId);
+    QVERIFY(!firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+    QCOMPARE(secondPane->position(), workspace.boundingRect().topLeft());
+    QCOMPARE(secondPane->size(), workspace.boundingRect().size());
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePane,
+        {tabId, secondId, Qt::Key_Left},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+    QCOMPARE(firstPane->position(), workspace.boundingRect().topLeft());
+    QCOMPARE(firstPane->size(), workspace.boundingRect().size());
+
+    // No-op and invalid navigation are inert, including while zoomed.
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, firstId, 2},
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::NavigatePane,
+        {tabId, firstId, Qt::Key_Home},
+    }));
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(!secondPane->isVisible());
+
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), false);
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::NavigatePaneRelative,
+        {tabId, firstId, 1},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondId);
+    QVERIFY(firstPane->isVisible());
+    QVERIFY(secondPane->isVisible());
+
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
+    workspace.applyConfigSnapshot(snapshot);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitDown,
+        {tabId, firstId, 0},
+    }));
+    QVERIFY(!workspace.tabModel()->entryAt(0)->zoomed);
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
 }
 
 void TerminalWorkspaceTest::broadContainerActionsResolveFromActivePane()

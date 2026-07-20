@@ -79,6 +79,9 @@ struct LaunchOptions {
     // New splits inherit the source pane's reported directory when enabled;
     // otherwise the workspace's effective working-directory is used.
     bool splitInheritWorkingDirectory = true;
+    // When enabled, successful split navigation transfers an existing zoom
+    // to the destination pane instead of restoring the full split tree.
+    bool splitPreserveZoomNavigation = false;
     // New tabs inherit the source pane's reported directory when enabled;
     // otherwise the workspace's effective working-directory is used.
     bool tabInheritWorkingDirectory = true;

@@ -64,7 +64,8 @@ The snapshot includes the finalized working-directory, split/tab directory
 inheritance policies, new-window/tab font-size inheritance policy, and the
 canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
-palette, selection colors, cursor
+palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
+selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, and
@@ -146,7 +147,10 @@ explicit and nested sources, source-stable new-tab directory/font inheritance
 across explicit, QML-style, reset, reload, and broad-fanout paths, exact
 `current`/`end` new-tab placement across live reload and broad fanout, live
 `always`/`auto`/`never` tab-strip visibility across one/two-tab transitions
-without hiding the surrounding toolbar, and split zoom lifecycle.
+without hiding the surrounding toolbar, and split zoom lifecycle. Zoom coverage
+also verifies the exact `navigation`/`no-navigation` config values, live policy
+reload, transfer on successful spatial and tree-order `goto_split`, inert failed
+navigation, and unchanged direct-activation and structural unzooming.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

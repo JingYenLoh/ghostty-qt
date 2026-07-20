@@ -38,6 +38,7 @@ struct ParsedConfig {
     std::optional<QVariant> unfocusedSplitFill;
     std::optional<QVariant> splitDividerColor;
     std::optional<bool> splitInheritWorkingDirectory;
+    std::optional<bool> splitPreserveZoomNavigation;
     std::optional<bool> tabInheritWorkingDirectory;
     std::optional<bool> windowInheritFontSize;
     std::optional<QString> windowNewTabPosition;
@@ -93,6 +94,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.unfocusedSplitFill,
             parsed.splitDividerColor,
             parsed.splitInheritWorkingDirectory,
+            parsed.splitPreserveZoomNavigation,
             parsed.tabInheritWorkingDirectory,
             parsed.windowInheritFontSize,
             parsed.windowNewTabPosition,
@@ -565,6 +567,18 @@ bool parseDump(const QByteArray &dump,
             parsed->splitDividerColor = std::move(color);
         } else if (key == QStringLiteral("split-inherit-working-directory")) {
             if (!parseRequiredBool(parsed->splitInheritWorkingDirectory)) {
+                return false;
+            }
+        } else if (key == QStringLiteral("split-preserve-zoom")) {
+            if (value == QStringLiteral("navigation")) {
+                parsed->splitPreserveZoomNavigation = true;
+            } else if (value == QStringLiteral("no-navigation")) {
+                parsed->splitPreserveZoomNavigation = false;
+            } else {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid split-preserve-zoom in Ghostty config output at line %1")
+                        .arg(displayLine));
                 return false;
             }
         } else if (key == QStringLiteral("tab-inherit-working-directory")) {
@@ -1293,6 +1307,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
     const bool splitInheritWorkingDirectory =
         changes.splitInheritWorkingDirectory.value_or(
             *defaults.splitInheritWorkingDirectory);
+    const bool splitPreserveZoomNavigation =
+        changes.splitPreserveZoomNavigation.value_or(
+            *defaults.splitPreserveZoomNavigation);
     const bool tabInheritWorkingDirectory =
         changes.tabInheritWorkingDirectory.value_or(
             *defaults.tabInheritWorkingDirectory);
@@ -1393,6 +1410,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            splitDividerColor);
     snapshot.values.insert(QStringLiteral("split-inherit-working-directory"),
                            splitInheritWorkingDirectory);
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"),
+                           splitPreserveZoomNavigation);
     snapshot.values.insert(QStringLiteral("tab-inherit-working-directory"),
                            tabInheritWorkingDirectory);
     snapshot.values.insert(QStringLiteral("window-inherit-font-size"),

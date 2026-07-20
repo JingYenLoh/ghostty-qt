@@ -244,6 +244,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         snapshot, QStringLiteral("split-inherit-working-directory"),
         result.splitInheritWorkingDirectory);
     applyConfigBool(
+        snapshot, QStringLiteral("split-preserve-zoom"),
+        result.splitPreserveZoomNavigation);
+    applyConfigBool(
         snapshot, QStringLiteral("tab-inherit-working-directory"),
         result.tabInheritWorkingDirectory);
     applyConfigBool(

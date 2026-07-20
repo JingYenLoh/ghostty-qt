@@ -47,6 +47,7 @@ private Q_SLOTS:
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
     void mapsWorkingDirectoryAndSurfaceInheritance();
+    void mapsSplitPreserveZoom();
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
     void mapsUnfocusedSplitAppearance();
@@ -111,6 +112,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
     QVERIFY(!options.splitAppearance.dividerColor.has_value());
     QVERIFY(options.splitInheritWorkingDirectory);
+    QVERIFY(!options.splitPreserveZoomNavigation);
     QVERIFY(options.tabInheritWorkingDirectory);
     QVERIFY(options.windowInheritFontSize);
     QCOMPARE(options.windowNewTabPosition,
@@ -569,6 +571,35 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsSplitPreserveZoom()
+{
+    LaunchOptions base;
+    base.splitPreserveZoomNavigation = false;
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
+    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
+                .splitPreserveZoomNavigation);
+
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), false);
+    QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
+                 .splitPreserveZoomNavigation);
+
+    base.splitPreserveZoomNavigation = true;
+    snapshot.values.insert(QStringLiteral("split-preserve-zoom"),
+                           QStringLiteral("navigation"));
+    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
+                .splitPreserveZoomNavigation);
+
+    snapshot.values.remove(QStringLiteral("split-preserve-zoom"));
+    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
+                .splitPreserveZoomNavigation);
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsNewTabPosition()
 {
     LaunchOptions base;
@@ -848,6 +879,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
     frontendOnlyChanged.workingDirectoryExplicit = false;
     frontendOnlyChanged.splitInheritWorkingDirectory = false;
+    frontendOnlyChanged.splitPreserveZoomNavigation = true;
     frontendOnlyChanged.tabInheritWorkingDirectory = false;
     frontendOnlyChanged.windowInheritFontSize = false;
     frontendOnlyChanged.windowNewTabPosition =

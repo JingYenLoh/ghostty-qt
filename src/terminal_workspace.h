@@ -118,6 +118,10 @@ private:
         Tab,
         Quit,
     };
+    enum class PaneActivationReason {
+        Direct,
+        SplitNavigation,
+    };
 
     PaneHandle createPane(const LaunchOptions &options);
     void createSearchOverlay(TerminalPane *pane);
@@ -127,7 +131,9 @@ private:
     void activateTab(TabId id);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);
-    void activatePane(PaneId id);
+    void activatePane(
+        PaneId id,
+        PaneActivationReason reason = PaneActivationReason::Direct);
     void requestQuitImpl();
     void approveQuit();
     void resolvePendingPaneRemoval(PaneHandle handle);

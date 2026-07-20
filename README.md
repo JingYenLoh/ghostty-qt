@@ -50,9 +50,10 @@ the host-language comparison and remaining engineering risks.
 - Tabs with indexed/last selection and cyclic reordering; recursively nested
   directional and aspect-selected automatic splits with wrapped spatial and
   tree-order navigation, keybinding resize/equalize, exact-gap pointer-dragged
-  dividers, live Ghostty-compatible unfocused-pane dimming, split zoom, and
-  close confirmation that distinguishes an idle interactive shell from a
-  foreground job on its PTY. Per-pane read-only mode blocks surface-originated
+  dividers, live Ghostty-compatible unfocused-pane dimming, split zoom with
+  optional navigation-preserved transfer, and close confirmation that
+  distinguishes an idle interactive shell from a foreground job on its PTY.
+  Per-pane read-only mode blocks surface-originated
   user input while output, terminal protocol replies, focus bookkeeping, and
   terminal-local selection, copy, search, and scrolling remain available; an
   input-transparent top-right badge exposes the state, which always protects
@@ -221,6 +222,7 @@ The current compatibility slice applies these keys:
 | --- | --- |
 | `working-directory` | Sets the default directory for initial panes and the fallback for new tabs and splits. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
 | `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
+| `split-preserve-zoom` | Ghostty's canonical `no-navigation` default clears split zoom after a successful `goto_split`. Canonical `navigation` instead transfers the zoomed presentation to the newly focused pane for successful previous/next or spatial navigation. Reload affects subsequent navigation immediately. A direction with no target changes neither focus nor zoom; direct activation of another pane and structural changes such as creating a split retain their existing unzoom behavior. |
 | `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
 | `window-inherit-font-size` | Defaults to `true`. New tabs inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. New-window behavior awaits multi-window support. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
@@ -324,6 +326,9 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `auto`), `goto_split`, `resize_split`, `equalize_splits`, and
 `toggle_split_zoom` directly. `toggle_readonly` applies independently to its
 source pane; `all:` or `global:` applies it once to every stable pane target.
+Successful `goto_split` actions consult the live `split-preserve-zoom` policy:
+`navigation` transfers an existing zoom to the destination, while the default
+`no-navigation` clears it. An unsuccessful navigation is inert.
 Viewport/selection bindings additionally support
 `scroll_to_top`, `scroll_to_bottom`, `scroll_to_row`, `scroll_page_up`,
 `scroll_page_down`, `scroll_page_fractional`, `scroll_page_lines`,

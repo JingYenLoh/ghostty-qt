@@ -413,6 +413,10 @@
       "status": "partial",
       "note": "The exact boolean defaults true and reloads for future splits only. True uses the explicit source pane's newest accepted local-host-validated OSC 7 directory and otherwise falls back to working-directory; false always uses that fallback. Font inheritance remains independent, nested splits consult the newest workspace base, and stale concrete directories fall back to process cwd while retaining pinned Ghostty's requested logical PWD. Full parity remains partial because the helper's CLI-shaped invocation cannot reproduce GTK's unset desktop-launch home default for the fallback setting."
     },
+    "split-preserve-zoom": {
+      "status": "supported",
+      "note": "The exact canonical no-navigation default clears zoom after a successful goto_split, while navigation atomically transfers the zoomed presentation to the destination for tree-order and spatial navigation. Reload affects subsequent navigation without mutating current state; failed navigation is inert, and direct activation or structural split changes retain their existing unzoom behavior."
+    },
     "tab-inherit-working-directory": {
       "status": "partial",
       "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
@@ -779,7 +783,7 @@
         },
         "goto_split": {
           "status": "supported",
-          "note": "Supports wrapped tree-order previous/next traversal, wrapped spatial directions, legacy top/bottom aliases, and Ghostty's default navigation-unzoom behavior."
+          "note": "Supports wrapped tree-order previous/next traversal, wrapped spatial directions, and legacy top/bottom aliases. Successful navigation consults the live split-preserve-zoom policy: canonical navigation transfers an existing zoom to the destination, while the canonical no-navigation default clears it; failed navigation is inert."
         },
         "goto_tab": {
           "status": "supported",
