@@ -278,15 +278,32 @@ GhosttyActionTranslation reject(Error error,
 GhosttyActionTranslation accept(WorkspaceAction action,
                                  WorkspaceActionContext context,
                                  QStringView actionName,
-                                 OptionalView parameter)
+                                 OptionalView parameter,
+                                 QString payload = {})
 {
     GhosttyActionTranslation result;
-    result.request = WorkspaceActionRequest{action, context};
+    result.request = WorkspaceActionRequest{
+        action, context, std::move(payload)};
     result.error = Error::None;
     result.actionName = actionName.toString();
     if (parameter.has_value()) {
         result.parameter = parameter->toString();
     }
+    return result;
+}
+
+std::optional<QString> decodeActionUtf8String(QStringView value)
+{
+    const std::optional<QByteArray> decoded =
+        decodeGhosttyActionString(value.toUtf8());
+    if (!decoded.has_value()) return std::nullopt;
+
+    QStringDecoder utf8(
+        QStringDecoder::Utf8,
+        QStringDecoder::Flag::Stateless
+            | QStringDecoder::Flag::ConvertInitialBom);
+    QString result = utf8(*decoded);
+    if (utf8.hasError()) return std::nullopt;
     return result;
 }
 
@@ -311,6 +328,7 @@ bool isCatalogAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("goto_split"))
         || equals(actionName, QLatin1StringView("goto_tab"))
         || equals(actionName, QLatin1StringView("move_tab"))
+        || equals(actionName, QLatin1StringView("set_tab_title"))
         || equals(actionName, QLatin1StringView("resize_split"));
 }
 
@@ -461,6 +479,25 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                       context,
                       actionName,
                       parameter);
+    }
+
+    if (equals(actionName, QLatin1StringView("set_tab_title"))) {
+        // The pinned structured helper serializes []const u8 action values
+        // with std.zig.stringEscape. Invert that byte boundary and reject
+        // text Qt cannot represent losslessly. An empty decoded title is the
+        // explicit reset operation, not a missing parameter.
+        if (!parameter.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        std::optional<QString> title = decodeActionUtf8String(*parameter);
+        if (!title.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        return accept(WorkspaceAction::SetTabTitle,
+                      context,
+                      actionName,
+                      parameter,
+                      std::move(*title));
     }
 
     if (equals(actionName, QLatin1StringView("close_tab"))) {
@@ -706,22 +743,16 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         // The structured config boundary uses Action.format, so invert its
         // canonical byte escapes before comparing against decoded table names.
         if (!parameter.has_value()) return std::nullopt;
-        const std::optional<QByteArray> decodedName =
-            decodeGhosttyActionString(parameter->toUtf8());
-        if (!decodedName.has_value()) return std::nullopt;
-        QStringDecoder utf8(
-            QStringDecoder::Utf8,
-            QStringDecoder::Flag::Stateless
-                | QStringDecoder::Flag::ConvertInitialBom);
-        const QString tableName = utf8(*decodedName);
-        if (utf8.hasError()) return std::nullopt;
+        const std::optional<QString> tableName =
+            decodeActionUtf8String(*parameter);
+        if (!tableName.has_value()) return std::nullopt;
         GhosttyPaneAction action;
         action.kind = GhosttyPaneActionKind::KeyTable;
         action.keyTable.kind =
             name == QLatin1StringView("activate_key_table")
             ? TerminalKeyTableRequest::Kind::Activate
             : TerminalKeyTableRequest::Kind::ActivateOnce;
-        action.keyTable.name = tableName;
+        action.keyTable.name = *tableName;
         return action;
     }
 

@@ -193,6 +193,7 @@ private Q_SLOTS:
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
+    void tabTitleOverridesFollowStableSourcesAndReset();
     void newTabPositionReloadsAndKeepsBroadOrder();
     void tabBarVisibilityTracksPolicyAndCount();
     void splitDirectionsPlaceAndFocusNewPane_data();
@@ -1510,6 +1511,164 @@ void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
         {},
     }));
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+}
+
+void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "sleep 1; printf '\\033]0;underlying-title\\007'; sleep 30"),
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+
+    const auto tabIndex = [&workspace](TabId id) {
+        return workspace.tabModel()->indexOf(id);
+    };
+    const auto entry = [&workspace, &tabIndex](TabId id) {
+        return workspace.tabModel()->entryAt(tabIndex(id));
+    };
+    const auto displayedTitle = [&workspace, &tabIndex](TabId id) {
+        const int index = tabIndex(id);
+        return workspace.tabModel()
+            ->data(workspace.tabModel()->index(index, 0),
+                   TabListModel::TitleRole)
+            .toString();
+    };
+
+    QSignalSpy currentTitleChanged(
+        &workspace, &TerminalWorkspace::currentTitleChanged);
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral(
+        R"(set_tab_title:\xf0\x9f\x91\xbb project:first)")));
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("👻 project:first"));
+    QCOMPARE(displayedTitle(firstTabId),
+             QStringLiteral("👻 project:first"));
+    QCOMPARE(workspace.currentTitle(),
+             QStringLiteral("👻 project:first"));
+    QCOMPARE(currentTitleChanged.count(), 1);
+
+    // Terminal-originated title changes continue updating the base title
+    // underneath the stable override.
+    QTRY_COMPARE_WITH_TIMEOUT(firstPane->title(),
+                              QStringLiteral("underlying-title"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(entry(firstTabId)->title,
+                              QStringLiteral("underlying-title"), 3000);
+    QCOMPARE(displayedTitle(firstTabId),
+             QStringLiteral("👻 project:first"));
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {firstTabId, firstPaneId, 0},
+    }));
+    const PaneId secondPaneId = entry(firstTabId)->activePaneId;
+    QVERIFY(secondPaneId.isValid());
+    QVERIFY(secondPaneId != firstPaneId);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("👻 project:first"));
+    QCOMPARE(entry(firstTabId)->title, secondPane->title());
+    QCOMPARE(displayedTitle(firstTabId),
+             QStringLiteral("👻 project:first"));
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const TabId secondTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    QVERIFY(secondTabId != firstTabId);
+    const QString secondTabTitleBefore = workspace.currentTitle();
+    const int currentSignalsBeforeInactiveUpdate =
+        currentTitleChanged.count();
+
+    // The originating pane owns the target context even while its tab is
+    // inactive. The selected tab and its window title do not drift.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:inactive source")));
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("inactive source"));
+    QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
+    QCOMPARE(workspace.currentTitle(), secondTabTitleBefore);
+    QCOMPARE(currentTitleChanged.count(),
+             currentSignalsBeforeInactiveUpdate);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::SetTabTitle,
+        {secondTabId, firstPaneId, 0},
+        QStringLiteral("mismatched"),
+    }));
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("inactive source"));
+    QVERIFY(entry(secondTabId)->titleOverride.isEmpty());
+
+    // Insertion and row movement retain the override by stable TabId.
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::MoveTab,
+        {firstTabId, firstPaneId, 1},
+    }));
+    QCOMPARE(workspace.tabModel()->idAt(1), firstTabId);
+    QCOMPARE(entry(firstTabId)->titleOverride,
+             QStringLiteral("inactive source"));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             secondTabId);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:")));
+    QVERIFY(entry(firstTabId)->titleOverride.isEmpty());
+    QCOMPARE(displayedTitle(firstTabId), entry(firstTabId)->title);
+    QCOMPARE(workspace.currentTitle(), secondTabTitleBefore);
+
+    GhosttyApplicationKeybindings applicationBindings({}, false);
+    applicationBindings.registerWorkspace(&workspace);
+    const TabId selectedBeforeBroad =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    applicationBindings.dispatchBroadActions({QStringLiteral(
+        R"(set_tab_title:\xf0\x9f\x8c\x90 broad)")});
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        QCOMPARE(workspace.tabModel()->entryAt(index)->titleOverride,
+                 QStringLiteral("🌐 broad"));
+        QCOMPARE(workspace.tabModel()
+                     ->data(workspace.tabModel()->index(index, 0),
+                            TabListModel::TitleRole)
+                     .toString(),
+                 QStringLiteral("🌐 broad"));
+    }
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             selectedBeforeBroad);
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("🌐 broad"));
+
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral(R"(set_tab_title:\xff)")});
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        QCOMPARE(workspace.tabModel()->entryAt(index)->titleOverride,
+                 QStringLiteral("🌐 broad"));
+    }
+
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("set_tab_title:")});
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        QVERIFY(workspace.tabModel()->entryAt(index)->titleOverride.isEmpty());
+    }
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             selectedBeforeBroad);
+    QCOMPARE(workspace.currentTitle(), entry(secondTabId)->title);
 }
 
 void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()

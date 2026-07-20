@@ -91,28 +91,37 @@ release any delivery-agent grab, then recreates them from the stable split IDs.
 
 Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
 geometry remain intact, while divider handles are absent. Only the current
-tab's panes and dividers are exposed. The active pane supplies the tab title
-and receives toolbar and directional-focus actions. A successful `goto_split`
-first resolves its destination, then applies focus and zoom as one workspace
-transition. The canonical `split-preserve-zoom = navigation` policy transfers
-an existing zoom to that destination; the canonical `no-navigation` default
-clears it. A direction with no destination changes neither focus nor zoom.
-Direct activation of a different pane still clears zoom. A new split can be
-placed on any side of its source; left/up insert the new leaf before the source
-and right/down insert it after. The omitted or explicit `auto` direction
-compares the source pane's effective surface-pixel width and height, choosing
-right only when width is greater and down otherwise. Every split focuses the
-new leaf and clears split zoom.
+tab's panes and dividers are exposed. The active pane supplies the tab's base
+title and receives toolbar and directional-focus actions. A non-empty
+`set_tab_title` payload installs a per-tab display-title override by stable tab
+identity; an empty payload clears it. Pane focus changes and OSC title updates
+continue to update the base title without replacing the override, so clearing
+it reveals the then-current active-pane title. Tab insertion and reordering do
+not redirect or discard the override.
+
+A successful `goto_split` first resolves its destination, then applies focus
+and zoom as one workspace transition. The canonical
+`split-preserve-zoom = navigation` policy transfers an existing zoom to that
+destination; the canonical `no-navigation` default clears it. A direction with
+no destination changes neither focus nor zoom. Direct activation of a
+different pane still clears zoom. A new split can be placed on any side of its
+source; left/up insert the new leaf before the source and right/down insert it
+after. The omitted or explicit `auto` direction compares the source pane's
+effective surface-pixel width and height, choosing right only when width is
+greater and down otherwise. Every split focuses the new leaf and clears split
+zoom.
 
 Tabs and panes have monotonically assigned `TabId` and `PaneId` values. The
 workspace resolves those identities at execution time instead of retaining
 vector rows or raw pane pointers across deferred operations. A
-`QAbstractListModel` publishes tab identity, title, active pane, working
-directory, running state, zoom, attention, progress, and read-only roles to
-QML. The current tab strip consumes that model. The read-only role follows each
-tab's active pane; the pane also exposes the state directly for its visible
-status badge. Several other roles remain foundations for later parity work
-rather than user-visible features today.
+`QAbstractListModel` publishes tab identity, effective title, raw title
+override, active pane, working directory, running state, zoom, attention,
+progress, and read-only roles to QML. The current tab strip consumes that
+model. Updating or clearing an override notifies both title roles when their
+values change. The read-only role follows each tab's active pane; the pane also
+exposes the state directly for its visible status badge. Several other roles
+remain foundations for later parity work rather than user-visible features
+today.
 
 Workspace commands pass through a typed `WorkspaceActionDispatcher` with an
 explicit tab/pane context. Keyboard, pane, and QML entry points can therefore

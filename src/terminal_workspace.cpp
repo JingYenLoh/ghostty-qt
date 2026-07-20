@@ -107,6 +107,7 @@ struct TerminalWorkspace::Tab {
     std::unique_ptr<Node> root;
     PaneId activePaneId;
     PaneId zoomedPaneId;
+    QString titleOverride;
 };
 
 class TerminalWorkspace::SplitDividerItem final : public QQuickItem {
@@ -629,6 +630,25 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
                            ? request.context.tabId
                            : tabIdForPane(request.context.paneId),
                        request.context.value);
+    case WorkspaceAction::SetTabTitle: {
+        if (request.context.paneId.isValid()
+            && (paneForId(request.context.paneId) == nullptr
+                || !contextMatchesPane())) {
+            return false;
+        }
+        const TabId tabId = request.context.paneId.isValid()
+            ? tabIdForPane(request.context.paneId)
+            : (request.context.tabId.isValid()
+                   ? request.context.tabId
+                   : currentTabId());
+        Tab *tab = tabById(tabId);
+        if (tab == nullptr) return false;
+        if (tab->titleOverride != request.payload) {
+            tab->titleOverride = request.payload;
+            refreshTab(tabId);
+        }
+        return true;
+    }
     case WorkspaceAction::ResizeSplit:
         if (paneForId(request.context.paneId) == nullptr
             || !contextMatchesPane()) return false;
@@ -1534,6 +1554,7 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     entry.title = activePane != nullptr
         ? activePane->title()
         : QStringLiteral("Terminal");
+    entry.titleOverride = tab.titleOverride;
     entry.currentDirectory = activePane != nullptr
         ? activePane->currentDirectory()
         : QString{};

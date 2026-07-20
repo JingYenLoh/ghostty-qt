@@ -2,6 +2,7 @@
 
 #include "workspace_ids.h"
 
+#include <QString>
 #include <QtTypes>
 
 #include <functional>
@@ -24,6 +25,7 @@ enum class WorkspaceAction {
     ActivateTabByIndex,
     ActivateLastTab,
     MoveTab,
+    SetTabTitle,
     ResizeSplit,
     EqualizeSplits,
     ToggleSplitZoom,
@@ -44,6 +46,10 @@ struct WorkspaceActionContext {
 struct WorkspaceActionRequest {
     WorkspaceAction action = WorkspaceAction::NewTab;
     WorkspaceActionContext context;
+    // Owning text payload for workspace actions whose canonical Ghostty
+    // representation carries arbitrary bytes. Translation validates and
+    // converts those bytes before the request crosses a component boundary.
+    QString payload = {};
 
     friend bool operator==(const WorkspaceActionRequest &,
                            const WorkspaceActionRequest &) = default;

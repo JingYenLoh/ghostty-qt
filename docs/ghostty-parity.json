@@ -912,6 +912,10 @@
           "status": "supported",
           "note": "Parses the required payload directly to f32, applies Ghostty's 1..255 clamp including NaN and signed-infinity behavior, and marks every targeted pane manually adjusted even when its effective size is unchanged."
         },
+        "set_tab_title": {
+          "status": "supported",
+          "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's current terminal title; focus and OSC title changes plus tab insertion and reordering preserve the override."
+        },
         "show_gtk_inspector": {
           "status": "not_applicable",
           "scope": "gtk_only"

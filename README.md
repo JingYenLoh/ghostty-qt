@@ -60,7 +60,9 @@ the host-language comparison and remaining engineering risks.
   that pane during close.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
-  strings into that action layer.
+  strings into that action layer. The direct `set_tab_title` action applies a
+  persistent override to the source pane's tab by stable identity; an empty
+  title restores the active pane's terminal-supplied title.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
@@ -326,6 +328,9 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `auto`), `goto_split`, `resize_split`, `equalize_splits`, and
 `toggle_split_zoom` directly. `toggle_readonly` applies independently to its
 source pane; `all:` or `global:` applies it once to every stable pane target.
+`set_tab_title:<title>` installs a stable override on the source pane's tab;
+`set_tab_title:` clears it and reveals the active pane's current terminal
+title.
 Successful `goto_split` actions consult the live `split-preserve-zoom` policy:
 `navigation` transfers an existing zoom to the destination, while the default
 `no-navigation` clears it. An unsuccessful navigation is inert.

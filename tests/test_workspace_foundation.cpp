@@ -116,6 +116,7 @@ void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
 
     QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
     entry.title = QStringLiteral("editor");
+    entry.titleOverride = QStringLiteral("project");
     entry.currentDirectory = QStringLiteral("/tmp/project");
     entry.running = true;
     entry.zoomed = true;
@@ -124,7 +125,9 @@ void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
     QCOMPARE(changed.count(), 1);
     const QModelIndex index = model.index(0, 0);
     QCOMPARE(model.data(index, TabListModel::TitleRole).toString(),
-             QStringLiteral("editor"));
+             QStringLiteral("project"));
+    QCOMPARE(model.data(index, TabListModel::TitleOverrideRole).toString(),
+             QStringLiteral("project"));
     QCOMPARE(model.data(index, TabListModel::CurrentDirectoryRole).toString(),
              QStringLiteral("/tmp/project"));
     QCOMPARE(model.data(index, TabListModel::RunningRole).toBool(), true);
@@ -149,6 +152,14 @@ void WorkspaceFoundationTest::dispatcherPreservesTypedActionContext()
     QCOMPARE(observed->context.tabId.value(), quint64(4));
     QCOMPARE(observed->context.paneId.value(), quint64(9));
     QCOMPARE(observed->context.value, int(Qt::Key_Right));
+
+    const WorkspaceActionRequest titleRequest{
+        WorkspaceAction::SetTabTitle,
+        {TabId(8), PaneId(12), 0, 0},
+        QStringLiteral("owned title"),
+    };
+    QVERIFY(dispatcher.dispatch(titleRequest));
+    QCOMPARE(*observed, titleRequest);
 }
 
 QTEST_APPLESS_MAIN(WorkspaceFoundationTest)

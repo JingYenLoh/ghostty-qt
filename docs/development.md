@@ -38,7 +38,8 @@ identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
-split placement, terminal appearance, OSC 8/default-regex interaction
+split placement, stable per-tab title overrides, terminal appearance,
+OSC 8/default-regex interaction
 rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
@@ -151,6 +152,11 @@ without hiding the surrounding toolbar, and split zoom lifecycle. Zoom coverage
 also verifies the exact `navigation`/`no-navigation` config values, live policy
 reload, transfer on successful spatial and tree-order `goto_split`, inert failed
 navigation, and unchanged direct-activation and structural unzooming.
+Direct tab-title coverage verifies Ghostty's canonical byte-string escape
+grammar and UTF-8 validation, inactive and broad-action source-tab targeting by
+stable identity, empty payload reset, effective/raw model-role notifications,
+and preservation across pane focus, OSC title updates, tab insertion, and
+reordering.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,
