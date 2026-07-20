@@ -39,9 +39,8 @@ typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
 split placement, stable per-tab title overrides and queued title prompts,
-terminal appearance,
-OSC 8/default-regex interaction
-rendering, the pinned
+replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
+terminal appearance and OSC 8/default-regex interaction rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:

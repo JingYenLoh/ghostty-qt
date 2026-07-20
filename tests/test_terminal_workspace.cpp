@@ -193,6 +193,7 @@ private Q_SLOTS:
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
+    void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
     void tabTitleOverridesFollowStableSourcesAndReset();
     void tabTitlePromptsPreserveStableTargetsAndReset();
     void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
@@ -1513,6 +1514,180 @@ void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
         {},
     }));
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+}
+
+void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/surface-base-title-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString firstRelease =
+        directory.filePath(QStringLiteral("first-release"));
+    const QString secondRelease =
+        directory.filePath(QStringLiteral("second-release"));
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+            "printf 'selection-marker\\r\\n\\033]0;cached-title\\007'; "
+            "while [ ! -e \"$2\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;cached-title\\007'; sleep 30"),
+        QStringLiteral("surface-title-test"),
+        firstRelease,
+        secondRelease,
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace;
+    workspace.setParentItem(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.window(), &window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId firstPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace.findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(!firstController->hasTitle());
+    QCOMPARE(firstPane->title(), QStringLiteral("sh"));
+
+    // A required-but-empty payload is a present, empty base title rather
+    // than the absence that selects the launch fallback.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:")));
+    QVERIFY(firstController->hasTitle());
+    QVERIFY(firstPane->title().isEmpty());
+    QVERIFY(workspace.tabModel()->entryAt(0)->title.isEmpty());
+    QVERIFY(workspace.currentTitle().isEmpty());
+
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral(
+        R"(set_surface_title:\xf0\x9f\x91\xbb base:first)")));
+    QCOMPARE(firstPane->title(), QStringLiteral("👻 base:first"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("👻 base:first"));
+
+    QFile release(firstRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(firstPane->title(),
+                              QStringLiteral("cached-title"), 3000);
+
+    // The tab override masks base-title updates without freezing them.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:tab mask")));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:action-base")));
+    QCOMPARE(firstPane->title(), QStringLiteral("action-base"));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->title,
+             QStringLiteral("action-base"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
+
+    // The second OSC deliberately restores the value cached before the
+    // action. The GUI base cache must still publish it as a replacement.
+    release.setFileName(secondRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(firstPane->title(),
+                              QStringLiteral("cached-title"), 3000);
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab mask"));
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:")));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("cached-title"));
+
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstPaneId, 0},
+    }));
+    const PaneId secondPaneId =
+        workspace.tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(secondPaneId.isValid());
+    QVERIFY(secondPaneId != firstPaneId);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *secondController =
+        secondPane->findChild<TerminalController *>();
+    QVERIFY(secondController != nullptr);
+    const QString activeTitle = workspace.currentTitle();
+
+    // The source pane remains authoritative while inactive; changing it does
+    // not activate the pane or replace the tab's active-surface title.
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:inactive source")));
+    QCOMPARE(firstPane->title(), QStringLiteral("inactive source"));
+    QCOMPARE(workspace.currentTitle(), activeTitle);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondPaneId);
+
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::SetSurfaceTitle,
+        {TabId(999'999), firstPaneId, 0},
+        QStringLiteral("mismatched"),
+    }));
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::SetSurfaceTitle,
+        {tabId, PaneId{}, 0},
+        QStringLiteral("missing pane"),
+    }));
+    QCOMPARE(firstPane->title(), QStringLiteral("inactive source"));
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("select_all")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstController->selectionAvailable(), 1000);
+    secondPane->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), secondPane, 1000);
+
+    QSignalSpy firstTitleChanges(firstPane, &TerminalPane::titleChanged);
+    QSignalSpy secondTitleChanges(secondPane, &TerminalPane::titleChanged);
+    const int selectedIndex = workspace.currentIndex();
+    const bool firstSelection = firstController->selectionAvailable();
+    const bool secondSelection = secondController->selectionAvailable();
+    QQuickItem *const focusedItem = window.activeFocusItem();
+    GhosttyApplicationKeybindings applicationBindings({}, false);
+    applicationBindings.registerWorkspace(&workspace);
+    applicationBindings.dispatchBroadActions({QStringLiteral(
+        R"(set_surface_title:\xf0\x9f\x8c\x90 broad)")});
+    QCOMPARE(firstTitleChanges.count(), 1);
+    QCOMPARE(secondTitleChanges.count(), 1);
+    QCOMPARE(firstPane->title(), QStringLiteral("🌐 broad"));
+    QCOMPARE(secondPane->title(), QStringLiteral("🌐 broad"));
+    QCOMPARE(workspace.currentIndex(), selectedIndex);
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondPaneId);
+    QCOMPARE(firstController->selectionAvailable(), firstSelection);
+    QCOMPARE(secondController->selectionAvailable(), secondSelection);
+    QCOMPARE(window.activeFocusItem(), focusedItem);
+
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral(R"(set_surface_title:\xff)")});
+    QCOMPARE(firstTitleChanges.count(), 1);
+    QCOMPARE(secondTitleChanges.count(), 1);
+
+    QPointer<TerminalPane> removedPane(firstPane);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {tabId, firstPaneId, 0},
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    QVERIFY(!workspace.dispatchAction({
+        WorkspaceAction::SetSurfaceTitle,
+        {tabId, firstPaneId, 0},
+        QStringLiteral("stale"),
+    }));
+    QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, secondPaneId);
 }
 
 void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()

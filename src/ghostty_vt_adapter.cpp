@@ -1050,10 +1050,10 @@ public:
         mouseEncoderConfigured_ = false;
         synchronizeInputModes();
 
-        // fullReset clears terminal-owned title and pwd without going through
-        // their OSC callbacks. Publish explicit empty effects so frontend
-        // caches and working-directory inheritance cannot retain stale state.
-        titleDirty_ = true;
+        // fullReset clears terminal-owned pwd without going through its OSC
+        // callback. Reset publishes no application title update, so the
+        // frontend retains the last base title published by either OSC or
+        // set_surface_title.
         pendingCurrentDirectory_ = QStringLiteral("");
 
         // Do not rely on the C API's dirty-state implementation detail. A

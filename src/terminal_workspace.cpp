@@ -630,6 +630,12 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
                            ? request.context.tabId
                            : tabIdForPane(request.context.paneId),
                        request.context.value);
+    case WorkspaceAction::SetSurfaceTitle: {
+        TerminalPane *pane = paneForId(request.context.paneId);
+        if (pane == nullptr || !contextMatchesPane()) return false;
+        pane->setSurfaceTitle(request.payload);
+        return true;
+    }
     case WorkspaceAction::PromptTabTitle: {
         if (request.context.paneId.isValid()
             && (paneForId(request.context.paneId) == nullptr

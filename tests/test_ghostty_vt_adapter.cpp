@@ -1433,8 +1433,9 @@ void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
     QVERIFY(!adapter->hasSelection());
     const GhosttyVtAdapter::DeferredEffects resetEffects =
         adapter->takeDeferredEffects();
-    QVERIFY(!resetEffects.title.isNull());
-    QVERIFY(resetEffects.title.isEmpty());
+    // Upstream reset publishes no apprt title update, so the frontend keeps
+    // the last base title regardless of which path published it.
+    QVERIFY(resetEffects.title.isNull());
     QVERIFY(!resetEffects.currentDirectory.isNull());
     QVERIFY(resetEffects.currentDirectory.isEmpty());
 

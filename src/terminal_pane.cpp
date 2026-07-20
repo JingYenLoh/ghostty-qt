@@ -893,14 +893,18 @@ TerminalPane::~TerminalPane()
 
 QString TerminalPane::title() const
 {
-    const QString controllerTitle = controller_->title();
-    if (!controllerTitle.isEmpty()) {
-        return controllerTitle;
+    if (controller_->hasTitle()) {
+        return controller_->title();
     }
     if (!options_.program.isEmpty()) {
         return QFileInfo(options_.program.constFirst()).fileName();
     }
     return QStringLiteral("Terminal");
+}
+
+void TerminalPane::setSurfaceTitle(QString title)
+{
+    controller_->setSurfaceTitle(std::move(title));
 }
 
 QString TerminalPane::currentDirectory() const
@@ -2420,6 +2424,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         return true;
     case WorkspaceAction::RequestQuit:
         Q_EMIT requestQuit();
+        return true;
+    case WorkspaceAction::SetSurfaceTitle:
+        setSurfaceTitle(std::move(request.payload));
         return true;
     case WorkspaceAction::ActivateTab:
     case WorkspaceAction::ActivatePane:

@@ -191,7 +191,7 @@ private Q_SLOTS:
     void keepsOsc8InteractionStableAcrossUnrelatedOutput();
     void restoresOsc8HoverAcrossViewportScroll();
     void letsShiftBypassMouseCaptureForHyperlinks();
-    void resetClearsTerminalMetadataAndSplitInheritance();
+    void resetPreservesSurfaceTitleAndClearsWorkingDirectory();
     void routesStructuredSequencesAndCancelsThemOnReload();
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
@@ -3652,7 +3652,7 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
              TerminalMouseInput::Release);
 }
 
-void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()
+void TerminalPaneTest::resetPreservesSurfaceTitleAndClearsWorkingDirectory()
 {
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
@@ -3679,9 +3679,21 @@ void TerminalPaneTest::resetClearsTerminalMetadataAndSplitInheritance()
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset")));
     QTRY_VERIFY_WITH_TIMEOUT(pane.currentDirectory().isEmpty(), 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(pane.title(), QStringLiteral("sh"), 1000);
+    QCOMPARE(pane.title(), QStringLiteral("metadata-title"));
     QCOMPARE(pane.splitLaunchOptions(options).workingDirectory,
              QDir::tempPath());
+
+    // OSC and set_surface_title converge on the same apprt base-title layer.
+    // Reset publishes no title update, so either writer survives, including
+    // an explicitly present empty action value.
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("set_surface_title:")));
+    QVERIFY(controller->hasTitle());
+    QVERIFY(pane.title().isEmpty());
+    const int updatesBeforeActionReset = updates.count();
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset")));
+    QTRY_VERIFY_WITH_TIMEOUT(updates.count() > updatesBeforeActionReset, 1000);
+    QVERIFY(controller->hasTitle());
+    QVERIFY(pane.title().isEmpty());
 }
 
 void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()

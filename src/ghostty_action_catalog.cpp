@@ -329,6 +329,7 @@ bool isCatalogAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("goto_split"))
         || equals(actionName, QLatin1StringView("goto_tab"))
         || equals(actionName, QLatin1StringView("move_tab"))
+        || equals(actionName, QLatin1StringView("set_surface_title"))
         || equals(actionName, QLatin1StringView("set_tab_title"))
         || equals(actionName, QLatin1StringView("resize_split"));
 }
@@ -488,11 +489,14 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                       parameter);
     }
 
-    if (equals(actionName, QLatin1StringView("set_tab_title"))) {
+    const bool setsSurfaceTitle =
+        equals(actionName, QLatin1StringView("set_surface_title"));
+    if (setsSurfaceTitle
+        || equals(actionName, QLatin1StringView("set_tab_title"))) {
         // The pinned structured helper serializes []const u8 action values
         // with std.zig.stringEscape. Invert that byte boundary and reject
-        // text Qt cannot represent losslessly. An empty decoded title is the
-        // explicit reset operation, not a missing parameter.
+        // text Qt cannot represent losslessly. An empty decoded title remains
+        // an explicit value for a surface and clears a tab override.
         if (!parameter.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
@@ -500,7 +504,9 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
         if (!title.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
-        return accept(WorkspaceAction::SetTabTitle,
+        return accept(setsSurfaceTitle
+                          ? WorkspaceAction::SetSurfaceTitle
+                          : WorkspaceAction::SetTabTitle,
                       context,
                       actionName,
                       parameter,

@@ -29,7 +29,13 @@ public:
                                 QObject *parent = nullptr);
     ~TerminalController() override;
 
-    QString title() const { return title_; }
+    QString title() const
+    {
+        return baseTitle_.has_value() ? *baseTitle_ : QString{};
+    }
+    // An explicit empty set_surface_title value is distinct from the absence
+    // of terminal metadata, which lets TerminalPane select its launch fallback.
+    bool hasTitle() const { return baseTitle_.has_value(); }
     QString currentDirectory() const { return currentDirectory_; }
     bool mouseTracking() const { return mouseTracking_; }
     bool running() const { return running_; }
@@ -47,6 +53,9 @@ public:
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
     void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
+    // Update the GUI-thread base-title cache. The next worker title event,
+    // including an empty value, replaces this action-originated value.
+    void setSurfaceTitle(QString title);
     // Queue graceful teardown without blocking the UI. Workspace-wide closes
     // call this for every pane first so their grace periods run concurrently.
     void beginShutdown();
@@ -181,7 +190,7 @@ private:
 
     QThread *thread_ = nullptr;
     SessionWorker *worker_ = nullptr;
-    QString title_;
+    std::optional<QString> baseTitle_;
     QString currentDirectory_;
     bool mouseTracking_ = false;
     bool running_ = true;

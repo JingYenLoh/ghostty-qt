@@ -854,7 +854,7 @@
         },
         "reset": {
           "status": "supported",
-          "note": "Performs libghostty's full terminal reset on the session thread, resynchronizes cached mouse-input, selection, title, and working-directory state, and publishes a complete replacement frame without writing to the PTY."
+          "note": "Performs libghostty's full terminal reset on the session thread, resynchronizes cached mouse-input, selection, and working-directory state, preserves the frontend's last published base title because upstream emits no application title update, and publishes a complete replacement frame without writing to the PTY."
         },
         "reset_font_size": {
           "status": "supported",
@@ -916,9 +916,13 @@
           "status": "supported",
           "note": "Parses the required payload directly to f32, applies Ghostty's 1..255 clamp including NaN and signed-infinity behavior, and marks every targeted pane manually adjusted even when its effective size is unchanged."
         },
+        "set_surface_title": {
+          "status": "supported",
+          "note": "Requires a colon, decodes Ghostty's canonical escaped-byte transport as valid UTF-8, and replaces the originating stable pane's base title without changing focus or selection. An empty payload remains explicitly present rather than selecting the Qt fallback; later OSC metadata replaces it, including restoration of the exact pre-action cached string. Reset preserves the current base title regardless of its latest writer because pinned Ghostty publishes no application title update. Per-tab overrides continue masking base updates, and all/global applies once to every pane."
+        },
         "set_tab_title": {
           "status": "supported",
-          "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's current terminal title; focus and OSC title changes plus tab insertion and reordering preserve the override."
+          "note": "Decodes Ghostty's canonical byte-string escapes and valid UTF-8, then applies a non-empty override to the source surface's tab by stable identity. An empty payload clears the override and reveals the active pane's current base title; focus and base-title changes plus tab insertion and reordering preserve the override."
         },
         "show_gtk_inspector": {
           "status": "not_applicable",

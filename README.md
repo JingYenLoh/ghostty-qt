@@ -60,9 +60,11 @@ the host-language comparison and remaining engineering risks.
   that pane during close.
 - Stable tab/pane identities, a QML tab list model, and typed workspace actions;
   a catalog translates the currently implemented subset of Ghostty action
-  strings into that action layer. The direct `set_tab_title` action applies a
-  persistent override to the source pane's tab by stable identity; an empty
-  title restores the active pane's terminal-supplied title. The
+  strings into that action layer. `set_surface_title` replaces the originating
+  pane's base title, including with an explicit empty value, until the next
+  terminal title update. The direct `set_tab_title` action applies a persistent
+  override to the source pane's tab by stable identity; an empty title restores
+  the active pane's current base title. The
   `prompt_tab_title` action edits the same stable override through a modal Qt
   dialog.
 - OSC title and local-host-validated working-directory updates, used for tab
@@ -330,8 +332,14 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `auto`), `goto_split`, `resize_split`, `equalize_splits`, and
 `toggle_split_zoom` directly. `toggle_readonly` applies independently to its
 source pane; `all:` or `global:` applies it once to every stable pane target.
+`set_surface_title:<title>` decodes Ghostty's escaped UTF-8 transport and
+replaces the source pane's base title without changing focus or terminal
+selection. A colon is required, and `set_surface_title:` is a present empty
+title rather than the launch-program fallback. Later OSC title updates replace
+the action value; an existing tab-title override continues masking either base
+value until it is cleared. Broad bindings apply the action once to every pane.
 `set_tab_title:<title>` installs a stable override on the source pane's tab;
-`set_tab_title:` clears it and reveals the active pane's current terminal
+`set_tab_title:` clears it and reveals the active pane's current base
 title. `prompt_tab_title` is a strict void action—spellings with a colon are
 invalid—and targets the source pane's tab even if tabs are selected or moved
 while its dialog is open. The field snapshots the raw override when present;

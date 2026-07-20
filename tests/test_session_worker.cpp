@@ -2469,10 +2469,9 @@ void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, false), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, false), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(containsFullFrame(updateSpy), 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !titleSpy.isEmpty()
-            && titleSpy.constLast().constFirst().toString().isEmpty(),
-        1000);
+    // Upstream reset has no application-title effect. The frontend retains
+    // whichever base title was last published by OSC or set_surface_title.
+    QVERIFY(titleSpy.isEmpty());
     QTRY_VERIFY_WITH_TIMEOUT(
         !directorySpy.isEmpty()
             && directorySpy.constLast().constFirst().toString().isEmpty(),

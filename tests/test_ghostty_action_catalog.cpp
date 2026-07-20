@@ -15,7 +15,7 @@ private Q_SLOTS:
     void translatesParameterizedActions_data();
     void translatesParameterizedActions();
     void preservesRawParametersAndTargetContext();
-    void translatesTabTitleActions();
+    void translatesTitleActions();
     void rejectsValidButUnsupportedParameters_data();
     void rejectsValidButUnsupportedParameters();
     void rejectsMalformedAndUnsupportedStrings_data();
@@ -221,55 +221,70 @@ void GhosttyActionCatalogTest::preservesRawParametersAndTargetContext()
     QCOMPARE(result.request->context.amount, source.amount);
 }
 
-void GhosttyActionCatalogTest::translatesTabTitleActions()
+void GhosttyActionCatalogTest::translatesTitleActions()
 {
     const WorkspaceActionContext source{TabId(41), PaneId(73), 9, 22};
 
     const struct {
-        QString serialized;
+        QString encoded;
         QString expected;
     } valid[] = {
-        {QStringLiteral("set_tab_title:"), QString{}},
-        {QStringLiteral("set_tab_title:project:main"),
-         QStringLiteral("project:main")},
-        {QStringLiteral(R"(set_tab_title:\xf0\x9f\x91\xbb workspace)"),
+        {QString{}, QString{}},
+        {QStringLiteral("project:main"), QStringLiteral("project:main")},
+        {QStringLiteral(R"(\xf0\x9f\x91\xbb workspace)"),
          QStringLiteral("👻 workspace")},
-        {QStringLiteral(R"(set_tab_title:path\\quoted\")"),
+        {QStringLiteral(R"(path\\quoted\")"),
          QStringLiteral("path\\quoted\"")},
-        {QStringLiteral(R"(set_tab_title:line\nnext)"),
+        {QStringLiteral(R"(line\nnext)"),
          QStringLiteral("line\nnext")},
+        {QStringLiteral(R"(left\x00right)"),
+         QString::fromUtf8("left\0right", 10)},
+        {QStringLiteral("直接"), QStringLiteral("直接")},
     };
 
-    for (const auto &testCase : valid) {
-        QString serialized = testCase.serialized;
-        const GhosttyActionTranslation result =
-            GhosttyActionCatalog::translate(serialized, source);
-        serialized.clear();
-
-        QVERIFY(result.accepted());
-        QCOMPARE(result.error, GhosttyActionTranslationError::None);
-        QCOMPARE(result.request->action, WorkspaceAction::SetTabTitle);
-        QCOMPARE(result.request->context, source);
-        QCOMPARE(result.request->payload, testCase.expected);
-        QCOMPARE(result.actionName, QStringLiteral("set_tab_title"));
-        QVERIFY(result.parameter.has_value());
-        QVERIFY(GhosttyActionCatalog::isImplemented(testCase.serialized));
-    }
-
-    const QStringList invalid{
-        QStringLiteral("set_tab_title"),
-        QStringLiteral(R"(set_tab_title:bad\q)"),
-        QStringLiteral(R"(set_tab_title:\xc3)"),
-        QStringLiteral(R"(set_tab_title:\xff)"),
-        QStringLiteral(R"(set_tab_title:\u{d800})"),
+    const struct {
+        QString name;
+        WorkspaceAction action;
+    } actions[] = {
+        {QStringLiteral("set_surface_title"),
+         WorkspaceAction::SetSurfaceTitle},
+        {QStringLiteral("set_tab_title"), WorkspaceAction::SetTabTitle},
     };
-    for (const QString &serialized : invalid) {
-        const GhosttyActionTranslation result =
-            GhosttyActionCatalog::translate(serialized, source);
-        QVERIFY2(!result.accepted(), qPrintable(serialized));
-        QCOMPARE(result.error, GhosttyActionTranslationError::InvalidFormat);
-        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
-                 qPrintable(serialized));
+
+    for (const auto &action : actions) {
+        for (const auto &testCase : valid) {
+            const QString input = action.name + u':' + testCase.encoded;
+            QString serialized = input;
+            const GhosttyActionTranslation result =
+                GhosttyActionCatalog::translate(serialized, source);
+            serialized.clear();
+
+            QVERIFY2(result.accepted(), qPrintable(input));
+            QCOMPARE(result.error, GhosttyActionTranslationError::None);
+            QCOMPARE(result.request->action, action.action);
+            QCOMPARE(result.request->context, source);
+            QCOMPARE(result.request->payload, testCase.expected);
+            QCOMPARE(result.actionName, action.name);
+            QVERIFY(result.parameter.has_value());
+            QVERIFY(GhosttyActionCatalog::isImplemented(input));
+        }
+
+        const QStringList invalid{
+            action.name,
+            action.name + QStringLiteral(R"(:bad\q)"),
+            action.name + QStringLiteral(R"(:\xc3)"),
+            action.name + QStringLiteral(R"(:\xff)"),
+            action.name + QStringLiteral(R"(:\u{d800})"),
+        };
+        for (const QString &serialized : invalid) {
+            const GhosttyActionTranslation result =
+                GhosttyActionCatalog::translate(serialized, source);
+            QVERIFY2(!result.accepted(), qPrintable(serialized));
+            QCOMPARE(result.error,
+                     GhosttyActionTranslationError::InvalidFormat);
+            QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                     qPrintable(serialized));
+        }
     }
 }
 
@@ -799,6 +814,9 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("toggle_readonly")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("set_surface_title:project")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("set_tab_title:project")),

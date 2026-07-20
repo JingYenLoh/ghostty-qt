@@ -75,6 +75,7 @@ public:
     void setUrlOpener(std::function<bool(const QUrl &)> opener);
 
     void focusTerminal();
+    void setSurfaceTitle(QString title);
     void copySelection();
     void pasteText(const QString &text);
     void confirmPaste(quint64 requestId);

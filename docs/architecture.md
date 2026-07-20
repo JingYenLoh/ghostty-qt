@@ -92,7 +92,18 @@ release any delivery-agent grab, then recreates them from the stable split IDs.
 Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
 geometry remain intact, while divider handles are absent. Only the current
 tab's panes and dividers are exposed. The active pane supplies the tab's base
-title and receives toolbar and directional-focus actions. A non-empty
+title and receives toolbar and directional-focus actions. Each controller
+stores that base as an optional value so absence selects the launch-program or
+`Terminal` fallback while `set_surface_title:` remains a present empty title.
+The parameterized action decodes the structured helper's canonical escaped
+UTF-8, requires the originating stable `PaneId`, and mutates only this
+GUI-thread cache. A later worker title event replaces it; comparing the full
+optional state ensures OSC can restore the exact string cached before the
+action. An empty OSC update returns to absence and the fallback. Reset
+preserves the current base title regardless of its latest writer because the
+pinned Ghostty action publishes no application title update. All/global fanout
+uses the existing stable pane snapshot and neither activates a pane nor touches
+terminal selection. A non-empty
 `set_tab_title` payload installs a per-tab display-title override by stable tab
 identity; an empty payload clears it. Pane focus changes and OSC title updates
 continue to update the base title without replacing the override, so clearing

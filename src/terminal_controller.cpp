@@ -8,6 +8,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -133,9 +134,14 @@ TerminalController::TerminalController(
             this, &TerminalController::terminalUpdated, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::titleChanged, this,
             [this](const QString &title) {
-                if (title_ == title) return;
-                title_ = title;
-                Q_EMIT titleChanged(title_);
+                // Empty terminal metadata means no title and restores the
+                // pane's launch fallback. set_surface_title: instead installs
+                // an explicit empty optional until this worker event arrives.
+                std::optional<QString> next;
+                if (!title.isEmpty()) next = title;
+                if (baseTitle_ == next) return;
+                baseTitle_ = std::move(next);
+                Q_EMIT titleChanged(this->title());
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::currentDirectoryChanged, this,
             [this](const QString &directory) {
@@ -262,6 +268,16 @@ TerminalController::~TerminalController()
         thread_->wait();
     }
     worker_ = nullptr;
+}
+
+void TerminalController::setSurfaceTitle(QString title)
+{
+    std::optional<QString> next(std::in_place, std::move(title));
+    if (baseTitle_ == next) {
+        return;
+    }
+    baseTitle_ = std::move(next);
+    Q_EMIT titleChanged(this->title());
 }
 
 void TerminalController::resizeTerminal(int columns, int rows,
