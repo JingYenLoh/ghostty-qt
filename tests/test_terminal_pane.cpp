@@ -2368,6 +2368,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("ctrl+x=increase_font_size:2.5"),
         QStringLiteral("ctrl+enter=toggle_fullscreen"),
         QStringLiteral("ctrl+w=close_tab:this"),
+        QStringLiteral("ctrl+shift+w=close_surface"),
         QStringLiteral("ctrl+r=reload_config"),
         QStringLiteral("alt+f4=close_window"),
         QStringLiteral("ctrl+y=open_config"),
@@ -2387,6 +2388,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
 
     TerminalPane pane(options);
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy closeSurface(&pane, &TerminalPane::requestClose);
     QSignalSpy closeTab(&pane, &TerminalPane::requestCloseTab);
     QSignalSpy reload(&pane, &TerminalPane::requestConfigReload);
     QSignalSpy quit(&pane, &TerminalPane::requestQuit);
@@ -2412,6 +2414,13 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                    Qt::ControlModifier, QStringLiteral("x"));
     QCoreApplication::sendEvent(&pane, &zoom);
     QCOMPARE(pane.fontPointSize(), 14.5);
+
+    QKeyEvent closePane(QEvent::KeyPress, Qt::Key_W,
+                        Qt::ControlModifier | Qt::ShiftModifier,
+                        QStringLiteral("W"));
+    QCoreApplication::sendEvent(&pane, &closePane);
+    QCOMPARE(closeSurface.count(), 1);
+    QCOMPARE(closeTab.count(), 0);
 
     QKeyEvent close(QEvent::KeyPress, Qt::Key_W,
                     Qt::ControlModifier, QStringLiteral("w"));

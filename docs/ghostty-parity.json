@@ -737,7 +737,7 @@
         },
         "close_surface": {
           "status": "partial",
-          "note": "Local root triggers route pane close through the typed workspace dispatcher and Ghostty action catalog."
+          "note": "Accepts only the exact void spelling and targets the originating stable PaneId plus its containing TabId. Local closure preserves an unrelated active pane, otherwise focuses the previous tree-order leaf except that the leftmost target selects the next leaf; it recursively collapses the split tree, clears only a removed zoom target, removes a final-leaf tab, and approves shutdown after the final tab. Pinned GTK also selects the target's neighbor for an inactive programmatic close, whereas Qt deliberately preserves the unrelated active pane. Read-only/running confirmation uses correlated nonzero IDs, revalidates the stable target, and resolves plus commits atomically against synchronous topology observers; quit approval permanently rejects later typed workspace actions so no worker can miss the shutdown sweep, while non-structural application or pane-local chain steps remain eligible to finish. Real all:/global: bindings are consumed without PTY input and intentionally converge on one atomic confirmation/quit per Qt workspace. Pinned Ghostty instead fans broad actions to each surface in creation/swap-remove order: GTK closes safe leaves immediately and requests per-surface confirmation for unsafe leaves, while retaining only one pending split-close handle rather than independent stable requests. Full parity also remains limited by the separately tracked prompt-marker approximation, configurable last-window lifetime, and absent multiwindow behavior."
         },
         "close_tab": {
           "status": "partial",

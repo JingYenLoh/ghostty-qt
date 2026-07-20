@@ -19,6 +19,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <ranges>
 #include <type_traits>
@@ -506,6 +507,8 @@ bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
 
 bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
 {
+    if (topologyMutation_) return false;
+
     // Actions may remove panes or tabs. QPointer keeps this stable snapshot
     // safe while preserving Ghostty's action-major fanout order at the
     // process-level caller.
@@ -546,7 +549,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     // Model and workspace signals are synchronous. Reject nested actions while
     // a stable-ID batch is being committed so observers cannot invalidate the
     // topology between its pane shutdown and row-removal phases.
-    if (topologyMutation_) return false;
+    if (topologyMutation_ || quitApprovedEmitted_) return false;
 
     const auto contextMatchesPane = [this, &request] {
         return !request.context.tabId.isValid()
@@ -1154,8 +1157,9 @@ void TerminalWorkspace::activatePane(PaneId paneId,
 
 void TerminalWorkspace::closeActivePane()
 {
+    const PaneId paneId = currentPaneId();
     dispatchAction({WorkspaceAction::ClosePane,
-                    {TabId{}, currentPaneId(), 0}});
+                    {currentTabId(), paneId, 0}});
 }
 
 void TerminalWorkspace::closePane(PaneId paneId, bool force)
@@ -1186,6 +1190,9 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
         const TabId tabId = tab->id;
         const bool removedActivePane = tab->activePaneId == paneId;
+        const PaneId nextActivePaneId = removedActivePane
+            ? focusTargetAfterClosing(*tab, paneId)
+            : tab->activePaneId;
         if (tab->zoomedPaneId == paneId) {
             tab->zoomedPaneId = {};
         }
@@ -1194,8 +1201,10 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         if (tab->root == nullptr) {
             removeTab(tabId);
         } else {
-            if (removedActivePane
-                || paneForId(tab->activePaneId) == nullptr) {
+            if (removedActivePane) {
+                tab->activePaneId = nextActivePaneId;
+            }
+            if (findNode(tab->root.get(), tab->activePaneId) == nullptr) {
                 tab->activePaneId = firstPaneId(tab->root.get());
             }
             updateSplitMembership(*tab);
@@ -1517,6 +1526,16 @@ TerminalWorkspace::PendingClose TerminalWorkspace::takePendingClose()
     return close;
 }
 
+void TerminalWorkspace::commitPendingClose()
+{
+    Q_ASSERT(!topologyMutation_);
+    // Resolving a dialog emits synchronously. Treat resolution and the
+    // approved topology change as one transaction so an observer cannot
+    // insert, split, or close a different target between those phases.
+    QScopedValueRollback<bool> mutation(topologyMutation_, true);
+    performPendingClose(takePendingClose());
+}
+
 void TerminalWorkspace::performPendingClose(PendingClose close)
 {
     if (const auto *pane = std::get_if<PendingPaneClose>(&close)) {
@@ -1553,7 +1572,7 @@ void TerminalWorkspace::reevaluatePendingClose()
         return;
     }
 
-    performPendingClose(takePendingClose());
+    commitPendingClose();
 }
 
 void TerminalWorkspace::requestQuit()
@@ -1583,6 +1602,12 @@ void TerminalWorkspace::approveQuit()
     if (quitApprovedEmitted_) {
         return;
     }
+    // This is an irreversible lifecycle boundary. Typed workspace actions
+    // are rejected after the latch is set, including during synchronous
+    // observers and before the host's deferred window close, so every worker
+    // is covered by this one shutdown sweep. Non-structural application and
+    // pane-local actions may still finish the Ghostty action chain that
+    // approved the quit.
     quitApprovedEmitted_ = true;
     // Start every worker shutdown before QObject hierarchy teardown. The
     // per-process grace periods then overlap on their independent threads
@@ -1609,7 +1634,7 @@ void TerminalWorkspace::confirmClose(quint64 confirmationId)
         || pendingCloseRequestId(pendingClose_) != confirmationId) {
         return;
     }
-    performPendingClose(takePendingClose());
+    commitPendingClose();
 }
 
 void TerminalWorkspace::cancelClose(quint64 confirmationId)
@@ -2285,6 +2310,21 @@ PaneId TerminalWorkspace::firstPaneId(Node *node) const
     if (node->isLeaf()) return node->paneId;
     const PaneId first = firstPaneId(node->first.get());
     return first.isValid() ? first : firstPaneId(node->second.get());
+}
+
+PaneId TerminalWorkspace::focusTargetAfterClosing(
+    const Tab &tab, PaneId paneId) const
+{
+    std::vector<PaneHandle> panes;
+    if (tab.root != nullptr) tab.root->collectPanes(panes);
+    if (panes.size() <= 1) return {};
+
+    const auto closing = std::ranges::find(panes, paneId, &PaneHandle::id);
+    if (closing == panes.end()) return {};
+
+    // Match Ghostty's GTK and macOS split-tree rule: move to the previous
+    // leaf, except that closing the leftmost leaf moves to the next one.
+    return closing == panes.begin() ? panes[1].id : std::prev(closing)->id;
 }
 
 TerminalPane *TerminalWorkspace::paneForId(PaneId paneId) const

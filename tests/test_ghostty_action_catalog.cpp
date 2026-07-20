@@ -329,6 +329,10 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
         << QStringLiteral("new_tab:") << Error::InvalidFormat;
     QTest::newRow("void-parameter")
         << QStringLiteral("quit:now") << Error::InvalidFormat;
+    QTest::newRow("close-surface-empty-parameter")
+        << QStringLiteral("close_surface:") << Error::InvalidFormat;
+    QTest::newRow("close-surface-parameter")
+        << QStringLiteral("close_surface:active") << Error::InvalidFormat;
     QTest::newRow("empty-split-direction")
         << QStringLiteral("new_split:") << Error::InvalidFormat;
     QTest::newRow("missing-required-parameter")
@@ -819,6 +823,8 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_window")),
              GhosttyActionScope::Application);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_tab")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_surface")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:this")),
              GhosttyActionScope::Surface);

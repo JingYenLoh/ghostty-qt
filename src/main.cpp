@@ -74,12 +74,22 @@ bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
     const auto acceptanceInvoked = std::make_shared<bool>(false);
     QObject::connect(
         workspace, &TerminalWorkspace::closeConfirmationRequested,
-        closeDialog, [closeDialog, acceptanceInvoked] {
+        closeDialog, [closeDialog, acceptanceInvoked](
+                         quint64 confirmationId, const QString &) {
             QTimer::singleShot(0, closeDialog,
-                               [closeDialog, acceptanceInvoked] {
+                               [closeDialog, acceptanceInvoked,
+                                confirmationId] {
                 if (!closeDialog->property("visible").toBool()) {
                     qCritical()
                         << "Close-dialog test hook observed a hidden QML dialog";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                if (confirmationId == 0
+                    || closeDialog->property("confirmationId").toULongLong()
+                        != confirmationId) {
+                    qCritical()
+                        << "Close-dialog test hook observed the wrong request ID";
                     QCoreApplication::exit(1);
                     return;
                 }
@@ -101,12 +111,24 @@ bool installCloseDialogTestHook(QQmlApplicationEngine *engine,
             }
         });
 
+    const auto requestSurfaceClose = [workspace] {
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        if (pane == nullptr
+            || !pane->executeConfiguredAction(
+                QStringLiteral("toggle_readonly"))
+            || !pane->executeConfiguredAction(
+                QStringLiteral("close_surface"))) {
+            qCritical()
+                << "Close-dialog test hook could not request a surface close";
+            QCoreApplication::exit(1);
+        }
+    };
     if (workspace->tabCount() > 0) {
-        QTimer::singleShot(0, workspace, &TerminalWorkspace::requestQuit);
+        QTimer::singleShot(0, workspace, requestSurfaceClose);
     } else {
         QObject::connect(
             workspace, &TerminalWorkspace::tabTitlesChanged,
-            workspace, [workspace] { workspace->requestQuit(); },
+            workspace, requestSurfaceClose,
             Qt::SingleShotConnection);
     }
     return true;

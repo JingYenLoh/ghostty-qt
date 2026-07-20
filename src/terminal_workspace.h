@@ -169,6 +169,7 @@ private:
     void beginCloseConfirmation(PendingClose close, const QString &message);
     quint64 pendingCloseRequestId(const PendingClose &close) const;
     PendingClose takePendingClose();
+    void commitPendingClose();
     void performPendingClose(PendingClose close);
     void resolvePendingPaneRemoval(PaneHandle handle);
     void resolvePendingTabRemoval(TabId tabId);
@@ -209,6 +210,7 @@ private:
     bool removePaneFromNode(std::unique_ptr<Node> &node, PaneId paneId);
     TerminalPane *firstPane(Node *node) const;
     PaneId firstPaneId(Node *node) const;
+    PaneId focusTargetAfterClosing(const Tab &tab, PaneId paneId) const;
     TerminalPane *paneForId(PaneId paneId) const;
     bool navigateFrom(PaneId paneId, int direction);
     bool navigateRelative(PaneId paneId, qint64 delta);

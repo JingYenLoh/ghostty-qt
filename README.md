@@ -331,8 +331,8 @@ trigger and one action; focused in-app dispatch still handles action chains.
 These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `new_split:left|right|up|down|auto` (with an omitted direction also selecting
-`auto`), `close_tab[:this|other|right]`, `goto_split`, `resize_split`,
-`equalize_splits`, and
+`auto`), `close_surface`, `close_tab[:this|other|right]`, `goto_split`,
+`resize_split`, `equalize_splits`, and
 `toggle_split_zoom` directly. `toggle_readonly` and
 `toggle_mouse_reporting` apply independently to their source pane; `all:` or
 `global:` applies either action once to every stable pane target. Mouse
@@ -346,6 +346,14 @@ valid no-target forms are harmless performed actions. A Qt batch confirmation
 freezes the target IDs, so later moves and insertions cannot redirect it.
 Each close dialog has a nonzero request identity, preventing a delayed response
 from confirming or cancelling a newer request.
+`close_surface` is a strict void action anchored to the originating pane's
+stable identity. Closing an active split focuses the previous pane in tree
+order, except that closing the leftmost pane focuses the next one; closing an
+inactive split preserves the current focus. The split tree collapses around
+the removed leaf, and a final leaf naturally promotes the operation through
+tab removal and, for the final tab, the application shutdown path. Broad
+`all:` and `global:` forms intentionally converge on one atomic close request
+per workspace rather than presenting one dialog per surface.
 `set_surface_title:<title>` decodes Ghostty's escaped UTF-8 transport and
 replaces the source pane's base title without changing focus or terminal
 selection. A colon is required, and `set_surface_title:` is a present empty
