@@ -524,16 +524,18 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
         // CloseTabMode.default is .this in Binding.zig.
         if (!parameter.has_value()
             || equals(*parameter, QLatin1StringView("this"))) {
-            return accept(WorkspaceAction::CloseTab,
-                          context,
-                          actionName,
-                          parameter);
+            context.closeTabMode = CloseTabMode::This;
+        } else if (equals(*parameter, QLatin1StringView("other"))) {
+            context.closeTabMode = CloseTabMode::Other;
+        } else if (equals(*parameter, QLatin1StringView("right"))) {
+            context.closeTabMode = CloseTabMode::Right;
+        } else {
+            return reject(Error::InvalidFormat, actionName, parameter);
         }
-        if (equals(*parameter, QLatin1StringView("other"))
-            || equals(*parameter, QLatin1StringView("right"))) {
-            return reject(Error::UnsupportedParameter, actionName, parameter);
-        }
-        return reject(Error::InvalidFormat, actionName, parameter);
+        return accept(WorkspaceAction::CloseTab,
+                      context,
+                      actionName,
+                      parameter);
     }
 
     if (equals(actionName, QLatin1StringView("new_split"))) {

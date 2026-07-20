@@ -1,139 +1,47 @@
 #include "tab_list_model.h"
 #include "workspace_action.h"
 
-#include <QSignalSpy>
 #include <QTest>
 
 #include <optional>
+
+template<typename Model>
+concept PubliclyMutableTabModel =
+    requires(Model &model, TabListEntry entry) { model.append(entry); }
+    || requires(Model &model, TabListEntry entry) {
+        model.insert(0, entry);
+    }
+    || requires(Model &model, TabListEntry entry) {
+        model.replace(entry.id, entry);
+    }
+    || requires(Model &model, TabListEntry entry) {
+        model.move(entry.id, 0);
+    }
+    || requires(Model &model) { model.removeAt(0); };
+
+static_assert(!PubliclyMutableTabModel<TabListModel>);
 
 class WorkspaceFoundationTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    void tabIdsRemainStableWhenRowsMoveAfterRemoval();
-    void tabModelInsertsStableEntries();
-    void tabModelMovesStableEntries();
-    void tabModelPublishesRoleChanges();
+    void tabModelExposesReadOnlyContract();
     void dispatcherPreservesTypedActionContext();
 };
 
-void WorkspaceFoundationTest::tabIdsRemainStableWhenRowsMoveAfterRemoval()
+void WorkspaceFoundationTest::tabModelExposesReadOnlyContract()
 {
     TabListModel model;
-    TabListEntry first;
-    first.id = TabId(11);
-    first.activePaneId = PaneId(101);
-    first.title = QStringLiteral("one");
-    model.append(first);
-    TabListEntry second;
-    second.id = TabId(22);
-    second.activePaneId = PaneId(202);
-    second.title = QStringLiteral("two");
-    model.append(second);
-
-    QCOMPARE(model.indexOf(TabId(11)), 0);
-    QCOMPARE(model.indexOf(TabId(22)), 1);
-    QVERIFY(model.remove(TabId(11)));
-
-    QCOMPARE(model.count(), 1);
-    QCOMPARE(model.idAt(0).value(), quint64(22));
-    QCOMPARE(model.indexOf(TabId(22)), 0);
-}
-
-void WorkspaceFoundationTest::tabModelInsertsStableEntries()
-{
-    TabListModel model;
-    for (const quint64 value : {quint64(1), quint64(3)}) {
-        TabListEntry entry;
-        entry.id = TabId(value);
-        entry.title = QString::number(value);
-        model.append(entry);
-    }
-    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
-    QSignalSpy countChanged(&model, &TabListModel::countChanged);
-
-    TabListEntry middle;
-    middle.id = TabId(2);
-    middle.title = QStringLiteral("2");
-    QVERIFY(model.insert(1, middle));
-    TabListEntry first;
-    first.id = TabId(0);
-    first.title = QStringLiteral("0");
-    QVERIFY(model.insert(0, first));
-    TabListEntry last;
-    last.id = TabId(4);
-    last.title = QStringLiteral("4");
-    QVERIFY(model.insert(model.count(), last));
-
-    QCOMPARE(inserted.count(), 3);
-    QCOMPARE(countChanged.count(), 3);
-    QCOMPARE(model.count(), 5);
-    for (int index = 0; index < model.count(); ++index) {
-        QCOMPARE(model.idAt(index), TabId(static_cast<quint64>(index)));
-    }
-
-    QVERIFY(!model.insert(-1, {}));
-    QVERIFY(!model.insert(model.count() + 1, {}));
-    QCOMPARE(inserted.count(), 3);
-    QCOMPARE(countChanged.count(), 3);
-}
-
-void WorkspaceFoundationTest::tabModelMovesStableEntries()
-{
-    TabListModel model;
-    for (quint64 value = 1; value <= 3; ++value) {
-        TabListEntry entry;
-        entry.id = TabId(value);
-        entry.title = QString::number(value);
-        model.append(entry);
-    }
-    QSignalSpy moved(&model, &QAbstractItemModel::rowsMoved);
-
-    QVERIFY(model.move(TabId(1), 2));
-    QCOMPARE(moved.count(), 1);
-    QCOMPARE(model.idAt(0), TabId(2));
-    QCOMPARE(model.idAt(1), TabId(3));
-    QCOMPARE(model.idAt(2), TabId(1));
-    QCOMPARE(model.indexOf(TabId(1)), 2);
-
-    QVERIFY(model.move(TabId(1), 0));
-    QCOMPARE(moved.count(), 2);
-    QCOMPARE(model.idAt(0), TabId(1));
-    QCOMPARE(model.idAt(1), TabId(2));
-    QCOMPARE(model.idAt(2), TabId(3));
-    QVERIFY(model.move(TabId(2), 1));
-    QCOMPARE(moved.count(), 2);
-}
-
-void WorkspaceFoundationTest::tabModelPublishesRoleChanges()
-{
-    TabListModel model;
-    TabListEntry entry;
-    entry.id = TabId(7);
-    entry.activePaneId = PaneId(70);
-    entry.title = QStringLiteral("shell");
-    model.append(entry);
-
-    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
-    entry.title = QStringLiteral("editor");
-    entry.titleOverride = QStringLiteral("project");
-    entry.currentDirectory = QStringLiteral("/tmp/project");
-    entry.running = true;
-    entry.zoomed = true;
-    QVERIFY(model.replace(TabId(7), entry));
-
-    QCOMPARE(changed.count(), 1);
-    const QModelIndex index = model.index(0, 0);
-    QCOMPARE(model.data(index, TabListModel::TitleRole).toString(),
-             QStringLiteral("project"));
-    QCOMPARE(model.data(index, TabListModel::TitleOverrideRole).toString(),
-             QStringLiteral("project"));
-    QCOMPARE(model.data(index, TabListModel::CurrentDirectoryRole).toString(),
-             QStringLiteral("/tmp/project"));
-    QCOMPARE(model.data(index, TabListModel::RunningRole).toBool(), true);
-    QCOMPARE(model.data(index, TabListModel::ZoomedRole).toBool(), true);
-    QCOMPARE(model.data(index, TabListModel::ActivePaneIdRole).toULongLong(),
-             quint64(70));
+    QCOMPARE(model.count(), 0);
+    QCOMPARE(model.rowCount(), 0);
+    QCOMPARE(model.entryAt(0), nullptr);
+    QCOMPARE(model.idAt(0), TabId{});
+    QCOMPARE(model.indexOf(TabId(7)), -1);
+    const QHash<int, QByteArray> roles = model.roleNames();
+    QCOMPARE(roles.value(TabListModel::TabIdRole), QByteArrayLiteral("tabId"));
+    QCOMPARE(roles.value(TabListModel::TitleRole), QByteArrayLiteral("title"));
+    QCOMPARE(roles.value(TabListModel::ActivePaneIdRole),
+             QByteArrayLiteral("activePaneId"));
 }
 
 void WorkspaceFoundationTest::dispatcherPreservesTypedActionContext()

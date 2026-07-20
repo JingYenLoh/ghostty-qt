@@ -741,7 +741,7 @@
         },
         "close_tab": {
           "status": "partial",
-          "note": "Local root triggers support the default/this mode; other/right tab modes remain planned."
+          "note": "Accepts the exact omitted/this/other/right grammar through a typed mode, anchors to the originating pane's stable containing tab, treats valid no-target modes as performed, correlates dialog responses, and freezes TabId membership across confirmation, reordering, insertion, focus restoration, and overlapping worker shutdown. Commit traverses those frozen members in the then-current reverse visual order. Qt matches Ghostty macOS only in grouping a multi-tab close behind one atomic confirmation: macOS recomputes membership after confirmation and traverses ascending, while Qt retains the original membership. Pinned GTK instead confirms each unsafe target independently and immediately closes safe targets. Broad fanout also follows Qt's tab/tree snapshot order rather than Ghostty's surface creation/swap-remove order, while broad default/this retains the pre-existing single-workspace coalescing."
         },
         "close_window": {
           "status": "partial",

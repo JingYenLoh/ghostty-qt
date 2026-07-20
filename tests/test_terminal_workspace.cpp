@@ -16,6 +16,7 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QSignalBlocker>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -26,10 +27,15 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace {
+
+static_assert(std::is_same_v<
+              decltype(std::declval<TerminalWorkspace &>().tabModel()),
+              const TabListModel *>);
 
 class ShellEnvironment final {
 public:
@@ -53,6 +59,45 @@ public:
 private:
     bool wasSet_ = false;
     QByteArray previous_;
+};
+
+class ResistantShellFixture final {
+public:
+    bool create(const QString &root)
+    {
+        readyDirectory_ = QDir(root).filePath(QStringLiteral("ready"));
+        shellPath_ = QDir(root).filePath(QStringLiteral("resistant-shell"));
+        if (!QDir().mkpath(readyDirectory_)) return false;
+
+        QFile shellFile(shellPath_);
+        if (!shellFile.open(QIODevice::WriteOnly)) return false;
+        const QByteArray script = QByteArrayLiteral(
+            "#!/bin/sh\n"
+            "ready_dir=\"${0%/*}/ready\"\n"
+            "trap '' HUP\n"
+            ": > \"$ready_dir/$$\"\n"
+            "exec /bin/sleep 30\n");
+        if (shellFile.write(script) != script.size()) return false;
+        shellFile.close();
+        return shellFile.setPermissions(QFileDevice::ReadOwner
+                                        | QFileDevice::WriteOwner
+                                        | QFileDevice::ExeOwner);
+    }
+
+    QByteArray encodedShellPath() const
+    {
+        return QFile::encodeName(shellPath_);
+    }
+
+    int readyProcessCount() const
+    {
+        return QDir(readyDirectory_)
+            .entryList(QDir::Files | QDir::NoDotAndDotDot).size();
+    }
+
+private:
+    QString shellPath_;
+    QString readyDirectory_;
 };
 
 LaunchOptions baseOptions()
@@ -82,6 +127,45 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
         && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+QVector<TabId> tabIds(TerminalWorkspace &workspace)
+{
+    QVector<TabId> result;
+    result.reserve(workspace.tabCount());
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        result.append(workspace.tabModel()->idAt(index));
+    }
+    return result;
+}
+
+quint64 closeConfirmationId(const QSignalSpy &requests, int index = -1)
+{
+    if (requests.isEmpty()) return 0;
+    const int resolvedIndex = index >= 0 ? index : requests.size() - 1;
+    return requests.at(resolvedIndex).constFirst().toULongLong();
+}
+
+struct CurrentTabProbe {
+    TabId tabId;
+    PaneId paneId;
+    QPointer<TerminalPane> pane;
+};
+
+CurrentTabProbe currentTabProbe(TerminalWorkspace &workspace)
+{
+    const TabListEntry *const entry =
+        workspace.tabModel()->entryAt(workspace.currentIndex());
+    if (entry == nullptr) return {};
+
+    TerminalPane *visiblePane = nullptr;
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        if (pane->isVisible()) {
+            if (visiblePane != nullptr) return {};
+            visiblePane = pane;
+        }
+    }
+    return {entry->id, entry->activePaneId, visiblePane};
 }
 
 QColor sourceOver(const QColor &underlying, const QColor &fill, double alpha)
@@ -192,6 +276,15 @@ private Q_SLOTS:
     void performableTabChangeRequiresDifferentTarget();
     void alwaysModePromptsForIdleShell();
     void multiPaneShutdownGracePeriodsOverlap();
+    void closeTabModesUseStableOriginsAndPreserveFocus();
+    void closeTabBatchConfirmationKeepsStableTargets();
+    void closeTabResponsesUseStableConfirmationIds();
+    void closeTabBatchRejectsReentrantTopologyChanges();
+    void pendingCloseTargetsPruneBeforeModelPublication();
+    void closeResponseDefersDuringBatchMutation();
+    void naturalTabExitPrunesPendingBatchTarget();
+    void broadCloseTabModesUseFirstStableSource();
+    void closeTabBatchShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadViewportAndSelectionActionsReachEveryPane();
@@ -317,7 +410,7 @@ void TerminalWorkspaceTest::submittedCommandPromptsBeforeForegroundPoll()
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
 
     // An empty command settles back to an idle prompt after the conservative
     // grace interval and no longer needs confirmation.
@@ -358,7 +451,7 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
 }
 
 void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
@@ -397,7 +490,7 @@ void TerminalWorkspaceTest::readOnlyBlocksUiActivityLatchAndProtectsClose()
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
 
     QVERIFY(pane->executeConfiguredAction(
         QStringLiteral("toggle_readonly")));
@@ -551,11 +644,11 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     workspace.closeCurrentTab();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(workspace.tabCount(), 1);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 2);
     QCOMPARE(quit.count(), 0);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
 
     // It also protects its own pane. Removing read-only while that request is
     // pending re-evaluates and completes the now-safe close exactly once.
@@ -568,7 +661,9 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     QVERIFY(firstPane->executeConfiguredAction(
         QStringLiteral("toggle_readonly")));
     QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
-    QCOMPARE(resolved.count(), 1);
+    // Both explicit cancellations and the auto-completed pane close resolve
+    // their distinct confirmation identities.
+    QCOMPARE(resolved.count(), 3);
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 1);
 
     workspace.requestQuit();
@@ -609,7 +704,7 @@ void TerminalWorkspaceTest::readOnlyNaturalExitPromptsExactlyOnce()
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
 
-    workspace.confirmClose();
+    workspace.confirmClose(closeConfirmationId(confirmation));
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 0, 1000);
     QCOMPARE(quit.count(), 1);
 }
@@ -860,29 +955,22 @@ void TerminalWorkspaceTest::alwaysModePromptsForIdleShell()
     workspace.requestQuit();
     QCOMPARE(confirmation.count(), 1);
     QCOMPARE(quit.count(), 0);
-    workspace.cancelClose();
+    workspace.cancelClose(closeConfirmationId(confirmation));
 }
 
 void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
 {
-    QTemporaryDir directory;
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/workspace-shutdown-XXXXXX")));
     QVERIFY(directory.isValid());
-    const QString shellPath = directory.filePath(QStringLiteral("resistant-shell"));
-    QFile shellFile(shellPath);
-    QVERIFY(shellFile.open(QIODevice::WriteOnly));
-    const QByteArray script = QByteArrayLiteral(
-        "#!/bin/sh\n"
-        "trap '' HUP\n"
-        "exec /bin/sleep 30\n");
-    QCOMPARE(shellFile.write(script), script.size());
-    shellFile.close();
-    QVERIFY(shellFile.setPermissions(QFileDevice::ReadOwner
-                                     | QFileDevice::WriteOwner
-                                     | QFileDevice::ExeOwner));
+    ResistantShellFixture resistantShell;
+    QVERIFY(resistantShell.create(directory.path()));
 
-    ShellEnvironment shell(QFile::encodeName(shellPath));
+    ShellEnvironment shell(resistantShell.encodedShellPath());
     LaunchOptions options = baseOptions();
     options.confirmCloseMode = ConfirmCloseMode::Always;
+    options.workingDirectory = directory.path();
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     auto workspace = std::make_unique<TerminalWorkspace>();
@@ -891,10 +979,9 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
     workspace->newTab();
     QCOMPARE(workspace->tabCount(), 3);
 
-    // Give every worker time to exec the helper and install the inherited
-    // ignored-SIGHUP disposition. Each must therefore reach the worker's
-    // two-second SIGKILL fallback during shutdown.
-    QTest::qWait(500);
+    // Every marker is created after the helper ignores SIGHUP. All workers
+    // must therefore reach the two-second SIGKILL fallback during shutdown.
+    QTRY_COMPARE_WITH_TIMEOUT(resistantShell.readyProcessCount(), 3, 5000);
     QSignalSpy confirmation(workspace.get(),
                             &TerminalWorkspace::closeConfirmationRequested);
     workspace->requestQuit();
@@ -902,7 +989,7 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
 
     QElapsedTimer elapsed;
     elapsed.start();
-    workspace->confirmClose();
+    workspace->confirmClose(closeConfirmationId(confirmation));
     workspace.reset();
 
     const qint64 shutdownMilliseconds = elapsed.elapsed();
@@ -912,12 +999,696 @@ void TerminalWorkspaceTest::multiPaneShutdownGracePeriodsOverlap()
              "pane shutdown grace periods ran serially instead of concurrently");
 }
 
+void TerminalWorkspaceTest::closeTabModesUseStableOriginsAndPreserveFocus()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    {
+        QQuickWindow window;
+        window.resize(900, 600);
+        TerminalWorkspace workspace;
+        workspace.setParentItem(window.contentItem());
+        workspace.setSize(window.size());
+        window.show();
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+        const CurrentTabProbe first = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe second = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe third = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe fourth = currentTabProbe(workspace);
+        QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({first.tabId, second.tabId,
+                                 third.tabId, fourth.tabId}));
+
+        workspace.setCurrentIndex(0);
+        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
+                                  first.pane.data(), 1000);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+
+        WorkspaceActionContext mismatched;
+        mismatched.tabId = first.tabId;
+        mismatched.paneId = second.paneId;
+        mismatched.closeTabMode = CloseTabMode::Right;
+        QVERIFY(!workspace.dispatchAction(
+            {WorkspaceAction::CloseTab, mismatched}));
+        QCOMPARE(workspace.tabCount(), 4);
+
+        // The source identity survives a row move. Right is evaluated from
+        // the source's current visual position, not its old index or the
+        // selected first tab.
+        QVERIFY(workspace.dispatchAction({
+            WorkspaceAction::MoveTab,
+            {second.tabId, second.paneId, 1},
+        }));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({first.tabId, third.tabId,
+                                 second.tabId, fourth.tabId}));
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:right")));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({first.tabId, third.tabId, second.tabId}));
+        QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+                 first.tabId);
+        QCOMPARE(window.activeFocusItem(), first.pane.data());
+        QTRY_VERIFY_WITH_TIMEOUT(fourth.pane.isNull(), 1000);
+        QVERIFY(third.pane && second.pane);
+        QCOMPARE(quit.count(), 0);
+
+        // A valid rightmost no-op is still performed and does not assess the
+        // protected source when its target set is empty.
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:right")));
+        QCOMPARE(confirmation.count(), 0);
+        QCOMPARE(workspace.tabCount(), 3);
+        QCOMPARE(window.activeFocusItem(), first.pane.data());
+    }
+
+    {
+        QQuickWindow window;
+        window.resize(900, 600);
+        TerminalWorkspace workspace;
+        workspace.setParentItem(window.contentItem());
+        workspace.setSize(window.size());
+        window.show();
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+        const CurrentTabProbe first = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe second = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe third = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe fourth = currentTabProbe(workspace);
+        QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
+
+        workspace.setCurrentIndex(1);
+        QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(),
+                                  second.pane.data(), 1000);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:other")));
+        QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId}));
+        QCOMPARE(workspace.currentIndex(), 0);
+        QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId,
+                 second.paneId);
+        QCOMPARE(window.activeFocusItem(), second.pane.data());
+        QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(fourth.pane.isNull(), 1000);
+        QCOMPARE(quit.count(), 0);
+
+        // Other on a sole tab is also a successful no-op and never widens to
+        // the frontend's single-window quit path.
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:other")));
+        QCOMPARE(confirmation.count(), 0);
+        QCOMPARE(workspace.tabCount(), 1);
+        QCOMPARE(quit.count(), 0);
+    }
+}
+
+void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Always;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    {
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        const CurrentTabProbe first = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe second = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe third = currentTabProbe(workspace);
+        workspace.newTab();
+        const CurrentTabProbe fourth = currentTabProbe(workspace);
+        QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
+        workspace.setCurrentIndex(1);
+
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:other")));
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(workspace.tabCount(), 4);
+        workspace.cancelClose(closeConfirmationId(confirmation));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({first.tabId, second.tabId,
+                                 third.tabId, fourth.tabId}));
+
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:right")));
+        QCOMPARE(confirmation.count(), 2);
+        workspace.cancelClose(closeConfirmationId(confirmation));
+        QCOMPARE(workspace.tabCount(), 4);
+
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:right")));
+        QCOMPARE(confirmation.count(), 3);
+
+        // Freeze C and D as the target set, then move D left of the source,
+        // move non-target A right of it, and insert E to its right. Confirming
+        // must still close exactly the original stable IDs.
+        QVERIFY(workspace.dispatchAction({
+            WorkspaceAction::MoveTab,
+            {fourth.tabId, fourth.paneId, 1},
+        }));
+        QVERIFY(workspace.dispatchAction({
+            WorkspaceAction::MoveTab,
+            {first.tabId, first.paneId, 2},
+        }));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({fourth.tabId, second.tabId,
+                                 third.tabId, first.tabId}));
+        workspace.newTab();
+        const CurrentTabProbe inserted = currentTabProbe(workspace);
+        QVERIFY(inserted.pane);
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({fourth.tabId, second.tabId,
+                                 inserted.tabId, third.tabId, first.tabId}));
+
+        workspace.confirmClose(closeConfirmationId(confirmation));
+        QCOMPARE(tabIds(workspace),
+                 QVector<TabId>({second.tabId, inserted.tabId, first.tabId}));
+        QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+                 inserted.tabId);
+        QVERIFY(second.pane && inserted.pane && first.pane);
+        QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(fourth.pane.isNull(), 1000);
+        QCOMPARE(quit.count(), 0);
+    }
+
+    {
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        const CurrentTabProbe first = currentTabProbe(workspace);
+        workspace.newTab();
+        workspace.newTab();
+        workspace.setCurrentIndex(0);
+
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy resolved(
+            &workspace, &TerminalWorkspace::closeConfirmationResolved);
+        QVERIFY(first.pane->executeConfiguredAction(
+            QStringLiteral("close_tab:right")));
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(workspace.tabCount(), 3);
+
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("confirm-close-surface"),
+                               QStringLiteral("false"));
+        workspace.applyConfigSnapshot(snapshot);
+        QCOMPARE(resolved.count(), 1);
+        QCOMPARE(tabIds(workspace), QVector<TabId>({first.tabId}));
+    }
+}
+
+void TerminalWorkspaceTest::closeTabResponsesUseStableConfirmationIds()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe fourth = currentTabProbe(workspace);
+    QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(third.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:this")));
+    QCOMPARE(confirmation.count(), 1);
+    const quint64 firstConfirmationId = closeConfirmationId(confirmation);
+    QVERIFY(firstConfirmationId != 0);
+
+    // Making the first target safe auto-resolves and commits that request.
+    // A response queued by its old dialog must not affect the next request.
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QCOMPARE(tabIds(workspace),
+             QVector<TabId>({first.tabId, third.tabId, fourth.tabId}));
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(closeConfirmationId(resolved), firstConfirmationId);
+    QTRY_VERIFY_WITH_TIMEOUT(second.pane.isNull(), 1000);
+
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:right")));
+    QCOMPARE(confirmation.count(), 2);
+    const quint64 secondConfirmationId = closeConfirmationId(confirmation);
+    QVERIFY(secondConfirmationId != 0);
+    QVERIFY(secondConfirmationId != firstConfirmationId);
+
+    workspace.confirmClose(firstConfirmationId);
+    workspace.cancelClose(firstConfirmationId);
+    QCOMPARE(tabIds(workspace),
+             QVector<TabId>({first.tabId, third.tabId, fourth.tabId}));
+    QCOMPARE(resolved.count(), 1);
+
+    workspace.confirmClose(secondConfirmationId);
+    QCOMPARE(tabIds(workspace), QVector<TabId>({first.tabId}));
+    QCOMPARE(resolved.count(), 2);
+    QCOMPARE(closeConfirmationId(resolved), secondConfirmationId);
+    QVERIFY(first.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(fourth.pane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::closeTabBatchRejectsReentrantTopologyChanges()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe fourth = currentTabProbe(workspace);
+    QVERIFY(first.pane && second.pane && third.pane && fourth.pane);
+    workspace.setCurrentIndex(1);
+
+    int rowsRemovedCount = 0;
+    bool selectionStayedCoherent = true;
+    bool nestedMoveAccepted = true;
+    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved,
+            &workspace,
+            [&](const QModelIndex &, int, int) {
+        ++rowsRemovedCount;
+        const int current = workspace.currentIndex();
+        selectionStayedCoherent = selectionStayedCoherent
+            && current >= 0 && current < workspace.tabModel()->count()
+            && workspace.tabModel()->idAt(current) == second.tabId;
+        if (rowsRemovedCount == 1) {
+            nestedMoveAccepted = workspace.dispatchAction({
+                WorkspaceAction::MoveTab,
+                {second.tabId, second.paneId, 1},
+            });
+        }
+    });
+
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:other")));
+    QCOMPARE(rowsRemovedCount, 3);
+    QVERIFY(selectionStayedCoherent);
+    QVERIFY(!nestedMoveAccepted);
+    QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId}));
+    QCOMPARE(workspace.currentIndex(), 0);
+    QVERIFY(second.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(fourth.pane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::pendingCloseTargetsPruneBeforeModelPublication()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe source = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    QVERIFY(first.pane && source.pane && third.pane);
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+    QVERIFY(third.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(source.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:other")));
+    QCOMPARE(confirmation.count(), 1);
+    const quint64 confirmationId = closeConfirmationId(confirmation);
+
+    bool finalTitlesSawResolution = false;
+    connect(&workspace, &TerminalWorkspace::tabTitlesChanged,
+            &workspace, [&] {
+        if (workspace.tabCount() == 1) {
+            finalTitlesSawResolution = resolved.count() == 1;
+        }
+    });
+
+    // Suppress live policy reevaluation so each now-safe target is removed by
+    // its own action while the original multi-target dialog remains pending.
+    {
+        QSignalBlocker blocker(first.pane);
+        QVERIFY(first.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+    }
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:this")));
+    QCOMPARE(tabIds(workspace),
+             QVector<TabId>({source.tabId, third.tabId}));
+    QCOMPARE(resolved.count(), 0);
+
+    {
+        QSignalBlocker blocker(third.pane);
+        QVERIFY(third.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+    }
+    QVERIFY(third.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:this")));
+    QCOMPARE(tabIds(workspace), QVector<TabId>({source.tabId}));
+    QVERIFY(finalTitlesSawResolution);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(closeConfirmationId(resolved), confirmationId);
+    QVERIFY(source.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::closeResponseDefersDuringBatchMutation()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe source = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    QVERIFY(first.pane && source.pane && third.pane);
+    QVERIFY(third.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(source.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:other")));
+    QCOMPARE(confirmation.count(), 1);
+    const quint64 confirmationId = closeConfirmationId(confirmation);
+
+    bool responseWasDeferred = false;
+    connect(workspace.tabModel(), &QAbstractItemModel::rowsRemoved,
+            &workspace,
+            [&](const QModelIndex &, int, int) {
+        if (workspace.tabCount() != 2) return;
+        workspace.confirmClose(confirmationId);
+        responseWasDeferred =
+            tabIds(workspace)
+                == QVector<TabId>({source.tabId, third.tabId})
+            && resolved.count() == 0;
+    });
+
+    // Removing the safe member emits rowsRemoved while the batch mutation
+    // guard is held. A synchronous QML response is queued, not nested.
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:this")));
+    QVERIFY(responseWasDeferred);
+    QCOMPARE(tabIds(workspace),
+             QVector<TabId>({source.tabId, third.tabId}));
+    QCOMPARE(resolved.count(), 0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    QCOMPARE(tabIds(workspace), QVector<TabId>({source.tabId}));
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(closeConfirmationId(resolved), confirmationId);
+    QVERIFY(source.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::naturalTabExitPrunesPendingBatchTarget()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/close-tab-natural-exit-XXXXXX")));
+    QVERIFY(directory.isValid());
+
+    const QString shellPath = directory.filePath(QStringLiteral("long-shell"));
+    QFile shellFile(shellPath);
+    QVERIFY(shellFile.open(QIODevice::WriteOnly));
+    const QByteArray shellScript = QByteArrayLiteral(
+        "#!/bin/sh\n"
+        "exec /bin/sleep 30\n");
+    QCOMPARE(shellFile.write(shellScript), shellScript.size());
+    shellFile.close();
+    QVERIFY(shellFile.setPermissions(QFileDevice::ReadOwner
+                                     | QFileDevice::WriteOwner
+                                     | QFileDevice::ExeOwner));
+
+    const QString readyPath = directory.filePath(QStringLiteral("ready"));
+    const QString releasePath = directory.filePath(QStringLiteral("release"));
+    ShellEnvironment shell(QFile::encodeName(shellPath));
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(": > \"$1\"; while [ ! -e \"$2\" ]; do sleep 0.01; done"),
+        QStringLiteral("close-tab-waiter"),
+        readyPath,
+        releasePath,
+    };
+    options.hold = false;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.workingDirectory = directory.path();
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(readyPath), 3000);
+
+    // New tabs intentionally clear the explicit program and start $SHELL.
+    workspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    QVERIFY(second.pane && third.pane);
+    QVERIFY(third.pane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace, &TerminalWorkspace::closeConfirmationResolved);
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:other")));
+    QCOMPARE(confirmation.count(), 1);
+    const quint64 confirmationId = closeConfirmationId(confirmation);
+
+    QFile releaseFile(releasePath);
+    QVERIFY(releaseFile.open(QIODevice::WriteOnly));
+    releaseFile.close();
+    QTRY_VERIFY_WITH_TIMEOUT(first.pane.isNull(), 3000);
+    QCOMPARE(tabIds(workspace),
+             QVector<TabId>({second.tabId, third.tabId}));
+    QCOMPARE(resolved.count(), 0);
+
+    workspace.confirmClose(confirmationId);
+    QCOMPARE(tabIds(workspace), QVector<TabId>({second.tabId}));
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(closeConfirmationId(resolved), confirmationId);
+    QVERIFY(second.pane);
+    QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    const auto exercise = [&](QStringView action,
+                              GhosttyKeybindFlags flags,
+                              Qt::Key key,
+                              quint32 codepoint,
+                              QChar controlCharacter) {
+        LaunchOptions exerciseOptions = options;
+        exerciseOptions.keybindingsConfigured = true;
+        exerciseOptions.keybindConfig.root = {GhosttyKeybindDefinition{
+            .sequence = {GhosttyKeybindTrigger{
+                .kind = GhosttyKeybindKeyKind::Unicode,
+                .unicodeCodepoint = codepoint,
+                .modifiers = GhosttyKeybindCtrl,
+            }},
+            .actions = {action.toString()},
+            .flags = flags,
+        }};
+        TerminalWorkspace::setDefaultLaunchOptions(exerciseOptions);
+
+        TerminalWorkspace workspace;
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        const CurrentTabProbe first = currentTabProbe(workspace);
+        QVERIFY(first.pane);
+        workspace.splitRight();
+        QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 2);
+        workspace.newTab();
+        const CurrentTabProbe second = currentTabProbe(workspace);
+        QVERIFY(second.pane->executeConfiguredAction(
+            QStringLiteral("toggle_readonly")));
+        workspace.newTab();
+        const CurrentTabProbe third = currentTabProbe(workspace);
+        QVERIFY(second.pane && third.pane);
+        workspace.setCurrentIndex(2);
+
+        GhosttyApplicationKeybindings bindings(exerciseOptions, false);
+        bindings.registerWorkspace(&workspace);
+        QSignalSpy confirmation(
+            &workspace, &TerminalWorkspace::closeConfirmationRequested);
+        QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
+        TerminalController *const controller =
+            third.pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+        QKeyEvent press(QEvent::KeyPress, key, Qt::ControlModifier,
+                        QString(controlCharacter));
+        QCoreApplication::sendEvent(third.pane, &press);
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::ControlModifier);
+        QCoreApplication::sendEvent(third.pane, &release);
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(forwarded.count(), 0);
+        QCOMPARE(workspace.tabCount(), 3);
+
+        workspace.confirmClose(closeConfirmationId(confirmation));
+        QCOMPARE(tabIds(workspace), QVector<TabId>({first.tabId}));
+        QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+                 first.tabId);
+        QCOMPARE(quit.count(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(second.pane.isNull(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(third.pane.isNull(), 1000);
+
+        // Duplicate split sources and valid no-target fanout are harmless.
+        bindings.dispatchBroadActions({QStringLiteral("close_tab:other")});
+        bindings.dispatchBroadActions({QStringLiteral("close_tab:right")});
+        QCOMPARE(confirmation.count(), 1);
+        QCOMPARE(workspace.tabCount(), 1);
+        QCOMPARE(quit.count(), 0);
+    };
+
+    exercise(QStringLiteral("close_tab:other"),
+             GhosttyKeybindFlags{.all = true},
+             Qt::Key_O, 'o', QChar(0x0f));
+    exercise(QStringLiteral("close_tab:right"),
+             GhosttyKeybindFlags{.global = true},
+             Qt::Key_R, 'r', QChar(0x12));
+}
+
+void TerminalWorkspaceTest::closeTabBatchShutdownGracePeriodsOverlap()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/close-tab-shutdown-XXXXXX")));
+    QVERIFY(directory.isValid());
+    ResistantShellFixture resistantShell;
+    QVERIFY(resistantShell.create(directory.path()));
+
+    ShellEnvironment shell(resistantShell.encodedShellPath());
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Always;
+    options.workingDirectory = directory.path();
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe source = currentTabProbe(workspace);
+    QVector<QPointer<TerminalPane>> targets;
+    for (int index = 0; index < 3; ++index) {
+        workspace.newTab();
+        targets.append(currentTabProbe(workspace).pane);
+    }
+    workspace.setCurrentIndex(0);
+    QTRY_COMPARE_WITH_TIMEOUT(resistantShell.readyProcessCount(), 3, 5000);
+
+    QSignalSpy confirmation(
+        &workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QVERIFY(source.pane->executeConfiguredAction(
+        QStringLiteral("close_tab:right")));
+    QCOMPARE(confirmation.count(), 1);
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    workspace.confirmClose(closeConfirmationId(confirmation));
+    QCOMPARE(workspace.tabCount(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(std::ranges::all_of(
+        targets, [](const QPointer<TerminalPane> &pane) {
+            return pane.isNull();
+        }), 6000);
+
+    const qint64 shutdownMilliseconds = elapsed.elapsed();
+    QVERIFY2(shutdownMilliseconds >= 1'500,
+             "signal-resistant tab workers did not exercise the grace period");
+    QVERIFY2(shutdownMilliseconds < 4'500,
+             "tab shutdown grace periods ran serially instead of concurrently");
+}
+
 void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
 {
     ShellEnvironment shell;
     LaunchOptions options = baseOptions();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
     options.keybindingsConfigured = true;
     const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
         return GhosttyKeybindTrigger{
@@ -983,6 +1754,7 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     LaunchOptions options = baseOptions();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
     options.keybindingsConfigured = true;
     const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
         return GhosttyKeybindTrigger{
@@ -1091,13 +1863,14 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     QCOMPARE(reload.count(), 1);
     QCOMPARE(forwarded.count(), 0);
 
-    // Valid-but-unimplemented close modes must remain no-ops, not be widened
-    // into the current single-window quit path.
+    // Other/right remain ordinary surface fanout, not the special broad
+    // close-every-surface path. The first stable source keeps its own tab.
+    const TabId firstTabId = workspace.tabModel()->idAt(0);
     QSignalSpy quit(&workspace, &TerminalWorkspace::quitApproved);
     applicationBindings.dispatchBroadActions(
         {QStringLiteral("close_tab:other")});
     QCOMPARE(quit.count(), 0);
-    QCOMPARE(workspace.tabCount(), 2);
+    QCOMPARE(tabIds(workspace), QVector<TabId>({firstTabId}));
 }
 
 void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
@@ -2671,15 +3444,6 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     TerminalWorkspace::setDefaultLaunchOptions(options);
-
-    const auto tabIds = [](TerminalWorkspace &workspace) {
-        QVector<TabId> result;
-        result.reserve(workspace.tabCount());
-        for (int index = 0; index < workspace.tabCount(); ++index) {
-            result.append(workspace.tabModel()->idAt(index));
-        }
-        return result;
-    };
 
     {
         TerminalWorkspace workspace;

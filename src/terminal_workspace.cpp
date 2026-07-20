@@ -11,14 +11,17 @@
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QScopedValueRollback>
+#include <QSet>
 #include <QSGSimpleRectNode>
 #include <QTimer>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cmath>
 #include <limits>
 #include <ranges>
+#include <type_traits>
 #include <utility>
 
 namespace {
@@ -27,6 +30,14 @@ constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
 constexpr auto readOnlyOverlayProperty =
     "_ghosttyQtReadOnlyOverlayAttached";
+
+quint64 nextNonzeroId(quint64 &counter) noexcept
+{
+    do {
+        ++counter;
+    } while (counter == 0);
+    return counter;
+}
 
 struct AxisWeights {
     [[nodiscard]] std::size_t along(
@@ -472,6 +483,7 @@ bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
 
 bool TerminalWorkspace::executeApplicationConfiguredAction(QStringView action)
 {
+    if (topologyMutation_) return false;
     if (!GhosttyActionCatalog::isImplemented(action)) {
         return false;
     }
@@ -531,6 +543,11 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
 
 bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
 {
+    // Model and workspace signals are synchronous. Reject nested actions while
+    // a stable-ID batch is being committed so observers cannot invalidate the
+    // topology between its pane shutdown and row-removal phases.
+    if (topologyMutation_) return false;
+
     const auto contextMatchesPane = [this, &request] {
         return !request.context.tabId.isValid()
             || tabIdForPane(request.context.paneId) == request.context.tabId;
@@ -562,8 +579,13 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         activatePane(request.context.paneId);
         return true;
     case WorkspaceAction::CloseTab:
-        if (tabById(request.context.tabId) == nullptr) return false;
-        closeTab(request.context.tabId);
+        if (tabById(request.context.tabId) == nullptr
+            || (request.context.paneId.isValid()
+                && (paneForId(request.context.paneId) == nullptr
+                    || !contextMatchesPane()))) {
+            return false;
+        }
+        closeTab(request.context.tabId, request.context.closeTabMode);
         return true;
     case WorkspaceAction::ClosePane:
         if (paneForId(request.context.paneId) == nullptr
@@ -833,10 +855,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                                 {tabIdForPane(paneId), paneId, 0}});
             });
     connect(pane, &TerminalPane::requestCloseTab, this,
-            [this, paneId] {
+            [this, paneId](CloseTabMode mode) {
                 const TabId tabId = tabIdForPane(paneId);
-                dispatchAction({WorkspaceAction::CloseTab,
-                                {tabId, PaneId{}, 0}});
+                WorkspaceActionContext context;
+                context.tabId = tabId;
+                context.paneId = paneId;
+                context.closeTabMode = mode;
+                dispatchAction({WorkspaceAction::CloseTab, context});
             });
     connect(pane, &TerminalPane::requestNavigate, this,
             [this, paneId](int direction) {
@@ -1144,40 +1169,47 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         return;
     }
     if (!force && shouldConfirmPaneClose(*pane)) {
-        pendingClose_ = PendingClose::Pane;
-        pendingPaneId_ = paneId;
-        pendingTabId_ = tabs_[static_cast<size_t>(tabIndex)]->id;
-        Q_EMIT closeConfirmationRequested(
+        if (!std::holds_alternative<std::monostate>(pendingClose_)) return;
+        beginCloseConfirmation(
+            PendingPaneClose{
+                paneId, tabs_[static_cast<size_t>(tabIndex)]->id},
             pane->isReadOnly()
                 ? QStringLiteral("This pane is read-only. Close it?")
                 : QStringLiteral("A process is still running in this pane. Close it?"));
         return;
     }
 
-    Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
-    const TabId tabId = tab->id;
-    const bool removedActivePane = tab->activePaneId == paneId;
-    if (tab->zoomedPaneId == paneId) {
-        tab->zoomedPaneId = {};
-    }
-    resolvePendingPaneRemoval({paneId, pane});
-    removePaneFromNode(tab->root, paneId);
-    if (tab->root == nullptr) {
-        removeTab(tabId);
-        return;
-    }
-    if (removedActivePane || paneForId(tab->activePaneId) == nullptr) {
-        tab->activePaneId = firstPaneId(tab->root.get());
-    }
-    updateSplitMembership(*tab);
-    if (tabIndex == currentIndex_) {
-        layoutCurrentTab();
-        if (TerminalPane *activePane = paneForId(tab->activePaneId);
-            activePane != nullptr) {
-            activePane->focusTerminal();
+    {
+        // Pending-prompt resolution and model updates below emit synchronous
+        // signals. Keep the cached tab/tree valid until this mutation commits.
+        QScopedValueRollback<bool> mutation(topologyMutation_, true);
+        Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
+        const TabId tabId = tab->id;
+        const bool removedActivePane = tab->activePaneId == paneId;
+        if (tab->zoomedPaneId == paneId) {
+            tab->zoomedPaneId = {};
+        }
+        resolvePendingPaneRemoval({paneId, pane});
+        removePaneFromNode(tab->root, paneId);
+        if (tab->root == nullptr) {
+            removeTab(tabId);
+        } else {
+            if (removedActivePane
+                || paneForId(tab->activePaneId) == nullptr) {
+                tab->activePaneId = firstPaneId(tab->root.get());
+            }
+            updateSplitMembership(*tab);
+            if (tabIndex == currentIndex_) {
+                layoutCurrentTab();
+                if (TerminalPane *activePane = paneForId(tab->activePaneId);
+                    activePane != nullptr) {
+                    activePane->focusTerminal();
+                }
+            }
+            refreshTab(tabId);
         }
     }
-    refreshTab(tabId);
+    reevaluatePendingClose();
 }
 
 bool TerminalWorkspace::removePaneFromNode(std::unique_ptr<Node> &node,
@@ -1216,77 +1248,206 @@ void TerminalWorkspace::closeCurrentTab()
                     {currentTabId(), PaneId{}, 0}});
 }
 
-void TerminalWorkspace::closeTab(TabId tabId, bool force)
+void TerminalWorkspace::closeTab(TabId tabId, CloseTabMode mode, bool force)
 {
-    const Tab *tab = tabById(tabId);
-    if (tab == nullptr) {
-        return;
+    closeTabs({tabId, closeTabTargets(tabId, mode)}, force);
+}
+
+std::vector<TabId> TerminalWorkspace::closeTabTargets(
+    TabId tabId, CloseTabMode mode) const
+{
+    const int source = tabIndexForId(tabId);
+    if (source < 0) return {};
+    if (mode == CloseTabMode::This) return {tabId};
+
+    // Match libadwaita's visual close order. Removing from right to left also
+    // avoids repeatedly shifting the unvisited portion of the tab vector.
+    const int firstTarget = [&] {
+        switch (mode) {
+        case CloseTabMode::Other: return 0;
+        case CloseTabMode::Right: return source + 1;
+        case CloseTabMode::This: break;
+        }
+        std::unreachable();
+    }();
+    std::vector<TabId> targets;
+    targets.reserve(tabs_.size() - static_cast<std::size_t>(firstTarget));
+    for (int index = static_cast<int>(tabs_.size()) - 1;
+         index >= firstTarget;
+         --index) {
+        if (index != source) {
+            targets.push_back(tabs_[static_cast<std::size_t>(index)]->id);
+        }
     }
-    if (!force && shouldConfirmTabClose(*tab)) {
-        pendingClose_ = PendingClose::Tab;
-        pendingPaneId_ = {};
-        pendingTabId_ = tabId;
-        Q_EMIT closeConfirmationRequested(
-            tabHasReadOnlyPane(*tab)
-                ? QStringLiteral("This tab contains a read-only pane. Close the tab?")
-                : QStringLiteral("Processes are still running in this tab. Close the tab?"));
-        return;
+    return targets;
+}
+
+void TerminalWorkspace::closeTabs(PendingTabClose close, bool force)
+{
+    QSet<TabId> liveTabIds;
+    liveTabIds.reserve(static_cast<qsizetype>(tabs_.size()));
+    for (const std::unique_ptr<Tab> &tab : tabs_) liveTabIds.insert(tab->id);
+    std::erase_if(close.targets, [&liveTabIds](TabId tabId) {
+        return !liveTabIds.contains(tabId);
+    });
+    if (close.targets.empty()) return;
+
+    if (!force) {
+        // Once broad fanout has installed a dialog, later snapshot sources
+        // must not mutate the first source's frozen outcome. Safe lifecycle
+        // removal still enters through closePane and can prune these IDs.
+        if (broadActionFanout_
+            && !std::holds_alternative<std::monostate>(pendingClose_)) {
+            return;
+        }
+        const CloseAssessment assessment = assessTabsClose(close.targets);
+        if (assessment.needsConfirmation) {
+            // The QML frontend presents one close dialog at a time. Keep the
+            // first stable request intact while broad fanout continues.
+            if (!std::holds_alternative<std::monostate>(pendingClose_)) return;
+
+            const bool plural = close.targets.size() > 1;
+            beginCloseConfirmation(
+                std::move(close),
+                assessment.hasReadOnlyPane
+                    ? (plural
+                           ? QStringLiteral("Some tabs contain read-only panes. Close the tabs?")
+                           : QStringLiteral("This tab contains a read-only pane. Close the tab?"))
+                    : (plural
+                           ? QStringLiteral("Processes are still running in these tabs. Close the tabs?")
+                           : QStringLiteral("Processes are still running in this tab. Close the tab?")));
+            return;
+        }
     }
-    removeTab(tabId);
+
+    removeTabs(std::move(close));
 }
 
 void TerminalWorkspace::removeTab(TabId tabId)
 {
-    const int index = tabIndexForId(tabId);
-    if (index < 0) {
-        return;
+    removeTabs({TabId{}, {tabId}});
+}
+
+void TerminalWorkspace::removeTabs(PendingTabClose close)
+{
+    struct IndexedTarget {
+        int index = -1;
+        TabId id;
+    };
+
+    std::vector<IndexedTarget> targets;
+    targets.reserve(close.targets.size());
+    QSet<TabId> targetIds;
+    targetIds.reserve(static_cast<qsizetype>(close.targets.size()));
+    for (const TabId tabId : close.targets) targetIds.insert(tabId);
+    for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
+        const TabId tabId = tabs_[static_cast<std::size_t>(index)]->id;
+        if (targetIds.contains(tabId)) {
+            targets.push_back({index, tabId});
+        }
     }
+    if (targets.empty()) return;
+
+    std::ranges::sort(targets, std::greater{}, &IndexedTarget::index);
     const bool wasTabBarVisible = tabBarVisible();
-    const bool removedCurrentTab = index == currentIndex_;
+    const TabId selectedTabId = currentTabId();
+    const int selectedIndex = currentIndex_;
+    const auto survives = [this, &targetIds](TabId tabId) {
+        return tabId.isValid() && !targetIds.contains(tabId)
+            && tabById(tabId) != nullptr;
+    };
+
+    TabId nextSelectedTabId;
+    if (survives(selectedTabId)) {
+        nextSelectedTabId = selectedTabId;
+    } else if (survives(close.originTabId)) {
+        nextSelectedTabId = close.originTabId;
+    } else {
+        // Match the ordinary close fallback: the next surviving tab when
+        // possible, otherwise the nearest survivor on the left.
+        for (int index = std::max(0, selectedIndex + 1);
+             index < static_cast<int>(tabs_.size()); ++index) {
+            const TabId candidate = tabs_[static_cast<std::size_t>(index)]->id;
+            if (!targetIds.contains(candidate)) {
+                nextSelectedTabId = candidate;
+                break;
+            }
+        }
+        for (int index = std::min(selectedIndex - 1,
+                                  static_cast<int>(tabs_.size()) - 1);
+             !nextSelectedTabId.isValid() && index >= 0; --index) {
+            const TabId candidate = tabs_[static_cast<std::size_t>(index)]->id;
+            if (!targetIds.contains(candidate)) {
+                nextSelectedTabId = candidate;
+            }
+        }
+    }
+
     std::vector<PaneHandle> panes;
-    if (const Node *root = tabs_[static_cast<size_t>(index)]->root.get();
-        root != nullptr) {
-        root->collectPanes(panes);
+    for (const IndexedTarget &target : targets) {
+        const Node *const root =
+            tabs_[static_cast<std::size_t>(target.index)]->root.get();
+        if (root != nullptr) root->collectPanes(panes);
     }
-    for (const PaneHandle &handle : panes) {
-        resolvePendingPaneRemoval(handle);
-        handle.pane->beginShutdown();
-        handle.pane->setVisible(false);
-        handle.pane->deleteLater();
-    }
-    tabs_.erase(tabs_.begin() + index);
-    tabModel_.remove(tabId);
-    Q_EMIT tabTitlesChanged();
-    if (tabBarVisible() != wasTabBarVisible) {
-        Q_EMIT tabBarVisibleChanged();
-    }
-    resolvePendingTabRemoval(tabId);
+    bool becameEmpty = false;
+    {
+        QScopedValueRollback<bool> mutation(topologyMutation_, true);
+        for (const PaneHandle &handle : panes) {
+            resolvePendingPaneRemoval(handle);
+            handle.pane->beginShutdown();
+        }
+        for (const PaneHandle &handle : panes) {
+            handle.pane->setVisible(false);
+            handle.pane->deleteLater();
+        }
 
-    if (tabs_.empty()) {
-        currentIndex_ = -1;
-        updateSplitDividers(nullptr);
-        Q_EMIT currentIndexChanged();
-        Q_EMIT currentTitleChanged();
+        for (const IndexedTarget &target : targets) {
+            // Synchronous observers cannot mutate the topology while the
+            // guard is held, but resolve the stable ID again so correctness
+            // never depends on an index cached across signal boundaries.
+            const int index = tabIndexForId(target.id);
+            if (index < 0) continue;
+            Q_ASSERT(tabModel_.idAt(index) == target.id);
+            tabs_.erase(tabs_.begin() + index);
+
+            // countChanged is emitted by removeAt. Publish a selection that
+            // already describes the post-removal rows before observers run.
+            currentIndex_ = nextSelectedTabId.isValid()
+                ? tabIndexForId(nextSelectedTabId)
+                : -1;
+            const bool modelRemoved = tabModel_.removeAt(index);
+            Q_ASSERT(modelRemoved);
+            Q_UNUSED(modelRemoved);
+        }
+        for (const IndexedTarget &target : targets) {
+            resolvePendingTabRemoval(target.id);
+        }
+        Q_EMIT tabTitlesChanged();
+        if (tabBarVisible() != wasTabBarVisible) {
+            Q_EMIT tabBarVisibleChanged();
+        }
+
+        becameEmpty = tabs_.empty();
+        if (becameEmpty) {
+            currentIndex_ = -1;
+            updateSplitDividers(nullptr);
+            Q_EMIT currentIndexChanged();
+            Q_EMIT currentTitleChanged();
+            if (!std::holds_alternative<std::monostate>(pendingClose_)) {
+                (void) takePendingClose();
+            }
+        } else if (nextSelectedTabId != selectedTabId) {
+            currentIndex_ = -1;
+            activateTab(nextSelectedTabId);
+        } else if (currentIndex_ != selectedIndex) {
+            Q_EMIT currentIndexChanged();
+        }
+    }
+
+    if (becameEmpty) {
         approveQuit();
-        return;
-    }
-
-    if (pendingClose_ == PendingClose::Quit && !shouldConfirmWorkspaceClose()) {
-        pendingClose_ = PendingClose::None;
-        pendingPaneId_ = {};
-        pendingTabId_ = {};
-        Q_EMIT closeConfirmationResolved();
-        approveQuit();
-        return;
-    }
-
-    if (removedCurrentTab) {
-        const int nextIndex = std::min(index, static_cast<int>(tabs_.size()) - 1);
-        currentIndex_ = -1;
-        activateTab(tabs_[static_cast<size_t>(nextIndex)]->id);
-    } else if (index < currentIndex_) {
-        --currentIndex_;
-        Q_EMIT currentIndexChanged();
+    } else {
+        reevaluatePendingClose();
     }
 }
 
@@ -1294,63 +1455,105 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
 {
     removePendingPastesForPane(handle);
     removeTitlePrompts(TitlePromptTarget{handle.id});
-    if (pendingClose_ != PendingClose::Pane || pendingPaneId_ != handle.id) {
+    const PendingPaneClose *const pending =
+        std::get_if<PendingPaneClose>(&pendingClose_);
+    if (pending == nullptr || pending->paneId != handle.id) {
         return;
     }
-    pendingClose_ = PendingClose::None;
-    pendingPaneId_ = {};
-    pendingTabId_ = {};
-    Q_EMIT closeConfirmationResolved();
+    (void) takePendingClose();
 }
 
 void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)
 {
     removeTitlePrompts(TitlePromptTarget{tabId});
-    if (pendingClose_ != PendingClose::Tab || pendingTabId_ != tabId) {
+    PendingTabClose *const pending =
+        std::get_if<PendingTabClose>(&pendingClose_);
+    if (pending == nullptr) return;
+
+    std::erase(pending->targets, tabId);
+    if (pending->targets.empty()) {
+        (void) takePendingClose();
+    }
+}
+
+void TerminalWorkspace::beginCloseConfirmation(PendingClose close,
+                                               const QString &message)
+{
+    Q_ASSERT(std::holds_alternative<std::monostate>(pendingClose_));
+    Q_ASSERT(!std::holds_alternative<std::monostate>(close));
+    const quint64 requestId = nextNonzeroId(nextCloseConfirmationId_);
+    std::visit(
+        [requestId](auto &pending) {
+            using T = std::remove_cvref_t<decltype(pending)>;
+            if constexpr (!std::same_as<T, std::monostate>) {
+                pending.requestId = requestId;
+            }
+        },
+        close);
+    pendingClose_ = std::move(close);
+    Q_EMIT closeConfirmationRequested(requestId, message);
+}
+
+quint64 TerminalWorkspace::pendingCloseRequestId(
+    const PendingClose &close) const
+{
+    return std::visit(
+        [](const auto &pending) -> quint64 {
+            using T = std::remove_cvref_t<decltype(pending)>;
+            if constexpr (std::same_as<T, std::monostate>) {
+                return 0;
+            } else {
+                return pending.requestId;
+            }
+        },
+        close);
+}
+
+TerminalWorkspace::PendingClose TerminalWorkspace::takePendingClose()
+{
+    PendingClose close = std::exchange(pendingClose_, std::monostate{});
+    const quint64 requestId = pendingCloseRequestId(close);
+    if (requestId != 0) Q_EMIT closeConfirmationResolved(requestId);
+    return close;
+}
+
+void TerminalWorkspace::performPendingClose(PendingClose close)
+{
+    if (const auto *pane = std::get_if<PendingPaneClose>(&close)) {
+        if (tabIdForPane(pane->paneId) == pane->tabId) {
+            closePane(pane->paneId, true);
+        }
         return;
     }
-    pendingClose_ = PendingClose::None;
-    pendingPaneId_ = {};
-    pendingTabId_ = {};
-    Q_EMIT closeConfirmationResolved();
+    if (auto *tabs = std::get_if<PendingTabClose>(&close)) {
+        closeTabs(std::move(*tabs), true);
+        return;
+    }
+    if (std::holds_alternative<PendingQuit>(close)) approveQuit();
 }
 
 void TerminalWorkspace::reevaluatePendingClose()
 {
-    if (pendingClose_ == PendingClose::None) {
-        return;
-    }
+    if (topologyMutation_) return;
 
-    const PendingClose action = pendingClose_;
-    const PaneId paneId = pendingPaneId_;
-    const TabId tabId = pendingTabId_;
-    if (action == PendingClose::Pane) {
-        TerminalPane *pane = paneForId(paneId);
+    if (const auto *pendingPane =
+            std::get_if<PendingPaneClose>(&pendingClose_)) {
+        TerminalPane *pane = paneForId(pendingPane->paneId);
         if (pane != nullptr && shouldConfirmPaneClose(*pane)) {
             return;
         }
-    } else if (action == PendingClose::Tab) {
-        const Tab *tab = tabById(tabId);
-        if (tab != nullptr && shouldConfirmTabClose(*tab)) {
+    } else if (const auto *pendingTabs =
+                   std::get_if<PendingTabClose>(&pendingClose_)) {
+        if (assessTabsClose(pendingTabs->targets).needsConfirmation) {
             return;
         }
-    } else if (action == PendingClose::Quit
-               && shouldConfirmWorkspaceClose()) {
+    } else if (std::holds_alternative<PendingQuit>(pendingClose_)) {
+        if (assessWorkspaceClose().needsConfirmation) return;
+    } else {
         return;
     }
 
-    pendingClose_ = PendingClose::None;
-    pendingPaneId_ = {};
-    pendingTabId_ = {};
-    Q_EMIT closeConfirmationResolved();
-
-    if (action == PendingClose::Pane && paneForId(paneId) != nullptr) {
-        closePane(paneId, true);
-    } else if (action == PendingClose::Tab && tabById(tabId) != nullptr) {
-        closeTab(tabId, true);
-    } else if (action == PendingClose::Quit) {
-        approveQuit();
-    }
+    performPendingClose(takePendingClose());
 }
 
 void TerminalWorkspace::requestQuit()
@@ -1360,15 +1563,14 @@ void TerminalWorkspace::requestQuit()
 
 void TerminalWorkspace::requestQuitImpl()
 {
-    if (pendingClose_ == PendingClose::Quit) {
-        return;
-    }
-    if (shouldConfirmWorkspaceClose()) {
-        pendingClose_ = PendingClose::Quit;
-        pendingPaneId_ = {};
-        pendingTabId_ = {};
-        Q_EMIT closeConfirmationRequested(
-            workspaceHasReadOnlyPane()
+    if (topologyMutation_) return;
+    if (!std::holds_alternative<std::monostate>(pendingClose_)) return;
+
+    const CloseAssessment assessment = assessWorkspaceClose();
+    if (assessment.needsConfirmation) {
+        beginCloseConfirmation(
+            PendingQuit{},
+            assessment.hasReadOnlyPane
                 ? QStringLiteral("This window contains a read-only pane. Quit?")
                 : QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
         return;
@@ -1395,29 +1597,34 @@ void TerminalWorkspace::approveQuit()
     Q_EMIT quitApproved();
 }
 
-void TerminalWorkspace::confirmClose()
+void TerminalWorkspace::confirmClose(quint64 confirmationId)
 {
-    const PendingClose action = pendingClose_;
-    const PaneId paneId = pendingPaneId_;
-    const TabId tabId = pendingTabId_;
-    pendingClose_ = PendingClose::None;
-    pendingPaneId_ = {};
-    pendingTabId_ = {};
-
-    if (action == PendingClose::Pane && tabIdForPane(paneId) == tabId) {
-        closePane(paneId, true);
-    } else if (action == PendingClose::Tab) {
-        closeTab(tabId, true);
-    } else if (action == PendingClose::Quit) {
-        approveQuit();
+    if (topologyMutation_) {
+        QTimer::singleShot(0, this, [this, confirmationId] {
+            confirmClose(confirmationId);
+        });
+        return;
     }
+    if (confirmationId == 0
+        || pendingCloseRequestId(pendingClose_) != confirmationId) {
+        return;
+    }
+    performPendingClose(takePendingClose());
 }
 
-void TerminalWorkspace::cancelClose()
+void TerminalWorkspace::cancelClose(quint64 confirmationId)
 {
-    pendingClose_ = PendingClose::None;
-    pendingPaneId_ = {};
-    pendingTabId_ = {};
+    if (topologyMutation_) {
+        QTimer::singleShot(0, this, [this, confirmationId] {
+            cancelClose(confirmationId);
+        });
+        return;
+    }
+    if (confirmationId == 0
+        || pendingCloseRequestId(pendingClose_) != confirmationId) {
+        return;
+    }
+    (void) takePendingClose();
 }
 
 void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
@@ -1474,10 +1681,7 @@ void TerminalWorkspace::showPendingPastePreview()
     if (pendingPastes_.isEmpty() || activePasteConfirmationId_ != 0) {
         return;
     }
-    do {
-        ++nextPasteConfirmationId_;
-    } while (nextPasteConfirmationId_ == 0);
-    activePasteConfirmationId_ = nextPasteConfirmationId_;
+    activePasteConfirmationId_ = nextNonzeroId(nextPasteConfirmationId_);
     Q_EMIT unsafePasteConfirmationRequested(
         activePasteConfirmationId_,
         pastePreview(pendingPastes_.front().text));
@@ -1548,11 +1752,9 @@ bool TerminalWorkspace::enqueueTitlePrompt(TitlePromptTarget target,
         return false;
     }
 
-    do {
-        ++nextTitlePromptId_;
-    } while (nextTitlePromptId_ == 0);
+    const quint64 promptId = nextNonzeroId(nextTitlePromptId_);
     pendingTitlePrompts_.push_back({
-        nextTitlePromptId_,
+        promptId,
         std::move(target),
         std::move(initialTitle),
     });
@@ -2317,32 +2519,59 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
     return true;
 }
 
-bool TerminalWorkspace::shouldConfirmTabClose(const Tab &tab) const
+TerminalWorkspace::CloseAssessment TerminalWorkspace::assessTabClose(
+    const Tab &tab) const
 {
-    if (tabHasReadOnlyPane(tab)) {
-        return true;
-    }
     std::vector<PaneHandle> panes;
-    tab.root->collectPanes(panes);
-    const bool childRunning = std::ranges::any_of(
-        panes,
-        [](const PaneHandle &handle) { return handle.pane->isRunning(); });
-    const bool activeProcess = std::ranges::any_of(
-        panes,
-        [](const PaneHandle &handle) {
-            return handle.pane->hasActiveProcess();
-        });
-    return shouldConfirmClose(effectiveOptions_.confirmCloseMode,
-                              childRunning, activeProcess);
+    if (tab.root != nullptr) tab.root->collectPanes(panes);
+
+    bool hasReadOnlyPane = false;
+    bool childRunning = false;
+    bool activeProcess = false;
+    for (const PaneHandle &handle : panes) {
+        hasReadOnlyPane = hasReadOnlyPane || handle.pane->isReadOnly();
+        childRunning = childRunning || handle.pane->isRunning();
+        activeProcess = activeProcess || handle.pane->hasActiveProcess();
+    }
+    return {
+        .needsConfirmation = hasReadOnlyPane
+            || shouldConfirmClose(effectiveOptions_.confirmCloseMode,
+                                  childRunning, activeProcess),
+        .hasReadOnlyPane = hasReadOnlyPane,
+    };
 }
 
-bool TerminalWorkspace::tabHasReadOnlyPane(const Tab &tab) const
+TerminalWorkspace::CloseAssessment TerminalWorkspace::assessTabsClose(
+    const std::vector<TabId> &tabIds) const
 {
-    std::vector<PaneHandle> panes;
-    tab.root->collectPanes(panes);
-    return std::ranges::any_of(
-        panes,
-        [](const PaneHandle &handle) { return handle.pane->isReadOnly(); });
+    QSet<TabId> targetIds;
+    targetIds.reserve(static_cast<qsizetype>(tabIds.size()));
+    for (const TabId tabId : tabIds) targetIds.insert(tabId);
+
+    CloseAssessment result;
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        if (!targetIds.contains(tab->id)) continue;
+        const CloseAssessment tabAssessment = assessTabClose(*tab);
+        result.needsConfirmation = result.needsConfirmation
+            || tabAssessment.needsConfirmation;
+        result.hasReadOnlyPane = result.hasReadOnlyPane
+            || tabAssessment.hasReadOnlyPane;
+    }
+    return result;
+}
+
+TerminalWorkspace::CloseAssessment
+TerminalWorkspace::assessWorkspaceClose() const
+{
+    CloseAssessment result;
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        const CloseAssessment tabAssessment = assessTabClose(*tab);
+        result.needsConfirmation = result.needsConfirmation
+            || tabAssessment.needsConfirmation;
+        result.hasReadOnlyPane = result.hasReadOnlyPane
+            || tabAssessment.hasReadOnlyPane;
+    }
+    return result;
 }
 
 bool TerminalWorkspace::shouldConfirmPaneClose(
@@ -2351,25 +2580,6 @@ bool TerminalWorkspace::shouldConfirmPaneClose(
     return pane.isReadOnly()
         || shouldConfirmClose(effectiveOptions_.confirmCloseMode,
                               pane.isRunning(), pane.hasActiveProcess());
-}
-
-bool TerminalWorkspace::shouldConfirmWorkspaceClose() const
-{
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        if (shouldConfirmTabClose(*tab)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool TerminalWorkspace::workspaceHasReadOnlyPane() const
-{
-    return std::ranges::any_of(
-        tabs_,
-        [this](const std::unique_ptr<Tab> &tab) {
-            return tabHasReadOnlyPane(*tab);
-        });
 }
 
 int TerminalWorkspace::tabIndexForId(TabId tabId) const

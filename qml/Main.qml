@@ -125,14 +125,15 @@ ApplicationWindow {
 
     Dialog {
         id: closeDialog
+        property var confirmationId: 0
         objectName: "closeDialog"
         anchors.centerIn: parent
         width: Math.max(280, Math.min(460, window.width - 32))
         modal: true
         title: "Confirm close"
         standardButtons: Dialog.Ok | Dialog.Cancel
-        onAccepted: workspace.confirmClose()
-        onRejected: workspace.cancelClose()
+        onAccepted: workspace.confirmClose(confirmationId)
+        onRejected: workspace.cancelClose(confirmationId)
 
         Label {
             id: closeMessage
@@ -216,11 +217,15 @@ ApplicationWindow {
 
     Connections {
         target: workspace
-        function onCloseConfirmationRequested(message) {
+        function onCloseConfirmationRequested(confirmationId, message) {
+            closeDialog.confirmationId = confirmationId
             closeMessage.text = message
             closeDialog.open()
         }
-        function onCloseConfirmationResolved() {
+        function onCloseConfirmationResolved(confirmationId) {
+            if (closeDialog.confirmationId !== confirmationId)
+                return
+            closeDialog.confirmationId = 0
             closeDialog.close()
         }
         function onUnsafePasteConfirmationRequested(confirmationId, preview) {

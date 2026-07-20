@@ -331,7 +331,8 @@ trigger and one action; focused in-app dispatch still handles action chains.
 These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `new_split:left|right|up|down|auto` (with an omitted direction also selecting
-`auto`), `goto_split`, `resize_split`, `equalize_splits`, and
+`auto`), `close_tab[:this|other|right]`, `goto_split`, `resize_split`,
+`equalize_splits`, and
 `toggle_split_zoom` directly. `toggle_readonly` and
 `toggle_mouse_reporting` apply independently to their source pane; `all:` or
 `global:` applies either action once to every stable pane target. Mouse
@@ -339,6 +340,12 @@ reporting remains the conjunction of the pane policy and the terminal's DEC
 mouse mode, with the effective route reevaluated for every pointer event. Raw
 DEC capture remains authoritative for Ghostty's Shift hyperlink escape even
 when the reporting policy is disabled.
+Tab-close actions resolve from the originating pane's stable containing tab.
+`other` closes every other tab and `right` closes only tabs after the source;
+valid no-target forms are harmless performed actions. A Qt batch confirmation
+freezes the target IDs, so later moves and insertions cannot redirect it.
+Each close dialog has a nonzero request identity, preventing a delayed response
+from confirming or cancelling a newer request.
 `set_surface_title:<title>` decodes Ghostty's escaped UTF-8 transport and
 replaces the source pane's base title without changing focus or terminal
 selection. A colon is required, and `set_surface_title:` is a present empty

@@ -154,15 +154,26 @@ model. Updating or clearing an override notifies both title roles when their
 values change. The read-only role follows each tab's active pane; the pane also
 exposes the state directly for its visible status badge. Several other roles
 remain foundations for later parity work rather than user-visible features
-today.
+today. The workspace owns all structural model mutation: C++ consumers receive
+a const typed view and QML receives an abstract model facade, so synchronous
+observers cannot desynchronize model rows from the pane topology.
 
 Workspace commands pass through a typed `WorkspaceActionDispatcher` with an
 explicit tab/pane context. Keyboard, pane, and QML entry points can therefore
 converge on the same action vocabulary as more Ghostty keybindings are added.
 Pending close and unsafe-paste operations retain stable IDs, so a model row
 moving before confirmation cannot redirect the operation to another pane or
-tab. Broad unsafe paste batches every stable target behind one confirmation;
-broad close converges on one confirmed shutdown request per workspace. One
+tab. Close dialogs also carry nonzero request IDs, so a delayed answer cannot
+resolve a newer request. A pending tab-set close retains its originating
+`TabId` plus frozen target membership; committing it starts every target worker
+before the row-removal phase, removes the surviving members in current reverse
+visual order, and restores focus to a surviving stable tab. Post-removal and
+count observers see a coherent selection, and synchronous observers cannot
+nest another topology action inside that commit. Broad unsafe
+paste batches every stable target behind one confirmation. Broad actions that
+close their own source converge on one confirmed shutdown request per
+workspace, while `close_tab:other` and `close_tab:right` keep ordinary
+per-surface fanout and its stable source order. One
 typed title-prompt FIFO retains a stable `PaneId` for surface prompts or
 `TabId` for tab prompts plus a nonzero request identity. Pane removal cancels
 its surface prompts but leaves a tab request alive when the containing tab

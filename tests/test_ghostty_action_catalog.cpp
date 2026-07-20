@@ -16,8 +16,6 @@ private Q_SLOTS:
     void translatesParameterizedActions();
     void preservesRawParametersAndTargetContext();
     void translatesTitleActions();
-    void rejectsValidButUnsupportedParameters_data();
-    void rejectsValidButUnsupportedParameters();
     void rejectsMalformedAndUnsupportedStrings_data();
     void rejectsMalformedAndUnsupportedStrings();
     void matchesPinnedIntegerParsing_data();
@@ -97,6 +95,10 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QCOMPARE(result.request->context.paneId, source.paneId);
         QCOMPARE(result.request->context.value, testCase.value);
         QCOMPARE(result.request->context.amount, source.amount);
+        if (testCase.action == WorkspaceAction::CloseTab) {
+            QCOMPARE(result.request->context.closeTabMode,
+                     CloseTabMode::This);
+        }
         QCOMPARE(result.actionName, serialized);
         QVERIFY(!result.parameter.has_value());
     }
@@ -138,6 +140,12 @@ void GhosttyActionCatalogTest::translatesParameterizedActions_data()
 
     QTest::newRow("close-tab-this")
         << QStringLiteral("close_tab:this") << WorkspaceAction::CloseTab
+        << qint64(700) << 0;
+    QTest::newRow("close-tab-other")
+        << QStringLiteral("close_tab:other") << WorkspaceAction::CloseTab
+        << qint64(700) << 0;
+    QTest::newRow("close-tab-right")
+        << QStringLiteral("close_tab:right") << WorkspaceAction::CloseTab
         << qint64(700) << 0;
     QTest::newRow("split-left")
         << QStringLiteral("new_split:left") << WorkspaceAction::SplitLeft
@@ -216,6 +224,14 @@ void GhosttyActionCatalogTest::translatesParameterizedActions()
     QCOMPARE(result.request->context.paneId, source.paneId);
     QCOMPARE(result.request->context.value, value);
     QCOMPARE(result.request->context.amount, amount);
+    const CloseTabMode closeTabMode =
+        serialized == QLatin1StringView("close_tab:other")
+        ? CloseTabMode::Other
+        : serialized == QLatin1StringView("close_tab:right")
+        ? CloseTabMode::Right
+        : CloseTabMode::This;
+    QCOMPARE(result.request->context.closeTabMode, closeTabMode);
+    QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
 }
 
 void GhosttyActionCatalogTest::preservesRawParametersAndTargetContext()
@@ -301,32 +317,6 @@ void GhosttyActionCatalogTest::translatesTitleActions()
     }
 }
 
-void GhosttyActionCatalogTest::rejectsValidButUnsupportedParameters_data()
-{
-    QTest::addColumn<QString>("serialized");
-    QTest::addColumn<bool>("hasParameter");
-
-    // These values are all valid in the pinned Binding.zig, but the current
-    // workspace does not yet implement their behavior.
-    QTest::newRow("close-other") << QStringLiteral("close_tab:other") << true;
-    QTest::newRow("close-right") << QStringLiteral("close_tab:right") << true;
-}
-
-void GhosttyActionCatalogTest::rejectsValidButUnsupportedParameters()
-{
-    QFETCH(QString, serialized);
-    QFETCH(bool, hasParameter);
-
-    const GhosttyActionTranslation result =
-        GhosttyActionCatalog::translate(serialized);
-
-    QVERIFY(!result.accepted());
-    QVERIFY(!result.request.has_value());
-    QCOMPARE(result.error,
-             GhosttyActionTranslationError::UnsupportedParameter);
-    QCOMPARE(result.parameter.has_value(), hasParameter);
-}
-
 void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
 {
     QTest::addColumn<QString>("serialized");
@@ -351,6 +341,10 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
         << QStringLiteral("new_split:right:down") << Error::InvalidFormat;
     QTest::newRow("bad-close-mode")
         << QStringLiteral("close_tab:This") << Error::InvalidFormat;
+    QTest::newRow("empty-close-mode")
+        << QStringLiteral("close_tab:") << Error::InvalidFormat;
+    QTest::newRow("extra-close-component")
+        << QStringLiteral("close_tab:right:other") << Error::InvalidFormat;
     QTest::newRow("missing-tab-index")
         << QStringLiteral("goto_tab") << Error::InvalidFormat;
     QTest::newRow("negative-tab-index")
@@ -827,6 +821,10 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_tab")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:this")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:other")),
+             GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:right")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("goto_tab:2")),
              GhosttyActionScope::Surface);

@@ -115,7 +115,7 @@ Q_SIGNALS:
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();
-    void requestCloseTab();
+    void requestCloseTab(CloseTabMode mode);
     void requestNavigate(int direction);
     void requestTabChange(int delta);
     void requestQuit();

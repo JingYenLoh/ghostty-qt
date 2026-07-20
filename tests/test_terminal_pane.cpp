@@ -186,6 +186,7 @@ private Q_SLOTS:
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
+    void routesTypedCloseTabModes();
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
     void routesSearchActionsAndRetainsUiState();
@@ -2376,7 +2377,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("performable:ctrl+g=goto_split:left"),
         QStringLiteral("performable:ctrl+j=open_config"),
         QStringLiteral("chain=new_tab"),
-        QStringLiteral("ctrl+k=close_tab:this"),
+        QStringLiteral("ctrl+k=close_tab:right"),
         QStringLiteral("chain=new_tab"),
         QStringLiteral("ctrl+o=quit"),
         QStringLiteral("chain=ignore"),
@@ -2416,6 +2417,9 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                     Qt::ControlModifier, QStringLiteral("w"));
     QCoreApplication::sendEvent(&pane, &close);
     QCOMPARE(closeTab.count(), 1);
+    QCOMPARE(qvariant_cast<CloseTabMode>(
+                 closeTab.constFirst().constFirst()),
+             CloseTabMode::This);
 
     QKeyEvent reloadEvent(QEvent::KeyPress, Qt::Key_R,
                           Qt::ControlModifier, QStringLiteral("r"));
@@ -2469,6 +2473,9 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                            Qt::ControlModifier, QString(QChar(0x0b)));
     QCoreApplication::sendEvent(&pane, &closingChain);
     QCOMPARE(closeTab.count(), 2);
+    QCOMPARE(qvariant_cast<CloseTabMode>(
+                 closeTab.constLast().constFirst()),
+             CloseTabMode::Right);
     QCOMPARE(newTab.count(), 3);
 
     // `quit` is not one of Ghostty's closing-surface actions. A following
@@ -2552,6 +2559,53 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                     Qt::ControlModifier, QString(QChar(0x07)));
     QCoreApplication::sendEvent(&pane, &unavailableNavigation);
     QCOMPARE(forwarded.count(), beforeUnavailableNavigation + 1);
+}
+
+void TerminalPaneTest::routesTypedCloseTabModes()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalPane pane(options);
+
+    const struct {
+        QString serialized;
+        CloseTabMode mode;
+    } cases[] = {
+        {QStringLiteral("close_tab"), CloseTabMode::This},
+        {QStringLiteral("close_tab:this"), CloseTabMode::This},
+        {QStringLiteral("close_tab:other"), CloseTabMode::Other},
+        {QStringLiteral("close_tab:right"), CloseTabMode::Right},
+    };
+
+    QSignalSpy fallback(&pane, &TerminalPane::requestCloseTab);
+    for (const auto &testCase : cases) {
+        QVERIFY2(pane.executeConfiguredAction(testCase.serialized),
+                 qPrintable(testCase.serialized));
+        QCOMPARE(qvariant_cast<CloseTabMode>(
+                     fallback.constLast().constFirst()),
+                 testCase.mode);
+    }
+    QCOMPARE(fallback.count(), 4);
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("close_tab:")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("close_tab:other:extra")));
+    QCOMPARE(fallback.count(), 4);
+
+    QVector<WorkspaceActionRequest> requests;
+    pane.setWorkspaceActionHandler(
+        [&requests](WorkspaceActionRequest request) {
+            requests.append(request);
+            return true;
+        });
+    for (const auto &testCase : cases) {
+        QVERIFY(pane.executeConfiguredAction(testCase.serialized));
+        QCOMPARE(requests.constLast().action, WorkspaceAction::CloseTab);
+        QCOMPARE(requests.constLast().context.closeTabMode, testCase.mode);
+    }
+    QCOMPARE(requests.size(), 4);
+    QCOMPARE(fallback.count(), 4);
 }
 
 void TerminalPaneTest::routesViewportAndSelectionActions()

@@ -87,7 +87,11 @@ struct ConfigFixture {
     QString preferredPath;
 
     ConfigFixture()
+        : temporary(temporaryTemplate())
     {
+        if (!temporary.isValid()) {
+            qFatal("could not create repository-local config fixture");
+        }
         xdgHome = QDir(temporary.path()).filePath(QStringLiteral("xdg"));
         const QString ghosttyDirectory =
             QDir(xdgHome).filePath(QStringLiteral("ghostty"));
@@ -100,6 +104,17 @@ struct ConfigFixture {
     }
 
     QStringList candidates() const { return {legacyPath, preferredPath}; }
+
+    static QString temporaryTemplate()
+    {
+        const QString directory =
+            QDir::current().filePath(QStringLiteral("tmp"));
+        if (!QDir().mkpath(directory)) {
+            qFatal("could not create repository-local tmp directory");
+        }
+        return QDir(directory).filePath(
+            QStringLiteral("config-loader-XXXXXX"));
+    }
 
     static void writeFile(const QString &path, const QByteArray &contents)
     {
@@ -1410,6 +1425,8 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
             "keybind = ctrl+i=copy_title_to_clipboard\n"
             "keybind = ctrl+s=set_surface_title:🌐 surface:detail\n"
             "keybind = ctrl+t=set_tab_title:👻 main:detail\n"
+            "keybind = ctrl+v=close_tab:other\n"
+            "keybind = ctrl+w=close_tab:right\n"
             "keybind = resize/ctrl+h=resize_split:left,10\n"
             "keybind = modeé/ctrl+h=resize_split:right,10\n").toUtf8());
 
@@ -1424,7 +1441,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
     QVERIFY(result->keybindConfig.has_value());
     const GhosttyKeybindConfig &config = *result->keybindConfig;
     QCOMPARE(config.schemaVersion, 1);
-    QCOMPARE(config.root.size(), 10);
+    QCOMPARE(config.root.size(), 12);
     QCOMPARE(config.tables.size(), 2);
 
     const auto chained = std::find_if(
@@ -1508,6 +1525,29 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
         QStringList({QStringLiteral("prompt_tab_title")}),
         &GhosttyKeybindDefinition::actions);
     QVERIFY(tabTitlePrompt != config.root.cend());
+
+    const auto closeOtherTabs = std::ranges::find(
+        config.root,
+        QStringList({QStringLiteral("close_tab:other")}),
+        &GhosttyKeybindDefinition::actions);
+    const auto closeTabsRight = std::ranges::find(
+        config.root,
+        QStringList({QStringLiteral("close_tab:right")}),
+        &GhosttyKeybindDefinition::actions);
+    QVERIFY(closeOtherTabs != config.root.cend());
+    QVERIFY(closeTabsRight != config.root.cend());
+    const auto falseCloseDiagnostic = std::ranges::find_if(
+        result->diagnostics,
+        [](const GhosttyConfigDiagnostic &diagnostic) {
+            return diagnostic.message.contains(
+                       QStringLiteral("close_tab:other"))
+                || diagnostic.message.contains(
+                       QStringLiteral("close_tab:right"));
+        });
+    QVERIFY2(falseCloseDiagnostic == result->diagnostics.cend(),
+             falseCloseDiagnostic == result->diagnostics.cend()
+                 ? ""
+                 : qPrintable(falseCloseDiagnostic->message));
 
     const auto resize = std::ranges::find(
         config.tables, QStringLiteral("resize"), &GhosttyKeybindTable::name);

@@ -21,7 +21,7 @@ class TerminalPane;
 
 class TerminalWorkspace : public QQuickItem {
     Q_OBJECT
-    Q_PROPERTY(TabListModel *tabModel READ tabModel CONSTANT)
+    Q_PROPERTY(QAbstractItemModel *tabModel READ qmlTabModel CONSTANT)
     Q_PROPERTY(QStringList tabTitles READ tabTitles NOTIFY tabTitlesChanged)
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
@@ -45,7 +45,7 @@ public:
 
     QStringList tabTitles() const;
     QString currentTitle() const;
-    TabListModel *tabModel() { return &tabModel_; }
+    const TabListModel *tabModel() const { return &tabModel_; }
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
     bool tabBarVisible() const;
@@ -71,8 +71,8 @@ public:
     Q_INVOKABLE void splitDown();
     Q_INVOKABLE void closeActivePane();
     Q_INVOKABLE void requestQuit();
-    Q_INVOKABLE void confirmClose();
-    Q_INVOKABLE void cancelClose();
+    Q_INVOKABLE void confirmClose(quint64 confirmationId);
+    Q_INVOKABLE void cancelClose(quint64 confirmationId);
     Q_INVOKABLE void confirmPaste(quint64 confirmationId);
     Q_INVOKABLE void cancelPaste(quint64 confirmationId);
     Q_INVOKABLE void confirmTitlePrompt(quint64 promptId,
@@ -84,8 +84,9 @@ Q_SIGNALS:
     void currentTitleChanged();
     void tabBarVisibleChanged();
     void currentIndexChanged();
-    void closeConfirmationRequested(const QString &message);
-    void closeConfirmationResolved();
+    void closeConfirmationRequested(quint64 confirmationId,
+                                    const QString &message);
+    void closeConfirmationResolved(quint64 confirmationId);
     void unsafePasteConfirmationRequested(quint64 confirmationId,
                                           const QString &preview);
     void unsafePasteConfirmationResolved(quint64 confirmationId);
@@ -104,6 +105,8 @@ protected:
     void itemChange(ItemChange change, const ItemChangeData &value) override;
 
 private:
+    QAbstractItemModel *qmlTabModel() { return &tabModel_; }
+
     struct Node;
     struct Tab;
     struct PaneHandle;
@@ -126,11 +129,24 @@ private:
         TitlePromptTarget target;
         QString initialTitle;
     };
-    enum class PendingClose {
-        None,
-        Pane,
-        Tab,
-        Quit,
+    struct PendingPaneClose {
+        PaneId paneId;
+        TabId tabId;
+        quint64 requestId = 0;
+    };
+    struct PendingTabClose {
+        TabId originTabId;
+        std::vector<TabId> targets;
+        quint64 requestId = 0;
+    };
+    struct PendingQuit {
+        quint64 requestId = 0;
+    };
+    using PendingClose = std::variant<
+        std::monostate, PendingPaneClose, PendingTabClose, PendingQuit>;
+    struct CloseAssessment {
+        bool needsConfirmation = false;
+        bool hasReadOnlyPane = false;
     };
     enum class PaneActivationReason {
         Direct,
@@ -150,6 +166,10 @@ private:
         PaneActivationReason reason = PaneActivationReason::Direct);
     void requestQuitImpl();
     void approveQuit();
+    void beginCloseConfirmation(PendingClose close, const QString &message);
+    quint64 pendingCloseRequestId(const PendingClose &close) const;
+    PendingClose takePendingClose();
+    void performPendingClose(PendingClose close);
     void resolvePendingPaneRemoval(PaneHandle handle);
     void resolvePendingTabRemoval(TabId tabId);
     void reevaluatePendingClose();
@@ -162,8 +182,13 @@ private:
     void splitPane(PaneId paneId, Qt::Orientation orientation,
                    bool placeNewPaneFirst);
     void closePane(PaneId paneId, bool force = false);
-    void closeTab(TabId tabId, bool force = false);
+    void closeTab(TabId tabId, CloseTabMode mode = CloseTabMode::This,
+                  bool force = false);
+    void closeTabs(PendingTabClose close, bool force = false);
+    std::vector<TabId> closeTabTargets(TabId tabId,
+                                       CloseTabMode mode) const;
     void removeTab(TabId tabId);
+    void removeTabs(PendingTabClose close);
     void refreshTab(TabId tabId);
     void updateSplitMembership(Tab &tab);
     TabListEntry tabListEntry(const Tab &tab) const;
@@ -192,11 +217,10 @@ private:
     bool toggleSplitZoom(TabId tabId);
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
+    CloseAssessment assessTabClose(const Tab &tab) const;
+    CloseAssessment assessTabsClose(const std::vector<TabId> &tabIds) const;
+    CloseAssessment assessWorkspaceClose() const;
     bool shouldConfirmPaneClose(const TerminalPane &pane) const;
-    bool tabHasReadOnlyPane(const Tab &tab) const;
-    bool shouldConfirmTabClose(const Tab &tab) const;
-    bool workspaceHasReadOnlyPane() const;
-    bool shouldConfirmWorkspaceClose() const;
     int tabIndexForId(TabId tabId) const;
     int tabIndexForPane(PaneId paneId) const;
     TabId tabIdForPane(PaneId paneId) const;
@@ -232,9 +256,8 @@ private:
     QHash<quint64, SplitDividerItem *> splitDividers_;
     bool initialTabCreated_ = false;
     bool quitApprovedEmitted_ = false;
-    PendingClose pendingClose_ = PendingClose::None;
-    PaneId pendingPaneId_;
-    TabId pendingTabId_;
+    PendingClose pendingClose_;
+    quint64 nextCloseConfirmationId_ = 0;
     QVector<PendingPaste> pendingPastes_;
     bool pendingPastePreviewScheduled_ = false;
     quint64 nextPasteConfirmationId_ = 0;
@@ -244,6 +267,7 @@ private:
     quint64 nextTitlePromptId_ = 0;
     bool titlePromptAdvanceScheduled_ = false;
     bool broadActionFanout_ = false;
+    bool topologyMutation_ = false;
     QQmlComponent *searchOverlayComponent_ = nullptr;
     QQmlComponent *readOnlyOverlayComponent_ = nullptr;
 };

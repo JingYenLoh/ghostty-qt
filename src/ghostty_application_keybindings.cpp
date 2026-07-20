@@ -70,8 +70,8 @@ bool containsIgnore(const QStringList &actions)
 
 bool closesEverySurface(QStringView action)
 {
-    // Other/right close-tab modes are valid Ghostty syntax but are not yet
-    // implemented. Never widen those modes into an application quit.
+    // Other/right retain their originating tab during ordinary per-surface
+    // fanout. Only actions that close the source itself converge on quit.
     return action == QLatin1StringView("close_surface")
         || action == QLatin1StringView("close_tab")
         || action == QLatin1StringView("close_tab:this")

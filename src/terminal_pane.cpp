@@ -1969,7 +1969,9 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
         case Qt::Key_T: Q_EMIT requestNewTab(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_O: Q_EMIT requestSplit(WorkspaceAction::SplitRight); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_E: Q_EMIT requestSplit(WorkspaceAction::SplitDown); return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_W: Q_EMIT requestCloseTab(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_W:
+            Q_EMIT requestCloseTab(CloseTabMode::This);
+            return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_Q: Q_EMIT requestQuit(); return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_F: startSearchUi(); return KeyHandling::ConsumePressAndRelease;
         default: break;
@@ -2111,11 +2113,12 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
             if (actionPerformed) {
                 ignored = ignored
                     || action == QLatin1StringView("ignore");
+                const QStringView actionName =
+                    GhosttyActionCatalog::parseSerializedAction(action).name;
                 hasClosingAction = hasClosingAction
-                    || action == QLatin1StringView("close_surface")
-                    || action == QLatin1StringView("close_tab")
-                    || action == QLatin1StringView("close_tab:this")
-                    || action == QLatin1StringView("close_window");
+                    || actionName == QLatin1StringView("close_surface")
+                    || actionName == QLatin1StringView("close_tab")
+                    || actionName == QLatin1StringView("close_window");
             }
         }
     }
@@ -2453,7 +2456,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         Q_EMIT requestNewTab();
         return true;
     case WorkspaceAction::CloseTab:
-        Q_EMIT requestCloseTab();
+        Q_EMIT requestCloseTab(request.context.closeTabMode);
         return true;
     case WorkspaceAction::ClosePane:
         Q_EMIT requestClose();

@@ -177,10 +177,9 @@ bool TabListModel::move(TabId id, int destination)
     return true;
 }
 
-bool TabListModel::remove(TabId id)
+bool TabListModel::removeAt(int row)
 {
-    const int row = indexOf(id);
-    if (row < 0) {
+    if (row < 0 || row >= entries_.size()) {
         return false;
     }
     beginRemoveRows(QModelIndex(), row, row);

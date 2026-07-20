@@ -39,6 +39,9 @@ typed config/appearance overlays, watched reload, structured keybinding trie
 matching, named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
 split placement, stable per-tab title overrides and queued title prompts,
+typed originating-tab close modes with correlated frozen-target confirmation,
+reentrant-model guards, natural-exit pruning, focus preservation, actual
+all/global keybinding fanout, and overlapping shutdown grace periods,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned

@@ -6,6 +6,8 @@
 #include <QString>
 #include <QVector>
 
+class TerminalWorkspace;
+
 struct TabListEntry {
     TabId id;
     PaneId activePaneId;
@@ -51,16 +53,18 @@ public:
     TabId idAt(int index) const;
     int indexOf(TabId id) const;
 
-    void append(TabListEntry entry);
-    bool insert(int index, TabListEntry entry);
-    bool replace(TabId id, TabListEntry entry);
-    bool move(TabId id, int destination);
-    bool remove(TabId id);
-
 Q_SIGNALS:
     void countChanged();
 
 private:
+    friend class TerminalWorkspace;
+
+    void append(TabListEntry entry);
+    bool insert(int index, TabListEntry entry);
+    bool replace(TabId id, TabListEntry entry);
+    bool move(TabId id, int destination);
+    bool removeAt(int index);
+
     static QString displayTitle(const TabListEntry &entry);
 
     QVector<TabListEntry> entries_;

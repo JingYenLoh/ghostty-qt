@@ -8,6 +8,12 @@
 #include <functional>
 #include <utility>
 
+enum class CloseTabMode {
+    This,
+    Other,
+    Right,
+};
+
 enum class WorkspaceAction {
     NewTab,
     ActivateTab,
@@ -41,6 +47,7 @@ struct WorkspaceActionContext {
     PaneId paneId;
     qint64 value = 0;
     int amount = 0;
+    CloseTabMode closeTabMode = CloseTabMode::This;
 
     friend bool operator==(const WorkspaceActionContext &,
                            const WorkspaceActionContext &) = default;
@@ -86,5 +93,6 @@ private:
 };
 
 Q_DECLARE_METATYPE(WorkspaceAction)
+Q_DECLARE_METATYPE(CloseTabMode)
 Q_DECLARE_METATYPE(WorkspaceActionContext)
 Q_DECLARE_METATYPE(WorkspaceActionRequest)
