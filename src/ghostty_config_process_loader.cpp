@@ -66,6 +66,7 @@ struct ParsedConfig {
     std::optional<bool> selectionClearOnTyping;
     std::optional<bool> selectionClearOnCopy;
     std::optional<QString> middleClickAction;
+    std::optional<bool> mouseReporting;
     std::optional<bool> linkUrl;
     std::optional<QString> linkPreviews;
     std::optional<QStringList> keybinds;
@@ -121,6 +122,7 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.selectionClearOnTyping,
             parsed.selectionClearOnCopy,
             parsed.middleClickAction,
+            parsed.mouseReporting,
             parsed.linkUrl,
             parsed.linkPreviews,
             parsed.keybinds,
@@ -812,6 +814,10 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->middleClickAction = value;
+        } else if (key == QStringLiteral("mouse-reporting")) {
+            if (!parseRequiredBool(parsed->mouseReporting)) {
+                return false;
+            }
         } else if (key == QStringLiteral("link-url")) {
             if (!parseRequiredBool(parsed->linkUrl)) {
                 return false;
@@ -1386,6 +1392,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
             *defaults.selectionClearOnCopy);
     const QString middleClickAction =
         changes.middleClickAction.value_or(*defaults.middleClickAction);
+    const bool mouseReporting =
+        changes.mouseReporting.value_or(*defaults.mouseReporting);
     const bool linkUrl = changes.linkUrl.value_or(*defaults.linkUrl);
     const QString linkPreviews =
         changes.linkPreviews.value_or(*defaults.linkPreviews);
@@ -1457,6 +1465,7 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            selectionClearOnCopy);
     snapshot.values.insert(QStringLiteral("middle-click-action"),
                            middleClickAction);
+    snapshot.values.insert(QStringLiteral("mouse-reporting"), mouseReporting);
     snapshot.values.insert(QStringLiteral("link-url"), linkUrl);
     snapshot.values.insert(QStringLiteral("link-previews"), linkPreviews);
     snapshot.values.insert(QStringLiteral("keybind"), keybinds);

@@ -1204,6 +1204,16 @@ public:
         return encoded;
     }
 
+    bool mouseTracking() const
+    {
+        bool tracking = false;
+        return ghostty_terminal_get(
+                   terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+                   &tracking)
+                == GHOSTTY_SUCCESS
+            && tracking;
+    }
+
     QByteArray encodeFocus(bool focused) const
     {
         bool reportFocus = false;
@@ -1348,6 +1358,12 @@ public:
     void clearSelection()
     {
         ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
+    }
+
+    void clearSelectionAndResetGesture()
+    {
+        clearSelection();
+        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
     }
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
@@ -3320,6 +3336,11 @@ GhosttyVtAdapter::EncodedKey GhosttyVtAdapter::encodeKey(
     return impl_->encodeKey(input);
 }
 
+bool GhosttyVtAdapter::mouseTracking() const
+{
+    return impl_->mouseTracking();
+}
+
 QByteArray GhosttyVtAdapter::encodeMouse(const TerminalMouseInput &input)
 {
     return impl_->encodeMouse(input);
@@ -3354,6 +3375,11 @@ bool GhosttyVtAdapter::hasSelection() const
 void GhosttyVtAdapter::clearSelection()
 {
     impl_->clearSelection();
+}
+
+void GhosttyVtAdapter::clearSelectionAndResetGesture()
+{
+    impl_->clearSelectionAndResetGesture();
 }
 
 bool GhosttyVtAdapter::beginSelection(int column, int row, int clickCount, bool rectangular)

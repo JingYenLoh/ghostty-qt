@@ -66,6 +66,7 @@ QByteArray defaultOutput()
                           "selection-clear-on-typing = true\n"
                           "selection-clear-on-copy = false\n"
                           "middle-click-action = primary-paste\n"
+                          "mouse-reporting = true\n"
                           "link-url = true\n"
                           "link-previews = true\n"
                           "keybind = ctrl+shift+t=new_tab\n"
@@ -378,6 +379,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "selection-clear-on-typing = false\r\n"
             "selection-clear-on-copy = true\r\n"
             "middle-click-action = ignore\r\n"
+            "mouse-reporting = false\r\n"
             "link-url = false\r\n"
             "link-previews = osc8\r\n"
             "keybind = alt+n=new_tab\r\n"
@@ -490,6 +492,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
              true);
     QCOMPARE(snapshot.values.value(QStringLiteral("middle-click-action")).toString(),
              QStringLiteral("ignore"));
+    QVERIFY(!snapshot.values.value(
+        QStringLiteral("mouse-reporting")).toBool());
     QCOMPARE(snapshot.values.value(QStringLiteral("link-url")).toBool(), false);
     QCOMPARE(snapshot.values.value(QStringLiteral("link-previews")).toString(),
              QStringLiteral("osc8"));
@@ -593,6 +597,7 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMo
         QStringLiteral("selection-clear-on-copy")).toBool());
     QCOMPARE(defaults.value(QStringLiteral("middle-click-action")).toString(),
              QStringLiteral("primary-paste"));
+    QVERIFY(defaults.value(QStringLiteral("mouse-reporting")).toBool());
 
     for (const QByteArray &mode : {QByteArrayLiteral("false"),
                                    QByteArrayLiteral("true"),
@@ -615,6 +620,17 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultsAndAcceptsEveryClipboardMo
         QCOMPARE(changed->values
                      .value(QStringLiteral("middle-click-action")).toString(),
                  QString::fromLatin1(action));
+    }
+
+    for (const QByteArray &enabled : {QByteArrayLiteral("false"),
+                                      QByteArrayLiteral("true")}) {
+        const GhosttyConfigLoadResult changed = parseGhosttyConfigShowOutputs(
+            defaultOutput(), QByteArrayLiteral("mouse-reporting = ")
+                + enabled + '\n', fixture.candidates());
+        QVERIFY2(changed.has_value(), qPrintable(errorMessage(changed)));
+        QCOMPARE(changed->values
+                     .value(QStringLiteral("mouse-reporting")).toBool(),
+                 enabled == QByteArrayLiteral("true"));
     }
 }
 
@@ -740,6 +756,7 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QByteArrayLiteral("window-inherit-font-size = true\n"),
              QByteArrayLiteral("window-new-tab-position = current\n"),
              QByteArrayLiteral("window-show-tab-bar = auto\n"),
+             QByteArrayLiteral("mouse-reporting = true\n"),
              QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
              QByteArrayLiteral("unfocused-split-fill = \n"),
          }) {
@@ -957,6 +974,8 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
          QStringLiteral("Invalid selection-clear-on-copy in Ghostty config output at line 1")},
         {QByteArrayLiteral("middle-click-action = paste\n"),
          QStringLiteral("Invalid middle-click-action in Ghostty config output at line 1")},
+        {QByteArrayLiteral("mouse-reporting = yes\n"),
+         QStringLiteral("Invalid mouse-reporting in Ghostty config output at line 1")},
     };
     for (const auto &testCase : malformedClipboard) {
         const GhosttyConfigLoadResult result = parseGhosttyConfigShowOutputs(

@@ -423,6 +423,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         }
     }
 
+    applyConfigBool(
+        snapshot, QStringLiteral("mouse-reporting"), result.mouseReporting);
+
     const auto keybindings = snapshot.value<QStringList>(QStringLiteral("keybind"));
     if (keybindings.has_value()) {
         result.keybindings = *keybindings;

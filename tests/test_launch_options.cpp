@@ -349,6 +349,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"), true);
     snapshot.values.insert(QStringLiteral("middle-click-action"),
                            QStringLiteral("ignore"));
+    snapshot.values.insert(QStringLiteral("mouse-reporting"), false);
     snapshot.values.insert(QStringLiteral("link-url"), false);
     snapshot.values.insert(QStringLiteral("link-previews"),
                            QStringLiteral("osc8"));
@@ -424,6 +425,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
+    QVERIFY(!cliResult.mouseReporting);
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindings.isEmpty());
@@ -502,6 +504,16 @@ void LaunchOptionsTest::mapsClipboardModes()
                                testCase.canonical);
         QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot).middleClickAction,
                  testCase.expected);
+    }
+
+    for (const bool enabled : {false, true}) {
+        LaunchOptions base;
+        base.mouseReporting = !enabled;
+        GhosttyConfigSnapshot snapshot;
+        snapshot.availability = GhosttyConfigAvailability::Available;
+        snapshot.values.insert(QStringLiteral("mouse-reporting"), enabled);
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).mouseReporting,
+                 enabled);
     }
 }
 
@@ -792,6 +804,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
                            QStringLiteral("true"));
     snapshot.values.insert(QStringLiteral("middle-click-action"), false);
+    snapshot.values.insert(QStringLiteral("mouse-reporting"),
+                           QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
                            QStringLiteral("sometimes"));
     snapshot.values.insert(QStringLiteral("split-divider-color"),
@@ -813,6 +827,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.selectionClipboard, base.selectionClipboard);
     QCOMPARE(result.clipboardPaste, base.clipboardPaste);
     QCOMPARE(result.middleClickAction, base.middleClickAction);
+    QCOMPARE(result.mouseReporting, base.mouseReporting);
     QCOMPARE(result.windowShowTabBar, base.windowShowTabBar);
     QCOMPARE(result.splitAppearance, base.splitAppearance);
 }

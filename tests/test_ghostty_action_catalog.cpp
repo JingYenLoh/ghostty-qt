@@ -542,6 +542,20 @@ void GhosttyActionCatalogTest::parsesPaneActions()
     QVERIFY(GhosttyActionCatalog::isImplemented(
         QStringLiteral("toggle_readonly")));
 
+    const GhosttyPaneAction mouseReporting =
+        parse("toggle_mouse_reporting");
+    QCOMPARE(mouseReporting.kind,
+             GhosttyPaneActionKind::ToggleMouseReporting);
+    QVERIFY(GhosttyActionCatalog::isImplemented(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("toggle_mouse_reporting:")));
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("toggle_mouse_reporting:false")));
+    QCOMPARE(GhosttyActionCatalog::scope(
+                 QStringLiteral("toggle_mouse_reporting")),
+             GhosttyActionScope::Surface);
+
     const QStringList implementedControls{
         QStringLiteral("csi:"),
         QStringLiteral("csi:0m"),

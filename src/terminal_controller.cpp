@@ -151,9 +151,13 @@ TerminalController::TerminalController(
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::mouseTrackingChanged, this,
             [this](bool enabled) {
-                if (mouseTracking_ == enabled) return;
-                mouseTracking_ = enabled;
-                Q_EMIT mouseTrackingChanged(mouseTracking_);
+                if (terminalMouseTracking_ == enabled) return;
+                const bool previous = mouseTracking();
+                terminalMouseTracking_ = enabled;
+                Q_EMIT terminalMouseTrackingChanged(enabled);
+                if (previous != mouseTracking()) {
+                    Q_EMIT mouseTrackingChanged(mouseTracking());
+                }
             }, Qt::QueuedConnection);
     connect(worker_, &SessionWorker::activeProcessChanged, this,
             [this](bool active) {
@@ -298,6 +302,18 @@ void TerminalController::beginShutdown()
 {
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
         Q_EMIT shutdownRequested();
+    }
+}
+
+void TerminalController::setMouseReportingEnabled(bool enabled)
+{
+    if (mouseReportingEnabled_ == enabled) {
+        return;
+    }
+    const bool previous = mouseTracking();
+    mouseReportingEnabled_ = enabled;
+    if (previous != mouseTracking()) {
+        Q_EMIT mouseTrackingChanged(mouseTracking());
     }
 }
 

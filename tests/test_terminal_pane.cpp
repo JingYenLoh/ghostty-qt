@@ -26,6 +26,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <array>
@@ -175,6 +176,7 @@ private Q_SLOTS:
     void writesClipboardDestinations();
     void copiesRawEffectiveSurfaceTitle();
     void reloadsMiddleClickClipboardPolicy();
+    void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
     void runsCursorBlinkTimerOnlyWhenNeeded();
@@ -1536,11 +1538,12 @@ void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
 void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
 {
     LaunchOptions options;
-    options.workingDirectory = QDir::tempPath();
+    options.workingDirectory = QDir::currentPath();
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        QStringLiteral("printf '\\033[?1000h'; sleep 5"),
+        QStringLiteral(
+            "stty -echo; printf '\\033[?1000h'; exec cat >/dev/null"),
     };
     options.hold = true;
     options.selectionClipboard.copyOnSelect =
@@ -1594,16 +1597,272 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     QCOMPARE(pasted.count(), 2);
     QCOMPARE(unsafe.count(), 0);
 
+    // The user policy restores ordinary middle-click behavior even while the
+    // terminal's raw DEC capture request remains active.
+    reloaded.mouseReporting = false;
+    pane.applyRuntimeOptions(reloaded);
+    QVERIFY(controller->terminalMouseTracking());
+    QVERIFY(!controller->mouseTracking());
+    pressMiddleButton(Qt::NoModifier);
+    QCOMPARE(mouse.count(), 1);
+    QCOMPARE(pasted.count(), 3);
+    QCOMPARE(pasted.constLast().constFirst().toString(), standardText);
+    QCOMPARE(unsafe.count(), 0);
+
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     pane.applyRuntimeOptions(reloaded);
-    pressMiddleButton(Qt::ShiftModifier);
-    QCOMPARE(pasted.count(), 2);
+    pressMiddleButton(Qt::NoModifier);
+    QCOMPARE(pasted.count(), 3);
     QCOMPARE(unsafe.count(), 0);
 
     clipboard->clear(QClipboard::Clipboard);
     if (supportsPrimary) {
         clipboard->clear(QClipboard::Selection);
     }
+}
+
+void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
+{
+    qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<TerminalUpdate>();
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/mouse-reporting-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString enableMode =
+        directory.filePath(QStringLiteral("enable-mode"));
+    const QString disableMode =
+        directory.filePath(QStringLiteral("disable-mode"));
+    const QString reenableMode =
+        directory.filePath(QStringLiteral("reenable-mode"));
+
+    LaunchOptions configured;
+    configured.workingDirectory = directory.path();
+    configured.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty -echo; printf 'raw-off-ready\\r\\nmouse-target'; "
+            "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+            "printf '\\033[?1002h\\r\\nraw-on-ready'; "
+            "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+            "printf '\\033[?1002l\\r\\nraw-off-again-ready'; "
+            "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
+            "printf '\\033[?1002h\\r\\nraw-on-again-ready'; "
+            "exec cat >/dev/null"),
+        QStringLiteral("mouse-reporting-test"),
+        enableMode,
+        disableMode,
+        reenableMode,
+    };
+    configured.hold = true;
+    configured.mouseReporting = false;
+    configured.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+
+    TerminalPane pane(configured);
+    pane.setSize(QSizeF(320.0, 160.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy mouse(controller, &TerminalController::mouseRequested);
+    QSignalSpy scroll(controller, &TerminalController::scrollRequested);
+    QSignalSpy selectionBegin(
+        controller, &TerminalController::beginSelectionRequested);
+    QSignalSpy selectionUpdate(
+        controller, &TerminalController::updateSelectionRequested);
+    QSignalSpy selectionEnd(
+        controller, &TerminalController::endSelectionRequested);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("raw-off-ready")), 5000);
+    QVERIFY(!controller->terminalMouseTracking());
+    QVERIFY(!controller->mouseReportingEnabled());
+    QVERIFY(!controller->mouseTracking());
+
+    const QPointF start(8.0, 8.0);
+    const QPointF moved(24.0, 8.0);
+    const auto sendMouse = [&pane](QEvent::Type type,
+                                   const QPointF &position,
+                                   Qt::MouseButton button,
+                                   Qt::MouseButtons buttons) {
+        QMouseEvent event(type, position, position, position,
+                          button, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto sendGesture = [&] {
+        sendMouse(QEvent::MouseButtonPress, start,
+                  Qt::LeftButton, Qt::LeftButton);
+        sendMouse(QEvent::MouseMove, moved,
+                  Qt::NoButton, Qt::LeftButton);
+        sendMouse(QEvent::MouseButtonRelease, moved,
+                  Qt::LeftButton, Qt::NoButton);
+    };
+    const auto sendWheel = [&pane, &start](
+                               Qt::KeyboardModifiers modifiers =
+                                   Qt::NoModifier) {
+        QWheelEvent event(start, start, QPoint{}, QPoint(0, 120),
+                          Qt::NoButton, modifiers, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto touch = [](const QString &path) {
+        QFile marker(path);
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        marker.close();
+    };
+
+    // Config false plus raw DEC mode false is local selection.
+    sendGesture();
+    QCOMPARE(mouse.count(), 0);
+    QCOMPARE(selectionBegin.count(), 1);
+    QCOMPARE(selectionUpdate.count(), 1);
+    QCOMPARE(selectionEnd.count(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 1000);
+
+    // Policy true alone cannot capture while the terminal has not requested
+    // a DEC mouse mode.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(controller->mouseReportingEnabled());
+    QVERIFY(!controller->mouseTracking());
+    sendGesture();
+    QCOMPARE(mouse.count(), 0);
+    QCOMPARE(selectionBegin.count(), 2);
+    QCOMPARE(selectionUpdate.count(), 2);
+    QCOMPARE(selectionEnd.count(), 2);
+
+    // DECSET activates capture only when the independent pane policy is on.
+    touch(enableMode);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("raw-on-ready")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QVERIFY(controller->mouseTracking());
+    sendGesture();
+    QCOMPARE(mouse.count(), 3);
+    QCOMPARE(selectionBegin.count(), 2);
+    QCOMPARE(selectionUpdate.count(), 2);
+    QCOMPARE(selectionEnd.count(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+
+    // Wheel reporting ignores Shift upstream, emits protocol button four,
+    // suppresses viewport scrolling, and clears an existing selection.
+    controller->selectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 1000);
+    sendWheel(Qt::ShiftModifier);
+    QCOMPARE(mouse.count(), 4);
+    QCOMPARE(scroll.count(), 0);
+    const TerminalMouseInput wheelInput = qvariant_cast<TerminalMouseInput>(
+        mouse.constLast().constFirst());
+    QCOMPARE(wheelInput.action, TerminalMouseInput::Press);
+    QCOMPARE(wheelInput.button, 4);
+    QVERIFY(wheelInput.modifiers & Qt::ShiftModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+
+    // Ghostty reevaluates capture for every event. Disabling after a reported
+    // press suppresses its later motion/release and does not begin selection.
+    sendMouse(QEvent::MouseButtonPress, start,
+              Qt::LeftButton, Qt::LeftButton);
+    QCOMPARE(mouse.count(), 5);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(!controller->mouseTracking());
+    sendMouse(QEvent::MouseMove, moved,
+              Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, moved,
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(mouse.count(), 5);
+    QCOMPARE(selectionBegin.count(), 2);
+    QCOMPARE(selectionUpdate.count(), 2);
+    QCOMPARE(selectionEnd.count(), 2);
+
+    // With raw DEC tracking still requested but policy off, the wheel returns
+    // to typed viewport scrolling.
+    sendWheel();
+    QCOMPARE(mouse.count(), 5);
+    QCOMPARE(scroll.count(), 1);
+    const TerminalViewportRequest viewport =
+        qvariant_cast<TerminalViewportRequest>(
+            scroll.constLast().constFirst());
+    QCOMPARE(viewport.kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(viewport.delta, -3);
+
+    // Conversely, enabling after a local press lets later events take the
+    // newly effective remote path. The local gesture still ends before the
+    // reported release atomically clears its selection on the worker.
+    sendMouse(QEvent::MouseButtonPress, start,
+              Qt::LeftButton, Qt::LeftButton);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(controller->mouseTracking());
+    sendMouse(QEvent::MouseMove, moved,
+              Qt::NoButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseButtonRelease, moved,
+              Qt::LeftButton, Qt::NoButton);
+    QCOMPARE(mouse.count(), 7);
+    QCOMPARE(selectionBegin.count(), 3);
+    QCOMPARE(selectionUpdate.count(), 2);
+    QCOMPARE(selectionEnd.count(), 3);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+
+    // DECRST suppresses capture without changing policy. Toggling policy in
+    // this state still cannot capture; restoring DECSET later makes the
+    // conjunction effective again.
+    touch(disableMode);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("raw-off-again-ready")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->terminalMouseTracking(), 1000);
+    QVERIFY(controller->mouseReportingEnabled());
+    QVERIFY(!controller->mouseTracking());
+    sendGesture();
+    QCOMPARE(mouse.count(), 7);
+    QCOMPARE(selectionBegin.count(), 4);
+    QCOMPARE(selectionUpdate.count(), 3);
+    QCOMPARE(selectionEnd.count(), 4);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(!controller->mouseReportingEnabled());
+    QVERIFY(!controller->mouseTracking());
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(controller->mouseReportingEnabled());
+    QVERIFY(!controller->mouseTracking());
+
+    touch(reenableMode);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("raw-on-again-ready")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QVERIFY(controller->mouseTracking());
+    sendGesture();
+    QCOMPARE(mouse.count(), 10);
+    QCOMPARE(selectionBegin.count(), 4);
+    QCOMPARE(selectionUpdate.count(), 3);
+    QCOMPARE(selectionEnd.count(), 4);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+
+    // Reload replaces the local toggle with the newest configured policy in
+    // either direction without touching the still-enabled terminal DEC mode.
+    pane.applyRuntimeOptions(configured);
+    QVERIFY(!controller->mouseReportingEnabled());
+    QVERIFY(controller->terminalMouseTracking());
+    LaunchOptions enabled = configured;
+    enabled.mouseReporting = true;
+    pane.applyRuntimeOptions(enabled);
+    QVERIFY(controller->mouseTracking());
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(!controller->mouseTracking());
+    // This snapshot is unchanged from options_, but it still replaces the
+    // independent runtime override.
+    pane.applyRuntimeOptions(enabled);
+    QVERIFY(controller->mouseTracking());
+
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting:")));
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting:false")));
 }
 
 void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
@@ -3569,19 +3828,39 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalMouseInput>();
 
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/mouse-link-capture-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString disableMode =
+        directory.filePath(QStringLiteral("disable-mode"));
+    const QString reenableMode =
+        directory.filePath(QStringLiteral("reenable-mode"));
+
     const QByteArray uri = QByteArrayLiteral("https://example.test/captured");
     QByteArray output = QByteArrayLiteral("\033[?1003h\033]8;;");
     output += uri;
     output += QByteArrayLiteral("\033\\L\033]8;;\033\\");
 
     LaunchOptions options;
-    options.workingDirectory = QDir::tempPath();
+    options.workingDirectory = directory.path();
     options.program = {
-        QStandardPaths::findExecutable(QStringLiteral("printf")),
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty -echo; printf '%s' \"$1\"; "
+            "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+            "printf '\\033[?1003l'; "
+            "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
+            "printf '\\033[?1003h'; "
+            "exec cat >/dev/null"),
+        QStringLiteral("mouse-link-capture-test"),
         QString::fromUtf8(output),
+        disableMode,
+        reenableMode,
     };
-    QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
+    options.mouseReporting = false;
     options.fontFamily =
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
 
@@ -3607,7 +3886,6 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QSignalSpy mouseRequests(controller, &TerminalController::mouseRequested);
     QSignalSpy activationResolved(
         controller, &TerminalController::hyperlinkActivationResolved);
-    QSignalSpy sessionEnded(&pane, &TerminalPane::sessionEnded);
 
     int openCount = 0;
     pane.setUrlOpener([&](const QUrl &opened) {
@@ -3617,8 +3895,8 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
 
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updates, QStringLiteral("L")), 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(controller->mouseTracking(), 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QVERIFY(!controller->mouseTracking());
 
     const auto sendHover = [&](Qt::KeyboardModifiers modifiers) {
         QHoverEvent event(QEvent::HoverMove, linkPosition, linkPosition,
@@ -3632,9 +3910,57 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
                           button, buttons, modifiers);
         QCoreApplication::sendEvent(&pane, &event);
     };
+    const auto touch = [](const QString &path) {
+        QFile marker(path);
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        marker.close();
+    };
 
+    // Link capture follows the raw DEC mode, not the user policy. With raw
+    // tracking on and reporting disabled, Ctrl alone remains captured while
+    // Ctrl+Shift can still query and activate terminal links.
     QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
                            Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    sendHover(Qt::NoModifier);
+    QCOMPARE(hyperlinkQueries.count(), 0);
+    QCOMPARE(mouseRequests.count(), 0);
+
+    // Raw DEC transitions must recompute hover even though the effective
+    // reporting property remains false under the disabled user policy.
+    touch(disableMode);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->terminalMouseTracking(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkQueries.isEmpty(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        pane.cursor().shape(), Qt::PointingHandCursor, 1000);
+
+    touch(reenableMode);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::ArrowCursor, 1000);
+
+    const qsizetype queriesBeforeShift = hyperlinkQueries.size();
+    QKeyEvent shiftPress(QEvent::KeyPress, Qt::Key_Shift,
+                         Qt::ControlModifier | Qt::ShiftModifier);
+    QCoreApplication::sendEvent(&pane, &shiftPress);
+    sendHover(Qt::NoModifier);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hyperlinkQueries.size() > queriesBeforeShift, 1000);
+    QCOMPARE(mouseRequests.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
+
+    QKeyEvent shiftRelease(QEvent::KeyRelease, Qt::Key_Shift,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &shiftRelease);
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &controlRelease);
+    hyperlinkQueries.clear();
+    hyperlinkResolved.clear();
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(controller->mouseTracking());
+
     QCoreApplication::sendEvent(&pane, &controlPress);
     sendHover(Qt::NoModifier);
     QCOMPARE(hyperlinkQueries.count(), 0);
@@ -3647,13 +3973,12 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
 
     // The pointer event deliberately omits its modifiers. Stored key state
     // must make Ctrl+Shift both release application capture and satisfy the
-    // exact Ctrl-only hyperlink binding after Shift is stripped.
-    QKeyEvent shiftPress(QEvent::KeyPress, Qt::Key_Shift,
-                         Qt::ControlModifier | Qt::ShiftModifier);
+    // exact Ctrl-only hyperlink binding after Shift is stripped. With no
+    // button held, upstream still reports the hover motion.
     QCoreApplication::sendEvent(&pane, &shiftPress);
     sendHover(Qt::NoModifier);
     QCOMPARE(hyperlinkQueries.count(), 1);
-    QCOMPARE(mouseRequests.count(), 1);
+    QCOMPARE(mouseRequests.count(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
     QCOMPARE(qvariant_cast<TerminalLinkKind>(
                  hyperlinkResolved.constLast().at(2)),
@@ -3670,18 +3995,13 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::NoModifier);
     QTRY_COMPARE_WITH_TIMEOUT(activationResolved.count(), 1, 1000);
     QCOMPARE(openCount, 1);
-    QCOMPARE(mouseRequests.count(), 1);
+    QCOMPARE(mouseRequests.count(), 2);
 
-    QKeyEvent shiftRelease(QEvent::KeyRelease, Qt::Key_Shift,
-                           Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &shiftRelease);
-    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
-                             Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &controlRelease);
 
-    // Route capture for the full physical gesture. Changing Shift while the
-    // button is held must neither strand a reported press nor synthesize a
-    // release for a locally handled press.
+    // Capture is evaluated for every event. Shift after a captured press
+    // suppresses the held motion and release.
     const int beforeCapturedGesture = mouseRequests.count();
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::NoModifier);
@@ -3689,17 +4009,13 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::ShiftModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
               Qt::ShiftModifier);
-    QCOMPARE(mouseRequests.count(), beforeCapturedGesture + 3);
+    QCOMPARE(mouseRequests.count(), beforeCapturedGesture + 1);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
                  mouseRequests.at(beforeCapturedGesture).constFirst()).action,
              TerminalMouseInput::Press);
-    QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.at(beforeCapturedGesture + 1).constFirst()).action,
-             TerminalMouseInput::Motion);
-    QCOMPARE(qvariant_cast<TerminalMouseInput>(
-                 mouseRequests.at(beforeCapturedGesture + 2).constFirst()).action,
-             TerminalMouseInput::Release);
 
+    // Releasing Shift after a local press allows the later motion and release
+    // to use the newly effective application route.
     const int beforeLocalGesture = mouseRequests.count();
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::ShiftModifier);
@@ -3707,11 +4023,17 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::NoModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
               Qt::NoModifier);
-    QCOMPARE(mouseRequests.count(), beforeLocalGesture);
+    QCOMPARE(mouseRequests.count(), beforeLocalGesture + 2);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.at(beforeLocalGesture).constFirst()).action,
+             TerminalMouseInput::Motion);
+    QCOMPARE(qvariant_cast<TerminalMouseInput>(
+                 mouseRequests.at(beforeLocalGesture + 1).constFirst()).action,
+             TerminalMouseInput::Release);
 
-    // Each held button retains its own route. A local Shift-left followed by
-    // a captured right press must encode motion as right-button motion and
-    // must not expose the unreported left button through `anyButtonPressed`.
+    // Physical button state is independent from each event's route. A local
+    // Shift-left followed by a reported right press makes motion identify the
+    // first still-held physical button, then reports both releases.
     const int beforeMixedGesture = mouseRequests.count();
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::ShiftModifier);
@@ -3723,25 +4045,29 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
               Qt::NoModifier);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
               Qt::NoModifier);
-    QCOMPARE(mouseRequests.count(), beforeMixedGesture + 3);
+    QCOMPARE(mouseRequests.count(), beforeMixedGesture + 4);
     const TerminalMouseInput mixedPress = qvariant_cast<TerminalMouseInput>(
         mouseRequests.at(beforeMixedGesture).constFirst());
     const TerminalMouseInput mixedMotion = qvariant_cast<TerminalMouseInput>(
         mouseRequests.at(beforeMixedGesture + 1).constFirst());
-    const TerminalMouseInput mixedRelease = qvariant_cast<TerminalMouseInput>(
+    const TerminalMouseInput rightRelease = qvariant_cast<TerminalMouseInput>(
         mouseRequests.at(beforeMixedGesture + 2).constFirst());
+    const TerminalMouseInput leftRelease = qvariant_cast<TerminalMouseInput>(
+        mouseRequests.at(beforeMixedGesture + 3).constFirst());
     QCOMPARE(mixedPress.action, TerminalMouseInput::Press);
     QCOMPARE(mixedPress.button, 2);
     QVERIFY(mixedPress.anyButtonPressed);
     QCOMPARE(mixedMotion.action, TerminalMouseInput::Motion);
-    QCOMPARE(mixedMotion.button, 2);
+    QCOMPARE(mixedMotion.button, 1);
     QVERIFY(mixedMotion.anyButtonPressed);
-    QCOMPARE(mixedRelease.action, TerminalMouseInput::Release);
-    QCOMPARE(mixedRelease.button, 2);
-    QVERIFY(!mixedRelease.anyButtonPressed);
+    QCOMPARE(rightRelease.action, TerminalMouseInput::Release);
+    QCOMPARE(rightRelease.button, 2);
+    QVERIFY(rightRelease.anyButtonPressed);
+    QCOMPARE(leftRelease.action, TerminalMouseInput::Release);
+    QCOMPARE(leftRelease.button, 1);
+    QVERIFY(!leftRelease.anyButtonPressed);
 
-    // Focus loss may occur while Qt still owns the mouse grab. Preserve the
-    // captured route until the physical release arrives.
+    // Focus loss does not lock a route: a Shift release remains local.
     const int beforeFocusLoss = mouseRequests.count();
     sendMouse(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton,
               Qt::NoModifier);
@@ -3749,10 +4075,10 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCoreApplication::sendEvent(&pane, &focusOut);
     sendMouse(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton,
               Qt::ShiftModifier);
-    QCOMPARE(mouseRequests.count(), beforeFocusLoss + 2);
+    QCOMPARE(mouseRequests.count(), beforeFocusLoss + 1);
     QCOMPARE(qvariant_cast<TerminalMouseInput>(
                  mouseRequests.constLast().constFirst()).action,
-             TerminalMouseInput::Release);
+             TerminalMouseInput::Press);
 }
 
 void TerminalPaneTest::resetPreservesSurfaceTitleAndClearsWorkingDirectory()

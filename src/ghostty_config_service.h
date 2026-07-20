@@ -44,6 +44,8 @@ public Q_SLOTS:
     void reloadNow();
 
 Q_SIGNALS:
+    // Published after every successful reload, including an unchanged
+    // snapshot, so runtime-only surface overrides can be restored.
     void changed(const GhosttyConfigSnapshot &snapshot);
     void reloadFailed(const QString &message);
 

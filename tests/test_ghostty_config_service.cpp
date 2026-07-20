@@ -50,6 +50,7 @@ private Q_SLOTS:
     void debouncesReloadBursts();
     void standardServiceReloadsOffGuiThread();
     void synchronousReloadSupersedesOlderAsyncResult();
+    void publishesUnchangedSuccessfulReloads();
     void retainsLastGoodSnapshotAfterFailure();
     void changedSubscriberMayDeleteAsyncService();
     void failedSubscriberMayDeleteAsyncService();
@@ -273,6 +274,27 @@ void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
     QTest::qWait(350);
     QCOMPARE(service.snapshot().value<int>(QStringLiteral("test-value")),
              std::optional<int>(3));
+}
+
+void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
+{
+    int loads = 0;
+    GhosttyConfigService service(
+        {},
+        [&loads](const QStringList &) {
+            ++loads;
+            return snapshotWithValue(17);
+        },
+        0);
+    QCOMPARE(loads, 1);
+
+    QSignalSpy changed(&service, &GhosttyConfigService::changed);
+    service.reloadNow();
+    QCOMPARE(loads, 2);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(qvariant_cast<GhosttyConfigSnapshot>(
+                 changed.constFirst().constFirst()),
+             service.snapshot());
 }
 
 void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()

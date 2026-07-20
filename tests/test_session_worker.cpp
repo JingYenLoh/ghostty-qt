@@ -179,6 +179,7 @@ private Q_SLOTS:
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void clearsSelectionOnlyForUpstreamTypingPaths();
+    void clearsSelectionForReportedMouseButtonsAndWheels();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
@@ -2128,6 +2129,104 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
                            TerminalSequenceResolution::FlushAndSendCurrent,
                            true, escape);
     expectClearedWithoutCopy();
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(24, 4, 8, 16, 192, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy mouseSpy(&worker, &SessionWorker::mouseTrackingChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty -echo; "
+            "printf 'mouse-selection-target\\r\\n\\033[?9hmouse-ready'; "
+            "exec cat >/dev/null"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    worker.initialize(options);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("mouse-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, true), 1000);
+
+    const auto selectTarget = [&] {
+        worker.clearSelection();
+        selectionSpy.clear();
+        worker.beginSelection(0, 0, 1, false);
+        worker.updateSelection(7, 0, false);
+        QVERIFY(spyContainsBool(selectionSpy, true));
+        selectionSpy.clear();
+    };
+    const TerminalMouseInput motion{
+        .action = TerminalMouseInput::Motion,
+        .button = 1,
+        .x = 8.0F,
+        .y = 8.0F,
+        .anyButtonPressed = true,
+    };
+    const TerminalMouseInput press{
+        .action = TerminalMouseInput::Press,
+        .button = 1,
+        .x = 8.0F,
+        .y = 8.0F,
+        .anyButtonPressed = true,
+    };
+    const TerminalMouseInput wheel{
+        .action = TerminalMouseInput::Press,
+        .button = 4,
+        .x = 8.0F,
+        .y = 8.0F,
+    };
+
+    // Cursor motion never clears a selection, but an encoded button event
+    // and a protocol wheel press do so before their PTY bytes are queued.
+    selectTarget();
+    worker.sendMouse(motion);
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+    worker.sendMouse(press);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    selectionSpy.clear();
+    worker.updateSelection(10, 0, false);
+    QVERIFY(!spyContainsBool(selectionSpy, true));
+
+    // X10 consumes wheel routing but intentionally encodes no wheel bytes.
+    // It still clears the range without resetting a physical drag gesture.
+    selectTarget();
+    worker.sendMouse(wheel);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    selectionSpy.clear();
+    worker.updateSelection(10, 0, false);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+
+    // Read-only suppresses only the PTY write. Terminal-local selection clear,
+    // gesture reset, and encoder bookkeeping still occur first.
+    selectTarget();
+    worker.setReadOnly(true);
+    worker.sendMouse(press);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    selectionSpy.clear();
+    worker.updateSelection(10, 0, false);
+    QVERIFY(!spyContainsBool(selectionSpy, true));
+    worker.setReadOnly(false);
+    worker.clearSelection();
 
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()

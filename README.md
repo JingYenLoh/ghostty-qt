@@ -254,6 +254,7 @@ The current compatibility slice applies these keys:
 | `clipboard-paste-protection`, `clipboard-paste-bracketed-safe` | Default to `true` and apply live. The session worker uses Ghostty's current bracketed-paste mode, exact safety check, and encoder. Unsafe text is retained under a correlated request ID; cancellation is inert, while confirmation rechecks current terminal mode before encoding and returns to the active screen before writing. |
 | `selection-clear-on-typing` | Defaults to `true` and applies live. A non-modifier key clears only after it produces terminal bytes; encoded repeats/releases follow the same rule, and physical Escape clears even when configured `false`. IME commit and preedit transitions participate, while consumed bindings, sequence-leader replay, raw `text`/`csi`/`esc` actions, and paste do not. |
 | `middle-click-action` | Applies `primary-paste` or `ignore` live. Primary paste reads the standard clipboard in `copy-on-select=clipboard` mode; otherwise it reads the primary selection with standard fallback. Terminal mouse reporting takes precedence. |
+| `mouse-reporting` | Defaults to `true` and gates application-requested DEC mouse capture independently for each pane. `false` leaves the terminal's requested mode intact while restoring local selection and scrolling. Every pointer event rechecks the policy/DEC conjunction; reported buttons and wheels atomically clear terminal selection. Reload replaces any pane-local runtime toggle, while new tabs and splits use the configured value. |
 | `link-url` | Enables Ghostty's pinned default regex matcher for scheme URLs and file paths. The default is `true`; live reload recomputes hover state. Explicit OSC 8 hyperlinks are unaffected. |
 | `link-previews` | Controls the destination overlay for an accepted `Ctrl` hover. `true` (the default) previews OSC 8 and regex links, `false` previews neither, and `osc8` previews only explicit OSC 8 destinations. Reload is frontend-only and preserves a hover over the terminal link. Removing a preview while its bottom-left guard owns the pointer resumes physical terminal hit testing and may query that newly exposed cell. |
 | `config-file` | Included files are parsed by Ghostty; existing files and directories for missing optional includes are watched for reload. |
@@ -331,8 +332,13 @@ These are the pinned Ghostty Linux defaults when configuration integration is
 enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `new_split:left|right|up|down|auto` (with an omitted direction also selecting
 `auto`), `goto_split`, `resize_split`, `equalize_splits`, and
-`toggle_split_zoom` directly. `toggle_readonly` applies independently to its
-source pane; `all:` or `global:` applies it once to every stable pane target.
+`toggle_split_zoom` directly. `toggle_readonly` and
+`toggle_mouse_reporting` apply independently to their source pane; `all:` or
+`global:` applies either action once to every stable pane target. Mouse
+reporting remains the conjunction of the pane policy and the terminal's DEC
+mouse mode, with the effective route reevaluated for every pointer event. Raw
+DEC capture remains authoritative for Ghostty's Shift hyperlink escape even
+when the reporting policy is disabled.
 `set_surface_title:<title>` decodes Ghostty's escaped UTF-8 transport and
 replaces the source pane's base title without changing focus or terminal
 selection. A colon is required, and `set_surface_title:` is a present empty

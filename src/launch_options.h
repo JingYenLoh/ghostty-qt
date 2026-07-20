@@ -98,6 +98,9 @@ struct LaunchOptions {
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
+    // Gates application-requested mouse tracking without changing the
+    // terminal's DEC mouse mode. The policy is surface-local at runtime.
+    bool mouseReporting = true;
     // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
     // available independently of this setting.
     bool linkUrl = true;

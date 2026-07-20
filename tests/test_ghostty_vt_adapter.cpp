@@ -1249,9 +1249,12 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
 {
     auto adapter = GhosttyVtAdapter::create({});
     QVERIFY(adapter != nullptr);
+    QVERIFY(!adapter->mouseTracking());
 
-    adapter->writeVt(QByteArrayLiteral("\033[?2004h\033[?1004h"));
+    adapter->writeVt(QByteArrayLiteral(
+        "\033[?2004h\033[?1004h\033[?1002h"));
     adapter->synchronizeInputModes();
+    QVERIFY(adapter->mouseTracking());
     QCOMPARE(adapter->encodePaste(QStringLiteral("one\ntwo")),
              QByteArrayLiteral("\033[200~one\ntwo\033[201~"));
     QCOMPARE(adapter->encodeFocus(true), QByteArrayLiteral("\033[I"));
@@ -1305,6 +1308,9 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     QVERIFY(!encodedRelease.bytes.isEmpty());
     QVERIFY(!encodedRelease.modifier);
     QVERIFY(!encodedRelease.escape);
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
+    QVERIFY(!adapter->mouseTracking());
 }
 
 void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()
@@ -1383,7 +1389,12 @@ void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()
     // motion in that same gesture can establish a new installed range.
     QVERIFY(adapter->updateSelection(8, 0, false));
     QVERIFY(adapter->hasSelection());
-    adapter->endSelection(8, 0);
+
+    // Reported physical buttons clear the installed range and release the
+    // gesture's tracked grid reference. A later drag cannot resurrect it.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!adapter->hasSelection());
+    QVERIFY(!adapter->updateSelection(10, 0, false));
 }
 
 void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()

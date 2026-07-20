@@ -875,6 +875,15 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
         return action;
     }
 
+    if (name == QLatin1StringView("toggle_mouse_reporting")) {
+        // Like the configuration it mutates, this is a per-surface void
+        // action. It never changes the terminal's requested DEC mouse mode.
+        if (parameter.has_value()) return std::nullopt;
+        GhosttyPaneAction action;
+        action.kind = GhosttyPaneActionKind::ToggleMouseReporting;
+        return action;
+    }
+
     if (name != QLatin1StringView("adjust_selection")) {
         return std::nullopt;
     }

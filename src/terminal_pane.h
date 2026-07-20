@@ -169,7 +169,6 @@ private:
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
                    Qt::MouseButton button, Qt::MouseButtons buttons,
                    Qt::KeyboardModifiers modifiers);
-    Qt::MouseButtons reportedMouseButtons(Qt::MouseButtons buttons) const;
     QPoint cellAt(const QPointF &position) const;
     std::optional<QPoint> hoverCellAt(const QPointF &position) const;
     int normalizedMouseButton(Qt::MouseButton button) const;
@@ -270,7 +269,6 @@ private:
     QByteArray pendingActivationUri_;
     TerminalLinkKind pendingActivationKind_ = TerminalLinkKind::Osc8;
     quint64 pendingActivationRequestId_ = 0;
-    QSet<Qt::MouseButton> mouseReportedPresses_;
     std::function<bool(const QUrl &)> urlOpener_;
     std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
     bool searchUiActive_ = false;

@@ -37,7 +37,15 @@ public:
     // of terminal metadata, which lets TerminalPane select its launch fallback.
     bool hasTitle() const { return baseTitle_.has_value(); }
     QString currentDirectory() const { return currentDirectory_; }
-    bool mouseTracking() const { return mouseTracking_; }
+    // Effective capture requires both the terminal's DEC mouse mode and the
+    // surface-local Ghostty policy. Keeping the conjunction here gives every
+    // pointer path one authoritative predicate.
+    bool mouseTracking() const
+    {
+        return terminalMouseTracking_ && mouseReportingEnabled_;
+    }
+    bool terminalMouseTracking() const { return terminalMouseTracking_; }
+    bool mouseReportingEnabled() const { return mouseReportingEnabled_; }
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
     bool selectionAvailable() const { return selectionAvailable_; }
@@ -59,6 +67,7 @@ public:
     // Queue graceful teardown without blocking the UI. Workspace-wide closes
     // call this for every pane first so their grace periods run concurrently.
     void beginShutdown();
+    void setMouseReportingEnabled(bool enabled);
     void setReadOnly(bool readOnly);
     void sendKey(const TerminalKeyInput &input);
     // Sequence leaders cross to SessionWorker immediately for mode-sensitive
@@ -111,6 +120,7 @@ Q_SIGNALS:
     void terminalUpdated(const TerminalUpdate &update);
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
+    void terminalMouseTrackingChanged(bool enabled);
     void mouseTrackingChanged(bool enabled);
     void runningChanged(bool running);
     void activeProcessChanged(bool active);
@@ -192,7 +202,8 @@ private:
     SessionWorker *worker_ = nullptr;
     std::optional<QString> baseTitle_;
     QString currentDirectory_;
-    bool mouseTracking_ = false;
+    bool terminalMouseTracking_ = false;
+    bool mouseReportingEnabled_ = true;
     bool running_ = true;
     bool activeProcess_ = false;
     bool explicitProgram_ = false;

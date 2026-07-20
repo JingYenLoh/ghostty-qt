@@ -1178,6 +1178,19 @@ void SessionWorker::clearSelectionState()
     scheduleFrame();
 }
 
+void SessionWorker::clearSelectionAndResetGestureState()
+{
+    if (vt_ == nullptr) {
+        return;
+    }
+    const bool hadSelection = selectionAvailable_;
+    vt_->clearSelectionAndResetGesture();
+    if (hadSelection) {
+        syncSelectionAvailability();
+        scheduleFrame();
+    }
+}
+
 void SessionWorker::clearSelectionAfterKey(bool modifier, bool escape)
 {
     if (!modifier
@@ -1188,6 +1201,23 @@ void SessionWorker::clearSelectionAfterKey(bool modifier, bool escape)
 
 void SessionWorker::sendMouse(const TerminalMouseInput &input)
 {
+    // The GUI policy decides whether an event is routed here; recheck the
+    // worker-owned DEC state so a queued raw-mode transition cannot apply
+    // reported-event side effects under a stale GUI snapshot.
+    if (vt_ == nullptr || !vt_->mouseTracking()) {
+        return;
+    }
+    if (input.action != TerminalMouseInput::Motion) {
+        const bool wheel = input.button >= 4 && input.button <= 7;
+        if (wheel) {
+            clearSelectionState();
+        } else {
+            clearSelectionAndResetGestureState();
+        }
+    }
+    // Encoding still runs in read-only mode and for events that produce no
+    // bytes (for example an X10 wheel). queueInputWrite is the sole PTY-write
+    // policy boundary, matching Ghostty's Surface::queueIo ordering.
     queueInputWrite(encodeMouse(input));
 }
 

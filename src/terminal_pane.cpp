@@ -734,6 +734,7 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
 
     controller_ = new TerminalController(
         toTerminalSessionLaunchOptions(options), this);
+    controller_->setMouseReportingEnabled(options.mouseReporting);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
                 bool applied = false;
@@ -834,7 +835,8 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
     });
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
-    connect(controller_, &TerminalController::mouseTrackingChanged, this,
+    connect(controller_, &TerminalController::terminalMouseTrackingChanged,
+            this,
             [this] {
                 clearHyperlinkHover();
                 recomputeHyperlinkHover();
@@ -1021,11 +1023,16 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
+    updated.mouseReporting = options.mouseReporting;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
+    // options_ is the configured snapshot; the controller owns the mutable
+    // pane-local policy. Reapplying an unchanged snapshot must still replace
+    // a runtime toggle.
+    controller_->setMouseReportingEnabled(updated.mouseReporting);
     if (updated == options_) {
         return;
     }
@@ -2343,6 +2350,10 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         case GhosttyPaneActionKind::ToggleReadOnly:
             controller_->setReadOnly(!controller_->readOnly());
             return true;
+        case GhosttyPaneActionKind::ToggleMouseReporting:
+            controller_->setMouseReportingEnabled(
+                !controller_->mouseReportingEnabled());
+            return true;
         }
     }
 
@@ -2558,16 +2569,13 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
         && !modifiers.testFlag(Qt::ShiftModifier);
-    if (event->button() != Qt::NoButton) {
-        if (report) {
-            mouseReportedPresses_.insert(event->button());
-        } else {
-            mouseReportedPresses_.remove(event->button());
-        }
-    }
     if (report) {
+        // Ghostty resets a local selection gesture whenever a reported
+        // button event takes over. In particular, disabling reporting before
+        // release must not turn a remotely handled press into a selection.
+        selecting_ = false;
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  reportedMouseButtons(event->buttons()), modifiers);
+                  event->buttons(), modifiers);
     } else if (event->button() == Qt::LeftButton) {
         // Ghostty starts its normal selection gesture even for a potential
         // link click. A release may activate the link, while a drag naturally
@@ -2599,16 +2607,12 @@ void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report = controller_->mouseTracking()
         && !modifiers.testFlag(Qt::ShiftModifier);
-    if (report) {
-        mouseReportedPresses_.insert(event->button());
-    } else {
-        mouseReportedPresses_.remove(event->button());
-    }
     if (!report) {
         beginLocalSelection(event->position(), 2, modifiers);
     } else {
+        selecting_ = false;
         sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  reportedMouseButtons(event->buttons()), modifiers);
+                  event->buttons(), modifiers);
     }
     event->accept();
 }
@@ -2640,15 +2644,16 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
         return;
     }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const Qt::MouseButtons reportedButtons =
-        reportedMouseButtons(event->buttons());
-    const bool report = event->buttons() == Qt::NoButton
-        ? controller_->mouseTracking()
-            && !modifiers.testFlag(Qt::ShiftModifier)
-        : reportedButtons != Qt::NoButton;
+    // Upstream reevaluates the policy for every event. Shift bypasses
+    // application capture only while a physical button is held; ordinary
+    // hover motion remains reportable.
+    const bool shiftBypassesCapture = event->buttons() != Qt::NoButton
+        && modifiers.testFlag(Qt::ShiftModifier);
+    const bool report = controller_->mouseTracking()
+        && !shiftBypassesCapture;
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
-                  reportedButtons, modifiers);
+                  event->buttons(), modifiers);
     } else if (selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint cell = cellAt(event->position());
         controller_->updateSelection(cell.x(), cell.y(),
@@ -2671,7 +2676,8 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     }
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = mouseReportedPresses_.remove(event->button()) > 0;
+    const bool report = controller_->mouseTracking()
+        && !modifiers.testFlag(Qt::ShiftModifier);
     if (event->button() == Qt::LeftButton && selecting_) {
         const QPoint cell = cellAt(event->position());
         controller_->endSelection(cell.x(), cell.y());
@@ -2690,7 +2696,7 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
             hyperlinkPressRequestId_, hoverCell_.x(), hoverCell_.y());
     } else if (report) {
         sendMouse(event->position(), TerminalMouseInput::Release, event->button(),
-                  reportedMouseButtons(event->buttons()), modifiers);
+                  event->buttons(), modifiers);
     }
     if (!activateHyperlink) {
         controller_->cancelHyperlinkActivation(
@@ -2709,8 +2715,7 @@ void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    if (!linkPreviewPointerCaptured_ && controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier)) {
+    if (!linkPreviewPointerCaptured_ && controller_->mouseTracking()) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
                   Qt::NoButton, modifiers);
     }
@@ -2736,8 +2741,7 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
     }
     const Qt::KeyboardModifiers modifiers =
         effectivePointerModifiers(event->modifiers());
-    if (controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier)) {
+    if (controller_->mouseTracking()) {
         TerminalMouseInput input;
         input.action = TerminalMouseInput::Press;
         input.button = steps > 0 ? 4 : 5;
@@ -2782,18 +2786,6 @@ void TerminalPane::sendMouse(const QPointF &position, TerminalMouseInput::Action
     controller_->sendMouse(input);
 }
 
-Qt::MouseButtons TerminalPane::reportedMouseButtons(
-    Qt::MouseButtons buttons) const
-{
-    Qt::MouseButtons reported = Qt::NoButton;
-    for (const Qt::MouseButton button : mouseReportedPresses_) {
-        if (buttons.testFlag(button)) {
-            reported |= button;
-        }
-    }
-    return reported;
-}
-
 int TerminalPane::normalizedMouseButton(Qt::MouseButton button) const
 {
     switch (button) {
@@ -2818,7 +2810,7 @@ bool TerminalPane::hyperlinkModifiersMatch(
     Qt::KeyboardModifiers modifiers) const
 {
     modifiers = normalizedModifiers(modifiers);
-    if (controller_->mouseTracking()) {
+    if (controller_->terminalMouseTracking()) {
         // Shift is Ghostty's Linux escape hatch from application mouse
         // capture. Once it releases capture, it is removed before matching
         // the exact Ctrl-only OSC 8 modifier.

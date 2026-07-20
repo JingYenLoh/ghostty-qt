@@ -238,6 +238,7 @@ public:
     void synchronizeInputModes();
 
     EncodedKey encodeKey(const TerminalKeyInput &input);
+    bool mouseTracking() const;
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QByteArray encodeFocus(bool focused) const;
     QByteArray encodePaste(const QString &text) const;
@@ -249,6 +250,7 @@ public:
     QString selectedText(bool trim = true) const;
     bool hasSelection() const;
     void clearSelection();
+    void clearSelectionAndResetGesture();
     bool beginSelection(int column, int row, int clickCount, bool rectangular);
     bool updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);

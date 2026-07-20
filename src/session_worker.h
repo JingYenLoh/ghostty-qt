@@ -160,6 +160,7 @@ private:
     void commitPaste(const QString &text, const QByteArray &encoded);
     void scrollToBottomForInput();
     void clearSelectionState();
+    void clearSelectionAndResetGestureState();
     void clearSelectionAfterKey(bool modifier, bool escape);
     void copySelectionTo(TerminalClipboardDestination destination,
                          bool clearAfterCopy);

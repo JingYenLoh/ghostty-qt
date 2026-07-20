@@ -207,14 +207,13 @@ void GhosttyConfigService::applyLoadResult(GhosttyConfigLoadResult result)
 
     failureRetryTimer_.stop();
     lastError_.clear();
-    const bool changedSnapshot = !snapshot_.has_value() || *snapshot_ != *result;
     snapshot_ = std::move(*result);
     refreshWatchPaths();
-    if (changedSnapshot) {
-        // As above, signal handlers may synchronously delete the sender.
-        const GhosttyConfigSnapshot published = *snapshot_;
-        Q_EMIT changed(published);
-    }
+    // As above, signal handlers may synchronously delete the sender. Every
+    // successful reload is published even when its values compare equal:
+    // runtime-only surface actions must be replaced by configured state.
+    const GhosttyConfigSnapshot published = *snapshot_;
+    Q_EMIT changed(published);
 }
 
 void GhosttyConfigService::beginAsyncReload()

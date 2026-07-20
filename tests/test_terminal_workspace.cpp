@@ -1106,6 +1106,7 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     LaunchOptions options = baseOptions();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
+    options.mouseReporting = false;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -1113,6 +1114,19 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
     const TabId firstTab = workspace.tabModel()->idAt(0);
     const PaneId firstPane = workspace.tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *const configuredSource =
+        workspace.findChild<TerminalPane *>();
+    QVERIFY(configuredSource != nullptr);
+    TerminalController *const configuredSourceController =
+        configuredSource->findChild<TerminalController *>();
+    QVERIFY(configuredSourceController != nullptr);
+    QVERIFY(!configuredSourceController->mouseReportingEnabled());
+
+    // A runtime toggle is surface-local. Splits and tabs created afterward
+    // consume the configured snapshot rather than inheriting that override.
+    QVERIFY(configuredSource->executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(configuredSourceController->mouseReportingEnabled());
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::SplitRight,
         {firstTab, firstPane, 0},
@@ -1129,12 +1143,15 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     std::vector<std::unique_ptr<QSignalSpy>> adjustmentSpies;
     std::vector<std::unique_ptr<QSignalSpy>> csiSpies;
     std::vector<std::unique_ptr<QSignalSpy>> resetSpies;
+    std::vector<TerminalController *> controllers;
+    controllers.reserve(static_cast<std::size_t>(panes.size()));
     QStringList controlFanoutOrder;
     for (qsizetype paneIndex = 0; paneIndex < panes.size(); ++paneIndex) {
         TerminalPane *pane = panes.at(paneIndex);
         TerminalController *controller =
             pane->findChild<TerminalController *>();
         QVERIFY(controller != nullptr);
+        controllers.push_back(controller);
         QVERIFY(!controller->selectionAvailable());
         scrollSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::scrollRequested));
@@ -1157,6 +1174,70 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
                         QStringLiteral("reset:%1").arg(paneIndex));
                 });
     }
+
+    const int currentIndex = workspace.currentIndex();
+    QVector<PaneId> activePaneIds;
+    activePaneIds.reserve(workspace.tabCount());
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        activePaneIds.append(workspace.tabModel()->entryAt(index)->activePaneId);
+    }
+    QCOMPARE(std::ranges::count_if(
+                 controllers,
+                 [](const TerminalController *controller) {
+                     return controller->mouseReportingEnabled();
+                 }),
+             1);
+    QVERIFY(configuredSourceController->mouseReportingEnabled());
+
+    GhosttyConfigSnapshot enabledSnapshot;
+    enabledSnapshot.availability = GhosttyConfigAvailability::Available;
+    enabledSnapshot.values.insert(QStringLiteral("mouse-reporting"), true);
+    workspace.applyConfigSnapshot(enabledSnapshot);
+    QVERIFY(std::ranges::all_of(
+        controllers,
+        [](const TerminalController *controller) {
+            return controller->mouseReportingEnabled();
+        }));
+
+    // Existing panes remain independent until a reload. Reapplying the same
+    // configured value still removes a local override.
+    QVERIFY(configuredSource->executeConfiguredAction(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(!configuredSourceController->mouseReportingEnabled());
+    QCOMPARE(std::ranges::count_if(
+                 controllers,
+                 [](const TerminalController *controller) {
+                     return controller->mouseReportingEnabled();
+                 }),
+             2);
+    workspace.applyConfigSnapshot(enabledSnapshot);
+    QVERIFY(std::ranges::all_of(
+        controllers,
+        [](const TerminalController *controller) {
+            return controller->mouseReportingEnabled();
+        }));
+
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(std::ranges::none_of(
+        controllers,
+        [](const TerminalController *controller) {
+            return controller->mouseReportingEnabled();
+        }));
+    QCOMPARE(workspace.currentIndex(), currentIndex);
+    for (int index = 0; index < workspace.tabCount(); ++index) {
+        QCOMPARE(workspace.tabModel()->entryAt(index)->activePaneId,
+                 activePaneIds.at(index));
+    }
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(std::ranges::all_of(
+        controllers,
+        [](const TerminalController *controller) {
+            return controller->mouseReportingEnabled();
+        }));
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_mouse_reporting:")));
 
     // Selection-dependent actions are not performable on any blank surface,
     // and broad dispatch must not manufacture a worker request for them.
