@@ -1214,7 +1214,8 @@ parseGhosttyConfigExportJson(const QByteArray &json)
     if (!exactObjectKeys(
             application,
             {QLatin1StringView("quit-after-last-window-closed"),
-             QLatin1StringView("quit-after-last-window-closed-delay-ms")},
+             QLatin1StringView("quit-after-last-window-closed-delay-ms"),
+             QLatin1StringView("gtk-single-instance")},
             QStringLiteral("application"), &parseError)) {
         return std::unexpected(std::move(parseError));
     }
@@ -1238,6 +1239,17 @@ parseGhosttyConfigExportJson(const QByteArray &json)
         parsed.quitAfterLastWindowClosedDelayMilliseconds =
             static_cast<quint32>(milliseconds);
     }
+    const QJsonValue singleInstance = application.value(
+        QStringLiteral("gtk-single-instance"));
+    const QString singleInstanceMode = singleInstance.toString();
+    if (!singleInstance.isString()
+        || (singleInstanceMode != QStringLiteral("false")
+            && singleInstanceMode != QStringLiteral("true")
+            && singleInstanceMode != QStringLiteral("detect"))) {
+        return std::unexpected(QStringLiteral(
+            "application.gtk-single-instance must be false, true, or detect"));
+    }
+    parsed.singleInstanceMode = singleInstanceMode;
 
     const QJsonValue keybindingsValue =
         object.value(QStringLiteral("keybindings"));
@@ -1684,6 +1696,8 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         parsed->values.insert(
             QStringLiteral("quit-after-last-window-closed"),
             exportedConfig->quitAfterLastWindowClosed);
+        parsed->values.insert(QStringLiteral("gtk-single-instance"),
+                              exportedConfig->singleInstanceMode);
         if (exportedConfig->quitAfterLastWindowClosedDelayMilliseconds) {
             parsed->values.insert(
                 QStringLiteral("quit-after-last-window-closed-delay"),

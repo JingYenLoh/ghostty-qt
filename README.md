@@ -68,6 +68,11 @@ the host-language comparison and remaining engineering risks.
   still higher persistent override to the source pane's tab by stable
   identity. Both prompt actions share one modal Qt dialog and stable FIFO
   scheduler.
+- Process-owned multiwindow lifetime and aggregate quit, including resident
+  zero-window operation. Eligible bare secondary launches use a versioned,
+  project-owned session-D-Bus endpoint; an acknowledged request has created
+  exactly one new primary-owned window without forwarding command text. Debug
+  and Release builds use separate names.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
@@ -220,9 +225,10 @@ If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
 `ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` and
 `+show-config` actions and a project-private structured config export, so
 syntax, file precedence, `config-file` includes, canonical values, and the
-finalized binding trie and lossless nullable lifetime values come from the exact
-pinned Ghostty parser rather than a Qt-side reimplementation. The main process
-receives only typed value snapshots.
+finalized binding trie, lossless nullable lifetime values, and raw
+`gtk-single-instance` mode come from the exact pinned Ghostty parser rather
+than a Qt-side reimplementation. The main process receives only typed value
+snapshots.
 
 The current compatibility slice applies these keys:
 
@@ -236,7 +242,8 @@ The current compatibility slice applies these keys:
 | `window-inherit-font-size` | Defaults to `true`. New tabs and pane-originated windows inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. An application/global new-window action uses the focused or most recently active pane. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
 | `window-show-tab-bar` | Supports Ghostty's exact `always`, `auto`, and `never` values and defaults to `auto`. `always` shows the tab strip with any tab count, `auto` hides it for one tab and shows it at two or more, and `never` hides it. Reload and the one/two-tab boundary update visibility live. This Qt mapping hides only the QML `TabBar`; the surrounding toolbar and its new-tab, split, and close controls remain available. |
-| `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so only the final ordinary confirmed window closure enters this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` retires every root and worker but keeps process configuration, actions, and global shortcuts resident. An in-process or portal `new_window` action can then create a fresh QML window, and reload updates both all live windows and the next replacement. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. External secondary-process/single-instance activation remains separate future work. |
+| `gtk-single-instance` | Preserves raw `false`, `true`, or `detect`; detect uses the originating process's real argv and `TERM_PROGRAM`. For this first no-payload slice, eligible bare launches atomically arbitrate a project-owned session-D-Bus name. A request arriving during primary startup keeps its reply pending; a secondary exits successfully only after the primary synchronously registers one new window, including from resident zero-window state. That window uses the primary's latest config, optionally inherits an actually focused/last-focused cwd, retains configured font size, uses configured cwd when no valid focus remains, and clears initial program/hold. An unavailable bus starts locally; failures on a connected bus fail closed, while bounded owner-handoff recovery follows a replacement primary. The synchronous creation acknowledgement is deliberately stronger than pinned Ghostty's fire-and-forget activation. Argument-bearing launches, `initial-window`, custom `class` namespaces, standard desktop D-Bus activation, and activation-token forwarding remain incomplete. |
+| `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so only the final ordinary confirmed window closure enters this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` retires every root and worker but keeps process configuration, actions, global shortcuts, and any enabled activation endpoint resident. An in-process, portal, or eligible bare secondary `new_window` request can then create a fresh QML window, and reload updates both all live windows and the next replacement. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. |
 | `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A successfully created replacement window cancels the single application timer; a failed factory attempt leaves it armed, identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit`—including with zero windows—bypasses it. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
 | `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. New tabs may initially inherit their source's actual size as described above. Explicit `--font-size` wins. |
@@ -479,7 +486,9 @@ protocol/error handling, real-parser `clear`/`unbind` resolution, the
 machine-checked parity manifest, the complete
 application's immediate, delayed, disabled, cancelled, reloaded, and explicit
 multiwindow lifetime, zero-window recreation, source-stable new-tab/new-window
-working-directory/font inheritance, aggregate quit coordination, per-pane
+working-directory/font inheritance, isolated D-Bus owner arbitration and
+timeout behavior, two-process zero-window reactivation, aggregate quit
+coordination, per-pane
 read-only input suppression and
 close protection, and staged relocation of
 both terminfo and the private config helper. The real QML close dialog is also
@@ -527,8 +536,9 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   Transient geometry still scans the visible grid on each presented update;
   compatible text-run batching and retained geometry remain CPU/allocation
   optimizations.
-- No X11 backend, external single-instance/secondary-launch activation bridge,
-  theme editor, session persistence, or production package metadata yet.
+- No X11 backend, standard desktop D-Bus service activation, payload-bearing
+  secondary-launch protocol, theme editor, session persistence, or production
+  package metadata yet.
   Configuration support is limited to the documented compatibility slice;
   most Ghostty keys remain planned.
 - Search is an incremental compatibility foundation rather than the upstream

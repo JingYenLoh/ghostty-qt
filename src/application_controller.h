@@ -49,6 +49,10 @@ public:
 
     [[nodiscard]] std::expected<ApplicationWindow, QString>
     createInitialWindow();
+    // Handles a source-less process activation synchronously so the caller
+    // can acknowledge only after a replacement window is registered. Ghostty
+    // inherits the focused surface's cwd for this path, but not its font size.
+    [[nodiscard]] bool activateNoCommand();
     [[nodiscard]] bool dispatch(
         ApplicationAction action,
         TerminalWorkspace *sourceWorkspace = nullptr,
@@ -89,6 +93,8 @@ private:
     [[nodiscard]] LaunchOptions nextWindowOptions(
         TerminalWorkspace *sourceWorkspace,
         PaneId sourcePaneId) const;
+    [[nodiscard]] LaunchOptions activationWindowOptions() const;
+    [[nodiscard]] TerminalWorkspace *focusedWorkspace() const;
     [[nodiscard]] bool containsWorkspace(
         const TerminalWorkspace *workspace) const;
     [[nodiscard]] std::vector<QPointer<TerminalWorkspace>>

@@ -30,6 +30,25 @@ set_tests_properties(application-lifetime-controller PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-single-instance-activation
+    test_single_instance_activation.cpp
+    private_session_bus.h
+    ../src/single_instance_activation.cpp
+    ../src/single_instance_activation.h
+)
+target_include_directories(test-single-instance-activation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-single-instance-activation PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+)
+add_test(NAME single-instance-activation
+    COMMAND test-single-instance-activation)
+set_tests_properties(single-instance-activation PROPERTIES TIMEOUT 25)
+
 qt_add_executable(test-application-controller
     test_application_controller.cpp
     ../src/application_action.h
@@ -443,13 +462,38 @@ set_tests_properties(application-lifecycle PROPERTIES
 )
 
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    qt_add_executable(test-application-single-instance
+        test_application_single_instance.cpp
+        private_session_bus.h
+    )
+    target_include_directories(test-application-single-instance PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_compile_definitions(test-application-single-instance PRIVATE
+        GHOSTTY_QT_TEST_EXECUTABLE="$<TARGET_FILE:ghostty-qt>"
+    )
+    target_link_libraries(test-application-single-instance PRIVATE
+        Qt6::Core
+        Qt6::DBus
+        Qt6::Test
+    )
+    add_dependencies(test-application-single-instance ghostty-qt)
+    add_test(NAME application-single-instance
+        COMMAND test-application-single-instance)
+    set_tests_properties(application-single-instance PROPERTIES
+        TIMEOUT 45
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        ENVIRONMENT
+            "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
+    )
+
     set(_ghostty_qt_resident_lifecycle_config_home
         "${CMAKE_CURRENT_BINARY_DIR}/application-resident-lifecycle-config")
     file(MAKE_DIRECTORY
         "${_ghostty_qt_resident_lifecycle_config_home}/ghostty")
     file(WRITE
         "${_ghostty_qt_resident_lifecycle_config_home}/ghostty/config.ghostty"
-        "quit-after-last-window-closed = false\nconfirm-close-surface = false\n")
+        "gtk-single-instance = false\nquit-after-last-window-closed = false\nconfirm-close-surface = false\n")
     foreach(_ghostty_qt_lifetime_mode IN ITEMS resident explicit-quit)
         add_test(
             NAME application-lifetime-${_ghostty_qt_lifetime_mode}

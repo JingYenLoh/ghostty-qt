@@ -6,6 +6,8 @@ endif()
 
 project(ghostty-qt VERSION 0.1.0 LANGUAGES C CXX)
 
+set(GHOSTTY_QT_APPLICATION_ID "io.github.JingYenLoh.ghostty_qt")
+
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "ghostty-qt supports Linux only")
 endif()
@@ -491,6 +493,8 @@ qt_add_executable(ghostty-qt
     src/launch_options.h
     src/session_worker.cpp
     src/session_worker.h
+    src/single_instance_activation.cpp
+    src/single_instance_activation.h
     src/tab_list_model.cpp
     src/tab_list_model.h
     src/terminal_appearance.h
@@ -535,6 +539,7 @@ target_link_libraries(ghostty-qt PRIVATE
 
 target_compile_definitions(ghostty-qt PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_APPLICATION_ID}$<$<CONFIG:Debug>:.Debug>"
 )
 
 add_dependencies(ghostty-qt ghostty-qt-terminfo)

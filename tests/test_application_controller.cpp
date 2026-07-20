@@ -83,6 +83,8 @@ private Q_SLOTS:
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
     void ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy();
     void successfulReplacementCancelsDelayedQuit();
+    void sourceLessActivationMatchesUpstreamInheritance();
+    void sourceLessActivationCancelsQuitAndReportsFailure();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
     void pendingQuitRehostsAfterItsWindowDisappears();
     void failedReplacementLeavesDelayedQuitArmed();
@@ -280,6 +282,136 @@ void ApplicationControllerTest::successfulReplacementCancelsDelayedQuit()
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 
+void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
+{
+    QTemporaryDir directories(
+        QDir::current().filePath(
+            QStringLiteral("tmp/application-activation-XXXXXX")));
+    QVERIFY(directories.isValid());
+    const QString focusedDirectory =
+        QDir(directories.path()).filePath(QStringLiteral("focused"));
+    const QString configuredDirectory =
+        QDir(directories.path()).filePath(QStringLiteral("configured"));
+    QVERIFY(QDir().mkpath(focusedDirectory));
+    QVERIFY(QDir().mkpath(configuredDirectory));
+
+    WindowFactoryHarness harness;
+    LaunchOptions initialOptions = baseOptions(focusedDirectory);
+    initialOptions.fontSize = 13.0;
+    ApplicationController controller(
+        initialOptions, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    TerminalPane *const focusedPane = onlyPane(initial->workspace);
+    QVERIFY(focusedPane != nullptr);
+    QVERIFY(focusedPane->executeConfiguredAction(
+        QStringLiteral("set_font_size:18")));
+
+    LaunchOptions currentOptions = initialOptions;
+    currentOptions.workingDirectory = configuredDirectory;
+    currentOptions.fontSize = 11.0;
+    controller.applyLaunchOptions(currentOptions);
+
+    // Registration alone is not focus. With no pane ever focused, source-less
+    // activation keeps the configured cwd instead of choosing an arbitrary
+    // live workspace.
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 2);
+    TerminalWorkspace *const noFocus =
+        controller.windows().constLast().workspace;
+    QCOMPARE(noFocus->effectiveLaunchOptions().workingDirectory,
+             configuredDirectory);
+
+    closeWorkspace(noFocus);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+    initial->window->requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        QGuiApplication::focusWindow() == initial->window, 1000);
+    focusedPane->setFocus(false);
+    focusedPane->forceActiveFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY_WITH_TIMEOUT(focusedPane->hasActiveFocus(), 1000);
+    QCOMPARE(controller.activeWorkspace(), initial->workspace);
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 2);
+    const TerminalWorkspace *const inherited =
+        controller.windows().constLast().workspace;
+    QCOMPARE(inherited->effectiveLaunchOptions().workingDirectory,
+             focusedDirectory);
+    QCOMPARE(inherited->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(inherited->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!inherited->effectiveLaunchOptions().hold);
+
+    // If the last-focused workspace disappears while another live window is
+    // hidden, the remaining workspace is not an implicit focus substitute.
+    QQuickWindow *const remainingWindow =
+        controller.windows().constLast().window;
+    remainingWindow->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+    remainingWindow->hide();
+    initial->window->requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        QGuiApplication::focusWindow() == initial->window, 1000);
+    QSignalSpy workspaceActivation(
+        initial->workspace, &TerminalWorkspace::workspaceActivated);
+    focusedPane->setFocus(false);
+    focusedPane->forceActiveFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY_WITH_TIMEOUT(focusedPane->hasActiveFocus(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspaceActivation.count(), 1, 1000);
+    QPointer<QQuickWindow> destroyedWindow(initial->window);
+    delete initial->window;
+    QVERIFY(destroyedWindow.isNull());
+    QCOMPARE(controller.windowCount(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(QGuiApplication::focusWindow() == nullptr, 1000);
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 2);
+    const TerminalWorkspace *const staleFocus =
+        controller.windows().constLast().workspace;
+    QCOMPARE(staleFocus->effectiveLaunchOptions().workingDirectory,
+             configuredDirectory);
+
+    currentOptions.windowInheritWorkingDirectory = false;
+    controller.applyLaunchOptions(currentOptions);
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 3);
+    const TerminalWorkspace *const configured =
+        controller.windows().constLast().workspace;
+    QCOMPARE(configured->effectiveLaunchOptions().workingDirectory,
+             configuredDirectory);
+    QCOMPARE(configured->effectiveLaunchOptions().fontSize, 11.0);
+}
+
+void ApplicationControllerTest::sourceLessActivationCancelsQuitAndReportsFailure()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.quitAfterLastWindowClosed = true;
+    options.quitAfterLastWindowClosedDelay = std::chrono::milliseconds(150);
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    closeWorkspace(initial->workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+    QVERIFY(controller.lifetimeController()->quitPending());
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 1);
+    QVERIFY(!controller.lifetimeController()->quitPending());
+    QTest::qWait(200);
+    QCOMPARE(quit.count(), 0);
+
+    WindowFactoryHarness failingHarness;
+    failingHarness.failOnCall = 2;
+    LaunchOptions residentOptions = baseOptions(QDir::currentPath());
+    ApplicationController failing(
+        residentOptions, failingHarness.factory(), false);
+    QVERIFY(failing.createInitialWindow().has_value());
+    QSignalSpy failure(&failing,
+                       &ApplicationController::windowCreationFailed);
+    QVERIFY(!failing.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QCOMPARE(failing.windowCount(), 1);
+}
+
 void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirmation()
 {
     WindowFactoryHarness harness;
@@ -308,6 +440,8 @@ void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirma
     QSignalSpy committed(&controller,
                          &ApplicationController::applicationQuitCommitted);
     QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    QSignalSpy creationFailure(
+        &controller, &ApplicationController::windowCreationFailed);
 
     QVERIFY(controller.dispatch(ApplicationAction::Quit, second.workspace));
     QCOMPARE(firstConfirmation.count(), 0);
@@ -317,6 +451,9 @@ void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirma
     QCOMPARE(secondConfirmation.constFirst().at(1).toString(),
              QStringLiteral(
                  "A terminal window contains a read-only pane. Quit the application?"));
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(creationFailure.count(), 1);
+    QCOMPARE(controller.windowCount(), 2);
 
     const quint64 cancelledId =
         secondConfirmation.constFirst().constFirst().toULongLong();
@@ -336,6 +473,8 @@ void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirma
     QCOMPARE(secondClose.count(), 1);
     QCOMPARE(committed.count(), 1);
     QCOMPARE(quit.count(), 1);
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(creationFailure.count(), 2);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 

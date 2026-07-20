@@ -51,6 +51,7 @@ private Q_SLOTS:
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
     void mapsApplicationLifetime();
+    void mapsSingleInstancePolicy();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
@@ -122,6 +123,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QVERIFY(options.quitAfterLastWindowClosed);
     QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
+    QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -361,7 +363,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
         QStringLiteral("keybind"),
         QStringList({QStringLiteral("alt+n=new_tab")}));
     snapshot.keybindConfig = GhosttyKeybindConfig{
-        .schemaVersion = 1,
+        .schemaVersion = GhosttyKeybindConfig::CurrentSchemaVersion,
         .root = {GhosttyKeybindDefinition{
             .sequence = {GhosttyKeybindTrigger{
                 .kind = GhosttyKeybindKeyKind::Unicode,
@@ -738,6 +740,42 @@ void LaunchOptionsTest::mapsApplicationLifetime()
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(result.quitAfterLastWindowClosed);
     QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
+}
+
+void LaunchOptionsTest::mapsSingleInstancePolicy()
+{
+    LaunchOptions base;
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+
+    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
+                           QStringLiteral("true"));
+    LaunchOptions options = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Enabled);
+    QVERIFY(shouldUseSingleInstance(options, 1, QByteArrayView("ghostty")));
+    // Forwarding command-line payloads is deliberately outside this first
+    // protocol even when the config explicitly enables process uniqueness.
+    QVERIFY(!shouldUseSingleInstance(options, 2, QByteArrayView{}));
+
+    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
+                           QStringLiteral("false"));
+    options = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Disabled);
+    QVERIFY(!shouldUseSingleInstance(options, 1, QByteArrayView{}));
+
+    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
+                           QStringLiteral("detect"));
+    options = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
+    QVERIFY(shouldUseSingleInstance(options, 1, QByteArrayView{}));
+    QVERIFY(!shouldUseSingleInstance(options, 1,
+                                     QByteArrayView("ghostty")));
+    QVERIFY(!shouldUseSingleInstance(options, 2, QByteArrayView{}));
+
+    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
+                           QStringLiteral("invalid"));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).singleInstanceMode,
+             SingleInstanceMode::Detect);
 }
 
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()

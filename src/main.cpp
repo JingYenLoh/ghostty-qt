@@ -1,5 +1,6 @@
 #include "application_controller.h"
 #include "launch_options.h"
+#include "single_instance_activation.h"
 #include "terminal_pane.h"
 #include "terminal_workspace.h"
 
@@ -140,6 +141,7 @@ enum class TitlePromptTestTarget {
 enum class ApplicationLifetimeTestMode {
     None,
     ResidentAfterWindowClose,
+    ExternalActivation,
     ExplicitQuit,
 };
 
@@ -151,6 +153,9 @@ ApplicationLifetimeTestMode applicationLifetimeTestMode()
     }
     if (mode == "explicit-quit") {
         return ApplicationLifetimeTestMode::ExplicitQuit;
+    }
+    if (mode == "external-activation") {
+        return ApplicationLifetimeTestMode::ExternalActivation;
     }
     return ApplicationLifetimeTestMode::None;
 }
@@ -172,9 +177,11 @@ bool installApplicationLifetimeTestHook(
 
     ApplicationLifetimeController *const lifetime =
         controller->lifetimeController();
-    if (mode == ApplicationLifetimeTestMode::ResidentAfterWindowClose) {
+    if (mode == ApplicationLifetimeTestMode::ResidentAfterWindowClose
+        || mode == ApplicationLifetimeTestMode::ExternalActivation) {
         struct ResidentTestState {
             int retiredWindows = 0;
+            bool replacementObserved = false;
             QPointer<QWindow> expectedRetiredWindow;
             QPointer<TerminalWorkspace> expectedRetiredWorkspace;
         };
@@ -194,10 +201,10 @@ bool installApplicationLifetimeTestHook(
         QObject::connect(
             controller, &ApplicationController::windowRetired,
             controller,
-            [controller, lifetime, completed, state] {
+            [controller, lifetime, completed, state, mode] {
                 QTimer::singleShot(
                     50, controller,
-                    [controller, lifetime, completed, state] {
+                    [controller, lifetime, completed, state, mode] {
                         if (lifetime->hasOpenWindow()
                             || lifetime->quitPending()
                             || lifetime->hasRequestedQuit()
@@ -215,7 +222,7 @@ bool installApplicationLifetimeTestHook(
                                 controller,
                                 &ApplicationController::windowCreated,
                                 controller,
-                                [controller, lifetime, state](
+                                [controller, lifetime, state, mode](
                                     QQuickWindow *replacement,
                                     TerminalWorkspace *replacementWorkspace) {
                                     if (!lifetime->hasOpenWindow()
@@ -228,6 +235,13 @@ bool installApplicationLifetimeTestHook(
                                     state->expectedRetiredWindow = replacement;
                                     state->expectedRetiredWorkspace =
                                         replacementWorkspace;
+                                    state->replacementObserved = true;
+                                    if (mode
+                                        == ApplicationLifetimeTestMode::ExternalActivation) {
+                                        QTextStream(stdout)
+                                            << "GHOSTTY_QT_ACTIVATION_ACCEPTED\n"
+                                            << Qt::flush;
+                                    }
                                     const auto closeReplacement =
                                         [replacementWorkspace] {
                                             replacementWorkspace
@@ -247,12 +261,26 @@ bool installApplicationLifetimeTestHook(
                                     }
                                 },
                                 Qt::SingleShotConnection);
+                            if (mode
+                                == ApplicationLifetimeTestMode::ExternalActivation) {
+                                QTextStream(stdout)
+                                    << "GHOSTTY_QT_ACTIVATION_READY\n"
+                                    << Qt::flush;
+                                return;
+                            }
                             if (!controller->dispatch(
                                     ApplicationAction::NewWindow)) {
                                 qCritical()
                                     << "Resident lifetime test could not queue a replacement window";
                                 QCoreApplication::exit(1);
                             }
+                            return;
+                        }
+
+                        if (!state->replacementObserved) {
+                            qCritical()
+                                << "Resident lifetime test retired without a replacement";
+                            QCoreApplication::exit(1);
                             return;
                         }
 
@@ -717,6 +745,30 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    std::unique_ptr<SingleInstanceActivation> activationEndpoint;
+    if (shouldUseSingleInstance(
+            effectiveApplicationOptions, arguments.size(),
+            QByteArrayView(qgetenv("TERM_PROGRAM")))) {
+        auto candidate = std::make_unique<SingleInstanceActivation>();
+        const SingleInstanceActivation::StartResult activation =
+            candidate->start();
+        switch (activation.role) {
+        case SingleInstanceActivation::Role::ActivatedExisting:
+            return 0;
+        case SingleInstanceActivation::Role::Failed:
+            qCritical().noquote() << activation.diagnostic;
+            return 1;
+        case SingleInstanceActivation::Role::Independent:
+            if (!activation.diagnostic.isEmpty()) {
+                qWarning().noquote() << activation.diagnostic;
+            }
+            break;
+        case SingleInstanceActivation::Role::Primary:
+            activationEndpoint = std::move(candidate);
+            break;
+        }
+    }
+
     // The engine and process controller both outlive every QML root. Their
     // declaration order tears down the controller, portal, windows, and pane
     // workers before the engine itself.
@@ -755,6 +807,13 @@ int main(int argc, char *argv[])
         qCritical().noquote() << "Could not create the primary application window:"
                               << initialWindow.error();
         return 1;
+    }
+    if (activationEndpoint) {
+        activationEndpoint->setActivationHandler(
+            [controller = QPointer(&applicationController)] {
+                return controller != nullptr
+                    && controller->activateNoCommand();
+            });
     }
     QQuickWindow *const applicationWindow = initialWindow->window;
     TerminalWorkspace *const workspace = initialWindow->workspace;

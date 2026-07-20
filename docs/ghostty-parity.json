@@ -379,7 +379,7 @@
     "quit-after-last-window-closed": {
       "status": "supported",
       "scope": "portable",
-      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, and applies only after the final registered primary window closes. False leaves the process-level config, shortcuts, reload, quit, and new-window factory alive with zero QML roots; a replacement window is fully registered before presentation. Reload reconciles active state, an explicit command forces true, and explicit quit bypasses the policy. External single-instance activation remains tracked separately."
+      "note": "The application-owned GUI-thread policy uses Ghostty's Linux default, disables Qt's implicit last-window exit, and applies only after the final registered primary window closes. False leaves the process-level config, shortcuts, reload, quit, any enabled activation endpoint, and new-window factory alive with zero QML roots; either a local action or an acknowledged bare secondary launch can register a replacement before presentation. Reload reconciles active state, an explicit command forces true, and explicit quit bypasses the policy."
     },
     "quit-after-last-window-closed-delay": {
       "status": "supported",
@@ -467,6 +467,8 @@
           "scope": "qt_mapping"
         },
         "gtk-single-instance": {
+          "status": "partial",
+          "note": "The private structured schema preserves Ghostty's raw false/true/detect mode, and the originating Qt process resolves detect from its real argv and TERM_PROGRAM. Bare Linux launches use a project-owned versioned session-D-Bus endpoint with distinct Debug/Release IDs: one process owns the no-replacement name, startup-time calls retain delayed replies, an acknowledged secondary synchronously creates exactly one primary-owned window, a resident zero-window owner can be revived, an unavailable bus falls back locally, connected-bus failures fail closed, and bounded owner-identity recovery follows a replacement primary. The new window uses the primary's latest config, inherits only a valid focused/last-focused cwd, retains configured cwd when no valid focus remains, retains configured font size, and clears one-shot program/hold. The synchronous creation acknowledgement deliberately strengthens pinned Ghostty's fire-and-forget activation. initial-window, custom class namespaces, option-bearing explicit-true launches, standard desktop D-Bus activation, activation tokens, and payload forwarding remain incomplete.",
           "scope": "qt_mapping"
         },
         "gtk-tabs-location": {
@@ -848,7 +850,7 @@
         },
         "new_window": {
           "status": "partial",
-          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. Every subsequent window clears the one-shot initial program and hold state, initializes one workspace before presentation, registers lifetime/keybindings/config fanout, and can recreate a resident process after every old root and worker is retired. External single-instance/DBus/CLI activation, initial geometry inheritance, and compositor-dependent activation tokens remain incomplete."
+          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. Every subsequent window clears the one-shot initial program and hold state, initializes one workspace before presentation, registers lifetime/keybindings/config fanout, and can recreate a resident process after every old root and worker is retired. Bare secondary-process activation is supported through the versioned no-payload D-Bus route, including the pinned null-parent cwd/configured-font distinction. The +new-window CLI payload, initial geometry inheritance, and compositor activation tokens remain incomplete."
         },
         "next_tab": {
           "status": "partial",
@@ -1044,7 +1046,8 @@
           "note": "--help exists; Ghostty +help behavior does not."
         },
         "new-window": {
-          "scope": "linux"
+          "scope": "linux",
+          "note": "Ghostty's payload-capable +new-window CLI protocol remains planned; ordinary bare secondary-process activation is tracked separately under gtk-single-instance and the new_window application action."
         },
         "toggle-quick-terminal": {
           "scope": "wayland"

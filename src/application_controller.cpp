@@ -115,14 +115,21 @@ ApplicationController::createInitialWindow()
     return created;
 }
 
+bool ApplicationController::activateNoCommand()
+{
+    auto created = createWindow(activationWindowOptions());
+    if (created.has_value()) return true;
+    Q_EMIT windowCreationFailed(created.error());
+    return false;
+}
+
 std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     const LaunchOptions &options)
 {
     if (!windowFactory_) {
         return std::unexpected(QStringLiteral("No window factory is available"));
     }
-    if (lifetime_.hasRequestedQuit()
-        || quitState_ == QuitState::ClosingWindows) {
+    if (lifetime_.hasRequestedQuit() || quitState_ != QuitState::Idle) {
         return std::unexpected(
             QStringLiteral("The application is already quitting"));
     }
@@ -237,6 +244,28 @@ LaunchOptions ApplicationController::nextWindowOptions(
     return result;
 }
 
+LaunchOptions ApplicationController::activationWindowOptions() const
+{
+    LaunchOptions result = effectiveOptions_;
+    if (TerminalWorkspace *const source = focusedWorkspace();
+        source != nullptr && result.windowInheritWorkingDirectory) {
+        // A normal Ghostty GApplication activation has no parent surface.
+        // Its GTK surface setup still overlays the globally focused surface's
+        // cwd, but parent-only font inheritance does not run.
+        LaunchOptions directoryProbe = result;
+        directoryProbe.windowInheritFontSize = false;
+        if (const auto inherited =
+                source->newWindowLaunchOptions(directoryProbe)) {
+            result.workingDirectory = inherited->workingDirectory;
+            result.inheritWorkingDirectory =
+                inherited->inheritWorkingDirectory;
+        }
+    }
+    result.program.clear();
+    result.hold = false;
+    return result;
+}
+
 void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
 {
     effectiveOptions_ = options;
@@ -252,6 +281,20 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
 
 TerminalWorkspace *ApplicationController::activeWorkspace() const
 {
+    if (TerminalWorkspace *const focused = focusedWorkspace()) {
+        return focused;
+    }
+    for (auto record = windows_.crbegin(); record != windows_.crend();
+         ++record) {
+        if (record->window != nullptr && record->workspace != nullptr) {
+            return record->workspace;
+        }
+    }
+    return nullptr;
+}
+
+TerminalWorkspace *ApplicationController::focusedWorkspace() const
+{
     QWindow *const focusWindow = QGuiApplication::focusWindow();
     if (focusWindow != nullptr) {
         for (const WindowRecord &record : windows_) {
@@ -262,12 +305,6 @@ TerminalWorkspace *ApplicationController::activeWorkspace() const
     }
     if (containsWorkspace(lastActiveWorkspace_)) {
         return lastActiveWorkspace_;
-    }
-    for (auto record = windows_.crbegin(); record != windows_.crend();
-         ++record) {
-        if (record->window != nullptr && record->workspace != nullptr) {
-            return record->workspace;
-        }
     }
     return nullptr;
 }
@@ -317,9 +354,6 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
     QQuickWindow *const window = applicationWindow.window;
     TerminalWorkspace *const workspace = applicationWindow.workspace;
     windows_.push_back({window, workspace});
-    if (!containsWorkspace(lastActiveWorkspace_)) {
-        lastActiveWorkspace_ = workspace;
-    }
     keybindings_->registerWorkspace(workspace);
 
     connect(workspace, &TerminalWorkspace::applicationActionRequested,
@@ -386,8 +420,13 @@ void ApplicationController::noteWorkspaceActivated(
 void ApplicationController::retireWindow(QQuickWindow *window)
 {
     const auto previousSize = windows_.size();
-    std::erase_if(windows_, [window](const WindowRecord &record) {
-        return record.window == nullptr || record.window == window;
+    std::erase_if(windows_, [this, window](const WindowRecord &record) {
+        const bool remove = record.window == nullptr
+            || record.window == window;
+        if (remove && record.workspace == lastActiveWorkspace_) {
+            lastActiveWorkspace_.clear();
+        }
+        return remove;
     });
     if (previousSize == windows_.size()) return;
     if (windows_.empty()) lifetime_.lastWindowClosed();

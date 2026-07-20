@@ -18,7 +18,7 @@ comptime {
 }
 
 /// Export values that Ghostty's text formatter cannot represent losslessly as
-/// the project-private JSON v1 schema. The returned allocation follows
+/// the project-private JSON v2 schema. The returned allocation follows
 /// ghostty_string_s ownership and is released by ghostty_string_free.
 export fn ghostty_qt_config_json(defaults: bool) String {
     return configJson(defaults) catch |err| {
@@ -40,7 +40,7 @@ fn configJson(defaults: bool) !String {
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 1));
+    try json.write(@as(u8, 2));
 
     try json.objectField("application");
     try json.beginObject();
@@ -54,6 +54,8 @@ fn configJson(defaults: bool) !String {
     } else {
         try json.write(null);
     }
+    try json.objectField("gtk-single-instance");
+    try json.write(@tagName(config.@"gtk-single-instance"));
     try json.endObject();
 
     var sequence: std.ArrayList(Binding.Trigger) = .empty;

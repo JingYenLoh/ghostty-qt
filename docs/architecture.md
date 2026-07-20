@@ -253,8 +253,33 @@ reload preserves the current deadline, while a changed value cancels and
 reconciles it against the current window state. This deliberately repairs the
 pinned GTK frontend's stale-timer reload edge cases. The false policy can keep
 a zero-window application resident; process and portal actions can reload it
-or construct another window. External single-instance/secondary-process
-activation is not implemented yet.
+or construct another window.
+
+Bare Linux process activation uses a separate versioned session-D-Bus
+component with a project-owned application ID; Debug adds its own suffix so a
+developer build cannot activate an installed Release build. The endpoint is
+exported on the connection before an atomic, non-queued, non-replaceable name
+claim. A secondary sends only the protocol version—never argv, environment,
+cwd, or shell text. Calls that arrive before primary startup installs the
+handler retain a delayed reply; they are acknowledged only after their
+synchronous source-less window creation finishes. An unavailable bus starts
+independently. On a connected bus, rejection or incompatibility from the same
+live owner is fatal, while a bounded owner-identity loop follows a replacement
+owner during process handoff. An ambiguous no-reply fails closed because the
+owner may already have created the window. This creation acknowledgement is a
+deliberate strengthening of pinned Ghostty's fire-and-forget normal activation.
+
+The private structured config export retains Ghostty's raw
+`gtk-single-instance` false/true/detect enum. The GUI process resolves detect
+from its real argv and `TERM_PROGRAM`; the first protocol slice deliberately
+excludes every argument-bearing launch. Role and name ownership stay fixed
+across live reload, matching GApplication construction-time policy. An
+accepted activation creates synchronously from the primary's latest process
+options, clears the one-shot program and hold, overlays only an actually
+focused or still-valid last-focused pane cwd when configured, and keeps the
+configured font size. With no valid focus it keeps configured cwd rather than
+choosing an arbitrary live pane. That cwd/font asymmetry matches the pinned GTK
+null-parent path.
 
 ## Output path
 
@@ -764,9 +789,9 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v1 envelope containing
-application lifetime values and Ghostty's finalized binding sets after
-defaults, includes, `clear`, overrides, chains, and
+The config helper exposes a project-private JSON v2 envelope containing
+application lifetime and raw single-instance values plus Ghostty's finalized
+binding sets after defaults, includes, `clear`, overrides, chains, and
 `unbind` have been resolved by the pinned Zig implementation. It retains full
 root sequences, named tables, physical/Unicode/catch-all triggers, canonical
 action chains, and every binding flag. The C++ parser is strict and
@@ -1063,6 +1088,15 @@ The default CTest suite has focused layers for each ownership boundary:
   one through the zero-window process action, retires it again, and explicitly
   quits; `application-lifetime-explicit-quit` exercises the real application
   wiring under a disabled last-window policy.
+- `single-instance-activation` runs owner arbitration, exact-once acceptance,
+  delayed pre-handler replies, creation-failure propagation, owner handoff,
+  protocol rejection, release/reacquisition, unavailable-bus fallback, and
+  ambiguous timeout behavior against isolated session buses whose sockets and
+  runtime directories live under repository-local `./tmp`.
+- `application-single-instance` starts two complete offscreen processes on an
+  isolated bus, retires the primary's initial QML root to resident zero-window
+  state, verifies the bare secondary exits successfully after recreating one
+  primary-owned window, then confirms clean retirement and explicit shutdown.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived
@@ -1104,7 +1138,7 @@ in a real Wayland session.
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, user-defined `link` rules, external single-instance activation,
+  actions, user-defined `link` rules, standard desktop D-Bus activation,
   saved sessions, and production packaging remain future work. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the

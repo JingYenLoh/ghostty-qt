@@ -1,19 +1,17 @@
 #include "ghostty_global_shortcut_portal.h"
+#include "private_session_bus.h"
 
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusObjectPath>
 #include <QDBusVariant>
 #include <QDBusVirtualObject>
-#include <QProcess>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
-#include <QUuid>
 #include <QVariantMap>
 
 #include <algorithm>
-#include <optional>
 
 namespace {
 
@@ -114,66 +112,6 @@ QString portalPath(QString sender, const QString &kind, const QString &token)
     return QStringLiteral("/org/freedesktop/portal/desktop/%1/%2/%3")
         .arg(kind, sender, token);
 }
-
-class PrivateSessionBus final {
-public:
-    bool start()
-    {
-        m_process.setProgram(QStringLiteral("dbus-daemon"));
-        m_process.setArguments({QStringLiteral("--session"),
-                                QStringLiteral("--nofork"),
-                                QStringLiteral("--print-address=1")});
-        m_process.start();
-        if (!m_process.waitForStarted(3000)
-            || (!m_process.canReadLine()
-                && !m_process.waitForReadyRead(3000))) {
-            return false;
-        }
-
-        const QString address = QString::fromUtf8(m_process.readLine()).trimmed();
-        if (address.isEmpty()) {
-            return false;
-        }
-
-        const QString suffix = QUuid::createUuid()
-                                   .toString(QUuid::WithoutBraces)
-                                   .remove(u'-');
-        m_serverName = QStringLiteral("ghostty_portal_server_%1").arg(suffix);
-        m_clientName = QStringLiteral("ghostty_portal_client_%1").arg(suffix);
-        m_server.emplace(QDBusConnection::connectToBus(address, m_serverName));
-        m_client.emplace(QDBusConnection::connectToBus(address, m_clientName));
-        return m_server->isConnected() && m_client->isConnected();
-    }
-
-    ~PrivateSessionBus()
-    {
-        m_client.reset();
-        m_server.reset();
-        if (!m_clientName.isEmpty()) {
-            QDBusConnection::disconnectFromBus(m_clientName);
-        }
-        if (!m_serverName.isEmpty()) {
-            QDBusConnection::disconnectFromBus(m_serverName);
-        }
-        if (m_process.state() != QProcess::NotRunning) {
-            m_process.terminate();
-            if (!m_process.waitForFinished(1000)) {
-                m_process.kill();
-                m_process.waitForFinished(1000);
-            }
-        }
-    }
-
-    QDBusConnection &server() { return *m_server; }
-    QDBusConnection &client() { return *m_client; }
-
-private:
-    QProcess m_process;
-    QString m_serverName;
-    QString m_clientName;
-    std::optional<QDBusConnection> m_server;
-    std::optional<QDBusConnection> m_client;
-};
 
 class FakeGlobalShortcutsPortal final : public QDBusVirtualObject {
 public:
@@ -614,9 +552,7 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
         QSKIP("dbus-daemon is unavailable");
     }
     PrivateSessionBus bus;
-    if (!bus.start()) {
-        QSKIP("a private dbus-daemon cannot start in this test environment");
-    }
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
 
     FakeGlobalShortcutsPortal fake(bus.server(),
                                    bus.client().baseService());

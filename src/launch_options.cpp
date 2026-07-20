@@ -293,6 +293,16 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                 std::chrono::milliseconds(delay->value<quint32>());
         }
     }
+    if (const auto mode = snapshot.value<QString>(
+            QStringLiteral("gtk-single-instance"))) {
+        if (*mode == QStringLiteral("true")) {
+            result.singleInstanceMode = SingleInstanceMode::Enabled;
+        } else if (*mode == QStringLiteral("false")) {
+            result.singleInstanceMode = SingleInstanceMode::Disabled;
+        } else if (*mode == QStringLiteral("detect")) {
+            result.singleInstanceMode = SingleInstanceMode::Detect;
+        }
+    }
     // Match Ghostty's `-e` contract: an explicitly supplied command always
     // exits with its final window and never inherits a lingering delay.
     enforceExplicitCommandLifetime(base, result);
@@ -470,6 +480,22 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     }
 
     return result;
+}
+
+bool shouldUseSingleInstance(const LaunchOptions &options,
+                             qsizetype argumentCount,
+                             QByteArrayView termProgram)
+{
+    if (argumentCount != 1) return false;
+    switch (options.singleInstanceMode) {
+    case SingleInstanceMode::Enabled:
+        return true;
+    case SingleInstanceMode::Disabled:
+        return false;
+    case SingleInstanceMode::Detect:
+        return termProgram.isEmpty();
+    }
+    return false;
 }
 
 bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,

@@ -4,6 +4,7 @@
 #include "terminal_session_options.h"
 
 #include <QColor>
+#include <QByteArrayView>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -40,6 +41,12 @@ enum class WindowShowTabBar {
     Always,
     Auto,
     Never,
+};
+
+enum class SingleInstanceMode {
+    Detect,
+    Enabled,
+    Disabled,
 };
 
 // Ghostty dims an unfocused pane by compositing this fill over the terminal.
@@ -106,6 +113,11 @@ struct LaunchOptions {
     bool quitAfterLastWindowClosed = true;
     std::optional<std::chrono::milliseconds>
         quitAfterLastWindowClosedDelay;
+    // This first transport slice accepts only bare, no-command activation.
+    // Detect additionally excludes launches from a terminal advertising
+    // TERM_PROGRAM. The structured helper preserves Ghostty's raw mode so the
+    // originating process can resolve detect from its real invocation.
+    SingleInstanceMode singleInstanceMode = SingleInstanceMode::Detect;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
@@ -163,3 +175,10 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
 // QCoreApplication::arguments().
 [[nodiscard]] std::expected<LaunchOptions, QString> parseLaunchOptions(
     const QStringList &arguments);
+
+// Pure startup policy used before creating QML or terminal runtime objects.
+// Any argv beyond argv[0] is intentionally outside the no-command protocol.
+[[nodiscard]] bool shouldUseSingleInstance(
+    const LaunchOptions &options,
+    qsizetype argumentCount,
+    QByteArrayView termProgram);

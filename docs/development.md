@@ -47,7 +47,8 @@ stable correlated read-only/running pane confirmation, atomic resolution,
 final-tab escalation, irreversible typed-workspace quit gating,
 application/pane-local chain completion, and atomic all/global workspace-close
 events, composite process-level window sources, zero-window recreation,
-multiwindow lifetime and aggregate quit coordination,
+multiwindow lifetime and aggregate quit coordination, versioned session-D-Bus
+owner arbitration, and two-process resident reactivation,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
@@ -80,10 +81,10 @@ selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
-`link-previews` policy, and the exact boolean/nullable-millisecond application
-lifetime policy. The process-loader tests verify default/current merging and
-malformed canonical
-values and nullable resets; launch-option tests verify their value-only overlay
+`link-previews` policy, the raw false/true/detect `gtk-single-instance` mode,
+and the exact boolean/nullable-millisecond application lifetime policy. The
+process-loader tests verify default/current merging, malformed canonical
+values, and nullable resets; launch-option tests verify their value-only overlay
 and worker-boundary projection; adapter tests verify that config-default changes
 preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
