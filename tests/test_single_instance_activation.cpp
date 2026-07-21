@@ -4,6 +4,7 @@
 #include <QDBusContext>
 #include <QDBusError>
 #include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
 #include <QDir>
 #include <QStandardPaths>
 #include <QTest>
@@ -60,11 +61,13 @@ class AcceptEndpoint final : public QObject {
 
 public:
     int calls = 0;
+    QVariantMap platformData;
 
 public Q_SLOTS:
-    Q_SCRIPTABLE void Activate(const QVariantMap &)
+    Q_SCRIPTABLE void Activate(const QVariantMap &data)
     {
         ++calls;
+        platformData = data;
     }
 };
 
@@ -155,14 +158,22 @@ void SingleInstanceActivationTest::secondaryActivatesPrimaryExactlyOnce()
     QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
     int activations = 0;
-    primary.setActivationHandler([&activations] {
+    DesktopActivationContext observed;
+    primary.setActivationHandler([&](DesktopActivationContext activation) {
         ++activations;
+        observed = std::move(activation);
         return true;
     });
 
     auto future = std::async(std::launch::async, [&bus, service] {
         SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start({.timeout = 2s});
+        return secondary.start({
+            .timeout = 2s,
+            .activation = {
+                .xdgActivationToken = QStringLiteral("forwarded-token"),
+                .desktopStartupId = QStringLiteral("forwarded-startup"),
+            },
+        });
     });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,
@@ -171,6 +182,10 @@ void SingleInstanceActivationTest::secondaryActivatesPrimaryExactlyOnce()
     QCOMPARE(result.role,
              SingleInstanceActivation::Role::ActivatedExisting);
     QCOMPARE(activations, 1);
+    QCOMPARE(observed.xdgActivationToken,
+             QStringLiteral("forwarded-token"));
+    QCOMPARE(observed.desktopStartupId,
+             QStringLiteral("forwarded-startup"));
 }
 
 void SingleInstanceActivationTest::secondaryCanExitWithoutActivatingPrimary()
@@ -186,7 +201,7 @@ void SingleInstanceActivationTest::secondaryCanExitWithoutActivatingPrimary()
     QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
     int activations = 0;
-    primary.setActivationHandler([&activations] {
+    primary.setActivationHandler([&activations](DesktopActivationContext) {
         ++activations;
         return true;
     });
@@ -215,23 +230,36 @@ void SingleInstanceActivationTest::activationWaitsUntilHandlerIsInstalled()
     QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
 
-    auto future = std::async(std::launch::async, [&bus, service] {
-        SingleInstanceActivation secondary(bus.client(), service);
-        return secondary.start({.timeout = 2s});
-    });
+    QDBusPendingCallWatcher firstCall(bus.client().asyncCall(
+        activationCall(service, {
+            {QStringLiteral("activation-token"),
+             QStringLiteral("queued-token")},
+        }), 2000));
+    QDBusPendingCallWatcher secondCall(bus.client().asyncCall(
+        activationCall(service, {
+            {QStringLiteral("activation-token"),
+             QStringLiteral("queued-token-two")},
+        }), 2000));
     QTest::qWait(100);
-    QCOMPARE(future.wait_for(0ms), std::future_status::timeout);
+    QVERIFY(!firstCall.isFinished());
+    QVERIFY(!secondCall.isFinished());
 
     int activations = 0;
-    primary.setActivationHandler([&activations] {
+    QStringList observedTokens;
+    primary.setActivationHandler([&](DesktopActivationContext activation) {
         ++activations;
+        observedTokens.append(std::move(activation.xdgActivationToken));
         return true;
     });
-    QTRY_COMPARE_WITH_TIMEOUT(future.wait_for(0ms),
-                              std::future_status::ready, 3000);
-    QCOMPARE(future.get().role,
-             SingleInstanceActivation::Role::ActivatedExisting);
-    QCOMPARE(activations, 1);
+    QTRY_VERIFY_WITH_TIMEOUT(firstCall.isFinished(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondCall.isFinished(), 3000);
+    QCOMPARE(firstCall.reply().type(), QDBusMessage::ReplyMessage);
+    QCOMPARE(secondCall.reply().type(), QDBusMessage::ReplyMessage);
+    QCOMPARE(activations, 2);
+    QCOMPARE(observedTokens, QStringList({
+        QStringLiteral("queued-token"),
+        QStringLiteral("queued-token-two"),
+    }));
 }
 
 void SingleInstanceActivationTest::queuedActivationReportsHandlerFailure()
@@ -255,7 +283,7 @@ void SingleInstanceActivationTest::queuedActivationReportsHandlerFailure()
     QCOMPARE(future.wait_for(0ms), std::future_status::timeout);
 
     int activations = 0;
-    primary.setActivationHandler([&activations] {
+    primary.setActivationHandler([&activations](DesktopActivationContext) {
         ++activations;
         return false;
     });
@@ -291,7 +319,12 @@ void SingleInstanceActivationTest::activationFollowsAnOwnerHandoff()
     auto future = std::async(
         std::launch::async, [thirdClient, service] {
             SingleInstanceActivation activation(thirdClient, service);
-            return activation.start({.timeout = 2s});
+            return activation.start({
+                .timeout = 2s,
+                .activation = {
+                    .xdgActivationToken = QStringLiteral("handoff-token"),
+                },
+            });
         });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,
@@ -301,6 +334,9 @@ void SingleInstanceActivationTest::activationFollowsAnOwnerHandoff()
     QCOMPARE(retiring.calls, 1);
     QVERIFY(retiring.handoffSucceeded);
     QCOMPARE(successor.calls, 1);
+    QCOMPARE(successor.platformData.value(QStringLiteral("activation-token"))
+                 .toString(),
+             QStringLiteral("handoff-token"));
 }
 
 void SingleInstanceActivationTest::exportsStandardInterfaceAndRejectsUnsupportedMethods()
@@ -316,8 +352,10 @@ void SingleInstanceActivationTest::exportsStandardInterfaceAndRejectsUnsupported
     QCOMPARE(primary.start({.timeout = 1s}).role,
              SingleInstanceActivation::Role::Primary);
     int activations = 0;
-    primary.setActivationHandler([&activations] {
+    DesktopActivationContext observed;
+    primary.setActivationHandler([&](DesktopActivationContext activation) {
         ++activations;
+        observed = std::move(activation);
         return true;
     });
 
@@ -342,6 +380,23 @@ void SingleInstanceActivationTest::exportsStandardInterfaceAndRejectsUnsupported
     QCOMPARE(reply.type(), QDBusMessage::ReplyMessage);
     QVERIFY(reply.arguments().isEmpty());
     QCOMPARE(activations, 1);
+    QCOMPARE(observed.xdgActivationToken, QStringLiteral("token"));
+    QCOMPARE(observed.desktopStartupId, QStringLiteral("startup"));
+
+    auto malformed = std::async(std::launch::async, [&bus, service] {
+        return bus.client().call(
+            activationCall(service, {
+                {QStringLiteral("activation-token"), 7},
+                {QStringLiteral("desktop-startup-id"),
+                 QByteArrayLiteral("not-a-string")},
+            }),
+            QDBus::Block, 1000);
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(
+        malformed.wait_for(0ms), std::future_status::ready, 2000);
+    QCOMPARE(malformed.get().type(), QDBusMessage::ReplyMessage);
+    QCOMPARE(activations, 2);
+    QVERIFY(observed.isEmpty());
 
     const auto unsupported
         = [&bus, &service](QString method, QList<QVariant> arguments) {

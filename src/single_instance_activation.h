@@ -1,5 +1,7 @@
 #pragma once
 
+#include "desktop_activation.h"
+
 #include <QDBusConnection>
 #include <QDBusContext>
 #include <QDBusMessage>
@@ -18,7 +20,8 @@
 
 // Coordinates no-payload application activation through the standard
 // org.freedesktop.Application endpoint on the user's session bus. It
-// deliberately carries no command line, environment, cwd, or shell text.
+// carries only standard presentation context: never command-line payload,
+// general environment state, cwd, or shell text.
 class SingleInstanceActivation final : public QObject,
                                        protected QDBusContext {
     Q_OBJECT
@@ -48,9 +51,11 @@ public:
         std::chrono::milliseconds timeout = std::chrono::seconds(10);
         ExistingInstanceAction existingInstanceAction =
             ExistingInstanceAction::Activate;
+        DesktopActivationContext activation;
     };
 
-    using ActivationHandler = std::move_only_function<bool()>;
+    using ActivationHandler = std::move_only_function<
+        bool(DesktopActivationContext)>;
 
     static constexpr auto InterfaceName = "org.freedesktop.Application";
 
@@ -87,6 +92,10 @@ private:
         ClaimStatus status = ClaimStatus::Failed;
         QString diagnostic;
     };
+    struct PendingActivation {
+        QDBusMessage request;
+        DesktopActivationContext activation;
+    };
 
     [[nodiscard]] ClaimResult tryClaimService();
     [[nodiscard]] std::expected<QString, QString> currentOwner() const;
@@ -98,7 +107,7 @@ private:
     QString serviceName_;
     QString objectPath_;
     ActivationHandler handler_;
-    std::vector<QDBusMessage> pendingActivations_;
+    std::vector<PendingActivation> pendingActivations_;
     bool started_ = false;
     bool objectRegistered_ = false;
     bool ownsService_ = false;

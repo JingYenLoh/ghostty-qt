@@ -1,5 +1,6 @@
 #include "application_controller.h"
 
+#include "desktop_activation.h"
 #include "ghostty_application_keybindings.h"
 #include "terminal_workspace.h"
 
@@ -8,11 +9,34 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QTimer>
 
 #include <algorithm>
 #include <ranges>
 #include <utility>
+
+namespace {
+
+bool isOwnedBy(const QObject *object, const QObject *owner) noexcept
+{
+    for (const QObject *candidate = object; candidate != nullptr;
+         candidate = candidate->parent()) {
+        if (candidate == owner) return true;
+    }
+    return false;
+}
+
+bool isValidWindowPair(const QQuickWindow *window,
+                       const TerminalWorkspace *workspace) noexcept
+{
+    return window != nullptr
+        && workspace != nullptr
+        && workspace->window() == window
+        && isOwnedBy(workspace, window);
+}
+
+} // namespace
 
 ApplicationController::ApplicationController(
     QQmlEngine &engine,
@@ -103,15 +127,18 @@ ApplicationController::qmlWindowFactory(QQmlEngine &engine)
 }
 
 std::expected<ApplicationWindow, QString>
-ApplicationController::createInitialWindow()
+ApplicationController::createInitialWindow(
+    DesktopActivationContext activation)
 {
     if (startupWindowHandled_) {
         return std::unexpected(
             QStringLiteral("The initial application window was already handled"));
     }
 
-    auto created = createWindow(effectiveOptions_);
-    if (created.has_value()) startupWindowHandled_ = true;
+    auto created = createWindow(effectiveOptions_, activation);
+    if (created.has_value() || hasCreatedSurface_) {
+        startupWindowHandled_ = true;
+    }
     return created;
 }
 
@@ -122,17 +149,29 @@ bool ApplicationController::startWithoutInitialWindow()
     return true;
 }
 
-bool ApplicationController::activateNoCommand()
+bool ApplicationController::activateNoCommand(
+    DesktopActivationContext activation)
 {
-    auto created = createWindow(activationWindowOptions());
+    if (!startupWindowHandled_) {
+        Q_EMIT windowCreationFailed(QStringLiteral(
+            "Application activation arrived before the startup window "
+            "decision"));
+        return false;
+    }
+    auto created = createWindow(activationWindowOptions(), activation);
     if (created.has_value()) return true;
     Q_EMIT windowCreationFailed(created.error());
     return false;
 }
 
 std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
-    const LaunchOptions &options)
+    const LaunchOptions &options,
+    const DesktopActivationContext &activation)
 {
+    if (windowCreationInProgress_) {
+        return std::unexpected(
+            QStringLiteral("Application window creation is already in progress"));
+    }
     if (!windowFactory_) {
         return std::unexpected(QStringLiteral("No window factory is available"));
     }
@@ -140,13 +179,20 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral("The application is already quitting"));
     }
+    windowCreationInProgress_ = true;
+    const auto creationGuard = qScopeGuard(
+        [this] { windowCreationInProgress_ = false; });
 
     std::expected<ApplicationWindow, QString> created = windowFactory_();
     if (!created.has_value()) return created;
-    const auto discardCreated = [&created] {
-        const QPointer<TerminalWorkspace> guardedWorkspace(
-            created->workspace);
-        delete created->window;
+    QPointer<QQuickWindow> guardedWindow(created->window);
+    QPointer<TerminalWorkspace> guardedWorkspace(created->workspace);
+    const auto pairIsValid = [&] {
+        return isValidWindowPair(
+            guardedWindow.data(), guardedWorkspace.data());
+    };
+    const auto discardCreated = [&] {
+        if (guardedWindow != nullptr) delete guardedWindow.data();
         if (guardedWorkspace != nullptr) delete guardedWorkspace.data();
         *created = {};
     };
@@ -160,36 +206,72 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral("The window factory returned an unowned workspace"));
     }
+    if (!isOwnedBy(created->workspace, created->window)) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The window factory returned a workspace outside the "
+                "window's QObject ownership tree"));
+    }
 
-    const QPointer<QQuickWindow> guardedWindow(created->window);
-    if (!created->workspace->initialize(options)) {
+    const bool initialized = guardedWorkspace->initialize(options);
+    // Match Ghostty's App.first lifecycle. A successfully initialized surface
+    // consumes the one-shot initial command even if a synchronous observer
+    // destroys the GUI pair before a later registration checkpoint.
+    if (initialized) hasCreatedSurface_ = true;
+    if (!pairIsValid()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The application window became invalid during workspace "
+                "initialization"));
+    }
+    if (!initialized) {
         discardCreated();
         return std::unexpected(
             QStringLiteral("The window workspace was already initialized"));
     }
-    // Match Ghostty's App.first lifecycle. Once a surface has successfully
-    // initialized, even a later GUI registration failure must not allow a
-    // future surface to consume the one-shot initial command again.
-    hasCreatedSurface_ = true;
-    if (!lifetime_.registerWindow(created->window)) {
+    if (!lifetime_.registerWindow(guardedWindow.data())) {
         discardCreated();
         return std::unexpected(
             QStringLiteral("Could not register the primary application window"));
     }
 
-    registerWindow(*created);
-    created->window->show();
-    created->window->requestActivate();
-    if (guardedWindow == nullptr) {
+    registerWindow({guardedWindow.data(), guardedWorkspace.data()});
+    if (!pairIsValid()) {
+        discardCreated();
         return std::unexpected(
-            QStringLiteral("The application window was destroyed during creation"));
+            QStringLiteral(
+                "The application window became invalid during registration"));
     }
-    Q_EMIT windowCreated(created->window, created->workspace);
-    if (guardedWindow == nullptr) {
+    showWindowWithActivation(*guardedWindow, activation);
+    if (!pairIsValid()) {
+        discardCreated();
         return std::unexpected(
-            QStringLiteral("The application window was destroyed by its creation observer"));
+            QStringLiteral(
+                "The application window became invalid while being shown"));
     }
-    return created;
+    if (activation.isEmpty()) {
+        guardedWindow->requestActivate();
+        if (!pairIsValid()) {
+            discardCreated();
+            return std::unexpected(
+                QStringLiteral(
+                    "The application window became invalid during activation"));
+        }
+    }
+    Q_EMIT windowCreated(guardedWindow.data(), guardedWorkspace.data());
+    if (!pairIsValid()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The application window became invalid in its creation "
+                "observer"));
+    }
+    return ApplicationWindow{
+        guardedWindow.data(),
+        guardedWorkspace.data(),
+    };
 }
 
 bool ApplicationController::dispatch(ApplicationAction action,
@@ -369,6 +451,12 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
     QQuickWindow *const window = applicationWindow.window;
     TerminalWorkspace *const workspace = applicationWindow.workspace;
     windows_.push_back({window, workspace});
+    connect(workspace, &QObject::destroyed, this,
+            [this, workspace, guardedWindow = QPointer(window)] {
+                workspaceDestroyed(workspace, guardedWindow);
+            });
+    connect(window, &QObject::destroyed, this,
+            [this, window] { retireWindow(window); });
     keybindings_->registerWorkspace(workspace);
 
     connect(workspace, &TerminalWorkspace::applicationActionRequested,
@@ -420,10 +508,6 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
                 });
             },
             Qt::SingleShotConnection);
-    connect(workspace, &QObject::destroyed, this,
-            [this, workspace] { workspaceDestroyed(workspace); });
-    connect(window, &QObject::destroyed, this,
-            [this, window] { retireWindow(window); });
 }
 
 void ApplicationController::noteWorkspaceActivated(
@@ -448,13 +532,32 @@ void ApplicationController::retireWindow(QQuickWindow *window)
     Q_EMIT windowRetired();
 }
 
-void ApplicationController::workspaceDestroyed(TerminalWorkspace *workspace)
+void ApplicationController::workspaceDestroyed(
+    TerminalWorkspace *workspace, QQuickWindow *window)
 {
     if (lastActiveWorkspace_.isNull()
         || lastActiveWorkspace_ == workspace) {
         lastActiveWorkspace_.clear();
     }
     awaitingShutdown_.remove(workspace);
+
+    // A workspace normally disappears as a child of its root window. If an
+    // observer destroys only that half, retire the unusable survivor instead
+    // of leaving lifetime tracking and the application registry divergent.
+    // Defer the check because QObject children are also destroyed while the
+    // root's destructor is active, before that root's QPointer is cleared.
+    if (!destroying_ && window != nullptr) {
+        const QPointer guardedWindow(window);
+        QTimer::singleShot(0, this, [this, guardedWindow] {
+            if (destroying_ || guardedWindow == nullptr) return;
+            const bool isRegisteredOrphan = std::ranges::any_of(
+                windows_, [guardedWindow](const WindowRecord &record) {
+                    return record.window == guardedWindow
+                        && record.workspace.isNull();
+                });
+            if (isRegisteredOrphan) delete guardedWindow.data();
+        });
+    }
 
     if (quitState_ == QuitState::AwaitingConfirmation
         && (quitDialogHost_.isNull() || quitDialogHost_ == workspace)

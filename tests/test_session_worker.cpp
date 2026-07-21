@@ -161,6 +161,7 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void stripsDesktopActivationFromChildEnvironment();
     void fallsBackFromUnavailableWorkingDirectory_data();
     void fallsBackFromUnavailableWorkingDirectory();
     void preservesInheritedLogicalPwd();
@@ -471,6 +472,53 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
+{
+    const ScopedEnvironmentVariable activationToken(
+        QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
+        QByteArrayLiteral("must-not-leak"));
+    const ScopedEnvironmentVariable startupId(
+        QByteArrayLiteral("DESKTOP_STARTUP_ID"),
+        QByteArrayLiteral("must-not-leak"));
+    const ScopedEnvironmentVariable sentinel(
+        QByteArrayLiteral("GHOSTTY_QT_CHILD_ENV_SENTINEL"),
+        QByteArrayLiteral("preserved"));
+
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf 'xdg=%s startup=%s sentinel=%s\\n' "
+            "\"${XDG_ACTIVATION_TOKEN-unset}\" "
+            "\"${DESKTOP_STARTUP_ID-unset}\" "
+            "\"${GHOSTTY_QT_CHILD_ENV_SENTINEL-unset}\""),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(QStringLiteral(
+                 "xdg=unset startup=unset sentinel=preserved")),
+             qPrintable(contents));
     worker.shutdown();
 }
 

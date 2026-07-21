@@ -435,6 +435,21 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
     GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR}"
 )
 
+add_library(ghostty-qt-desktop-activation STATIC
+    src/desktop_activation.cpp
+    src/desktop_activation.h
+)
+target_include_directories(ghostty-qt-desktop-activation PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-desktop-activation
+    PUBLIC Qt6::Core
+    PRIVATE Qt6::Gui
+)
+target_compile_options(ghostty-qt-desktop-activation PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-action-pipeline STATIC
     src/ghostty_action_catalog.cpp
     src/ghostty_action_catalog.h
@@ -533,6 +548,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::QuickControls2
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter

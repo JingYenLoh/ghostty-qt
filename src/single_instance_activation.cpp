@@ -140,7 +140,7 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         QDBusMessage message = QDBusMessage::createMethodCall(
             serviceName_, objectPath_,
             QString::fromLatin1(InterfaceName), QStringLiteral("Activate"));
-        message << QVariantMap{};
+        message << options.activation.toPlatformData();
         const QDBusMessage activationReply = connection_.call(
             message, QDBus::Block, boundedTimeout(remaining));
         const bool accepted
@@ -194,17 +194,18 @@ void SingleInstanceActivation::setActivationHandler(
     ActivationHandler handler)
 {
     handler_ = std::move(handler);
-    std::vector<QDBusMessage> pending =
+    std::vector<PendingActivation> pending =
         std::exchange(pendingActivations_, {});
-    for (const QDBusMessage &request : pending) {
-        completeActivation(request, handler_ && handler_());
+    for (PendingActivation &activation : pending) {
+        completeActivation(activation.request,
+            handler_ && handler_(std::move(activation.activation)));
     }
 }
 
 void SingleInstanceActivation::release()
 {
-    for (const QDBusMessage &request : pendingActivations_) {
-        completeActivation(request, false);
+    for (const PendingActivation &activation : pendingActivations_) {
+        completeActivation(activation.request, false);
     }
     pendingActivations_.clear();
     if (ownsService_) {
@@ -220,9 +221,12 @@ void SingleInstanceActivation::release()
 
 void SingleInstanceActivation::Activate(const QVariantMap &platformData)
 {
-    Q_UNUSED(platformData);
+    DesktopActivationContext activation =
+        DesktopActivationContext::fromPlatformData(platformData);
     if (!calledFromDBus()) {
-        if (ownsService_ && handler_) (void) handler_();
+        if (ownsService_ && handler_) {
+            (void)handler_(std::move(activation));
+        }
         return;
     }
 
@@ -236,9 +240,9 @@ void SingleInstanceActivation::Activate(const QVariantMap &platformData)
         || pendingActivations_.size() >= MaximumPendingActivations) {
         completeActivation(request, false);
     } else if (handler_) {
-        completeActivation(request, handler_());
+        completeActivation(request, handler_(std::move(activation)));
     } else {
-        pendingActivations_.push_back(request);
+        pendingActivations_.push_back({request, std::move(activation)});
     }
 }
 

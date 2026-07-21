@@ -282,19 +282,51 @@ is functional; the complete standard `Open(as,a{sv})` and
 The launching process's typed `initial-window` decision determines what
 happens when another owner exists: true sends standard source-less activation,
 while false unregisters its temporary endpoint and exits normally without
-contacting the owner. No activation forwards argv, environment, cwd, or shell
-text. A process carrying `DBUS_STARTER_ADDRESS` connects through Qt's
-activation-bus alias; an ordinary process uses the session bus. Calls arriving
-before startup finishes retain delayed replies. The handler is installed only
-after controller, configuration, lifetime, and test wiring, and each success
-is acknowledged after synchronous window registration.
+contacting the owner. No activation forwards argv, cwd, shell text, or general
+environment state. The sole launcher-state exception is a typed
+`DesktopActivationContext`: exact string-valued `activation-token` and
+`desktop-startup-id` fields are retained with each request, while unknown
+fields, wrong variant types, and embedded NULs are discarded. Pending startup
+requests keep their message/context pairs in FIFO order. A process carrying
+`DBUS_STARTER_ADDRESS` connects through Qt's activation-bus alias; an ordinary
+process uses the session bus. Calls arriving before startup finishes retain
+delayed replies. The handler is installed only after controller,
+configuration, lifetime, and test wiring, and each success is acknowledged
+after synchronous window registration.
+
+For a direct launch, `main` captures and unsets `XDG_ACTIVATION_TOKEN` and
+`DESKTOP_STARTUP_ID` before constructing `QGuiApplication`; an existing-owner
+fallback serializes those values into the standard platform dictionary, while
+a new primary carries them directly to its first window. Immediately around
+the target `QWindow::show()`, the GUI thread projects the typed values back to
+those two conventional variables so Qt's Wayland platform plugin can consume
+the transferred token. Immediately before projection, the activation state
+caches a sanitized child environment and marks presentation active. While it
+is active, `SessionWorker` returns that cache instead of walking process-global
+`environ`; outside presentation it takes a fresh sanitized snapshot under the
+same state mutex. This avoids racing Qt Wayland's own internal token unset and
+also lets a synchronously destroyed workspace join its worker without
+deadlocking on `show()`. An RAII guard always clears the one-shot variables
+afterward and never restores a consumed value. A window shown with transferred
+platform data does not issue a second `requestActivate()`.
+
+Window creation is a checked ownership transaction. The workspace must be
+both visually associated with the root and inside its QObject ownership tree;
+guarded liveness checkpoints follow initialization, lifetime registration,
+presentation, optional activation, and creation observers. Successful surface
+initialization consumes Ghostty's one-shot first-surface state even if a later
+synchronous callback destroys the pair. Any failure tears down the remaining
+half, and standalone workspace destruction retires its now-invalid root on the
+next event turn before normal last-window policy runs. Nested synchronous
+creation is rejected until the transaction completes, and every checkpoint
+revalidates both ownership relationships rather than checking only liveness.
+
 An unavailable bus starts independently. On a connected bus, rejection or
 incompatibility from the same live owner is fatal, while a bounded owner-
 identity loop follows a replacement owner during handoff. An ambiguous
 no-reply fails closed because the owner may already have created the window.
 This creation acknowledgement deliberately strengthens pinned Ghostty's
-fire-and-forget normal activation. Standard platform data is accepted but not
-interpreted, so compositor activation-token handoff remains separate work.
+fire-and-forget normal activation.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
@@ -1129,10 +1161,11 @@ The default CTest suite has focused layers for each ownership boundary:
   quits; `application-lifetime-explicit-quit` exercises the real application
   wiring under a disabled last-window policy.
 - `single-instance-activation` runs owner arbitration, exact-once acceptance,
-  delayed pre-handler replies, creation-failure propagation, owner handoff,
-  standard method/signature rejection, release/reacquisition, unavailable-bus
-  fallback, and ambiguous timeout behavior against isolated session buses
-  whose sockets and runtime directories live under repository-local `./tmp`.
+  delayed pre-handler replies, FIFO typed platform-data retention,
+  creation-failure propagation, owner handoff, standard method/signature
+  rejection, release/reacquisition, unavailable-bus fallback, and ambiguous
+  timeout behavior against isolated session buses whose sockets and runtime
+  directories live under repository-local `./tmp`.
 - `application-single-instance` starts two complete offscreen processes on an
   isolated bus, retires the primary's initial QML root to resident zero-window
   state, verifies the bare secondary exits successfully after recreating one
@@ -1141,7 +1174,13 @@ The default CTest suite has focused layers for each ownership boundary:
   an inert successful launch, then uses a true secondary to create exactly one
   first surface in the false-started primary. Config-on and config-off builds
   also exercise an explicitly bootstrapped zero-window host plus real cold
-  service discovery, activation, teardown, and restart on a private bus.
+  service discovery, activation, teardown, and restart on a private bus. A
+  standard-endpoint fixture also verifies that a real fallback executable
+  forwards exact launcher token/startup-ID platform data.
+- `desktop-activation` verifies exact platform-dictionary filtering,
+  pre-application launcher capture, scoped window-show projection, and
+  one-shot cleanup. Controller and worker suites additionally cover
+  reentrant half-pair destruction and shell-child token scrubbing.
 - `desktop-integration-install` stages an installation under repository-local
   `./tmp` and validates configuration-specific desktop/service metadata,
   install-time executable paths, bootstrap arguments, and config-helper
@@ -1190,8 +1229,8 @@ in a real Wayland session.
   actions, user-defined `link` rules, payload-bearing desktop/process
   activation, saved sessions, and full production packaging remain future
   work. Standard source-less desktop activation and minimal metadata are
-  implemented; systemd notification, activation-token consumption, icon, and
-  AppStream layers remain. OSC 8, the
+  implemented, including activation-token consumption; systemd notification,
+  icon, and AppStream layers remain. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen

@@ -1,4 +1,5 @@
 #include "session_worker.h"
+#include "desktop_activation.h"
 #include "ghostty_link_matcher.h"
 #include "ghostty_vt_adapter.h"
 #include "terminal_osc8_index.h"
@@ -685,7 +686,7 @@ bool SessionWorker::spawnChild()
     }
     argv.push_back(nullptr);
 
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    QProcessEnvironment environment = sanitizedChildEnvironment();
     const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
     if (!terminfo) {
         Q_EMIT errorOccurred(terminfo.error());

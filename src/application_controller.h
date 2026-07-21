@@ -2,6 +2,7 @@
 
 #include "application_action.h"
 #include "application_lifetime.h"
+#include "desktop_activation.h"
 #include "launch_options.h"
 #include "workspace_ids.h"
 
@@ -48,7 +49,7 @@ public:
     ~ApplicationController() override;
 
     [[nodiscard]] std::expected<ApplicationWindow, QString>
-    createInitialWindow();
+    createInitialWindow(DesktopActivationContext activation = {});
     // Completes the one-shot startup decision without requesting a surface.
     // A later explicit or remote new-window action can still create the first
     // surface and consume the current initial command.
@@ -56,7 +57,10 @@ public:
     // Handles a source-less process activation synchronously so the caller
     // can acknowledge only after a replacement window is registered. Ghostty
     // inherits the focused surface's cwd for this path, but not its font size.
-    [[nodiscard]] bool activateNoCommand();
+    // Startup must first choose createInitialWindow or
+    // startWithoutInitialWindow.
+    [[nodiscard]] bool activateNoCommand(
+        DesktopActivationContext activation = {});
     [[nodiscard]] bool dispatch(
         ApplicationAction action,
         TerminalWorkspace *sourceWorkspace = nullptr,
@@ -93,7 +97,8 @@ private:
 
     static WindowFactory qmlWindowFactory(QQmlEngine &engine);
     [[nodiscard]] std::expected<ApplicationWindow, QString> createWindow(
-        const LaunchOptions &options);
+        const LaunchOptions &options,
+        const DesktopActivationContext &activation = {});
     [[nodiscard]] LaunchOptions nextWindowOptions(
         TerminalWorkspace *sourceWorkspace,
         PaneId sourcePaneId) const;
@@ -106,7 +111,8 @@ private:
     void registerWindow(ApplicationWindow window);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);
     void retireWindow(QQuickWindow *window);
-    void workspaceDestroyed(TerminalWorkspace *workspace);
+    void workspaceDestroyed(TerminalWorkspace *workspace,
+                            QQuickWindow *window);
     void requestApplicationQuit();
     void commitApplicationQuit(TerminalWorkspace *host);
     void applicationQuitCancelled(TerminalWorkspace *host);
@@ -125,6 +131,7 @@ private:
     QuitState quitState_ = QuitState::Idle;
     bool startupWindowHandled_ = false;
     bool hasCreatedSurface_ = false;
+    bool windowCreationInProgress_ = false;
     bool startingApplicationShutdown_ = false;
     bool quitRehostScheduled_ = false;
     bool destroying_ = false;

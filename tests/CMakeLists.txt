@@ -9,6 +9,24 @@ target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-desktop-activation
+    test_desktop_activation.cpp
+)
+target_include_directories(test-desktop-activation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-desktop-activation PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-desktop-activation
+)
+add_test(NAME desktop-activation COMMAND test-desktop-activation)
+set_tests_properties(desktop-activation PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(test-application-lifetime
     test_application_lifetime.cpp
     ../src/application_lifetime.cpp
@@ -44,6 +62,7 @@ target_link_libraries(test-single-instance-activation PRIVATE
     Qt6::Core
     Qt6::DBus
     Qt6::Test
+    ghostty-qt-desktop-activation
 )
 add_test(NAME single-instance-activation
     COMMAND test-single-instance-activation)
@@ -96,6 +115,7 @@ target_link_libraries(test-application-controller PRIVATE
     Qt6::Test
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter
@@ -151,6 +171,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Gui
     Qt6::Test
     ghostty-qt-action-pipeline
+    ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter
@@ -187,6 +208,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Quick
     Qt6::Test
     ghostty-qt-action-pipeline
+    ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter
@@ -242,6 +264,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Test
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter

@@ -73,8 +73,10 @@ the host-language comparison and remaining engineering risks.
   share the standard `org.freedesktop.Application` session-D-Bus endpoint; an
   activating launcher synchronously creates exactly one new primary-owned
   window without forwarding command text, while `initial-window=false` exits
-  without activation. Installed desktop/service metadata supports cold and
-  warm activation, and Debug and Release builds use separate identities.
+  without activation. Standard activation-token and desktop-startup-ID data
+  follow the originating request into that window without leaking to its
+  shell. Installed desktop/service metadata supports cold and warm activation,
+  and Debug and Release builds use separate identities.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
@@ -245,7 +247,7 @@ The current compatibility slice applies these keys:
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
 | `window-show-tab-bar` | Supports Ghostty's exact `always`, `auto`, and `never` values and defaults to `auto`. `always` shows the tab strip with any tab count, `auto` hides it for one tab and shows it at two or more, and `never` hides it. Reload and the one/two-tab boundary update visibility live. This Qt mapping hides only the QML `TabBar`; the surrounding toolbar and its new-tab, split, and close controls remain available. |
 | `initial-window` | Defaults to `true`. `false` completes startup without constructing a QML root or terminal surface, while process configuration, reload, application actions, global shortcuts, and single-instance ownership remain available. A false secondary still participates in atomic name arbitration but exits successfully without activating the owner; a later launcher whose own current value is true activates that same primary even if the primary started with false. The installed D-Bus service forces false only for its bootstrap process, then the queued standard activation unconditionally creates exactly one first window. Local/application `new_window` and every accepted process/desktop activation remain unconditional, and the first surface created after suppressed startup retains the current one-shot program/hold; later surfaces clear them. Reloading the primary's value does not itself create or close a window because the decision is sampled once per launching process. Explicit `--initial-window=true|false` startup values take precedence over configuration. |
-| `gtk-single-instance` | Preserves raw `false`, `true`, or `detect`; detect uses the originating process's real invocation and `TERM_PROGRAM`. Eligible no-payload launches atomically arbitrate the application-ID D-Bus name and expose `org.freedesktop.Application` at the ID-derived root path. A true launcher or standard desktop `Activate(a{sv})` call keeps a startup-time reply pending and succeeds only after the primary synchronously registers one new window; a false launcher exits successfully without sending activation. The installed direct-exec service cold-starts a forced true/false zero-window host, while the desktop fallback forces only true. CLI bootstrap values outrank contradictory user configuration. The created window uses the primary's latest config, optionally inherits an actually focused/last-focused cwd, retains configured font size, and uses configured cwd when no valid focus remains. If it is the primary's first-ever surface it retains one-shot program/hold; subsequent surfaces clear them. An unavailable bus starts locally; connected-bus failures fail closed, while bounded owner-handoff recovery follows a replacement primary. Platform data is accepted but activation tokens are not yet applied; `Open`, `ActivateAction`, custom `class` namespaces, general option-bearing launches, and payload forwarding remain incomplete. The synchronous creation acknowledgement deliberately strengthens pinned Ghostty's fire-and-forget activation. |
+| `gtk-single-instance` | Preserves raw `false`, `true`, or `detect`; detect uses the originating process's real invocation and `TERM_PROGRAM`. Eligible no-payload launches atomically arbitrate the application-ID D-Bus name and expose `org.freedesktop.Application` at the ID-derived root path. A true launcher or standard desktop `Activate(a{sv})` call keeps a startup-time reply pending and succeeds only after the primary synchronously registers one complete window/workspace pair; a false launcher exits successfully without sending activation. The installed direct-exec service cold-starts a forced true/false zero-window host, while the desktop fallback forces only true. CLI bootstrap values outrank contradictory user configuration. The standard string `activation-token` and `desktop-startup-id` platform fields retain FIFO request identity, are projected only while the corresponding window is shown, and are then cleared; wrong types, embedded NULs, and unknown fields are discarded, and shell children never inherit the values. A direct primary captures the matching launcher environment before Qt starts and consumes it through the same presentation path. The created window uses the primary's latest config, optionally inherits an actually focused/last-focused cwd, retains configured font size, and uses configured cwd when no valid focus remains. If it is the primary's first-ever surface it retains one-shot program/hold; subsequent surfaces clear them. An unavailable bus starts locally; connected-bus failures fail closed, while bounded owner-handoff recovery follows a replacement primary. `Open`, `ActivateAction`, custom `class` namespaces, general option-bearing launches, and payload forwarding remain incomplete. The synchronous creation acknowledgement deliberately strengthens pinned Ghostty's fire-and-forget activation. |
 | `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so only the final ordinary confirmed window closure enters this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` retires every root and worker but keeps process configuration, actions, global shortcuts, and any enabled activation endpoint resident. Matching the pinned GTK control flow, an `initial-window=false` process that has never requested a surface is not treated as having closed its last window and remains resident even when this setting is true. After a first surface exists, the ordinary policy applies. An in-process, portal, or eligible true bare-secondary `new_window` request can create a fresh QML window, and reload updates both all live windows and the next replacement. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. |
 | `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A successfully created replacement window cancels the single application timer; a failed factory attempt leaves it armed, identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit`—including with zero windows—bypasses it. Pinned Ghostty's config documentation says a never-windowed `initial-window=false` process should time out, but its GTK runtime exposes no startup timer hook; this frontend follows the executable pinned GTK behavior and starts the delay only after a real final surface closes. |
 | `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
@@ -471,10 +473,14 @@ ordinary launches use the desktop session bus.
 The standard endpoint implements source-less `Activate(a{sv})`. It exports the
 required `Open(as,a{sv})` and `ActivateAction(s,av,a{sv})` method signatures but
 returns `NotSupported` until URI and action payload semantics are implemented.
-Platform data, including startup IDs and activation tokens, is accepted and
-currently ignored. The service file deliberately uses direct D-Bus activation:
-no dangling `SystemdService` is advertised before a matching user unit and
-notification lifecycle exist.
+`activation-token` and `desktop-startup-id` are accepted only as exact D-Bus
+strings, carried with their request, and exposed as `XDG_ACTIVATION_TOKEN` and
+`DESKTOP_STARTUP_ID` only during the target window's `show()` call. A direct
+launcher captures and clears the same environment variables before Qt starts;
+all paths clear them after presentation and strip them from every terminal
+child. Other platform data is ignored. The service file deliberately uses
+direct D-Bus activation: no dangling `SystemdService` is advertised before a
+matching user unit and notification lifecycle exist.
 
 ## Terminfo
 
@@ -521,7 +527,8 @@ multiwindow lifetime, zero-window recreation, source-stable new-tab/new-window
 working-directory/font inheritance, isolated standard D-Bus owner arbitration
 and timeout behavior, starter-bus-only warm and repeated cold service
 activation, CLI/config bootstrap precedence, two-process zero-window
-reactivation, aggregate quit
+reactivation, exact one-shot activation platform-data handoff and child
+scrubbing, reentrant window/workspace creation teardown, aggregate quit
 coordination, per-pane
 read-only input suppression and
 close protection, staged relocation of terminfo and the private config helper,
@@ -572,7 +579,7 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   compatible text-run batching and retained geometry remain CPU/allocation
   optimizations.
 - No X11 backend, payload-bearing secondary-launch protocol, theme editor,
-  session persistence, systemd/activation-token integration, project icon,
+  session persistence, systemd notification integration, project icon,
   AppStream metadata, or distribution package yet. Minimal desktop and direct
   D-Bus service activation metadata is installed.
   Configuration support is limited to the documented compatibility slice;

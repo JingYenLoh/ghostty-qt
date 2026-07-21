@@ -1,4 +1,5 @@
 #include "application_controller.h"
+#include "desktop_activation.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
 #include "terminal_pane.h"
@@ -822,6 +823,13 @@ int main(int argc, char *argv[])
         qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("wayland"));
     }
 
+    // Launcher presentation data is a one-shot capability. Capture and clear
+    // it before Qt, config helpers, or terminal workers can start threads or
+    // child processes; the typed value is projected only while its target
+    // window is shown.
+    DesktopActivationContext startupActivation =
+        DesktopActivationContext::takeFromEnvironment();
+
     QGuiApplication application(argc, argv);
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
@@ -884,6 +892,7 @@ int main(int argc, char *argv[])
                 .existingInstanceAction = effectiveApplicationOptions.initialWindow
                     ? SingleInstanceActivation::ExistingInstanceAction::Activate
                     : SingleInstanceActivation::ExistingInstanceAction::DoNotActivate,
+                .activation = startupActivation,
             });
         switch (activation.role) {
         case SingleInstanceActivation::Role::ActivatedExisting:
@@ -938,7 +947,8 @@ int main(int argc, char *argv[])
     std::optional<ApplicationWindow> initialWindow;
     if (effectiveApplicationOptions.initialWindow) {
         const std::expected<ApplicationWindow, QString> created =
-            applicationController.createInitialWindow();
+            applicationController.createInitialWindow(
+                std::move(startupActivation));
         if (!created.has_value()) {
             qCritical().noquote()
                 << "Could not create the primary application window:"
@@ -1036,8 +1046,10 @@ int main(int argc, char *argv[])
     // the corresponding window is registered.
     if (activationEndpoint) {
         activationEndpoint->setActivationHandler(
-            [controller = QPointer(&applicationController)] {
-                return controller != nullptr && controller->activateNoCommand();
+            [controller = QPointer(&applicationController)](
+                DesktopActivationContext activation) {
+                return controller != nullptr
+                    && controller->activateNoCommand(std::move(activation));
             });
     }
     const auto activationHandlerGuard = qScopeGuard([&activationEndpoint] {

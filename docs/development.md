@@ -49,7 +49,9 @@ application/pane-local chain completion, and atomic all/global workspace-close
 events, composite process-level window sources, zero-window recreation,
 multiwindow lifetime and aggregate quit coordination, standard
 `org.freedesktop.Application` owner arbitration, warm/cold service activation,
-staged desktop metadata, and two-process resident reactivation,
+staged desktop metadata, two-process resident reactivation, exact one-shot
+activation platform-data handoff and shell-child scrubbing, reentrant
+window/workspace creation teardown,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
@@ -187,15 +189,21 @@ PaneIds in separate windows, live and stale source inheritance, one-shot
 command removal including the first lazy surface after suppressed startup,
 live/replacement config, delayed-exit cancellation and factory failure, clean
 zero-window residence, application-wide confirmation and shutdown,
-cancellation, and dialog re-hosting. Private session-D-Bus integration also
-covers a false launcher that leaves a false-started primary at zero windows,
+cancellation, dialog re-hosting, ownership-contract rejection, and synchronous
+destruction during presentation and creation observers. Private session-D-Bus
+integration also covers a false launcher that leaves a false-started primary
+at zero windows,
 followed by a true launcher that creates exactly one primary-owned surface.
 With configuration enabled, the same suite forces the exact service bootstrap
 flags over contradictory user configuration; the config-off build proves that
 activation does not depend on the parser helper. Both call the standard
 endpoint against a warm zero-window process and let the bus discover, start,
 activate, retire, and restart a cold service using only its starter-bus
-environment. The DESTDIR-staged desktop integration test checks
+environment. Focused activation tests also verify exact D-Bus string filtering,
+FIFO platform-data retention, pre-Qt launcher capture, scoped window-show
+projection, cached race-free worker snapshots, fallback-executable forwarding,
+cleanup, and removal from terminal child environments. The DESTDIR-staged
+desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, and config-helper presence.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane

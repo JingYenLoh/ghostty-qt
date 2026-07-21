@@ -6,11 +6,13 @@
 #include <QGuiApplication>
 #include <QPointer>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include <expected>
+#include <optional>
 
 namespace {
 
@@ -87,9 +89,19 @@ private Q_SLOTS:
     void successfulReplacementCancelsDelayedQuit();
     void sourceLessActivationMatchesUpstreamInheritance();
     void sourceLessActivationCancelsQuitAndReportsFailure();
+    void sourceLessActivationRequiresStartupDecision();
+    void sourceLessActivationProjectsDesktopContext();
+    void reentrantWindowCreationIsRejected();
+    void showDestructionCannotLeaveHalfRegisteredWindow();
+    void failedInitialPresentationConsumesStartupDecision();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
     void pendingQuitRehostsAfterItsWindowDisappears();
     void failedReplacementLeavesDelayedQuitArmed();
+    void rejectsWorkspaceOutsideWindowOwnership();
+    void creationObserversCannotLeaveHalfRegisteredWindow_data();
+    void creationObserversCannotLeaveHalfRegisteredWindow();
+    void creationObserverCannotDetachWorkspace();
+    void workspaceLossRetiresOwningWindow();
 };
 
 void ApplicationControllerTest::initTestCase()
@@ -232,6 +244,115 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
     QVERIFY(controller.dispatch(ApplicationAction::Quit));
     QCOMPARE(committed.count(), 1);
     QCOMPARE(quit.count(), 1);
+}
+
+void ApplicationControllerTest::rejectsWorkspaceOutsideWindowOwnership()
+{
+    QPointer<QQuickWindow> window;
+    QPointer<TerminalWorkspace> workspace;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        window = new QQuickWindow;
+        workspace = new TerminalWorkspace;
+        workspace->setParentItem(window->contentItem());
+        return ApplicationWindow{window, workspace};
+    };
+
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    const auto created = controller.createInitialWindow();
+    QVERIFY(!created.has_value());
+    QVERIFY(created.error().contains(QStringLiteral("QObject ownership")));
+    QVERIFY(window.isNull());
+    QVERIFY(workspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
+}
+
+void ApplicationControllerTest::creationObserversCannotLeaveHalfRegisteredWindow_data()
+{
+    QTest::addColumn<bool>("deleteWorkspace");
+    QTest::newRow("workspace") << true;
+    QTest::newRow("window") << false;
+}
+
+void ApplicationControllerTest::creationObserversCannotLeaveHalfRegisteredWindow()
+{
+    QFETCH(bool, deleteWorkspace);
+    WindowFactoryHarness harness;
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), harness.factory(), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+
+    QPointer<QQuickWindow> observedWindow;
+    QPointer<TerminalWorkspace> observedWorkspace;
+    connect(&controller, &ApplicationController::windowCreated,
+            &controller,
+            [&](QQuickWindow *window, TerminalWorkspace *workspace) {
+                observedWindow = window;
+                observedWorkspace = workspace;
+                if (deleteWorkspace) {
+                    delete workspace;
+                } else {
+                    delete window;
+                }
+            });
+    QSignalSpy failure(&controller,
+                       &ApplicationController::windowCreationFailed);
+
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QVERIFY(observedWindow.isNull());
+    QVERIFY(observedWorkspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+    QVERIFY(controller.windows().isEmpty());
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
+}
+
+void ApplicationControllerTest::creationObserverCannotDetachWorkspace()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), harness.factory(), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+
+    QPointer<QQuickWindow> observedWindow;
+    QPointer<TerminalWorkspace> observedWorkspace;
+    connect(&controller, &ApplicationController::windowCreated,
+            &controller,
+            [&](QQuickWindow *window, TerminalWorkspace *workspace) {
+                observedWindow = window;
+                observedWorkspace = workspace;
+                workspace->setParent(nullptr);
+                QCOMPARE(workspace->window(), window);
+            });
+    QSignalSpy failure(&controller,
+                       &ApplicationController::windowCreationFailed);
+
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QVERIFY(observedWindow.isNull());
+    QVERIFY(observedWorkspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
+}
+
+void ApplicationControllerTest::workspaceLossRetiresOwningWindow()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QPointer<QQuickWindow> window(initial->window);
+    QPointer<TerminalWorkspace> workspace(initial->workspace);
+
+    delete initial->workspace;
+    QVERIFY(workspace.isNull());
+    QTRY_VERIFY_WITH_TIMEOUT(window.isNull(), 1000);
+    QCOMPARE(controller.windowCount(), 0);
+    QVERIFY(controller.windows().isEmpty());
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
 }
 
 void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
@@ -504,6 +625,194 @@ void ApplicationControllerTest::sourceLessActivationCancelsQuitAndReportsFailure
     QVERIFY(!failing.activateNoCommand());
     QCOMPARE(failure.count(), 1);
     QCOMPARE(failing.windowCount(), 1);
+}
+
+void ApplicationControllerTest::sourceLessActivationProjectsDesktopContext()
+{
+    const bool tokenWasSet =
+        qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN");
+    const bool startupWasSet =
+        qEnvironmentVariableIsSet("DESKTOP_STARTUP_ID");
+    const QByteArray previousToken = qgetenv("XDG_ACTIVATION_TOKEN");
+    const QByteArray previousStartup = qgetenv("DESKTOP_STARTUP_ID");
+    (void)qunsetenv("XDG_ACTIVATION_TOKEN");
+    (void)qunsetenv("DESKTOP_STARTUP_ID");
+    const auto restoreEnvironment = qScopeGuard([&] {
+        if (tokenWasSet) {
+            (void)qputenv("XDG_ACTIVATION_TOKEN", previousToken);
+        } else {
+            (void)qunsetenv("XDG_ACTIVATION_TOKEN");
+        }
+        if (startupWasSet) {
+            (void)qputenv("DESKTOP_STARTUP_ID", previousStartup);
+        } else {
+            (void)qunsetenv("DESKTOP_STARTUP_ID");
+        }
+    });
+
+    QByteArray tokenDuringShow;
+    QByteArray startupDuringShow;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        auto *window = new QQuickWindow;
+        auto *workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        connect(window, &QWindow::visibleChanged, window,
+                [&](bool visible) {
+                    if (!visible) return;
+                    tokenDuringShow = qgetenv("XDG_ACTIVATION_TOKEN");
+                    startupDuringShow = qgetenv("DESKTOP_STARTUP_ID");
+                });
+        return ApplicationWindow{window, workspace};
+    };
+
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+    QVERIFY(controller.activateNoCommand({
+        .xdgActivationToken = QStringLiteral("controller-token"),
+        .desktopStartupId = QStringLiteral("controller-startup"),
+    }));
+    QCOMPARE(tokenDuringShow, QByteArrayLiteral("controller-token"));
+    QCOMPARE(startupDuringShow, QByteArrayLiteral("controller-startup"));
+    QVERIFY(!qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN"));
+    QVERIFY(!qEnvironmentVariableIsSet("DESKTOP_STARTUP_ID"));
+}
+
+void ApplicationControllerTest::sourceLessActivationRequiresStartupDecision()
+{
+    WindowFactoryHarness harness;
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), harness.factory(), false);
+    QSignalSpy failure(&controller,
+                       &ApplicationController::windowCreationFailed);
+
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QCOMPARE(harness.calls, 0);
+    QVERIFY(controller.startWithoutInitialWindow());
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(harness.calls, 1);
+    QCOMPARE(failure.count(), 1);
+}
+
+void ApplicationControllerTest::reentrantWindowCreationIsRejected()
+{
+    int factoryCalls = 0;
+    ApplicationController *controller = nullptr;
+    std::optional<bool> nestedResult;
+    QByteArray tokenAfterNestedAttempt;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        ++factoryCalls;
+        auto *window = new QQuickWindow;
+        auto *workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        connect(window, &QWindow::visibleChanged, window,
+                [&](bool visible) {
+                    if (!visible || nestedResult.has_value()) return;
+                    nestedResult = controller->activateNoCommand({
+                        .xdgActivationToken =
+                            QStringLiteral("nested-token"),
+                    });
+                    tokenAfterNestedAttempt =
+                        qgetenv("XDG_ACTIVATION_TOKEN");
+                });
+        return ApplicationWindow{window, workspace};
+    };
+
+    ApplicationController ownedController(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    controller = &ownedController;
+    QSignalSpy failure(&ownedController,
+                       &ApplicationController::windowCreationFailed);
+
+    QVERIFY(ownedController.startWithoutInitialWindow());
+    QVERIFY(ownedController.activateNoCommand({
+        .xdgActivationToken = QStringLiteral("outer-token"),
+    }));
+    QVERIFY(nestedResult.has_value());
+    QVERIFY(!*nestedResult);
+    QCOMPARE(tokenAfterNestedAttempt, QByteArrayLiteral("outer-token"));
+    QCOMPARE(factoryCalls, 1);
+    QCOMPARE(failure.count(), 1);
+    QCOMPARE(ownedController.windowCount(), 1);
+    QVERIFY(!qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN"));
+}
+
+void ApplicationControllerTest::showDestructionCannotLeaveHalfRegisteredWindow()
+{
+    QPointer<QQuickWindow> observedWindow;
+    QPointer<TerminalWorkspace> observedWorkspace;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        observedWindow = new QQuickWindow;
+        observedWorkspace = new TerminalWorkspace(
+            observedWindow->contentItem());
+        observedWorkspace->setParentItem(observedWindow->contentItem());
+        connect(observedWindow, &QWindow::visibleChanged, observedWindow,
+                [workspace = observedWorkspace](bool visible) {
+                    if (visible && workspace != nullptr) {
+                        delete workspace.data();
+                    }
+                });
+        return ApplicationWindow{observedWindow, observedWorkspace};
+    };
+
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+    QSignalSpy failure(&controller,
+                       &ApplicationController::windowCreationFailed);
+
+    QVERIFY(!controller.activateNoCommand());
+    QCOMPARE(failure.count(), 1);
+    QVERIFY(observedWindow.isNull());
+    QVERIFY(observedWorkspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+    QVERIFY(controller.windows().isEmpty());
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
+}
+
+void ApplicationControllerTest::failedInitialPresentationConsumesStartupDecision()
+{
+    int factoryCalls = 0;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        ++factoryCalls;
+        auto *window = new QQuickWindow;
+        auto *workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        if (factoryCalls == 1) {
+            connect(window, &QWindow::visibleChanged, window,
+                    [guardedWorkspace = QPointer(workspace)](bool visible) {
+                        if (visible && guardedWorkspace != nullptr) {
+                            delete guardedWorkspace.data();
+                        }
+                    });
+        }
+        return ApplicationWindow{window, workspace};
+    };
+
+    ApplicationController controller(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    const auto failed = controller.createInitialWindow();
+    QVERIFY(!failed.has_value());
+    QCOMPARE(factoryCalls, 1);
+
+    const auto retry = controller.createInitialWindow();
+    QVERIFY(!retry.has_value());
+    QVERIFY(retry.error().contains(QStringLiteral("already handled")));
+    QCOMPARE(factoryCalls, 1);
+
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(factoryCalls, 2);
+    const QVector<ApplicationWindow> windows = controller.windows();
+    QCOMPARE(windows.size(), 1);
+    QVERIFY(windows.constFirst().workspace
+                ->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!windows.constFirst().workspace
+                 ->effectiveLaunchOptions().hold);
 }
 
 void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirmation()

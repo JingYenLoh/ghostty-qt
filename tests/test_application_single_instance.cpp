@@ -99,6 +99,26 @@ QString applicationObjectPath()
     return path;
 }
 
+class RecordingActivationEndpoint final : public QObject {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
+
+public:
+    int calls = 0;
+    QVariantMap platformData;
+
+public Q_SLOTS:
+    Q_SCRIPTABLE void Activate(const QVariantMap &data)
+    {
+        ++calls;
+        platformData = data;
+        Q_EMIT activated();
+    }
+
+Q_SIGNALS:
+    void activated();
+};
+
 QDBusMessage activateApplication(QDBusConnection &connection)
 {
     QDBusMessage request = QDBusMessage::createMethodCall(applicationId(),
@@ -142,6 +162,7 @@ class ApplicationSingleInstanceTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void execFallbackForwardsLauncherPlatformData();
     void explicitZeroWindowHostSupportsStandardActivation();
     void dbusColdStartsZeroWindowHost();
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
@@ -149,6 +170,63 @@ private Q_SLOTS:
     void falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates();
 #endif
 };
+
+void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir configHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-desktop-forwarding-XXXXXX")));
+    QVERIFY(configHome.isValid());
+    QVERIFY(writeGhosttyConfig(configHome.path(),
+        QByteArrayLiteral("gtk-single-instance = false\n"
+                          "initial-window = true\n")));
+
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+    RecordingActivationEndpoint endpoint;
+    QVERIFY(bus.server().registerObject(applicationObjectPath(),
+        QStringLiteral("org.freedesktop.Application"), &endpoint,
+        QDBusConnection::ExportScriptableSlots));
+    QVERIFY(bus.server().registerService(applicationId()));
+
+    QProcessEnvironment environment =
+        applicationEnvironment(bus, configHome.path());
+    environment.insert(QStringLiteral("XDG_ACTIVATION_TOKEN"),
+                       QStringLiteral("fallback-token"));
+    environment.insert(QStringLiteral("DESKTOP_STARTUP_ID"),
+                       QStringLiteral("fallback-startup"));
+    QProcess secondary;
+    secondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    secondary.setArguments({QStringLiteral("--gtk-single-instance=true")});
+    secondary.setProcessEnvironment(environment);
+    secondary.start();
+    QVERIFY(secondary.waitForStarted(3000));
+    const auto cleanup = qScopeGuard([&secondary] {
+        if (secondary.state() == QProcess::NotRunning) return;
+        secondary.kill();
+        secondary.waitForFinished(3000);
+    });
+
+    QTRY_COMPARE_WITH_TIMEOUT(endpoint.calls, 1, 10'000);
+    QCOMPARE(endpoint.platformData.value(
+                 QStringLiteral("activation-token")).toString(),
+             QStringLiteral("fallback-token"));
+    QCOMPARE(endpoint.platformData.value(
+                 QStringLiteral("desktop-startup-id")).toString(),
+             QStringLiteral("fallback-startup"));
+    QCOMPARE(endpoint.platformData.size(), 2);
+    if (secondary.state() != QProcess::NotRunning) {
+        QVERIFY2(secondary.waitForFinished(10'000),
+                 qPrintable(processFailure(
+                     secondary, secondary.readAllStandardOutput())));
+    }
+    QCOMPARE(secondary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(secondary.exitCode(), 0);
+}
 
 void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActivation()
 {
