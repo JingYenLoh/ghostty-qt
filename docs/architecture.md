@@ -240,8 +240,13 @@ or controller threads.
 process-action vocabulary that remains available with zero workspaces. Window
 creation is queued to the GUI event loop, reuses one `QQmlComponent`,
 initializes the new workspace from the latest process options before
-presentation, and consumes the initial one-shot command and hold state only
-when the first-ever surface initializes.
+presentation, seeds its pre-fullscreen restore state, and requests its initial
+normal, maximized, or fullscreen Qt window state through the activation-aware
+presentation call. Qt Quick exposes only the dominant fullscreen state, so
+when both settings are enabled the retained state and a visibility observer
+restore maximized after either an action- or compositor-driven fullscreen
+exit. The creation transaction consumes the initial one-shot command and hold
+state only when the first-ever surface initializes.
 Suppressed startup can therefore retain those values for its first later local
 or remote window; every subsequent window clears them permanently. A surface
 source is the composite live
@@ -792,7 +797,7 @@ tab/split fallbacks partial.
 The current typed compatibility slice contains `working-directory`,
 `split-inherit-working-directory`, `tab-inherit-working-directory`,
 `window-inherit-font-size`, `window-new-tab-position`,
-`window-show-tab-bar`, `font-family`, `font-size`, the
+`window-show-tab-bar`, `maximize`, `fullscreen`, `font-family`, `font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -815,6 +820,10 @@ insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
 child as manually zoomed. Tab-strip visibility is workspace-owned presentation
 policy and updates immediately without entering a pane or worker. The
+maximize and Linux-normalized fullscreen values remain application-owned
+creation policy: a successful reload changes every subsequently created
+window, including resident and desktop-activation replacements, without
+changing any live window's state. The
 workspace-owned `split-preserve-zoom` navigation bit also reloads without a
 pane or worker update and is consulted by each subsequent successful
 `goto_split`; it never changes the current zoom merely because configuration

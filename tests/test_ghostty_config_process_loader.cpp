@@ -48,6 +48,8 @@ QByteArray defaultOutput()
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
                           "window-show-tab-bar = auto\n"
+                          "maximize = false\n"
+                          "fullscreen = false\n"
                           "selection-foreground = \n"
                           "selection-background = \n"
                           "search-foreground = #000000\n"
@@ -193,6 +195,7 @@ private Q_SLOTS:
     void rejectsMalformedStructuredConfigJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
     void preservesDefaultAndAcceptsEveryWindowShowTabBarMode();
+    void preservesDefaultAndAcceptsEveryFullscreenMode();
     void preservesDefaultAndAcceptsEveryLinkPreviewMode();
     void preservesDefaultsAndAcceptsEveryClipboardMode();
     void emptyRepeatableChangesResetDefaults();
@@ -494,6 +497,11 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("auto"));
+    QVERIFY(!canonicalDefaults->values.value(
+                 QStringLiteral("maximize")).toBool());
+    QCOMPARE(canonicalDefaults->values.value(
+                 QStringLiteral("fullscreen")).toString(),
+             QStringLiteral("false"));
     QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.7);
@@ -526,6 +534,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "window-inherit-font-size = false\r\n"
             "window-new-tab-position = end\r\n"
             "window-show-tab-bar = never\r\n"
+            "maximize = true\r\n"
+            "fullscreen = non-native-visible-menu\r\n"
             "palette = 1=#123456\r\n"
             "palette = 255=#fedcba\r\n"
             "selection-foreground = cell-background\r\n"
@@ -596,6 +606,9 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("never"));
+    QVERIFY(snapshot.values.value(QStringLiteral("maximize")).toBool());
+    QCOMPARE(snapshot.values.value(QStringLiteral("fullscreen")).toString(),
+             QStringLiteral("non-native-visible-menu"));
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("unfocused-split-opacity")).toDouble(),
              0.42);
@@ -704,6 +717,34 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryWindowShowTa
         QVERIFY2(changed.has_value(), qPrintable(errorMessage(changed)));
         QCOMPARE(changed->values
                      .value(QStringLiteral("window-show-tab-bar")).toString(),
+                 QString::fromLatin1(mode));
+    }
+}
+
+void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryFullscreenMode()
+{
+    ConfigFixture fixture;
+    const GhosttyConfigLoadResult unchanged = parseGhosttyConfigShowOutputs(
+        defaultOutput(), {}, fixture.candidates());
+    QVERIFY2(unchanged.has_value(), qPrintable(errorMessage(unchanged)));
+    QVERIFY(!unchanged->values.value(QStringLiteral("maximize")).toBool());
+    QCOMPARE(unchanged->values.value(QStringLiteral("fullscreen")).toString(),
+             QStringLiteral("false"));
+
+    for (const QByteArray &mode : {
+             QByteArrayLiteral("false"),
+             QByteArrayLiteral("true"),
+             QByteArrayLiteral("non-native"),
+             QByteArrayLiteral("non-native-visible-menu"),
+             QByteArrayLiteral("non-native-padded-notch"),
+         }) {
+        const GhosttyConfigLoadResult changed = parseGhosttyConfigShowOutputs(
+            defaultOutput(),
+            QByteArrayLiteral("maximize = true\nfullscreen = ") + mode + '\n',
+            fixture.candidates());
+        QVERIFY2(changed.has_value(), qPrintable(errorMessage(changed)));
+        QVERIFY(changed->values.value(QStringLiteral("maximize")).toBool());
+        QCOMPARE(changed->values.value(QStringLiteral("fullscreen")).toString(),
                  QString::fromLatin1(mode));
     }
 }
@@ -924,6 +965,8 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QByteArrayLiteral("window-inherit-font-size = true\n"),
              QByteArrayLiteral("window-new-tab-position = current\n"),
              QByteArrayLiteral("window-show-tab-bar = auto\n"),
+             QByteArrayLiteral("maximize = false\n"),
+             QByteArrayLiteral("fullscreen = false\n"),
              QByteArrayLiteral("mouse-reporting = true\n"),
              QByteArrayLiteral("unfocused-split-opacity = 0.7\n"),
              QByteArrayLiteral("unfocused-split-fill = \n"),
@@ -965,6 +1008,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
              QByteArrayLiteral("tab-inherit-working-directory"),
              QByteArrayLiteral("window-inherit-working-directory"),
              QByteArrayLiteral("window-inherit-font-size"),
+             QByteArrayLiteral("maximize"),
          }) {
         for (const QByteArray &value : {
                  QByteArrayLiteral(""), QByteArrayLiteral("1"),
@@ -980,6 +1024,22 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
                      QStringLiteral("Invalid %1 in Ghostty config output at line 1")
                          .arg(QString::fromLatin1(key)));
         }
+    }
+
+    for (const QByteArray &value : {
+             QByteArrayLiteral(""), QByteArrayLiteral("TRUE"),
+             QByteArrayLiteral("native"),
+             QByteArrayLiteral("non-native-visible"),
+         }) {
+        const GhosttyConfigLoadResult malformedFullscreen =
+            parseGhosttyConfigShowOutputs(
+                defaultOutput(),
+                QByteArrayLiteral("fullscreen = ") + value
+                    + QByteArrayLiteral("\n"),
+                fixture.candidates());
+        QVERIFY(!malformedFullscreen.has_value());
+        QCOMPARE(malformedFullscreen.error(),
+                 QStringLiteral("Invalid fullscreen in Ghostty config output at line 1"));
     }
 
     for (const QByteArray &value : {
@@ -1351,7 +1411,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                        "window-inherit-working-directory = false\n"
                        "window-inherit-font-size = false\n"
                        "window-new-tab-position = end\n"
-                       "window-show-tab-bar = never\n")
+                       "window-show-tab-bar = never\n"
+                       "maximize = true\n"
+                       "fullscreen = non-native-visible-menu\n")
             .arg(configuredDirectory)
             .toUtf8());
 
@@ -1381,6 +1443,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
     QCOMPARE(result->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("never"));
+    QVERIFY(result->values.value(QStringLiteral("maximize")).toBool());
+    QCOMPARE(result->values.value(QStringLiteral("fullscreen")).toString(),
+             QStringLiteral("non-native-visible-menu"));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
@@ -1391,7 +1456,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                           "window-inherit-working-directory = true\n"
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
-                          "window-show-tab-bar = always\n"));
+                          "window-show-tab-bar = always\n"
+                          "maximize = false\n"
+                          "fullscreen = false\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.value(QStringLiteral("working-directory"))
@@ -1413,6 +1480,9 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
     QCOMPARE(result->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("always"));
+    QVERIFY(!result->values.value(QStringLiteral("maximize")).toBool());
+    QCOMPARE(result->values.value(QStringLiteral("fullscreen")).toString(),
+             QStringLiteral("false"));
 
     ConfigFixture::writeFile(
         fixture.preferredPath,

@@ -340,6 +340,11 @@
       "status": "supported",
       "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
     },
+    "fullscreen": {
+      "status": "supported",
+      "scope": "linux",
+      "note": "The exact pinned enum defaults false. True and every non-native variant map to Qt native fullscreen on Linux for each subsequently created window; reload never changes existing window state. When maximize is also true, action- and compositor-driven fullscreen exits restore maximized."
+    },
     "initial-window": {
       "status": "supported",
       "scope": "linux",
@@ -360,6 +365,10 @@
     "link-url": {
       "status": "supported",
       "note": "The pinned default URL/path expression and vendored Oniguruma semantics run on complete semantic logical lines. The setting defaults true, reloads live, and controls only regex links; explicit OSC 8 destinations remain interactive when disabled."
+    },
+    "maximize": {
+      "status": "supported",
+      "note": "The exact default-false boolean presents every subsequently created window maximized. Initial, action-created, resident-replacement, and desktop-activated windows share the same creation path; reload affects future windows without mutating existing state."
     },
     "middle-click-action": {
       "status": "supported",

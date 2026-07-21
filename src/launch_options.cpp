@@ -297,6 +297,22 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     } else if (showTabBar == QStringLiteral("never")) {
         result.windowShowTabBar = WindowShowTabBar::Never;
     }
+    applyConfigBool(snapshot, QStringLiteral("maximize"), result.maximize);
+    if (const auto fullscreen = snapshot.value<QString>(
+            QStringLiteral("fullscreen"))) {
+        if (*fullscreen == QStringLiteral("false")) {
+            result.fullscreen = false;
+        } else if (*fullscreen == QStringLiteral("true")
+                   || *fullscreen == QStringLiteral("non-native")
+                   || *fullscreen
+                       == QStringLiteral("non-native-visible-menu")
+                   || *fullscreen
+                       == QStringLiteral("non-native-padded-notch")) {
+            // Ghostty documents every non-native mode as equivalent to native
+            // fullscreen away from macOS. This frontend is Linux-only.
+            result.fullscreen = true;
+        }
+    }
     applyConfigBool(
         snapshot, QStringLiteral("quit-after-last-window-closed"),
         result.quitAfterLastWindowClosed);

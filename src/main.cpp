@@ -666,6 +666,69 @@ bool installFullscreenActionTestHook(QQuickWindow *window,
     return true;
 }
 
+bool installInitialWindowStateTestHook(QQuickWindow *window)
+{
+    if (window == nullptr) {
+        qCritical()
+            << "Initial-window-state test hook could not find the QML window";
+        return false;
+    }
+
+    auto *const timer = new QTimer(window);
+    timer->setSingleShot(true);
+    const auto stage = std::make_shared<int>(0);
+    const auto retries = std::make_shared<int>(0);
+    QObject::connect(
+        timer, &QTimer::timeout, window,
+        [window, timer, stage, retries] {
+            const QWindow::Visibility expected = *stage == 1
+                ? QWindow::Maximized
+                : QWindow::FullScreen;
+            if (window->visibility() != expected) {
+                if (++*retries <= 100) {
+                    timer->start(10);
+                    return;
+                }
+                qCritical()
+                    << "Initial-window-state test hook expected visibility"
+                    << expected << "at stage" << *stage << "but observed"
+                    << window->visibility();
+                QCoreApplication::exit(1);
+                return;
+            }
+            if (window->property("visibilityBeforeFullscreen").toInt()
+                != static_cast<int>(QWindow::Maximized)) {
+                qCritical()
+                    << "Initial fullscreen window did not retain maximized restore state";
+                QCoreApplication::exit(1);
+                return;
+            }
+
+            *retries = 0;
+            if (*stage == 2) {
+                QCoreApplication::quit();
+                return;
+            }
+            if (*stage == 0) {
+                // Simulate a compositor or window-manager fullscreen exit,
+                // which does not call the QML action helper.
+                window->setVisibility(QWindow::Windowed);
+            } else {
+                if (!QMetaObject::invokeMethod(
+                        window, "toggleFullscreen", Qt::DirectConnection)) {
+                    qCritical()
+                        << "Initial-window-state test hook could not invoke the QML fullscreen toggle";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+            }
+            ++*stage;
+            timer->start(0);
+        });
+    timer->start(0);
+    return true;
+}
+
 bool installMaximizeActionTestHook(QQuickWindow *window,
                                    TerminalWorkspace *workspace)
 {
@@ -1216,6 +1279,13 @@ int main(int argc, char *argv[])
             "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
         if (!initialWindow
             || !installFullscreenActionTestHook(applicationWindow, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE") == 1) {
+        if (!initialWindow
+            || !installInitialWindowStateTestHook(applicationWindow)) {
             return 1;
         }
     }

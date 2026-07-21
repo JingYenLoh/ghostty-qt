@@ -45,6 +45,8 @@ struct ParsedConfig {
     std::optional<bool> windowInheritFontSize;
     std::optional<QString> windowNewTabPosition;
     std::optional<QString> windowShowTabBar;
+    std::optional<bool> maximize;
+    std::optional<QString> fullscreen;
     SparsePalette palette;
     std::optional<QVariant> selectionForeground;
     std::optional<QVariant> selectionBackground;
@@ -103,6 +105,8 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.windowInheritFontSize,
             parsed.windowNewTabPosition,
             parsed.windowShowTabBar,
+            parsed.maximize,
+            parsed.fullscreen,
             parsed.selectionForeground,
             parsed.selectionBackground,
             parsed.searchForeground,
@@ -620,6 +624,23 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->windowShowTabBar = value;
+        } else if (key == QStringLiteral("maximize")) {
+            if (!parseRequiredBool(parsed->maximize)) {
+                return false;
+            }
+        } else if (key == QStringLiteral("fullscreen")) {
+            if (value != QStringLiteral("false")
+                && value != QStringLiteral("true")
+                && value != QStringLiteral("non-native")
+                && value != QStringLiteral("non-native-visible-menu")
+                && value != QStringLiteral("non-native-padded-notch")) {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid fullscreen in Ghostty config output at line %1")
+                        .arg(displayLine));
+                return false;
+            }
+            parsed->fullscreen = value;
         } else if (key == QStringLiteral("palette")) {
             int index = 0;
             QColor color;
@@ -1410,6 +1431,9 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
             *defaults.windowNewTabPosition);
     const QString windowShowTabBar = changes.windowShowTabBar.value_or(
         *defaults.windowShowTabBar);
+    const bool maximize = changes.maximize.value_or(*defaults.maximize);
+    const QString fullscreen =
+        changes.fullscreen.value_or(*defaults.fullscreen);
     SparsePalette palette = defaults.palette;
     for (std::size_t index = 0; index < palette.size(); ++index) {
         if (changes.palette[index].has_value()) {
@@ -1515,6 +1539,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            windowNewTabPosition);
     snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
                            windowShowTabBar);
+    snapshot.values.insert(QStringLiteral("maximize"), maximize);
+    snapshot.values.insert(QStringLiteral("fullscreen"), fullscreen);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);
     snapshot.values.insert(QStringLiteral("selection-foreground"),
                            selectionForeground);

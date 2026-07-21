@@ -7,6 +7,7 @@ ApplicationWindow {
     id: window
     property bool closeApproved: false
     property int visibilityBeforeFullscreen: Window.Windowed
+    property int previousVisibility: Window.Hidden
 
     function toggleFullscreen() {
         if (visibility === Window.FullScreen) {
@@ -27,6 +28,19 @@ ApplicationWindow {
             visibility = visibility === Window.Maximized
                        ? Window.Windowed
                        : Window.Maximized
+        }
+    }
+
+    onVisibilityChanged: {
+        const prior = previousVisibility
+        previousVisibility = window.visibility
+        if (prior === Window.FullScreen
+                && window.visibility === Window.Windowed
+                && visibilityBeforeFullscreen !== Window.Windowed) {
+            // A compositor-side fullscreen exit bypasses toggleFullscreen().
+            // Restore the state captured before fullscreen just as the
+            // application action does.
+            window.visibility = visibilityBeforeFullscreen
         }
     }
 

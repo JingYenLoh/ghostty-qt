@@ -51,6 +51,7 @@ private Q_SLOTS:
     void mapsSplitPreserveZoom();
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
+    void mapsStartupWindowState();
     void mapsApplicationLifetime();
     void mapsSingleInstancePolicy();
     void mapsUnfocusedSplitAppearance();
@@ -122,6 +123,8 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
+    QVERIFY(!options.maximize);
+    QVERIFY(!options.fullscreen);
     QVERIFY(options.quitAfterLastWindowClosed);
     QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(options.initialWindow);
@@ -761,6 +764,51 @@ void LaunchOptionsTest::mapsWindowShowTabBar()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsStartupWindowState()
+{
+    LaunchOptions base;
+    base.maximize = true;
+    base.fullscreen = true;
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("maximize"), false);
+    snapshot.values.insert(QStringLiteral("fullscreen"),
+                           QStringLiteral("false"));
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(!result.maximize);
+    QVERIFY(!result.fullscreen);
+
+    snapshot.values.insert(QStringLiteral("maximize"), true);
+    for (const QString &mode : {
+             QStringLiteral("true"),
+             QStringLiteral("non-native"),
+             QStringLiteral("non-native-visible-menu"),
+             QStringLiteral("non-native-padded-notch"),
+         }) {
+        snapshot.values.insert(QStringLiteral("fullscreen"), mode);
+        result = applyGhosttyConfigSnapshot(base, snapshot);
+        QVERIFY(result.maximize);
+        QVERIFY(result.fullscreen);
+    }
+
+    LaunchOptions unchanged;
+    snapshot.values.insert(QStringLiteral("maximize"),
+                           QStringLiteral("true"));
+    snapshot.values.insert(QStringLiteral("fullscreen"), true);
+    QCOMPARE(applyGhosttyConfigSnapshot(unchanged, snapshot), unchanged);
+
+    snapshot.values.insert(QStringLiteral("maximize"), true);
+    snapshot.values.insert(QStringLiteral("fullscreen"),
+                           QStringLiteral("native"));
+    result = applyGhosttyConfigSnapshot(unchanged, snapshot);
+    QVERIFY(result.maximize);
+    QVERIFY(!result.fullscreen);
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsApplicationLifetime()
 {
     LaunchOptions base;
@@ -1078,6 +1126,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.maximize = true;
+    frontendOnlyChanged.fullscreen = true;
     frontendOnlyChanged.quitAfterLastWindowClosed = false;
     frontendOnlyChanged.quitAfterLastWindowClosedDelay =
         std::chrono::milliseconds(250);

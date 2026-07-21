@@ -244,7 +244,30 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
             QStringLiteral(
                 "The application window became invalid during registration"));
     }
-    showWindowWithActivation(*guardedWindow, activation);
+
+    // Fullscreen takes precedence at presentation time; the QML root retains
+    // the maximized state separately so leaving an initially fullscreen and
+    // maximized window restores it to maximized.
+    guardedWindow->setProperty(
+        "visibilityBeforeFullscreen",
+        static_cast<int>(options.maximize
+                             ? QWindow::Maximized
+                             : QWindow::Windowed));
+    if (!pairIsValid()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The application window became invalid while configuring "
+                "its initial state"));
+    }
+
+    const WindowPresentationMode presentationMode = options.fullscreen
+        ? WindowPresentationMode::Fullscreen
+        : (options.maximize
+               ? WindowPresentationMode::Maximized
+               : WindowPresentationMode::Windowed);
+    showWindowWithActivation(
+        *guardedWindow, activation, presentationMode);
     if (!pairIsValid()) {
         discardCreated();
         return std::unexpected(

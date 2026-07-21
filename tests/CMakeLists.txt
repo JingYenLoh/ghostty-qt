@@ -669,6 +669,27 @@ set_tests_properties(application-maximize-action PROPERTIES
         "Binding loop detected;QQmlApplicationEngine failed"
 )
 
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    add_test(
+        NAME application-initial-window-state
+        COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+    )
+    set(_ghostty_qt_initial_window_state_config_home
+        "${CMAKE_CURRENT_BINARY_DIR}/application-initial-window-state-config")
+    file(MAKE_DIRECTORY
+        "${_ghostty_qt_initial_window_state_config_home}/ghostty")
+    file(WRITE
+        "${_ghostty_qt_initial_window_state_config_home}/ghostty/config.ghostty"
+        "gtk-single-instance = false\nconfirm-close-surface = false\nmaximize = true\nfullscreen = true\n")
+    set_tests_properties(application-initial-window-state PROPERTIES
+        TIMEOUT 5
+        ENVIRONMENT
+            "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_initial_window_state_config_home}"
+        FAIL_REGULAR_EXPRESSION
+            "Binding loop detected;QQmlApplicationEngine failed"
+    )
+endif()
+
 add_test(
     NAME application-tab-bar-visibility
     COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true

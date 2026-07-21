@@ -107,6 +107,10 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Initial state for each newly created Qt window. These remain frontend
+    // policy and never cross the terminal session-thread boundary.
+    bool maximize = false;
+    bool fullscreen = false;
     // Linux process lifetime is application-owned. Closing the final primary
     // window either quits on the next event turn, waits for the optional
     // Ghostty duration, or leaves the process alive when disabled.

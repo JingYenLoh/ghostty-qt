@@ -146,14 +146,26 @@ QVariantMap DesktopActivationContext::toPlatformData() const
 }
 
 void showWindowWithActivation(QWindow &window,
-                              const DesktopActivationContext &activation)
+                              const DesktopActivationContext &activation,
+                              WindowPresentationMode mode)
 {
     const ScopedActivationProjection projection(activation);
 
-    // Qt Wayland applies XDG_ACTIVATION_TOKEN from setVisible(). A second
-    // explicit request would ask the compositor for another token after the
-    // transferred token has already been consumed.
-    window.show();
+    // Qt Wayland applies XDG_ACTIVATION_TOKEN while the requested visibility
+    // makes the window visible. Keep this as the sole presentation operation:
+    // show() would reset a maximized/fullscreen state prepared while hidden,
+    // while a second request would consume or replace the transferred token.
+    switch (mode) {
+    case WindowPresentationMode::Windowed:
+        window.setVisibility(QWindow::Windowed);
+        return;
+    case WindowPresentationMode::Maximized:
+        window.setVisibility(QWindow::Maximized);
+        return;
+    case WindowPresentationMode::Fullscreen:
+        window.setVisibility(QWindow::FullScreen);
+        return;
+    }
 }
 
 QProcessEnvironment sanitizedChildEnvironment()

@@ -6,6 +6,12 @@
 
 class QWindow;
 
+enum class WindowPresentationMode {
+    Windowed,
+    Maximized,
+    Fullscreen,
+};
+
 // Carries only the standard desktop presentation data that this frontend can
 // apply. The D-Bus dictionary is untrusted; unknown keys and non-string values
 // are deliberately discarded before the application controller sees them.
@@ -32,7 +38,9 @@ struct DesktopActivationContext final {
 // variables synchronously while showing the window; their scoped projection
 // avoids process-wide stale state and keeps the typed context above D-Bus.
 void showWindowWithActivation(QWindow &window,
-                              const DesktopActivationContext &activation);
+                              const DesktopActivationContext &activation,
+                              WindowPresentationMode mode =
+                                  WindowPresentationMode::Windowed);
 
 // Session workers run outside the GUI thread. During presentation they reuse a
 // clean pre-projection snapshot because Qt Wayland may itself mutate the

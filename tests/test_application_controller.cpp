@@ -16,9 +16,23 @@
 
 namespace {
 
+Qt::WindowStates presentationWindowStates(Qt::WindowStates states)
+{
+    return states
+        & Qt::WindowStates(Qt::WindowMinimized
+                           | Qt::WindowMaximized
+                           | Qt::WindowFullScreen);
+}
+
 struct WindowFactoryHarness {
+    struct Presentation {
+        Qt::WindowStates states;
+        int visibilityBeforeFullscreen = QWindow::Windowed;
+    };
+
     int calls = 0;
     int failOnCall = 0;
+    QVector<Presentation> presentations;
 
     ApplicationController::WindowFactory factory()
     {
@@ -36,6 +50,18 @@ struct WindowFactoryHarness {
                 new TerminalWorkspace(window->contentItem());
             workspace->setParentItem(window->contentItem());
             workspace->setSize(QSizeF(window->size()));
+            QObject::connect(window, &QWindow::visibleChanged, window,
+                             [this, window](bool visible) {
+                                 if (!visible) return;
+                                 presentations.append({
+                                     .states = presentationWindowStates(
+                                         window->windowStates()),
+                                     .visibilityBeforeFullscreen =
+                                         window->property(
+                                             "visibilityBeforeFullscreen")
+                                             .toInt(),
+                                 });
+                             });
             return ApplicationWindow{window, workspace};
         };
     }
@@ -81,6 +107,9 @@ class ApplicationControllerTest : public QObject {
 
 private Q_SLOTS:
     void initTestCase();
+    void configuresInitialWindowStateBeforePresentation_data();
+    void configuresInitialWindowStateBeforePresentation();
+    void windowStateReloadAffectsOnlyFutureWindows();
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
     void suppressedStartupPreservesFirstSurfaceOptions();
@@ -108,6 +137,133 @@ void ApplicationControllerTest::initTestCase()
 {
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
+}
+
+void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation_data()
+{
+    QTest::addColumn<bool>("maximize");
+    QTest::addColumn<bool>("fullscreen");
+    QTest::addColumn<int>("expectedState");
+    QTest::addColumn<int>("expectedVisibility");
+    QTest::addColumn<int>("expectedRestoreVisibility");
+
+    QTest::newRow("windowed")
+        << false << false
+        << static_cast<int>(Qt::WindowNoState)
+        << static_cast<int>(QWindow::Windowed)
+        << static_cast<int>(QWindow::Windowed);
+    QTest::newRow("maximized")
+        << true << false
+        << static_cast<int>(Qt::WindowMaximized)
+        << static_cast<int>(QWindow::Maximized)
+        << static_cast<int>(QWindow::Maximized);
+    QTest::newRow("fullscreen")
+        << false << true
+        << static_cast<int>(Qt::WindowFullScreen)
+        << static_cast<int>(QWindow::FullScreen)
+        << static_cast<int>(QWindow::Windowed);
+    QTest::newRow("fullscreen-restores-maximized")
+        << true << true
+        << static_cast<int>(Qt::WindowFullScreen)
+        << static_cast<int>(QWindow::FullScreen)
+        << static_cast<int>(QWindow::Maximized);
+}
+
+void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation()
+{
+    QFETCH(bool, maximize);
+    QFETCH(bool, fullscreen);
+    QFETCH(int, expectedState);
+    QFETCH(int, expectedVisibility);
+    QFETCH(int, expectedRestoreVisibility);
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.maximize = maximize;
+    options.fullscreen = fullscreen;
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+    QCOMPARE(harness.presentations.size(), 1);
+    const WindowFactoryHarness::Presentation &presentation =
+        harness.presentations.constFirst();
+    QCOMPARE(static_cast<int>(presentation.states), expectedState);
+    QCOMPARE(presentation.visibilityBeforeFullscreen,
+             expectedRestoreVisibility);
+    QCOMPARE(static_cast<int>(created->window->visibility()),
+             expectedVisibility);
+}
+
+void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QCOMPARE(harness.presentations.size(), 1);
+    QCOMPARE(presentationWindowStates(initial->window->windowStates()),
+             Qt::WindowStates(Qt::WindowNoState));
+
+    LaunchOptions maximized = options;
+    maximized.maximize = true;
+    controller.applyLaunchOptions(maximized);
+    QCOMPARE(presentationWindowStates(initial->window->windowStates()),
+             Qt::WindowStates(Qt::WindowNoState));
+    QCOMPARE(initial->window->property(
+                 "visibilityBeforeFullscreen").toInt(),
+             static_cast<int>(QWindow::Windowed));
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 2, 1000);
+    const ApplicationWindow actionCreated = controller.windows().constLast();
+    QCOMPARE(presentationWindowStates(actionCreated.window->windowStates()),
+             Qt::WindowStates(Qt::WindowMaximized));
+    QCOMPARE(actionCreated.window->visibility(), QWindow::Maximized);
+
+    LaunchOptions fullscreen = maximized;
+    fullscreen.maximize = false;
+    fullscreen.fullscreen = true;
+    controller.applyLaunchOptions(fullscreen);
+    QCOMPARE(presentationWindowStates(initial->window->windowStates()),
+             Qt::WindowStates(Qt::WindowNoState));
+    QCOMPARE(presentationWindowStates(actionCreated.window->windowStates()),
+             Qt::WindowStates(Qt::WindowMaximized));
+
+    for (const ApplicationWindow &window : controller.windows()) {
+        closeWorkspace(window.workspace);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 3, 1000);
+    const ApplicationWindow residentReplacement =
+        controller.windows().constFirst();
+    QCOMPARE(presentationWindowStates(
+                 residentReplacement.window->windowStates()),
+             Qt::WindowStates(Qt::WindowFullScreen));
+    QCOMPARE(residentReplacement.window->visibility(),
+             QWindow::FullScreen);
+
+    closeWorkspace(residentReplacement.workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+
+    LaunchOptions both = fullscreen;
+    both.maximize = true;
+    controller.applyLaunchOptions(both);
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 1);
+    QCOMPARE(harness.presentations.size(), 4);
+    const ApplicationWindow activated = controller.windows().constFirst();
+    QCOMPARE(presentationWindowStates(activated.window->windowStates()),
+             Qt::WindowStates(Qt::WindowFullScreen));
+    QCOMPARE(activated.window->visibility(), QWindow::FullScreen);
+    QCOMPARE(harness.presentations.at(3).visibilityBeforeFullscreen,
+             static_cast<int>(QWindow::Maximized));
 }
 
 void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePolicies()
@@ -365,6 +521,8 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
     WindowFactoryHarness localHarness;
     LaunchOptions options = baseOptions(QDir::currentPath());
     options.initialWindow = false;
+    options.maximize = true;
+    options.fullscreen = true;
     options.quitAfterLastWindowClosed = true;
     options.quitAfterLastWindowClosedDelay = std::chrono::milliseconds(25);
     ApplicationController local(options, localHarness.factory(), false);
@@ -392,11 +550,16 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
 
     QVERIFY(local.dispatch(ApplicationAction::NewWindow));
     QTRY_COMPARE_WITH_TIMEOUT(local.windowCount(), 1, 1000);
-    const TerminalWorkspace *const first =
-        local.windows().constFirst().workspace;
+    const ApplicationWindow firstWindow = local.windows().constFirst();
+    const TerminalWorkspace *const first = firstWindow.workspace;
     QCOMPARE(first->effectiveLaunchOptions().program, reloaded.program);
     QVERIFY(first->effectiveLaunchOptions().hold);
     QCOMPARE(first->effectiveLaunchOptions().fontSize, 19.0);
+    QCOMPARE(presentationWindowStates(firstWindow.window->windowStates()),
+             Qt::WindowStates(Qt::WindowFullScreen));
+    QCOMPARE(firstWindow.window->property(
+                 "visibilityBeforeFullscreen").toInt(),
+             static_cast<int>(QWindow::Maximized));
 
     reloaded.initialWindow = false;
     local.applyLaunchOptions(reloaded);
@@ -414,11 +577,19 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
     QVERIFY(activated.startWithoutInitialWindow());
     QVERIFY(activated.activateNoCommand());
     QCOMPARE(activated.windowCount(), 1);
+    const ApplicationWindow activatedFirstWindow =
+        activated.windows().constFirst();
     const TerminalWorkspace *const activatedFirst =
-        activated.windows().constFirst().workspace;
+        activatedFirstWindow.workspace;
     QCOMPARE(activatedFirst->effectiveLaunchOptions().program,
              options.program);
     QVERIFY(activatedFirst->effectiveLaunchOptions().hold);
+    QCOMPARE(presentationWindowStates(
+                 activatedFirstWindow.window->windowStates()),
+             Qt::WindowStates(Qt::WindowFullScreen));
+    QCOMPARE(activatedFirstWindow.window->property(
+                 "visibilityBeforeFullscreen").toInt(),
+             static_cast<int>(QWindow::Maximized));
     QVERIFY(activated.activateNoCommand());
     QCOMPARE(activated.windowCount(), 2);
     QVERIFY(activated.windows().constLast().workspace
