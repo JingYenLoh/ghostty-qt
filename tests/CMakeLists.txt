@@ -9,6 +9,49 @@ target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
+add_executable(fake-ghostty-cli-helper
+    fake_ghostty_cli_helper.cpp
+)
+target_compile_options(fake-ghostty-cli-helper PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
+qt_add_executable(test-ghostty-cli-delegation
+    test_ghostty_cli_delegation.cpp
+)
+target_include_directories(test-ghostty-cli-delegation PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-ghostty-cli-delegation PRIVATE
+    GHOSTTY_QT_TEST_CONFIG_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
+    GHOSTTY_QT_TEST_EXECUTABLE="$<TARGET_FILE:ghostty-qt>"
+    GHOSTTY_QT_TEST_FAKE_HELPER="$<TARGET_FILE:fake-ghostty-cli-helper>"
+)
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    target_compile_definitions(test-ghostty-cli-delegation PRIVATE
+        GHOSTTY_QT_TEST_REAL_HELPER="$<TARGET_FILE:ghostty-qt-config-helper>"
+    )
+else()
+    target_compile_definitions(test-ghostty-cli-delegation PRIVATE
+        GHOSTTY_QT_TEST_REAL_HELPER=""
+    )
+endif()
+target_link_libraries(test-ghostty-cli-delegation PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-cli-delegation
+)
+add_dependencies(test-ghostty-cli-delegation
+    fake-ghostty-cli-helper
+    ghostty-qt
+)
+add_test(NAME ghostty-cli-delegation
+    COMMAND test-ghostty-cli-delegation)
+set_tests_properties(ghostty-cli-delegation PROPERTIES
+    TIMEOUT 60
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 qt_add_executable(test-desktop-activation
     test_desktop_activation.cpp
 )

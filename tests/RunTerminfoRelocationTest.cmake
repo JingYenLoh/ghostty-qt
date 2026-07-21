@@ -34,9 +34,14 @@ if(rename_result)
 endif()
 
 if(CONFIG_HELPER_NAME)
+    set(relocated_application
+        "${relocated_prefix}/${INSTALL_BINDIR}/ghostty-qt")
     set(relocated_config_helper
         "${relocated_prefix}/${INSTALL_BINDIR}/${CONFIG_HELPER_NAME}")
-    if(NOT EXISTS "${relocated_config_helper}")
+    if(NOT EXISTS "${relocated_application}")
+        message(FATAL_ERROR
+            "Installed application is missing: ${relocated_application}")
+    elseif(NOT EXISTS "${relocated_config_helper}")
         message(FATAL_ERROR
             "Installed config helper is missing: ${relocated_config_helper}")
     endif()
@@ -55,6 +60,41 @@ if(CONFIG_HELPER_NAME)
         message(FATAL_ERROR
             "Relocated config helper failed (${config_helper_result})\n"
             "${config_helper_output}\n${config_helper_error}")
+    endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            --unset=DISPLAY
+            --unset=WAYLAND_DISPLAY
+            "QT_QPA_PLATFORM=ghostty-cli-relocation-must-not-load-qt"
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_config_helper}" +help
+        RESULT_VARIABLE direct_help_result
+        OUTPUT_VARIABLE direct_help_output
+        ERROR_VARIABLE direct_help_error)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            --unset=DISPLAY
+            --unset=WAYLAND_DISPLAY
+            "QT_QPA_PLATFORM=ghostty-cli-relocation-must-not-load-qt"
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_application}" +help
+        RESULT_VARIABLE delegated_help_result
+        OUTPUT_VARIABLE delegated_help_output
+        ERROR_VARIABLE delegated_help_error)
+    if(NOT direct_help_result EQUAL 0
+       OR NOT delegated_help_result EQUAL direct_help_result
+       OR NOT delegated_help_output STREQUAL direct_help_output
+       OR NOT delegated_help_error STREQUAL direct_help_error
+       OR NOT delegated_help_output MATCHES "Available actions:")
+        message(FATAL_ERROR
+            "Relocated CLI delegation differs from its sibling helper\n"
+            "helper (${direct_help_result}):\n${direct_help_output}\n"
+            "${direct_help_error}\n"
+            "application (${delegated_help_result}):\n"
+            "${delegated_help_output}\n${delegated_help_error}")
     endif()
 
     execute_process(

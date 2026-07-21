@@ -3,8 +3,9 @@
 `ghostty-qt` is a Linux, Wayland-only terminal emulator MVP built with Qt Quick,
 C++23, and Ghostty's `libghostty-vt` C API. Ghostty supplies terminal parsing,
 screen state, selection, and input encoding; a separate helper uses the pinned
-Ghostty application parser for configuration; Qt supplies the window, controls,
-scene-graph rendering, clipboard, and input-method integration.
+Ghostty application parser for configuration and selected inspection CLI
+actions; Qt supplies the window, controls, scene-graph rendering, clipboard,
+and input-method integration.
 
 This is an early developer build, not a drop-in replacement for the Ghostty
 application. See [Architecture](docs/architecture.md) for the design and the
@@ -83,6 +84,11 @@ the host-language comparison and remaining engineering risks.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
   by the pinned Ghostty code, watched-file reload, and a deliberately small set
   of applied appearance/session keys.
+- Transparent pre-Qt delegation of the pinned `+explain-config`, `+help`,
+  `+list-actions`, `+list-colors`, `+list-keybinds`, `+show-config`, and
+  `+validate-config` implementations. These retain the caller's terminal,
+  streams, process relationship, environment, working directory, and exact
+  action exit status without requiring a working Wayland or Qt platform plugin.
 - Ghostty's finalized keybindings—including named key tables, sequences,
   catch-all fallback, action chains, and local/`all`/`global` flags—for the
   supported pane/workspace actions. Linux global shortcuts use the XDG portal;
@@ -321,6 +327,36 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | `--scrollback-lines LINES` | Estimate capacity for 0 to 10,000,000 rows; the default is 10,000. The legacy value is converted to libghostty's byte cap. |
 | `--hold` | Keep the initial pane after its child exits. |
 | `-- program arguments...` | Run a command instead of the default shell. |
+
+The default configuration-enabled build also accepts these exact Ghostty CLI
+actions:
+
+```text
++explain-config  +help          +list-actions  +list-colors
++list-keybinds   +show-config   +validate-config
+```
+
+They may use their pinned Ghostty action-specific flags and operands in the
+original order. The frontend recognizes them from raw process arguments and
+replaces itself with its installed sibling helper before Qt starts, so piping,
+pagers, TTY detection, process/signal relationships, and exit codes behave like
+a direct CLI invocation. `-e` and this frontend's documented `--` delimiter
+protect command payloads from action detection: `--` launches the documented
+frontend command, while an earlier exact `-e` suppresses delegation according
+to pinned Ghostty's detector ordering but remains unsupported by the frontend
+launch parser.
+Ordinary `--help` and `--version` remain the ghostty-qt frontend variants;
+unsupported `+` actions fail explicitly instead of being interpreted as
+terminal programs.
+
+`+help` and `+list-actions` print pinned upstream catalogs, including entries
+that remain planned in ghostty-qt; appearing in those catalogs is not a claim
+that the frontend implements the item. `+show-config` and `+validate-config`
+run the pinned implementations through ghostty-qt's embedded-runtime helper,
+whose application runtime is intentionally `none` rather than GTK. A
+development build configured with `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF` omits
+that helper and reports delegated actions as unavailable before attempting GUI
+startup.
 
 ### Shortcuts
 

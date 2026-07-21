@@ -435,6 +435,17 @@ target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
     GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR}"
 )
 
+add_library(ghostty-qt-cli-delegation STATIC
+    src/ghostty_cli_delegation.cpp
+    src/ghostty_cli_delegation.h
+)
+target_include_directories(ghostty-qt-cli-delegation PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_compile_options(ghostty-qt-cli-delegation PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-desktop-activation STATIC
     src/desktop_activation.cpp
     src/desktop_activation.h
@@ -548,6 +559,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::QuickControls2
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-cli-delegation
     ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
@@ -558,6 +570,7 @@ target_link_libraries(ghostty-qt PRIVATE
 target_compile_definitions(ghostty-qt PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
     GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+    GHOSTTY_QT_CONFIG_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
 )
 
 add_dependencies(ghostty-qt ghostty-qt-terminfo)
@@ -572,6 +585,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     )
     target_link_libraries(ghostty-qt-config-helper PRIVATE
         ghostty-config-internal
+        ghostty-qt-cli-delegation
     )
     target_compile_options(ghostty-qt-config-helper PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
@@ -595,7 +609,6 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         BUILD_WITH_INSTALL_RPATH TRUE)
 
     target_compile_definitions(ghostty-qt PRIVATE
-        GHOSTTY_QT_CONFIG_ENABLED=1
         GHOSTTY_QT_CONFIG_HELPER_NAME="ghostty-qt-config-helper")
     add_dependencies(ghostty-qt ghostty-qt-config-helper)
 

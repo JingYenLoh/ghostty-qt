@@ -1,8 +1,11 @@
+#include "ghostty_cli_delegation.h"
+
 #include <ghostty.h>
 
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <span>
 
 extern "C" ghostty_string_s ghostty_qt_config_json(bool defaults);
 
@@ -18,16 +21,8 @@ bool isShowConfigJsonAction(const char *argument)
 int showConfigJson(int argc, char **argv)
 {
     bool defaults = false;
-    bool foundAction = false;
-    for (int index = 1; index < argc; ++index) {
-        if (isShowConfigJsonAction(argv[index])) {
-            if (foundAction) {
-                std::fputs("ghostty-qt-config-helper: duplicate +show-config-json action\n",
-                           stderr);
-                return 64;
-            }
-            foundAction = true;
-        } else if (std::strcmp(argv[index], "--default") == 0) {
+    for (int index = 2; index < argc; ++index) {
+        if (std::strcmp(argv[index], "--default") == 0) {
             if (defaults) {
                 std::fputs("ghostty-qt-config-helper: duplicate --default option\n", stderr);
                 return 64;
@@ -64,14 +59,38 @@ int showConfigJson(int argc, char **argv)
     return writeFailed ? 74 : 0;
 }
 
+bool isPrivateConfigExport(std::span<char *const> arguments)
+{
+    if (arguments.size() < 2
+        || !isShowConfigJsonAction(arguments[1])) {
+        return false;
+    }
+    for (char *const rawArgument : arguments.subspan(2)) {
+        if (rawArgument != nullptr
+            && std::string_view(rawArgument).starts_with('+')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
-    for (int index = 1; index < argc; ++index) {
-        if (isShowConfigJsonAction(argv[index])) {
-            return showConfigJson(argc, argv);
-        }
+    const std::span<char *const> arguments(
+        argv, static_cast<std::size_t>(argc));
+    if (isPrivateConfigExport(arguments)) {
+        return showConfigJson(argc, argv);
+    }
+
+    const GhosttyCliActionSelection selection =
+        selectGhosttyCliAction(arguments);
+    if (selection.disposition != GhosttyCliActionDisposition::Delegate) {
+        std::fputs(
+            "ghostty-qt-config-helper: no supported public CLI action was selected\n",
+            stderr);
+        return 64;
     }
 
     const int initializationResult =

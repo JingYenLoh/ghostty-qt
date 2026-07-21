@@ -56,12 +56,13 @@ replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
-PTY, renderer, application-lifecycle, parity, exact-parser smoke, and
+raw pre-Qt CLI process replacement, PTY, renderer, application-lifecycle,
+parity, exact-parser smoke, and
 relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-parity-manifest'
+ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-cli-delegation|ghostty-parity-manifest'
 ```
 
 ## Ghostty configuration parser
@@ -74,6 +75,17 @@ parser is outside `libghostty-vt`, the build produces a private
 Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
 `+show-config-json` action, and converts only the documented compatibility
 keys into value snapshots.
+
+The same private executable is the transparent process-replacement target for
+`+explain-config`, `+help`, `+list-actions`, `+list-colors`, `+list-keybinds`,
+`+show-config`, and `+validate-config`. A shared allowlist guards both binaries.
+The frontend classifies raw arguments and uses Linux `execv` before QString
+conversion or Qt initialization; it does not reuse the buffered, timeout-bound
+`QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
+state, environment, PID, process/signal relationship, and exit status remain
+caller-owned. The helper's embedded application runtime is `none`, so
+runtime-specific config finalization can differ from GTK even though the action
+implementation is the exact pinned code.
 
 The snapshot includes the finalized working-directory, split/tab/window
 directory inheritance policies, new-window/tab font-size inheritance policy,
@@ -136,6 +148,11 @@ The three focused config tests have distinct boundaries:
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
+- `ghostty-cli-delegation` combines allocation-free classifier cases with a
+  byte-framed fake helper, all seven real action implementations, invalid and
+  reordered action options, missing/unexecutable-helper failure, the config-off
+  boundary, and moved-prefix main-to-helper discovery. Every fixture lives
+  under the repository-local `./tmp` or build tree.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.

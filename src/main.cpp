@@ -1,5 +1,6 @@
 #include "application_controller.h"
 #include "desktop_activation.h"
+#include "ghostty_cli_delegation.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
 #include "terminal_pane.h"
@@ -21,8 +22,11 @@
 #include <QTimer>
 #include <QtQml>
 
+#include <cstdio>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
 #include <utility>
 
 namespace {
@@ -45,6 +49,15 @@ void printHelp()
               "      --gtk-single-instance MODE  Use false, true, or detect "
               "uniqueness.\n"
               "      --initial-window BOOLEAN    Request an initial window.\n";
+#if GHOSTTY_QT_CONFIG_ENABLED
+    output << "\nPinned Ghostty CLI actions:\n";
+    for (const std::string_view action : GhosttyQtDelegatedCliActions) {
+        output << "  "
+               << QString::fromLatin1(
+                      action.data(), static_cast<qsizetype>(action.size()))
+               << '\n';
+    }
+#endif
 }
 
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -797,6 +810,52 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
 
 int main(int argc, char *argv[])
 {
+    const std::span<char *const> rawArguments(
+        argv, static_cast<std::size_t>(argc));
+    const GhosttyCliActionSelection cliAction =
+        selectGhosttyCliAction(rawArguments);
+    switch (cliAction.disposition) {
+    case GhosttyCliActionDisposition::None:
+        break;
+    case GhosttyCliActionDisposition::Unsupported:
+        std::fprintf(
+            stderr,
+            "ghostty-qt: unsupported Ghostty CLI action '%.*s'\n",
+            static_cast<int>(cliAction.argument.size()),
+            cliAction.argument.data());
+        return 2;
+    case GhosttyCliActionDisposition::Multiple:
+        std::fprintf(
+            stderr,
+            "ghostty-qt: multiple Ghostty CLI actions are not allowed "
+            "(second action: '%.*s')\n",
+            static_cast<int>(cliAction.argument.size()),
+            cliAction.argument.data());
+        return 2;
+    case GhosttyCliActionDisposition::Delegate:
+#if GHOSTTY_QT_CONFIG_ENABLED
+        {
+            const GhosttyCliExecError failure = execGhosttyCliHelper(
+                rawArguments,
+                GHOSTTY_QT_CONFIG_HELPER_NAME);
+            const std::string target = failure.target.native();
+            const std::string cause = failure.cause.message();
+            std::fprintf(stderr,
+                         "ghostty-qt: could not execute CLI helper '%s': %s\n",
+                         target.c_str(), cause.c_str());
+            return failure.exitCode();
+        }
+#else
+        std::fprintf(
+            stderr,
+            "ghostty-qt: Ghostty CLI action '%.*s' is unavailable because "
+            "this build disabled GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG\n",
+            static_cast<int>(cliAction.argument.size()),
+            cliAction.argument.data());
+        return 1;
+#endif
+    }
+
     QStringList arguments;
     arguments.reserve(argc);
     for (int index = 0; index < argc; ++index) {

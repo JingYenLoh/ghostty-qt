@@ -1046,16 +1046,40 @@
         "version"
       ],
       "overrides": {
+        "explain-config": {
+          "status": "supported",
+          "note": "Delegates the pinned implementation through the relocatable embedded-runtime helper before Qt starts."
+        },
         "help": {
-          "status": "partial",
-          "note": "--help exists; Ghostty +help behavior does not."
+          "status": "supported",
+          "note": "The pinned +help implementation is delegated; the frontend's ordinary --help remains separate, and the printed upstream catalog is not a support claim for every listed action."
+        },
+        "list-actions": {
+          "status": "supported",
+          "note": "Delegates the pinned action catalog through the relocatable embedded-runtime helper before Qt starts."
+        },
+        "list-colors": {
+          "status": "supported",
+          "note": "Delegates the pinned color catalog and its action-specific options before Qt starts."
+        },
+        "list-keybinds": {
+          "status": "supported",
+          "note": "Delegates the pinned finalized keybinding formatter through the embedded-runtime helper."
         },
         "new-window": {
           "scope": "linux",
           "note": "Ghostty's payload-capable +new-window/org.gtk.Actions protocol remains planned; ordinary bare-secondary and standard desktop source-less activation are tracked separately under gtk-single-instance and the new_window application action."
         },
+        "show-config": {
+          "status": "supported",
+          "note": "Delegates the pinned implementation through ghostty-qt's app-runtime=none helper; GTK-runtime-specific finalization is intentionally outside this embedded helper contract."
+        },
         "toggle-quick-terminal": {
           "scope": "wayland"
+        },
+        "validate-config": {
+          "status": "supported",
+          "note": "Delegates the pinned validation implementation with raw arguments, streams, and exit status preserved."
         },
         "version": {
           "status": "partial",

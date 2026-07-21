@@ -29,6 +29,9 @@ The process controller owns every primary window; each terminal pane then has
 the following ownership and data flow:
 
 ```text
+ghostty-qt raw CLI classifier (before Qt)
+  -> exec sibling ghostty-qt-config-helper for the supported +action subset
+
 ApplicationController (UI thread, process lifetime)
   -> reusable Main.qml component -> zero or more primary windows
      -> TerminalWorkspace (UI thread, recursive tabs/splits)
@@ -1004,6 +1007,39 @@ the main executable and resolves the library from a relative private
 `${CMAKE_INSTALL_LIBDIR}/ghostty-qt` directory; disabling the option omits this
 configuration path entirely.
 
+The main executable and helper share one constexpr catalog containing the
+seven public inspection/validation actions. At the first line of process
+startup, before argument transcoding or any Qt object, the frontend classifies
+raw `argv`. The frontend's documented `--` command delimiter stops detection
+before its terminal payload. An exact earlier `-e` also suppresses delegation
+to match pinned Ghostty's detector ordering, although `-e` itself remains
+unsupported by the frontend launch parser. Standalone frontend help/version
+remain separate, deferred actions and the private `+show-config-json` protocol
+are rejected, and multiple actions fail closed. The helper repeats the same
+allowlist check, while accepting the private export only in its canonical
+first-argument form, so a mixed invocation cannot select an unadvertised
+internal Ghostty action.
+
+For an accepted public action, Linux `/proc/self/exe` supplies the physical
+application path and the compiled helper filename selects its sibling. The
+frontend calls `execv` with the untouched argument pointers except for the
+helper `argv[0]`; no PATH, working-directory, environment override, shell, or
+preflight access check participates. Process replacement preserves PID,
+stdin/stdout/stderr, TTY and pager behavior, environment, current directory,
+inherited non-close-on-exec descriptors, the process/signal relationship, and
+the pinned action's exit status. A missing or unexecutable sibling returns
+shell-style 127 or 126 without entering Qt. A configuration-disabled build
+retains classification so a supported action gets an immediate feature-boundary
+diagnostic instead of becoming a terminal program. Normal GUI launches perform
+no helper-path lookup.
+
+These commands run the pinned Ghostty action implementation in the existing
+embedded helper, whose application runtime is deliberately `none`; output
+whose finalization depends on GTK runtime state is therefore not described as
+byte-identical to the GTK executable. Likewise, upstream action catalogs are
+inventories rather than claims that every printed frontend action is already
+implemented by ghostty-qt.
+
 The build also runs a small Zig generator against Ghostty's terminfo source and
 compiles the result with `tic -x`. The generated database is a dependency of the
 application and PTY integration test. A build-tree run finds `share/terminfo`
@@ -1016,8 +1052,9 @@ override. No system terminfo installation is required.
 Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
 developer and release CMake trees. Those presets must not build concurrently.
 The staged relocation test installs into a temporary prefix, moves the prefix,
-and runs a Qt Core-only probe from the moved `bin` directory to verify that it
-selects the moved private database. A separate staged-install test verifies the
+runs the moved main executable through its sibling helper, and runs a Qt
+Core-only probe from the moved `bin` directory to verify that it selects the
+moved private database. A separate staged-install test verifies the
 configuration-specific desktop entry and direct D-Bus service, their distinct
 fallback/zero-window commands, exact service identity, actual install-prefix
 or configured-absolute executable path, DESTDIR exclusion from embedded paths,
@@ -1137,6 +1174,11 @@ The default CTest suite has focused layers for each ownership boundary:
   X11 divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
+- `ghostty-cli-delegation` verifies the shared raw-argument classifier; same-PID
+  process replacement; byte-exact argv, stdin, stdout, and stderr; environment,
+  working-directory, and exit-status preservation; missing/unexecutable-helper
+  and config-disabled failures; all seven real pinned actions; action-option
+  order; pre-Qt operation; and direct-helper equivalence.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,
@@ -1190,8 +1232,9 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived
   configuration, keybinding-action, and CLI-action inventories.
 - `terminfo-relocatable-install` stages and moves an installation, executes the
-  relocated private config helper, verifies runtime terminfo lookup, and checks
-  valid and invalid explicit overrides.
+  relocated main-to-helper CLI chain plus the helper's private config paths,
+  verifies runtime terminfo lookup, and checks valid and invalid explicit
+  overrides.
 
 Clipboard and selection-lifecycle tests cover trim policy, copy destinations
 and primary fallback, explicit copy-and-clear ordering, automatic selection
