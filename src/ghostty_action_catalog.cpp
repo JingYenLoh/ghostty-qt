@@ -955,6 +955,9 @@ GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
     if (parsed.name == QLatin1StringView("new_window")) {
         return ApplicationAction::NewWindow;
     }
+    if (parsed.name == QLatin1StringView("open_config")) {
+        return ApplicationAction::OpenConfig;
+    }
     if (parsed.name == QLatin1StringView("reload_config")) {
         return ApplicationAction::ReloadConfig;
     }

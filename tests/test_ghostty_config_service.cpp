@@ -73,6 +73,23 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
         QDir(ghosttyDirectory).filePath(QStringLiteral("config.ghostty")),
     };
     QCOMPARE(GhosttyConfigService::standardConfigPaths(environment), expected);
+    QCOMPARE(GhosttyConfigService::standardConfigEditPaths(environment),
+             QStringList({expected.at(1), expected.at(0)}));
+
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"),
+                       QStringLiteral("relative-xdg"));
+    QCOMPARE(GhosttyConfigService::standardConfigPaths(environment),
+             QStringList({
+                 QDir(environment.value(QStringLiteral("HOME")))
+                     .filePath(QStringLiteral(".config/ghostty/config")),
+                 QDir(environment.value(QStringLiteral("HOME")))
+                     .filePath(QStringLiteral(".config/ghostty/config.ghostty")),
+             }));
+    QCOMPARE(GhosttyConfigService::standardConfigEditPaths(environment),
+             QStringList({
+                 QStringLiteral("relative-xdg/ghostty/config.ghostty"),
+                 QStringLiteral("relative-xdg/ghostty/config"),
+             }));
 
     QStringList observed;
     GhosttyConfigService service(
@@ -92,6 +109,11 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
              QStringList({
                  QDir(fallbackDirectory).filePath(QStringLiteral("config")),
                  QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
+             }));
+    QCOMPARE(GhosttyConfigService::standardConfigEditPaths(environment),
+             QStringList({
+                 QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
+                 QDir(fallbackDirectory).filePath(QStringLiteral("config")),
              }));
 }
 

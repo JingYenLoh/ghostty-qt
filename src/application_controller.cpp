@@ -281,6 +281,9 @@ bool ApplicationController::dispatch(ApplicationAction action,
     switch (action) {
     case ApplicationAction::Ignore:
         return true;
+    case ApplicationAction::OpenConfig:
+        Q_EMIT configOpenRequested();
+        return true;
     case ApplicationAction::ReloadConfig:
         Q_EMIT configReloadRequested();
         return true;

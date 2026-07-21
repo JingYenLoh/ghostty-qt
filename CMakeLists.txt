@@ -509,6 +509,8 @@ qt_add_executable(ghostty-qt
     src/ghostty_application_keybindings.h
     src/ghostty_config_loader.h
     src/ghostty_config_export.h
+    src/ghostty_config_edit.cpp
+    src/ghostty_config_edit.h
     src/ghostty_config_process_loader.cpp
     src/ghostty_config_process_loader.h
     src/ghostty_config_service.cpp

@@ -2619,6 +2619,16 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         QStringLiteral("new_window")));
     QCOMPARE(reload.count(), 2);
 
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("open_config")});
+    QCOMPARE(reload.count(), 3);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 reload.constLast().constFirst()),
+             ApplicationAction::OpenConfig);
+    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("open_config")));
+    QCOMPARE(reload.count(), 3);
+
     // Other/right remain ordinary surface fanout, not the special broad
     // close-every-surface path. The first stable source keeps its own tab.
     const TabId firstTabId = workspace.tabModel()->idAt(0);

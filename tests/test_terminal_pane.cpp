@@ -2462,18 +2462,19 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(closeWindowRequested.count(), 1);
     QCOMPARE(applicationActionCount(ApplicationAction::Quit), 0);
 
-    const int beforeUnsupported = forwarded.count();
-    QKeyEvent unsupported(QEvent::KeyPress, Qt::Key_Y,
-                          Qt::ControlModifier, QString(QChar(0x19)));
-    QCoreApplication::sendEvent(&pane, &unsupported);
-    QCOMPARE(forwarded.count(), beforeUnsupported);
+    const int beforeOpenConfig = forwarded.count();
+    QKeyEvent openConfig(QEvent::KeyPress, Qt::Key_Y,
+                         Qt::ControlModifier, QString(QChar(0x19)));
+    QCoreApplication::sendEvent(&pane, &openConfig);
+    QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 1);
+    QCOMPARE(forwarded.count(), beforeOpenConfig);
 
     // A normal consumed binding suppresses terminal input even when its
     // state-dependent action has nothing to copy.
     QKeyEvent consumedEmptyCopy(QEvent::KeyPress, Qt::Key_B,
                                 Qt::ControlModifier, QString(QChar(0x02)));
     QCoreApplication::sendEvent(&pane, &consumedEmptyCopy);
-    QCOMPARE(forwarded.count(), beforeUnsupported);
+    QCOMPARE(forwarded.count(), beforeOpenConfig);
 
     // Unconsumed actions still run, then allow normal VT encoding.
     const int beforeUnconsumedReload = forwarded.count();
@@ -2491,11 +2492,12 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCoreApplication::sendEvent(&pane, &ignored);
     QCOMPARE(forwarded.count(), beforeIgnore);
 
-    // A performable chain succeeds when any supported action succeeds; one
-    // unsupported action must not suppress the supported remainder.
+    // A performable chain executes the application action and its supported
+    // surface remainder before reporting success.
     QKeyEvent partialChain(QEvent::KeyPress, Qt::Key_J,
                            Qt::ControlModifier, QString(QChar(0x0a)));
     QCoreApplication::sendEvent(&pane, &partialChain);
+    QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 2);
     QCOMPARE(newTab.count(), 2);
 
     // Ghostty executes the complete chain before reporting a surface-closing

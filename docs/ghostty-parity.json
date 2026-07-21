@@ -861,6 +861,10 @@
           "status": "partial",
           "note": "Local root triggers route the action through the typed catalog and workspace."
         },
+        "open_config": {
+          "status": "supported",
+          "note": "Accepts only the exact void spelling and routes one process-scoped request for local, root, all, or global dispatch, including with zero windows. Linux edit selection examines preferred XDG config.ghostty before legacy config, chooses the first non-empty file or otherwise the first existing empty file, recursively creates the preferred path when neither exists, and uses exclusive creation so contents and concurrent creators are preserved. The selected local-file URL is opened through Qt desktop services; preparation and launch failures are logged without falling through to PTY input. This is the GUI action, not the separately tracked +edit-config CLI contract."
+        },
         "paste_from_clipboard": {
           "status": "partial",
           "note": "Local root bindings paste through the existing safety and bracketed-paste path."

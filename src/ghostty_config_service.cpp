@@ -139,6 +139,24 @@ QStringList GhosttyConfigService::standardConfigPaths(
     };
 }
 
+QStringList GhosttyConfigService::standardConfigEditPaths(
+    const QProcessEnvironment &environment)
+{
+    QString configHome = environment.value(QStringLiteral("XDG_CONFIG_HOME"));
+    if (configHome.isEmpty()) {
+        QString home = environment.value(QStringLiteral("HOME"));
+        if (home.isEmpty()) home = QDir::homePath();
+        configHome = QDir(home).filePath(QStringLiteral(".config"));
+    }
+
+    const QString ghosttyDirectory =
+        QDir(configHome).filePath(QStringLiteral("ghostty"));
+    return {
+        QDir(ghosttyDirectory).filePath(QStringLiteral("config.ghostty")),
+        QDir(ghosttyDirectory).filePath(QStringLiteral("config")),
+    };
+}
+
 const GhosttyConfigSnapshot &GhosttyConfigService::snapshot() const
 {
     Q_ASSERT(snapshot_.has_value());

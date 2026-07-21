@@ -8,6 +8,7 @@
 enum class ApplicationAction {
     Ignore,
     NewWindow,
+    OpenConfig,
     ReloadConfig,
     Quit,
 };

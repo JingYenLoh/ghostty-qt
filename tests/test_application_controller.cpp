@@ -221,6 +221,11 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
     QVERIFY(!controller.lifetimeController()->quitPending());
     QVERIFY(!controller.lifetimeController()->hasRequestedQuit());
 
+    QSignalSpy openConfig(&controller,
+                          &ApplicationController::configOpenRequested);
+    QVERIFY(controller.dispatch(ApplicationAction::OpenConfig));
+    QCOMPARE(openConfig.count(), 1);
+
     QSignalSpy reload(&controller,
                       &ApplicationController::configReloadRequested);
     QVERIFY(controller.dispatch(ApplicationAction::ReloadConfig));

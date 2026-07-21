@@ -28,6 +28,12 @@ public:
 
     static QStringList standardConfigPaths(
         const QProcessEnvironment &environment = QProcessEnvironment::systemEnvironment());
+    // Ghostty loads the legacy path before config.ghostty, but its GUI edit
+    // action examines those same files in the opposite order. Its edit-path
+    // discovery also retains a non-empty relative XDG_CONFIG_HOME so the
+    // subsequent absolute-file preparation fails as it does upstream.
+    static QStringList standardConfigEditPaths(
+        const QProcessEnvironment &environment = QProcessEnvironment::systemEnvironment());
 
     const QStringList &candidatePaths() const { return candidatePaths_; }
     bool hasSnapshot() const { return snapshot_.has_value(); }

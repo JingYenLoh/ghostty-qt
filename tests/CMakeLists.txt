@@ -447,6 +447,22 @@ target_link_libraries(test-ghostty-config-service PRIVATE
 add_test(NAME ghostty-config-service COMMAND test-ghostty-config-service)
 set_tests_properties(ghostty-config-service PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-ghostty-config-edit
+    test_ghostty_config_edit.cpp
+    ../src/ghostty_config_edit.cpp
+    ../src/ghostty_config_edit.h
+)
+target_include_directories(test-ghostty-config-edit PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-config-edit PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME ghostty-config-edit COMMAND test-ghostty-config-edit)
+set_tests_properties(ghostty-config-edit PROPERTIES TIMEOUT 10)
+
 add_executable(fake-ghostty-config-helper
     fake_ghostty_config_helper.cpp
 )

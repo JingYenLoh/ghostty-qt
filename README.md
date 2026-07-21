@@ -301,9 +301,9 @@ keybind = modal/escape=deactivate_key_table
 ```
 
 `all:` runs an action over every surface in the process; app-scoped actions
-such as `new_window`, `reload_config`, and `quit` run once. `global:` has the
-same fanout semantics and, for eligible root bindings, additionally registers
-with the desktop portal:
+such as `new_window`, `open_config`, `reload_config`, and `quit` run once.
+`global:` has the same fanout semantics and, for eligible root bindings,
+additionally registers with the desktop portal:
 
 ```ini
 keybind = all:ctrl+shift+f=increase_font_size:1
@@ -365,6 +365,7 @@ startup.
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy the selection / paste the clipboard. |
 | `Ctrl+Shift+A` | Select all terminal content. |
 | `Ctrl+Shift+F` | Open and focus the current pane's search overlay. |
+| `Ctrl+,` | Create if needed and open the Ghostty configuration file. |
 | `Ctrl+Shift+T` | Open a tab. |
 | `Ctrl+Shift+O` / `Ctrl+Shift+E` | Split right / split down. |
 | `Ctrl+Shift+W` | Close the active tab. |

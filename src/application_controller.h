@@ -76,6 +76,7 @@ public:
     }
 
 Q_SIGNALS:
+    void configOpenRequested();
     void configReloadRequested();
     void windowCreated(QQuickWindow *window, TerminalWorkspace *workspace);
     void windowRetired();

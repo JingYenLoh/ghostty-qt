@@ -396,6 +396,7 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
     } accepted[] = {
         {"ignore", ApplicationAction::Ignore},
         {"new_window", ApplicationAction::NewWindow},
+        {"open_config", ApplicationAction::OpenConfig},
         {"reload_config", ApplicationAction::ReloadConfig},
         {"quit", ApplicationAction::Quit},
     };
@@ -411,6 +412,8 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
              QStringLiteral("ignore:anything"),
              QStringLiteral("new_window:"),
              QStringLiteral("new_window:now"),
+             QStringLiteral("open_config:"),
+             QStringLiteral("open_config:now"),
              QStringLiteral("reload_config:"),
              QStringLiteral("reload_config:soft"),
              QStringLiteral("quit:"),

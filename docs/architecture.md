@@ -236,11 +236,12 @@ Transient dialogs are not registered. Each approved root and its workspace are
 deleted after closing, so delayed or resident operation retains no dead panes
 or controller threads.
 
-`new_window`, `reload_config`, and `quit` use a typed process-action vocabulary
-that remains available with zero workspaces. Window creation is queued to the
-GUI event loop, reuses one `QQmlComponent`, initializes the new workspace from
-the latest process options before presentation, and consumes the initial
-one-shot command and hold state only when the first-ever surface initializes.
+`new_window`, `open_config`, `reload_config`, and `quit` use a typed
+process-action vocabulary that remains available with zero workspaces. Window
+creation is queued to the GUI event loop, reuses one `QQmlComponent`,
+initializes the new workspace from the latest process options before
+presentation, and consumes the initial one-shot command and hold state only
+when the first-ever surface initializes.
 Suppressed startup can therefore retain those values for its first later local
 or remote window; every subsequent window clears them permanently. A surface
 source is the composite live
@@ -253,6 +254,19 @@ shutdown before emitting one irreversible process quit. It bypasses both the
 disabled last-window policy and any delay, including with zero windows. A
 command supplied after `--` matches Ghostty's `-e` lifetime rule by forcing
 immediate last-window exit.
+
+The strict void `open_config` action emits one process request even when a
+broad binding originated from multiple surfaces. On Linux its edit candidates
+are the preferred XDG `config.ghostty` followed by legacy `config`, deliberately
+the reverse of their configuration merge order. The first non-empty file wins;
+otherwise the first existing empty file wins, and if neither exists the
+preferred file and its parent directories are created. Candidate inspection
+uses native open/stat errors, and creation is exclusive so an existing or
+concurrently created file is never truncated. Qt receives the selected path as
+a `QUrl::fromLocalFile` desktop-open request. Preparation or desktop-launch
+failure is logged without turning the consumed application binding into PTY
+input. This GUI action is separate from Ghostty's `+edit-config` CLI action,
+which has editor-environment and path-selection semantics of its own.
 
 The nullable delay crosses the structured config boundary after Ghostty's own
 `Duration.asMilliseconds()` conversion, preserving configured zero separately

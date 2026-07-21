@@ -676,13 +676,7 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
                           QStringLiteral("ctrl+x>ctrl+y=new_tab"),
                           QStringLiteral("ctrl+f=toggle_fullscreen"),
                           QStringLiteral("ctrl+u=open_config")}));
-    QCOMPARE(snapshot.diagnostics.size(), 1);
-    QVERIFY(std::any_of(
-        snapshot.diagnostics.cbegin(), snapshot.diagnostics.cend(),
-        [](const GhosttyConfigDiagnostic &diagnostic) {
-            return diagnostic.message.contains(
-                QStringLiteral("open_config"));
-        }));
+    QVERIFY(snapshot.diagnostics.isEmpty());
     QCOMPARE(snapshot.values.value(QStringLiteral("config-file")).toStringList(),
              QStringList({includePath, QStringLiteral("?") + missingOptional}));
     QCOMPARE(snapshot.sourcePaths,

@@ -1,6 +1,8 @@
 #include "application_controller.h"
 #include "desktop_activation.h"
 #include "ghostty_cli_delegation.h"
+#include "ghostty_config_edit.h"
+#include "ghostty_config_service.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
 #include "terminal_pane.h"
@@ -8,7 +10,6 @@
 
 #if GHOSTTY_QT_CONFIG_ENABLED
 #include "ghostty_config_process_loader.h"
-#include "ghostty_config_service.h"
 #endif
 
 #include <QDebug>
@@ -985,6 +986,17 @@ int main(int argc, char *argv[])
         &application, [](const QString &message) {
             qWarning().noquote()
                 << "Could not create a new terminal window:" << message;
+        });
+    QObject::connect(
+        &applicationController, &ApplicationController::configOpenRequested,
+        &application, [] {
+            const auto opened = openGhosttyConfigForEditing(
+                GhosttyConfigService::standardConfigEditPaths());
+            if (!opened.has_value()) {
+                qWarning().noquote()
+                    << "Could not open the Ghostty configuration:"
+                    << opened.error();
+            }
         });
 
 #if GHOSTTY_QT_CONFIG_ENABLED
