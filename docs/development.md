@@ -47,8 +47,9 @@ stable correlated read-only/running pane confirmation, atomic resolution,
 final-tab escalation, irreversible typed-workspace quit gating,
 application/pane-local chain completion, and atomic all/global workspace-close
 events, composite process-level window sources, zero-window recreation,
-multiwindow lifetime and aggregate quit coordination, versioned session-D-Bus
-owner arbitration, and two-process resident reactivation,
+multiwindow lifetime and aggregate quit coordination, standard
+`org.freedesktop.Application` owner arbitration, warm/cold service activation,
+staged desktop metadata, and two-process resident reactivation,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
@@ -189,6 +190,14 @@ zero-window residence, application-wide confirmation and shutdown,
 cancellation, and dialog re-hosting. Private session-D-Bus integration also
 covers a false launcher that leaves a false-started primary at zero windows,
 followed by a true launcher that creates exactly one primary-owned surface.
+With configuration enabled, the same suite forces the exact service bootstrap
+flags over contradictory user configuration; the config-off build proves that
+activation does not depend on the parser helper. Both call the standard
+endpoint against a warm zero-window process and let the bus discover, start,
+activate, retire, and restart a cold service using only its starter-bus
+environment. The DESTDIR-staged desktop integration test checks
+configuration-specific IDs, relative or absolute final executable paths,
+distinct desktop fallback/service-host arguments, and config-helper presence.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

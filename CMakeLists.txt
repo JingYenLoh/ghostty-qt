@@ -7,6 +7,8 @@ endif()
 project(ghostty-qt VERSION 0.1.0 LANGUAGES C CXX)
 
 set(GHOSTTY_QT_APPLICATION_ID "io.github.JingYenLoh.ghostty_qt")
+set(GHOSTTY_QT_EFFECTIVE_APPLICATION_ID
+    "${GHOSTTY_QT_APPLICATION_ID}$<$<CONFIG:Debug>:.Debug>")
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "ghostty-qt supports Linux only")
@@ -539,7 +541,7 @@ target_link_libraries(ghostty-qt PRIVATE
 
 target_compile_definitions(ghostty-qt PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_APPLICATION_ID}$<$<CONFIG:Debug>:.Debug>"
+    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
 )
 
 add_dependencies(ghostty-qt ghostty-qt-terminfo)
@@ -581,8 +583,13 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         GHOSTTY_QT_CONFIG_HELPER_NAME="ghostty-qt-config-helper")
     add_dependencies(ghostty-qt ghostty-qt-config-helper)
 
-    set(_ghostty_qt_installed_helper
-        "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ghostty-qt-config-helper")
+    if(IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}")
+        set(_ghostty_qt_installed_helper
+            "\$ENV{DESTDIR}${CMAKE_INSTALL_BINDIR}/ghostty-qt-config-helper")
+    else()
+        set(_ghostty_qt_installed_helper
+            "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ghostty-qt-config-helper")
+    endif()
     # Force a fresh source binary on repeated installs before applying the
     # explicit RPATH rewrite below.
     install(CODE "file(REMOVE \"${_ghostty_qt_installed_helper}\")")
@@ -598,7 +605,44 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     install(CODE "${_ghostty_qt_install_rpath_code}")
 endif()
 
+set(_ghostty_qt_desktop_build_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/desktop-integration")
+file(MAKE_DIRECTORY "${_ghostty_qt_desktop_build_dir}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/ghostty-qt.desktop.in"
+    "${_ghostty_qt_desktop_build_dir}/ghostty-qt.desktop.in"
+    @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/dist/linux/ghostty-qt.service.in"
+    "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in"
+    @ONLY)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchInstalledDesktopMetadata.cmake.in"
+    "${_ghostty_qt_desktop_build_dir}/PatchInstalledDesktopMetadata.cmake.in"
+    @ONLY)
+file(GENERATE
+    OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.desktop"
+    INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt.desktop.in")
+file(GENERATE
+    OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
+    INPUT "${_ghostty_qt_desktop_build_dir}/ghostty-qt.service.in")
+file(GENERATE
+    OUTPUT
+        "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake"
+    INPUT
+        "${_ghostty_qt_desktop_build_dir}/PatchInstalledDesktopMetadata.cmake.in")
+
 install(TARGETS ghostty-qt RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(FILES
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.desktop"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+install(FILES
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}.service"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/dbus-1/services")
+install(SCRIPT
+    "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"
     DESTINATION "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
 

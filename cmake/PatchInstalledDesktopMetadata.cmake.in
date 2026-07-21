@@ -1,0 +1,36 @@
+set(_ghostty_qt_data_dir "@CMAKE_INSTALL_DATADIR@")
+if(NOT IS_ABSOLUTE "${_ghostty_qt_data_dir}")
+    set(_ghostty_qt_data_dir
+        "${CMAKE_INSTALL_PREFIX}/${_ghostty_qt_data_dir}")
+endif()
+cmake_path(NORMAL_PATH _ghostty_qt_data_dir)
+set(_ghostty_qt_metadata_root
+    "$ENV{DESTDIR}${_ghostty_qt_data_dir}")
+
+set(_ghostty_qt_binary_dir "@CMAKE_INSTALL_BINDIR@")
+if(NOT IS_ABSOLUTE "${_ghostty_qt_binary_dir}")
+    set(_ghostty_qt_binary_dir
+        "${CMAKE_INSTALL_PREFIX}/${_ghostty_qt_binary_dir}")
+endif()
+cmake_path(NORMAL_PATH _ghostty_qt_binary_dir)
+set(_ghostty_qt_executable "${_ghostty_qt_binary_dir}/ghostty-qt")
+string(REPLACE "\\" "\\\\" _ghostty_qt_executable
+    "${_ghostty_qt_executable}")
+string(REPLACE "\"" "\\\"" _ghostty_qt_executable
+    "${_ghostty_qt_executable}")
+
+foreach(_ghostty_qt_metadata IN ITEMS
+        "applications/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.desktop"
+        "dbus-1/services/@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@.service")
+    set(_ghostty_qt_metadata_path
+        "${_ghostty_qt_metadata_root}/${_ghostty_qt_metadata}")
+    file(READ "${_ghostty_qt_metadata_path}" _ghostty_qt_contents)
+    string(REPLACE "__GHOSTTY_QT_INSTALL_EXECUTABLE__"
+        "${_ghostty_qt_executable}"
+        _ghostty_qt_contents "${_ghostty_qt_contents}")
+    if(_ghostty_qt_contents MATCHES "__GHOSTTY_QT_INSTALL_EXECUTABLE__")
+        message(FATAL_ERROR
+            "Desktop metadata retained its executable placeholder: ${_ghostty_qt_metadata_path}")
+    endif()
+    file(WRITE "${_ghostty_qt_metadata_path}" "${_ghostty_qt_contents}")
+endforeach()

@@ -216,7 +216,10 @@ prompt state plus installed shell integration and remains a tracked parity
 item. Pending dialogs are re-evaluated when state changes. Destruction sends
 `SIGHUP` to the child's process group, allows a two-second grace period, and
 uses `SIGKILL` if the group does not exit; workspace/tab teardown starts all
-pane shutdowns first so grace periods overlap.
+pane shutdowns first so grace periods overlap. A close-on-exec readiness pipe
+holds parent-side publication until the `forkpty` child has reset its inherited
+`SIGHUP` disposition, so an immediate close cannot enter an application signal
+handler in the child before `exec`.
 
 Process lifetime is application-owned rather than a side effect of QML window
 destruction. Qt's implicit `quitOnLastWindowClosed` behavior is disabled.
@@ -264,28 +267,43 @@ controller therefore preserves the same never-requested state for
 existed and closed. This differs from the prose comment on the pinned config
 field, but matches its executable GTK control flow.
 
-Bare Linux process activation uses a separate versioned session-D-Bus
-component with a project-owned application ID; Debug adds its own suffix so a
-developer build cannot activate an installed Release build. The endpoint is
-exported on the connection before an atomic, non-queued, non-replaceable name
-claim. The launching process's typed `initial-window` decision determines what
-happens when another owner exists: true sends the protocol-version-only
-activation, while false unregisters its temporary endpoint and exits normally
-without contacting the owner. No activation ever forwards argv, environment,
-cwd, or shell text. Calls that arrive before primary startup installs the
-handler retain a delayed reply; they are acknowledged only after their
-synchronous source-less window creation finishes. An unavailable bus starts
-independently. On a connected bus, rejection or incompatibility from the same
-live owner is fatal, while a bounded owner-identity loop follows a replacement
-owner during process handoff. An ambiguous no-reply fails closed because the
-owner may already have created the window. This creation acknowledgement is a
-deliberate strengthening of pinned Ghostty's fire-and-forget normal activation.
+Linux process and desktop activation share the canonical
+`org.freedesktop.Application` session-D-Bus endpoint. Its well-known name is
+the build's application ID and its object path is derived by replacing dots
+with slashes and hyphens with underscores. Debug appends `.Debug` consistently
+to the runtime ID, desktop filename, service filename, and derived path, so a
+developer build cannot activate an installed Release build. The object is
+exported before an atomic, non-queued, non-replaceable name claim, preventing a
+cold request from observing an owner without its endpoint. `Activate(a{sv})`
+is functional; the complete standard `Open(as,a{sv})` and
+`ActivateAction(s,av,a{sv})` signatures are exported with stable
+`NotSupported` errors until their payload semantics are implemented.
+
+The launching process's typed `initial-window` decision determines what
+happens when another owner exists: true sends standard source-less activation,
+while false unregisters its temporary endpoint and exits normally without
+contacting the owner. No activation forwards argv, environment, cwd, or shell
+text. A process carrying `DBUS_STARTER_ADDRESS` connects through Qt's
+activation-bus alias; an ordinary process uses the session bus. Calls arriving
+before startup finishes retain delayed replies. The handler is installed only
+after controller, configuration, lifetime, and test wiring, and each success
+is acknowledged after synchronous window registration.
+An unavailable bus starts independently. On a connected bus, rejection or
+incompatibility from the same live owner is fatal, while a bounded owner-
+identity loop follows a replacement owner during handoff. An ambiguous
+no-reply fails closed because the owner may already have created the window.
+This creation acknowledgement deliberately strengthens pinned Ghostty's
+fire-and-forget normal activation. Standard platform data is accepted but not
+interpreted, so compositor activation-token handoff remains separate work.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
-The GUI process resolves detect
-from its real argv and `TERM_PROGRAM`; the first protocol slice deliberately
-excludes every argument-bearing launch. Role and name ownership stay fixed
+The GUI process resolves detect from its real invocation and `TERM_PROGRAM`.
+Parsing records whether an invocation has unforwarded window/session payload,
+so the exact `--gtk-single-instance` and `--initial-window` coordination flags
+remain eligible while cwd, font, hold, scrollback, and program arguments stay
+independent. Explicit coordination values outrank configuration on initial
+load and reload. Role and name ownership stay fixed
 across live reload, matching GApplication construction-time policy. Reloading
 `initial-window` changes no current window; a fresh launcher samples its own
 new value. The primary activation handler itself remains unconditional, so a
@@ -967,8 +985,12 @@ Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
 developer and release CMake trees. Those presets must not build concurrently.
 The staged relocation test installs into a temporary prefix, moves the prefix,
 and runs a Qt Core-only probe from the moved `bin` directory to verify that it
-selects the moved private database. Production desktop metadata and packaging
-remain separate work.
+selects the moved private database. A separate staged-install test verifies the
+configuration-specific desktop entry and direct D-Bus service, their distinct
+fallback/zero-window commands, exact service identity, actual install-prefix
+or configured-absolute executable path, DESTDIR exclusion from embedded paths,
+absence of unresolved placeholders, and the config-on/off helper boundary.
+Systemd, icon, AppStream, and distribution packaging remain separate work.
 
 Qt's `emit` macro is disabled with `QT_NO_KEYWORDS` because the public Ghostty C
 API legitimately contains struct fields named `emit`.
@@ -1108,16 +1130,22 @@ The default CTest suite has focused layers for each ownership boundary:
   wiring under a disabled last-window policy.
 - `single-instance-activation` runs owner arbitration, exact-once acceptance,
   delayed pre-handler replies, creation-failure propagation, owner handoff,
-  protocol rejection, release/reacquisition, unavailable-bus fallback, and
-  ambiguous timeout behavior against isolated session buses whose sockets and
-  runtime directories live under repository-local `./tmp`.
+  standard method/signature rejection, release/reacquisition, unavailable-bus
+  fallback, and ambiguous timeout behavior against isolated session buses
+  whose sockets and runtime directories live under repository-local `./tmp`.
 - `application-single-instance` starts two complete offscreen processes on an
   isolated bus, retires the primary's initial QML root to resident zero-window
   state, verifies the bare secondary exits successfully after recreating one
   primary-owned window, then confirms clean retirement and explicit shutdown.
   A second flow starts directly with no QML roots, proves a false secondary is
   an inert successful launch, then uses a true secondary to create exactly one
-  first surface in the false-started primary.
+  first surface in the false-started primary. Config-on and config-off builds
+  also exercise an explicitly bootstrapped zero-window host plus real cold
+  service discovery, activation, teardown, and restart on a private bus.
+- `desktop-integration-install` stages an installation under repository-local
+  `./tmp` and validates configuration-specific desktop/service metadata,
+  install-time executable paths, bootstrap arguments, and config-helper
+  presence or absence.
 - `application-close-dialog` opens and accepts the real QML close confirmation
   around a live child, failing on binding loops or shutdown regressions.
 - `ghostty-parity-manifest` checks the pinned revision and upstream-derived
@@ -1159,8 +1187,11 @@ in a real Wayland session.
   post-generation palette mask. Those cases remain explicitly partial/planned
   in the parity ledger.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, user-defined `link` rules, standard desktop D-Bus activation,
-  saved sessions, and production packaging remain future work. OSC 8, the
+  actions, user-defined `link` rules, payload-bearing desktop/process
+  activation, saved sessions, and full production packaging remain future
+  work. Standard source-less desktop activation and minimal metadata are
+  implemented; systemd notification, activation-token consumption, icon, and
+  AppStream layers remain. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen

@@ -23,6 +23,11 @@ public:
 
     bool start()
     {
+        return start(QProcessEnvironment::systemEnvironment());
+    }
+
+    bool start(QProcessEnvironment environment)
+    {
         error_.clear();
         const QString temporaryRoot =
             QDir::current().filePath(QStringLiteral("tmp"));
@@ -40,16 +45,23 @@ public:
             return false;
         }
 
-        QProcessEnvironment environment =
-            QProcessEnvironment::systemEnvironment();
+        const QString requestedAddress
+            = QStringLiteral("unix:path=%1")
+                  .arg(QDir(runtimeDirectory_->path())
+                          .filePath(QStringLiteral("bus")));
         environment.insert(QStringLiteral("XDG_RUNTIME_DIR"),
                            runtimeDirectory_->path());
+        // An activated service must use the starter bus supplied by the
+        // daemon. Remove any developer-session values so cold-start tests
+        // cannot accidentally pass through Qt's sessionBus().
+        environment.remove(QStringLiteral("DBUS_SESSION_BUS_ADDRESS"));
+        environment.remove(QStringLiteral("DBUS_STARTER_ADDRESS"));
+        environment.remove(QStringLiteral("DBUS_STARTER_BUS_TYPE"));
         process_.setProcessEnvironment(environment);
         process_.setProgram(QStringLiteral("dbus-daemon"));
         process_.setArguments({QStringLiteral("--session"),
-                               QStringLiteral("--address=unix:path=%1")
-                                   .arg(QDir(runtimeDirectory_->path())
-                                            .filePath(QStringLiteral("bus"))),
+                               QStringLiteral("--address=%1")
+                                   .arg(requestedAddress),
                                QStringLiteral("--nofork"),
                                QStringLiteral("--print-address=1")});
         process_.start();

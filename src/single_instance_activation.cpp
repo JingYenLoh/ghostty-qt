@@ -4,6 +4,7 @@
 #include <QDBusError>
 #include <QDBusMessage>
 #include <QDBusReply>
+#include <QVariantMap>
 
 #include <algorithm>
 #include <limits>
@@ -30,6 +31,7 @@ SingleInstanceActivation::SingleInstanceActivation(
     : QObject(parent)
     , connection_(std::move(connection))
     , serviceName_(std::move(serviceName))
+    , objectPath_(objectPathForApplicationId(serviceName_))
 {
 }
 
@@ -43,12 +45,32 @@ QString SingleInstanceActivation::defaultServiceName()
     return QStringLiteral(GHOSTTY_QT_APPLICATION_ID);
 }
 
+QDBusConnection SingleInstanceActivation::defaultConnection()
+{
+    if (!qEnvironmentVariableIsEmpty("DBUS_STARTER_ADDRESS")) {
+        return QDBusConnection::connectToBus(
+            QDBusConnection::ActivationBus,
+            QStringLiteral("ghostty_qt_activation_bus"));
+    }
+    return QDBusConnection::sessionBus();
+}
+
+QString SingleInstanceActivation::objectPathForApplicationId(
+    QStringView applicationId)
+{
+    QString path = QStringLiteral("/");
+    path += applicationId;
+    path.replace(u'.', u'/');
+    path.replace(u'-', u'_');
+    return path;
+}
+
 SingleInstanceActivation::StartResult SingleInstanceActivation::start(
     StartOptions options)
 {
     if (started_) {
         return {
-            .role = ownsService_ ? Role::Primary : Role::Failed,
+            .role = Role::Failed,
             .diagnostic = QStringLiteral(
                 "Single-instance coordination was already started"),
         };
@@ -66,8 +88,7 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
     // Export under this connection's unique name before atomically claiming
     // the well-known name. A secondary may then call as soon as RequestName
     // reports that an owner exists without observing a missing object.
-    objectRegistered_ = connection_.registerObject(
-        QString::fromLatin1(ObjectPath),
+    objectRegistered_ = connection_.registerObject(objectPath_,
         QString::fromLatin1(InterfaceName), this,
         QDBusConnection::ExportScriptableSlots);
     if (!objectRegistered_) {
@@ -117,20 +138,23 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         }
 
         QDBusMessage message = QDBusMessage::createMethodCall(
-            serviceName_, QString::fromLatin1(ObjectPath),
+            serviceName_, objectPath_,
             QString::fromLatin1(InterfaceName), QStringLiteral("Activate"));
-        message << ProtocolVersion;
-        const QDBusReply<bool> accepted(connection_.call(
-            message, QDBus::Block, boundedTimeout(remaining)));
-        if (accepted.isValid() && accepted.value()) {
+        message << QVariantMap{};
+        const QDBusMessage activationReply = connection_.call(
+            message, QDBus::Block, boundedTimeout(remaining));
+        const bool accepted
+            = activationReply.type() == QDBusMessage::ReplyMessage
+            && activationReply.arguments().isEmpty();
+        if (accepted) {
             unregisterObject();
             return {.role = Role::ActivatedExisting, .diagnostic = {}};
         }
 
-        if (!accepted.isValid()
-            && (accepted.error().type() == QDBusError::NoReply
-                || accepted.error().type() == QDBusError::Timeout
-                || accepted.error().type() == QDBusError::TimedOut)) {
+        const QDBusError activationError(activationReply);
+        if (activationError.type() == QDBusError::NoReply
+            || activationError.type() == QDBusError::Timeout
+            || activationError.type() == QDBusError::TimedOut) {
             return fail(QStringLiteral(
                 "The existing instance did not acknowledge activation before the deadline; refusing to create a possibly duplicate window"));
         }
@@ -153,10 +177,12 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         }
         if (successor->isEmpty() || *successor != *owner) continue;
 
-        const QString reason = accepted.isValid()
-            ? QStringLiteral("The existing instance rejected activation")
-            : QStringLiteral("The existing instance has no compatible activation endpoint: %1")
-                  .arg(accepted.error().message());
+        const QString reason = activationReply.type()
+                == QDBusMessage::ReplyMessage
+            ? QStringLiteral(
+                  "The existing instance returned an invalid activation reply")
+            : QStringLiteral("The existing instance rejected activation: %1")
+                  .arg(activationError.message());
         return fail(reason);
     }
 
@@ -171,15 +197,14 @@ void SingleInstanceActivation::setActivationHandler(
     std::vector<QDBusMessage> pending =
         std::exchange(pendingActivations_, {});
     for (const QDBusMessage &request : pending) {
-        const bool accepted = handler_ && handler_();
-        (void) connection_.send(request.createReply(accepted));
+        completeActivation(request, handler_ && handler_());
     }
 }
 
 void SingleInstanceActivation::release()
 {
     for (const QDBusMessage &request : pendingActivations_) {
-        (void) connection_.send(request.createReply(false));
+        completeActivation(request, false);
     }
     pendingActivations_.clear();
     if (ownsService_) {
@@ -193,13 +218,12 @@ void SingleInstanceActivation::release()
     handler_ = nullptr;
 }
 
-bool SingleInstanceActivation::Activate(quint32 protocolVersion)
+void SingleInstanceActivation::Activate(const QVariantMap &platformData)
 {
-    if (!ownsService_ || protocolVersion != ProtocolVersion) return false;
-    if (handler_) return handler_();
-    if (!calledFromDBus()
-        || pendingActivations_.size() >= MaximumPendingActivations) {
-        return false;
+    Q_UNUSED(platformData);
+    if (!calledFromDBus()) {
+        if (ownsService_ && handler_) (void) handler_();
+        return;
     }
 
     // The owner claims its name before QML startup so concurrent launches
@@ -207,8 +231,32 @@ bool SingleInstanceActivation::Activate(quint32 protocolVersion)
     // installs the handler: the secondary is acknowledged only after the
     // corresponding window has actually been registered.
     setDelayedReply(true);
-    pendingActivations_.push_back(message());
-    return false;
+    const QDBusMessage request = message();
+    if (!ownsService_
+        || pendingActivations_.size() >= MaximumPendingActivations) {
+        completeActivation(request, false);
+    } else if (handler_) {
+        completeActivation(request, handler_());
+    } else {
+        pendingActivations_.push_back(request);
+    }
+}
+
+void SingleInstanceActivation::Open(
+    const QStringList &uris, const QVariantMap &platformData)
+{
+    Q_UNUSED(uris);
+    Q_UNUSED(platformData);
+    rejectUnsupported(QStringLiteral("Open"));
+}
+
+void SingleInstanceActivation::ActivateAction(const QString &actionName,
+    const QVariantList &parameter, const QVariantMap &platformData)
+{
+    Q_UNUSED(actionName);
+    Q_UNUSED(parameter);
+    Q_UNUSED(platformData);
+    rejectUnsupported(QStringLiteral("ActivateAction"));
 }
 
 SingleInstanceActivation::ClaimResult
@@ -272,9 +320,31 @@ SingleInstanceActivation::currentOwner() const
             .arg(reply.error().message()));
 }
 
+void SingleInstanceActivation::completeActivation(
+    const QDBusMessage &request, bool accepted)
+{
+    QDBusMessage reply = accepted
+        ? request.createReply()
+        : request.createErrorReply(
+              QStringLiteral("org.freedesktop.DBus.Error.Failed"),
+              QStringLiteral("The application could not create a window"));
+    (void)connection_.send(reply);
+}
+
+void SingleInstanceActivation::rejectUnsupported(QStringView methodName)
+{
+    if (!calledFromDBus()) return;
+    setDelayedReply(true);
+    (void)connection_.send(message().createErrorReply(
+        QStringLiteral("org.freedesktop.DBus.Error.NotSupported"),
+        QStringLiteral(
+            "%1 is not supported by this no-payload activation endpoint")
+            .arg(methodName)));
+}
+
 void SingleInstanceActivation::unregisterObject()
 {
     if (!objectRegistered_) return;
-    connection_.unregisterObject(QString::fromLatin1(ObjectPath));
+    connection_.unregisterObject(objectPath_);
     objectRegistered_ = false;
 }

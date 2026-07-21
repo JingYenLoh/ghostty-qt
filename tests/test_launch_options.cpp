@@ -32,6 +32,7 @@ class LaunchOptionsTest : public QObject {
 
 private Q_SLOTS:
     void defaults();
+    void parsesActivationBootstrapOptions();
     void parsesEveryOptionAndProgramArguments();
     void preservesSymlinkSensitiveExplicitWorkingDirectory();
     void rejectsInvalidWorkingDirectory();
@@ -124,12 +125,77 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.quitAfterLastWindowClosed);
     QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(options.initialWindow);
+    QVERIFY(!options.initialWindowExplicit);
+    QVERIFY(!options.hasUnforwardedLaunchPayload);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
+    QVERIFY(!options.singleInstanceModeExplicit);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
     QVERIFY(!options.hold);
     QVERIFY(options.program.isEmpty());
+}
+
+void LaunchOptionsTest::parsesActivationBootstrapOptions()
+{
+    const auto service = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--gtk-single-instance=true"),
+        QStringLiteral("--initial-window=false"),
+    });
+    QVERIFY2(service.has_value(), qPrintable(errorMessage(service)));
+    QCOMPARE(service->singleInstanceMode, SingleInstanceMode::Enabled);
+    QVERIFY(service->singleInstanceModeExplicit);
+    QVERIFY(!service->initialWindow);
+    QVERIFY(service->initialWindowExplicit);
+    QVERIFY(!service->hasUnforwardedLaunchPayload);
+    QVERIFY(service->program.isEmpty());
+    QVERIFY(shouldUseSingleInstance(*service, QByteArrayView("ghostty")));
+
+    GhosttyConfigSnapshot contradictory;
+    contradictory.availability = GhosttyConfigAvailability::Available;
+    contradictory.values.insert(
+        QStringLiteral("gtk-single-instance"), QStringLiteral("false"));
+    contradictory.values.insert(QStringLiteral("initial-window"), true);
+    QCOMPARE(applyGhosttyConfigSnapshot(*service, contradictory), *service);
+
+    const auto detect = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--gtk-single-instance=detect"),
+        QStringLiteral("--initial-window=T"),
+    });
+    QVERIFY2(detect.has_value(), qPrintable(errorMessage(detect)));
+    QVERIFY(detect->initialWindow);
+    QVERIFY(shouldUseSingleInstance(*detect, QByteArrayView{}));
+    QVERIFY(!shouldUseSingleInstance(*detect, QByteArrayView("ghostty")));
+
+    const auto disabled = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--gtk-single-instance=false"),
+        QStringLiteral("--initial-window=0"),
+    });
+    QVERIFY2(disabled.has_value(), qPrintable(errorMessage(disabled)));
+    QVERIFY(!shouldUseSingleInstance(*disabled, QByteArrayView{}));
+    QVERIFY(!disabled->initialWindow);
+
+    for (const QString &argument : {
+             QStringLiteral("--gtk-single-instance=yes"),
+             QStringLiteral("--initial-window=yes"),
+         }) {
+        const auto invalid = parseLaunchOptions(
+            {QStringLiteral("ghostty-qt"), argument});
+        QVERIFY(!invalid.has_value());
+        QVERIFY(invalid.error().contains(QStringLiteral("Invalid")));
+    }
+
+    const auto payload = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--gtk-single-instance=true"),
+        QStringLiteral("--font-size=14"),
+    });
+    QVERIFY2(payload.has_value(), qPrintable(errorMessage(payload)));
+    QVERIFY(payload->hasUnforwardedLaunchPayload);
+    QVERIFY(!shouldUseSingleInstance(*payload, QByteArrayView{}));
 }
 
 void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
@@ -167,6 +233,7 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(options.scrollbackLimitExplicit);
     QVERIFY(options.hold);
+    QVERIFY(options.hasUnforwardedLaunchPayload);
     QCOMPARE(options.program,
              QStringList({QStringLiteral("/bin/sh"), QStringLiteral("-lc"),
                           QStringLiteral("printf hello")}));
@@ -760,25 +827,27 @@ void LaunchOptionsTest::mapsSingleInstancePolicy()
                            QStringLiteral("true"));
     LaunchOptions options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Enabled);
-    QVERIFY(shouldUseSingleInstance(options, 1, QByteArrayView("ghostty")));
+    QVERIFY(shouldUseSingleInstance(options, QByteArrayView("ghostty")));
     // Forwarding command-line payloads is deliberately outside this first
     // protocol even when the config explicitly enables process uniqueness.
-    QVERIFY(!shouldUseSingleInstance(options, 2, QByteArrayView{}));
+    options.hasUnforwardedLaunchPayload = true;
+    QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
+    options.hasUnforwardedLaunchPayload = false;
 
     snapshot.values.insert(QStringLiteral("gtk-single-instance"),
                            QStringLiteral("false"));
     options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Disabled);
-    QVERIFY(!shouldUseSingleInstance(options, 1, QByteArrayView{}));
+    QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
 
     snapshot.values.insert(QStringLiteral("gtk-single-instance"),
                            QStringLiteral("detect"));
     options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
-    QVERIFY(shouldUseSingleInstance(options, 1, QByteArrayView{}));
-    QVERIFY(!shouldUseSingleInstance(options, 1,
-                                     QByteArrayView("ghostty")));
-    QVERIFY(!shouldUseSingleInstance(options, 2, QByteArrayView{}));
+    QVERIFY(shouldUseSingleInstance(options, QByteArrayView{}));
+    QVERIFY(!shouldUseSingleInstance(options, QByteArrayView("ghostty")));
+    options.hasUnforwardedLaunchPayload = true;
+    QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
 
     snapshot.values.insert(QStringLiteral("gtk-single-instance"),
                            QStringLiteral("invalid"));

@@ -2,12 +2,13 @@
 #include "single_instance_activation.h"
 
 #include <QDBusContext>
+#include <QDBusError>
 #include <QDBusMessage>
-#include <QDBusReply>
 #include <QDir>
 #include <QStandardPaths>
 #include <QTest>
 #include <QUuid>
+#include <QVariantMap>
 
 #include <chrono>
 #include <future>
@@ -26,39 +27,50 @@ QString uniqueServiceName()
         .arg(suffix);
 }
 
+QString objectPath(const QString &service)
+{
+    return SingleInstanceActivation::objectPathForApplicationId(service);
+}
+
+QDBusMessage activationCall(
+    const QString &service, QVariantMap platformData = {})
+{
+    QDBusMessage message
+        = QDBusMessage::createMethodCall(service, objectPath(service),
+            QString::fromLatin1(SingleInstanceActivation::InterfaceName),
+            QStringLiteral("Activate"));
+    message << platformData;
+    return message;
+}
+
 class NeverReplyEndpoint final : public QObject, protected QDBusContext {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface",
-                "io.github.JingYenLoh.ghostty_qt.Application1")
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
 
 public Q_SLOTS:
-    Q_SCRIPTABLE bool Activate(quint32)
+    Q_SCRIPTABLE void Activate(const QVariantMap &)
     {
         setDelayedReply(true);
-        return false;
     }
 };
 
 class AcceptEndpoint final : public QObject {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface",
-                "io.github.JingYenLoh.ghostty_qt.Application1")
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
 
 public:
     int calls = 0;
 
 public Q_SLOTS:
-    Q_SCRIPTABLE bool Activate(quint32 protocolVersion)
+    Q_SCRIPTABLE void Activate(const QVariantMap &)
     {
         ++calls;
-        return protocolVersion == SingleInstanceActivation::ProtocolVersion;
     }
 };
 
-class HandoffEndpoint final : public QObject {
+class HandoffEndpoint final : public QObject, protected QDBusContext {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface",
-                "io.github.JingYenLoh.ghostty_qt.Application1")
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
 
 public:
     HandoffEndpoint(QDBusConnection retiring,
@@ -74,12 +86,15 @@ public:
     bool handoffSucceeded = false;
 
 public Q_SLOTS:
-    Q_SCRIPTABLE bool Activate(quint32)
+    Q_SCRIPTABLE void Activate(const QVariantMap &)
     {
+        setDelayedReply(true);
         ++calls;
         handoffSucceeded = retiring_.unregisterService(service_)
             && successor_.registerService(service_);
-        return false;
+        (void)retiring_.send(message().createErrorReply(
+            QStringLiteral("org.freedesktop.DBus.Error.Failed"),
+            QStringLiteral("owner retired")));
     }
 
 private:
@@ -100,7 +115,7 @@ private Q_SLOTS:
     void activationWaitsUntilHandlerIsInstalled();
     void queuedActivationReportsHandlerFailure();
     void activationFollowsAnOwnerHandoff();
-    void rejectsUnknownProtocolAndReleasesOwnership();
+    void exportsStandardInterfaceAndRejectsUnsupportedMethods();
     void disconnectedBusFallsBackAndNoReplyFailsClosed();
 };
 
@@ -120,6 +135,10 @@ void SingleInstanceActivationTest::firstRegistrantBecomesPrimary()
     });
     QCOMPARE(result.role, SingleInstanceActivation::Role::Primary);
     QVERIFY(result.diagnostic.isEmpty());
+    QVERIFY(activation.isPrimary());
+    const auto repeated = activation.start({.timeout = 1s});
+    QCOMPARE(repeated.role, SingleInstanceActivation::Role::Failed);
+    QVERIFY(!repeated.diagnostic.isEmpty());
     QVERIFY(activation.isPrimary());
 }
 
@@ -257,13 +276,11 @@ void SingleInstanceActivationTest::activationFollowsAnOwnerHandoff()
 
     const QString service = uniqueServiceName();
     AcceptEndpoint successor;
-    QVERIFY(bus.client().registerObject(
-        QString::fromLatin1(SingleInstanceActivation::ObjectPath),
+    QVERIFY(bus.client().registerObject(objectPath(service),
         QString::fromLatin1(SingleInstanceActivation::InterfaceName),
         &successor, QDBusConnection::ExportScriptableSlots));
     HandoffEndpoint retiring(bus.server(), bus.client(), service);
-    QVERIFY(bus.server().registerObject(
-        QString::fromLatin1(SingleInstanceActivation::ObjectPath),
+    QVERIFY(bus.server().registerObject(objectPath(service),
         QString::fromLatin1(SingleInstanceActivation::InterfaceName),
         &retiring, QDBusConnection::ExportScriptableSlots));
     QVERIFY(bus.server().registerService(service));
@@ -286,7 +303,7 @@ void SingleInstanceActivationTest::activationFollowsAnOwnerHandoff()
     QCOMPARE(successor.calls, 1);
 }
 
-void SingleInstanceActivationTest::rejectsUnknownProtocolAndReleasesOwnership()
+void SingleInstanceActivationTest::exportsStandardInterfaceAndRejectsUnsupportedMethods()
 {
     if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
         QSKIP("dbus-daemon is unavailable");
@@ -304,23 +321,58 @@ void SingleInstanceActivationTest::rejectsUnknownProtocolAndReleasesOwnership()
         return true;
     });
 
+    QCOMPARE(objectPath(QStringLiteral("org.example.app-debug")),
+        QStringLiteral("/org/example/app_debug"));
+
     auto future = std::async(std::launch::async, [&bus, service] {
-        QDBusMessage message = QDBusMessage::createMethodCall(
-            service,
-            QString::fromLatin1(SingleInstanceActivation::ObjectPath),
-            QString::fromLatin1(SingleInstanceActivation::InterfaceName),
-            QStringLiteral("Activate"));
-        message << quint32(SingleInstanceActivation::ProtocolVersion + 1);
-        return QDBusReply<bool>(
-            bus.client().call(message, QDBus::Block, 1000));
+        QVariantMap platformData;
+        platformData.insert(
+            QStringLiteral("activation-token"),
+            QStringLiteral("token"));
+        platformData.insert(
+            QStringLiteral("desktop-startup-id"), QStringLiteral("startup"));
+        platformData.insert(QStringLiteral("unknown"), 42);
+        return bus.client().call(
+            activationCall(service, platformData), QDBus::Block, 1000);
     });
     QTRY_VERIFY_WITH_TIMEOUT(future.wait_for(0ms)
                                  == std::future_status::ready,
                              2000);
-    const QDBusReply<bool> reply = future.get();
-    QVERIFY(reply.isValid());
-    QVERIFY(!reply.value());
-    QCOMPARE(activations, 0);
+    const QDBusMessage reply = future.get();
+    QCOMPARE(reply.type(), QDBusMessage::ReplyMessage);
+    QVERIFY(reply.arguments().isEmpty());
+    QCOMPARE(activations, 1);
+
+    const auto unsupported
+        = [&bus, &service](QString method, QList<QVariant> arguments) {
+              return std::async(std::launch::async,
+                  [&bus, &service, method = std::move(method),
+                      arguments = std::move(arguments)] {
+                      QDBusMessage message = QDBusMessage::createMethodCall(
+                          service, objectPath(service),
+                          QString::fromLatin1(
+                              SingleInstanceActivation::InterfaceName),
+                          method);
+                      message.setArguments(arguments);
+                      return bus.client().call(message, QDBus::Block, 1000);
+                  });
+          };
+
+    auto open = unsupported(QStringLiteral("Open"),
+        {QVariant::fromValue(
+             QStringList{QStringLiteral("file:tmp/a")}),
+         QVariant::fromValue(QVariantMap{})});
+    QTRY_COMPARE_WITH_TIMEOUT(
+        open.wait_for(0ms), std::future_status::ready, 2000);
+    QCOMPARE(QDBusError(open.get()).type(), QDBusError::NotSupported);
+
+    auto action = unsupported(QStringLiteral("ActivateAction"),
+        {QStringLiteral("new-window"),
+         QVariant::fromValue(QVariantList{}),
+         QVariant::fromValue(QVariantMap{})});
+    QTRY_COMPARE_WITH_TIMEOUT(
+        action.wait_for(0ms), std::future_status::ready, 2000);
+    QCOMPARE(QDBusError(action.get()).type(), QDBusError::NotSupported);
 
     primary.release();
     QVERIFY(!primary.isPrimary());
@@ -358,8 +410,7 @@ void SingleInstanceActivationTest::disconnectedBusFallsBackAndNoReplyFailsClosed
 
     const QString service = uniqueServiceName();
     NeverReplyEndpoint endpoint;
-    QVERIFY(bus.server().registerObject(
-        QString::fromLatin1(SingleInstanceActivation::ObjectPath),
+    QVERIFY(bus.server().registerObject(objectPath(service),
         QString::fromLatin1(SingleInstanceActivation::InterfaceName),
         &endpoint, QDBusConnection::ExportScriptableSlots));
     QVERIFY(bus.server().registerService(service));

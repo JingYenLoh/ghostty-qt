@@ -5,6 +5,10 @@
 #include <QDBusMessage>
 #include <QObject>
 #include <QString>
+#include <QStringList>
+#include <QStringView>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include <chrono>
 #include <cstddef>
@@ -12,14 +16,13 @@
 #include <functional>
 #include <vector>
 
-// Coordinates no-payload application activation through one versioned,
-// project-owned name on the user's session bus. It deliberately carries no
-// command line, environment, cwd, or shell text.
+// Coordinates no-payload application activation through the standard
+// org.freedesktop.Application endpoint on the user's session bus. It
+// deliberately carries no command line, environment, cwd, or shell text.
 class SingleInstanceActivation final : public QObject,
                                        protected QDBusContext {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface",
-                "io.github.JingYenLoh.ghostty_qt.Application1")
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
 
 public:
     enum class Role {
@@ -49,19 +52,18 @@ public:
 
     using ActivationHandler = std::move_only_function<bool()>;
 
-    static constexpr quint32 ProtocolVersion = 1;
-    static constexpr auto ObjectPath =
-        "/io/github/JingYenLoh/ghostty_qt/Application";
-    static constexpr auto InterfaceName =
-        "io.github.JingYenLoh.ghostty_qt.Application1";
+    static constexpr auto InterfaceName = "org.freedesktop.Application";
 
+    [[nodiscard]] static QDBusConnection defaultConnection();
     explicit SingleInstanceActivation(
-        QDBusConnection connection = QDBusConnection::sessionBus(),
+        QDBusConnection connection = defaultConnection(),
         QString serviceName = defaultServiceName(),
         QObject *parent = nullptr);
     ~SingleInstanceActivation() override;
 
     [[nodiscard]] static QString defaultServiceName();
+    [[nodiscard]] static QString objectPathForApplicationId(
+        QStringView applicationId);
     [[nodiscard]] StartResult start(StartOptions options);
     void setActivationHandler(ActivationHandler handler);
     void release();
@@ -69,7 +71,11 @@ public:
     [[nodiscard]] bool isPrimary() const { return ownsService_; }
 
 public Q_SLOTS:
-    Q_SCRIPTABLE bool Activate(quint32 protocolVersion);
+    Q_SCRIPTABLE void Activate(const QVariantMap &platformData);
+    Q_SCRIPTABLE void Open(
+        const QStringList &uris, const QVariantMap &platformData);
+    Q_SCRIPTABLE void ActivateAction(const QString &actionName,
+        const QVariantList &parameter, const QVariantMap &platformData);
 
 private:
     enum class ClaimStatus {
@@ -84,10 +90,13 @@ private:
 
     [[nodiscard]] ClaimResult tryClaimService();
     [[nodiscard]] std::expected<QString, QString> currentOwner() const;
+    void completeActivation(const QDBusMessage &request, bool accepted);
+    void rejectUnsupported(QStringView methodName);
     void unregisterObject();
 
     QDBusConnection connection_;
     QString serviceName_;
+    QString objectPath_;
     ActivationHandler handler_;
     std::vector<QDBusMessage> pendingActivations_;
     bool started_ = false;

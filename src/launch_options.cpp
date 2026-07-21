@@ -15,6 +15,23 @@ namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
 
+std::optional<bool> parseGhosttyBoolean(QStringView value)
+{
+    if (value == QLatin1StringView("true")
+        || value == QLatin1StringView("1")
+        || value == QLatin1StringView("t")
+        || value == QLatin1StringView("T")) {
+        return true;
+    }
+    if (value == QLatin1StringView("false")
+        || value == QLatin1StringView("0")
+        || value == QLatin1StringView("f")
+        || value == QLatin1StringView("F")) {
+        return false;
+    }
+    return std::nullopt;
+}
+
 std::optional<QColor> configColor(const GhosttyConfigSnapshot &snapshot,
                                   const QString &key)
 {
@@ -283,8 +300,10 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     applyConfigBool(
         snapshot, QStringLiteral("quit-after-last-window-closed"),
         result.quitAfterLastWindowClosed);
-    applyConfigBool(snapshot, QStringLiteral("initial-window"),
-                    result.initialWindow);
+    if (!base.initialWindowExplicit) {
+        applyConfigBool(snapshot, QStringLiteral("initial-window"),
+                        result.initialWindow);
+    }
     const auto delay = snapshot.values.constFind(
         QStringLiteral("quit-after-last-window-closed-delay"));
     if (delay != snapshot.values.cend()) {
@@ -295,14 +314,16 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                 std::chrono::milliseconds(delay->value<quint32>());
         }
     }
-    if (const auto mode = snapshot.value<QString>(
-            QStringLiteral("gtk-single-instance"))) {
-        if (*mode == QStringLiteral("true")) {
-            result.singleInstanceMode = SingleInstanceMode::Enabled;
-        } else if (*mode == QStringLiteral("false")) {
-            result.singleInstanceMode = SingleInstanceMode::Disabled;
-        } else if (*mode == QStringLiteral("detect")) {
-            result.singleInstanceMode = SingleInstanceMode::Detect;
+    if (!base.singleInstanceModeExplicit) {
+        if (const auto mode = snapshot.value<QString>(
+                QStringLiteral("gtk-single-instance"))) {
+            if (*mode == QStringLiteral("true")) {
+                result.singleInstanceMode = SingleInstanceMode::Enabled;
+            } else if (*mode == QStringLiteral("false")) {
+                result.singleInstanceMode = SingleInstanceMode::Disabled;
+            } else if (*mode == QStringLiteral("detect")) {
+                result.singleInstanceMode = SingleInstanceMode::Detect;
+            }
         }
     }
     // Match Ghostty's `-e` contract: an explicitly supplied command always
@@ -485,10 +506,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
 }
 
 bool shouldUseSingleInstance(const LaunchOptions &options,
-                             qsizetype argumentCount,
                              QByteArrayView termProgram)
 {
-    if (argumentCount != 1) return false;
+    if (options.hasUnforwardedLaunchPayload) return false;
     switch (options.singleInstanceMode) {
     case SingleInstanceMode::Enabled:
         return true;
@@ -550,6 +570,14 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
     const QCommandLineOption holdOption(
         QStringLiteral("hold"),
         QStringLiteral("Keep the terminal open after the child process exits."));
+    const QCommandLineOption singleInstanceOption(
+        QStringLiteral("gtk-single-instance"),
+        QStringLiteral("Use false, true, or detect process uniqueness."),
+        QStringLiteral("mode"));
+    const QCommandLineOption initialWindowOption(
+        QStringLiteral("initial-window"),
+        QStringLiteral("Request an initial window (true or false)."),
+        QStringLiteral("boolean"));
     const QCommandLineOption helpOption(
         {QStringLiteral("h"), QStringLiteral("help")},
         QStringLiteral("Show command-line help."));
@@ -558,7 +586,8 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         QStringLiteral("Show version information."));
 
     parser.addOptions({workingDirectoryOption, fontFamilyOption, fontSizeOption,
-                       scrollbackLinesOption, holdOption, helpOption, versionOption});
+                       scrollbackLinesOption, holdOption, singleInstanceOption,
+                       initialWindowOption, helpOption, versionOption});
     parser.addPositionalArgument(
         QStringLiteral("program"),
         QStringLiteral("Program and arguments to execute after --."),
@@ -624,6 +653,40 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
     parsed.showHelp = parser.isSet(helpOption);
     parsed.showVersion = parser.isSet(versionOption);
     parsed.program = parser.positionalArguments();
+    parsed.hasUnforwardedLaunchPayload = parsed.workingDirectoryExplicit
+        || parsed.fontFamilyExplicit || parsed.fontSizeExplicit
+        || parsed.scrollbackLimitExplicit || parsed.hold
+        || !parsed.program.isEmpty();
+
+    if (parser.isSet(singleInstanceOption)) {
+        const QString mode = parser.value(singleInstanceOption);
+        if (mode == QStringLiteral("true")) {
+            parsed.singleInstanceMode = SingleInstanceMode::Enabled;
+        } else if (mode == QStringLiteral("false")) {
+            parsed.singleInstanceMode = SingleInstanceMode::Disabled;
+        } else if (mode == QStringLiteral("detect")) {
+            parsed.singleInstanceMode = SingleInstanceMode::Detect;
+        } else {
+            return std::unexpected(QStringLiteral(
+                "Invalid gtk-single-instance value '%1': expected "
+                "false, true, or detect.")
+                    .arg(mode));
+        }
+        parsed.singleInstanceModeExplicit = true;
+    }
+
+    if (parser.isSet(initialWindowOption)) {
+        const QString value = parser.value(initialWindowOption);
+        const std::optional<bool> initialWindow =
+            parseGhosttyBoolean(value);
+        if (!initialWindow.has_value()) {
+            return std::unexpected(QStringLiteral(
+                "Invalid initial-window value '%1': expected true or false.")
+                    .arg(value));
+        }
+        parsed.initialWindow = *initialWindow;
+        parsed.initialWindowExplicit = true;
+    }
 
     return parsed;
 }

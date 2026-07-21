@@ -85,8 +85,10 @@ advanced text/graphics support, and distribution:
   bounded cell/byte and Oniguruma retry limits. Exact OSC grouping by hyperlink
   ID also remains limited by the public C API, which exposes only the
   destination URI.
-- Runtime terminfo lookup is relocatable and covered by a staged-install test;
-  desktop integration metadata and distribution-specific packages remain.
+- Runtime terminfo lookup is relocatable and covered by a staged-install test.
+  A second staged contract covers minimal desktop and direct D-Bus service
+  activation metadata; systemd notification, project icon, AppStream, and
+  distribution-specific packages remain.
 - Headless smoke tests use Qt's software scene graph. The hardware RHI path
   needs interactive visual and performance qualification on representative
   Wayland compositors and GPU drivers.

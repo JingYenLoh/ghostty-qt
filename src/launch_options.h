@@ -116,11 +116,17 @@ struct LaunchOptions {
     // Whether this process requests a window during initial application
     // activation. Explicit new-window actions remain available when false.
     bool initialWindow = true;
-    // This first transport slice accepts only bare, no-command activation.
+    // Command-line service bootstrap values must outrank the user's config.
+    bool initialWindowExplicit = false;
+    // This transport accepts only source-less activation. The parser marks
+    // every option/program that would need forwarding; the exact coordination
+    // flags remain payload-free.
+    bool hasUnforwardedLaunchPayload = false;
     // Detect additionally excludes launches from a terminal advertising
     // TERM_PROGRAM. The structured helper preserves Ghostty's raw mode so the
     // originating process can resolve detect from its real invocation.
     SingleInstanceMode singleInstanceMode = SingleInstanceMode::Detect;
+    bool singleInstanceModeExplicit = false;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
@@ -180,8 +186,5 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
     const QStringList &arguments);
 
 // Pure startup policy used before creating QML or terminal runtime objects.
-// Any argv beyond argv[0] is intentionally outside the no-command protocol.
 [[nodiscard]] bool shouldUseSingleInstance(
-    const LaunchOptions &options,
-    qsizetype argumentCount,
-    QByteArrayView termProgram);
+    const LaunchOptions &options, QByteArrayView termProgram);

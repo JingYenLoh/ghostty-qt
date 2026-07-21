@@ -724,15 +724,43 @@ bool SessionWorker::spawnChild()
     size.ws_xpixel = boundedU16(surfaceWidthPixels_);
     size.ws_ypixel = boundedU16(surfaceHeightPixels_);
 
+    std::array<int, 2> childReadyPipe{-1, -1};
+    if (::pipe2(childReadyPipe.data(), O_CLOEXEC) < 0) {
+        Q_EMIT errorOccurred(QStringLiteral("Unable to create child-ready pipe: %1")
+                               .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        return false;
+    }
+
     int ptyFd = -1;
     const pid_t pid = ::forkpty(&ptyFd, nullptr, nullptr, &size);
     if (pid < 0) {
+        (void)::close(childReadyPipe[0]);
+        (void)::close(childReadyPipe[1]);
         Q_EMIT errorOccurred(QStringLiteral("Unable to create PTY: %1")
                                .arg(QString::fromLocal8Bit(std::strerror(errno))));
         return false;
     }
 
     if (pid == 0) {
+        (void)::close(childReadyPipe[0]);
+        struct sigaction defaultAction {};
+        defaultAction.sa_handler = SIG_DFL;
+        if (::sigemptyset(&defaultAction.sa_mask) != 0
+            || ::sigaction(SIGHUP, &defaultAction, nullptr) != 0) {
+            _exit(126);
+        }
+
+        // forkpty returns to the parent before the child necessarily finishes
+        // login_tty. Publish readiness only after SIGHUP can no longer invoke
+        // an inherited Qt/application handler during an immediate close.
+        constexpr char ready = 1;
+        ssize_t written = -1;
+        do {
+            written = ::write(childReadyPipe[1], &ready, sizeof(ready));
+        } while (written < 0 && errno == EINTR);
+        (void)::close(childReadyPipe[1]);
+        if (written != 1) _exit(126);
+
         if (attemptWorkingDirectory) {
             // Ghostty treats the directory as a hint. An existing file,
             // permission failure, or post-preflight race must not prevent the
@@ -756,6 +784,23 @@ bool SessionWorker::spawnChild()
             _exit(126);
         }
         _exit(sawAccessDenied ? 126 : 127);
+    }
+
+    (void)::close(childReadyPipe[1]);
+    char ready = 0;
+    ssize_t received = -1;
+    do {
+        received = ::read(childReadyPipe[0], &ready, sizeof(ready));
+    } while (received < 0 && errno == EINTR);
+    (void)::close(childReadyPipe[0]);
+    if (received != 1 || ready != 1) {
+        (void)::close(ptyFd);
+        int status = 0;
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+        }
+        Q_EMIT errorOccurred(
+            QStringLiteral("Child exited before completing PTY setup"));
+        return false;
     }
 
     masterFd_ = ptyFd;

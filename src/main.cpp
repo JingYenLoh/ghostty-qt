@@ -37,8 +37,13 @@ void printHelp()
               "      --working-directory DIR   Start the command in DIR.\n"
               "      --font-family FAMILY      Use FAMILY for terminal text.\n"
               "      --font-size POINTS        Set font size (default: 12).\n"
-              "      --scrollback-lines LINES  Estimate capacity for LINES (default: 10000).\n"
-              "      --hold                    Keep the pane after the command exits.\n";
+              "      --scrollback-lines LINES  Estimate capacity for LINES "
+              "(default: 10000).\n"
+              "      --hold                    Keep the pane after the command "
+              "exits.\n"
+              "      --gtk-single-instance MODE  Use false, true, or detect "
+              "uniqueness.\n"
+              "      --initial-window BOOLEAN    Request an initial window.\n";
 }
 
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -392,6 +397,50 @@ bool installSuppressedStartupTestHook(
 
     QTextStream(stdout)
         << "GHOSTTY_QT_INITIAL_WINDOW_READY\n" << Qt::flush;
+    return true;
+}
+
+bool installDesktopActivationTestHook(
+    ApplicationController *controller, bool *completed)
+{
+    ApplicationLifetimeController *const lifetime
+        = controller->lifetimeController();
+    if (controller->windowCount() != 0 || lifetime->registeredWindowCount() != 0
+        || lifetime->hasOpenWindow()) {
+        qCritical()
+            << "Desktop-activation test hook did not begin with zero windows";
+        return false;
+    }
+
+    QObject::connect(
+        controller, &ApplicationController::windowCreationFailed, controller,
+        [](const QString &message) {
+            qCritical().noquote()
+                << "Desktop activation could not create a window:" << message;
+            QCoreApplication::exit(1);
+        },
+        Qt::SingleShotConnection);
+    QObject::connect(
+        controller, &ApplicationController::windowCreated, controller,
+        [controller, lifetime, completed](QQuickWindow *, TerminalWorkspace *) {
+            if (controller->windowCount() != 1
+                || lifetime->registeredWindowCount() != 1
+                || !lifetime->hasOpenWindow()) {
+                qCritical()
+                    << "Desktop activation did not create exactly one window";
+                QCoreApplication::exit(1);
+                return;
+            }
+            *completed = true;
+            QTextStream(stdout) << "GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED\n"
+                                << Qt::flush;
+            QTimer::singleShot(0, QCoreApplication::instance(),
+                [] { QCoreApplication::quit(); });
+        },
+        Qt::SingleShotConnection);
+
+    QTextStream(stdout) << "GHOSTTY_QT_DESKTOP_ACTIVATION_READY\n"
+                        << Qt::flush;
     return true;
 }
 
@@ -780,6 +829,8 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("ghostty-qt"));
     QCoreApplication::setApplicationVersion(QStringLiteral(GHOSTTY_QT_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
+    QGuiApplication::setDesktopFileName(
+        QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
 
     const bool allowNonWayland = qEnvironmentVariableIntValue(
         "GHOSTTY_QT_ALLOW_NON_WAYLAND") == 1;
@@ -825,7 +876,7 @@ int main(int argc, char *argv[])
 
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
     if (shouldUseSingleInstance(
-            effectiveApplicationOptions, arguments.size(),
+            effectiveApplicationOptions,
             QByteArrayView(qgetenv("TERM_PROGRAM")))) {
         auto candidate = std::make_unique<SingleInstanceActivation>();
         const SingleInstanceActivation::StartResult activation =
@@ -899,18 +950,6 @@ int main(int argc, char *argv[])
         qCritical() << "Could not start without an initial application window";
         return 1;
     }
-    if (activationEndpoint) {
-        activationEndpoint->setActivationHandler(
-            [controller = QPointer(&applicationController)] {
-                return controller != nullptr
-                    && controller->activateNoCommand();
-            });
-    }
-    const auto activationHandlerGuard = qScopeGuard([&activationEndpoint] {
-        if (activationEndpoint) {
-            activationEndpoint->setActivationHandler({});
-        }
-    });
     QQuickWindow *const applicationWindow = initialWindow
         ? initialWindow->window
         : nullptr;
@@ -938,6 +977,17 @@ int main(int argc, char *argv[])
             || !installSuppressedStartupTestHook(
                 &applicationController, effectiveApplicationOptions,
                 &suppressedStartupTestCompleted))) {
+        return 1;
+    }
+
+    const bool desktopActivationTest
+        = qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION")
+        == 1;
+    bool desktopActivationTestCompleted = false;
+    if (desktopActivationTest
+        && (initialWindow
+            || !installDesktopActivationTestHook(
+                &applicationController, &desktopActivationTestCompleted))) {
         return 1;
     }
 
@@ -980,6 +1030,22 @@ int main(int argc, char *argv[])
         }
     }
 
+    // Install activation last. A cold D-Bus call can arrive as soon as the
+    // well-known name is claimed; keeping its delayed reply queued until here
+    // guarantees that every controller, reload, and test hook is ready before
+    // the corresponding window is registered.
+    if (activationEndpoint) {
+        activationEndpoint->setActivationHandler(
+            [controller = QPointer(&applicationController)] {
+                return controller != nullptr && controller->activateNoCommand();
+            });
+    }
+    const auto activationHandlerGuard = qScopeGuard([&activationEndpoint] {
+        if (activationEndpoint) {
+            activationEndpoint->setActivationHandler({});
+        }
+    });
+
     const int exitCode = application.exec();
     if (lifetimeTestMode != ApplicationLifetimeTestMode::None
         && !lifetimeTestCompleted) {
@@ -988,6 +1054,10 @@ int main(int argc, char *argv[])
     }
     if (suppressedStartupTest && !suppressedStartupTestCompleted) {
         qCritical() << "Suppressed-startup test hook did not complete";
+        return 1;
+    }
+    if (desktopActivationTest && !desktopActivationTestCompleted) {
+        qCritical() << "Desktop-activation test hook did not complete";
         return 1;
     }
     return exitCode;

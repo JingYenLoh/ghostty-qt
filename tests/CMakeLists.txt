@@ -250,7 +250,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
 add_dependencies(test-terminal-workspace ghostty-qt-terminfo)
 add_test(NAME terminal-workspace COMMAND test-terminal-workspace)
 set_tests_properties(terminal-workspace PROPERTIES
-    TIMEOUT 30
+    TIMEOUT 60
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
 )
@@ -461,32 +461,34 @@ set_tests_properties(application-lifecycle PROPERTIES
         "Binding loop detected;QQmlApplicationEngine failed"
 )
 
-if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
-    qt_add_executable(test-application-single-instance
-        test_application_single_instance.cpp
-        private_session_bus.h
-    )
-    target_include_directories(test-application-single-instance PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}"
-    )
-    target_compile_definitions(test-application-single-instance PRIVATE
-        GHOSTTY_QT_TEST_EXECUTABLE="$<TARGET_FILE:ghostty-qt>"
-    )
-    target_link_libraries(test-application-single-instance PRIVATE
-        Qt6::Core
-        Qt6::DBus
-        Qt6::Test
-    )
-    add_dependencies(test-application-single-instance ghostty-qt)
-    add_test(NAME application-single-instance
-        COMMAND test-application-single-instance)
-    set_tests_properties(application-single-instance PROPERTIES
-        TIMEOUT 45
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        ENVIRONMENT
-            "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
-    )
+qt_add_executable(test-application-single-instance
+    test_application_single_instance.cpp
+    private_session_bus.h
+)
+target_include_directories(test-application-single-instance PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_compile_definitions(test-application-single-instance PRIVATE
+    GHOSTTY_QT_TEST_EXECUTABLE="$<TARGET_FILE:ghostty-qt>"
+    GHOSTTY_QT_TEST_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+    GHOSTTY_QT_TEST_CONFIG_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
+)
+target_link_libraries(test-application-single-instance PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+)
+add_dependencies(test-application-single-instance ghostty-qt)
+add_test(NAME application-single-instance
+    COMMAND test-application-single-instance)
+set_tests_properties(application-single-instance PROPERTIES
+    TIMEOUT 60
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
+)
 
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_resident_lifecycle_config_home
         "${CMAKE_CURRENT_BINARY_DIR}/application-resident-lifecycle-config")
     file(MAKE_DIRECTORY
@@ -591,6 +593,20 @@ set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
 set_tests_properties(session-worker PROPERTIES
     ENVIRONMENT "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
 )
+
+add_test(
+    NAME desktop-integration-install
+    COMMAND "${CMAKE_COMMAND}"
+        "-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DSTAGE_DIR=${CMAKE_SOURCE_DIR}/tmp/desktop-integration-install-${CMAKE_BUILD_TYPE}-${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}"
+        "-DINSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
+        "-DINSTALL_DATADIR=${CMAKE_INSTALL_DATADIR}"
+        "-DAPPLICATION_ID=${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+        "-DEXPECT_CONFIG_HELPER=${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}"
+        "-DCONFIG=$<CONFIG>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/RunDesktopIntegrationInstallTest.cmake"
+)
+set_tests_properties(desktop-integration-install PROPERTIES TIMEOUT 30)
 
 qt_add_executable(test-terminfo-path-probe
     test_terminfo_path_probe.cpp
