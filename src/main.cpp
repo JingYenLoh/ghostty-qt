@@ -23,6 +23,7 @@
 #include <QTimer>
 #include <QtQml>
 
+#include <array>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -665,6 +666,121 @@ bool installFullscreenActionTestHook(QQuickWindow *window,
     return true;
 }
 
+bool installMaximizeActionTestHook(QQuickWindow *window,
+                                   TerminalWorkspace *workspace)
+{
+    if (window == nullptr) {
+        qCritical() << "Maximize test hook could not find the QML window";
+        return false;
+    }
+
+    const auto exercise = [workspace, window] {
+        workspace->splitRight();
+        if (workspace->findChildren<TerminalPane *>().size() != 2) {
+            qCritical() << "Maximize test hook could not create two panes";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        struct Step final {
+            QWindow::Visibility expected;
+            enum class Command {
+                ToggleMaximize,
+                ToggleFullscreen,
+                Minimize,
+                RestoreWindowed,
+                Finish,
+            } command;
+        };
+        using Command = Step::Command;
+        constexpr std::array steps{
+            Step{QWindow::Windowed, Command::ToggleMaximize},
+            Step{QWindow::Maximized, Command::ToggleFullscreen},
+            Step{QWindow::FullScreen, Command::ToggleFullscreen},
+            Step{QWindow::Maximized, Command::ToggleMaximize},
+            Step{QWindow::Windowed, Command::ToggleFullscreen},
+            Step{QWindow::FullScreen, Command::ToggleMaximize},
+            Step{QWindow::FullScreen, Command::ToggleFullscreen},
+            Step{QWindow::Maximized, Command::ToggleFullscreen},
+            Step{QWindow::FullScreen, Command::ToggleMaximize},
+            Step{QWindow::FullScreen, Command::ToggleFullscreen},
+            Step{QWindow::Windowed, Command::ToggleMaximize},
+            Step{QWindow::Maximized, Command::ToggleMaximize},
+            Step{QWindow::Windowed, Command::Minimize},
+            Step{QWindow::Minimized, Command::ToggleFullscreen},
+            Step{QWindow::FullScreen, Command::ToggleFullscreen},
+            Step{QWindow::Minimized, Command::RestoreWindowed},
+            Step{QWindow::Windowed, Command::Finish},
+        };
+
+        auto *const timer = new QTimer(workspace);
+        timer->setSingleShot(true);
+        const auto stage = std::make_shared<std::size_t>(0);
+        const auto retries = std::make_shared<int>(0);
+        QObject::connect(
+            timer, &QTimer::timeout, workspace,
+            [workspace, window, timer, stage, retries, steps] {
+                const Step &step = steps.at(*stage);
+                if (window->visibility() != step.expected) {
+                    if (++*retries <= 100) {
+                        timer->start(10);
+                        return;
+                    }
+                    qCritical()
+                        << "Window-state action did not reach visibility"
+                        << step.expected << "at stage" << *stage
+                        << "actual" << window->visibility();
+                    QCoreApplication::exit(1);
+                    return;
+                }
+
+                *retries = 0;
+                if (step.command == Command::Finish) {
+                    QCoreApplication::quit();
+                    return;
+                }
+
+                if (step.command == Command::Minimize) {
+                    window->setVisibility(QWindow::Minimized);
+                } else if (step.command == Command::RestoreWindowed) {
+                    window->setVisibility(QWindow::Windowed);
+                } else {
+                    const QString action =
+                        step.command == Command::ToggleMaximize
+                        ? QStringLiteral("toggle_maximize")
+                        : QStringLiteral("toggle_fullscreen");
+                    if (!workspace->executeSurfaceActionOnAllPanes(action)) {
+                        qCritical()
+                            << "Window-state test hook could not execute"
+                            << action << "at stage" << *stage;
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                }
+                if (*stage + 1 >= steps.size()) {
+                    qCritical()
+                        << "Window-state test hook exhausted its steps";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                ++*stage;
+                timer->start(0);
+            });
+        timer->start(0);
+    };
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                         workspace,
+                         [workspace, exercise] {
+            QTimer::singleShot(0, workspace, exercise);
+        }, Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 bool verifyTabBarTestState(TerminalWorkspace *workspace,
                            QObject *tabBar,
                            int expectedCount,
@@ -1100,6 +1216,13 @@ int main(int argc, char *argv[])
             "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
         if (!initialWindow
             || !installFullscreenActionTestHook(applicationWindow, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_TOGGLE_MAXIMIZE") == 1) {
+        if (!initialWindow
+            || !installMaximizeActionTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }

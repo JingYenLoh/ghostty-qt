@@ -39,6 +39,7 @@ enum class WorkspaceAction {
     EqualizeSplits,
     ToggleSplitZoom,
     ToggleFullscreen,
+    ToggleMaximize,
 };
 
 struct WorkspaceActionContext {

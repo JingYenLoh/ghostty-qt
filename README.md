@@ -68,7 +68,8 @@ the host-language comparison and remaining engineering risks.
   those two raw surface layers. The direct `set_tab_title` action applies a
   still higher persistent override to the source pane's tab by stable
   identity. Both prompt actions share one modal Qt dialog and stable FIFO
-  scheduler.
+  scheduler. Surface-scoped fullscreen and maximize actions target the
+  containing Qt window, with broad bindings coalesced once per window.
 - Process-owned multiwindow lifetime and aggregate quit, including resident
   zero-window operation. Eligible bare secondary launches and desktop shells
   share the standard `org.freedesktop.Application` session-D-Bus endpoint; an
@@ -398,7 +399,9 @@ enabled. Custom bindings can also invoke `goto_tab`, `last_tab`, `move_tab`,
 `new_split:left|right|up|down|auto` (with an omitted direction also selecting
 `auto`), `close_surface`, `close_tab[:this|other|right]`, `goto_split`,
 `resize_split`, `equalize_splits`, and
-`toggle_split_zoom` directly. `toggle_readonly` and
+`toggle_split_zoom` directly. `toggle_maximize` toggles the containing window
+between maximized and normal state; Ghostty has no default binding for it.
+`toggle_readonly` and
 `toggle_mouse_reporting` apply independently to their source pane; `all:` or
 `global:` applies either action once to every stable pane target. Mouse
 reporting remains the conjunction of the pane policy and the terminal's DEC

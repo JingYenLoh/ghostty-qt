@@ -515,15 +515,17 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
         }
     }
 
-    // Ghostty scopes fullscreen to a source surface, but every Qt pane in a
-    // workspace ultimately mutates the same host window. Applying the toggle
-    // synchronously once per pane would cancel itself for an even pane count.
-    // Keep broad dispatch once per registered workspace/window while leaving
-    // all other surface actions on the ordinary per-pane fanout path.
+    // Ghostty scopes window-state actions to a source surface, but every Qt
+    // pane in a workspace ultimately mutates the same host window. Applying a
+    // toggle synchronously once per pane would cancel itself for an even pane
+    // count. Keep broad dispatch once per registered workspace/window while
+    // leaving all other surface actions on the ordinary per-pane fanout path.
     const GhosttyActionTranslation translated =
         GhosttyActionCatalog::translate(action);
     if (translated.accepted()
-        && translated.request->action == WorkspaceAction::ToggleFullscreen) {
+        && (translated.request->action == WorkspaceAction::ToggleFullscreen
+            || translated.request->action
+                == WorkspaceAction::ToggleMaximize)) {
         return !panes.empty() && dispatchAction(*translated.request);
     }
 
@@ -723,6 +725,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         return toggleSplitZoom(tabId);
     }
     case WorkspaceAction::ToggleFullscreen:
+    case WorkspaceAction::ToggleMaximize:
         if ((request.context.paneId.isValid()
              && (paneForId(request.context.paneId) == nullptr
                  || !contextMatchesPane()))
@@ -731,7 +734,11 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             || window() == nullptr) {
             return false;
         }
-        Q_EMIT toggleFullscreenRequested();
+        if (request.action == WorkspaceAction::ToggleFullscreen) {
+            Q_EMIT toggleFullscreenRequested();
+        } else {
+            Q_EMIT toggleMaximizeRequested();
+        }
         return true;
     }
     return false;

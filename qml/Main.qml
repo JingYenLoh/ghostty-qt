@@ -17,6 +17,19 @@ ApplicationWindow {
         }
     }
 
+    function toggleMaximize() {
+        if (visibility === Window.FullScreen) {
+            visibilityBeforeFullscreen =
+                    visibilityBeforeFullscreen === Window.Maximized
+                    ? Window.Windowed
+                    : Window.Maximized
+        } else {
+            visibility = visibility === Window.Maximized
+                       ? Window.Windowed
+                       : Window.Maximized
+        }
+    }
+
     width: 1100
     height: 720
     minimumWidth: 480
@@ -255,6 +268,9 @@ ApplicationWindow {
         }
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()
+        }
+        function onToggleMaximizeRequested() {
+            window.toggleMaximize()
         }
         function onWindowCloseApproved() {
             window.closeApproved = true

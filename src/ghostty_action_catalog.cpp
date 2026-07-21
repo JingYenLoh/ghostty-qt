@@ -316,6 +316,7 @@ bool isVoidAction(QStringView actionName)
         || equals(actionName, QLatin1StringView("last_tab"))
         || equals(actionName, QLatin1StringView("toggle_split_zoom"))
         || equals(actionName, QLatin1StringView("toggle_fullscreen"))
+        || equals(actionName, QLatin1StringView("toggle_maximize"))
         || equals(actionName, QLatin1StringView("equalize_splits"))
         || equals(actionName, QLatin1StringView("prompt_surface_title"))
         || equals(actionName, QLatin1StringView("prompt_tab_title"));
@@ -428,6 +429,12 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
     }
     if (equals(actionName, QLatin1StringView("toggle_fullscreen"))) {
         return accept(WorkspaceAction::ToggleFullscreen,
+                      context,
+                      actionName,
+                      parameter);
+    }
+    if (equals(actionName, QLatin1StringView("toggle_maximize"))) {
+        return accept(WorkspaceAction::ToggleMaximize,
                       context,
                       actionName,
                       parameter);

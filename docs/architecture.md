@@ -971,14 +971,21 @@ snapshot as their creation source, so activating one new tab cannot redirect
 the next action's inherited directory or font size. Placement still resolves
 against the selected tab before each creation, matching Ghostty: in `current`
 mode the advancing selection produces one contiguous block in stable source
-order, while `end` appends that block. A fullscreen surface action is coalesced
-once per workspace during
-broad fanout because every pane maps to the same synchronously toggled Qt host
-window; separate workspaces still receive independent transitions. In
-contrast, both title prompt actions preserve pinned per-surface invocation:
-every surface in the stable fanout snapshot contributes one independently
-captured request, including multiple leaves of the same split tab. Surface and
-tab requests share one modal FIFO and are shown without deduplication.
+order, while `end` appends that block. Fullscreen and maximize surface actions
+are coalesced once per workspace during broad fanout because every pane maps to
+the same synchronously toggled Qt host window; separate workspaces still
+receive independent transitions. This intentionally normalizes pinned GTK's
+per-surface broad toggles, which can cancel within a multi-pane window. Qt
+Quick exposes only one dominant visibility state, so QML retains whether a
+fullscreen window should restore maximized, windowed, minimized, or another
+prior visibility state. A maximize toggle during fullscreen changes that
+retained state between maximized and windowed without leaving fullscreen,
+matching the independent GTK window-state flags. Qt owns normal geometry
+restoration. In contrast, both title prompt actions preserve pinned
+per-surface invocation: every surface in the stable fanout snapshot contributes
+one independently captured request, including multiple leaves of the same
+split tab. Surface and tab requests share one modal FIFO and are shown without
+deduplication.
 
 On Linux, eligible root `global` bindings are registered asynchronously through
 the XDG Global Shortcuts portal using Qt D-Bus. Request response subscriptions
@@ -1170,8 +1177,9 @@ The default CTest suite has focused layers for each ownership boundary:
   source stability, local OSC 7/reset fallback, manual font zoom, and
   future-creation policy reloads. Workspace/QML coverage also verifies exact
   live `always`/`auto`/`never` tab-strip visibility, including one/two-tab
-  transitions while the surrounding toolbar remains visible. It also sends
-  real pointer gestures
+  transitions while the surrounding toolbar remains visible, plus coalesced
+  fullscreen/maximize routing across panes and windows and prior-visibility
+  restoration across fullscreen. It also sends real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,
   focus preservation, endpoint clamping, cancellation, zoom/tab/scene
   lifecycle, ratio persistence, terminal-cell hit regions, and nullable live

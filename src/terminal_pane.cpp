@@ -2512,6 +2512,7 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     case WorkspaceAction::EqualizeSplits:
     case WorkspaceAction::ToggleSplitZoom:
     case WorkspaceAction::ToggleFullscreen:
+    case WorkspaceAction::ToggleMaximize:
         return false;
     }
     return false;

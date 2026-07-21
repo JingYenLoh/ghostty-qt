@@ -991,6 +991,10 @@
           "status": "supported",
           "note": "Routes the finalized surface action through the typed workspace pipeline to toggle the containing Qt window; broad all/global fanout applies one transition per workspace, and Ghostty's Linux Ctrl+physical Enter default is active."
         },
+        "toggle_maximize": {
+          "status": "supported",
+          "note": "Routes the exact void surface action to maximize or restore the containing Qt window. Broad all/global fanout is intentionally coalesced once per workspace instead of reproducing pinned GTK's cancel-prone per-surface toggles; separate windows transition independently. Prior visibility, including maximized or minimized state, survives fullscreen round trips, and toggling maximize while fullscreen changes the eventual restore state without leaving fullscreen. Ghostty provides no default binding."
+        },
         "toggle_mouse_reporting": {
           "status": "supported",
           "note": "Flips the source pane's mouse-reporting policy without mutating terminal DEC mode. Effective capture is the per-event conjunction of both states; all/global toggles every stable pane once, each pane remains independent, and live reload restores configuration."

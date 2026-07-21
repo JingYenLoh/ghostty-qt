@@ -337,7 +337,7 @@ private Q_SLOTS:
     void splitZoomPreservesLayoutAndResetsOnNavigationAndSplit();
     void splitZoomNavigationPolicyReloadsLive();
     void broadContainerActionsResolveFromActivePane();
-    void routesFullscreenActionToHostWindow();
+    void routesWindowStateActionsToHostWindows();
     void inactiveTabResizeAppliesWhenActivated();
 };
 
@@ -2827,7 +2827,7 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     }
 }
 
-void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
+void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
@@ -2839,12 +2839,48 @@ void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
     // no target and must not manufacture a host-window transition.
     {
         TerminalWorkspace emptyWorkspace;
-        QSignalSpy emptyRequested(
+        QSignalSpy emptyFullscreenRequested(
             &emptyWorkspace,
             &TerminalWorkspace::toggleFullscreenRequested);
+        QSignalSpy emptyMaximizeRequested(
+            &emptyWorkspace,
+            &TerminalWorkspace::toggleMaximizeRequested);
         QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("toggle_fullscreen")));
-        QCOMPARE(emptyRequested.count(), 0);
+        QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_maximize")));
+        QCOMPARE(emptyFullscreenRequested.count(), 0);
+        QCOMPARE(emptyMaximizeRequested.count(), 0);
+    }
+
+    // A populated workspace still cannot mutate window state until it is
+    // attached to a host QQuickWindow.
+    {
+        TerminalWorkspace unattachedWorkspace;
+        QTRY_COMPARE_WITH_TIMEOUT(unattachedWorkspace.tabCount(), 1, 1000);
+        const TabListEntry *const unattachedEntry =
+            unattachedWorkspace.tabModel()->entryAt(0);
+        QVERIFY(unattachedEntry != nullptr);
+        QSignalSpy unattachedFullscreenRequested(
+            &unattachedWorkspace,
+            &TerminalWorkspace::toggleFullscreenRequested);
+        QSignalSpy unattachedMaximizeRequested(
+            &unattachedWorkspace,
+            &TerminalWorkspace::toggleMaximizeRequested);
+        QVERIFY(!unattachedWorkspace.dispatchAction({
+            WorkspaceAction::ToggleFullscreen,
+            {unattachedEntry->id, unattachedEntry->activePaneId, 0},
+        }));
+        QVERIFY(!unattachedWorkspace.dispatchAction({
+            WorkspaceAction::ToggleMaximize,
+            {unattachedEntry->id, unattachedEntry->activePaneId, 0},
+        }));
+        QVERIFY(!unattachedWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_fullscreen")));
+        QVERIFY(!unattachedWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_maximize")));
+        QCOMPARE(unattachedFullscreenRequested.count(), 0);
+        QCOMPARE(unattachedMaximizeRequested.count(), 0);
     }
 
     QQuickWindow window;
@@ -2859,46 +2895,104 @@ void TerminalWorkspaceTest::routesFullscreenActionToHostWindow()
     const TabListEntry *entry = workspace->tabModel()->entryAt(0);
     QVERIFY(entry != nullptr);
 
-    QSignalSpy requested(workspace.get(),
-                         &TerminalWorkspace::toggleFullscreenRequested);
+    QSignalSpy fullscreenRequested(
+        workspace.get(), &TerminalWorkspace::toggleFullscreenRequested);
+    QSignalSpy maximizeRequested(
+        workspace.get(), &TerminalWorkspace::toggleMaximizeRequested);
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
         {entry->id, entry->activePaneId, 0},
     }));
-    QCOMPARE(requested.count(), 1);
+    QCOMPARE(fullscreenRequested.count(), 1);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleMaximize,
+        {entry->id, entry->activePaneId, 0},
+    }));
+    QCOMPARE(maximizeRequested.count(), 1);
 
     QVERIFY(!workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
         {entry->id, PaneId(999'999), 0},
     }));
     QVERIFY(!workspace->dispatchAction({
-        WorkspaceAction::ToggleFullscreen,
+        WorkspaceAction::ToggleMaximize,
         {TabId(999'999), entry->activePaneId, 0},
     }));
-    QCOMPARE(requested.count(), 1);
+    QCOMPARE(fullscreenRequested.count(), 1);
+    QCOMPARE(maximizeRequested.count(), 1);
 
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
         {},
     }));
-    QCOMPARE(requested.count(), 2);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleMaximize,
+        {},
+    }));
+    QCOMPARE(fullscreenRequested.count(), 2);
+    QCOMPARE(maximizeRequested.count(), 2);
 
     workspace->splitRight();
     workspace->newTab();
     workspace->splitRight();
     QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 4);
 
-    requested.clear();
+    fullscreenRequested.clear();
     QVERIFY(workspace->executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_fullscreen")));
-    QCOMPARE(requested.count(), 1);
+    QCOMPARE(fullscreenRequested.count(), 1);
     QVERIFY(!workspace->executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_fullscreen:")));
-    QCOMPARE(requested.count(), 1);
+    QCOMPARE(fullscreenRequested.count(), 1);
     QVERIFY(workspace->executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_fullscreen")));
-    QCOMPARE(requested.count(), 2);
+    QCOMPARE(fullscreenRequested.count(), 2);
 
+    maximizeRequested.clear();
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_maximize")));
+    QCOMPARE(maximizeRequested.count(), 1);
+    QVERIFY(!workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_maximize:")));
+    QCOMPARE(maximizeRequested.count(), 1);
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_maximize")));
+    QCOMPARE(maximizeRequested.count(), 2);
+
+    // Process-wide all/global dispatch visits every registered workspace,
+    // while each multi-pane host receives exactly one state transition.
+    QQuickWindow secondWindow;
+    secondWindow.resize(700, 500);
+    auto secondWorkspace = std::make_unique<TerminalWorkspace>();
+    secondWorkspace->setParentItem(secondWindow.contentItem());
+    secondWorkspace->setSize(secondWindow.size());
+    secondWindow.show();
+    QTRY_COMPARE_WITH_TIMEOUT(secondWorkspace->window(), &secondWindow, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(secondWorkspace->tabCount(), 1, 1000);
+
+    QSignalSpy secondFullscreenRequested(
+        secondWorkspace.get(),
+        &TerminalWorkspace::toggleFullscreenRequested);
+    QSignalSpy secondMaximizeRequested(
+        secondWorkspace.get(),
+        &TerminalWorkspace::toggleMaximizeRequested);
+    GhosttyApplicationKeybindings applicationBindings(options, false);
+    applicationBindings.registerWorkspace(workspace.get());
+    applicationBindings.registerWorkspace(secondWorkspace.get());
+
+    fullscreenRequested.clear();
+    maximizeRequested.clear();
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("toggle_maximize")});
+    QCOMPARE(maximizeRequested.count(), 1);
+    QCOMPARE(secondMaximizeRequested.count(), 1);
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("toggle_fullscreen")});
+    QCOMPARE(fullscreenRequested.count(), 1);
+    QCOMPARE(secondFullscreenRequested.count(), 1);
+
+    secondWorkspace.reset();
+    secondWindow.close();
     workspace.reset();
     window.close();
 }

@@ -2378,6 +2378,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("alt+n=new_tab"),
         QStringLiteral("ctrl+x=increase_font_size:2.5"),
         QStringLiteral("ctrl+enter=toggle_fullscreen"),
+        QStringLiteral("alt+m=toggle_maximize"),
         QStringLiteral("ctrl+w=close_tab:this"),
         QStringLiteral("ctrl+shift+w=close_surface"),
         QStringLiteral("ctrl+r=reload_config"),
@@ -2586,6 +2587,22 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("toggle_fullscreen:")));
     QCOMPARE(workspaceRequests.size(), 1);
+
+    const int beforeMaximize = forwarded.count();
+    QKeyEvent maximizePress(QEvent::KeyPress, Qt::Key_M,
+                            Qt::AltModifier, QStringLiteral("m"));
+    QCoreApplication::sendEvent(&pane, &maximizePress);
+    QCOMPARE(workspaceRequests.size(), 2);
+    QCOMPARE(workspaceRequests.constLast().action,
+             WorkspaceAction::ToggleMaximize);
+    QCOMPARE(forwarded.count(), beforeMaximize);
+    QKeyEvent maximizeRelease(QEvent::KeyRelease, Qt::Key_M,
+                              Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &maximizeRelease);
+    QCOMPARE(forwarded.count(), beforeMaximize);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("toggle_maximize:")));
+    QCOMPARE(workspaceRequests.size(), 2);
 
     const int beforeUnavailableNavigation = forwarded.count();
     QKeyEvent unavailableNavigation(QEvent::KeyPress, Qt::Key_G,

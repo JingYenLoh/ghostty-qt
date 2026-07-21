@@ -131,6 +131,7 @@ Q_SIGNALS:
     void broadActionsRequested(const QStringList &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();
+    void toggleMaximizeRequested();
     void windowCloseApproved();
     void applicationQuitApproved();
     void applicationQuitCancelled();
