@@ -1022,17 +1022,17 @@ the main executable and resolves the library from a relative private
 configuration path entirely.
 
 The main executable and helper share one constexpr catalog containing the
-seven public inspection/validation actions. At the first line of process
-startup, before argument transcoding or any Qt object, the frontend classifies
-raw `argv`. The frontend's documented `--` command delimiter stops detection
-before its terminal payload. An exact earlier `-e` also suppresses delegation
-to match pinned Ghostty's detector ordering, although `-e` itself remains
-unsupported by the frontend launch parser. Standalone frontend help/version
-remain separate, deferred actions and the private `+show-config-json` protocol
-are rejected, and multiple actions fail closed. The helper repeats the same
-allowlist check, while accepting the private export only in its canonical
-first-argument form, so a mixed invocation cannot select an unadvertised
-internal Ghostty action.
+eight public configuration/inspection/validation actions. At the first line of
+process startup, before argument transcoding or any Qt object, the frontend
+classifies raw `argv`. The frontend's documented `--` command delimiter stops
+detection before its terminal payload. An exact earlier `-e` also suppresses
+delegation to match pinned Ghostty's detector ordering, although `-e` itself
+remains unsupported by the frontend launch parser. Standalone frontend
+help/version remain separate, deferred actions and the private
+`+show-config-json` protocol are rejected, and multiple actions fail closed.
+The helper repeats the same allowlist check, while accepting the private export
+only in its canonical first-argument form, so a mixed invocation cannot select
+an unadvertised internal Ghostty action.
 
 For an accepted public action, Linux `/proc/self/exe` supplies the physical
 application path and the compiled helper filename selects its sibling. The
@@ -1046,6 +1046,18 @@ shell-style 127 or 126 without entering Qt. A configuration-disabled build
 retains classification so a supported action gets an immediate feature-boundary
 diagnostic instead of becoming a terminal program. Normal GUI launches perform
 no helper-path lookup.
+
+The pinned `+edit-config` implementation then performs its own intentional
+second replacement. It loads standard configuration first, creating the
+preferred file when both standard files are absent; selects the first non-empty
+`VISUAL` then `EDITOR` value; appends the shell-escaped preferred configuration
+path; and executes `/bin/sh -c`. The editor value is deliberately shell syntax,
+while the selected path is the non-empty preferred file, the non-empty legacy
+file, or finally the preferred path. At the pinned revision, a newly created
+file remains empty despite the upstream template-writing intent. The resulting
+shell or editor status is therefore the CLI status. This is separate from the
+GUI `open_config` action, whose Qt desktop-service launch and empty-file
+handling have a different contract.
 
 These commands run the pinned Ghostty action implementation in the existing
 embedded helper, whose application runtime is deliberately `none`; output
@@ -1191,8 +1203,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-cli-delegation` verifies the shared raw-argument classifier; same-PID
   process replacement; byte-exact argv, stdin, stdout, and stderr; environment,
   working-directory, and exit-status preservation; missing/unexecutable-helper
-  and config-disabled failures; all seven real pinned actions; action-option
-  order; pre-Qt operation; and direct-helper equivalence.
+  and config-disabled failures; all eight real pinned actions; action-option
+  order; pre-Qt operation; direct-helper equivalence; and the `+edit-config`
+  editor exec, preferred-file creation, path escaping, and environment
+  precedence.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,

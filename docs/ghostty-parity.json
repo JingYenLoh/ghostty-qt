@@ -1050,6 +1050,10 @@
         "version"
       ],
       "overrides": {
+        "edit-config": {
+          "status": "supported",
+          "note": "Delegates the pinned Linux implementation before Qt starts: standard config loading and preferred-file creation, non-empty VISUAL then EDITOR selection, preferred/non-empty legacy path choice, shell-escaped path construction, /bin/sh replacement, raw streams, and editor exit status are preserved. The pinned implementation currently leaves a newly created file empty despite its template-writing intent. This is distinct from the GUI open_config action."
+        },
         "explain-config": {
           "status": "supported",
           "note": "Delegates the pinned implementation through the relocatable embedded-runtime helper before Qt starts."

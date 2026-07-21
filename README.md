@@ -3,8 +3,8 @@
 `ghostty-qt` is a Linux, Wayland-only terminal emulator MVP built with Qt Quick,
 C++23, and Ghostty's `libghostty-vt` C API. Ghostty supplies terminal parsing,
 screen state, selection, and input encoding; a separate helper uses the pinned
-Ghostty application parser for configuration and selected inspection CLI
-actions; Qt supplies the window, controls, scene-graph rendering, clipboard,
+Ghostty application parser for configuration and selected CLI actions; Qt
+supplies the window, controls, scene-graph rendering, clipboard,
 and input-method integration.
 
 This is an early developer build, not a drop-in replacement for the Ghostty
@@ -84,11 +84,12 @@ the host-language comparison and remaining engineering risks.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
   by the pinned Ghostty code, watched-file reload, and a deliberately small set
   of applied appearance/session keys.
-- Transparent pre-Qt delegation of the pinned `+explain-config`, `+help`,
-  `+list-actions`, `+list-colors`, `+list-keybinds`, `+show-config`, and
-  `+validate-config` implementations. These retain the caller's terminal,
-  streams, process relationship, environment, working directory, and exact
-  action exit status without requiring a working Wayland or Qt platform plugin.
+- Transparent pre-Qt delegation of the pinned `+edit-config`,
+  `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
+  `+list-keybinds`, `+show-config`, and `+validate-config` implementations.
+  These retain the caller's terminal, streams, process relationship,
+  environment, working directory, and exact action exit status without
+  requiring a working Wayland or Qt platform plugin.
 - Ghostty's finalized keybindings—including named key tables, sequences,
   catch-all fallback, action chains, and local/`all`/`global` flags—for the
   supported pane/workspace actions. Linux global shortcuts use the XDG portal;
@@ -332,8 +333,8 @@ The default configuration-enabled build also accepts these exact Ghostty CLI
 actions:
 
 ```text
-+explain-config  +help          +list-actions  +list-colors
-+list-keybinds   +show-config   +validate-config
++edit-config     +explain-config  +help          +list-actions
++list-colors     +list-keybinds    +show-config   +validate-config
 ```
 
 They may use their pinned Ghostty action-specific flags and operands in the
@@ -357,6 +358,16 @@ whose application runtime is intentionally `none` rather than GTK. A
 development build configured with `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF` omits
 that helper and reports delegated actions as unavailable before attempting GUI
 startup.
+
+`+edit-config` is the pinned CLI action, distinct from the GUI `open_config`
+keybinding action. It loads the standard configuration (creating the preferred
+file when neither standard file exists), selects the first non-empty `$VISUAL`
+then `$EDITOR` value, and replaces the process with `/bin/sh -c` so the editor
+value may contain shell syntax. It opens the preferred non-empty
+`config.ghostty`, otherwise the non-empty legacy `config`, otherwise the new
+path. At the pinned revision, that newly created file is empty despite the
+upstream template-writing intent. The command does not reload configuration
+after editing.
 
 ### Shortcuts
 

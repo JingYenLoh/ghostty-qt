@@ -202,8 +202,23 @@ QProcessEnvironment controlledEnvironment(const QString &configHome)
     environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
     environment.insert(QStringLiteral("PAGER"), QStringLiteral("cat"));
     environment.remove(QStringLiteral("DISPLAY"));
+    environment.remove(QStringLiteral("EDITOR"));
+    environment.remove(QStringLiteral("VISUAL"));
     environment.remove(QStringLiteral("WAYLAND_DISPLAY"));
     return environment;
+}
+
+QString shellQuote(const QString &value)
+{
+    QString escaped = value;
+    escaped.replace(QStringLiteral("'"), QStringLiteral("'\\''"));
+    return QStringLiteral("'") + escaped + QStringLiteral("'");
+}
+
+bool isRegularFile(const QString &path)
+{
+    const QFileInfo information(path);
+    return information.isFile();
 }
 
 } // namespace
@@ -216,6 +231,7 @@ private Q_SLOTS:
     void replacementPreservesProcessContract();
     void matchesPinnedHelper_data();
     void matchesPinnedHelper();
+    void editConfigUsesPinnedEditorContract();
     void enforcesBuildConfigurationBoundary();
 };
 
@@ -267,7 +283,7 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
     constexpr std::array DeferredActions{
         "+boo",
         "+crash-report",
-        "+edit-config",
+        "+edit-config=now",
         "+list-fonts",
         "+list-themes",
         "+new-window",
@@ -387,6 +403,10 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
                        QStringLiteral("--no-pager"),
                        QStringLiteral("font-size")}
         << QByteArrayLiteral("Font size in points") << 0;
+    QTest::newRow("edit-config-help")
+        << QStringList{QStringLiteral("+edit-config"),
+                       QStringLiteral("--help")}
+        << QByteArrayLiteral("$VISUAL") << 0;
     QTest::newRow("list-actions")
         << QStringList{QStringLiteral("+list-actions")}
         << QByteArrayLiteral("copy_to_clipboard") << 0;
@@ -417,6 +437,10 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
         << QByteArrayLiteral("validate-config") << 0;
     QTest::newRow("invalid-option")
         << QStringList{QStringLiteral("+list-colors"),
+                       QStringLiteral("--definitely-invalid")}
+        << QByteArray{} << 1;
+    QTest::newRow("edit-config-invalid-option")
+        << QStringList{QStringLiteral("+edit-config"),
                        QStringLiteral("--definitely-invalid")}
         << QByteArray{} << 1;
 }
@@ -458,6 +482,150 @@ void GhosttyCliDelegationTest::matchesPinnedHelper()
         QVERIFY2(application->standardOutput.contains(marker),
                  application->standardOutput.constData());
     }
+#endif
+}
+
+void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
+{
+#if !GHOSTTY_QT_TEST_CONFIG_ENABLED
+    QSKIP("The pinned CLI helper is disabled in this build");
+#else
+    QVERIFY(QDir().mkpath(QStringLiteral("tmp")));
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/ghostty-cli-edit-config-XXXXXX")));
+    QVERIFY(temporary.isValid());
+
+    const QString editor = temporary.filePath(
+        QStringLiteral("fake editor's executable"));
+    QVERIFY(copyExecutable(
+        QStringLiteral(GHOSTTY_QT_TEST_FAKE_HELPER), editor));
+    const QString editorCommand =
+        QStringLiteral("exec ") + shellQuote(editor);
+    const QByteArray standardInput("editor-input\0payload\n", 21);
+
+    const QString preferredHome = temporary.filePath(
+        QStringLiteral("preferred config home's files"));
+    QVERIFY(QDir().mkpath(preferredHome));
+    const QString preferredPath = QDir(preferredHome).filePath(
+        QStringLiteral("ghostty/config.ghostty"));
+    QProcessEnvironment preferredEnvironment =
+        controlledEnvironment(preferredHome);
+    preferredEnvironment.insert(QStringLiteral("VISUAL"), editorCommand);
+    preferredEnvironment.insert(QStringLiteral("EDITOR"),
+                                QStringLiteral("exec /bin/false"));
+    preferredEnvironment.insert(QStringLiteral("GHOSTTY_QT_CLI_SENTINEL"),
+                                QStringLiteral("visual-won"));
+
+    auto preferred = runProcess(
+        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+        {QStringLiteral("+edit-config")}, preferredEnvironment,
+        temporary.path(), standardInput);
+    QVERIFY2(preferred.has_value(),
+             qPrintable(preferred.has_value()
+                 ? QString{} : preferred.error()));
+    QCOMPARE(preferred->exitStatus, QProcess::NormalExit);
+    QCOMPARE(preferred->exitCode, 73);
+    QCOMPARE(preferred->standardError,
+             QByteArray("fake-stderr\0binary", 18));
+    auto preferredReport = parseFakeHelperReport(
+        preferred->standardOutput);
+    QVERIFY2(preferredReport.has_value(),
+             qPrintable(preferredReport.has_value()
+                 ? QString{} : preferredReport.error()));
+    QCOMPARE(preferredReport->processId, preferred->processId);
+    const QList<QByteArray> expectedPreferredArguments{
+        QFile::encodeName(editor),
+        QFile::encodeName(preferredPath),
+    };
+    QCOMPARE(preferredReport->arguments, expectedPreferredArguments);
+    QCOMPARE(preferredReport->workingDirectory,
+             QFile::encodeName(temporary.path()));
+    QCOMPARE(preferredReport->environmentSentinel,
+             QByteArrayLiteral("visual-won"));
+    QCOMPARE(preferredReport->standardInput, standardInput);
+    QVERIFY(isRegularFile(preferredPath));
+    QCOMPARE(QFileInfo(preferredPath).size(), qint64{0});
+
+    const QString legacyHome = temporary.filePath(
+        QStringLiteral("legacy config home's files"));
+    const QString legacyDirectory = QDir(legacyHome).filePath(
+        QStringLiteral("ghostty"));
+    QVERIFY(QDir().mkpath(legacyDirectory));
+    const QString legacyPath = QDir(legacyDirectory).filePath(
+        QStringLiteral("config"));
+    QFile legacyFile(legacyPath);
+    QVERIFY(legacyFile.open(QIODevice::WriteOnly));
+    QCOMPARE(legacyFile.write("font-size = 13\n"), qint64{15});
+    legacyFile.close();
+
+    QProcessEnvironment legacyEnvironment =
+        controlledEnvironment(legacyHome);
+    legacyEnvironment.insert(QStringLiteral("VISUAL"), QString{});
+    legacyEnvironment.insert(QStringLiteral("EDITOR"), editorCommand);
+    legacyEnvironment.insert(QStringLiteral("GHOSTTY_QT_CLI_SENTINEL"),
+                             QStringLiteral("editor-fallback"));
+    auto legacy = runProcess(
+        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+        {QStringLiteral("+edit-config")}, legacyEnvironment,
+        temporary.path());
+    QVERIFY2(legacy.has_value(),
+             qPrintable(legacy.has_value() ? QString{} : legacy.error()));
+    QCOMPARE(legacy->exitStatus, QProcess::NormalExit);
+    QCOMPARE(legacy->exitCode, 73);
+    QCOMPARE(legacy->standardError,
+             QByteArray("fake-stderr\0binary", 18));
+    auto legacyReport = parseFakeHelperReport(legacy->standardOutput);
+    QVERIFY2(legacyReport.has_value(),
+             qPrintable(legacyReport.has_value()
+                 ? QString{} : legacyReport.error()));
+    QCOMPARE(legacyReport->processId, legacy->processId);
+    const QList<QByteArray> expectedLegacyArguments{
+        QFile::encodeName(editor),
+        QFile::encodeName(legacyPath),
+    };
+    QCOMPARE(legacyReport->arguments, expectedLegacyArguments);
+    QCOMPARE(legacyReport->environmentSentinel,
+             QByteArrayLiteral("editor-fallback"));
+    QVERIFY(!QFileInfo::exists(QDir(legacyHome).filePath(
+        QStringLiteral("ghostty/config.ghostty"))));
+
+    const QString missingEditorHome = temporary.filePath(
+        QStringLiteral("missing editor config"));
+    QVERIFY(QDir().mkpath(missingEditorHome));
+    const QString missingEditorPath = QDir(missingEditorHome).filePath(
+        QStringLiteral("ghostty/config.ghostty"));
+    const QProcessEnvironment missingEditorEnvironment =
+        controlledEnvironment(missingEditorHome);
+    auto missingEditor = runProcess(
+        QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
+        {QStringLiteral("+edit-config")}, missingEditorEnvironment,
+        temporary.path());
+    auto directMissingEditor = runProcess(
+        QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+        {QStringLiteral("+edit-config")}, missingEditorEnvironment,
+        temporary.path());
+    QVERIFY2(missingEditor.has_value(),
+             qPrintable(missingEditor.has_value()
+                 ? QString{} : missingEditor.error()));
+    QVERIFY2(directMissingEditor.has_value(),
+             qPrintable(directMissingEditor.has_value()
+                 ? QString{} : directMissingEditor.error()));
+    QCOMPARE(missingEditor->exitStatus, QProcess::NormalExit);
+    QCOMPARE(missingEditor->exitCode, 1);
+    QVERIFY(missingEditor->standardOutput.isEmpty());
+    QVERIFY(missingEditor->standardError.contains(
+        QByteArrayLiteral("$EDITOR or $VISUAL")));
+    QVERIFY(missingEditor->standardError.contains(
+        QByteArrayLiteral("\x1b]8;;file://")
+            + QFile::encodeName(missingEditorPath)));
+    QCOMPARE(missingEditor->exitStatus, directMissingEditor->exitStatus);
+    QCOMPARE(missingEditor->exitCode, directMissingEditor->exitCode);
+    QCOMPARE(missingEditor->standardOutput,
+             directMissingEditor->standardOutput);
+    QCOMPARE(missingEditor->standardError,
+             directMissingEditor->standardError);
+    QVERIFY(isRegularFile(missingEditorPath));
+    QCOMPARE(QFileInfo(missingEditorPath).size(), qint64{0});
 #endif
 }
 
@@ -524,6 +692,8 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
     QVERIFY(frontendHelp->standardOutput.contains(
         QByteArrayLiteral("+validate-config")));
+    QVERIFY(frontendHelp->standardOutput.contains(
+        QByteArrayLiteral("+edit-config")));
     auto helperUnsupported = runProcess(
         QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
         {QStringLiteral("+new-window")}, environment, temporary.path());
@@ -564,7 +734,7 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
         QByteArrayLiteral("+validate-config")));
     auto action = runProcess(
         QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE),
-        {QStringLiteral("+help")}, environment, temporary.path());
+        {QStringLiteral("+edit-config")}, environment, temporary.path());
     QVERIFY2(action.has_value(),
              qPrintable(action.has_value() ? QString{} : action.error()));
     QCOMPARE(action->exitStatus, QProcess::NormalExit);
@@ -572,6 +742,8 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     QVERIFY(action->standardOutput.isEmpty());
     QVERIFY(action->standardError.contains(
         QByteArrayLiteral("GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG")));
+    QVERIFY(action->standardError.contains(
+        QByteArrayLiteral("+edit-config")));
 #endif
 }
 

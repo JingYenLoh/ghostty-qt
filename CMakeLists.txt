@@ -219,6 +219,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/build.zig"
             "${GHOSTTY_SOURCE_DIR}/build.zig.zon"
             "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/edit_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/show_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/validate_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"

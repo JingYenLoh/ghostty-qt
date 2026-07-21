@@ -77,8 +77,9 @@ Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
 keys into value snapshots.
 
 The same private executable is the transparent process-replacement target for
-`+explain-config`, `+help`, `+list-actions`, `+list-colors`, `+list-keybinds`,
-`+show-config`, and `+validate-config`. A shared allowlist guards both binaries.
+`+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
+`+list-keybinds`, `+show-config`, and `+validate-config`. A shared allowlist
+guards both binaries.
 The frontend classifies raw arguments and uses Linux `execv` before QString
 conversion or Qt initialization; it does not reuse the buffered, timeout-bound
 `QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
@@ -86,6 +87,12 @@ state, environment, PID, process/signal relationship, and exit status remain
 caller-owned. The helper's embedded application runtime is `none`, so
 runtime-specific config finalization can differ from GTK even though the action
 implementation is the exact pinned code.
+
+`+edit-config` continues through the pinned helper into `/bin/sh -c` using the
+first non-empty `VISUAL` or `EDITOR` value and a shell-escaped standard config
+path. Tests must always remove inherited editor variables or install a
+deterministic fake editor; invoking this action with a developer's environment
+can intentionally replace the test process with their interactive editor.
 
 The snapshot includes the finalized working-directory, split/tab/window
 directory inheritance policies, new-window/tab font-size inheritance policy,
@@ -149,10 +156,11 @@ The three focused config tests have distinct boundaries:
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a
-  byte-framed fake helper, all seven real action implementations, invalid and
-  reordered action options, missing/unexecutable-helper failure, the config-off
-  boundary, and moved-prefix main-to-helper discovery. Every fixture lives
-  under the repository-local `./tmp` or build tree.
+  byte-framed fake helper, all eight real action implementations, invalid and
+  reordered action options, the pinned editor exec and selection contract,
+  missing/unexecutable-helper failure, the config-off boundary, and
+  moved-prefix main-to-helper discovery. Every fixture lives under the
+  repository-local `./tmp` or build tree.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.

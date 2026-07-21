@@ -6,8 +6,9 @@
 #include <string_view>
 #include <system_error>
 
-inline constexpr std::array<std::string_view, 7>
+inline constexpr std::array<std::string_view, 8>
     GhosttyQtDelegatedCliActions{
+        "+edit-config",
         "+explain-config",
         "+help",
         "+list-actions",
