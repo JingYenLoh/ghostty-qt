@@ -32,8 +32,8 @@ namespace {
 
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
-constexpr auto kReadOnlyOverlayProperty =
-    "_ghosttyQtReadOnlyOverlayAttached";
+constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
+constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
@@ -81,12 +81,20 @@ struct TerminalWorkspace::Node {
 
     void collectPanes(std::vector<PaneHandle> &panes) const
     {
+        forEachPane([&panes](const PaneHandle &handle) {
+            panes.push_back(handle);
+        });
+    }
+
+    template<typename Visitor>
+    void forEachPane(Visitor &&visitor) const
+    {
         if (isLeaf()) {
-            panes.push_back({paneId, pane});
+            visitor(PaneHandle{paneId, pane});
             return;
         }
-        if (first != nullptr) first->collectPanes(panes);
-        if (second != nullptr) second->collectPanes(panes);
+        if (first != nullptr) first->forEachPane(visitor);
+        if (second != nullptr) second->forEachPane(visitor);
     }
 
     [[nodiscard]] AxisWeights equalize()
@@ -170,6 +178,16 @@ struct TerminalWorkspace::Tab {
     PaneId zoomedPaneId;
     QString titleOverride;
 };
+
+template<typename Visitor>
+void TerminalWorkspace::forEachPane(Visitor &&visitor) const
+{
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        if (tab->root != nullptr) {
+            tab->root->forEachPane(visitor);
+        }
+    }
+}
 
 class TerminalWorkspace::SplitDividerItem final : public QQuickItem {
 public:
@@ -338,127 +356,92 @@ TerminalWorkspace::~TerminalWorkspace() = default;
 
 void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
 {
-    if (searchOverlayComponent_ == component) {
-        return;
-    }
-
-    searchOverlayComponent_ = component;
-    if (component != nullptr) {
-        connect(component, &QObject::destroyed, this, [this, component] {
-            if (searchOverlayComponent_ == component) {
-                searchOverlayComponent_ = nullptr;
-                Q_EMIT searchOverlayComponentChanged();
-            }
-        });
-
-        for (const PaneHandle &handle : allPanes()) {
-            createSearchOverlay(handle.pane);
-        }
-    }
-
-    Q_EMIT searchOverlayComponentChanged();
-}
-
-void TerminalWorkspace::createSearchOverlay(TerminalPane *pane)
-{
-    constexpr auto attachedProperty = "_ghosttyQtSearchOverlayAttached";
-    if (pane == nullptr || searchOverlayComponent_ == nullptr
-        || pane->property(attachedProperty).toBool()) {
-        return;
-    }
-
-    QObject *overlay = searchOverlayComponent_->createWithInitialProperties({
-        {QStringLiteral("terminalPane"),
-         QVariant::fromValue(static_cast<QObject *>(pane))},
-    });
-    if (overlay == nullptr) {
-        qWarning().noquote()
-            << "Could not create terminal search overlay:"
-            << searchOverlayComponent_->errorString();
-        return;
-    }
-
-    auto *overlayItem = qobject_cast<QQuickItem *>(overlay);
-    if (overlayItem == nullptr) {
-        qWarning() << "Terminal search overlay component did not create a QQuickItem";
-        delete overlay;
-        return;
-    }
-
-    overlay->setParent(pane);
-    overlayItem->setParentItem(pane);
-    pane->setProperty(attachedProperty, true);
+    setPaneOverlayComponent(
+        searchOverlay_, component, kSearchOverlayProperty,
+        "terminal search overlay",
+        &TerminalWorkspace::searchOverlayComponentChanged);
 }
 
 void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
 {
-    if (readOnlyOverlayComponent_ == component) {
-        return;
-    }
-
-    // Unlike the app's normal one-time assignment, the public QML property
-    // may be replaced. Tear down the old factory's products so every existing
-    // pane can attach an object created by the replacement.
-    const std::vector<PaneHandle> panes = allPanes();
-    for (const PaneHandle &handle : panes) {
-        clearPaneOverlay(handle.pane, kReadOnlyOverlayProperty);
-    }
-
-    readOnlyOverlayComponent_ = component;
-    if (component != nullptr) {
-        connect(component, &QObject::destroyed, this, [this, component] {
-            if (readOnlyOverlayComponent_ == component) {
-                setReadOnlyOverlayComponent(nullptr);
-            }
-        });
-
-        for (const PaneHandle &handle : panes) {
-            attachPaneOverlay(readOnlyOverlayComponent_, handle.pane,
-                              kReadOnlyOverlayProperty,
-                              "terminal read-only overlay");
-        }
-    }
-
-    Q_EMIT readOnlyOverlayComponentChanged();
+    setPaneOverlayComponent(
+        readOnlyOverlay_, component, kReadOnlyOverlayProperty,
+        "terminal read-only overlay",
+        &TerminalWorkspace::readOnlyOverlayComponentChanged);
 }
 
 void TerminalWorkspace::setResizeOverlayComponent(QQmlComponent *component)
 {
-    if (resizeOverlayComponent_ == component) {
+    setPaneOverlayComponent(
+        resizeOverlay_, component, kResizeOverlayProperty,
+        "terminal resize overlay",
+        &TerminalWorkspace::resizeOverlayComponentChanged);
+}
+
+void TerminalWorkspace::setPaneOverlayComponent(
+    PaneOverlaySlot &slot,
+    QQmlComponent *component,
+    const char *paneProperty,
+    const char *description,
+    void (TerminalWorkspace::*changedSignal)())
+{
+    if (slot.component == component) {
         return;
     }
 
+    QObject::disconnect(slot.destructionConnection);
+    slot.destructionConnection = {};
+
+    // Component creation and destruction can execute QML callbacks. Traverse
+    // a stable pane snapshot so a callback cannot invalidate the split tree
+    // underneath this lifecycle update.
     const std::vector<PaneHandle> panes = allPanes();
     for (const PaneHandle &handle : panes) {
-        clearPaneOverlay(handle.pane, kResizeOverlayProperty);
+        clearPaneOverlay(handle.pane, paneProperty);
     }
 
-    resizeOverlayComponent_ = component;
+    slot.component = component;
     if (component != nullptr) {
-        connect(component, &QObject::destroyed, this, [this, component] {
-            if (resizeOverlayComponent_ == component) {
-                setResizeOverlayComponent(nullptr);
-            }
-        });
+        PaneOverlaySlot *const guardedSlot = &slot;
+        slot.destructionConnection = connect(
+            component, &QObject::destroyed, this,
+            [this, guardedSlot, paneProperty, changedSignal] {
+                guardedSlot->component.clear();
+                guardedSlot->destructionConnection = {};
+                for (const PaneHandle &handle : allPanes()) {
+                    clearPaneOverlay(handle.pane, paneProperty);
+                }
+                (this->*changedSignal)();
+            });
 
         for (const PaneHandle &handle : panes) {
-            attachPaneOverlay(resizeOverlayComponent_, handle.pane,
-                              kResizeOverlayProperty,
-                              "terminal resize overlay");
+            attachPaneOverlay(component, handle.pane, paneProperty,
+                              description);
         }
     }
 
-    Q_EMIT resizeOverlayComponentChanged();
+    (this->*changedSignal)();
+}
+
+void TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
+{
+    attachPaneOverlay(searchOverlay_.component.data(), pane,
+                      kSearchOverlayProperty,
+                      "terminal search overlay");
+    attachPaneOverlay(readOnlyOverlay_.component.data(), pane,
+                      kReadOnlyOverlayProperty,
+                      "terminal read-only overlay");
+    attachPaneOverlay(resizeOverlay_.component.data(), pane,
+                      kResizeOverlayProperty,
+                      "terminal resize overlay");
 }
 
 std::vector<TerminalWorkspace::PaneHandle> TerminalWorkspace::allPanes() const
 {
     std::vector<PaneHandle> panes;
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        if (tab->root != nullptr) {
-            tab->root->collectPanes(panes);
-        }
-    }
+    forEachPane([&panes](const PaneHandle &handle) {
+        panes.push_back(handle);
+    });
     return panes;
 }
 
@@ -1018,13 +1001,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 }
                 beginUnsafePaste(requestId, text, paneId);
             });
-    createSearchOverlay(pane);
-    attachPaneOverlay(readOnlyOverlayComponent_, pane,
-                      kReadOnlyOverlayProperty,
-                      "terminal read-only overlay");
-    attachPaneOverlay(resizeOverlayComponent_, pane,
-                      kResizeOverlayProperty,
-                      "terminal resize overlay");
+    attachPaneOverlays(pane);
     return {paneId, pane};
 }
 
@@ -2233,11 +2210,12 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
         activePane = firstPane(tab.root.get());
     }
 
-    std::vector<PaneHandle> panes;
-    tab.root->collectPanes(panes);
-    const bool running = std::ranges::any_of(
-        panes,
-        [](const PaneHandle &handle) { return handle.pane->isRunning(); });
+    bool running = false;
+    if (tab.root != nullptr) {
+        tab.root->forEachPane([&running](const PaneHandle &handle) {
+            running = running || handle.pane->isRunning();
+        });
+    }
 
     TabListEntry entry;
     entry.id = tab.id;
@@ -2827,16 +2805,19 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
 WorkspaceCloseAssessment TerminalWorkspace::assessTabClose(
     const Tab &tab) const
 {
-    std::vector<PaneHandle> panes;
-    if (tab.root != nullptr) tab.root->collectPanes(panes);
-
     bool hasReadOnlyPane = false;
     bool childRunning = false;
     bool activeProcess = false;
-    for (const PaneHandle &handle : panes) {
-        hasReadOnlyPane = hasReadOnlyPane || handle.pane->isReadOnly();
-        childRunning = childRunning || handle.pane->isRunning();
-        activeProcess = activeProcess || handle.pane->hasActiveProcess();
+    if (tab.root != nullptr) {
+        tab.root->forEachPane(
+            [&hasReadOnlyPane, &childRunning, &activeProcess](
+                const PaneHandle &handle) {
+                hasReadOnlyPane = hasReadOnlyPane
+                    || handle.pane->isReadOnly();
+                childRunning = childRunning || handle.pane->isRunning();
+                activeProcess = activeProcess
+                    || handle.pane->hasActiveProcess();
+            });
     }
     return {
         .needsConfirmation = hasReadOnlyPane

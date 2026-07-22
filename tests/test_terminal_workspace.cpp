@@ -22,8 +22,10 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QUrl>
+#include <QtQml/qqml.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -282,6 +284,7 @@ class TerminalWorkspaceTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
     void deferredInitialSessionCancelsAndScopesToFirstPane();
     void runningProgramPromptsThenResolvesOnceOnExit();
@@ -297,6 +300,7 @@ private Q_SLOTS:
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
     void readOnlyBlocksUiActivityLatchAndProtectsClose();
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
+    void overlayComponentsShareOneLifecycle();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
@@ -343,6 +347,13 @@ private Q_SLOTS:
     void routesWindowStateActionsToHostWindows();
     void inactiveTabResizeAppliesWhenActivated();
 };
+
+void TerminalWorkspaceTest::initTestCase()
+{
+    qmlRegisterUncreatableType<TerminalPane>(
+        "GhosttyQt", 1, 0, "TerminalPane",
+        "TerminalPane instances are owned by TerminalWorkspace");
+}
 
 void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
 {
@@ -1578,6 +1589,167 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 3);
     QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    using Setter = void (TerminalWorkspace::*)(QQmlComponent *);
+    using Getter = QQmlComponent *(TerminalWorkspace::*)() const;
+    using ChangedSignal = void (TerminalWorkspace::*)();
+    struct OverlayCase {
+        const char *name;
+        Setter setter;
+        Getter getter;
+        ChangedSignal changed;
+    };
+    const std::array cases{
+        OverlayCase{
+            "search", &TerminalWorkspace::setSearchOverlayComponent,
+            &TerminalWorkspace::searchOverlayComponent,
+            &TerminalWorkspace::searchOverlayComponentChanged,
+        },
+        OverlayCase{
+            "readOnly", &TerminalWorkspace::setReadOnlyOverlayComponent,
+            &TerminalWorkspace::readOnlyOverlayComponent,
+            &TerminalWorkspace::readOnlyOverlayComponentChanged,
+        },
+        OverlayCase{
+            "resize", &TerminalWorkspace::setResizeOverlayComponent,
+            &TerminalWorkspace::resizeOverlayComponent,
+            &TerminalWorkspace::resizeOverlayComponentChanged,
+        },
+    };
+
+    const auto makeComponent = [&engine](const QString &objectName) {
+        auto component = std::make_unique<QQmlComponent>(&engine);
+        const QByteArray source = QStringLiteral(
+            "import QtQuick\n"
+            "import GhosttyQt 1.0\n"
+            "Item {\n"
+            "    required property TerminalPane terminalPane\n"
+            "    objectName: \"%1\"\n"
+            "    enabled: false\n"
+            "}\n")
+                                      .arg(objectName)
+                                      .toUtf8();
+        component->setData(
+            source,
+            QUrl(QStringLiteral("inmemory:/%1.qml").arg(objectName)));
+        return component;
+    };
+
+    for (const OverlayCase &overlayCase : cases) {
+        TerminalWorkspace workspace;
+        workspace.setSize(QSizeF(640.0, 360.0));
+        QVERIFY(workspace.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+        QSignalSpy changed(&workspace, overlayCase.changed);
+
+        const QString firstName = QStringLiteral("%1OverlayFirst")
+                                      .arg(QString::fromLatin1(
+                                          overlayCase.name));
+        auto firstComponent = makeComponent(firstName);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            firstComponent->isReady() || firstComponent->isError(), 1000);
+        QVERIFY2(firstComponent->isReady(),
+                 qPrintable(firstComponent->errorString()));
+        (workspace.*overlayCase.setter)(firstComponent.get());
+        QCOMPARE((workspace.*overlayCase.getter)(), firstComponent.get());
+        QCOMPARE(changed.count(), 1);
+
+        TerminalPane *const initialPane =
+            workspace.findChild<TerminalPane *>();
+        QVERIFY(initialPane != nullptr);
+        QPointer<QQuickItem> firstOverlay =
+            initialPane->findChild<QQuickItem *>(
+                firstName, Qt::FindDirectChildrenOnly);
+        QVERIFY(firstOverlay != nullptr);
+        QCOMPARE(firstOverlay->parentItem(), initialPane);
+        QCOMPARE(firstOverlay->property("terminalPane").value<TerminalPane *>(),
+                 initialPane);
+
+        // Reassigning the same externally owned factory is a no-op and must
+        // retain the existing pane object rather than causing QML churn.
+        (workspace.*overlayCase.setter)(firstComponent.get());
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(initialPane->findChild<QQuickItem *>(
+                     firstName, Qt::FindDirectChildrenOnly),
+                 firstOverlay.data());
+
+        const QString secondName = QStringLiteral("%1OverlaySecond")
+                                       .arg(QString::fromLatin1(
+                                           overlayCase.name));
+        auto secondComponent = makeComponent(secondName);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            secondComponent->isReady() || secondComponent->isError(), 1000);
+        QVERIFY2(secondComponent->isReady(),
+                 qPrintable(secondComponent->errorString()));
+        (workspace.*overlayCase.setter)(secondComponent.get());
+        QCOMPARE((workspace.*overlayCase.getter)(), secondComponent.get());
+        QCOMPARE(changed.count(), 2);
+        QVERIFY(firstOverlay.isNull());
+
+        QPointer<QQuickItem> initialReplacement =
+            initialPane->findChild<QQuickItem *>(
+                secondName, Qt::FindDirectChildrenOnly);
+        QVERIFY(initialReplacement != nullptr);
+        workspace.splitRight();
+        QTRY_COMPARE_WITH_TIMEOUT(
+            workspace.findChildren<TerminalPane *>().size(), 2, 1000);
+        for (TerminalPane *const pane :
+             workspace.findChildren<TerminalPane *>()) {
+            QQuickItem *const attached = pane->findChild<QQuickItem *>(
+                secondName, Qt::FindDirectChildrenOnly);
+            QVERIFY(attached != nullptr);
+            QCOMPARE(attached->parentItem(), pane);
+            QCOMPARE(attached->property("terminalPane").value<TerminalPane *>(),
+                     pane);
+        }
+
+        // Destroying the externally owned current factory clears its guarded
+        // pointer and every product. This was the stale-search-overlay bug.
+        secondComponent.reset();
+        QCOMPARE((workspace.*overlayCase.getter)(), nullptr);
+        QCOMPARE(changed.count(), 3);
+        QVERIFY(initialReplacement.isNull());
+        for (TerminalPane *const pane :
+             workspace.findChildren<TerminalPane *>()) {
+            QVERIFY(pane->findChild<QQuickItem *>(
+                        secondName, Qt::FindDirectChildrenOnly)
+                    == nullptr);
+        }
+
+        (workspace.*overlayCase.setter)(nullptr);
+        QCOMPARE(changed.count(), 3);
+
+        const QString thirdName = QStringLiteral("%1OverlayThird")
+                                      .arg(QString::fromLatin1(
+                                          overlayCase.name));
+        auto thirdComponent = makeComponent(thirdName);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            thirdComponent->isReady() || thirdComponent->isError(), 1000);
+        QVERIFY2(thirdComponent->isReady(),
+                 qPrintable(thirdComponent->errorString()));
+        (workspace.*overlayCase.setter)(thirdComponent.get());
+        QCOMPARE(changed.count(), 4);
+        (workspace.*overlayCase.setter)(nullptr);
+        QCOMPARE(changed.count(), 5);
+        QCOMPARE((workspace.*overlayCase.getter)(), nullptr);
+        for (TerminalPane *const pane :
+             workspace.findChildren<TerminalPane *>()) {
+            QVERIFY(pane->findChild<QQuickItem *>(
+                        thirdName, Qt::FindDirectChildrenOnly)
+                    == nullptr);
+        }
+    }
 }
 
 void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()

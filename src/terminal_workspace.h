@@ -6,11 +6,14 @@
 #include "workspace_action.h"
 
 #include <QHash>
+#include <QMetaObject>
 #include <QPointer>
 #include <QQuickItem>
+#include <QQmlComponent>
 #include <QStringList>
 #include <QStringView>
 #include <QVector>
+#include <QtQmlIntegration/qqmlintegration.h>
 
 #include <deque>
 #include <memory>
@@ -18,7 +21,6 @@
 #include <variant>
 #include <vector>
 
-class QQmlComponent;
 class TerminalPane;
 
 struct WorkspaceCloseAssessment {
@@ -36,6 +38,7 @@ struct WorkspaceCloseAssessment {
 
 class TerminalWorkspace : public QQuickItem {
     Q_OBJECT
+    QML_NAMED_ELEMENT(TerminalWorkspace)
     Q_PROPERTY(QAbstractItemModel *tabModel READ qmlTabModel CONSTANT)
     Q_PROPERTY(QStringList tabTitles READ tabTitles NOTIFY tabTitlesChanged)
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
@@ -94,17 +97,17 @@ public:
     }
     QQmlComponent *searchOverlayComponent() const
     {
-        return searchOverlayComponent_;
+        return searchOverlay_.component.data();
     }
     void setSearchOverlayComponent(QQmlComponent *component);
     QQmlComponent *readOnlyOverlayComponent() const
     {
-        return readOnlyOverlayComponent_;
+        return readOnlyOverlay_.component.data();
     }
     void setReadOnlyOverlayComponent(QQmlComponent *component);
     QQmlComponent *resizeOverlayComponent() const
     {
-        return resizeOverlayComponent_;
+        return resizeOverlay_.component.data();
     }
     void setResizeOverlayComponent(QQmlComponent *component);
 
@@ -163,6 +166,10 @@ private:
     struct Node;
     struct Tab;
     struct PaneHandle;
+    struct PaneOverlaySlot {
+        QPointer<QQmlComponent> component;
+        QMetaObject::Connection destructionConnection;
+    };
     struct SplitDividerDrag {
         qreal pointer = 0.0;
         qreal ratio = 0.0;
@@ -212,7 +219,15 @@ private:
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate);
-    void createSearchOverlay(TerminalPane *pane);
+    void setPaneOverlayComponent(
+        PaneOverlaySlot &slot,
+        QQmlComponent *component,
+        const char *paneProperty,
+        const char *description,
+        void (TerminalWorkspace::*changedSignal)());
+    void attachPaneOverlays(TerminalPane *pane);
+    template<typename Visitor>
+    void forEachPane(Visitor &&visitor) const;
     [[nodiscard]] std::vector<PaneHandle> allPanes() const;
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
@@ -343,7 +358,7 @@ private:
     bool titlePromptAdvanceScheduled_ = false;
     bool broadActionFanout_ = false;
     bool topologyMutation_ = false;
-    QQmlComponent *searchOverlayComponent_ = nullptr;
-    QQmlComponent *readOnlyOverlayComponent_ = nullptr;
-    QQmlComponent *resizeOverlayComponent_ = nullptr;
+    PaneOverlaySlot searchOverlay_;
+    PaneOverlaySlot readOnlyOverlay_;
+    PaneOverlaySlot resizeOverlay_;
 };

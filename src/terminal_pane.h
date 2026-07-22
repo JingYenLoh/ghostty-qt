@@ -19,6 +19,7 @@
 #include <QString>
 #include <QStringList>
 #include <QUrl>
+#include <QtQmlIntegration/qqmlintegration.h>
 
 #include <chrono>
 #include <functional>
@@ -41,6 +42,8 @@ struct TerminalKeyTableRequest;
 
 class TerminalPane final : public QQuickItem {
     Q_OBJECT
+    QML_NAMED_ELEMENT(TerminalPane)
+    QML_UNCREATABLE("TerminalPane instances are owned by TerminalWorkspace")
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
     Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
     Q_PROPERTY(qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)

@@ -22,7 +22,6 @@
 #include <QScopeGuard>
 #include <QTextStream>
 #include <QTimer>
-#include <QtQml>
 
 #include <array>
 #include <cmath>
@@ -1224,8 +1223,6 @@ int main(int argc, char *argv[])
             << QGuiApplication::platformName() << ").\n";
         return 2;
     }
-
-    qmlRegisterType<TerminalWorkspace>("GhosttyQt", 1, 0, "TerminalWorkspace");
 
 #if GHOSTTY_QT_CONFIG_ENABLED
     const QString configHelperPath = QDir(QCoreApplication::applicationDirPath())

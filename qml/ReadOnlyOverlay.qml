@@ -1,15 +1,16 @@
 import QtQuick
 import QtQuick.Controls
+import GhosttyQt 1.0
 
 Rectangle {
     id: root
 
-    required property var terminalPane
+    required property TerminalPane terminalPane
 
     objectName: "terminalReadOnlyOverlay"
     z: 900
     enabled: false
-    visible: terminalPane.readOnly
+    visible: terminalPane !== null && terminalPane.readOnly
     width: label.implicitWidth + 16
     height: label.implicitHeight + 10
     x: parent ? Math.max(0, parent.width - width - 8) : 0

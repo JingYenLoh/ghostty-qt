@@ -1,16 +1,17 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import GhosttyQt 1.0
 
 Pane {
     id: root
 
-    required property var terminalPane
+    required property TerminalPane terminalPane
     property bool activatingPane: false
 
     objectName: "terminalSearchOverlay"
     z: 1000
-    visible: terminalPane.searchUiActive
+    visible: terminalPane !== null && terminalPane.searchUiActive
     width: parent ? Math.min(implicitWidth, Math.max(0, parent.width - 16))
                   : implicitWidth
     x: parent ? Math.max(0, parent.width - width - 8) : 0
@@ -18,13 +19,16 @@ Pane {
     padding: 6
 
     function synchronizeText() {
+        if (terminalPane === null)
+            return
         if (searchField.text !== terminalPane.searchUiText)
             searchField.text = terminalPane.searchUiText
     }
 
     function submitText() {
         searchDebounce.stop()
-        terminalPane.setSearchUiText(searchField.text)
+        if (terminalPane !== null)
+            terminalPane.setSearchUiText(searchField.text)
     }
 
     function focusAndSelect() {
@@ -38,7 +42,8 @@ Pane {
 
     function closeSearch() {
         searchDebounce.stop()
-        terminalPane.endSearchUi()
+        if (terminalPane !== null)
+            terminalPane.endSearchUi()
     }
 
     contentItem: RowLayout {
@@ -55,7 +60,8 @@ Pane {
 
             onTextEdited: searchDebounce.restart()
             onActiveFocusChanged: {
-                if (activeFocus && !root.activatingPane) {
+                if (activeFocus && !root.activatingPane
+                        && root.terminalPane !== null) {
                     // Activating a workspace pane normally returns focus to
                     // the terminal. Reclaim it once without emitting again.
                     root.activatingPane = true
@@ -80,7 +86,8 @@ Pane {
         Label {
             Layout.minimumWidth: 44
             horizontalAlignment: Text.AlignRight
-            text: root.terminalPane.searchMatchLabel
+            text: root.terminalPane !== null
+                  ? root.terminalPane.searchMatchLabel : ""
             Accessible.name: "Search match count"
         }
 
@@ -121,7 +128,10 @@ Pane {
     Timer {
         id: searchDebounce
         interval: 150
-        onTriggered: root.terminalPane.setSearchUiText(searchField.text)
+        onTriggered: {
+            if (root.terminalPane !== null)
+                root.terminalPane.setSearchUiText(searchField.text)
+        }
     }
 
     Connections {
@@ -134,7 +144,8 @@ Pane {
 
         function onSearchUiActiveChanged() {
             root.synchronizeText()
-            if (root.terminalPane.searchUiActive)
+            if (root.terminalPane !== null
+                    && root.terminalPane.searchUiActive)
                 root.focusAndSelect()
         }
 

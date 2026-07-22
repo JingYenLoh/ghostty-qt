@@ -667,6 +667,13 @@ shows progressive selected/total status, and maps Enter, Shift+Enter, and
 Escape to next, previous, and end. It is anchored at the top-right and is not
 draggable yet.
 
+Search, read-only, and resize overlays use the same guarded factory lifecycle.
+Replacing or destroying a factory removes all objects it created before a new
+factory is attached, and each newly created pane receives the current factories.
+The workspace traverses a stable pane snapshot while running QML creation and
+destruction callbacks so those callbacks cannot invalidate the split tree being
+visited.
+
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
 terminal and the kernel PTY with `TIOCSWINSZ`.
