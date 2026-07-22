@@ -190,10 +190,17 @@ the pointer remains on the link, occupied-guard release back to physical hit
 testing, left/right overlay relocation, and bounded/escaped destination
 presentation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
-stable tab insertion/reordering/index selection, wrapped split traversal,
-mutable and equalized layouts, future-only split working-directory policy reloads with
-explicit and nested sources, source-stable new-tab directory/font inheritance
-across explicit, QML-style, reset, reload, and broad-fanout paths, exact
+owner-delayed lifecycle publication, final-surface and final-tab action-chain
+completion, synchronous host destruction after local/all/global key events,
+direct all-pane fanout unwinding under both normal close and unexpected
+observer destruction, ordered application-quit escalation, protected
+multiwindow confirmation re-hosting, and deferred open/reload callbacks that
+destroy their originating workspace. They also cover stable tab
+insertion/reordering/index selection, wrapped split
+traversal, mutable and equalized layouts, future-only split working-directory
+policy reloads with explicit and nested sources, source-stable new-tab
+directory/font inheritance across explicit, QML-style, reset, reload, and
+broad-fanout paths, exact
 `current`/`end` new-tab placement across live reload and broad fanout, live
 `always`/`auto`/`never` tab-strip visibility across one/two-tab transitions
 without hiding the surrounding toolbar, and split zoom lifecycle. Zoom coverage

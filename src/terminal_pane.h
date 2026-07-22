@@ -212,8 +212,10 @@ private:
     void markTextRowsChangedLocked(const TerminalUpdate &update);
     void syncCursorBlink(bool resetPhase);
     void setFontPointSize(qreal points);
-    KeyHandling handleShortcut(QKeyEvent *event);
-    KeyHandling handleConfiguredShortcut(QKeyEvent *event);
+    KeyHandling handleShortcut(
+        QKeyEvent *event, const QPointer<TerminalPane> &guard);
+    KeyHandling handleConfiguredShortcut(
+        QKeyEvent *event, const QPointer<TerminalPane> &guard);
     [[nodiscard]] ConfiguredActionOutcome performConfiguredAction(
         QStringView action);
     int viewportPageRows() const;
@@ -350,7 +352,8 @@ private:
     TerminalLinkKind pendingActivationKind_ = TerminalLinkKind::Osc8;
     quint64 pendingActivationRequestId_ = 0;
     std::function<bool(const QUrl &)> urlOpener_;
-    std::function<bool(WorkspaceActionRequest)> workspaceActionHandler_;
+    std::shared_ptr<std::function<bool(WorkspaceActionRequest)>>
+        workspaceActionHandler_;
     bool searchUiActive_ = false;
     bool split_ = false;
     bool searchEngineActive_ = false;

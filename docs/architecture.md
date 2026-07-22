@@ -1034,11 +1034,28 @@ empty string, and an explicit primary-selection paste never inherits the
 separate middle-click fallback policy.
 
 Destructive lifecycle commitment belongs to the object that owns that
-lifecycle, not to the pane action interpreter. A pane-originated window close
-is queued on `TerminalWorkspace`, and a keybinding-originated application quit
-is queued on `ApplicationController`; direct programmatic close and quit APIs
-remain synchronous. This lets every configured action chain unwind before a
-close-approval observer can synchronously destroy its pane or workspace.
+lifecycle, not to the pane action interpreter. `TerminalWorkspace` commits a
+close synchronously: it rejects later structural actions and starts every pane
+shutdown. It then advances its closed lifecycle through a single queued
+publication, so `windowCloseApproved` cannot authorize a destructive host
+observer until the originating key event has unwound. Repeated close requests
+coalesce, and an application-quit escalation is published only after the
+window approval. The pane-originated `close_window` request remains queued as
+well, allowing later structural members of that particular chain to finish
+before commitment. Process-wide quit confirmation is aggregated and hosted
+only by workspaces that remain open; already committed windows participate in
+the subsequent shutdown wait without bypassing another window's protection.
+
+Keybinding-originated `open_config`, `reload_config`, and `quit` callbacks
+similarly cross the surviving `ApplicationController` queue. `new_window`
+enters its existing queued creation path directly, preserving its order
+relative to a later quit. The public programmatic `dispatch` API enters routing
+synchronously without this keybinding-only wrapper; any resulting close still
+uses the owner-delayed approval publication above. A guarded pane resumption is
+the defensive fallback for an embedding application that attaches a
+destructive direct observer to some other signal; supported lifecycle actions
+do not rely on that fallback. Workspace-wide fanout stops safely if a
+synchronous pane observer destroys the workspace.
 Page actions use the full terminal height; fractional pages multiply in f32
 and truncate toward zero, while line and absolute-row parameters retain their
 pinned i16 and usize bounds. Non-finite or unsafe fractional values are

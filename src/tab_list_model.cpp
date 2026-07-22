@@ -1,6 +1,7 @@
 #include "tab_list_model.h"
 
 #include <QList>
+#include <QPointer>
 #include <QVariant>
 
 #include <algorithm>
@@ -182,9 +183,12 @@ bool TabListModel::removeAt(int row)
     if (row < 0 || row >= entries_.size()) {
         return false;
     }
+    const QPointer<TabListModel> guard(this);
     beginRemoveRows(QModelIndex(), row, row);
+    if (guard == nullptr) return false;
     entries_.removeAt(row);
     endRemoveRows();
+    if (guard == nullptr) return true;
     Q_EMIT countChanged();
     return true;
 }

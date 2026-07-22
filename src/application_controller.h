@@ -122,6 +122,7 @@ private:
     void workspaceDestroyed(TerminalWorkspace *workspace,
                             QQuickWindow *window);
     void requestApplicationQuit();
+    void beginApplicationShutdown();
     void commitApplicationQuit(TerminalWorkspace *host);
     void applicationQuitCancelled(TerminalWorkspace *host);
     void workspaceShutdownApproved(TerminalWorkspace *workspace);

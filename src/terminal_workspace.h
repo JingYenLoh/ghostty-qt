@@ -93,9 +93,16 @@ public:
     void requestApplicationQuitConfirmation(
         WorkspaceCloseAssessment applicationAssessment);
     void forceShutdownForApplicationQuit();
-    [[nodiscard]] bool isWindowCloseApproved() const
+    [[nodiscard]] bool canHostApplicationQuitConfirmation() const
     {
-        return windowCloseApprovedEmitted_;
+        return windowCloseState_ == WindowCloseState::Open;
+    }
+    // Publication is irrevocably in flight once direct signal delivery has
+    // begun, even before every observer has returned.
+    [[nodiscard]] bool isWindowCloseApprovalPublished() const
+    {
+        return windowCloseState_ == WindowCloseState::Publishing
+            || windowCloseState_ == WindowCloseState::Published;
     }
     QQmlComponent *searchOverlayComponent() const
     {
@@ -205,6 +212,12 @@ private:
         WindowOnly,
         QuitApplication,
     };
+    enum class WindowCloseState {
+        Open,
+        Committed,
+        Publishing,
+        Published,
+    };
     struct PendingWindowClose {
         quint64 requestId = 0;
     };
@@ -245,6 +258,7 @@ private:
         PaneActivationReason reason = PaneActivationReason::Direct);
     void requestWindowCloseImpl(WindowCloseIntent intent);
     void approveWindowClose();
+    void publishWindowCloseApproval();
     void approveApplicationQuit();
     void scheduleApplicationQuitReconciliation();
     void beginCloseConfirmation(PendingClose close, const QString &message);
@@ -331,7 +345,6 @@ private:
     LaunchOptions effectiveOptions_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     TabListModel tabModel_;
-    WorkspaceActionDispatcher actionDispatcher_;
     std::vector<std::unique_ptr<Tab>> tabs_;
     int currentIndex_ = -1;
     quint64 nextTabId_ = 1;
@@ -343,7 +356,7 @@ private:
     QPointer<TerminalPane> deferredInitialPane_;
     PaneId deferredInitialPaneId_;
     bool initialized_ = false;
-    bool windowCloseApprovedEmitted_ = false;
+    WindowCloseState windowCloseState_ = WindowCloseState::Open;
     bool applicationQuitRequested_ = false;
     bool applicationQuitApprovedEmitted_ = false;
     bool applicationQuitReconciliationScheduled_ = false;

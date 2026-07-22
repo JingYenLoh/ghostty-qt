@@ -497,6 +497,10 @@ bool ApplicationController::dispatch(ApplicationAction action,
         const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
         QTimer::singleShot(
             0, this, [this, guardedSource, sourcePaneId] {
+                if (quitState_ != QuitState::Idle
+                    || lifetime_.hasRequestedQuit()) {
+                    return;
+                }
                 TerminalWorkspace *screenSource = guardedSource;
                 if (!containsWorkspace(screenSource)) {
                     screenSource = activeWorkspace();
@@ -526,18 +530,28 @@ void ApplicationController::dispatchRequestedAction(
     TerminalWorkspace *sourceWorkspace,
     PaneId sourcePaneId)
 {
-    if (action != ApplicationAction::Quit) {
+    // New-window already posts its actual creation from dispatch(). Posting a
+    // wrapper here as well would let a later queued quit overtake it. Ignore
+    // is inert, so both actions can enter dispatch immediately.
+    switch (action) {
+    case ApplicationAction::Ignore:
+    case ApplicationAction::NewWindow:
         (void) dispatch(action, sourceWorkspace, sourcePaneId);
         return;
+    case ApplicationAction::OpenConfig:
+    case ApplicationAction::ReloadConfig:
+    case ApplicationAction::Quit:
+        break;
     }
 
-    // A keybinding chain can request quit before executing later actions.
-    // Commit the destructive application lifecycle only after the chain has
-    // unwound. The controller outlives every workspace, so a preceding
-    // close_window cannot discard the later process-wide quit request.
+    // External config callbacks and quit may synchronously destroy their
+    // source workspace. The process owner outlives every pane, so publish
+    // these application actions only after the complete keybinding chain and
+    // originating key event have unwound.
     const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
-    QTimer::singleShot(0, this, [this, guardedSource, sourcePaneId] {
-        (void) dispatch(ApplicationAction::Quit,
+    QTimer::singleShot(0, this,
+                       [this, action, guardedSource, sourcePaneId] {
+        (void) dispatch(action,
                         guardedSource.data(), sourcePaneId);
     });
 }
@@ -808,24 +822,65 @@ void ApplicationController::requestApplicationQuit()
 
     const auto workspaces = workspaceSnapshot();
     if (workspaces.empty()) {
-        quitState_ = QuitState::ClosingWindows;
-        Q_EMIT applicationQuitCommitted();
-        lifetime_.requestQuitNow();
+        beginApplicationShutdown();
         return;
     }
 
     WorkspaceCloseAssessment assessment;
+    TerminalWorkspace *firstConfirmationHost = nullptr;
     for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-        if (workspace != nullptr) assessment |= workspace->closeAssessment();
+        if (workspace != nullptr
+            && workspace->canHostApplicationQuitConfirmation()) {
+            if (firstConfirmationHost == nullptr) {
+                firstConfirmationHost = workspace;
+            }
+            assessment |= workspace->closeAssessment();
+        }
+    }
+    if (firstConfirmationHost == nullptr) {
+        // Every window has already committed its ordinary close, so there is
+        // nothing left to confirm. Let one closing workspace carry the sticky
+        // application intent; its ordered window/application publication then
+        // enters the shared shutdown path.
+        TerminalWorkspace *host = activeWorkspace();
+        if (host == nullptr) host = workspaces.front();
+        quitState_ = QuitState::AwaitingConfirmation;
+        quitDialogHost_ = host;
+        host->requestApplicationQuitConfirmation({});
+        return;
     }
 
     TerminalWorkspace *host = activeWorkspace();
-    if (host == nullptr) {
-        host = workspaces.front();
+    if (host == nullptr || !host->canHostApplicationQuitConfirmation()) {
+        host = firstConfirmationHost;
     }
     quitState_ = QuitState::AwaitingConfirmation;
     quitDialogHost_ = host;
     host->requestApplicationQuitConfirmation(assessment);
+}
+
+void ApplicationController::beginApplicationShutdown()
+{
+    quitState_ = QuitState::ClosingWindows;
+    quitDialogHost_.clear();
+    awaitingShutdown_.clear();
+    const auto workspaces = workspaceSnapshot();
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr
+            && !workspace->isWindowCloseApprovalPublished()) {
+            awaitingShutdown_.insert(workspace);
+        }
+    }
+
+    startingApplicationShutdown_ = true;
+    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+        if (workspace != nullptr
+            && !workspace->isWindowCloseApprovalPublished()) {
+            workspace->forceShutdownForApplicationQuit();
+        }
+    }
+    startingApplicationShutdown_ = false;
+    finishApplicationQuitIfReady();
 }
 
 void ApplicationController::commitApplicationQuit(TerminalWorkspace *host)
@@ -835,24 +890,7 @@ void ApplicationController::commitApplicationQuit(TerminalWorkspace *host)
         return;
     }
 
-    quitState_ = QuitState::ClosingWindows;
-    quitDialogHost_.clear();
-    awaitingShutdown_.clear();
-    const auto workspaces = workspaceSnapshot();
-    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-        if (workspace != nullptr && !workspace->isWindowCloseApproved()) {
-            awaitingShutdown_.insert(workspace);
-        }
-    }
-
-    startingApplicationShutdown_ = true;
-    for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-        if (workspace != nullptr && !workspace->isWindowCloseApproved()) {
-            workspace->forceShutdownForApplicationQuit();
-        }
-    }
-    startingApplicationShutdown_ = false;
-    finishApplicationQuitIfReady();
+    beginApplicationShutdown();
 }
 
 void ApplicationController::applicationQuitCancelled(

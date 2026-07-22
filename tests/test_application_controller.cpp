@@ -178,6 +178,16 @@ TerminalController *onlyController(TerminalWorkspace *workspace)
         ? pane->findChild<TerminalController *>() : nullptr;
 }
 
+void sendCtrlKPressAndRelease(TerminalPane *pane)
+{
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
+                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QCoreApplication::sendEvent(pane, &press);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_K,
+                      Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &release);
+}
+
 PaneId activePaneId(TerminalWorkspace *workspace)
 {
     if (workspace == nullptr || workspace->tabCount() != 1) return {};
@@ -233,6 +243,13 @@ private Q_SLOTS:
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
     void configuredQuitWaitsForCompleteActionChain();
+    void configuredCloseWindowQuitEscalatesBeforePublication();
+    void configuredCloseWindowQuitUsesOpenConfirmationHost();
+    void configuredApplicationCallbackWaitsForCompleteActionChain_data();
+    void configuredApplicationCallbackWaitsForCompleteActionChain();
+    void rootApplicationChainSurvivesSourceDestruction();
+    void configuredNewWindowAndQuitPreserveOrder_data();
+    void configuredNewWindowAndQuitPreserveOrder();
     void suppressedStartupPreservesFirstSessionOptions();
     void failedLazyCreationDoesNotConsumeFirstSession();
     void terminalInitializationFailurePromotesNextSession();
@@ -251,6 +268,7 @@ private Q_SLOTS:
     void showDestructionCannotLeaveHalfRegisteredWindow();
     void failedInitialPresentationPreservesFirstSession();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
+    void reentrantQuitDuringClosePublicationDoesNotLoseApproval();
     void pendingQuitRehostsAfterItsWindowDisappears();
     void failedReplacementLeavesDelayedQuitArmed();
     void rejectsWorkspaceOutsideWindowOwnership();
@@ -886,6 +904,285 @@ void ApplicationControllerTest::configuredQuitWaitsForCompleteActionChain()
     QVERIFY(guardedWorkspace.isNull());
 }
 
+void ApplicationControllerTest::
+configuredCloseWindowQuitEscalatesBeforePublication()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=close_window"),
+        QStringLiteral("chain=quit"),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(initial->workspace->tabCount(), 1, 1000);
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    QVERIFY(pane != nullptr);
+
+    QStringList publicationOrder;
+    connect(initial->workspace, &TerminalWorkspace::windowCloseApproved,
+            &controller, [&publicationOrder] {
+                publicationOrder.append(QStringLiteral("window"));
+            });
+    connect(initial->workspace, &TerminalWorkspace::applicationQuitApproved,
+            &controller, [&publicationOrder] {
+                publicationOrder.append(QStringLiteral("application"));
+            });
+    QSignalSpy committed(&controller,
+                         &ApplicationController::applicationQuitCommitted);
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    const QPointer<TerminalWorkspace> guardedWorkspace(initial->workspace);
+
+    sendCtrlKPressAndRelease(pane);
+
+    QVERIFY(guardedWorkspace != nullptr);
+    QVERIFY(publicationOrder.isEmpty());
+    QCOMPARE(committed.count(), 0);
+    QCOMPARE(quit.count(), 0);
+
+    const QStringList expected{
+        QStringLiteral("window"), QStringLiteral("application")};
+    QTRY_COMPARE_WITH_TIMEOUT(publicationOrder, expected, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+    QVERIFY(guardedWorkspace.isNull());
+}
+
+void ApplicationControllerTest::
+configuredCloseWindowQuitUsesOpenConfirmationHost()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.confirmCloseMode = ConfirmCloseMode::RunningProcesses;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=close_window"),
+        QStringLiteral("chain=quit"),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+    const auto protectedWindow = controller.createInitialWindow();
+    QVERIFY(protectedWindow.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        protectedWindow->workspace->tabCount(), 1, 1000);
+    TerminalPane *const protectedPane =
+        onlyPane(protectedWindow->workspace);
+    QVERIFY(protectedPane != nullptr);
+    QVERIFY(protectedPane->executeConfiguredAction(
+        QStringLiteral("toggle_readonly")));
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    const ApplicationWindow source = controller.windows().constLast();
+    QCOMPARE(controller.activeWorkspace(), source.workspace);
+    TerminalPane *const sourcePane = onlyPane(source.workspace);
+    QVERIFY(sourcePane != nullptr);
+
+    QSignalSpy protectedConfirmation(
+        protectedWindow->workspace,
+        &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy sourceConfirmation(
+        source.workspace, &TerminalWorkspace::closeConfirmationRequested);
+    QSignalSpy committed(&controller,
+                         &ApplicationController::applicationQuitCommitted);
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    const QPointer<TerminalWorkspace> guardedSource(source.workspace);
+
+    sendCtrlKPressAndRelease(sourcePane);
+
+    // The source close commits before queued quit routing. It can no longer
+    // host the aggregate prompt, so the protected open workspace must do so.
+    QTRY_COMPARE_WITH_TIMEOUT(protectedConfirmation.count(), 1, 1000);
+    QCOMPARE(sourceConfirmation.count(), 0);
+    QCOMPARE(protectedConfirmation.constFirst().at(1).toString(),
+             QStringLiteral(
+                 "A terminal window contains a read-only pane. Quit the application?"));
+    QCOMPARE(committed.count(), 0);
+    QCOMPARE(quit.count(), 0);
+
+    protectedWindow->workspace->cancelClose(
+        protectedConfirmation.constFirst().constFirst().toULongLong());
+    QTRY_VERIFY_WITH_TIMEOUT(guardedSource.isNull(), 1000);
+    QCOMPARE(controller.windowCount(), 1);
+    QCOMPARE(committed.count(), 0);
+    QCOMPARE(quit.count(), 0);
+}
+
+void ApplicationControllerTest::
+configuredApplicationCallbackWaitsForCompleteActionChain_data()
+{
+    QTest::addColumn<QString>("action");
+
+    QTest::newRow("open-config") << QStringLiteral("open_config");
+    QTest::newRow("reload-config") << QStringLiteral("reload_config");
+}
+
+void ApplicationControllerTest::
+configuredApplicationCallbackWaitsForCompleteActionChain()
+{
+    QFETCH(QString, action);
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=%1").arg(action),
+        QStringLiteral("chain=new_tab"),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(initial->workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    QVERIFY(pane != nullptr);
+    TerminalController *const terminal = onlyController(initial->workspace);
+    QVERIFY(terminal != nullptr);
+    QSignalSpy forwarded(terminal, &TerminalController::keyRequested);
+    const QPointer<TerminalWorkspace> guardedWorkspace(initial->workspace);
+    const QPointer<TerminalPane> guardedPane(pane);
+    int callbacks = 0;
+    int observedTabCount = -1;
+    const auto destroySource = [&] {
+        ++callbacks;
+        observedTabCount = guardedWorkspace != nullptr
+            ? guardedWorkspace->tabCount() : -1;
+        delete guardedWorkspace.data();
+    };
+    if (action == QStringLiteral("open_config")) {
+        connect(&controller, &ApplicationController::configOpenRequested,
+                &controller, destroySource);
+    } else {
+        connect(&controller, &ApplicationController::configReloadRequested,
+                &controller, destroySource);
+    }
+
+    sendCtrlKPressAndRelease(pane);
+
+    // The pane-local suffix completes before an externally reentrant
+    // application callback crosses the process-owner boundary.
+    QVERIFY(guardedWorkspace != nullptr);
+    QVERIFY(guardedPane != nullptr);
+    QCOMPARE(guardedWorkspace->tabCount(), 2);
+    QCOMPARE(callbacks, 0);
+    QCOMPARE(forwarded.count(), 0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(callbacks, 1, 1000);
+    QCOMPARE(observedTabCount, 2);
+    QVERIFY(guardedWorkspace.isNull());
+    QVERIFY(guardedPane.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+}
+
+void ApplicationControllerTest::
+rootApplicationChainSurvivesSourceDestruction()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=open_config"),
+        QStringLiteral("chain=reload_config"),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(initial->workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    QVERIFY(pane != nullptr);
+    TerminalController *const terminal = onlyController(initial->workspace);
+    QVERIFY(terminal != nullptr);
+    QSignalSpy forwarded(terminal, &TerminalController::keyRequested);
+    const QPointer<TerminalWorkspace> guardedWorkspace(initial->workspace);
+    QStringList callbacks;
+    connect(&controller, &ApplicationController::configOpenRequested,
+            &controller, [&] {
+                callbacks.append(QStringLiteral("open"));
+                delete guardedWorkspace.data();
+            });
+    connect(&controller, &ApplicationController::configReloadRequested,
+            &controller, [&] {
+                callbacks.append(QStringLiteral("reload"));
+            });
+
+    sendCtrlKPressAndRelease(pane);
+
+    QVERIFY(callbacks.isEmpty());
+    QVERIFY(guardedWorkspace != nullptr);
+    QCOMPARE(forwarded.count(), 0);
+
+    const QStringList expected{
+        QStringLiteral("open"), QStringLiteral("reload")};
+    QTRY_COMPARE_WITH_TIMEOUT(callbacks, expected, 1000);
+    QVERIFY(guardedWorkspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+}
+
+void ApplicationControllerTest::
+configuredNewWindowAndQuitPreserveOrder_data()
+{
+    QTest::addColumn<QStringList>("actions");
+    QTest::addColumn<int>("expectedFactoryCalls");
+    QTest::addColumn<QStringList>("expectedEvents");
+
+    QTest::newRow("new-window-before-quit")
+        << QStringList({QStringLiteral("new_window"),
+                        QStringLiteral("quit")})
+        << 2
+        << QStringList({QStringLiteral("window"),
+                        QStringLiteral("quit")});
+    QTest::newRow("quit-before-new-window")
+        << QStringList({QStringLiteral("quit"),
+                        QStringLiteral("new_window")})
+        << 1
+        << QStringList({QStringLiteral("quit")});
+}
+
+void ApplicationControllerTest::
+configuredNewWindowAndQuitPreserveOrder()
+{
+    QFETCH(QStringList, actions);
+    QFETCH(int, expectedFactoryCalls);
+    QFETCH(QStringList, expectedEvents);
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=%1").arg(actions.constFirst()),
+        QStringLiteral("chain=%1").arg(actions.constLast()),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(initial->workspace->tabCount(), 1, 1000);
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    QVERIFY(pane != nullptr);
+
+    QStringList events;
+    connect(&controller, &ApplicationController::windowCreated,
+            &controller, [&events] {
+                events.append(QStringLiteral("window"));
+            });
+    connect(&controller, &ApplicationController::applicationQuitCommitted,
+            &controller, [&events] {
+                events.append(QStringLiteral("quit"));
+            });
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    sendCtrlKPressAndRelease(pane);
+
+    QCOMPARE(harness.calls, 1);
+    QCOMPARE(quit.count(), 0);
+    QVERIFY(events.isEmpty());
+    bool actionQueueDrained = false;
+    QTimer::singleShot(0, &controller, [&actionQueueDrained] {
+        actionQueueDrained = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(actionQueueDrained, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+    QCOMPARE(harness.calls, expectedFactoryCalls);
+    QCOMPARE(events, expectedEvents);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+}
+
 void ApplicationControllerTest::rejectsWorkspaceOutsideWindowOwnership()
 {
     QPointer<QQuickWindow> window;
@@ -1497,7 +1794,7 @@ void ApplicationControllerTest::successfulReplacementCancelsDelayedQuit()
     QCOMPARE(quit.count(), 0);
 
     QVERIFY(controller.dispatch(ApplicationAction::Quit));
-    QCOMPARE(quit.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 
@@ -1893,12 +2190,56 @@ void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirma
         secondConfirmation.constLast().constFirst().toULongLong();
     QVERIFY(acceptedId != cancelledId);
     second.workspace->confirmClose(acceptedId);
-    QCOMPARE(firstClose.count(), 1);
-    QCOMPARE(secondClose.count(), 1);
-    QCOMPARE(committed.count(), 1);
-    QCOMPARE(quit.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(firstClose.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(secondClose.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
     QVERIFY(!controller.activateNoCommand());
     QCOMPARE(creationFailure.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+}
+
+void ApplicationControllerTest::
+reentrantQuitDuringClosePublicationDoesNotLoseApproval()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(options, harness.factory(), false);
+    const auto first = controller.createInitialWindow();
+    QVERIFY(first.has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    const ApplicationWindow active = controller.windows().constLast();
+    QCOMPARE(controller.activeWorkspace(), active.workspace);
+    const QPointer<TerminalWorkspace> publishingWorkspace(first->workspace);
+
+    bool reentrantQuitAccepted = false;
+    bool publishingWorkspaceAliveAtCommit = false;
+    connect(first->workspace, &TerminalWorkspace::windowCloseApproved,
+            &controller, [&] {
+                reentrantQuitAccepted =
+                    controller.dispatch(ApplicationAction::Quit);
+            });
+    QSignalSpy committed(&controller,
+                         &ApplicationController::applicationQuitCommitted);
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    connect(&controller, &ApplicationController::applicationQuitCommitted,
+            &controller, [&] {
+                publishingWorkspaceAliveAtCommit =
+                    publishingWorkspace != nullptr;
+            });
+
+    // The active host publishes first. While the other workspace is inside
+    // its direct approval signal, request process-wide quit from a later
+    // observer. A publication already in flight must not be inserted into the
+    // controller's wait set after its one acknowledgement has passed.
+    active.workspace->requestWindowClose();
+    first->workspace->requestWindowClose();
+
+    QTRY_VERIFY_WITH_TIMEOUT(reentrantQuitAccepted, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
+    QVERIFY(publishingWorkspaceAliveAtCommit);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 
@@ -1943,8 +2284,8 @@ void ApplicationControllerTest::pendingQuitRehostsAfterItsWindowDisappears()
     const quint64 confirmationId =
         firstConfirmation.constFirst().constFirst().toULongLong();
     first->workspace->confirmClose(confirmationId);
-    QCOMPARE(committed.count(), 1);
-    QCOMPARE(quit.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(committed.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 

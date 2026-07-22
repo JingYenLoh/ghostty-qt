@@ -177,6 +177,7 @@ private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
     void executesTypedFontSizeActions();
+    void workspaceActionHandlerRetainsMutableState();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
     void copiesRawEffectiveSurfaceTitle();
@@ -1515,6 +1516,28 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     QCOMPARE(reloadBounds.fontPointSize(), 255.0);
     reloadBounds.resetZoom();
     QCOMPARE(reloadBounds.fontPointSize(), 300.0);
+}
+
+void TerminalPaneTest::workspaceActionHandlerRetainsMutableState()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    int totalCalls = 0;
+    pane.setWorkspaceActionHandler(
+        [calls = 0, &totalCalls](WorkspaceActionRequest) mutable {
+            ++totalCalls;
+            return ++calls == 2;
+        });
+
+    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("new_tab")));
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("new_tab")));
+    QCOMPARE(totalCalls, 2);
 }
 
 void TerminalPaneTest::packagesInputMethodLifecycleAsOneWorkerRequest()

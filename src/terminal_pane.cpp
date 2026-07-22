@@ -1403,7 +1403,10 @@ void TerminalPane::setSplit(bool split)
 void TerminalPane::setWorkspaceActionHandler(
     std::function<bool(WorkspaceActionRequest)> handler)
 {
-    workspaceActionHandler_ = std::move(handler);
+    workspaceActionHandler_ = handler
+        ? std::make_shared<std::function<bool(WorkspaceActionRequest)>>(
+              std::move(handler))
+        : nullptr;
 }
 
 void TerminalPane::setUrlOpener(std::function<bool(const QUrl &)> opener)
@@ -2302,7 +2305,15 @@ TerminalPane::currentSessionGeometry(
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
-    const KeyHandling handling = handleShortcut(event);
+    const QPointer<TerminalPane> guard(this);
+    const KeyHandling handling = handleShortcut(event, guard);
+    // Lifecycle actions are owner-deferred, but an embedding application may
+    // still attach a destructive direct observer to another pane signal.
+    // Never resume ordinary key handling through a deleted QObject.
+    if (guard == nullptr) {
+        event->accept();
+        return;
+    }
     // Run configured actions against the previously accepted hover before a
     // chord's non-modifier key refreshes link eligibility. This keeps
     // copy_url_to_clipboard synchronous within Ghostty action chains.
@@ -2330,10 +2341,11 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     event->accept();
 }
 
-TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
+TerminalPane::KeyHandling TerminalPane::handleShortcut(
+    QKeyEvent *event, const QPointer<TerminalPane> &guard)
 {
     if (options_.keybindSource.isAvailable()) {
-        return handleConfiguredShortcut(event);
+        return handleConfiguredShortcut(event, guard);
     }
 
     const Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
@@ -2426,7 +2438,7 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
 }
 
 TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
-    QKeyEvent *event)
+    QKeyEvent *event, const QPointer<TerminalPane> &guard)
 {
     const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
@@ -2440,6 +2452,9 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
     if (previousKeyTables != keybinds_.activeTableNames()) {
         Q_EMIT activeKeyTablesChanged();
+        if (guard == nullptr) {
+            return KeyHandling::ConsumePressAndRelease;
+        }
     }
 
     switch (step.kind) {
@@ -2502,6 +2517,12 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     for (const QString &action : step.match.actions) {
         const ConfiguredActionOutcome outcome =
             performConfiguredAction(action);
+        if (guard == nullptr) {
+            // Known lifecycle effects are deferred and therefore complete the
+            // chain. For an unexpected destructive embedding callback, stop
+            // without touching the deleted pane again.
+            return KeyHandling::ConsumePressAndRelease;
+        }
         performed = outcome.performed || performed;
         switch (outcome.effect) {
         case GhosttyActionInputEffect::None:
@@ -2785,8 +2806,9 @@ TerminalPane::performConfiguredAction(QStringView serializedAction)
             ? WorkspaceAction::SplitRight
             : WorkspaceAction::SplitDown;
     }
-    if (workspaceActionHandler_) {
-        return outcome(workspaceActionHandler_(request));
+    const auto workspaceActionHandler = workspaceActionHandler_;
+    if (workspaceActionHandler != nullptr) {
+        return outcome((*workspaceActionHandler)(request));
     }
     switch (request.action) {
     case WorkspaceAction::NewTab:
