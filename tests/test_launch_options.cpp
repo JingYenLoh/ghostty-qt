@@ -51,6 +51,7 @@ private Q_SLOTS:
     void mapsSplitPreserveZoom();
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
+    void mapsWindowCellDimensions();
     void mapsStartupWindowState();
     void mapsApplicationLifetime();
     void mapsSingleInstancePolicy();
@@ -123,6 +124,8 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
+    QCOMPARE(options.windowWidth, quint32(0));
+    QCOMPARE(options.windowHeight, quint32(0));
     QVERIFY(!options.maximize);
     QVERIFY(!options.fullscreen);
     QVERIFY(options.quitAfterLastWindowClosed);
@@ -764,6 +767,62 @@ void LaunchOptionsTest::mapsWindowShowTabBar()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsWindowCellDimensions()
+{
+    LaunchOptions base;
+    base.windowWidth = 91;
+    base.windowHeight = 31;
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("window-width"),
+                           QVariant::fromValue<quint32>(120));
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.windowWidth, quint32(120));
+    QCOMPARE(result.windowHeight, quint32(31));
+
+    snapshot.values.clear();
+    snapshot.values.insert(QStringLiteral("window-height"),
+                           QVariant::fromValue<quint32>(0));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.windowWidth, quint32(91));
+    QCOMPARE(result.windowHeight, quint32(0));
+
+    snapshot.values.insert(QStringLiteral("window-width"),
+                           QVariant::fromValue<quint32>(10));
+    snapshot.values.insert(QStringLiteral("window-height"),
+                           QVariant::fromValue<quint32>(4));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.windowWidth, quint32(10));
+    QCOMPARE(result.windowHeight, quint32(4));
+
+    snapshot.values.insert(
+        QStringLiteral("window-width"),
+        QVariant::fromValue<quint32>(std::numeric_limits<quint32>::max()));
+    snapshot.values.insert(
+        QStringLiteral("window-height"),
+        QVariant::fromValue<quint32>(std::numeric_limits<quint32>::max()));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.windowWidth, std::numeric_limits<quint32>::max());
+    QCOMPARE(result.windowHeight, std::numeric_limits<quint32>::max());
+
+    for (const QVariant &malformed : {
+             QVariant(QStringLiteral("80")), QVariant::fromValue<qint64>(80),
+             QVariant::fromValue<double>(80.0),
+         }) {
+        snapshot.values.insert(QStringLiteral("window-width"), malformed);
+        snapshot.values.insert(QStringLiteral("window-height"), malformed);
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+    }
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    snapshot.values.insert(QStringLiteral("window-width"),
+                           QVariant::fromValue<quint32>(120));
+    snapshot.values.insert(QStringLiteral("window-height"),
+                           QVariant::fromValue<quint32>(40));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsStartupWindowState()
 {
     LaunchOptions base;
@@ -1033,6 +1092,9 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
                            QStringLiteral("false"));
     snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
                            QStringLiteral("sometimes"));
+    snapshot.values.insert(QStringLiteral("window-width"), qint64(80));
+    snapshot.values.insert(QStringLiteral("window-height"),
+                           QStringLiteral("24"));
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            QStringLiteral("not-a-color"));
     snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
@@ -1054,6 +1116,8 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.middleClickAction, base.middleClickAction);
     QCOMPARE(result.mouseReporting, base.mouseReporting);
     QCOMPARE(result.windowShowTabBar, base.windowShowTabBar);
+    QCOMPARE(result.windowWidth, base.windowWidth);
+    QCOMPARE(result.windowHeight, base.windowHeight);
     QCOMPARE(result.splitAppearance, base.splitAppearance);
 }
 
@@ -1126,6 +1190,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.windowWidth = 132;
+    frontendOnlyChanged.windowHeight = 43;
     frontendOnlyChanged.maximize = true;
     frontendOnlyChanged.fullscreen = true;
     frontendOnlyChanged.quitAfterLastWindowClosed = false;

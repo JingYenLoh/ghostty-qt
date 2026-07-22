@@ -623,6 +623,11 @@
           "status": "not_applicable",
           "scope": "x11"
         },
+        "window-height": {
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-width. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The settled pre-map grid matches the request when screen or compositor constraints permit it, but SessionWorker still forks at 80x24 before its first queued resize, so exact child-observed pre-exec dimensions remain incomplete."
+        },
         "window-inherit-font-size": {
           "status": "partial",
           "note": "The exact default-true boolean controls new tabs and windows: true copies only the exact action source's current point size, including manual zoom, while false keeps the newest application font-size with CLI precedence. Composite workspace/PaneId identity distinguishes equal pane IDs in different windows; children remain unadjusted and follow later font-size reloads. Status remains partial because pinned GTK currently ignores the false setting despite the documented contract and embedded frontend honoring it."
@@ -639,6 +644,11 @@
           "status": "supported",
           "scope": "qt_mapping",
           "note": "The exact always/auto/never enum defaults to auto. Always shows the QML tab strip at every tab count, auto hides it for one tab and shows it at two or more, and never hides it; config reload and one/two-tab transitions update the property live. Acceptance covers workspace state and real QML visibility while the surrounding toolbar remains available."
+        },
+        "window-width": {
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The settled pre-map grid matches the request when screen or compositor constraints permit it, but SessionWorker still forks at 80x24 before its first queued resize, so exact child-observed pre-exec dimensions remain incomplete."
         },
         "working-directory": {
           "status": "partial",

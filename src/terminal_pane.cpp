@@ -1,6 +1,7 @@
 #include "terminal_pane.h"
 
 #include "ghostty_action_catalog.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
 #include "terminal_pane_render_probe_p.h"
@@ -10,7 +11,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFocusEvent>
-#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -701,13 +701,12 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
         return QDesktopServices::openUrl(url);
     };
 
-    const QString family = options.fontFamily.isEmpty()
-        ? QFontDatabase::systemFont(QFontDatabase::FixedFont).family()
-        : options.fontFamily;
-    font_.setFamily(family);
-    font_.setPointSizeF(options.fontSize);
-    font_.setFixedPitch(true);
-    font_.setStyleHint(QFont::Monospace);
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        options.fontFamily, options.fontSize);
+    font_ = metrics.font;
+    cellWidth_ = metrics.cellWidth;
+    cellHeight_ = metrics.cellHeight;
+    baseline_ = metrics.baseline;
     frame_.foreground = options.appearance.foregroundColor;
     frame_.background = options.appearance.backgroundColor;
     frame_.palette = options.appearance.palette;
@@ -723,8 +722,6 @@ TerminalPane::TerminalPane(const LaunchOptions &options, QQuickItem *parent)
             (void) keybinds_.load(options.keybindConfig);
         }
     }
-    updateMetrics();
-
     cursorTimer_ = new QTimer(this);
     cursorTimer_->setInterval(600);
     connect(cursorTimer_, &QTimer::timeout, this, [this] {
@@ -1066,9 +1063,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     const TerminalSessionRuntimeOptions updatedRuntime =
         toTerminalSessionRuntimeOptions(updated);
 
-    const QString family = updated.fontFamily.isEmpty()
-        ? QFontDatabase::systemFont(QFontDatabase::FixedFont).family()
-        : updated.fontFamily;
+    const QString family = resolveTerminalFontFamily(updated.fontFamily);
     bool metricsChanged = false;
     bool pointSizeChanged = false;
     {
@@ -1851,10 +1846,10 @@ void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGe
 void TerminalPane::updateMetrics()
 {
     QMutexLocker locker(&renderMutex_);
-    const QFontMetricsF metrics(font_);
-    cellWidth_ = std::max(1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    cellHeight_ = std::max(1.0, std::ceil(metrics.height()));
-    baseline_ = std::ceil(metrics.ascent() + (cellHeight_ - metrics.height()) / 2.0);
+    const TerminalCellMetrics metrics = terminalCellMetrics(font_);
+    cellWidth_ = metrics.cellWidth;
+    cellHeight_ = metrics.cellHeight;
+    baseline_ = metrics.baseline;
 }
 
 void TerminalPane::markTextRowsChangedLocked(const TerminalUpdate &update)

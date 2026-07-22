@@ -19,6 +19,7 @@
 class GhosttyApplicationKeybindings;
 class QQmlEngine;
 class QQuickWindow;
+class QScreen;
 class TerminalWorkspace;
 
 Q_MOC_INCLUDE("terminal_workspace.h")
@@ -99,7 +100,8 @@ private:
     static WindowFactory qmlWindowFactory(QQmlEngine &engine);
     [[nodiscard]] std::expected<ApplicationWindow, QString> createWindow(
         const LaunchOptions &options,
-        const DesktopActivationContext &activation = {});
+        const DesktopActivationContext &activation = {},
+        QScreen *preferredScreen = nullptr);
     [[nodiscard]] LaunchOptions nextWindowOptions(
         TerminalWorkspace *sourceWorkspace,
         PaneId sourcePaneId) const;

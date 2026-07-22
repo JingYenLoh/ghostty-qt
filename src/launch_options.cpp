@@ -297,6 +297,14 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     } else if (showTabBar == QStringLiteral("never")) {
         result.windowShowTabBar = WindowShowTabBar::Never;
     }
+    if (const auto width = snapshot.value<quint32>(
+            QStringLiteral("window-width"))) {
+        result.windowWidth = *width;
+    }
+    if (const auto height = snapshot.value<quint32>(
+            QStringLiteral("window-height"))) {
+        result.windowHeight = *height;
+    }
     applyConfigBool(snapshot, QStringLiteral("maximize"), result.maximize);
     if (const auto fullscreen = snapshot.value<QString>(
             QStringLiteral("fullscreen"))) {

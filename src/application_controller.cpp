@@ -2,6 +2,7 @@
 
 #include "desktop_activation.h"
 #include "ghostty_application_keybindings.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_workspace.h"
 
 #include <QGuiApplication>
@@ -9,10 +10,15 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QScopeGuard>
 #include <QTimer>
+#include <QVariant>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <optional>
 #include <ranges>
 #include <utility>
 
@@ -34,6 +40,97 @@ bool isValidWindowPair(const QQuickWindow *window,
         && workspace != nullptr
         && workspace->window() == window
         && isOwnedBy(workspace, window);
+}
+
+constexpr quint32 minimumWindowColumns = 10;
+constexpr quint32 minimumWindowRows = 4;
+
+qreal nonNegativeWindowProperty(const QQuickWindow &window,
+                                const char *name) noexcept
+{
+    bool ok = false;
+    const qreal value = window.property(name).toDouble(&ok);
+    return ok && std::isfinite(value) && value >= 0.0 ? value : 0.0;
+}
+
+int pixelExtent(qreal cellExtent, quint32 cells, qreal chromeExtent) noexcept
+{
+    const long double pixels =
+        static_cast<long double>(cellExtent)
+            * static_cast<long double>(cells)
+        + static_cast<long double>(chromeExtent);
+    constexpr int maximum = std::numeric_limits<int>::max();
+    if (!std::isfinite(pixels)
+        || pixels >= static_cast<long double>(maximum)) {
+        return maximum;
+    }
+    return std::max(1, static_cast<int>(std::ceil(pixels)));
+}
+
+QSize windowSizeForGrid(const TerminalCellMetrics &metrics,
+                        quint32 columns, quint32 rows,
+                        qreal chromeWidth, qreal chromeHeight) noexcept
+{
+    return {
+        pixelExtent(metrics.cellWidth, columns, chromeWidth),
+        pixelExtent(metrics.cellHeight, rows, chromeHeight),
+    };
+}
+
+struct InitialWindowGeometry {
+    QSize minimumSize;
+    std::optional<QSize> requestedSize;
+};
+
+InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
+                                            const LaunchOptions &options)
+{
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.fontFamily, options.fontSize);
+    const qreal chromeWidth =
+        nonNegativeWindowProperty(window, "terminalChromeWidth");
+    const qreal chromeHeight =
+        nonNegativeWindowProperty(window, "terminalChromeHeight");
+    QSize minimum = windowSizeForGrid(
+        metrics, minimumWindowColumns, minimumWindowRows,
+        chromeWidth, chromeHeight);
+
+    QSize available;
+    if (const QScreen *const screen = window.screen(); screen != nullptr) {
+        available = screen->availableGeometry().size();
+        if (available.width() > 0) {
+            minimum.setWidth(std::min(minimum.width(), available.width()));
+        }
+        if (available.height() > 0) {
+            minimum.setHeight(std::min(minimum.height(), available.height()));
+        }
+    }
+
+    // Ghostty treats the dimensions as a pair. A one-sided setting keeps the
+    // frontend's ordinary default size, while the minimum grid still follows
+    // the actual font used by the first pane.
+    if (options.windowWidth == 0 || options.windowHeight == 0) {
+        return {
+            .minimumSize = minimum,
+            .requestedSize = std::nullopt,
+        };
+    }
+
+    QSize requested = windowSizeForGrid(
+        metrics,
+        std::max(options.windowWidth, minimumWindowColumns),
+        std::max(options.windowHeight, minimumWindowRows),
+        chromeWidth, chromeHeight);
+    if (available.width() > 0) {
+        requested.setWidth(std::min(requested.width(), available.width()));
+    }
+    if (available.height() > 0) {
+        requested.setHeight(std::min(requested.height(), available.height()));
+    }
+    return {
+        .minimumSize = minimum,
+        .requestedSize = requested.expandedTo(minimum),
+    };
 }
 
 } // namespace
@@ -158,7 +255,13 @@ bool ApplicationController::activateNoCommand(
             "decision"));
         return false;
     }
-    auto created = createWindow(activationWindowOptions(), activation);
+    TerminalWorkspace *const source = focusedWorkspace();
+    QScreen *const preferredScreen = source != nullptr
+        && source->window() != nullptr
+        ? source->window()->screen()
+        : nullptr;
+    auto created = createWindow(
+        activationWindowOptions(), activation, preferredScreen);
     if (created.has_value()) return true;
     Q_EMIT windowCreationFailed(created.error());
     return false;
@@ -166,7 +269,8 @@ bool ApplicationController::activateNoCommand(
 
 std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     const LaunchOptions &options,
-    const DesktopActivationContext &activation)
+    const DesktopActivationContext &activation,
+    QScreen *preferredScreen)
 {
     if (windowCreationInProgress_) {
         return std::unexpected(
@@ -214,6 +318,39 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
                 "window's QObject ownership tree"));
     }
 
+    if (preferredScreen != nullptr
+        && guardedWindow->screen() != preferredScreen) {
+        guardedWindow->setScreen(preferredScreen);
+        if (!pairIsValid()) {
+            discardCreated();
+            return std::unexpected(
+                QStringLiteral(
+                    "The application window became invalid while selecting "
+                    "its initial screen"));
+        }
+    }
+
+    const InitialWindowGeometry geometry =
+        initialWindowGeometry(*guardedWindow, options);
+    guardedWindow->setMinimumSize(geometry.minimumSize);
+    if (!pairIsValid()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The application window became invalid while configuring "
+                "its initial geometry"));
+    }
+    if (geometry.requestedSize.has_value()) {
+        guardedWindow->resize(*geometry.requestedSize);
+        if (!pairIsValid()) {
+            discardCreated();
+            return std::unexpected(
+                QStringLiteral(
+                    "The application window became invalid while configuring "
+                    "its initial geometry"));
+        }
+    }
+
     const bool initialized = guardedWorkspace->initialize(options);
     // Match Ghostty's App.first lifecycle. A successfully initialized surface
     // consumes the one-shot initial command even if a synchronous observer
@@ -247,13 +384,25 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
 
     // Fullscreen takes precedence at presentation time; the QML root retains
     // the maximized state separately so leaving an initially fullscreen and
-    // maximized window restores it to maximized.
-    guardedWindow->setProperty(
-        "visibilityBeforeFullscreen",
-        static_cast<int>(options.maximize
-                             ? QWindow::Maximized
-                             : QWindow::Windowed));
-    if (!pairIsValid()) {
+    // maximized window restores it to maximized. A window first mapped in a
+    // non-windowed state also needs its hidden normal size retained until Qt
+    // has completed the first transition back to Windowed.
+    const QSize initialNormalSize = guardedWindow->size();
+    const auto setInitialProperty = [&](const char *name,
+                                        const QVariant &value) {
+        if (!pairIsValid()) return false;
+        guardedWindow->setProperty(name, value);
+        return pairIsValid();
+    };
+    if (!setInitialProperty("initialNormalSize", initialNormalSize)
+        || !setInitialProperty(
+            "initialNormalSizePending",
+            options.maximize || options.fullscreen)
+        || !setInitialProperty(
+            "visibilityBeforeFullscreen",
+            static_cast<int>(options.maximize
+                                 ? QWindow::Maximized
+                                 : QWindow::Windowed))) {
         discardCreated();
         return std::unexpected(
             QStringLiteral(
@@ -317,8 +466,17 @@ bool ApplicationController::dispatch(ApplicationAction action,
         const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
         QTimer::singleShot(
             0, this, [this, guardedSource, sourcePaneId] {
+                TerminalWorkspace *screenSource = guardedSource;
+                if (!containsWorkspace(screenSource)) {
+                    screenSource = activeWorkspace();
+                }
+                QScreen *const preferredScreen = screenSource != nullptr
+                    && screenSource->window() != nullptr
+                    ? screenSource->window()->screen()
+                    : nullptr;
                 auto created = createWindow(
-                    nextWindowOptions(guardedSource, sourcePaneId));
+                    nextWindowOptions(guardedSource, sourcePaneId), {},
+                    preferredScreen);
                 if (!created.has_value()) {
                     Q_EMIT windowCreationFailed(created.error());
                 }

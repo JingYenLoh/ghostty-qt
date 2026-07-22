@@ -533,6 +533,8 @@ qt_add_executable(ghostty-qt
     src/terminal_controller.h
     src/terminal_clipboard.cpp
     src/terminal_clipboard.h
+    src/terminal_cell_metrics.cpp
+    src/terminal_cell_metrics.h
     src/terminal_osc8_index.h
     src/terminal_pane.cpp
     src/terminal_pane.h

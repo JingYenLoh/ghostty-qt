@@ -239,8 +239,19 @@ or controller threads.
 `new_window`, `open_config`, `reload_config`, and `quit` use a typed
 process-action vocabulary that remains available with zero workspaces. Window
 creation is queued to the GUI event loop, reuses one `QQmlComponent`,
-initializes the new workspace from the latest process options before
-presentation, seeds its pre-fullscreen restore state, and requests its initial
+resolves the latest per-window options, and validates the still-hidden root.
+Pane-originated and source-less focused-window requests assign that source
+screen before sizing; an initial or zero-window request retains Qt's primary
+screen default.
+When both configured grid dimensions are nonzero, the controller uses the same
+Qt font construction and integral cell metrics as `TerminalPane`, adds the
+QML-declared persistent chrome, applies the 10-by-4 cell minimum, and clamps
+the requested logical-pixel client size best-effort to the available screen.
+It performs this resize before workspace initialization, so the first pane is
+laid out at the resulting grid, and revalidates the guarded root/workspace pair
+because resize observers are synchronous. It then initializes the workspace,
+seeds its pre-fullscreen restore state, retains the hidden normal size when the
+first map will be maximized/fullscreen, and requests its initial
 normal, maximized, or fullscreen Qt window state through the activation-aware
 presentation call. Qt Quick exposes only the dominant fullscreen state, so
 when both settings are enabled the retained state and a visibility observer
@@ -797,7 +808,8 @@ tab/split fallbacks partial.
 The current typed compatibility slice contains `working-directory`,
 `split-inherit-working-directory`, `tab-inherit-working-directory`,
 `window-inherit-font-size`, `window-new-tab-position`,
-`window-show-tab-bar`, `maximize`, `fullscreen`, `font-family`, `font-size`, the
+`window-show-tab-bar`, `window-width`, `window-height`, `maximize`,
+`fullscreen`, `font-family`, `font-size`, the
 appearance keys listed below, the frontend-only `unfocused-split-opacity`,
 `unfocused-split-fill`, and `split-divider-color`,
 `scrollback-limit`, `confirm-close-surface`,
@@ -824,7 +836,19 @@ maximize and Linux-normalized fullscreen values remain application-owned
 creation policy: a successful reload changes every subsequently created
 window, including resident and desktop-activation replacements, without
 changing any live window's state. The
-workspace-owned `split-preserve-zoom` navigation bit also reloads without a
+paired window dimensions are likewise future-window creation policy. Their
+cell-to-pixel conversion uses each new window's resolved font size, including
+source-pane inheritance, and runs before the workspace and its first pane are
+constructed. Existing roots retain both their size and minimum hint on reload.
+The worker currently initializes `libghostty-vt` and `forkpty` with its legacy
+80-by-24 defaults before the GUI thread's first queued pane resize arrives;
+the terminal therefore settles to the requested grid before presentation when
+screen or compositor constraints permit it, but an immediately executing
+child can observe one transient 80-by-24
+winsize. A first-pane-only initial-geometry transport remains required for
+exact pre-exec parity without leaking window dimensions into later tabs or
+splits. The workspace-owned `split-preserve-zoom` navigation bit also reloads
+without a
 pane or worker update and is consulted by each subsequent successful
 `goto_split`; it never changes the current zoom merely because configuration
 reloaded. Palette and
@@ -989,9 +1013,11 @@ Quick exposes only one dominant visibility state, so QML retains whether a
 fullscreen window should restore maximized, windowed, minimized, or another
 prior visibility state. A maximize toggle during fullscreen changes that
 retained state between maximized and windowed without leaving fullscreen,
-matching the independent GTK window-state flags. Qt owns normal geometry
-restoration. In contrast, both title prompt actions preserve pinned
-per-surface invocation: every surface in the stable fanout snapshot contributes
+matching the independent GTK window-state flags. A root first mapped in a
+non-windowed state has no compositor-established normal geometry, so QML
+restores its retained hidden size on the first transition to windowed; Qt owns
+all later normal geometry restoration. In contrast, both title prompt actions
+preserve pinned per-surface invocation: every surface in the stable fanout snapshot contributes
 one independently captured request, including multiple leaves of the same
 split tab. Surface and tab requests share one modal FIFO and are shown without
 deduplication.

@@ -48,6 +48,8 @@ QByteArray defaultOutput()
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
                           "window-show-tab-bar = auto\n"
+                          "window-width = 0\n"
+                          "window-height = 0\n"
                           "maximize = false\n"
                           "fullscreen = false\n"
                           "selection-foreground = \n"
@@ -195,6 +197,7 @@ private Q_SLOTS:
     void rejectsMalformedStructuredConfigJson();
     void mergesCanonicalOutputsIntoTypedSnapshot();
     void preservesDefaultAndAcceptsEveryWindowShowTabBarMode();
+    void preservesFinalizedWindowCellDimensions();
     void preservesDefaultAndAcceptsEveryFullscreenMode();
     void preservesDefaultAndAcceptsEveryLinkPreviewMode();
     void preservesDefaultsAndAcceptsEveryClipboardMode();
@@ -497,6 +500,18 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(canonicalDefaults->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("auto"));
+    QCOMPARE(canonicalDefaults->values.value(QStringLiteral("window-width"))
+                 .metaType(),
+             QMetaType::fromType<quint32>());
+    QCOMPARE(canonicalDefaults->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(0));
+    QCOMPARE(canonicalDefaults->values.value(QStringLiteral("window-height"))
+                 .metaType(),
+             QMetaType::fromType<quint32>());
+    QCOMPARE(canonicalDefaults->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(0));
     QVERIFY(!canonicalDefaults->values.value(
                  QStringLiteral("maximize")).toBool());
     QCOMPARE(canonicalDefaults->values.value(
@@ -534,6 +549,8 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
             "window-inherit-font-size = false\r\n"
             "window-new-tab-position = end\r\n"
             "window-show-tab-bar = never\r\n"
+            "window-width = 132\r\n"
+            "window-height = 43\r\n"
             "maximize = true\r\n"
             "fullscreen = non-native-visible-menu\r\n"
             "palette = 1=#123456\r\n"
@@ -606,6 +623,12 @@ void GhosttyConfigProcessLoaderTest::mergesCanonicalOutputsIntoTypedSnapshot()
     QCOMPARE(snapshot.values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("never"));
+    QCOMPARE(snapshot.values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(132));
+    QCOMPARE(snapshot.values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(43));
     QVERIFY(snapshot.values.value(QStringLiteral("maximize")).toBool());
     QCOMPARE(snapshot.values.value(QStringLiteral("fullscreen")).toString(),
              QStringLiteral("non-native-visible-menu"));
@@ -719,6 +742,69 @@ void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryWindowShowTa
                      .value(QStringLiteral("window-show-tab-bar")).toString(),
                  QString::fromLatin1(mode));
     }
+}
+
+void GhosttyConfigProcessLoaderTest::preservesFinalizedWindowCellDimensions()
+{
+    ConfigFixture fixture;
+    const GhosttyConfigLoadResult unchanged = parseGhosttyConfigShowOutputs(
+        defaultOutput(), {}, fixture.candidates());
+    QVERIFY2(unchanged.has_value(), qPrintable(errorMessage(unchanged)));
+    QCOMPARE(unchanged->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(0));
+    QCOMPARE(unchanged->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(0));
+
+    const GhosttyConfigLoadResult widthOnly = parseGhosttyConfigShowOutputs(
+        defaultOutput(), QByteArrayLiteral("window-width = 80\n"),
+        fixture.candidates());
+    QVERIFY2(widthOnly.has_value(), qPrintable(errorMessage(widthOnly)));
+    QCOMPARE(widthOnly->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(80));
+    QCOMPARE(widthOnly->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(0));
+
+    const GhosttyConfigLoadResult heightOnly = parseGhosttyConfigShowOutputs(
+        defaultOutput(), QByteArrayLiteral("window-height = 24\n"),
+        fixture.candidates());
+    QVERIFY2(heightOnly.has_value(), qPrintable(errorMessage(heightOnly)));
+    QCOMPARE(heightOnly->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(0));
+    QCOMPARE(heightOnly->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(24));
+
+    const GhosttyConfigLoadResult minimum = parseGhosttyConfigShowOutputs(
+        defaultOutput(),
+        QByteArrayLiteral("window-width = 10\nwindow-height = 4\n"),
+        fixture.candidates());
+    QVERIFY2(minimum.has_value(), qPrintable(errorMessage(minimum)));
+    QCOMPARE(minimum->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(10));
+    QCOMPARE(minimum->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(4));
+
+    const QByteArray maximumValue =
+        QByteArray::number(std::numeric_limits<quint32>::max());
+    const GhosttyConfigLoadResult maximum = parseGhosttyConfigShowOutputs(
+        defaultOutput(),
+        QByteArrayLiteral("window-width = ") + maximumValue
+            + QByteArrayLiteral("\nwindow-height = ") + maximumValue + '\n',
+        fixture.candidates());
+    QVERIFY2(maximum.has_value(), qPrintable(errorMessage(maximum)));
+    QCOMPARE(maximum->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             std::numeric_limits<quint32>::max());
+    QCOMPARE(maximum->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             std::numeric_limits<quint32>::max());
 }
 
 void GhosttyConfigProcessLoaderTest::preservesDefaultAndAcceptsEveryFullscreenMode()
@@ -965,6 +1051,8 @@ void GhosttyConfigProcessLoaderTest::emptyNullableChangesOverrideDefaults()
              QByteArrayLiteral("window-inherit-font-size = true\n"),
              QByteArrayLiteral("window-new-tab-position = current\n"),
              QByteArrayLiteral("window-show-tab-bar = auto\n"),
+             QByteArrayLiteral("window-width = 0\n"),
+             QByteArrayLiteral("window-height = 0\n"),
              QByteArrayLiteral("maximize = false\n"),
              QByteArrayLiteral("fullscreen = false\n"),
              QByteArrayLiteral("mouse-reporting = true\n"),
@@ -1040,6 +1128,29 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedCanonicalValues()
         QVERIFY(!malformedFullscreen.has_value());
         QCOMPARE(malformedFullscreen.error(),
                  QStringLiteral("Invalid fullscreen in Ghostty config output at line 1"));
+    }
+
+    for (const QByteArray &key : {
+             QByteArrayLiteral("window-width"),
+             QByteArrayLiteral("window-height"),
+         }) {
+        for (const QByteArray &value : {
+                 QByteArrayLiteral(""), QByteArrayLiteral("-1"),
+                 QByteArrayLiteral("+1"), QByteArrayLiteral("1.0"),
+                 QByteArrayLiteral("80cols"),
+                 QByteArrayLiteral("4294967296"),
+             }) {
+            const GhosttyConfigLoadResult malformedDimension =
+                parseGhosttyConfigShowOutputs(
+                    defaultOutput(), key + QByteArrayLiteral(" = ") + value
+                        + QByteArrayLiteral("\n"),
+                    fixture.candidates());
+            QVERIFY(!malformedDimension.has_value());
+            QCOMPARE(
+                malformedDimension.error(),
+                QStringLiteral("Invalid %1 in Ghostty config output at line 1")
+                    .arg(QString::fromLatin1(key)));
+        }
     }
 
     for (const QByteArray &value : {
@@ -1412,6 +1523,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                        "window-inherit-font-size = false\n"
                        "window-new-tab-position = end\n"
                        "window-show-tab-bar = never\n"
+                       "window-width = 1\n"
+                       "window-height = 1\n"
                        "maximize = true\n"
                        "fullscreen = non-native-visible-menu\n")
             .arg(configuredDirectory)
@@ -1443,6 +1556,12 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
     QCOMPARE(result->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("never"));
+    QCOMPARE(result->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(10));
+    QCOMPARE(result->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(4));
     QVERIFY(result->values.value(QStringLiteral("maximize")).toBool());
     QCOMPARE(result->values.value(QStringLiteral("fullscreen")).toString(),
              QStringLiteral("non-native-visible-menu"));
@@ -1457,6 +1576,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
                           "window-inherit-font-size = true\n"
                           "window-new-tab-position = current\n"
                           "window-show-tab-bar = always\n"
+                          "window-width = 132\n"
+                          "window-height = 43\n"
                           "maximize = false\n"
                           "fullscreen = false\n"));
     result = load(fixture.candidates());
@@ -1480,6 +1601,12 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceInheritance()
     QCOMPARE(result->values.value(
                  QStringLiteral("window-show-tab-bar")).toString(),
              QStringLiteral("always"));
+    QCOMPARE(result->values.value(QStringLiteral("window-width"))
+                 .value<quint32>(),
+             quint32(132));
+    QCOMPARE(result->values.value(QStringLiteral("window-height"))
+                 .value<quint32>(),
+             quint32(43));
     QVERIFY(!result->values.value(QStringLiteral("maximize")).toBool());
     QCOMPARE(result->values.value(QStringLiteral("fullscreen")).toString(),
              QStringLiteral("false"));

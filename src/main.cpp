@@ -5,6 +5,7 @@
 #include "ghostty_config_service.h"
 #include "launch_options.h"
 #include "single_instance_activation.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_pane.h"
 #include "terminal_workspace.h"
 
@@ -24,6 +25,7 @@
 #include <QtQml>
 
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -666,11 +668,13 @@ bool installFullscreenActionTestHook(QQuickWindow *window,
     return true;
 }
 
-bool installInitialWindowStateTestHook(QQuickWindow *window)
+bool installInitialWindowStateTestHook(QQuickWindow *window,
+                                       const LaunchOptions &options)
 {
-    if (window == nullptr) {
+    if (window == nullptr
+        || options.windowWidth == 0 || options.windowHeight == 0) {
         qCritical()
-            << "Initial-window-state test hook could not find the QML window";
+            << "Initial-window-state test hook requires configured geometry";
         return false;
     }
 
@@ -680,11 +684,27 @@ bool installInitialWindowStateTestHook(QQuickWindow *window)
     const auto retries = std::make_shared<int>(0);
     QObject::connect(
         timer, &QTimer::timeout, window,
-        [window, timer, stage, retries] {
-            const QWindow::Visibility expected = *stage == 1
-                ? QWindow::Maximized
-                : QWindow::FullScreen;
-            if (window->visibility() != expected) {
+        [window, options, timer, stage, retries] {
+            constexpr std::array expectedStates{
+                QWindow::FullScreen,
+                QWindow::Maximized,
+                QWindow::FullScreen,
+                QWindow::Maximized,
+                QWindow::Windowed,
+            };
+            const QWindow::Visibility expected = expectedStates.at(
+                static_cast<std::size_t>(*stage));
+            const TerminalCellMetrics metrics = terminalCellMetrics(
+                options.fontFamily, options.fontSize);
+            const QSize configuredSize(
+                qCeil(metrics.cellWidth
+                      * static_cast<qreal>(options.windowWidth)
+                      + window->property("terminalChromeWidth").toDouble()),
+                qCeil(metrics.cellHeight
+                      * static_cast<qreal>(options.windowHeight)
+                      + window->property("terminalChromeHeight").toDouble()));
+            if (window->visibility() != expected
+                || (*stage == 4 && window->size() != configuredSize)) {
                 if (++*retries <= 100) {
                     timer->start(10);
                     return;
@@ -692,7 +712,8 @@ bool installInitialWindowStateTestHook(QQuickWindow *window)
                 qCritical()
                     << "Initial-window-state test hook expected visibility"
                     << expected << "at stage" << *stage << "but observed"
-                    << window->visibility();
+                    << window->visibility() << "with size" << window->size()
+                    << "instead of" << configuredSize;
                 QCoreApplication::exit(1);
                 return;
             }
@@ -705,7 +726,7 @@ bool installInitialWindowStateTestHook(QQuickWindow *window)
             }
 
             *retries = 0;
-            if (*stage == 2) {
+            if (*stage == 4) {
                 QCoreApplication::quit();
                 return;
             }
@@ -713,7 +734,7 @@ bool installInitialWindowStateTestHook(QQuickWindow *window)
                 // Simulate a compositor or window-manager fullscreen exit,
                 // which does not call the QML action helper.
                 window->setVisibility(QWindow::Windowed);
-            } else {
+            } else if (*stage == 1 || *stage == 2) {
                 if (!QMetaObject::invokeMethod(
                         window, "toggleFullscreen", Qt::DirectConnection)) {
                     qCritical()
@@ -721,8 +742,124 @@ bool installInitialWindowStateTestHook(QQuickWindow *window)
                     QCoreApplication::exit(1);
                     return;
                 }
+            } else {
+                if (!QMetaObject::invokeMethod(
+                        window, "toggleMaximize", Qt::DirectConnection)) {
+                    qCritical()
+                        << "Initial-window-state test hook could not invoke the QML maximize toggle";
+                    QCoreApplication::exit(1);
+                    return;
+                }
             }
             ++*stage;
+            timer->start(0);
+        });
+    timer->start(0);
+    return true;
+}
+
+bool installInitialWindowSizeTestHook(QQuickWindow *window,
+                                      TerminalWorkspace *workspace,
+                                      const LaunchOptions &options)
+{
+    if (window == nullptr || workspace == nullptr
+        || options.windowWidth == 0 || options.windowHeight == 0) {
+        qCritical()
+            << "Initial-window-size test hook requires a configured QML window:"
+            << window << workspace << options.windowWidth
+            << options.windowHeight;
+        return false;
+    }
+
+    auto *const timer = new QTimer(window);
+    timer->setSingleShot(true);
+    const auto stage = std::make_shared<int>(0);
+    const auto retries = std::make_shared<int>(0);
+    QObject::connect(
+        timer, &QTimer::timeout, window,
+        [window, workspace, options, timer, stage, retries] {
+            TerminalPane *const pane = [&]() -> TerminalPane * {
+                const QList<TerminalPane *> panes =
+                    workspace->findChildren<TerminalPane *>();
+                return panes.size() == 1 ? panes.constFirst() : nullptr;
+            }();
+            const TerminalCellMetrics metrics = terminalCellMetrics(
+                options.fontFamily, options.fontSize);
+            const qreal chromeWidth =
+                window->property("terminalChromeWidth").toDouble();
+            const qreal chromeHeight =
+                window->property("terminalChromeHeight").toDouble();
+            const QSize configuredSize(
+                qCeil(metrics.cellWidth
+                      * static_cast<qreal>(options.windowWidth)
+                      + chromeWidth),
+                qCeil(metrics.cellHeight
+                      * static_cast<qreal>(options.windowHeight)
+                      + chromeHeight));
+            const QSize minimumSize(
+                qCeil(metrics.cellWidth * 10.0 + chromeWidth),
+                qCeil(metrics.cellHeight * 4.0 + chromeHeight));
+            const bool shouldBeWindowed = *stage == 0
+                || *stage == 2 || *stage == 4;
+            const bool windowReady = pane != nullptr
+                && (!shouldBeWindowed
+                    || (window->visibility() == QWindow::Windowed
+                        && window->size() == configuredSize
+                        && window->minimumSize() == minimumSize
+                        && static_cast<quint32>(std::floor(
+                               pane->width() / metrics.cellWidth))
+                            == options.windowWidth
+                        && static_cast<quint32>(std::floor(
+                               pane->height() / metrics.cellHeight))
+                            == options.windowHeight));
+            const QWindow::Visibility expectedState = *stage == 1
+                ? QWindow::Maximized
+                : (*stage == 3 ? QWindow::FullScreen : QWindow::Windowed);
+            if (!windowReady || window->visibility() != expectedState) {
+                if (++*retries <= 100) {
+                    timer->start(10);
+                    return;
+                }
+                qCritical()
+                    << "Initial-window-size test hook failed at stage" << *stage
+                    << "visibility" << window->visibility()
+                    << "window" << window->size() << "minimum"
+                    << window->minimumSize() << "pane"
+                    << (pane != nullptr ? pane->size() : QSizeF())
+                    << "expected window" << configuredSize
+                    << "expected minimum" << minimumSize;
+                QCoreApplication::exit(1);
+                return;
+            }
+
+            *retries = 0;
+            switch ((*stage)++) {
+            case 0:
+            case 1:
+                if (!QMetaObject::invokeMethod(
+                        window, "toggleMaximize", Qt::DirectConnection)) {
+                    qCritical()
+                        << "Initial-window-size test hook could not toggle maximize";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                break;
+            case 2:
+            case 3:
+                if (!QMetaObject::invokeMethod(
+                        window, "toggleFullscreen", Qt::DirectConnection)) {
+                    qCritical()
+                        << "Initial-window-size test hook could not toggle fullscreen";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                break;
+            case 4:
+                QCoreApplication::quit();
+                return;
+            default:
+                Q_UNREACHABLE();
+            }
             timer->start(0);
         });
     timer->start(0);
@@ -1285,7 +1422,16 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIntValue(
             "GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE") == 1) {
         if (!initialWindow
-            || !installInitialWindowStateTestHook(applicationWindow)) {
+            || !installInitialWindowStateTestHook(
+                applicationWindow, effectiveApplicationOptions)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_INITIAL_WINDOW_SIZE") == 1) {
+        if (!initialWindow
+            || !installInitialWindowSizeTestHook(
+                applicationWindow, workspace, effectiveApplicationOptions)) {
             return 1;
         }
     }

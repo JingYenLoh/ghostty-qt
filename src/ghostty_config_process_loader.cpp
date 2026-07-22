@@ -45,6 +45,8 @@ struct ParsedConfig {
     std::optional<bool> windowInheritFontSize;
     std::optional<QString> windowNewTabPosition;
     std::optional<QString> windowShowTabBar;
+    std::optional<quint32> windowWidth;
+    std::optional<quint32> windowHeight;
     std::optional<bool> maximize;
     std::optional<QString> fullscreen;
     SparsePalette palette;
@@ -105,6 +107,8 @@ bool hasRequiredFields(const ParsedConfig &parsed)
             parsed.windowInheritFontSize,
             parsed.windowNewTabPosition,
             parsed.windowShowTabBar,
+            parsed.windowWidth,
+            parsed.windowHeight,
             parsed.maximize,
             parsed.fullscreen,
             parsed.selectionForeground,
@@ -464,6 +468,24 @@ bool parseFiniteDouble(const QString &value, double *destination)
     return true;
 }
 
+bool parseCanonicalUint32(const QString &value, quint32 *destination)
+{
+    if (value.isEmpty()
+        || !std::ranges::all_of(value, [](QChar character) {
+               return character >= u'0' && character <= u'9';
+           })) {
+        return false;
+    }
+
+    bool valid = false;
+    const uint parsed = value.toUInt(&valid, 10);
+    if (!valid) {
+        return false;
+    }
+    *destination = static_cast<quint32>(parsed);
+    return true;
+}
+
 bool parseDump(const QByteArray &dump,
                ParsedConfig *parsed,
                QString *errorMessage)
@@ -624,6 +646,22 @@ bool parseDump(const QByteArray &dump,
                 return false;
             }
             parsed->windowShowTabBar = value;
+        } else if (key == QStringLiteral("window-width")
+                   || key == QStringLiteral("window-height")) {
+            quint32 dimension = 0;
+            if (!parseCanonicalUint32(value, &dimension)) {
+                setError(
+                    errorMessage,
+                    QStringLiteral("Invalid %1 in Ghostty config output at line %2")
+                        .arg(key)
+                        .arg(displayLine));
+                return false;
+            }
+            if (key == QStringLiteral("window-width")) {
+                parsed->windowWidth = dimension;
+            } else {
+                parsed->windowHeight = dimension;
+            }
         } else if (key == QStringLiteral("maximize")) {
             if (!parseRequiredBool(parsed->maximize)) {
                 return false;
@@ -1431,6 +1469,10 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
             *defaults.windowNewTabPosition);
     const QString windowShowTabBar = changes.windowShowTabBar.value_or(
         *defaults.windowShowTabBar);
+    const quint32 windowWidth =
+        changes.windowWidth.value_or(*defaults.windowWidth);
+    const quint32 windowHeight =
+        changes.windowHeight.value_or(*defaults.windowHeight);
     const bool maximize = changes.maximize.value_or(*defaults.maximize);
     const QString fullscreen =
         changes.fullscreen.value_or(*defaults.fullscreen);
@@ -1539,6 +1581,8 @@ GhosttyConfigLoadResult parseGhosttyConfigShowOutputs(
                            windowNewTabPosition);
     snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
                            windowShowTabBar);
+    snapshot.values.insert(QStringLiteral("window-width"), windowWidth);
+    snapshot.values.insert(QStringLiteral("window-height"), windowHeight);
     snapshot.values.insert(QStringLiteral("maximize"), maximize);
     snapshot.values.insert(QStringLiteral("fullscreen"), fullscreen);
     snapshot.values.insert(QStringLiteral("palette"), paletteValues);

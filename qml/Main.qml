@@ -8,6 +8,13 @@ ApplicationWindow {
     property bool closeApproved: false
     property int visibilityBeforeFullscreen: Window.Windowed
     property int previousVisibility: Window.Hidden
+    property size initialNormalSize: Qt.size(0, 0)
+    property bool initialNormalSizePending: false
+    // ApplicationController sizes the client area in terminal cells before
+    // the first pane is constructed. Keep the frontend chrome contract typed
+    // and explicit instead of guessing it from a partially laid-out item tree.
+    readonly property real terminalChromeWidth: 0
+    readonly property real terminalChromeHeight: windowHeader.implicitHeight
 
     function toggleFullscreen() {
         if (visibility === Window.FullScreen) {
@@ -41,13 +48,21 @@ ApplicationWindow {
             // Restore the state captured before fullscreen just as the
             // application action does.
             window.visibility = visibilityBeforeFullscreen
+            return
+        }
+        if (window.visibility === Window.Windowed
+                && initialNormalSizePending) {
+            // A root first mapped maximized/fullscreen has no compositor-owned
+            // normal geometry yet. Restore the hidden pre-map size once; all
+            // later normal geometry belongs to Qt and the compositor.
+            initialNormalSizePending = false
+            window.width = initialNormalSize.width
+            window.height = initialNormalSize.height
         }
     }
 
     width: 1100
     height: 720
-    minimumWidth: 480
-    minimumHeight: 320
     // The process controller presents the window only after its workspace,
     // lifetime tracking, process actions, and retirement wiring are complete.
     visible: false

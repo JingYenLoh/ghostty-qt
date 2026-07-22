@@ -107,6 +107,11 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Requested terminal grid for newly created windows. Zero retains the
+    // frontend's ordinary sizing; presentation policy requires both values
+    // to be nonzero before it derives a pixel geometry.
+    quint32 windowWidth = 0;
+    quint32 windowHeight = 0;
     // Initial state for each newly created Qt window. These remain frontend
     // policy and never cross the terminal session-thread boundary.
     bool maximize = false;

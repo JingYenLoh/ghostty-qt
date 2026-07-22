@@ -1,4 +1,5 @@
 #include "application_controller.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_pane.h"
 #include "terminal_workspace.h"
 
@@ -6,12 +7,16 @@
 #include <QGuiApplication>
 #include <QPointer>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+#include <cmath>
 #include <expected>
+#include <limits>
 #include <optional>
 
 namespace {
@@ -28,10 +33,14 @@ struct WindowFactoryHarness {
     struct Presentation {
         Qt::WindowStates states;
         int visibilityBeforeFullscreen = QWindow::Windowed;
+        QSize size;
+        QSize minimumSize;
     };
 
     int calls = 0;
     int failOnCall = 0;
+    qreal chromeWidth = 0.0;
+    qreal chromeHeight = 0.0;
     QVector<Presentation> presentations;
 
     ApplicationController::WindowFactory factory()
@@ -46,10 +55,19 @@ struct WindowFactoryHarness {
             auto *window = new QQuickWindow;
             window->setWidth(800);
             window->setHeight(500);
+            window->setProperty("terminalChromeWidth", chromeWidth);
+            window->setProperty("terminalChromeHeight", chromeHeight);
             auto *workspace =
                 new TerminalWorkspace(window->contentItem());
             workspace->setParentItem(window->contentItem());
             workspace->setSize(QSizeF(window->size()));
+            const auto resizeWorkspace = [window, workspace] {
+                workspace->setSize(QSizeF(window->size()));
+            };
+            QObject::connect(window, &QWindow::widthChanged,
+                             workspace, resizeWorkspace);
+            QObject::connect(window, &QWindow::heightChanged,
+                             workspace, resizeWorkspace);
             QObject::connect(window, &QWindow::visibleChanged, window,
                              [this, window](bool visible) {
                                  if (!visible) return;
@@ -60,6 +78,8 @@ struct WindowFactoryHarness {
                                          window->property(
                                              "visibilityBeforeFullscreen")
                                              .toInt(),
+                                     .size = window->size(),
+                                     .minimumSize = window->minimumSize(),
                                  });
                              });
             return ApplicationWindow{window, workspace};
@@ -100,6 +120,28 @@ void closeWorkspace(TerminalWorkspace *workspace)
     workspace->requestWindowClose();
 }
 
+QSize gridWindowSize(const TerminalCellMetrics &metrics,
+                     quint32 columns, quint32 rows,
+                     qreal chromeWidth, qreal chromeHeight)
+{
+    const auto extent = [](qreal cellExtent, quint32 cells, qreal chrome) {
+        const long double pixels =
+            static_cast<long double>(cellExtent)
+                * static_cast<long double>(cells)
+            + static_cast<long double>(chrome);
+        constexpr int maximum = std::numeric_limits<int>::max();
+        if (!std::isfinite(pixels)
+            || pixels >= static_cast<long double>(maximum)) {
+            return maximum;
+        }
+        return std::max(1, static_cast<int>(std::ceil(pixels)));
+    };
+    return {
+        extent(metrics.cellWidth, columns, chromeWidth),
+        extent(metrics.cellHeight, rows, chromeHeight),
+    };
+}
+
 } // namespace
 
 class ApplicationControllerTest : public QObject {
@@ -110,6 +152,11 @@ private Q_SLOTS:
     void configuresInitialWindowStateBeforePresentation_data();
     void configuresInitialWindowStateBeforePresentation();
     void windowStateReloadAffectsOnlyFutureWindows();
+    void configuresInitialWindowGeometryBeforePresentation_data();
+    void configuresInitialWindowGeometryBeforePresentation();
+    void windowGeometryReloadAffectsOnlyFutureWindows();
+    void initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data();
+    void initialGeometryDestructionCannotLeaveHalfRegisteredWindow();
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
     void suppressedStartupPreservesFirstSurfaceOptions();
@@ -264,6 +311,207 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
     QCOMPARE(activated.window->visibility(), QWindow::FullScreen);
     QCOMPARE(harness.presentations.at(3).visibilityBeforeFullscreen,
              static_cast<int>(QWindow::Maximized));
+}
+
+void ApplicationControllerTest::configuresInitialWindowGeometryBeforePresentation_data()
+{
+    QTest::addColumn<quint32>("columns");
+    QTest::addColumn<quint32>("rows");
+    QTest::addColumn<double>("fontSize");
+    QTest::addColumn<bool>("usesConfiguredSize");
+
+    QTest::newRow("default")
+        << quint32(0) << quint32(0) << 12.0 << false;
+    QTest::newRow("width-only")
+        << quint32(40) << quint32(0) << 12.0 << false;
+    QTest::newRow("height-only")
+        << quint32(0) << quint32(12) << 12.0 << false;
+    QTest::newRow("paired")
+        << quint32(40) << quint32(12) << 12.0 << true;
+    QTest::newRow("defensive-minimum")
+        << quint32(1) << quint32(1) << 12.0 << true;
+    QTest::newRow("overflow-safe-screen-clamp")
+        << std::numeric_limits<quint32>::max()
+        << std::numeric_limits<quint32>::max()
+        << 12.0 << true;
+    QTest::newRow("screen-bounds-large-font-minimum")
+        << quint32(10) << quint32(4) << 1000.0 << true;
+}
+
+void ApplicationControllerTest::configuresInitialWindowGeometryBeforePresentation()
+{
+    QFETCH(quint32, columns);
+    QFETCH(quint32, rows);
+    QFETCH(double, fontSize);
+    QFETCH(bool, usesConfiguredSize);
+
+    WindowFactoryHarness harness;
+    harness.chromeWidth = 3.25;
+    harness.chromeHeight = 41.5;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowWidth = columns;
+    options.windowHeight = rows;
+    options.fontSize = fontSize;
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+    QCOMPARE(harness.presentations.size(), 1);
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        options.fontFamily, options.fontSize);
+    QSize expectedMinimum = gridWindowSize(
+        metrics, 10, 4, harness.chromeWidth, harness.chromeHeight);
+    const QSize available = created->window->screen() != nullptr
+        ? created->window->screen()->availableGeometry().size()
+        : QSize();
+    if (available.width() > 0) {
+        expectedMinimum.setWidth(
+            std::min(expectedMinimum.width(), available.width()));
+    }
+    if (available.height() > 0) {
+        expectedMinimum.setHeight(
+            std::min(expectedMinimum.height(), available.height()));
+    }
+    QCOMPARE(created->window->minimumSize(), expectedMinimum);
+    QCOMPARE(harness.presentations.constFirst().minimumSize,
+             expectedMinimum);
+
+    QSize expected(800, 500);
+    if (usesConfiguredSize) {
+        expected = gridWindowSize(
+            metrics,
+            std::max(columns, quint32(10)),
+            std::max(rows, quint32(4)),
+            harness.chromeWidth, harness.chromeHeight);
+        if (available.width() > 0) {
+            expected.setWidth(
+                std::min(expected.width(), available.width()));
+        }
+        if (available.height() > 0) {
+            expected.setHeight(
+                std::min(expected.height(), available.height()));
+        }
+        expected = expected.expandedTo(expectedMinimum);
+    }
+    QCOMPARE(created->window->size(), expected);
+    QCOMPARE(harness.presentations.constFirst().size, expected);
+}
+
+void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowWidth = 20;
+    options.windowHeight = 8;
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    const QSize initialSize = gridWindowSize(
+        terminalCellMetrics(options.fontFamily, options.fontSize),
+        options.windowWidth, options.windowHeight, 0.0, 0.0);
+    QCOMPARE(initial->window->size(), initialSize);
+    TerminalPane *const initialPane = onlyPane(initial->workspace);
+    QVERIFY(initialPane != nullptr);
+
+    LaunchOptions reloaded = options;
+    reloaded.windowWidth = 30;
+    reloaded.windowHeight = 10;
+    controller.applyLaunchOptions(reloaded);
+    QCOMPARE(initial->window->size(), initialSize);
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 2, 1000);
+    const QSize reloadedSize = gridWindowSize(
+        terminalCellMetrics(reloaded.fontFamily, reloaded.fontSize),
+        reloaded.windowWidth, reloaded.windowHeight, 0.0, 0.0);
+    QCOMPARE(controller.windows().constLast().window->size(), reloadedSize);
+
+    QVERIFY(initialPane->executeConfiguredAction(
+        QStringLiteral("set_font_size:18")));
+    QVERIFY(initialPane->executeConfiguredAction(
+        QStringLiteral("new_window")));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 3, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 3, 1000);
+    const QSize inheritedFontSize = gridWindowSize(
+        terminalCellMetrics(reloaded.fontFamily, 18.0),
+        reloaded.windowWidth, reloaded.windowHeight, 0.0, 0.0);
+    const ApplicationWindow inherited = controller.windows().constLast();
+    QCOMPARE(inherited.workspace->effectiveLaunchOptions().fontSize, 18.0);
+    QCOMPARE(inherited.window->size(), inheritedFontSize);
+
+    const QVector<ApplicationWindow> live = controller.windows();
+    for (const ApplicationWindow &window : live) {
+        closeWorkspace(window.workspace);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 4, 1000);
+    QCOMPARE(controller.windows().constFirst().window->size(), reloadedSize);
+    closeWorkspace(controller.windows().constFirst().workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+
+    LaunchOptions activated = reloaded;
+    activated.windowWidth = 36;
+    activated.windowHeight = 11;
+    controller.applyLaunchOptions(activated);
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 1);
+    QCOMPARE(harness.presentations.size(), 5);
+    QCOMPARE(
+        controller.windows().constFirst().window->size(),
+        gridWindowSize(
+            terminalCellMetrics(activated.fontFamily, activated.fontSize),
+            activated.windowWidth, activated.windowHeight, 0.0, 0.0));
+}
+
+void ApplicationControllerTest::initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data()
+{
+    QTest::addColumn<bool>("invalidateMinimum");
+    QTest::newRow("minimum-size") << true;
+    QTest::newRow("configured-resize") << false;
+}
+
+void ApplicationControllerTest::initialGeometryDestructionCannotLeaveHalfRegisteredWindow()
+{
+    QFETCH(bool, invalidateMinimum);
+    QPointer<QQuickWindow> window;
+    QPointer<TerminalWorkspace> workspace;
+    ApplicationController::WindowFactory factory = [&]()
+        -> std::expected<ApplicationWindow, QString> {
+        window = new QQuickWindow;
+        window->resize(800, 500);
+        workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        workspace->setSize(QSizeF(window->size()));
+        const auto invalidate = [guarded = workspace] {
+            delete guarded.data();
+        };
+        if (invalidateMinimum) {
+            QObject::connect(window, &QWindow::minimumWidthChanged,
+                             window, invalidate, Qt::SingleShotConnection);
+        } else {
+            QObject::connect(window, &QWindow::widthChanged,
+                             window, invalidate, Qt::SingleShotConnection);
+        }
+        return ApplicationWindow{window, workspace};
+    };
+
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowWidth = 40;
+    options.windowHeight = 12;
+    ApplicationController controller(options, std::move(factory), false);
+    const auto created = controller.createInitialWindow();
+    QVERIFY(!created.has_value());
+    QVERIFY(created.error().contains(QStringLiteral("initial geometry")));
+    QVERIFY(window.isNull());
+    QVERIFY(workspace.isNull());
+    QCOMPARE(controller.windowCount(), 0);
+    QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
 }
 
 void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePolicies()

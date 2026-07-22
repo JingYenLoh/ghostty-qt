@@ -9,6 +9,25 @@ target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-terminal-cell-metrics
+    test_terminal_cell_metrics.cpp
+    ../src/terminal_cell_metrics.cpp
+    ../src/terminal_cell_metrics.h
+)
+target_include_directories(test-terminal-cell-metrics PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-cell-metrics PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME terminal-cell-metrics COMMAND test-terminal-cell-metrics)
+set_tests_properties(terminal-cell-metrics PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 add_executable(fake-ghostty-cli-helper
     fake_ghostty_cli_helper.cpp
 )
@@ -132,6 +151,8 @@ qt_add_executable(test-application-controller
     ../src/terminal_controller.h
     ../src/terminal_clipboard.cpp
     ../src/terminal_clipboard.h
+    ../src/terminal_cell_metrics.cpp
+    ../src/terminal_cell_metrics.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_workspace.cpp
@@ -231,6 +252,8 @@ qt_add_executable(test-terminal-pane
     ../src/terminal_controller.h
     ../src/terminal_clipboard.cpp
     ../src/terminal_clipboard.h
+    ../src/terminal_cell_metrics.cpp
+    ../src/terminal_cell_metrics.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_pane_render_probe_p.h
@@ -281,6 +304,8 @@ qt_add_executable(test-terminal-workspace
     ../src/terminal_controller.h
     ../src/terminal_clipboard.cpp
     ../src/terminal_clipboard.h
+    ../src/terminal_cell_metrics.cpp
+    ../src/terminal_cell_metrics.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_osc8_index.h
@@ -680,11 +705,30 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         "${_ghostty_qt_initial_window_state_config_home}/ghostty")
     file(WRITE
         "${_ghostty_qt_initial_window_state_config_home}/ghostty/config.ghostty"
-        "gtk-single-instance = false\nconfirm-close-surface = false\nmaximize = true\nfullscreen = true\n")
+        "gtk-single-instance = false\nconfirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\nmaximize = true\nfullscreen = true\n")
     set_tests_properties(application-initial-window-state PROPERTIES
         TIMEOUT 5
         ENVIRONMENT
             "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_initial_window_state_config_home}"
+        FAIL_REGULAR_EXPRESSION
+            "Binding loop detected;QQmlApplicationEngine failed"
+    )
+
+    add_test(
+        NAME application-initial-window-size
+        COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+    )
+    set(_ghostty_qt_initial_window_size_config_home
+        "${CMAKE_CURRENT_BINARY_DIR}/application-initial-window-size-config")
+    file(MAKE_DIRECTORY
+        "${_ghostty_qt_initial_window_size_config_home}/ghostty")
+    file(WRITE
+        "${_ghostty_qt_initial_window_size_config_home}/ghostty/config.ghostty"
+        "gtk-single-instance = false\nconfirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\n")
+    set_tests_properties(application-initial-window-size PROPERTIES
+        TIMEOUT 5
+        ENVIRONMENT
+            "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_INITIAL_WINDOW_SIZE=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;QT_SCALE_FACTOR=1;XDG_CONFIG_HOME=${_ghostty_qt_initial_window_size_config_home}"
         FAIL_REGULAR_EXPRESSION
             "Binding loop detected;QQmlApplicationEngine failed"
     )
