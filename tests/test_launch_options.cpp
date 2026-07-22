@@ -44,6 +44,7 @@ private Q_SLOTS:
     void rejectsUnknownOption();
     void rejectsMissingApplicationName();
     void overlaysGhosttySnapshotAndPreservesCliFonts();
+    void mapsKeybindingSources();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -143,6 +144,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
+    QVERIFY(!options.keybindSource.isAvailable());
     QVERIFY(!options.hold);
     QVERIFY(options.program.isEmpty());
 }
@@ -513,9 +515,10 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QVERIFY(!cliResult.mouseReporting);
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
-    QVERIFY(cliResult.keybindings.isEmpty());
-    QVERIFY(cliResult.keybindingsConfigured);
-    QCOMPARE(cliResult.keybindConfig, *snapshot.keybindConfig);
+    QVERIFY(cliResult.keybindSource.isAvailable());
+    QVERIFY(cliResult.keybindSource.text() == nullptr);
+    QVERIFY(cliResult.keybindSource.structured() != nullptr);
+    QCOMPARE(*cliResult.keybindSource.structured(), *snapshot.keybindConfig);
 
     base.fontFamilyExplicit = false;
     base.fontSizeExplicit = false;
@@ -525,6 +528,60 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(configResult.fontSize, 14.5);
     QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
+}
+
+void LaunchOptionsTest::mapsKeybindingSources()
+{
+    const LaunchOptions base;
+
+    const LaunchOptions unavailable =
+        applyGhosttyConfigSnapshot(base, GhosttyConfigSnapshot{});
+    QVERIFY(!unavailable.keybindSource.isAvailable());
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    const QStringList textBindings = {
+        QStringLiteral("alt+t=new_tab"),
+    };
+    snapshot.values.insert(QStringLiteral("keybind"), textBindings);
+
+    const LaunchOptions textFallback =
+        applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(textFallback.keybindSource.isAvailable());
+    QVERIFY(textFallback.keybindSource.structured() == nullptr);
+    QVERIFY(textFallback.keybindSource.text() != nullptr);
+    QCOMPARE(*textFallback.keybindSource.text(), textBindings);
+
+    snapshot.values.insert(QStringLiteral("keybind"), QStringList{});
+    const LaunchOptions emptyTextFallback =
+        applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(emptyTextFallback.keybindSource.isAvailable());
+    QVERIFY(emptyTextFallback.keybindSource.structured() == nullptr);
+    QVERIFY(emptyTextFallback.keybindSource.text() != nullptr);
+    QVERIFY(emptyTextFallback.keybindSource.text()->isEmpty());
+
+    snapshot.keybindConfig = GhosttyKeybindConfig{};
+    const LaunchOptions structuredEmpty =
+        applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(structuredEmpty.keybindSource.text() == nullptr);
+    QVERIFY(structuredEmpty.keybindSource.structured() != nullptr);
+    QVERIFY(structuredEmpty.keybindSource.structured()->root.isEmpty());
+    QVERIFY(structuredEmpty.keybindSource.structured()->tables.isEmpty());
+
+    snapshot.keybindConfig->root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = quint32('n'),
+            .modifiers = GhosttyKeybindAlt,
+        }},
+        .actions = {QStringLiteral("new_window")},
+    }};
+    const LaunchOptions structured =
+        applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(structured.keybindSource.text() == nullptr);
+    QVERIFY(structured.keybindSource.structured() != nullptr);
+    QCOMPARE(structured.keybindSource.structured()->root,
+             snapshot.keybindConfig->root);
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()
@@ -1268,8 +1325,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         QColor(QStringLiteral("#abcdef"));
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
-    frontendOnlyChanged.keybindings = {QStringLiteral("ctrl+x=ignore")};
-    frontendOnlyChanged.keybindingsConfigured = true;
+    frontendOnlyChanged.keybindSource = GhosttyKeybindSource::text(
+        {QStringLiteral("ctrl+x=ignore")});
     frontendOnlyChanged.showHelp = true;
     frontendOnlyChanged.showVersion = true;
     QCOMPARE(toTerminalSessionLaunchOptions(frontendOnlyChanged), launch);

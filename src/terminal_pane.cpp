@@ -734,13 +734,7 @@ TerminalPane::TerminalPane(
         && options.appearance.cursorColor.color.isValid()
         ? options.appearance.cursorColor.color
         : options.appearance.foregroundColor;
-    if (options.keybindingsConfigured) {
-        if (!options.keybindings.isEmpty()) {
-            (void) keybinds_.load(options.keybindings);
-        } else {
-            (void) keybinds_.load(options.keybindConfig);
-        }
-    }
+    (void) keybinds_.load(options.keybindSource);
     cursorTimer_ = new QTimer(this);
     cursorTimer_->setInterval(600);
     connect(cursorTimer_, &QTimer::timeout, this, [this] {
@@ -1290,9 +1284,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.resizeOverlay = options.resizeOverlay;
-    updated.keybindConfig = options.keybindConfig;
-    updated.keybindings = options.keybindings;
-    updated.keybindingsConfigured = options.keybindingsConfigured;
+    updated.keybindSource = options.keybindSource;
     // options_ is the configured snapshot; the controller owns the mutable
     // pane-local policy. Reapplying an unchanged snapshot must still replace
     // a runtime toggle.
@@ -1361,17 +1353,9 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         activeSequenceToken_ = 0;
     }
     const QStringList previousKeyTables = keybinds_.activeTableNames();
-    if (options_.keybindingsConfigured) {
-        GhosttyKeybindSet candidate;
-        if (!options_.keybindings.isEmpty()) {
-            (void) candidate.load(options_.keybindings);
-        } else {
-            (void) candidate.load(options_.keybindConfig);
-        }
-        keybinds_ = std::move(candidate);
-    } else {
-        keybinds_.clear();
-    }
+    GhosttyKeybindSet candidate;
+    (void) candidate.load(options_.keybindSource);
+    keybinds_ = std::move(candidate);
     if (previousKeyTables != keybinds_.activeTableNames()) {
         Q_EMIT activeKeyTablesChanged();
     }
@@ -2348,7 +2332,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 
 TerminalPane::KeyHandling TerminalPane::handleShortcut(QKeyEvent *event)
 {
-    if (options_.keybindingsConfigured) {
+    if (options_.keybindSource.isAvailable()) {
         return handleConfiguredShortcut(event);
     }
 

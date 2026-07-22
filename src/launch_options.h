@@ -174,14 +174,11 @@ struct LaunchOptions {
     // Controls whether matched link destinations are shown before activation.
     // Ghostty defaults to previews for both regex and OSC 8 links.
     LinkPreviewMode linkPreviews = LinkPreviewMode::Always;
-    // The helper publishes Ghostty's finalized structured sets. The explicit
-    // bit distinguishes an intentionally empty root from the built-in
-    // emergency shortcuts used when configuration is unavailable.
-    GhosttyKeybindConfig keybindConfig;
-    // Text fallback used by config-disabled builds and direct compatibility
-    // tests. A structured snapshot clears this list before reaching a pane.
-    QStringList keybindings;
-    bool keybindingsConfigured = false;
+    // The helper normally publishes Ghostty's finalized structured set. A
+    // tagged text alternative remains for config-disabled builds and direct
+    // compatibility tests; the unavailable alternative enables the built-in
+    // emergency shortcuts.
+    GhosttyKeybindSource keybindSource;
     bool hold = false;
     bool showHelp = false;
     bool showVersion = false;

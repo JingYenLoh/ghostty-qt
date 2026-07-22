@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <expected>
 #include <linux/input-event-codes.h>
 #include <ranges>
@@ -750,6 +751,19 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
     (void) candidate.load(config);
     *this = std::move(candidate);
     return report;
+}
+
+GhosttyKeybindLoadReport GhosttyKeybindSet::load(
+    const GhosttyKeybindSource &source)
+{
+    return source.visit([this]<typename Source>(const Source &value) {
+        if constexpr (std::same_as<Source, std::monostate>) {
+            clear();
+            return GhosttyKeybindLoadReport{};
+        } else {
+            return load(value);
+        }
+    });
 }
 
 GhosttyKeybindLoadReport GhosttyKeybindSet::load(

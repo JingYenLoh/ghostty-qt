@@ -124,18 +124,13 @@ void GhosttyApplicationKeybindings::applyLaunchOptions(
     const LaunchOptions &options)
 {
     GhosttyKeybindSet candidate;
-    if (options.keybindingsConfigured) {
-        if (!options.keybindings.isEmpty()) {
-            (void) candidate.load(options.keybindings);
-        } else {
-            (void) candidate.load(options.keybindConfig);
-        }
-    }
+    (void) candidate.load(options.keybindSource);
     rootBindings_ = std::move(candidate);
 
     if (portal_ != nullptr) {
-        if (options.keybindingsConfigured && options.keybindings.isEmpty()) {
-            portal_->setKeybindConfig(options.keybindConfig);
+        if (const GhosttyKeybindConfig *config =
+                options.keybindSource.structured()) {
+            portal_->setKeybindConfig(*config);
         } else {
             portal_->clear();
         }

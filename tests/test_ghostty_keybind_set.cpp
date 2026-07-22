@@ -70,6 +70,7 @@ private Q_SLOTS:
     void matchesFullUnicodeCaseFoldsAndScalars();
     void ordersAndFiltersUnicodeCandidates();
     void unicodeBindingsSurviveCopyAndReload();
+    void loadsTaggedSources();
     void appendsAdjacentChainsInOrder();
     void preservesLocalFlags();
     void supportsSequencesAndCatchAllWhileRejectingDeferredForms();
@@ -116,6 +117,62 @@ void GhosttyKeybindSetTest::parsesEqualsAndPlusTriggerDelimiters()
                                     QStringLiteral("=")))
                  .actions,
              QStringList({QStringLiteral("text:=hello")}));
+}
+
+void GhosttyKeybindSetTest::loadsTaggedSources()
+{
+    GhosttyKeybindSet set;
+
+    const GhosttyKeybindSource text = GhosttyKeybindSource::text({
+        QStringLiteral("alt+t=new_tab"),
+    });
+    QVERIFY(text.isAvailable());
+    QVERIFY(text.text() != nullptr);
+    QVERIFY(text.structured() == nullptr);
+    const GhosttyKeybindLoadReport textReport = set.load(text);
+    QCOMPARE(textReport.count(Disposition::Installed), 1);
+    QCOMPARE(requireMatch(set.match(Qt::Key_T, Qt::AltModifier,
+                                    QStringLiteral("t")))
+                 .actions,
+             QStringList({QStringLiteral("new_tab")}));
+
+    const GhosttyKeybindSource emptyText = GhosttyKeybindSource::text({});
+    QVERIFY(emptyText.isAvailable());
+    QVERIFY(emptyText.text() != nullptr);
+    QVERIFY(emptyText.text()->isEmpty());
+    QVERIFY(emptyText.structured() == nullptr);
+    QVERIFY(set.load(emptyText).records.isEmpty());
+    QVERIFY(set.isEmpty());
+
+    (void) set.load(text);
+    QCOMPARE(set.size(), 1);
+
+    const GhosttyKeybindSource unavailable;
+    QVERIFY(!unavailable.isAvailable());
+    QVERIFY(unavailable.text() == nullptr);
+    QVERIFY(unavailable.structured() == nullptr);
+    QVERIFY(set.load(unavailable).records.isEmpty());
+    QVERIFY(set.isEmpty());
+
+    const GhosttyKeybindSource structuredEmpty =
+        GhosttyKeybindSource::structured({});
+    QVERIFY(structuredEmpty.isAvailable());
+    QVERIFY(structuredEmpty.text() == nullptr);
+    QVERIFY(structuredEmpty.structured() != nullptr);
+    QVERIFY(set.load(structuredEmpty).records.isEmpty());
+    QVERIFY(set.isEmpty());
+
+    GhosttyKeybindConfig config;
+    config.root = {binding({unicodeTrigger('n', GhosttyKeybindAlt)},
+                           QStringLiteral("new_window"))};
+    const GhosttyKeybindSource structured =
+        GhosttyKeybindSource::structured(std::move(config));
+    const GhosttyKeybindLoadReport structuredReport = set.load(structured);
+    QCOMPARE(structuredReport.count(Disposition::Installed), 1);
+    QCOMPARE(requireMatch(set.match(Qt::Key_N, Qt::AltModifier,
+                                    QStringLiteral("n")))
+                 .actions,
+             QStringList({QStringLiteral("new_window")}));
 }
 
 void GhosttyKeybindSetTest::matchesNamedAndW3cPhysicalKeys()

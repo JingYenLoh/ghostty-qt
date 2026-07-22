@@ -644,11 +644,10 @@ void TerminalWorkspaceTest::configuredCloseChainSurvivesSynchronousWorkspaceDest
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+k=close_window"),
         QStringLiteral("chain=new_tab"),
-    };
+    });
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     auto *workspace = new TerminalWorkspace;
@@ -1206,8 +1205,8 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
         options.program = {QStringLiteral("/bin/true")};
         options.hold = true;
         options.confirmCloseMode = ConfirmCloseMode::Never;
-        options.keybindingsConfigured = true;
-        options.keybindConfig.root = {GhosttyKeybindDefinition{
+        GhosttyKeybindConfig config;
+        config.root = {GhosttyKeybindDefinition{
             .sequence = {GhosttyKeybindTrigger{
                 .kind = GhosttyKeybindKeyKind::Unicode,
                 .unicodeCodepoint = codepoint,
@@ -1219,6 +1218,8 @@ void TerminalWorkspaceTest::broadCloseSurfaceConvergesOnWorkspaceQuit()
             },
             .flags = flags,
         }};
+        options.keybindSource =
+            GhosttyKeybindSource::structured(std::move(config));
         TerminalWorkspace::setDefaultLaunchOptions(options);
 
         TerminalWorkspace workspace;
@@ -2149,10 +2150,9 @@ void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
 {
     ShellEnvironment shell;
     LaunchOptions options = baseOptions();
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("performable:ctrl+tab=next_tab"),
-    };
+    });
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -2873,8 +2873,8 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
                               quint32 codepoint,
                               QChar controlCharacter) {
         LaunchOptions exerciseOptions = options;
-        exerciseOptions.keybindingsConfigured = true;
-        exerciseOptions.keybindConfig.root = {GhosttyKeybindDefinition{
+        GhosttyKeybindConfig config;
+        config.root = {GhosttyKeybindDefinition{
             .sequence = {GhosttyKeybindTrigger{
                 .kind = GhosttyKeybindKeyKind::Unicode,
                 .unicodeCodepoint = codepoint,
@@ -2883,6 +2883,8 @@ void TerminalWorkspaceTest::broadCloseTabModesUseFirstStableSource()
             .actions = {action.toString()},
             .flags = flags,
         }};
+        exerciseOptions.keybindSource =
+            GhosttyKeybindSource::structured(std::move(config));
         TerminalWorkspace::setDefaultLaunchOptions(exerciseOptions);
 
         TerminalWorkspace workspace;
@@ -2999,7 +3001,6 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
-    options.keybindingsConfigured = true;
     const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
         return GhosttyKeybindTrigger{
             .kind = GhosttyKeybindKeyKind::Unicode,
@@ -3007,7 +3008,8 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             .modifiers = modifiers,
         };
     };
-    options.keybindConfig.root = {
+    GhosttyKeybindConfig config;
+    config.root = {
         GhosttyKeybindDefinition{
             .sequence = {unicode('m', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("activate_key_table:modal")},
@@ -3031,7 +3033,7 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             .flags = GhosttyKeybindFlags{.all = true},
         },
     };
-    options.keybindConfig.tables = {GhosttyKeybindTable{
+    config.tables = {GhosttyKeybindTable{
         .name = QStringLiteral("modal"),
         .bindings = {
             GhosttyKeybindDefinition{
@@ -3052,6 +3054,8 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             },
         },
     }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -3118,7 +3122,6 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
-    options.keybindingsConfigured = true;
     const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
         return GhosttyKeybindTrigger{
             .kind = GhosttyKeybindKeyKind::Unicode,
@@ -3126,7 +3129,8 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
             .modifiers = modifiers,
         };
     };
-    options.keybindConfig.root = {
+    GhosttyKeybindConfig config;
+    config.root = {
         GhosttyKeybindDefinition{
             .sequence = {unicode('g', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("increase_font_size:2")},
@@ -3155,6 +3159,8 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
             .actions = {QStringLiteral("new_tab")},
         },
     };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;

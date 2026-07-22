@@ -555,17 +555,14 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
 
     const auto keybindings = snapshot.value<QStringList>(QStringLiteral("keybind"));
     if (keybindings.has_value()) {
-        result.keybindings = *keybindings;
-        result.keybindingsConfigured = true;
+        result.keybindSource = GhosttyKeybindSource::text(*keybindings);
     }
     if (snapshot.keybindConfig.has_value()) {
-        result.keybindConfig = *snapshot.keybindConfig;
         // The structured dump is the authoritative, fully finalized Ghostty
-        // set. The text formatter remains in the snapshot for diagnostics and
-        // config-disabled compatibility, but must not shadow sequences,
-        // chains, unbinds, or binding flags in production.
-        result.keybindings.clear();
-        result.keybindingsConfigured = true;
+        // set. It therefore replaces the text formatter retained for
+        // diagnostics and config-disabled compatibility.
+        result.keybindSource =
+            GhosttyKeybindSource::structured(*snapshot.keybindConfig);
     }
 
     return result;

@@ -159,7 +159,7 @@ LaunchOptions baseOptions(const QString &directory)
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
     options.quitAfterLastWindowClosed = false;
-    options.keybindingsConfigured = true;
+    options.keybindSource = GhosttyKeybindSource::structured({});
     return options;
 }
 
@@ -860,10 +860,10 @@ void ApplicationControllerTest::configuredQuitWaitsForCompleteActionChain()
 {
     WindowFactoryHarness harness;
     LaunchOptions options = baseOptions(QDir::currentPath());
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+k=quit"),
         QStringLiteral("chain=new_tab"),
-    };
+    });
     ApplicationController controller(options, harness.factory(), false);
     const auto initial = controller.createInitialWindow();
     QVERIFY(initial.has_value());

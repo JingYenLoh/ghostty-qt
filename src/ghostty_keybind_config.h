@@ -5,6 +5,9 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include <utility>
+#include <variant>
+
 enum class GhosttyKeybindKeyKind {
     Physical,
     Unicode,
@@ -61,4 +64,61 @@ struct GhosttyKeybindConfig {
     QVector<GhosttyKeybindTable> tables;
 
     bool operator==(const GhosttyKeybindConfig &) const = default;
+};
+
+// The frontend can receive keybindings from the structured helper export or
+// from the flattened text fallback used by config-disabled builds. Keeping
+// the source tagged prevents callers from combining a configured flag, an
+// empty text list, and an unrelated structured value into contradictory
+// states.
+class GhosttyKeybindSource final {
+public:
+    GhosttyKeybindSource() = default;
+
+    [[nodiscard]] static GhosttyKeybindSource structured(
+        GhosttyKeybindConfig config)
+    {
+        return GhosttyKeybindSource(std::move(config));
+    }
+
+    [[nodiscard]] static GhosttyKeybindSource text(QStringList values)
+    {
+        return GhosttyKeybindSource(std::move(values));
+    }
+
+    [[nodiscard]] bool isAvailable() const noexcept
+    {
+        return !std::holds_alternative<std::monostate>(value_);
+    }
+
+    [[nodiscard]] const GhosttyKeybindConfig *structured() const noexcept
+    {
+        return std::get_if<GhosttyKeybindConfig>(&value_);
+    }
+
+    [[nodiscard]] const QStringList *text() const noexcept
+    {
+        return std::get_if<QStringList>(&value_);
+    }
+
+    template<typename Visitor>
+    decltype(auto) visit(Visitor &&visitor) const
+    {
+        return std::visit(std::forward<Visitor>(visitor), value_);
+    }
+
+    bool operator==(const GhosttyKeybindSource &) const = default;
+
+private:
+    explicit GhosttyKeybindSource(GhosttyKeybindConfig config)
+        : value_(std::move(config))
+    {
+    }
+
+    explicit GhosttyKeybindSource(QStringList values)
+        : value_(std::move(values))
+    {
+    }
+
+    std::variant<std::monostate, GhosttyKeybindConfig, QStringList> value_;
 };

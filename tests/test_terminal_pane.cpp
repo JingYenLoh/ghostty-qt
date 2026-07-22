@@ -2585,8 +2585,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("alt+n=new_tab"),
         QStringLiteral("ctrl+x=increase_font_size:2.5"),
         QStringLiteral("ctrl+enter=toggle_fullscreen"),
@@ -2613,7 +2612,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("chain=ignore"),
         QStringLiteral("alt+t=copy_title_to_clipboard"),
         QStringLiteral("chain=paste_from_clipboard"),
-    };
+    });
 
     TerminalPane pane(options);
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
@@ -2891,7 +2890,6 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.keybindingsConfigured = true;
     const auto controlKey = [](quint32 codepoint) {
         return GhosttyKeybindTrigger{
             .kind = GhosttyKeybindKeyKind::Unicode,
@@ -2899,7 +2897,8 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
             .modifiers = GhosttyKeybindCtrl,
         };
     };
-    options.keybindConfig.root = {
+    GhosttyKeybindConfig config;
+    config.root = {
         GhosttyKeybindDefinition{
             .sequence = {controlKey('u')},
             .actions = {
@@ -2921,6 +2920,8 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
             },
         },
     };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -3017,14 +3018,13 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
         QStringLiteral("printf 'pane-action-selection'; sleep 5"),
     };
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("performable:alt+u=scroll_to_selection"),
         QStringLiteral("performable:alt+i=adjust_selection:left"),
         QStringLiteral("alt+y=select_all"),
         QStringLiteral("chain=adjust_selection:right"),
         QStringLiteral("chain=scroll_to_selection"),
-    };
+    });
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -3193,13 +3193,12 @@ void TerminalPaneTest::routesTerminalControlActions()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("alt+c=csi:31m"),
         QStringLiteral("chain=esc:7"),
         QStringLiteral(R"(chain=text:\\x00\\n\\u{1f47b})"),
         QStringLiteral("chain=reset"),
-    };
+    });
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -3277,10 +3276,9 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
-    };
+    });
 
     QFont font(options.fontFamily);
     font.setPointSizeF(options.fontSize);
@@ -3643,10 +3641,9 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     options.linkUrl = false;
     options.fontFamily =
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
-    };
+    });
 
     QFont font(options.fontFamily);
     font.setPointSizeF(options.fontSize);
@@ -4075,10 +4072,9 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
     options.hold = true;
     options.fontFamily =
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
-    options.keybindingsConfigured = true;
-    options.keybindings = {
+    options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
-    };
+    });
 
     QFont font(options.fontFamily);
     font.setPointSizeF(options.fontSize);
@@ -4609,8 +4605,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindConfig.root = {
+    GhosttyKeybindConfig config;
+    config.root = {
         sequence('n', QStringLiteral("new_tab")),
         sequence('u', QStringLiteral("reload_config"),
                  GhosttyKeybindFlags{.consumed = false}),
@@ -4620,6 +4616,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
         sequence('f', QStringLiteral("end_key_sequence"),
                  GhosttyKeybindFlags{.consumed = false}),
     };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -4709,12 +4707,15 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     leader();
     const int resolutionsBeforeReload = resolved.count();
     LaunchOptions reloaded = options;
-    reloaded.keybindConfig.root = {
+    GhosttyKeybindConfig reloadedConfig;
+    reloadedConfig.root = {
         GhosttyKeybindDefinition{
             .sequence = {unicode('q', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("new_tab")},
         },
     };
+    reloaded.keybindSource =
+        GhosttyKeybindSource::structured(std::move(reloadedConfig));
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(resolved.count(), resolutionsBeforeReload + 1);
     QCOMPARE(resolution(), TerminalSequenceResolution::Drop);
@@ -4750,8 +4751,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindConfig.root = {
+    GhosttyKeybindConfig config;
+    config.root = {
         binding({unicode('m', GhosttyKeybindCtrl)},
                 QStringLiteral(R"(activate_key_table:edit\xc3\xa9)"),
                 GhosttyKeybindFlags{.performable = true}),
@@ -4764,7 +4765,7 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
                 QStringLiteral("deactivate_key_table"),
                 GhosttyKeybindFlags{.performable = true}),
     };
-    options.keybindConfig.tables = {
+    config.tables = {
         GhosttyKeybindTable{
             .name = QStringLiteral("edité"),
             .bindings = {
@@ -4783,6 +4784,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
             },
         },
     };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -4898,7 +4901,11 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edité")}));
     QCOMPARE(tableChanges.count(), 10);
     LaunchOptions reloaded = options;
-    reloaded.keybindConfig.tables.clear();
+    GhosttyKeybindConfig reloadedConfig =
+        *reloaded.keybindSource.structured();
+    reloadedConfig.tables.clear();
+    reloaded.keybindSource =
+        GhosttyKeybindSource::structured(std::move(reloadedConfig));
     pane.applyRuntimeOptions(reloaded);
     QVERIFY(pane.activeKeyTables().isEmpty());
     QCOMPARE(tableChanges.count(), 11);
@@ -4922,8 +4929,8 @@ void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()
             "printf '%s' \"$payload\" | od -An -tx1 | tr -d ' \\n'; "
             "printf '\\n'")};
     options.hold = true;
-    options.keybindingsConfigured = true;
-    options.keybindConfig.root = {GhosttyKeybindDefinition{
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
         .sequence = {
             GhosttyKeybindTrigger{
                 .kind = GhosttyKeybindKeyKind::Unicode,
@@ -4937,6 +4944,8 @@ void TerminalPaneTest::replaysInvalidStructuredSequenceThroughPty()
         },
         .actions = {QStringLiteral("new_tab")},
     }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();

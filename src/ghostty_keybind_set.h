@@ -117,6 +117,12 @@ public:
     [[nodiscard]] GhosttyKeybindLoadReport load(
         const GhosttyKeybindConfig &config);
 
+    // Loads the only source represented by the tagged frontend value. An
+    // unavailable source clears the set and leaves the caller on its fallback
+    // shortcut path.
+    [[nodiscard]] GhosttyKeybindLoadReport load(
+        const GhosttyKeybindSource &source);
+
     // Stateless matching always checks the root set; use advance() for a
     // pane's active table stack and sequences. qtKey is QKeyEvent::key(),
     // modifiers is QKeyEvent::modifiers(), and text is QKeyEvent::text().
