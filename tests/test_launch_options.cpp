@@ -52,6 +52,7 @@ private Q_SLOTS:
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
     void mapsWindowCellDimensions();
+    void mapsResizeOverlay();
     void mapsStartupWindowState();
     void mapsApplicationLifetime();
     void mapsSingleInstancePolicy();
@@ -126,6 +127,9 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.windowWidth, quint32(0));
     QCOMPARE(options.windowHeight, quint32(0));
+    QCOMPARE(options.resizeOverlay.mode, ResizeOverlayMode::AfterFirst);
+    QCOMPARE(options.resizeOverlay.position, ResizeOverlayPosition::Center);
+    QCOMPARE(options.resizeOverlay.duration, std::chrono::milliseconds(750));
     QVERIFY(!options.maximize);
     QVERIFY(!options.fullscreen);
     QVERIFY(options.quitAfterLastWindowClosed);
@@ -823,6 +827,57 @@ void LaunchOptionsTest::mapsWindowCellDimensions()
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
+void LaunchOptionsTest::mapsResizeOverlay()
+{
+    LaunchOptions base;
+    base.resizeOverlay = {
+        .mode = ResizeOverlayMode::Never,
+        .position = ResizeOverlayPosition::TopLeft,
+        .duration = std::chrono::milliseconds(900),
+    };
+
+    GhosttyConfigSnapshot snapshot;
+    snapshot.availability = GhosttyConfigAvailability::Available;
+    snapshot.values.insert(QStringLiteral("resize-overlay"),
+                           QStringLiteral("always"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
+                           QStringLiteral("bottom-right"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
+                           QVariant::fromValue<quint32>(1'234));
+    LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::Always);
+    QCOMPARE(result.resizeOverlay.position,
+             ResizeOverlayPosition::BottomRight);
+    QCOMPARE(result.resizeOverlay.duration,
+             std::chrono::milliseconds(1'234));
+
+    snapshot.values.insert(QStringLiteral("resize-overlay"),
+                           QStringLiteral("after-first"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
+                           QStringLiteral("top-center"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
+                           QVariant::fromValue<quint32>(0));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::AfterFirst);
+    QCOMPARE(result.resizeOverlay.position,
+             ResizeOverlayPosition::TopCenter);
+    QCOMPARE(result.resizeOverlay.duration, std::chrono::milliseconds(250));
+
+    snapshot.values.insert(QStringLiteral("resize-overlay"),
+                           QStringLiteral("sometimes"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
+                           QStringLiteral("left"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
+                           qint64(750));
+    result = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(result.resizeOverlay, base.resizeOverlay);
+
+    snapshot.availability = GhosttyConfigAvailability::Unavailable;
+    snapshot.values.insert(QStringLiteral("resize-overlay"),
+                           QStringLiteral("always"));
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+}
+
 void LaunchOptionsTest::mapsStartupWindowState()
 {
     LaunchOptions base;
@@ -1095,6 +1150,11 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     snapshot.values.insert(QStringLiteral("window-width"), qint64(80));
     snapshot.values.insert(QStringLiteral("window-height"),
                            QStringLiteral("24"));
+    snapshot.values.insert(QStringLiteral("resize-overlay"), true);
+    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
+                           QStringLiteral("left"));
+    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
+                           qint64(750));
     snapshot.values.insert(QStringLiteral("split-divider-color"),
                            QStringLiteral("not-a-color"));
     snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
@@ -1118,6 +1178,7 @@ void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
     QCOMPARE(result.windowShowTabBar, base.windowShowTabBar);
     QCOMPARE(result.windowWidth, base.windowWidth);
     QCOMPARE(result.windowHeight, base.windowHeight);
+    QCOMPARE(result.resizeOverlay, base.resizeOverlay);
     QCOMPARE(result.splitAppearance, base.splitAppearance);
 }
 

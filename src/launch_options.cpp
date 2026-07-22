@@ -306,6 +306,40 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             QStringLiteral("window-height"))) {
         result.windowHeight = *height;
     }
+    if (const auto mode = snapshot.value<QString>(
+            QStringLiteral("resize-overlay"))) {
+        if (*mode == QStringLiteral("always")) {
+            result.resizeOverlay.mode = ResizeOverlayMode::Always;
+        } else if (*mode == QStringLiteral("never")) {
+            result.resizeOverlay.mode = ResizeOverlayMode::Never;
+        } else if (*mode == QStringLiteral("after-first")) {
+            result.resizeOverlay.mode = ResizeOverlayMode::AfterFirst;
+        }
+    }
+    if (const auto position = snapshot.value<QString>(
+            QStringLiteral("resize-overlay-position"))) {
+        if (*position == QStringLiteral("center")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::Center;
+        } else if (*position == QStringLiteral("top-left")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::TopLeft;
+        } else if (*position == QStringLiteral("top-center")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::TopCenter;
+        } else if (*position == QStringLiteral("top-right")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::TopRight;
+        } else if (*position == QStringLiteral("bottom-left")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::BottomLeft;
+        } else if (*position == QStringLiteral("bottom-center")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::BottomCenter;
+        } else if (*position == QStringLiteral("bottom-right")) {
+            result.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
+        }
+    }
+    if (const auto duration = snapshot.value<quint32>(
+            QStringLiteral("resize-overlay-duration"))) {
+        // Ghostty's GTK widget constrains this property to at least 250 ms.
+        result.resizeOverlay.duration = std::chrono::milliseconds(
+            std::max(*duration, quint32{250}));
+    }
     applyConfigBool(snapshot, QStringLiteral("maximize"), result.maximize);
     if (const auto fullscreen = snapshot.value<QString>(
             QStringLiteral("fullscreen"))) {

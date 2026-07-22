@@ -18,7 +18,7 @@ comptime {
 }
 
 /// Export values that Ghostty's text formatter cannot represent losslessly as
-/// the project-private JSON v3 schema. The returned allocation follows
+/// the project-private JSON v4 schema. The returned allocation follows
 /// ghostty_string_s ownership and is released by ghostty_string_free.
 export fn ghostty_qt_config_json(defaults: bool) String {
     return configJson(defaults) catch |err| {
@@ -40,7 +40,7 @@ fn configJson(defaults: bool) !String {
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 3));
+    try json.write(@as(u8, 4));
 
     try json.objectField("application");
     try json.beginObject();
@@ -56,6 +56,13 @@ fn configJson(defaults: bool) !String {
     }
     try json.objectField("initial-window");
     try json.write(config.@"initial-window");
+    try json.objectField("resize-overlay");
+    try json.write(@tagName(config.@"resize-overlay"));
+    try json.objectField("resize-overlay-position");
+    try json.write(@tagName(config.@"resize-overlay-position"));
+    try json.objectField("resize-overlay-duration-ms");
+    // Match the pinned GTK frontend's truncation and c_uint saturation.
+    try json.write(config.@"resize-overlay-duration".asMilliseconds());
     try json.objectField("gtk-single-instance");
     try json.write(@tagName(config.@"gtk-single-instance"));
     try json.endObject();

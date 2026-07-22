@@ -934,13 +934,13 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v3 envelope containing
-application lifetime, `initial-window`, and raw single-instance values plus
-Ghostty's finalized
-binding sets after defaults, includes, `clear`, overrides, chains, and
-`unbind` have been resolved by the pinned Zig implementation. It retains full
-root sequences, named tables, physical/Unicode/catch-all triggers, canonical
-action chains, and every binding flag. The C++ parser is strict and
+The config helper exposes a project-private JSON v4 envelope containing
+application lifetime, `initial-window`, raw single-instance values, and the
+lossless resize-overlay mode, position, and whole-millisecond duration plus
+Ghostty's finalized binding sets after defaults, includes, `clear`, overrides,
+chains, and `unbind` have been resolved by the pinned Zig implementation. It
+retains full root sequences, named tables, physical/Unicode/catch-all triggers,
+canonical action chains, and every binding flag. The C++ parser is strict and
 transactional: an unknown schema or malformed dump rejects the reload without
 replacing the last-good snapshot.
 

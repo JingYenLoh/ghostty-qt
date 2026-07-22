@@ -43,6 +43,30 @@ enum class WindowShowTabBar {
     Never,
 };
 
+enum class ResizeOverlayMode {
+    Always,
+    Never,
+    AfterFirst,
+};
+
+enum class ResizeOverlayPosition {
+    Center,
+    TopLeft,
+    TopCenter,
+    TopRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+};
+
+struct ResizeOverlayOptions {
+    ResizeOverlayMode mode = ResizeOverlayMode::AfterFirst;
+    ResizeOverlayPosition position = ResizeOverlayPosition::Center;
+    std::chrono::milliseconds duration{750};
+
+    bool operator==(const ResizeOverlayOptions &) const = default;
+};
+
 enum class SingleInstanceMode {
     Detect,
     Enabled,
@@ -112,6 +136,8 @@ struct LaunchOptions {
     // to be nonzero before it derives a pixel geometry.
     quint32 windowWidth = 0;
     quint32 windowHeight = 0;
+    // Transient pane-local grid feedback remains entirely on the GUI thread.
+    ResizeOverlayOptions resizeOverlay;
     // Initial state for each newly created Qt window. These remain frontend
     // policy and never cross the terminal session-thread boundary.
     bool maximize = false;

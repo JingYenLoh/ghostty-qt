@@ -1275,6 +1275,9 @@ parseGhosttyConfigExportJson(const QByteArray &json)
             {QLatin1StringView("quit-after-last-window-closed"),
              QLatin1StringView("quit-after-last-window-closed-delay-ms"),
              QLatin1StringView("initial-window"),
+             QLatin1StringView("resize-overlay"),
+             QLatin1StringView("resize-overlay-position"),
+             QLatin1StringView("resize-overlay-duration-ms"),
              QLatin1StringView("gtk-single-instance")},
             QStringLiteral("application"), &parseError)) {
         return std::unexpected(std::move(parseError));
@@ -1306,6 +1309,49 @@ parseGhosttyConfigExportJson(const QByteArray &json)
             "application.initial-window must be a boolean"));
     }
     parsed.initialWindow = initialWindow.toBool();
+
+    const QJsonValue resizeOverlay = application.value(
+        QStringLiteral("resize-overlay"));
+    const QString resizeOverlayMode = resizeOverlay.toString();
+    if (!resizeOverlay.isString()
+        || (resizeOverlayMode != QStringLiteral("always")
+            && resizeOverlayMode != QStringLiteral("never")
+            && resizeOverlayMode != QStringLiteral("after-first"))) {
+        return std::unexpected(QStringLiteral(
+            "application.resize-overlay must be always, never, or after-first"));
+    }
+    parsed.resizeOverlayMode = resizeOverlayMode;
+
+    const QJsonValue resizeOverlayPosition = application.value(
+        QStringLiteral("resize-overlay-position"));
+    const QString position = resizeOverlayPosition.toString();
+    static const QSet<QString> resizeOverlayPositions{
+        QStringLiteral("center"),
+        QStringLiteral("top-left"),
+        QStringLiteral("top-center"),
+        QStringLiteral("top-right"),
+        QStringLiteral("bottom-left"),
+        QStringLiteral("bottom-center"),
+        QStringLiteral("bottom-right"),
+    };
+    if (!resizeOverlayPosition.isString()
+        || !resizeOverlayPositions.contains(position)) {
+        return std::unexpected(QStringLiteral(
+            "application.resize-overlay-position must be a supported position"));
+    }
+    parsed.resizeOverlayPosition = position;
+
+    const QJsonValue resizeOverlayDuration = application.value(
+        QStringLiteral("resize-overlay-duration-ms"));
+    quint64 resizeOverlayMilliseconds = 0;
+    if (!unsignedJsonInteger(
+            resizeOverlayDuration, std::numeric_limits<quint32>::max(),
+            &resizeOverlayMilliseconds)) {
+        return std::unexpected(QStringLiteral(
+            "application.resize-overlay-duration-ms must be a uint32 integer"));
+    }
+    parsed.resizeOverlayDurationMilliseconds =
+        static_cast<quint32>(resizeOverlayMilliseconds);
 
     const QJsonValue singleInstance = application.value(
         QStringLiteral("gtk-single-instance"));
@@ -1777,6 +1823,13 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
             exportedConfig->quitAfterLastWindowClosed);
         parsed->values.insert(QStringLiteral("initial-window"),
                               exportedConfig->initialWindow);
+        parsed->values.insert(QStringLiteral("resize-overlay"),
+                              exportedConfig->resizeOverlayMode);
+        parsed->values.insert(QStringLiteral("resize-overlay-position"),
+                              exportedConfig->resizeOverlayPosition);
+        parsed->values.insert(
+            QStringLiteral("resize-overlay-duration"),
+            exportedConfig->resizeOverlayDurationMilliseconds);
         parsed->values.insert(QStringLiteral("gtk-single-instance"),
                               exportedConfig->singleInstanceMode);
         if (exportedConfig->quitAfterLastWindowClosedDelayMilliseconds) {

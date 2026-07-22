@@ -54,7 +54,7 @@ struct GhosttyKeybindTable {
 };
 
 struct GhosttyKeybindConfig {
-    static constexpr int CurrentSchemaVersion = 3;
+    static constexpr int CurrentSchemaVersion = 4;
 
     int schemaVersion = CurrentSchemaVersion;
     QVector<GhosttyKeybindDefinition> root;
