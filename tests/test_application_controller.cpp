@@ -1,11 +1,15 @@
 #include "application_controller.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_controller.h"
 #include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
 
 #include <QDir>
+#include <QEvent>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QPointer>
 #include <QQuickWindow>
@@ -43,7 +47,10 @@ struct WindowFactoryHarness {
     int failOnCall = 0;
     qreal chromeWidth = 0.0;
     qreal chromeHeight = 0.0;
+    QSize simulatedCompositorSize;
+    bool createTabAtPresentation = false;
     QVector<Presentation> presentations;
+    QVector<bool> sessionStartedAtPresentation;
 
     ApplicationController::WindowFactory factory()
     {
@@ -77,8 +84,27 @@ struct WindowFactoryHarness {
             QObject::connect(window, &QWindow::heightChanged,
                              workspace, resizeWorkspace);
             QObject::connect(window, &QWindow::visibleChanged, window,
-                             [this, window](bool visible) {
+                             [this, window, workspace](bool visible) {
                                  if (!visible) return;
+                                 TerminalController *const controller =
+                                     workspace->findChild<TerminalController *>();
+                                 sessionStartedAtPresentation.append(
+                                     controller != nullptr
+                                     && controller->sessionStarted());
+                                 if (simulatedCompositorSize.isValid()) {
+                                     const QSize compositorSize =
+                                         simulatedCompositorSize;
+                                     QObject::connect(
+                                         window, &QQuickWindow::frameSwapped,
+                                         window,
+                                         [window, compositorSize] {
+                                             window->resize(compositorSize);
+                                         }, Qt::SingleShotConnection);
+                                     window->update();
+                                 }
+                                 if (createTabAtPresentation) {
+                                     workspace->newTab();
+                                 }
                                  presentations.append({
                                      .states = presentationWindowStates(
                                          window->windowStates()),
@@ -159,6 +185,8 @@ private Q_SLOTS:
     void initTestCase();
     void configuresInitialWindowStateBeforePresentation_data();
     void configuresInitialWindowStateBeforePresentation();
+    void defersNonWindowedSessionUntilExposedGeometry_data();
+    void defersNonWindowedSessionUntilExposedGeometry();
     void windowStateReloadAffectsOnlyFutureWindows();
     void configuresInitialWindowGeometryBeforePresentation_data();
     void configuresInitialWindowGeometryBeforePresentation();
@@ -241,6 +269,9 @@ void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation()
     const auto created = controller.createInitialWindow();
     QVERIFY(created.has_value());
     QCOMPARE(harness.presentations.size(), 1);
+    QCOMPARE(harness.sessionStartedAtPresentation.size(), 1);
+    QCOMPARE(harness.sessionStartedAtPresentation.constFirst(),
+             !maximize && !fullscreen);
     const WindowFactoryHarness::Presentation &presentation =
         harness.presentations.constFirst();
     QCOMPARE(static_cast<int>(presentation.states), expectedState);
@@ -248,6 +279,138 @@ void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation()
              expectedRestoreVisibility);
     QCOMPARE(static_cast<int>(created->window->visibility()),
              expectedVisibility);
+}
+
+void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry_data()
+{
+    QTest::addColumn<bool>("maximize");
+    QTest::addColumn<bool>("fullscreen");
+    QTest::addColumn<bool>("switchTabBeforeResize");
+
+    QTest::newRow("maximized") << true << false << false;
+    QTest::newRow("fullscreen-hidden-first-tab") << false << true << true;
+    QTest::newRow("fullscreen-restores-maximized") << true << true << false;
+}
+
+void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
+{
+    QFETCH(bool, maximize);
+    QFETCH(bool, fullscreen);
+    QFETCH(bool, switchTabBeforeResize);
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString resultPath = temporary.filePath(QStringLiteral("winsize"));
+    const QString startPath = temporary.filePath(QStringLiteral("starts"));
+    const QString inputPath = temporary.filePath(QStringLiteral("input"));
+
+    WindowFactoryHarness harness;
+    harness.simulatedCompositorSize = QSize(913, 617);
+    harness.createTabAtPresentation = switchTabBeforeResize;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowWidth = 40;
+    options.windowHeight = 12;
+    options.maximize = maximize;
+    options.fullscreen = fullscreen;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "printf '%s\\n' \"$$\" >> \"$1\"; IFS= read -r line; "
+            "stty size > \"$0\"; printf '%s' \"$line\" > \"$2\"; "
+            "exec sleep 30"),
+        resultPath, startPath, inputPath,
+    };
+
+    ApplicationController application(options, harness.factory(), false);
+    const auto created = application.createInitialWindow();
+    QVERIFY(created.has_value());
+    QCOMPARE(harness.sessionStartedAtPresentation.size(), 1);
+    QVERIFY(!harness.sessionStartedAtPresentation.constFirst());
+
+    TerminalPane *initialPane = nullptr;
+    for (TerminalPane *const pane :
+         created->workspace->findChildren<TerminalPane *>()) {
+        if (terminalPaneRenderProbe(pane).initialGeometry.has_value()) {
+            initialPane = pane;
+            break;
+        }
+    }
+    QVERIFY(initialPane != nullptr);
+    TerminalController *const controller =
+        initialPane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(!controller->sessionStarted());
+    QVERIFY(!controller->running());
+    QVERIFY(!controller->activeProcess());
+    QSignalSpy runningChanged(controller, &TerminalController::runningChanged);
+    controller->setReadOnly(true);
+    controller->sendRawText(QByteArrayLiteral("must-not-arrive\n"));
+    controller->setReadOnly(false);
+    controller->sendRawText(QByteArrayLiteral("queued-before-start\n"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(created->window->isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        options.fontFamily, options.fontSize);
+    const std::optional<TerminalSessionGeometry> expected =
+        terminalSessionGeometryForViewport(
+            created->workspace->width(), created->workspace->height(),
+            metrics.cellWidth, metrics.cellHeight,
+            created->window->devicePixelRatio());
+    QVERIFY(expected.has_value());
+    QVERIFY(controller->launchGeometry() == expected);
+    QCOMPARE(runningChanged.count(), 1);
+    QCOMPARE(runningChanged.constFirst().constFirst().toBool(), true);
+
+    // New tabs follow Ghostty's command-inheritance policy and do not replay
+    // the initial custom command, so this marker belongs only to the deferred
+    // first pane even in the hidden-first-tab row.
+    constexpr int expectedStarts = 1;
+    const auto startCount = [&startPath] {
+        QFile starts(startPath);
+        if (!starts.open(QIODevice::ReadOnly)) return 0;
+        const QByteArray contents = starts.readAll().simplified();
+        return contents.isEmpty()
+            ? 0 : static_cast<int>(contents.split(' ').size());
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(startCount(), expectedStarts, 2000);
+    const auto inputContents = [&inputPath] {
+        QFile input(inputPath);
+        return input.open(QIODevice::ReadOnly)
+            ? input.readAll() : QByteArray{};
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(
+        inputContents(), QByteArrayLiteral("queued-before-start"), 2000);
+
+    // Only the deferred initial pane receives the queued probe input, so this
+    // geometry record cannot be overwritten by the deliberately immediate
+    // second tab used by the hidden-pane case.
+    QVERIFY(QFileInfo::exists(resultPath));
+    QFile result(resultPath);
+    QVERIFY(result.open(QIODevice::ReadOnly));
+    const QList<QByteArray> dimensions =
+        result.readAll().simplified().split(' ');
+    QCOMPARE(dimensions.size(), 2);
+    QCOMPARE(dimensions.at(0).toInt(), expected->rows);
+    QCOMPARE(dimensions.at(1).toInt(), expected->columns);
+
+    QEvent duplicateExpose(QEvent::Expose);
+    QCoreApplication::sendEvent(created->window, &duplicateExpose);
+    created->window->resize(created->window->size() + QSize(1, 1));
+    QTest::qWait(25);
+    QCOMPARE(runningChanged.count(), 1);
+    QCOMPARE(startCount(), expectedStarts);
+    const std::optional<TerminalSessionGeometry> launchGeometry =
+        controller->launchGeometry();
+    QVERIFY(!controller->startSession(TerminalSessionGeometry{
+        .columns = 1,
+        .rows = 1,
+        .cellWidthPixels = 1,
+        .cellHeightPixels = 1,
+        .surfaceWidthPixels = 1,
+        .surfaceHeightPixels = 1,
+    }));
+    QVERIFY(controller->launchGeometry() == launchGeometry);
 }
 
 void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
@@ -1187,6 +1350,7 @@ void ApplicationControllerTest::showDestructionCannotLeaveHalfRegisteredWindow()
 {
     QPointer<QQuickWindow> observedWindow;
     QPointer<TerminalWorkspace> observedWorkspace;
+    bool sessionStartedBeforeDestruction = true;
     ApplicationController::WindowFactory factory = [&]()
         -> std::expected<ApplicationWindow, QString> {
         observedWindow = new QQuickWindow;
@@ -1194,22 +1358,29 @@ void ApplicationControllerTest::showDestructionCannotLeaveHalfRegisteredWindow()
             observedWindow->contentItem());
         observedWorkspace->setParentItem(observedWindow->contentItem());
         connect(observedWindow, &QWindow::visibleChanged, observedWindow,
-                [workspace = observedWorkspace](bool visible) {
+                [workspace = observedWorkspace,
+                 &sessionStartedBeforeDestruction](bool visible) {
                     if (visible && workspace != nullptr) {
+                        TerminalController *const terminal =
+                            workspace->findChild<TerminalController *>();
+                        sessionStartedBeforeDestruction = terminal != nullptr
+                            && terminal->sessionStarted();
                         delete workspace.data();
                     }
                 });
         return ApplicationWindow{observedWindow, observedWorkspace};
     };
 
-    ApplicationController controller(
-        baseOptions(QDir::currentPath()), std::move(factory), false);
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.maximize = true;
+    ApplicationController controller(options, std::move(factory), false);
     QVERIFY(controller.startWithoutInitialWindow());
     QSignalSpy failure(&controller,
                        &ApplicationController::windowCreationFailed);
 
     QVERIFY(!controller.activateNoCommand());
     QCOMPARE(failure.count(), 1);
+    QVERIFY(!sessionStartedBeforeDestruction);
     QVERIFY(observedWindow.isNull());
     QVERIFY(observedWorkspace.isNull());
     QCOMPARE(controller.windowCount(), 0);

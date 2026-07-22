@@ -26,7 +26,9 @@ class TerminalController final : public QObject {
 
 public:
     explicit TerminalController(const TerminalSessionLaunchOptions &options,
-                                QObject *parent = nullptr);
+                                QObject *parent = nullptr,
+                                TerminalSessionStartMode startMode =
+                                    TerminalSessionStartMode::Immediate);
     ~TerminalController() override;
 
     QString title() const
@@ -48,6 +50,17 @@ public:
     bool mouseReportingEnabled() const { return mouseReportingEnabled_; }
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
+    bool sessionStarted() const { return sessionStarted_; }
+    [[nodiscard]] const std::optional<TerminalSessionGeometry> &
+    launchGeometry() const
+    {
+        return launchOptions_.initialGeometry;
+    }
+    // Starts the session exactly once; exposed for deferred frontend
+    // scheduling. A supplied geometry replaces every hidden/pre-presentation
+    // resize coalesced into the launch snapshot.
+    [[nodiscard]] bool startSession(
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     bool selectionAvailable() const { return selectionAvailable_; }
     bool readOnly() const { return readOnly_; }
     // True while an earlier queued select-all may establish a selection.
@@ -198,19 +211,22 @@ private:
     quint64 nextSearchGeneration();
     quint64 nextSearchSelectionRequestId();
 
+    TerminalSessionLaunchOptions launchOptions_;
     QThread *thread_ = nullptr;
     SessionWorker *worker_ = nullptr;
     std::optional<QString> baseTitle_;
     QString currentDirectory_;
     bool terminalMouseTracking_ = false;
     bool mouseReportingEnabled_ = true;
-    bool running_ = true;
+    bool running_ = false;
     bool activeProcess_ = false;
     bool explicitProgram_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
     int pendingSelectAllRequests_ = 0;
     bool closing_ = false;
+    bool sessionStarted_ = false;
+    bool sessionStartCancelled_ = false;
     quint64 nextSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;

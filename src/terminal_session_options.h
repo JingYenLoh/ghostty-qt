@@ -35,6 +35,14 @@ enum class TerminalClipboardDestination : quint8 {
     PrimaryAndStandard,
 };
 
+// Frontend-owned scheduling for construction of a terminal session. Deferred
+// mode is used only while an initially non-windowed Qt surface waits for its
+// compositor-assigned viewport; it is not part of the worker launch payload.
+enum class TerminalSessionStartMode : quint8 {
+    Immediate,
+    Deferred,
+};
+
 struct TerminalSelectionClipboardOptions {
     bool trimTrailingSpaces = true;
     TerminalCopyOnSelectMode copyOnSelect = TerminalCopyOnSelectMode::Primary;

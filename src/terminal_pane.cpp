@@ -682,12 +682,14 @@ TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(
 TerminalPane::TerminalPane(
     const LaunchOptions &options,
     QQuickItem *parent,
-    std::optional<TerminalSessionGeometry> initialGeometry)
+    std::optional<TerminalSessionGeometry> initialGeometry,
+    TerminalSessionStartMode startMode)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
     , splitAppearance_(options.splitAppearance)
     , defaultFontPointSize_(options.fontSize)
+    , sessionStartMode_(startMode)
 {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     clearRenderProbe(this);
@@ -699,34 +701,9 @@ TerminalPane::TerminalPane(
     setAcceptHoverEvents(true);
     setFlag(QQuickItem::ItemAcceptsInputMethod, true);
     setFocusPolicy(Qt::StrongFocus);
-    const auto watchWindow = [this](QQuickWindow *quickWindow) {
-        if (observedWindow_ != nullptr) {
-            observedWindow_->removeEventFilter(this);
-        }
-        QObject::disconnect(windowActiveConnection_);
-        QObject::disconnect(windowScreenConnection_);
-        windowActiveConnection_ = {};
-        windowScreenConnection_ = {};
-        observedWindow_ = quickWindow;
-        if (quickWindow != nullptr) {
-            quickWindow->installEventFilter(this);
-            windowActiveConnection_ = connect(
-                quickWindow, &QWindow::activeChanged,
-                this, [this] { update(); });
-            windowScreenConnection_ = connect(
-                quickWindow, &QWindow::screenChanged,
-                this, [this](QScreen *) {
-                    updateTerminalSize();
-                    update();
-                });
-            // Geometry may have settled before a previously detached pane
-            // entered this scene, so refresh even when its logical size did
-            // not change.
-            updateTerminalSize();
-        }
-        update();
-    };
-    connect(this, &QQuickItem::windowChanged, this, watchWindow);
+    itemWindowConnection_ = connect(
+        this, &QQuickItem::windowChanged,
+        this, &TerminalPane::watchWindow);
     watchWindow(window());
     urlOpener_ = [](const QUrl &url) {
         return QDesktopServices::openUrl(url);
@@ -763,7 +740,8 @@ TerminalPane::TerminalPane(
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
     sessionOptions.initialGeometry = std::move(initialGeometry);
-    controller_ = new TerminalController(sessionOptions, this);
+    controller_ = new TerminalController(
+        sessionOptions, this, sessionStartMode_);
     controller_->setMouseReportingEnabled(options.mouseReporting);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
@@ -921,10 +899,14 @@ TerminalPane::TerminalPane(
 
 TerminalPane::~TerminalPane()
 {
+    QObject::disconnect(itemWindowConnection_);
     if (observedWindow_ != nullptr) {
         observedWindow_->removeEventFilter(this);
         observedWindow_ = nullptr;
     }
+    QObject::disconnect(windowActiveConnection_);
+    QObject::disconnect(windowScreenConnection_);
+    disconnectDeferredSessionWindowSignals();
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     clearRenderProbe(this);
 #endif
@@ -932,13 +914,173 @@ TerminalPane::~TerminalPane()
 
 bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == observedWindow_.data()
-        && event != nullptr
-        && event->type() == QEvent::DevicePixelRatioChange) {
-        updateTerminalSize();
-        update();
+    if (watched == observedWindow_.data() && event != nullptr) {
+        switch (event->type()) {
+        case QEvent::DevicePixelRatioChange:
+            deferredSessionStartCandidate_.reset();
+            updateTerminalSize();
+            scheduleDeferredSessionStart();
+            update();
+            break;
+        case QEvent::Expose:
+        case QEvent::Show:
+        case QEvent::Resize:
+        case QEvent::WindowStateChange:
+            deferredSessionStartCandidate_.reset();
+            scheduleDeferredSessionStart();
+            break;
+        default:
+            break;
+        }
     }
     return QQuickItem::eventFilter(watched, event);
+}
+
+void TerminalPane::watchWindow(QQuickWindow *quickWindow)
+{
+    if (observedWindow_ != nullptr) {
+        observedWindow_->removeEventFilter(this);
+    }
+    QObject::disconnect(windowActiveConnection_);
+    QObject::disconnect(windowScreenConnection_);
+    disconnectDeferredSessionWindowSignals();
+    windowActiveConnection_ = {};
+    windowScreenConnection_ = {};
+    observedWindow_ = quickWindow;
+    deferredSessionStartCandidate_.reset();
+    deferredSessionPresentedFrame_ = 0;
+    deferredSessionCandidateFrame_ = 0;
+    if (quickWindow != nullptr) {
+        quickWindow->installEventFilter(this);
+        windowActiveConnection_ = connect(
+            quickWindow, &QWindow::activeChanged,
+            this, [this] { update(); });
+        windowScreenConnection_ = connect(
+            quickWindow, &QWindow::screenChanged,
+            this, [this](QScreen *) {
+                updateTerminalSize();
+                deferredSessionStartCandidate_.reset();
+                scheduleDeferredSessionStart();
+                update();
+            });
+        if (sessionStartMode_ == TerminalSessionStartMode::Deferred
+            && (controller_ == nullptr || !controller_->sessionStarted())) {
+            windowVisibilityConnection_ = connect(
+                quickWindow, &QWindow::visibilityChanged,
+                this, [this](QWindow::Visibility) {
+                    deferredSessionStartCandidate_.reset();
+                    scheduleDeferredSessionStart();
+                });
+            windowStateConnection_ = connect(
+                quickWindow, &QWindow::windowStateChanged,
+                this, [this](Qt::WindowState) {
+                    deferredSessionStartCandidate_.reset();
+                    scheduleDeferredSessionStart();
+                });
+            windowFrameSwappedConnection_ = connect(
+                quickWindow, &QQuickWindow::frameSwapped,
+                this, [this] {
+                    if (!deferredSessionStartArmed_) return;
+                    ++deferredSessionPresentedFrame_;
+                    scheduleDeferredSessionStart();
+                });
+        }
+        // Geometry may have settled before a previously detached pane entered
+        // this scene, so refresh even when its logical size did not change.
+        updateTerminalSize();
+    }
+    scheduleDeferredSessionStart();
+    update();
+}
+
+void TerminalPane::disconnectDeferredSessionWindowSignals()
+{
+    QObject::disconnect(windowVisibilityConnection_);
+    QObject::disconnect(windowStateConnection_);
+    QObject::disconnect(windowFrameSwappedConnection_);
+    windowVisibilityConnection_ = {};
+    windowStateConnection_ = {};
+    windowFrameSwappedConnection_ = {};
+}
+
+bool TerminalPane::armDeferredSessionStart(
+    std::function<QSizeF()> viewportSizeProvider)
+{
+    if (sessionStartMode_ != TerminalSessionStartMode::Deferred
+        || controller_ == nullptr) {
+        return false;
+    }
+    if (controller_->sessionStarted()) {
+        return true;
+    }
+    deferredSessionStartArmed_ = true;
+    deferredSessionViewportSizeProvider_ = std::move(viewportSizeProvider);
+    deferredSessionStartCandidate_.reset();
+    deferredSessionCandidateFrame_ = deferredSessionPresentedFrame_;
+    scheduleDeferredSessionStart();
+    return true;
+}
+
+void TerminalPane::scheduleDeferredSessionStart()
+{
+    if (!deferredSessionStartArmed_ || deferredSessionStartCheckQueued_
+        || controller_ == nullptr || controller_->sessionStarted()) {
+        return;
+    }
+    deferredSessionStartCheckQueued_ = true;
+    QTimer::singleShot(0, this, [this] {
+        deferredSessionStartCheckQueued_ = false;
+        tryDeferredSessionStart();
+    });
+}
+
+void TerminalPane::tryDeferredSessionStart()
+{
+    if (!deferredSessionStartArmed_ || controller_ == nullptr
+        || controller_->sessionStarted()) {
+        return;
+    }
+    QQuickWindow *const quickWindow = window();
+    if (quickWindow == nullptr || !quickWindow->isVisible()
+        || !quickWindow->isExposed()) {
+        deferredSessionStartCandidate_.reset();
+        return;
+    }
+    std::optional<QSizeF> viewportSize;
+    if (deferredSessionViewportSizeProvider_) {
+        const std::function<QSizeF()> viewportSizeProvider =
+            deferredSessionViewportSizeProvider_;
+        const QPointer<TerminalPane> guard(this);
+        viewportSize = viewportSizeProvider();
+        if (guard.isNull()) return;
+    }
+    const std::optional<TerminalSessionGeometry> geometry =
+        currentSessionGeometry(viewportSize);
+    if (!geometry.has_value()) {
+        deferredSessionStartCandidate_.reset();
+        return;
+    }
+    // One queued stability turn prevents an expose/configure callback from
+    // observing the old QML anchor layout before its resize is polished. Two
+    // presented frames then acknowledge that the same geometry survived a
+    // post-map scene-graph boundary rather than only two zero-delay timers.
+    if (deferredSessionStartCandidate_ != geometry) {
+        deferredSessionStartCandidate_ = geometry;
+        deferredSessionCandidateFrame_ = deferredSessionPresentedFrame_;
+        quickWindow->update();
+        return;
+    }
+    if (deferredSessionPresentedFrame_ - deferredSessionCandidateFrame_ < 2) {
+        quickWindow->update();
+        return;
+    }
+    // Disarm before startSession emits process-state changes: a synchronous
+    // observer may delete this pane or its window from that notification.
+    deferredSessionStartArmed_ = false;
+    deferredSessionStartCandidate_.reset();
+    deferredSessionViewportSizeProvider_ = {};
+    disconnectDeferredSessionWindowSignals();
+    (void) controller_->startSession(geometry);
 }
 
 QString TerminalPane::title() const
@@ -1218,6 +1360,10 @@ void TerminalPane::setUrlOpener(std::function<bool(const QUrl &)> opener)
 
 void TerminalPane::beginShutdown()
 {
+    deferredSessionStartArmed_ = false;
+    deferredSessionStartCandidate_.reset();
+    deferredSessionViewportSizeProvider_ = {};
+    disconnectDeferredSessionWindowSignals();
     controller_->beginShutdown();
 }
 
@@ -1884,7 +2030,9 @@ void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGe
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size()) {
+        deferredSessionStartCandidate_.reset();
         updateTerminalSize();
+        scheduleDeferredSessionStart();
         refreshLinkPreview();
         reconcileReleasedLinkPreview(previewWasPointerCaptured);
         update();
@@ -1941,6 +2089,13 @@ void TerminalPane::updateTerminalSize()
 {
     if (controller_ == nullptr) return;
 
+    const std::optional<TerminalSessionGeometry> geometry =
+        currentSessionGeometry();
+    if (!geometry.has_value()) {
+        clearHyperlinkHover();
+        cancelHyperlinkPress();
+        return;
+    }
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
     {
@@ -1948,24 +2103,10 @@ void TerminalPane::updateTerminalSize()
         cellWidth = cellWidth_;
         cellHeight = cellHeight_;
     }
-    if (width() <= 0.0 || height() <= 0.0
-        || cellWidth <= 0.0 || cellHeight <= 0.0
-        || !std::isfinite(width()) || !std::isfinite(height())
-        || !std::isfinite(cellWidth) || !std::isfinite(cellHeight)) {
-        clearHyperlinkHover();
-        cancelHyperlinkPress();
-        return;
-    }
     if (width() < cellWidth || height() < cellHeight) {
         clearHyperlinkHover();
         cancelHyperlinkPress();
     }
-    const qreal devicePixelRatio =
-        window() != nullptr ? window()->devicePixelRatio() : 1.0;
-    const std::optional<TerminalSessionGeometry> geometry =
-        terminalSessionGeometryForViewport(
-            width(), height(), cellWidth, cellHeight, devicePixelRatio);
-    if (!geometry.has_value()) return;
     {
         QMutexLocker locker(&renderMutex_);
         terminalRows_ = geometry->rows;
@@ -1975,6 +2116,32 @@ void TerminalPane::updateTerminalSize()
         geometry->columns, geometry->rows,
         geometry->cellWidthPixels, geometry->cellHeightPixels,
         geometry->surfaceWidthPixels, geometry->surfaceHeightPixels);
+}
+
+std::optional<TerminalSessionGeometry>
+TerminalPane::currentSessionGeometry(
+    std::optional<QSizeF> viewportSize) const
+{
+    qreal cellWidth = 0.0;
+    qreal cellHeight = 0.0;
+    {
+        QMutexLocker locker(&renderMutex_);
+        cellWidth = cellWidth_;
+        cellHeight = cellHeight_;
+    }
+    const QSizeF viewport = viewportSize.value_or(size());
+    if (viewport.width() <= 0.0 || viewport.height() <= 0.0
+        || cellWidth <= 0.0 || cellHeight <= 0.0
+        || !std::isfinite(viewport.width())
+        || !std::isfinite(viewport.height())
+        || !std::isfinite(cellWidth) || !std::isfinite(cellHeight)) {
+        return std::nullopt;
+    }
+    const qreal devicePixelRatio =
+        window() != nullptr ? window()->devicePixelRatio() : 1.0;
+    return terminalSessionGeometryForViewport(
+        viewport.width(), viewport.height(), cellWidth, cellHeight,
+        devicePixelRatio);
 }
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)

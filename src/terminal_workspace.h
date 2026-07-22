@@ -6,6 +6,7 @@
 #include "workspace_action.h"
 
 #include <QHash>
+#include <QPointer>
 #include <QQuickItem>
 #include <QStringList>
 #include <QStringView>
@@ -58,7 +59,11 @@ public:
     // QML constructs the item before the process controller can supply the
     // per-window launch request. Initialization is one-shot and creates the
     // first tab only after those options and QML components are ready.
-    bool initialize(const LaunchOptions &options);
+    bool initialize(
+        const LaunchOptions &options,
+        TerminalSessionStartMode initialSessionStartMode =
+            TerminalSessionStartMode::Immediate);
+    [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
     void applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot);
 
@@ -194,13 +199,17 @@ private:
 
     PaneHandle createPane(
         const LaunchOptions &options,
-        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
+        TerminalSessionStartMode startMode =
+            TerminalSessionStartMode::Immediate);
     void createSearchOverlay(TerminalPane *pane);
     void createReadOnlyOverlay(TerminalPane *pane);
     bool executeAction(const WorkspaceActionRequest &request);
-    void createNewTab(
+    PaneHandle createNewTab(
         PaneId sourcePaneId = {},
-        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
+        TerminalSessionStartMode startMode =
+            TerminalSessionStartMode::Immediate);
     void activateTab(TabId id);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);
@@ -303,6 +312,8 @@ private:
     quint64 splitDividerGeneration_ = 0;
     QHash<quint64, SplitDividerItem *> splitDividers_;
     bool initialTabCreated_ = false;
+    QPointer<TerminalPane> deferredInitialPane_;
+    PaneId deferredInitialPaneId_;
     bool initialized_ = false;
     bool windowCloseApprovedEmitted_ = false;
     bool applicationQuitRequested_ = false;

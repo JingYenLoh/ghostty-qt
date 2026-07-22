@@ -351,7 +351,12 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         }
     }
 
-    const bool initialized = guardedWorkspace->initialize(options);
+    const TerminalSessionStartMode initialSessionStartMode =
+        options.maximize || options.fullscreen
+        ? TerminalSessionStartMode::Deferred
+        : TerminalSessionStartMode::Immediate;
+    const bool initialized = guardedWorkspace->initialize(
+        options, initialSessionStartMode);
     // Match Ghostty's App.first lifecycle. A successfully initialized surface
     // consumes the one-shot initial command even if a synchronous observer
     // destroys the GUI pair before a later registration checkpoint.
@@ -422,6 +427,21 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral(
                 "The application window became invalid while being shown"));
+    }
+    if (initialSessionStartMode == TerminalSessionStartMode::Deferred
+        && !guardedWorkspace->armInitialSessionStart()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "Could not arm the initial terminal session after window "
+                "presentation"));
+    }
+    if (!pairIsValid()) {
+        discardCreated();
+        return std::unexpected(
+            QStringLiteral(
+                "The application window became invalid while arming its "
+                "initial terminal session"));
     }
     if (activation.isEmpty()) {
         guardedWindow->requestActivate();

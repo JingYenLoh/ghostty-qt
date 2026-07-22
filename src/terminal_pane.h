@@ -53,7 +53,9 @@ public:
     explicit TerminalPane(
         const LaunchOptions &options,
         QQuickItem *parent = nullptr,
-        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
+        TerminalSessionStartMode startMode =
+            TerminalSessionStartMode::Immediate);
     ~TerminalPane() override;
 
     QString title() const;
@@ -84,6 +86,11 @@ public:
     // search visibility, which complete Ghostty's dimming predicate.
     void setSplit(bool split);
     void beginShutdown();
+    // ApplicationController arms only the first pane of a window that was
+    // presented maximized/fullscreen. The actual start remains queued until
+    // Qt reports a stable exposed viewport.
+    [[nodiscard]] bool armDeferredSessionStart(
+        std::function<QSizeF()> viewportSizeProvider = {});
     void setWorkspaceActionHandler(
         std::function<bool(WorkspaceActionRequest)> handler);
     // Dependency injection keeps external URL launches out of automated
@@ -161,6 +168,13 @@ private:
 
     void updateMetrics();
     void updateTerminalSize();
+    [[nodiscard]] std::optional<TerminalSessionGeometry>
+    currentSessionGeometry(
+        std::optional<QSizeF> viewportSize = std::nullopt) const;
+    void watchWindow(QQuickWindow *quickWindow);
+    void disconnectDeferredSessionWindowSignals();
+    void scheduleDeferredSessionStart();
+    void tryDeferredSessionStart();
     void markTextRowsChangedLocked(const TerminalUpdate &update);
     void syncCursorBlink(bool resetPhase);
     void setFontPointSize(qreal points);
@@ -246,9 +260,21 @@ private:
     bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
+    QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;
+    QMetaObject::Connection windowVisibilityConnection_;
+    QMetaObject::Connection windowStateConnection_;
+    QMetaObject::Connection windowFrameSwappedConnection_;
     QPointer<QQuickWindow> observedWindow_;
+    TerminalSessionStartMode sessionStartMode_ =
+        TerminalSessionStartMode::Immediate;
+    bool deferredSessionStartArmed_ = false;
+    bool deferredSessionStartCheckQueued_ = false;
+    std::optional<TerminalSessionGeometry> deferredSessionStartCandidate_;
+    std::function<QSizeF()> deferredSessionViewportSizeProvider_;
+    quint64 deferredSessionPresentedFrame_ = 0;
+    quint64 deferredSessionCandidateFrame_ = 0;
     QSet<quint64> consumedKeys_;
     quint64 activeSequenceToken_ = 0;
     bool hoverInside_ = false;

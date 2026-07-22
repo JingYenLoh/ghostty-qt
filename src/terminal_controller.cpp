@@ -5,6 +5,7 @@
 
 #include <QGuiApplication>
 #include <QMetaObject>
+#include <QPointer>
 #include <QThread>
 
 #include <algorithm>
@@ -22,14 +23,13 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
 } // namespace
 
 TerminalController::TerminalController(
-    const TerminalSessionLaunchOptions &options, QObject *parent)
+    const TerminalSessionLaunchOptions &options, QObject *parent,
+    TerminalSessionStartMode startMode)
     : QObject(parent)
+    , launchOptions_(options)
     , currentDirectory_(options.inheritWorkingDirectory
                             ? QString{}
                             : options.workingDirectory)
-    // Treat a starting child conservatively until the worker can identify an
-    // idle interactive-shell prompt.
-    , activeProcess_(true)
     , explicitProgram_(!options.program.isEmpty())
 {
     qRegisterMetaType<TerminalUpdate>();
@@ -50,7 +50,6 @@ TerminalController::TerminalController(
     thread_ = new QThread(this);
     worker_ = new SessionWorker;
     worker_->moveToThread(thread_);
-    connect(thread_, &QThread::finished, worker_, &QObject::deleteLater);
 
     connect(this, &TerminalController::resizeRequested,
             worker_, &SessionWorker::resizeTerminal, Qt::QueuedConnection);
@@ -255,16 +254,72 @@ TerminalController::TerminalController(
                 Q_EMIT sessionExited(exitCode, signalNumber, hold);
             }, Qt::QueuedConnection);
 
+    if (startMode == TerminalSessionStartMode::Immediate) {
+        (void) startSession();
+    }
+}
+
+bool TerminalController::startSession(
+    std::optional<TerminalSessionGeometry> initialGeometry)
+{
+    if (sessionStarted_ || sessionStartCancelled_ || closing_) {
+        return false;
+    }
+    if (initialGeometry.has_value()) {
+        launchOptions_.initialGeometry =
+            normalizedTerminalSessionGeometry(*initialGeometry);
+    }
+
+    sessionStarted_ = true;
+    const bool notifyRunning = !running_;
+    const bool notifyActiveProcess = !activeProcess_;
+    // Treat a starting child conservatively until the worker can identify an
+    // idle interactive-shell prompt.
+    running_ = true;
+    activeProcess_ = true;
+
+    connect(thread_, &QThread::finished, worker_, &QObject::deleteLater);
     connect(thread_, &QThread::started, worker_,
-            [worker = worker_, launchOptions = options] {
+            [worker = worker_, launchOptions = launchOptions_] {
                 worker->initialize(launchOptions);
             });
     thread_->start();
+
+    QPointer<TerminalController> guard(this);
+    if (notifyRunning) {
+        Q_EMIT runningChanged(true);
+        if (guard.isNull()) return true;
+    }
+    if (notifyActiveProcess) {
+        Q_EMIT activeProcessChanged(true);
+    }
+    return true;
 }
 
 TerminalController::~TerminalController()
 {
     closing_ = true;
+    if (!sessionStarted_ && thread_ != nullptr && worker_ != nullptr) {
+        // The worker already owns every pre-start queued request, but its
+        // affinity thread has never run. Move it home from that thread's
+        // started callback, quit before entering the event loop, then delete
+        // it synchronously on this controller's thread. Pending MetaCall
+        // events migrate with the worker and QObject destruction removes them
+        // without invoking an uninitialized session.
+        QThread *const controllerThread = QObject::thread();
+        QThread *const workerThread = thread_;
+        SessionWorker *const worker = worker_;
+        connect(workerThread, &QThread::started, worker,
+                [controllerThread, workerThread, worker] {
+                    (void) worker->moveToThread(controllerThread);
+                    workerThread->quit();
+                }, Qt::DirectConnection);
+        workerThread->start();
+        workerThread->wait();
+        delete worker_;
+        worker_ = nullptr;
+        return;
+    }
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
         QMetaObject::invokeMethod(worker_, &SessionWorker::shutdown,
                                   Qt::BlockingQueuedConnection);
@@ -288,6 +343,20 @@ void TerminalController::resizeTerminal(int columns, int rows,
                                         int cellWidthPixels, int cellHeightPixels,
                                         int surfaceWidthPixels, int surfaceHeightPixels)
 {
+    if (!sessionStarted_) {
+        if (!sessionStartCancelled_) {
+            launchOptions_.initialGeometry =
+                normalizedTerminalSessionGeometry({
+                    .columns = columns,
+                    .rows = rows,
+                    .cellWidthPixels = cellWidthPixels,
+                    .cellHeightPixels = cellHeightPixels,
+                    .surfaceWidthPixels = surfaceWidthPixels,
+                    .surfaceHeightPixels = surfaceHeightPixels,
+                });
+        }
+        return;
+    }
     Q_EMIT resizeRequested(columns, rows, cellWidthPixels, cellHeightPixels,
                          surfaceWidthPixels, surfaceHeightPixels);
 }
@@ -295,11 +364,19 @@ void TerminalController::resizeTerminal(int columns, int rows,
 void TerminalController::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
+    if (!sessionStarted_) {
+        launchOptions_.runtime = options;
+        return;
+    }
     Q_EMIT runtimeOptionsRequested(options);
 }
 
 void TerminalController::beginShutdown()
 {
+    if (!sessionStarted_) {
+        sessionStartCancelled_ = true;
+        return;
+    }
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
         Q_EMIT shutdownRequested();
     }

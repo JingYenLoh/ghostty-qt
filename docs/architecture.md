@@ -852,20 +852,32 @@ rejecting nonfinite or not-yet-laid-out viewports. Only the initial `createNewTa
 path moves this value through `TerminalPane` into the worker thread's captured
 launch options. `SessionWorker` applies it before both `libghostty-vt`
 construction and `forkpty`, so the first frame, scrollback estimate, and an
-immediately executing child share the actual screen-clamped pre-map geometry.
+immediately executing child share the authoritative startup geometry.
 Linux exposes PTY pixel extents as 16-bit fields, so only synthetic surfaces
 wider or taller than 65,535 physical pixels saturate at that final kernel
 boundary while libghostty retains the overflow-safe `int` extent.
 Ordinary new-tab and split paths have no seed and continue with their own
 layout resize. Pane scene attachment and window screen/scale changes also
 re-emit the unchanged logical viewport so physical geometry cannot remain at a
-stale device scale. A maximized or fullscreen compositor cannot publish its mapped
-extent while the root is still hidden; such a window starts at its exact normal
-geometry and receives the compositor-assigned extent through the ordinary
-first live resize after presentation. The workspace-owned
-`split-preserve-zoom` navigation bit also reloads
-without a
-pane or worker update and is consulted by each subsequent successful
+stale device scale. A normal window keeps this immediate pre-map path. For an
+initially maximized or fullscreen window, workspace initialization still
+constructs and registers the first pane/controller synchronously but leaves its
+worker uninitialized on a non-running thread. After the one activation-aware
+presentation, the pane coalesces hidden and compositor resize state, waits for
+a valid exposed viewport to remain stable across two presented-frame
+boundaries, and starts the worker exactly once with that newest geometry. An
+inactive first tab derives
+its pending leaf size from the workspace's current logical split tree rather
+than retaining hidden normal geometry. Runtime reload and resize state received
+while pending are folded into the launch snapshot; read-only, focus, and other
+queued requests retain their order behind worker initialization. A shutdown
+before exposure cancels the launch; teardown starts the dormant thread only
+long enough to move the uninitialized worker back to the GUI thread and delete
+it without delivering queued calls. Close policy therefore sees no process to
+confirm. Normal windows, the bare-QML fallback, and every later tab or split
+retain immediate startup. The workspace-owned `split-preserve-zoom` navigation
+bit also reloads without a pane or worker update and is consulted by each
+subsequent successful
 `goto_split`; it never changes the current zoom merely because configuration
 reloaded. Palette and
 fixed cursor defaults are updated through

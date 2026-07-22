@@ -283,6 +283,7 @@ class TerminalWorkspaceTest : public QObject {
 
 private Q_SLOTS:
     void initialGeometrySeedsOnlyFirstPane();
+    void deferredInitialSessionCancelsAndScopesToFirstPane();
     void runningProgramPromptsThenResolvesOnceOnExit();
     void distinguishesWindowCloseFromApplicationQuit();
     void applicationQuitEscalatesCloseLifecycle();
@@ -359,6 +360,10 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
     const CurrentTabProbe first = currentTabProbe(workspace);
     QVERIFY(first.pane != nullptr);
     QVERIFY(terminalPaneRenderProbe(first.pane).initialGeometry.has_value());
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(firstController->sessionStarted());
 
     workspace.newTab();
     QCOMPARE(workspace.tabCount(), 2);
@@ -366,11 +371,142 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
     QVERIFY(second.pane != nullptr);
     QVERIFY(second.pane != first.pane);
     QVERIFY(!terminalPaneRenderProbe(second.pane).initialGeometry.has_value());
+    TerminalController *const secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(secondController != nullptr);
+    QVERIFY(secondController->sessionStarted());
 
     const CurrentTabProbe third = splitRightProbe(workspace);
     QVERIFY(third.pane != nullptr);
     QVERIFY(third.pane != second.pane);
     QVERIFY(!terminalPaneRenderProbe(third.pane).initialGeometry.has_value());
+    TerminalController *const thirdController =
+        third.pane->findChild<TerminalController *>();
+    QVERIFY(thirdController != nullptr);
+    QVERIFY(thirdController->sessionStarted());
+}
+
+void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::RunningProcesses;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString startMarker =
+        temporary.filePath(QStringLiteral("unexpected-start"));
+    LaunchOptions markerOptions = options;
+    markerOptions.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("printf started > \"$0\""), startMarker,
+    };
+    {
+        QQuickWindow window;
+        window.resize(640, 360);
+        auto *workspace = new TerminalWorkspace(window.contentItem());
+        workspace->setParentItem(window.contentItem());
+        workspace->setSize(window.size());
+        QVERIFY(workspace->initialize(
+            markerOptions, TerminalSessionStartMode::Deferred));
+        TerminalController *const controller =
+            workspace->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QVERIFY(!workspace->closeAssessment().needsConfirmation);
+        QVERIFY(workspace->armInitialSessionStart());
+        controller->sendRawText(QByteArrayLiteral("must-not-run\n"));
+        QPointer<TerminalWorkspace> guardedWorkspace(workspace);
+        QPointer<TerminalController> guardedController(controller);
+        connect(workspace, &TerminalWorkspace::windowCloseApproved,
+                &window, [workspace] { delete workspace; });
+        workspace->requestWindowClose();
+        QVERIFY(guardedWorkspace.isNull());
+        QVERIFY(guardedController.isNull());
+
+        window.showMaximized();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+        QTest::qWait(25);
+        QVERIFY(!QFileInfo::exists(startMarker));
+    }
+
+    {
+        QQuickWindow window;
+        window.resize(640, 360);
+        auto *workspace = new TerminalWorkspace(window.contentItem());
+        workspace->setParentItem(window.contentItem());
+        workspace->setSize(window.size());
+        QVERIFY(workspace->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        QPointer<TerminalWorkspace> guardedWorkspace(workspace);
+        QPointer<TerminalPane> guardedPane(pane);
+        connect(pane, &TerminalPane::processStateChanged,
+                &window, [workspace] { delete workspace; },
+                Qt::SingleShotConnection);
+        QVERIFY(workspace->armInitialSessionStart());
+        window.showMaximized();
+        QTRY_VERIFY_WITH_TIMEOUT(guardedWorkspace.isNull(), 1000);
+        QVERIFY(guardedPane.isNull());
+    }
+
+    {
+        QQuickWindow window;
+        window.resize(640, 360);
+        auto *workspace = new TerminalWorkspace(window.contentItem());
+        workspace->setParentItem(window.contentItem());
+        workspace->setSize(window.size());
+        QVERIFY(workspace->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QVERIFY(!controller->sessionStarted());
+        QVERIFY(!controller->running());
+        QVERIFY(!controller->activeProcess());
+        QVERIFY(!workspace->closeAssessment().needsConfirmation);
+
+        QVERIFY(workspace->armInitialSessionStart());
+        pane->beginShutdown();
+        window.showMaximized();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+        QTest::qWait(25);
+        QVERIFY(!controller->sessionStarted());
+        QVERIFY(!workspace->closeAssessment().needsConfirmation);
+    }
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(
+        options, TerminalSessionStartMode::Deferred));
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(!firstController->sessionStarted());
+
+    workspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.pane != first.pane);
+    TerminalController *const secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(secondController != nullptr);
+    QVERIFY(secondController->sessionStarted());
+
+    const CurrentTabProbe third = splitRightProbe(workspace);
+    QVERIFY(third.pane != nullptr);
+    TerminalController *const thirdController =
+        third.pane->findChild<TerminalController *>();
+    QVERIFY(thirdController != nullptr);
+    QVERIFY(thirdController->sessionStarted());
+    QVERIFY(!firstController->sessionStarted());
 }
 
 void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()

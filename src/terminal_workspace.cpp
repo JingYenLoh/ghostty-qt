@@ -13,6 +13,7 @@
 #include <QQmlComponent>
 #include <QQuickWindow>
 #include <QScopedValueRollback>
+#include <QScopeGuard>
 #include <QSet>
 #include <QSGSimpleRectNode>
 #include <QTimer>
@@ -424,7 +425,9 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
     defaultOptions_ = options;
 }
 
-bool TerminalWorkspace::initialize(const LaunchOptions &options)
+bool TerminalWorkspace::initialize(
+    const LaunchOptions &options,
+    TerminalSessionStartMode initialSessionStartMode)
 {
     if (initialized_) return false;
     initialized_ = true;
@@ -433,11 +436,64 @@ bool TerminalWorkspace::initialize(const LaunchOptions &options)
         options.fontFamily, options.fontSize);
     const qreal devicePixelRatio =
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
-    createNewTab(
+    const PaneHandle initialPane = createNewTab(
         {}, terminalSessionGeometryForViewport(
                 width(), height(), metrics.cellWidth, metrics.cellHeight,
-                devicePixelRatio));
+                devicePixelRatio),
+        initialSessionStartMode);
+    if (initialSessionStartMode == TerminalSessionStartMode::Deferred) {
+        deferredInitialPane_ = initialPane.pane;
+        deferredInitialPaneId_ = initialPane.id;
+    }
     return true;
+}
+
+bool TerminalWorkspace::armInitialSessionStart()
+{
+    if (deferredInitialPane_ == nullptr) {
+        return false;
+    }
+    const QPointer<TerminalWorkspace> workspace(this);
+    const QPointer<TerminalPane> pane(deferredInitialPane_);
+    const PaneId paneId = deferredInitialPaneId_;
+    const bool armed = deferredInitialPane_->armDeferredSessionStart(
+        [workspace, pane, paneId] {
+            if (workspace == nullptr || pane == nullptr) {
+                return QSizeF{};
+            }
+            if (pane->isVisible()) {
+                return pane->size();
+            }
+            Tab *const tab = workspace->tabById(
+                workspace->tabIdForPane(paneId));
+            if (tab == nullptr || tab->root == nullptr) {
+                return pane->size();
+            }
+            workspace->updateNodeGeometry(
+                tab->root.get(), workspace->boundingRect());
+            QSizeF viewportSize;
+            if (tab->zoomedPaneId == paneId) {
+                viewportSize = workspace->boundingRect().size();
+            } else {
+                Node *const node = workspace->findNode(
+                    tab->root.get(), paneId);
+                viewportSize = node != nullptr
+                    ? node->geometry.size() : pane->size();
+            }
+            // No PTY exists yet, so keeping this hidden item's logical size in
+            // sync cannot violate inactive-tab resize suppression. It also
+            // prevents a later DPR/screen refresh from replaying the hidden
+            // normal size after the deferred session has started.
+            if (pane->size() != viewportSize) {
+                pane->setSize(viewportSize);
+            }
+            return viewportSize;
+        });
+    if (!armed) {
+        deferredInitialPane_ = nullptr;
+        deferredInitialPaneId_ = {};
+    }
+    return armed;
 }
 
 void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
@@ -810,11 +866,12 @@ WorkspaceCloseAssessment TerminalWorkspace::closeAssessment() const
 
 TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     const LaunchOptions &options,
-    std::optional<TerminalSessionGeometry> initialGeometry)
+    std::optional<TerminalSessionGeometry> initialGeometry,
+    TerminalSessionStartMode startMode)
 {
     const PaneId paneId(nextPaneId_++);
     auto *pane = new TerminalPane(
-        options, this, std::move(initialGeometry));
+        options, this, std::move(initialGeometry), startMode);
     pane->setVisible(false);
     pane->setWorkspaceActionHandler(
         [this, paneId](WorkspaceActionRequest request) {
@@ -929,9 +986,10 @@ void TerminalWorkspace::newTab()
     dispatchAction({WorkspaceAction::NewTab, {}});
 }
 
-void TerminalWorkspace::createNewTab(
+TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
     PaneId sourcePaneId,
-    std::optional<TerminalSessionGeometry> initialGeometry)
+    std::optional<TerminalSessionGeometry> initialGeometry,
+    TerminalSessionStartMode startMode)
 {
     const bool wasTabBarVisible = tabBarVisible();
     LaunchOptions options = effectiveOptions_;
@@ -956,7 +1014,7 @@ void TerminalWorkspace::createNewTab(
         : static_cast<int>(tabs_.size());
 
     const PaneHandle pane = createPane(
-        options, std::move(initialGeometry));
+        options, std::move(initialGeometry), startMode);
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);
     tab->root = std::make_unique<Node>(pane);
@@ -973,6 +1031,7 @@ void TerminalWorkspace::createNewTab(
         Q_EMIT tabBarVisibleChanged();
     }
     activateTab(tabId);
+    return pane;
 }
 
 void TerminalWorkspace::setCurrentIndex(int index)
@@ -1213,10 +1272,18 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
         return;
     }
 
+    const QPointer<TerminalWorkspace> guard(this);
     {
         // Pending-prompt resolution and model updates below emit synchronous
         // signals. Keep the cached tab/tree valid until this mutation commits.
-        QScopedValueRollback<bool> mutation(topologyMutation_, true);
+        const bool previousMutation =
+            std::exchange(topologyMutation_, true);
+        const auto restoreMutation = qScopeGuard(
+            [guard, previousMutation] {
+                if (guard != nullptr) {
+                    guard->topologyMutation_ = previousMutation;
+                }
+            });
         Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
         const TabId tabId = tab->id;
         const bool removedActivePane = tab->activePaneId == paneId;
@@ -1227,6 +1294,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
             tab->zoomedPaneId = {};
         }
         resolvePendingPaneRemoval({paneId, pane});
+        if (guard == nullptr) return;
         removePaneFromNode(tab->root, paneId);
         if (tab->root == nullptr) {
             removeTab(tabId);
@@ -1248,6 +1316,7 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
             refreshTab(tabId);
         }
     }
+    if (guard == nullptr) return;
     reevaluatePendingClose();
 }
 
@@ -1563,8 +1632,18 @@ void TerminalWorkspace::commitPendingClose()
     // Resolving a dialog emits synchronously. Treat resolution and the
     // approved topology change as one transaction so an observer cannot
     // insert, split, or close a different target between those phases.
-    QScopedValueRollback<bool> mutation(topologyMutation_, true);
-    performPendingClose(takePendingClose());
+    const QPointer<TerminalWorkspace> guard(this);
+    const bool previousMutation = std::exchange(topologyMutation_, true);
+    const auto restoreMutation = qScopeGuard(
+        [guard, previousMutation] {
+            if (guard != nullptr) {
+                guard->topologyMutation_ = previousMutation;
+            }
+        });
+    PendingClose close = takePendingClose();
+    if (guard != nullptr) {
+        performPendingClose(std::move(close));
+    }
 }
 
 void TerminalWorkspace::performPendingClose(PendingClose close)
@@ -1714,8 +1793,14 @@ void TerminalWorkspace::approveWindowClose()
             handle.pane->beginShutdown();
         }
     }
+    // The host is allowed to destroy the workspace synchronously once the
+    // window close has been approved. Do not continue the application-quit
+    // escalation through a deleted QObject in that case.
+    const QPointer<TerminalWorkspace> guard(this);
     Q_EMIT windowCloseApproved();
-    approveApplicationQuit();
+    if (guard != nullptr) {
+        approveApplicationQuit();
+    }
 }
 
 void TerminalWorkspace::approveApplicationQuit()
