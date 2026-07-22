@@ -113,32 +113,46 @@ if(CONFIG_HELPER_NAME)
     endif()
     string(JSON structured_schema ERROR_VARIABLE structured_json_error
         GET "${structured_helper_output}" version)
+    string(JSON values_type ERROR_VARIABLE values_json_error
+        TYPE "${structured_helper_output}" values)
     string(JSON lifetime_type ERROR_VARIABLE lifetime_json_error
-        TYPE "${structured_helper_output}" application
+        TYPE "${structured_helper_output}" values
             quit-after-last-window-closed)
     string(JSON keybind_root_type ERROR_VARIABLE keybind_json_error
         TYPE "${structured_helper_output}" keybindings root)
+    string(JSON default_keybind_root_type
+        ERROR_VARIABLE default_keybind_json_error
+        TYPE "${structured_helper_output}" default-keybindings root)
     string(JSON single_instance ERROR_VARIABLE single_instance_json_error
-        GET "${structured_helper_output}" application gtk-single-instance)
+        GET "${structured_helper_output}" values gtk-single-instance)
     string(JSON initial_window_type ERROR_VARIABLE initial_window_json_error
-        TYPE "${structured_helper_output}" application initial-window)
+        TYPE "${structured_helper_output}" values initial-window)
     string(JSON initial_window ERROR_VARIABLE initial_window_value_json_error
-        GET "${structured_helper_output}" application initial-window)
-    if(structured_json_error OR lifetime_json_error OR keybind_json_error
+        GET "${structured_helper_output}" values initial-window)
+    string(JSON palette_length ERROR_VARIABLE palette_json_error
+        LENGTH "${structured_helper_output}" values palette)
+    if(structured_json_error OR values_json_error OR lifetime_json_error
+       OR keybind_json_error OR default_keybind_json_error
        OR single_instance_json_error
        OR initial_window_json_error
        OR initial_window_value_json_error
+       OR palette_json_error
        OR NOT structured_schema EQUAL 1
+       OR NOT values_type STREQUAL "OBJECT"
        OR NOT lifetime_type STREQUAL "BOOLEAN"
        OR NOT initial_window_type STREQUAL "BOOLEAN"
        OR NOT initial_window
        OR NOT single_instance STREQUAL "detect"
-       OR NOT keybind_root_type STREQUAL "ARRAY")
+       OR NOT keybind_root_type STREQUAL "ARRAY"
+       OR NOT default_keybind_root_type STREQUAL "ARRAY"
+       OR NOT palette_length EQUAL 256)
         message(FATAL_ERROR
             "Relocated helper returned invalid structured config JSON: "
-            "${structured_json_error};${lifetime_json_error};"
-            "${keybind_json_error};${single_instance_json_error};"
-            "${initial_window_json_error};${initial_window_value_json_error}\n"
+            "${structured_json_error};${values_json_error};"
+            "${lifetime_json_error};${keybind_json_error};"
+            "${default_keybind_json_error};${single_instance_json_error};"
+            "${initial_window_json_error};${initial_window_value_json_error};"
+            "${palette_json_error}\n"
             "${structured_helper_output}")
     endif()
 endif()

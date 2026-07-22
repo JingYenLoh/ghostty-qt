@@ -6,8 +6,9 @@
 #include <cstring>
 #include <cstdint>
 #include <span>
+#include <string_view>
 
-extern "C" ghostty_string_s ghostty_qt_config_json(bool defaults);
+extern "C" ghostty_string_s ghostty_qt_config_json();
 
 namespace {
 
@@ -20,33 +21,26 @@ bool isShowConfigJsonAction(const char *argument)
 
 int showConfigJson(int argc, char **argv)
 {
-    bool defaults = false;
-    for (int index = 2; index < argc; ++index) {
-        if (std::strcmp(argv[index], "--default") == 0) {
-            if (defaults) {
-                std::fputs("ghostty-qt-config-helper: duplicate --default option\n", stderr);
-                return 64;
-            }
-            defaults = true;
-        } else {
-            std::fprintf(stderr,
-                         "ghostty-qt-config-helper: unsupported option for "
-                         "+show-config-json: %s\n",
-                         argv[index]);
-            return 64;
-        }
+    if (argc != 2) {
+        std::fputs(
+            "ghostty-qt-config-helper: +show-config-json takes no options\n",
+            stderr);
+        return 64;
     }
 
-    // Ghostty doesn't know this project-private action. Initialize its global
-    // state with only argv[0], then let the private C export load either the
-    // ordinary config files or the built-in defaults exactly once.
-    char *initializationArguments[] = {argv[0]};
-    const int initializationResult = ghostty_init(1, initializationArguments);
+    // Ghostty doesn't know this project-private action. Give its global state
+    // the recognized public action whose finalized values this export replaces.
+    // Ghostty's config iterator ignores action tokens, while the extra argument
+    // preserves its established probable-CLI defaults even when TERM_PROGRAM
+    // is absent.
+    char showConfigAction[] = "+show-config";
+    char *initializationArguments[] = {argv[0], showConfigAction};
+    const int initializationResult = ghostty_init(2, initializationArguments);
     if (initializationResult != 0) {
         return initializationResult;
     }
 
-    const ghostty_string_s json = ghostty_qt_config_json(defaults);
+    const ghostty_string_s json = ghostty_qt_config_json();
     if (json.ptr == nullptr) {
         std::fputs("ghostty-qt-config-helper: failed to export structured config\n",
                    stderr);

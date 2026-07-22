@@ -234,13 +234,15 @@ $XDG_CONFIG_HOME/ghostty/config.ghostty
 ```
 
 If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
-`ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` and
-`+show-config` actions and a project-private structured config export, so
-syntax, file precedence, `config-file` includes, canonical values, and the
-finalized binding trie, lossless nullable lifetime values, and raw
-`gtk-single-instance` mode plus the `initial-window` startup decision come
-from the exact pinned Ghostty parser rather than a Qt-side reimplementation.
-The main process receives only typed value snapshots.
+`ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` action
+around two project-private JSON-v1 exports. Each export contains all 53
+finalized values consumed by the frontend plus the current and platform-default
+binding tries; the two complete documents must byte-match before publication.
+Syntax, file precedence, `config-file` includes, canonical values, nullable
+lifetime values, raw `gtk-single-instance`, `initial-window`, and finalized
+bindings therefore come from the exact pinned Ghostty implementation. Qt strictly
+decodes owned typed values and does not parse or merge the human-oriented
+`+show-config` output.
 
 The current compatibility slice applies these keys:
 
@@ -695,10 +697,11 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   bold, faint, and split appearance settings documented above. Dynamic
   light/dark theme switching, font fallback lists, palette
   generation/harmonization, and the rest of Ghostty's appearance model remain
-  planned. The pinned
-  `+show-config` text boundary does not expose the derived palette and explicit
-  entry mask needed to reproduce `palette-generate` or `palette-harmonious`
-  exactly.
+  planned. Ghostty applies palette generation later in `termio.DerivedConfig`,
+  using the explicit-entry mask together with foreground, background, and the
+  harmonious flag. The current project-private export carries the finalized
+  base palette but not that derived state, so `palette-generate` and
+  `palette-harmonious` cannot yet be reproduced exactly.
 - Automated startup testing uses Qt's software scene-graph backend. The GPU/RHI
   renderer still needs interactive visual qualification on real Wayland
   compositors and driver combinations.

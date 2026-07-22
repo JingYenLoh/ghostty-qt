@@ -558,9 +558,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.keybindSource = GhosttyKeybindSource::text(*keybindings);
     }
     if (snapshot.keybindConfig.has_value()) {
-        // The structured dump is the authoritative, fully finalized Ghostty
-        // set. It therefore replaces the text formatter retained for
-        // diagnostics and config-disabled compatibility.
+        // The structured projection is the authoritative, fully finalized
+        // Ghostty set. Explicit flattened values remain available only to
+        // config-disabled and injected test callers.
         result.keybindSource =
             GhosttyKeybindSource::structured(*snapshot.keybindConfig);
     }

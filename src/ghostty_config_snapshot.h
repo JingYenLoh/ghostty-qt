@@ -35,9 +35,9 @@ struct GhosttyConfigDiagnostic {
 };
 
 // The bridge is responsible for preserving the type of each Ghostty value in
-// QVariant (for example bool, quint32, qint64, double, QString, or QStringList). Keeping
-// this value-only lets snapshots cross Qt threads without retaining any
-// Ghostty-owned handles.
+// QVariant (for example bool, quint32, quint64, double, QColor, QString, or
+// QStringList). Keeping this value-only lets snapshots cross Qt threads
+// without retaining any Ghostty-owned handles.
 struct GhosttyConfigSnapshot {
     GhosttyConfigAvailability availability = GhosttyConfigAvailability::Unavailable;
     QVariantMap values;

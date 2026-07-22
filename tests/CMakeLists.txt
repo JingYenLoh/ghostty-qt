@@ -585,12 +585,25 @@ target_link_libraries(test-ghostty-config-process-loader PRIVATE
     Qt6::Gui
     Qt6::Test
     ghostty-qt-action-pipeline
+    ghostty-qt-config-export
 )
 add_dependencies(test-ghostty-config-process-loader
     fake-ghostty-config-helper)
 add_test(NAME ghostty-config-process-loader
     COMMAND test-ghostty-config-process-loader)
 set_tests_properties(ghostty-config-process-loader PROPERTIES TIMEOUT 15)
+
+qt_add_executable(test-ghostty-config-export
+    test_ghostty_config_export.cpp
+)
+target_link_libraries(test-ghostty-config-export PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-config-export
+)
+add_test(NAME ghostty-config-export COMMAND test-ghostty-config-export)
+set_tests_properties(ghostty-config-export PROPERTIES TIMEOUT 10)
 
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_helper_test_home

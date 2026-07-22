@@ -384,11 +384,11 @@
     },
     "palette-generate": {
       "status": "planned",
-      "note": "The pinned +show-config text output occurs before derived palette generation and loses the explicit-entry mask required for exact behavior."
+      "note": "Ghostty applies generation later in termio.DerivedConfig using the explicit-entry mask plus foreground and background; the schema-v1 frontend projection carries the finalized base palette but not that derived state."
     },
     "palette-harmonious": {
       "status": "planned",
-      "note": "The pinned +show-config text output does not expose the derived palette and explicit-entry mask required for exact harmonization."
+      "note": "Ghostty applies harmonization later in termio.DerivedConfig; the schema-v1 frontend projection does not carry the derived palette or explicit-entry mask required for exact behavior."
     },
     "quit-after-last-window-closed": {
       "status": "supported",

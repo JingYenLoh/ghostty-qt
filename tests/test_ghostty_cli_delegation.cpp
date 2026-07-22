@@ -729,6 +729,19 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     QCOMPARE(helperPrivateMix->exitStatus, QProcess::NormalExit);
     QCOMPARE(helperPrivateMix->exitCode, 64);
     QVERIFY(helperPrivateMix->standardOutput.isEmpty());
+
+    auto obsoletePrivateOption = runProcess(
+        QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+        {QStringLiteral("+show-config-json"), QStringLiteral("--default")},
+        environment, temporary.path());
+    QVERIFY2(obsoletePrivateOption.has_value(),
+             qPrintable(obsoletePrivateOption.has_value()
+                 ? QString{} : obsoletePrivateOption.error()));
+    QCOMPARE(obsoletePrivateOption->exitStatus, QProcess::NormalExit);
+    QCOMPARE(obsoletePrivateOption->exitCode, 64);
+    QVERIFY(obsoletePrivateOption->standardOutput.isEmpty());
+    QVERIFY(obsoletePrivateOption->standardError.contains(
+        QByteArrayLiteral("+show-config-json takes no options")));
 #else
     QVERIFY(!frontendHelp->standardOutput.contains(
         QByteArrayLiteral("+validate-config")));

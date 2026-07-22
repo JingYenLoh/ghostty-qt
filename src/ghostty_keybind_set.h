@@ -106,9 +106,9 @@ class GhosttyKeybindSet final {
 public:
     static constexpr qsizetype MaximumActiveTables = 8;
 
-    // Replaces the current set with the flattened values emitted by the pinned
-    // `ghostty +show-config`. Later duplicate triggers replace earlier ones,
-    // matching Ghostty's config semantics.
+    // Replaces the current set from the explicit flattened-text fallback used
+    // by config-disabled and injected test callers. Later duplicate triggers
+    // replace earlier ones, matching Ghostty's config semantics.
     [[nodiscard]] GhosttyKeybindLoadReport load(const QStringList &values);
 
     // Production configuration uses the versioned, value-only dump of

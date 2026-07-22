@@ -99,39 +99,28 @@ int main(int argc, char **argv)
     }
 
     if (action == "+show-config-json") {
-        if (mode == "structured-query-failure") {
-            std::cerr << "structured config query failed";
+        const int invocation = actionInvocationCount("+show-config-json");
+        if (mode == "config-query-failure" && invocation == 1) {
+            std::cerr << "config query failed";
             return 8;
         }
-        if (mode == "structured-query-malformed") {
+        if (mode == "config-consistency-query-failure" && invocation >= 2) {
+            std::cerr << "config consistency query failed";
+            return 9;
+        }
+        if (mode == "config-query-malformed") {
             std::cout << "{not-json";
             return 0;
         }
-        std::cout << environmentValue("GHOSTTY_QT_FAKE_CONFIG_JSON");
+        if (invocation == 1) {
+            std::cerr << environmentValue("GHOSTTY_QT_FAKE_SUCCESS_WARNING");
+        }
+        if (mode == "config-consistency-mismatch" && invocation >= 2) {
+            std::cout << environmentValue("GHOSTTY_QT_FAKE_CONFIG_JSON_SECOND");
+        } else {
+            std::cout << environmentValue("GHOSTTY_QT_FAKE_CONFIG_JSON");
+        }
         return 0;
     }
-
-    if (action != "+show-config") {
-        return 64;
-    }
-
-    const bool defaults = hasArgument(argc, argv, "--default");
-    if ((defaults && mode == "default-query-failure")
-        || (!defaults && mode == "current-query-failure")) {
-        std::cerr << "query failed";
-        return 7;
-    }
-
-    const char *variable = defaults
-        ? "GHOSTTY_QT_FAKE_DEFAULT_OUTPUT"
-        : "GHOSTTY_QT_FAKE_CHANGES_OUTPUT";
-    if (!defaults) {
-        std::cerr << environmentValue("GHOSTTY_QT_FAKE_SUCCESS_WARNING");
-    }
-    std::cout << environmentValue(variable);
-    if (!defaults && mode == "query-consistency-mismatch"
-        && actionInvocationCount("+show-config") >= 2) {
-        std::cout << "font-size = 18\n";
-    }
-    return 0;
+    return 64;
 }

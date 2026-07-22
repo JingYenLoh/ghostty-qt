@@ -71,10 +71,12 @@ Configuration is enabled by default with
 `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=ON`. Because the exact Ghostty application
 parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
-`ghostty-qt-config-helper`. The main process talks to that helper through
-Ghostty's `+validate-config` and `+show-config` CLI actions plus the private
-`+show-config-json` action, and converts only the documented compatibility
-keys into value snapshots.
+`ghostty-qt-config-helper`. Each load is a four-process transaction: validate,
+request the private schema-v1 `+show-config-json` projection, validate again,
+and request the same projection again. The two JSON byte streams must match,
+so each document carries one finalized current configuration together with its
+platform-default keybinding baseline. The loader does not parse or merge the
+human-oriented `+show-config` output.
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
@@ -94,8 +96,8 @@ path. Tests must always remove inherited editor variables or install a
 deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
-The snapshot includes the finalized working-directory, split/tab/window
-directory inheritance policies, new-window/tab font-size inheritance policy,
+The schema-v1 projection includes the finalized working-directory,
+split/tab/window directory inheritance policies, new-window/tab font-size policy,
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
 palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
@@ -106,8 +108,9 @@ split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the raw false/true/detect `gtk-single-instance` mode,
 the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
-process-loader tests verify default/current merging, malformed canonical
-values, and nullable resets; launch-option tests verify their value-only overlay
+export and process-loader tests verify exact field/type validation, malformed
+canonical values, nullable values, transaction consistency, and default-aware
+keybinding diagnostics; launch-option tests verify their value-only overlay
 and worker-boundary projection; adapter tests verify that config-default changes
 preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
@@ -142,15 +145,18 @@ Oniguruma package. `ghostty-link-matcher` tests the C++ byte-range boundary;
 URL/path corpus against that same engine. Both searches and the application use
 Ghostty's 100,000-step retry budget.
 
-The three focused config tests have distinct boundaries:
+The five focused config tests have distinct boundaries:
 
 - `ghostty-config-service` exercises filesystem discovery/watch/debounce,
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
+- `ghostty-config-export` exercises the strict schema-v1 decoder independently
+  of process execution, including exact fields and types, the full unsigned
+  scrollback range, nullable values, and malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
-  post-query validation, canonical output parsing, warnings, timeouts, crashes,
-  and failures deterministic; one case joins the loader to the real helper to
-  verify finalized surface-inheritance booleans, Ghostty's effective
+  post-query validation, byte-for-byte consistency, warnings, timeouts,
+  crashes, and failures deterministic; real-helper cases verify finalized
+  surface-inheritance booleans, Ghostty's effective
   `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
@@ -247,7 +253,8 @@ for missing and existing non-directory launch paths.
 uses pure registry tests plus a private
 D-Bus daemon to exercise response races, reload, cleanup, and activation.
 The same boundary does not expose the post-derivation palette and explicit-entry
-mask required for exact `palette-generate`/`palette-harmonious` behavior. Also,
+mask that `termio.DerivedConfig` needs for exact
+`palette-generate`/`palette-harmonious` behavior. Also,
 the public terminal option for cursor blink is boolean rather than Ghostty's
 configuration tri-state. The parity ledger keeps those limitations planned and
 partial, respectively.

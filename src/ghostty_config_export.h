@@ -4,31 +4,23 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QVariantMap>
 #include <QtGlobal>
 
 #include <expected>
-#include <optional>
 
-// Lossless project-private values exported from one pinned Ghostty Config
-// generation. Milliseconds intentionally match Duration.asMilliseconds(),
-// which is the conversion used by the pinned Linux GTK frontend.
+// One complete frontend configuration projection exported from a single
+// pinned Ghostty Config generation. The platform-default binding set is kept
+// beside the current set so compatibility diagnostics do not mistake Ghostty
+// built-ins for user configuration.
 struct GhosttyConfigExport {
     static constexpr int CurrentSchemaVersion = 1;
     static_assert(GhosttyKeybindConfig::CurrentSchemaVersion
                   == CurrentSchemaVersion);
 
-    int schemaVersion = CurrentSchemaVersion;
+    QVariantMap values;
     GhosttyKeybindConfig keybindings;
-    bool quitAfterLastWindowClosed = true;
-    std::optional<quint32> quitAfterLastWindowClosedDelayMilliseconds;
-    bool initialWindow = true;
-    QString resizeOverlayMode = QStringLiteral("after-first");
-    QString resizeOverlayPosition = QStringLiteral("center");
-    quint32 resizeOverlayDurationMilliseconds = 750;
-    // Raw false/true/detect is retained because the config helper is built
-    // with app-runtime=none; only the originating GUI process has the argv
-    // and TERM_PROGRAM context needed to resolve detect.
-    QString singleInstanceMode = QStringLiteral("detect");
+    GhosttyKeybindConfig defaultKeybindings;
 
     bool operator==(const GhosttyConfigExport &) const = default;
 };

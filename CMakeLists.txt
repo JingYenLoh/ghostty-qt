@@ -481,6 +481,22 @@ target_compile_options(ghostty-qt-action-pipeline PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-config-export STATIC
+    src/ghostty_config_export.cpp
+    src/ghostty_config_export.h
+    src/ghostty_keybind_config.h
+)
+target_include_directories(ghostty-qt-config-export PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-config-export PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+target_compile_options(ghostty-qt-config-export PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
@@ -570,6 +586,7 @@ target_link_libraries(ghostty-qt PRIVATE
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
     ghostty-qt-cli-delegation
+    ghostty-qt-config-export
     ghostty-qt-desktop-activation
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths

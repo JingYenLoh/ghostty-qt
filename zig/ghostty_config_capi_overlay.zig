@@ -17,23 +17,17 @@ comptime {
     _ = @import("CApi_upstream.zig");
 }
 
-/// Export values that Ghostty's text formatter cannot represent losslessly as
-/// the project-private JSON v1 schema. The returned allocation follows
+/// Export one complete, finalized configuration generation as the
+/// project-private JSON v1 schema. The returned allocation follows
 /// ghostty_string_s ownership and is released by ghostty_string_free.
-export fn ghostty_qt_config_json(defaults: bool) String {
-    return configJson(defaults) catch |err| {
+export fn ghostty_qt_config_json() String {
+    return configJson() catch |err| {
         std.log.err("error exporting structured config as JSON err={}", .{err});
         return .empty;
     };
 }
 
-fn configJson(defaults: bool) !String {
-    var config = if (defaults)
-        try Config.default(state.alloc)
-    else
-        try Config.load(state.alloc);
-    defer config.deinit();
-
+fn configJson() !String {
     var output: std.Io.Writer.Allocating = .init(state.alloc);
     errdefer output.deinit();
 
@@ -42,11 +36,135 @@ fn configJson(defaults: bool) !String {
     try json.objectField("version");
     try json.write(@as(u8, 1));
 
-    try json.objectField("application");
+    {
+        var config = try Config.load(state.alloc);
+        defer config.deinit();
+
+        try json.objectField("values");
+        try writeValues(&json, &config);
+
+        try json.objectField("keybindings");
+        try writeKeybinds(&json, &config.keybind);
+    }
+
+    // Platform defaults let the frontend distinguish unsupported user
+    // bindings from unsupported built-ins. Load them only after releasing the
+    // current generation so the short-lived helper does not retain both.
+    {
+        var defaults = try Config.default(state.alloc);
+        defer defaults.deinit();
+
+        try json.objectField("default-keybindings");
+        try writeKeybinds(&json, &defaults.keybind);
+    }
+    try json.endObject();
+
+    return .fromSlice(try output.toOwnedSlice());
+}
+
+fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.beginObject();
+
+    try json.objectField("working-directory");
+    try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
+    try json.objectField("font-family");
+    try json.beginArray();
+    for (config.@"font-family".list.items) |family| try json.write(family);
+    try json.endArray();
+    try json.objectField("font-size");
+    try json.write(config.@"font-size");
+    try json.objectField("foreground");
+    try writeRgb(json, config.foreground);
+    try json.objectField("background");
+    try writeRgb(json, config.background);
+    try json.objectField("unfocused-split-opacity");
+    try json.write(config.@"unfocused-split-opacity");
+    try json.objectField("unfocused-split-fill");
+    try writeOptionalRgb(json, config.@"unfocused-split-fill");
+    try json.objectField("split-divider-color");
+    try writeOptionalRgb(json, config.@"split-divider-color");
+    try json.objectField("split-inherit-working-directory");
+    try json.write(config.@"split-inherit-working-directory");
+    try json.objectField("split-preserve-zoom");
+    try json.write(config.@"split-preserve-zoom".navigation);
+    try json.objectField("tab-inherit-working-directory");
+    try json.write(config.@"tab-inherit-working-directory");
+    try json.objectField("window-inherit-working-directory");
+    try json.write(config.@"window-inherit-working-directory");
+    try json.objectField("window-inherit-font-size");
+    try json.write(config.@"window-inherit-font-size");
+    try json.objectField("window-new-tab-position");
+    try json.write(@tagName(config.@"window-new-tab-position"));
+    try json.objectField("window-show-tab-bar");
+    try json.write(@tagName(config.@"window-show-tab-bar"));
+    try json.objectField("window-width");
+    try json.write(config.@"window-width");
+    try json.objectField("window-height");
+    try json.write(config.@"window-height");
+    try json.objectField("maximize");
+    try json.write(config.maximize);
+    try json.objectField("fullscreen");
+    try json.write(@tagName(config.fullscreen));
+    try json.objectField("palette");
+    try json.beginArray();
+    for (config.palette.value) |color| try writeRgb(json, color);
+    try json.endArray();
+    try json.objectField("selection-foreground");
+    try writeOptionalTerminalColor(json, config.@"selection-foreground");
+    try json.objectField("selection-background");
+    try writeOptionalTerminalColor(json, config.@"selection-background");
+    try json.objectField("search-foreground");
+    try writeTerminalColor(json, config.@"search-foreground");
+    try json.objectField("search-background");
+    try writeTerminalColor(json, config.@"search-background");
+    try json.objectField("search-selected-foreground");
+    try writeTerminalColor(json, config.@"search-selected-foreground");
+    try json.objectField("search-selected-background");
+    try writeTerminalColor(json, config.@"search-selected-background");
+    try json.objectField("cursor-color");
+    try writeOptionalTerminalColor(json, config.@"cursor-color");
+    try json.objectField("cursor-opacity");
+    try json.write(config.@"cursor-opacity");
+    try json.objectField("cursor-style");
+    try json.write(@tagName(config.@"cursor-style"));
+    try json.objectField("cursor-style-blink");
+    if (config.@"cursor-style-blink") |blink| try json.write(blink) else try json.write(null);
+    try json.objectField("cursor-text");
+    try writeOptionalTerminalColor(json, config.@"cursor-text");
+    try json.objectField("bold-color");
+    try writeOptionalBoldColor(json, config.@"bold-color");
+    try json.objectField("faint-opacity");
+    try json.write(config.@"faint-opacity");
+    try json.objectField("scrollback-limit");
+    var scrollback_buf: [32]u8 = undefined;
+    try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
+    try json.objectField("confirm-close-surface");
+    try json.write(@tagName(config.@"confirm-close-surface"));
+    try json.objectField("clipboard-trim-trailing-spaces");
+    try json.write(config.@"clipboard-trim-trailing-spaces");
+    try json.objectField("clipboard-paste-protection");
+    try json.write(config.@"clipboard-paste-protection");
+    try json.objectField("clipboard-paste-bracketed-safe");
+    try json.write(config.@"clipboard-paste-bracketed-safe");
+    try json.objectField("copy-on-select");
+    try json.write(@tagName(config.@"copy-on-select"));
+    try json.objectField("selection-clear-on-typing");
+    try json.write(config.@"selection-clear-on-typing");
+    try json.objectField("selection-clear-on-copy");
+    try json.write(config.@"selection-clear-on-copy");
+    try json.objectField("middle-click-action");
+    try json.write(@tagName(config.@"middle-click-action"));
+    try json.objectField("mouse-reporting");
+    try json.write(config.@"mouse-reporting");
+    try json.objectField("link-url");
+    try json.write(config.@"link-url");
+    try json.objectField("link-previews");
+    try json.write(@tagName(config.@"link-previews"));
+    try json.objectField("config-file");
+    try writeConfigFiles(json, &config.@"config-file");
     try json.objectField("quit-after-last-window-closed");
     try json.write(config.@"quit-after-last-window-closed");
-    try json.objectField("quit-after-last-window-closed-delay-ms");
+    try json.objectField("quit-after-last-window-closed-delay");
     if (config.@"quit-after-last-window-closed-delay") |duration| {
         // This is the exact conversion used by the pinned GTK frontend:
         // truncate sub-millisecond precision and saturate at c_uint.
@@ -60,41 +178,90 @@ fn configJson(defaults: bool) !String {
     try json.write(@tagName(config.@"resize-overlay"));
     try json.objectField("resize-overlay-position");
     try json.write(@tagName(config.@"resize-overlay-position"));
-    try json.objectField("resize-overlay-duration-ms");
+    try json.objectField("resize-overlay-duration");
     // Match the pinned GTK frontend's truncation and c_uint saturation.
     try json.write(config.@"resize-overlay-duration".asMilliseconds());
     try json.objectField("gtk-single-instance");
     try json.write(@tagName(config.@"gtk-single-instance"));
     try json.endObject();
+}
 
+fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !void {
     var sequence: std.ArrayList(Binding.Trigger) = .empty;
     defer sequence.deinit(state.alloc);
 
-    try json.objectField("keybindings");
     try json.beginObject();
     try json.objectField("root");
     try json.beginArray();
-    try writeSet(&json, state.alloc, &config.keybind.set, &sequence);
+    try writeSet(json, state.alloc, &keybinds.set, &sequence);
     try json.endArray();
 
     try json.objectField("tables");
     try json.beginArray();
-    var tables = config.keybind.tables.iterator();
+    var tables = keybinds.tables.iterator();
     while (tables.next()) |table| {
         try json.beginObject();
         try json.objectField("name");
         try json.write(table.key_ptr.*);
         try json.objectField("bindings");
         try json.beginArray();
-        try writeSet(&json, state.alloc, table.value_ptr, &sequence);
+        try writeSet(json, state.alloc, table.value_ptr, &sequence);
         try json.endArray();
         try json.endObject();
     }
     try json.endArray();
     try json.endObject();
-    try json.endObject();
+}
 
-    return .fromSlice(try output.toOwnedSlice());
+fn writeWorkingDirectory(json: *std.json.Stringify, value: Config.WorkingDirectory) !void {
+    switch (value) {
+        .home, .inherit => try json.write(@tagName(value)),
+        .path => |path| try json.write(path),
+    }
+}
+
+fn writeRgb(json: *std.json.Stringify, color: anytype) !void {
+    var buf: [7]u8 = undefined;
+    try json.write(try std.fmt.bufPrint(
+        &buf,
+        "#{x:0>2}{x:0>2}{x:0>2}",
+        .{ color.r, color.g, color.b },
+    ));
+}
+
+fn writeOptionalRgb(json: *std.json.Stringify, color: ?Config.Color) !void {
+    if (color) |value| try writeRgb(json, value) else try json.write(null);
+}
+
+fn writeTerminalColor(json: *std.json.Stringify, color: Config.TerminalColor) !void {
+    switch (color) {
+        .color => |value| try writeRgb(json, value),
+        .@"cell-foreground", .@"cell-background" => try json.write(@tagName(color)),
+    }
+}
+
+fn writeOptionalTerminalColor(json: *std.json.Stringify, color: ?Config.TerminalColor) !void {
+    if (color) |value| try writeTerminalColor(json, value) else try json.write(null);
+}
+
+fn writeOptionalBoldColor(json: *std.json.Stringify, color: ?Config.BoldColor) !void {
+    if (color) |value| switch (value) {
+        .color => |rgb| try writeRgb(json, rgb),
+        .bright => try json.write("bright"),
+    } else try json.write(null);
+}
+
+fn writeConfigFiles(json: *std.json.Stringify, paths: *const Config.RepeatablePath) !void {
+    try json.beginArray();
+    var buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    for (paths.value.items) |path| {
+        const value = switch (path) {
+            .optional => |optional| try std.fmt.bufPrint(&buf, "?{s}", .{optional}),
+            .required => |required| required,
+        };
+        try json.write(value);
+    }
+    try json.endArray();
 }
 
 fn writeSet(

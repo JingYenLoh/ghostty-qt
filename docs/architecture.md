@@ -787,22 +787,22 @@ the Qt-side process adapter invokes, in order:
 
 ```text
 +validate-config
-+show-config --default
-+show-config
 +show-config-json
 +validate-config
-+show-config
 +show-config-json
 ```
 
 The helper runs with the selected `XDG_CONFIG_HOME`, so Ghostty itself owns
 standard-file discovery, legacy/preferred-file precedence, include handling,
-validation, defaults, and canonical formatting. The final two queries must
-byte-match the first current-config and structured outputs, preventing a valid
-A-to-B edit from publishing a mixed snapshot. The adapter merges the default
-and changed-value output into a value-only `GhosttyConfigSnapshot`. This keeps
-the unstable application API and all of its state outside the long-lived Qt
-process while avoiding a second parser.
+validation, defaults, and finalization. Each JSON document is one exact
+schema-v1 frontend projection containing all consumed values plus the finalized
+current and platform-default binding sets. The two JSON byte streams must
+match, preventing a valid A-to-B edit from publishing a mixed snapshot. The
+adapter strictly decodes the verified document into a
+value-only `GhosttyConfigSnapshot`; it never parses or merges Ghostty's
+human-oriented `+show-config` output. This keeps the unstable application API
+and all of its state outside the long-lived Qt process while avoiding a second
+configuration parser.
 
 `GhosttyConfigService` watches the legacy `ghostty/config`, preferred
 `ghostty/config.ghostty`, their nearest existing directories, existing include
@@ -825,23 +825,19 @@ resident window retirement.
 The helper process necessarily has Ghostty action arguments, so the pinned
 parser classifies it as a probable CLI launch. An otherwise unset
 `working-directory` therefore finalizes to `inherit`; the GTK desktop-launch
-heuristic that would choose `home` cannot be reconstructed from the current
-text protocol. Explicit `inherit`, `home`, tilde, and concrete path values are
+heuristic that would choose `home` cannot be reconstructed from the private
+helper context. Explicit `inherit`, `home`, tilde, and concrete path values are
 still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
-The current typed compatibility slice contains `working-directory`,
-`split-inherit-working-directory`, `tab-inherit-working-directory`,
-`window-inherit-font-size`, `window-new-tab-position`,
-`window-show-tab-bar`, `window-width`, `window-height`, `maximize`,
-`fullscreen`, `font-family`, `font-size`, the
-appearance keys listed below, the frontend-only `unfocused-split-opacity`,
-`unfocused-split-fill`, and `split-divider-color`,
-`scrollback-limit`, `confirm-close-surface`,
-`link-url`, `link-previews`, `config-file`, and a versioned dump of the
-finalized keybinding sets. The same structured envelope carries
-`initial-window`, `quit-after-last-window-closed`, and the exact
-nullable-millisecond form of `quit-after-last-window-closed-delay`.
+The current typed compatibility slice covers launch and window geometry,
+working-directory and inheritance policy, application lifetime, font and
+terminal appearance, scrollback, selection/clipboard/mouse/link behavior,
+resize-overlay presentation, included config files, and the finalized
+keybinding sets. The README and machine-checked parity ledger describe the
+individual keys. One strict schema-v1 document carries the whole slice,
+including nullable values such as `quit-after-last-window-closed-delay`; there
+is no separate defaults merge or partially populated snapshot.
 Appearance crosses threads as a
 value-only `TerminalAppearance`: terminal foreground/background, all 256
 palette defaults, selection and candidate/selected search colors, cursor
@@ -941,11 +937,13 @@ older configured fallback.
 Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
 only a boolean; it cannot represent the upstream tri-state in which explicit
-true/false ignores DEC mode 12. The pinned `+show-config` text output also
-precedes derived palette generation and loses Ghostty's explicit-entry mask,
-so `palette-generate` and `palette-harmonious` remain planned rather than being
-approximated. Static themes can contribute canonical appearance values through
-the pinned parser, while dynamic light/dark theme selection is not implemented.
+true/false ignores DEC mode 12. Ghostty applies palette generation and
+harmonization later in `termio.DerivedConfig`; the private projection carries
+the finalized base palette but not that derived palette or its explicit-entry
+mask. Therefore `palette-generate` and `palette-harmonious` remain planned
+rather than being approximated. Static themes can contribute canonical
+appearance values through the pinned parser, while dynamic light/dark theme
+selection is not implemented.
 
 Because the pinned terminal API cannot resize an existing scrollback
 allocation, the byte-valued Ghostty limit applies when a pane is created; a
@@ -1339,8 +1337,11 @@ The default CTest suite has focused layers for each ownership boundary:
   reload cleanup, and stale callback rejection on a private D-Bus daemon.
 - `ghostty-config-service` verifies standard paths, file/directory and include
   watches, atomic replacement, debounce, and retention of the last good value.
-- `ghostty-config-process-loader` verifies canonical and structured snapshot
-  parsing, the validation/default/current/structured/post-validation protocol,
+- `ghostty-config-export` verifies strict decoding of the complete schema-v1
+  frontend projection, including exact shapes and types, nullable fields,
+  canonical colors, the full unsigned scrollback range, and binding trees.
+- `ghostty-config-process-loader` verifies the four-process
+  validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact nullable/capped application-lifetime duration export and nullable
