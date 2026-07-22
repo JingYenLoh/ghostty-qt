@@ -59,6 +59,7 @@ private Q_SLOTS:
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void ignoresUnavailableAndMalformedSnapshotValues();
+    void removesOnlyTheInitialCommand();
     void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
@@ -1324,6 +1325,23 @@ void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()
                   .unit = ScrollbackLimitUnit::Lines},
                  80),
              std::numeric_limits<quint64>::max());
+}
+
+void LaunchOptionsTest::removesOnlyTheInitialCommand()
+{
+    LaunchOptions options;
+    options.workingDirectory = QStringLiteral("/configured");
+    options.fontSize = 17.0;
+    options.maximize = true;
+    options.program = {
+        QStringLiteral("command"), QStringLiteral("argument"),
+    };
+    options.hold = true;
+
+    LaunchOptions expected = options;
+    expected.program.clear();
+    expected.hold = false;
+    QVERIFY(withoutInitialCommand(options) == expected);
 }
 
 void LaunchOptionsTest::mapsCloseConfirmationModes()

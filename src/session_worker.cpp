@@ -467,10 +467,13 @@ bool SessionWorker::canonicalTextMayStartProcess(const QByteArray &payload)
     return text.has_value() && bytesMayStartProcess(*text);
 }
 
-void SessionWorker::initialize(const TerminalSessionLaunchOptions &options)
+bool SessionWorker::initialize(
+    const TerminalSessionLaunchOptions &options,
+    InitializationObserver observer)
 {
     if (vt_ != nullptr || running_) {
-        return;
+        if (observer) observer(false);
+        return false;
     }
 
     options_ = options;
@@ -531,15 +534,18 @@ void SessionWorker::initialize(const TerminalSessionLaunchOptions &options)
             this, &SessionWorker::compressScrollback);
 
     if (!createTerminal()) {
+        if (observer) observer(false);
         Q_EMIT errorOccurred(QStringLiteral("Failed to initialize libghostty-vt."));
         Q_EMIT sessionExited(127, 0, options_.hold);
-        return;
+        return false;
     }
 
+    if (observer) observer(true);
     publishFrame();
     if (!spawnChild()) {
         Q_EMIT sessionExited(127, 0, options_.hold);
     }
+    return true;
 }
 
 bool SessionWorker::createTerminal()

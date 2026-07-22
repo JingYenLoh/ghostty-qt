@@ -452,10 +452,12 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 
 bool TerminalWorkspace::initialize(
     const LaunchOptions &options,
-    TerminalSessionStartMode initialSessionStartMode)
+    TerminalSessionStartMode initialSessionStartMode,
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
 {
     if (initialized_) return false;
     initialized_ = true;
+    initialSessionCoordinator_ = std::move(initialSessionCoordinator);
     applyLaunchOptions(options);
     const TerminalCellMetrics metrics = terminalCellMetrics(
         options.fontFamily, options.fontSize);
@@ -896,7 +898,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
 {
     const PaneId paneId(nextPaneId_++);
     auto *pane = new TerminalPane(
-        options, this, std::move(initialGeometry), startMode);
+        options, this, std::move(initialGeometry), startMode,
+        initialSessionCoordinator_);
     pane->setVisible(false);
     pane->setWorkspaceActionHandler(
         [this, paneId](WorkspaceActionRequest request) {
@@ -1025,8 +1028,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
         if (sourcePane != nullptr) {
             options = sourcePane->tabLaunchOptions(effectiveOptions_);
         } else {
-            options.program.clear();
-            options.hold = false;
+            options = withoutInitialCommand(std::move(options));
         }
     }
     initialTabCreated_ = true;

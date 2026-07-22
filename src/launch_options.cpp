@@ -196,6 +196,13 @@ TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
     };
 }
 
+LaunchOptions withoutInitialCommand(LaunchOptions options)
+{
+    options.program.clear();
+    options.hold = false;
+    return options;
+}
+
 TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
     const LaunchOptions &options)
 {

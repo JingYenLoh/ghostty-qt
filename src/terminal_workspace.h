@@ -21,6 +21,7 @@
 #include <variant>
 #include <vector>
 
+class InitialSessionCoordinator;
 class TerminalPane;
 
 struct WorkspaceCloseAssessment {
@@ -69,7 +70,9 @@ public:
     bool initialize(
         const LaunchOptions &options,
         TerminalSessionStartMode initialSessionStartMode =
-            TerminalSessionStartMode::Immediate);
+            TerminalSessionStartMode::Immediate,
+        std::shared_ptr<InitialSessionCoordinator>
+            initialSessionCoordinator = {});
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
     void applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot);
@@ -327,6 +330,7 @@ private:
 
     static LaunchOptions defaultOptions_;
     LaunchOptions effectiveOptions_;
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     TabListModel tabModel_;
     WorkspaceActionDispatcher actionDispatcher_;
     std::vector<std::unique_ptr<Tab>> tabs_;

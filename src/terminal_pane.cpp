@@ -690,7 +690,8 @@ TerminalPane::TerminalPane(
     const LaunchOptions &options,
     QQuickItem *parent,
     std::optional<TerminalSessionGeometry> initialGeometry,
-    TerminalSessionStartMode startMode)
+    TerminalSessionStartMode startMode,
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
@@ -754,7 +755,8 @@ TerminalPane::TerminalPane(
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
     sessionOptions.initialGeometry = std::move(initialGeometry);
-    controller_ = new TerminalController(sessionOptions, this);
+    controller_ = new TerminalController(
+        sessionOptions, this, std::move(initialSessionCoordinator));
     controller_->setMouseReportingEnabled(options.mouseReporting);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
@@ -854,6 +856,13 @@ TerminalPane::TerminalPane(
             Q_EMIT titleChanged();
         }
     });
+    connect(controller_, &TerminalController::launchProgramChanged,
+            this, [this] {
+                if (!surfaceTitleOverride_.has_value()
+                    && !controller_->hasTitle()) {
+                    Q_EMIT titleChanged();
+                }
+            });
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
     connect(controller_, &TerminalController::terminalMouseTrackingChanged,
@@ -1109,8 +1118,8 @@ QString TerminalPane::title() const
         effective.has_value()) {
         return *effective;
     }
-    if (!options_.program.isEmpty()) {
-        return QFileInfo(options_.program.constFirst()).fileName();
+    if (!controller_->launchProgram().isEmpty()) {
+        return QFileInfo(controller_->launchProgram().constFirst()).fileName();
     }
     return QStringLiteral("Terminal");
 }
@@ -1231,9 +1240,7 @@ LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
         result.fontFamily = font_.family();
         result.fontSize = font_.pointSizeF();
     }
-    result.program.clear();
-    result.hold = false;
-    return result;
+    return withoutInitialCommand(std::move(result));
 }
 
 LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
@@ -1248,9 +1255,7 @@ LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
         QMutexLocker locker(&renderMutex_);
         result.fontSize = font_.pointSizeF();
     }
-    result.program.clear();
-    result.hold = false;
-    return result;
+    return withoutInitialCommand(std::move(result));
 }
 
 LaunchOptions TerminalPane::windowLaunchOptions(
@@ -1266,11 +1271,7 @@ LaunchOptions TerminalPane::windowLaunchOptions(
         QMutexLocker locker(&renderMutex_);
         result.fontSize = font_.pointSizeF();
     }
-    // The command supplied to the original process is a one-shot initial
-    // command. New windows use the configured shell/session command.
-    result.program.clear();
-    result.hold = false;
-    return result;
+    return withoutInitialCommand(std::move(result));
 }
 
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)

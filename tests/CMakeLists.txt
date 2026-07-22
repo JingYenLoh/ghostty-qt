@@ -165,6 +165,8 @@ qt_add_executable(test-application-controller
     ../src/ghostty_application_keybindings.h
     ../src/ghostty_global_shortcut_portal.cpp
     ../src/ghostty_global_shortcut_portal.h
+    ../src/initial_session_coordinator.cpp
+    ../src/initial_session_coordinator.h
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/session_worker.cpp
@@ -195,6 +197,7 @@ target_include_directories(test-application-controller PRIVATE
 target_compile_definitions(test-application-controller PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
     GHOSTTY_QT_RENDER_TEST_PROBE=1
+    GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
 )
 target_link_libraries(test-application-controller PRIVATE
     Qt6::Core
@@ -211,13 +214,32 @@ target_link_libraries(test-application-controller PRIVATE
     ghostty-qt-vt-adapter
     util
 )
-add_dependencies(test-application-controller ghostty-qt-terminfo)
+add_dependencies(test-application-controller
+    ghostty-qt-terminfo
+    pty-geometry-probe
+)
 add_test(NAME application-controller COMMAND test-application-controller)
 set_tests_properties(application-controller PROPERTIES
     TIMEOUT 30
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
 )
+
+qt_add_executable(test-initial-session-coordinator
+    test_initial_session_coordinator.cpp
+    ../src/initial_session_coordinator.cpp
+    ../src/initial_session_coordinator.h
+)
+target_include_directories(test-initial-session-coordinator PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-initial-session-coordinator PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME initial-session-coordinator
+    COMMAND test-initial-session-coordinator)
+set_tests_properties(initial-session-coordinator PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-terminal-types
     test_terminal_types.cpp
@@ -276,6 +298,8 @@ add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
     test_terminal_pane.cpp
+    ../src/initial_session_coordinator.cpp
+    ../src/initial_session_coordinator.h
     ../src/session_worker.cpp
     ../src/session_worker.h
     ../src/terminal_controller.cpp
@@ -326,6 +350,8 @@ qt_add_executable(test-terminal-workspace
     ../src/ghostty_application_keybindings.h
     ../src/ghostty_global_shortcut_portal.cpp
     ../src/ghostty_global_shortcut_portal.h
+    ../src/initial_session_coordinator.cpp
+    ../src/initial_session_coordinator.h
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/session_worker.cpp

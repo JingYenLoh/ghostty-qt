@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 
 class QChronoTimer;
@@ -36,6 +37,7 @@ class QSGNode;
 class QTimer;
 class QWheelEvent;
 class QQuickWindow;
+class InitialSessionCoordinator;
 class TerminalController;
 struct TerminalFontSizeRequest;
 struct TerminalKeyTableRequest;
@@ -67,7 +69,9 @@ public:
         QQuickItem *parent = nullptr,
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
-            TerminalSessionStartMode::Immediate);
+            TerminalSessionStartMode::Immediate,
+        std::shared_ptr<InitialSessionCoordinator>
+            initialSessionCoordinator = {});
     ~TerminalPane() override;
 
     QString title() const;

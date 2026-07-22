@@ -261,12 +261,17 @@ normal, maximized, or fullscreen Qt window state through the activation-aware
 presentation call. Qt Quick exposes only the dominant fullscreen state, so
 when both settings are enabled the retained state and a visibility observer
 restore maximized after either an action- or compositor-driven fullscreen
-exit. The creation transaction consumes the initial one-shot command and hold
-state only when the first-ever surface initializes.
-Suppressed startup can therefore retain those values for its first later local
-or remote window; every subsequent window clears them permanently. A surface
-source is the composite live
-workspace plus stable `PaneId`, because pane IDs are only workspace-local;
+exit. A separate session-start transaction consumes the initial one-shot
+command and hold state only when the first session successfully initializes
+libghostty-vt. A process-wide coordinator grants immutable program/hold
+snapshots in FIFO start order, commits a grant before child launch, and
+releases it if terminal initialization fails. Suppressed startup, window
+construction or presentation failure before terminal initialization, and a
+deferred root closed before exposure therefore retain the current values for
+the next eligible session. A later child-launch failure does not restore a
+committed grant; later sessions use ordinary launch defaults. A
+surface source is the composite live workspace plus stable `PaneId`, because
+pane IDs are only workspace-local;
 stale sources fall back to the focused or most recently active workspace, then
 to process defaults. Explicit `quit` read-only-assesses every live workspace,
 hosts at most one confirmation on the active window, changes no window on
@@ -351,11 +356,15 @@ platform data does not issue a second `requestActivate()`.
 Window creation is a checked ownership transaction. The workspace must be
 both visually associated with the root and inside its QObject ownership tree;
 guarded liveness checkpoints follow initialization, lifetime registration,
-presentation, optional activation, and creation observers. Successful surface
-initialization consumes Ghostty's one-shot first-surface state even if a later
-synchronous callback destroys the pair. Any failure tears down the remaining
-half, and standalone workspace destruction retires its now-invalid root on the
-next event turn before normal last-window policy runs. Nested synchronous
+presentation, optional activation, and creation observers. Those window
+operations do not themselves consume the first-session lease, but an immediate
+pane can initialize while the presentation transaction is still running. Once
+a session successfully initializes libghostty-vt, its lease remains committed
+even if child launch fails or a later callback destroys the pair; a failure
+before that boundary releases or never requests it. Any window-creation failure
+tears down the remaining half,
+and standalone workspace destruction retires its now-invalid root on the next
+event turn before normal last-window policy runs. Nested synchronous
 creation is rejected until the transaction completes, and every checkpoint
 revalidates both ownership relationships rather than checking only liveness.
 
@@ -379,8 +388,9 @@ across live reload, matching GApplication construction-time policy. Reloading
 new value. The primary activation handler itself remains unconditional, so a
 true launcher can create the first window in a primary that began false. An
 accepted activation creates synchronously from the primary's latest process
-options, retains one-shot program and hold only for the first-ever surface,
-and overlays only an actually
+options, and its pane participates in the same process-wide first-session
+lease. Only the first session that successfully initializes receives one-shot
+program and hold. The activation path overlays only an actually
 focused or still-valid last-focused pane cwd when configured, and keeps the
 configured font size. With no valid focus it keeps configured cwd rather than
 choosing an arbitrary live pane. That cwd/font asymmetry matches the pinned GTK
@@ -686,9 +696,12 @@ other terminal access remain serialized on the pane's worker thread.
 
 ## Session and environment
 
-The first pane receives the parsed command-line options. Without a command,
-the worker starts executable `$SHELL` or `/bin/sh`. Later surfaces start the
-default shell and derive launch-only values from the newest workspace options.
+Every pane receives the applicable current launch policy, while only the
+process's first successfully initialized session receives the one-shot initial
+program and hold values. A deferred pane destroyed before start does not
+consume them. Without an explicit command, the worker starts executable
+`$SHELL` or `/bin/sh`; later sessions follow the ordinary default-command
+policy.
 A new tab retains the exact action-target pane; an empty-context QML request
 uses the current tab's recorded active pane. When
 `tab-inherit-working-directory` is true, that source's latest nonempty reported
@@ -858,8 +871,8 @@ ratio are converted to a complete `TerminalSessionGeometry`. The same
 overflow-safe conversion drives later pane resizes, flooring the cell grid,
 rounding physical extents, bounding rows and columns to the PTY range, and
 rejecting nonfinite or not-yet-laid-out viewports. Only the initial `createNewTab`
-path moves this value through `TerminalPane` into the worker thread's captured
-launch options. `SessionWorker` applies it before both `libghostty-vt`
+path moves this value through `TerminalPane` into the controller-owned pending
+launch state. `SessionWorker` applies it before both `libghostty-vt`
 construction and `forkpty`, so the first frame, scrollback estimate, and an
 immediately executing child share the authoritative startup geometry.
 Linux exposes PTY pixel extents as 16-bit fields, so only synthetic surfaces
@@ -877,14 +890,18 @@ a valid exposed viewport to remain stable across two presented-frame
 boundaries, and starts exactly one lazily created worker with that newest
 geometry. An inactive first tab derives its pending leaf size from the
 workspace's current logical split tree rather than retaining hidden normal
-geometry. Runtime reload and resize state received
-while pending are folded into the launch snapshot. A typed controller-owned
+geometry. Runtime reload and resize state received while pending are folded
+into the launch snapshot. A typed controller-owned
 FIFO retains read-only, focus, input, selection, search, and other worker
 requests in their original order behind initialization. A shutdown before
 exposure cancels the launch and drops that FIFO; destroying the lightweight
 controller creates no worker, thread, terminal, PTY, or child. Close policy
-therefore sees no process to confirm. Normal windows, the bare-QML fallback,
-and every later tab or split retain immediate startup. The workspace-owned
+therefore sees no process to confirm. Every application-created controller,
+including later tabs and splits, shares the same first-session coordinator, so
+an immediate later pane can beat a constructed-but-deferred root. The winner
+commits its ticket immediately after libghostty-vt creation; a child-launch
+error does not restore it. Normal windows, the bare-QML fallback, and every
+later tab or split retain immediate scheduling. The workspace-owned
 `split-preserve-zoom` navigation
 bit also reloads without a pane or worker update and is consulted by each
 subsequent successful
@@ -1345,7 +1362,7 @@ The default CTest suite has focused layers for each ownership boundary:
   primary-owned window, then confirms clean retirement and explicit shutdown.
   A second flow starts directly with no QML roots, proves a false secondary is
   an inert successful launch, then uses a true secondary to create exactly one
-  first surface in the false-started primary. Config-on and config-off builds
+  first session in the false-started primary. Config-on and config-off builds
   also exercise an explicitly bootstrapped zero-window host plus real cold
   service discovery, activation, teardown, and restart on a private bus. A
   standard-endpoint fixture also verifies that a real fallback executable
@@ -1376,8 +1393,11 @@ non-bracketed policy, live options, control-byte encoding, confirmation-time
 mode changes, accepted-only activity and viewport changes, all GUI paste entry
 points, immutable worker IDs, multi-pane dialog correlation, queued payloads,
 stale responses, session/pane teardown, and preview bounds.
-Typed-action tests cover tab and split state transitions; process-controller
-tests cover multiwindow creation, inheritance, lifetime, and aggregate quit;
+Typed-action tests cover tab and split state transitions. Process-controller
+tests cover first-session FIFO lease commit/release, reload snapshots,
+close-before-start preservation, immediate-tab and reverse-root start order,
+single-start guarantees, immediate child rows/columns/PTY pixels, multiwindow
+creation, inheritance, lifetime, and aggregate quit.
 the offscreen tests validate QML startup, close/recreate shutdown, dialog
 shutdown, and scene-graph frame replacement in a headless environment, but
 they do not validate the hardware RHI path.

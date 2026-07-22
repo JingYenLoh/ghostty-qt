@@ -125,9 +125,11 @@ void TerminalController::connectWorkerRequestRelays()
 }
 
 TerminalController::TerminalController(
-    const TerminalSessionLaunchOptions &options, QObject *parent)
+    const TerminalSessionLaunchOptions &options, QObject *parent,
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
     : QObject(parent)
     , launchOptions_(options)
+    , initialSessionCoordinator_(std::move(initialSessionCoordinator))
     , currentDirectory_(options.inheritWorkingDirectory
                             ? QString{}
                             : options.workingDirectory)
@@ -148,6 +150,15 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
 
+    if (initialSessionCoordinator_ != nullptr) {
+        launchOptions_.program.clear();
+        launchOptions_.hold = false;
+        explicitProgram_ = false;
+        connect(initialSessionCoordinator_.get(),
+                &InitialSessionCoordinator::requestsChanged,
+                this, &TerminalController::tryStartSession,
+                Qt::QueuedConnection);
+    }
     connectWorkerRequestRelays();
 }
 
@@ -283,7 +294,7 @@ void TerminalController::enqueueWorkerRequest(WorkerRequest request)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     if (worker_.isNull()) {
-        if (sessionStartCancelled_ || closing_) {
+        if (sessionStartState_ == SessionStartState::Cancelled || closing_) {
             return;
         }
         pendingWorkerRequests_.push_back(std::move(request));
@@ -313,8 +324,21 @@ void TerminalController::createWorkerRuntime()
     connectWorkerResults(worker);
     connect(thread_, &QThread::finished, worker, &QObject::deleteLater);
     connect(thread_, &QThread::started, worker,
-            [worker, launchOptions = launchOptions_] {
-                worker->initialize(launchOptions);
+            [worker, launchOptions = launchOptions_,
+             coordinator = initialSessionCoordinator_,
+             ticket = initialSessionTicket_] {
+                worker->initialize(
+                    launchOptions,
+                    [coordinator, ticket](bool initialized) {
+                        if (coordinator == nullptr || !ticket.has_value()) {
+                            return;
+                        }
+                        const bool resolved = initialized
+                            ? coordinator->commit(*ticket)
+                            : coordinator->release(*ticket);
+                        Q_ASSERT(resolved);
+                        Q_UNUSED(resolved);
+                    });
             });
 
     std::vector<WorkerRequest> pending =
@@ -328,7 +352,7 @@ void TerminalController::createWorkerRuntime()
 bool TerminalController::startSession(
     std::optional<TerminalSessionGeometry> initialGeometry)
 {
-    if (sessionStarted_ || sessionStartCancelled_ || closing_) {
+    if (sessionStartState_ != SessionStartState::Idle || closing_) {
         return false;
     }
     if (initialGeometry.has_value()) {
@@ -336,7 +360,53 @@ bool TerminalController::startSession(
             normalizedTerminalSessionGeometry(*initialGeometry);
     }
 
-    sessionStarted_ = true;
+    sessionStartState_ = SessionStartState::WaitingForLease;
+    tryStartSession();
+    return true;
+}
+
+void TerminalController::tryStartSession()
+{
+    if (sessionStartState_ != SessionStartState::WaitingForLease
+        || closing_) {
+        return;
+    }
+
+    bool programChanged = false;
+    if (initialSessionCoordinator_ != nullptr) {
+        const InitialSessionCoordinator::RequestResult result =
+            initialSessionCoordinator_->request(initialSessionTicket_);
+        if (result.ticket.isValid()) {
+            initialSessionTicket_ = result.ticket;
+        }
+        switch (result.status) {
+        case InitialSessionCoordinator::RequestStatus::Waiting:
+            return;
+        case InitialSessionCoordinator::RequestStatus::Granted:
+            if (!result.payload.has_value()) {
+                sessionStartState_ = SessionStartState::Cancelled;
+                pendingWorkerRequests_.clear();
+                cancelInitialSessionRequest();
+                Q_EMIT errorOccurred(QStringLiteral(
+                    "The initial-session lease had no launch payload"));
+                return;
+            }
+            programChanged = applyInitialSessionPayload(*result.payload);
+            break;
+        case InitialSessionCoordinator::RequestStatus::Consumed:
+            initialSessionTicket_.reset();
+            break;
+        case InitialSessionCoordinator::RequestStatus::Invalid:
+            sessionStartState_ = SessionStartState::Cancelled;
+            pendingWorkerRequests_.clear();
+            cancelInitialSessionRequest();
+            Q_EMIT errorOccurred(QStringLiteral(
+                "The initial-session lease became invalid"));
+            return;
+        }
+    }
+
+    sessionStartState_ = SessionStartState::Started;
     const bool notifyRunning = !running_;
     const bool notifyActiveProcess = !activeProcess_;
     // Treat a starting child conservatively until the worker can identify an
@@ -347,14 +417,36 @@ bool TerminalController::startSession(
     createWorkerRuntime();
 
     QPointer<TerminalController> guard(this);
+    if (programChanged) {
+        Q_EMIT launchProgramChanged();
+        if (guard.isNull()) return;
+    }
     if (notifyRunning) {
         Q_EMIT runningChanged(true);
-        if (guard.isNull()) return true;
+        if (guard.isNull()) return;
     }
     if (notifyActiveProcess) {
         Q_EMIT activeProcessChanged(true);
     }
-    return true;
+}
+
+bool TerminalController::applyInitialSessionPayload(
+    const InitialSessionCoordinator::Payload &payload)
+{
+    const bool programChanged = launchOptions_.program != payload.program;
+    launchOptions_.program = payload.program;
+    launchOptions_.hold = payload.hold;
+    explicitProgram_ = !launchOptions_.program.isEmpty();
+    return programChanged;
+}
+
+void TerminalController::cancelInitialSessionRequest()
+{
+    if (initialSessionCoordinator_ != nullptr
+        && initialSessionTicket_.has_value()) {
+        (void) initialSessionCoordinator_->cancel(*initialSessionTicket_);
+        initialSessionTicket_.reset();
+    }
 }
 
 TerminalController::~TerminalController()
@@ -369,6 +461,7 @@ TerminalController::~TerminalController()
         thread_->quit();
         thread_->wait();
     }
+    cancelInitialSessionRequest();
     worker_.clear();
 }
 
@@ -386,8 +479,8 @@ void TerminalController::resizeTerminal(int columns, int rows,
                                         int cellWidthPixels, int cellHeightPixels,
                                         int surfaceWidthPixels, int surfaceHeightPixels)
 {
-    if (!sessionStarted_) {
-        if (!sessionStartCancelled_) {
+    if (sessionStartState_ != SessionStartState::Started) {
+        if (sessionStartState_ != SessionStartState::Cancelled) {
             launchOptions_.initialGeometry =
                 normalizedTerminalSessionGeometry({
                     .columns = columns,
@@ -407,7 +500,7 @@ void TerminalController::resizeTerminal(int columns, int rows,
 void TerminalController::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
-    if (!sessionStarted_) {
+    if (sessionStartState_ != SessionStartState::Started) {
         launchOptions_.runtime = options;
         return;
     }
@@ -416,9 +509,10 @@ void TerminalController::applyRuntimeOptions(
 
 void TerminalController::beginShutdown()
 {
-    if (!sessionStarted_) {
-        sessionStartCancelled_ = true;
+    if (sessionStartState_ != SessionStartState::Started) {
+        sessionStartState_ = SessionStartState::Cancelled;
         pendingWorkerRequests_.clear();
+        cancelInitialSessionRequest();
         return;
     }
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {

@@ -2,6 +2,7 @@
 
 #include "desktop_activation.h"
 #include "ghostty_application_keybindings.h"
+#include "initial_session_coordinator.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_workspace.h"
 
@@ -155,10 +156,17 @@ ApplicationController::ApplicationController(
     : QObject(parent)
     , windowFactory_(std::move(windowFactory))
     , effectiveOptions_(std::move(effectiveOptions))
+    , initialSessionCoordinator_(
+          std::make_shared<InitialSessionCoordinator>(
+              InitialSessionCoordinator::Payload{
+                  .program = effectiveOptions_.program,
+                  .hold = effectiveOptions_.hold,
+              }))
     , keybindings_(std::make_unique<GhosttyApplicationKeybindings>(
           effectiveOptions_, enableGlobalShortcutsPortal))
 {
-    TerminalWorkspace::setDefaultLaunchOptions(effectiveOptions_);
+    TerminalWorkspace::setDefaultLaunchOptions(
+        withoutInitialCommand(effectiveOptions_));
     lifetime_.applyLaunchOptions(effectiveOptions_);
 
     connect(&lifetime_, &ApplicationLifetimeController::quitRequested,
@@ -233,7 +241,7 @@ ApplicationController::createInitialWindow(
     }
 
     auto created = createWindow(effectiveOptions_, activation);
-    if (created.has_value() || hasCreatedSurface_) {
+    if (created.has_value()) {
         startupWindowHandled_ = true;
     }
     return created;
@@ -356,11 +364,14 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         ? TerminalSessionStartMode::Deferred
         : TerminalSessionStartMode::Immediate;
     const bool initialized = guardedWorkspace->initialize(
-        options, initialSessionStartMode);
-    // Match Ghostty's App.first lifecycle. A successfully initialized surface
-    // consumes the one-shot initial command even if a synchronous observer
-    // destroys the GUI pair before a later registration checkpoint.
-    if (initialized) hasCreatedSurface_ = true;
+        withoutInitialCommand(options), initialSessionStartMode,
+        initialSessionCoordinator_);
+    // The initial-window request and first successful session initialization
+    // are independent one-shot decisions. Reaching workspace initialization
+    // handles startup even if presentation later destroys the GUI pair.
+    if (initialized && !startupWindowHandled_) {
+        startupWindowHandled_ = true;
+    }
     if (!pairIsValid()) {
         discardCreated();
         return std::unexpected(
@@ -514,8 +525,6 @@ LaunchOptions ApplicationController::nextWindowOptions(
     TerminalWorkspace *sourceWorkspace,
     PaneId sourcePaneId) const
 {
-    if (!hasCreatedSurface_) return effectiveOptions_;
-
     TerminalWorkspace *const fallback = activeWorkspace();
     TerminalWorkspace *source = sourceWorkspace;
     if (!containsWorkspace(source)) {
@@ -537,22 +546,17 @@ LaunchOptions ApplicationController::nextWindowOptions(
         }
     }
 
-    LaunchOptions result = effectiveOptions_;
-    result.program.clear();
-    result.hold = false;
-    return result;
+    return effectiveOptions_;
 }
 
 LaunchOptions ApplicationController::activationWindowOptions() const
 {
-    if (!hasCreatedSurface_) return effectiveOptions_;
-
     LaunchOptions result = effectiveOptions_;
-    if (TerminalWorkspace *const source = focusedWorkspace();
-        source != nullptr && result.windowInheritWorkingDirectory) {
+    TerminalWorkspace *const source = focusedWorkspace();
+    if (source != nullptr && result.windowInheritWorkingDirectory) {
         // A normal Ghostty GApplication activation has no parent surface.
-        // Its GTK surface setup still overlays the globally focused surface's
-        // cwd, but parent-only font inheritance does not run.
+        // Its GTK surface setup still overlays the globally focused
+        // surface's cwd, but parent-only font inheritance does not run.
         LaunchOptions directoryProbe = result;
         directoryProbe.windowInheritFontSize = false;
         if (const auto inherited =
@@ -562,20 +566,24 @@ LaunchOptions ApplicationController::activationWindowOptions() const
                 inherited->inheritWorkingDirectory;
         }
     }
-    result.program.clear();
-    result.hold = false;
     return result;
 }
 
 void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
 {
+    (void) initialSessionCoordinator_->updatePayload({
+        .program = options.program,
+        .hold = options.hold,
+    });
     effectiveOptions_ = options;
-    TerminalWorkspace::setDefaultLaunchOptions(effectiveOptions_);
+    const LaunchOptions ordinaryOptions =
+        withoutInitialCommand(effectiveOptions_);
+    TerminalWorkspace::setDefaultLaunchOptions(ordinaryOptions);
     lifetime_.applyLaunchOptions(effectiveOptions_);
     keybindings_->applyLaunchOptions(effectiveOptions_);
     for (const QPointer<TerminalWorkspace> &workspace : workspaceSnapshot()) {
         if (workspace != nullptr) {
-            workspace->applyLaunchOptions(effectiveOptions_);
+            workspace->applyLaunchOptions(ordinaryOptions);
         }
     }
 }

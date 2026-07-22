@@ -190,6 +190,10 @@ struct LaunchOptions {
     bool operator==(const LaunchOptions &) const = default;
 };
 
+// Program and hold form Ghostty's process-wide one-shot initial-session
+// payload. Every ordinary pane keeps the remaining launch policy unchanged.
+[[nodiscard]] LaunchOptions withoutInitialCommand(LaunchOptions options);
+
 // Explicitly project the broad application/pane configuration onto the
 // smaller value types allowed to cross the session-thread boundary.
 TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(

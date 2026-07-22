@@ -11,6 +11,7 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
 #include <memory>
 
 class QSocketNotifier;
@@ -30,9 +31,17 @@ public:
     // still decodes and writes only on the worker thread.
     static bool canonicalBytesMayStartProcess(const QByteArray &payload);
     static bool canonicalTextMayStartProcess(const QByteArray &payload);
+    using InitializationObserver = std::move_only_function<void(bool)>;
+
+    // True means libghostty-vt was created for this worker. A later child
+    // launch failure is reported through the existing signals without
+    // changing that result. The optional one-shot observer runs immediately
+    // after terminal creation succeeds or fails, before child launch begins.
+    bool initialize(
+        const TerminalSessionLaunchOptions &options,
+        InitializationObserver observer = {});
 
 public Q_SLOTS:
-    void initialize(const TerminalSessionLaunchOptions &options);
     // Apply the worker-owned live state: terminal appearance and regex URL
     // matching. Font, keybindings, previews, and future-pane scrollback remain
     // owned by TerminalPane.

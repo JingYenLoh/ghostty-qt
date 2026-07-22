@@ -17,6 +17,7 @@
 #include <vector>
 
 class GhosttyApplicationKeybindings;
+class InitialSessionCoordinator;
 class QQmlEngine;
 class QQuickWindow;
 class QScreen;
@@ -125,6 +126,7 @@ private:
 
     WindowFactory windowFactory_;
     LaunchOptions effectiveOptions_;
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     ApplicationLifetimeController lifetime_;
     std::unique_ptr<GhosttyApplicationKeybindings> keybindings_;
     std::vector<WindowRecord> windows_;
@@ -133,7 +135,6 @@ private:
     QSet<TerminalWorkspace *> awaitingShutdown_;
     QuitState quitState_ = QuitState::Idle;
     bool startupWindowHandled_ = false;
-    bool hasCreatedSurface_ = false;
     bool windowCreationInProgress_ = false;
     bool startingApplicationShutdown_ = false;
     bool quitRehostScheduled_ = false;

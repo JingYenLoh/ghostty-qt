@@ -1,5 +1,6 @@
 #pragma once
 
+#include "initial_session_coordinator.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 
@@ -11,6 +12,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -29,7 +31,9 @@ class TerminalController final : public QObject {
 
 public:
     explicit TerminalController(const TerminalSessionLaunchOptions &options,
-                                QObject *parent = nullptr);
+                                QObject *parent = nullptr,
+                                std::shared_ptr<InitialSessionCoordinator>
+                                    initialSessionCoordinator = {});
     ~TerminalController() override;
 
     QString title() const
@@ -51,15 +55,23 @@ public:
     bool mouseReportingEnabled() const { return mouseReportingEnabled_; }
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
-    bool sessionStarted() const { return sessionStarted_; }
+    bool sessionStarted() const
+    {
+        return sessionStartState_ == SessionStartState::Started;
+    }
+    [[nodiscard]] const QStringList &launchProgram() const
+    {
+        return launchOptions_.program;
+    }
+    [[nodiscard]] bool launchHold() const { return launchOptions_.hold; }
     [[nodiscard]] const std::optional<TerminalSessionGeometry> &
     launchGeometry() const
     {
         return launchOptions_.initialGeometry;
     }
-    // Starts the session exactly once; exposed for deferred frontend
-    // scheduling. A supplied geometry replaces every hidden/pre-presentation
-    // resize coalesced into the launch snapshot.
+    // Accepts one start request. The actual worker may wait for the
+    // application-wide initial-session lease. A supplied geometry replaces
+    // every hidden/pre-presentation resize coalesced into the launch snapshot.
     [[nodiscard]] bool startSession(
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     bool selectionAvailable() const { return selectionAvailable_; }
@@ -140,6 +152,7 @@ Q_SIGNALS:
     void activeProcessChanged(bool active);
     void selectionAvailableChanged(bool available);
     void readOnlyChanged(bool readOnly);
+    void launchProgramChanged();
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
     void bell();
@@ -208,6 +221,12 @@ Q_SIGNALS:
 
 private:
     using WorkerRequest = std::function<void(SessionWorker &)>;
+    enum class SessionStartState : quint8 {
+        Idle,
+        WaitingForLease,
+        Started,
+        Cancelled,
+    };
 
     template<typename... SignalArgs, typename... WorkerArgs>
     void relayWorkerRequest(
@@ -217,12 +236,18 @@ private:
     void enqueueWorkerRequest(WorkerRequest request);
     void createWorkerRuntime();
     void connectWorkerResults(SessionWorker *worker);
+    void tryStartSession();
+    [[nodiscard]] bool applyInitialSessionPayload(
+        const InitialSessionCoordinator::Payload &payload);
+    void cancelInitialSessionRequest();
     void notePotentialActivity();
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
     quint64 nextSearchSelectionRequestId();
 
     TerminalSessionLaunchOptions launchOptions_;
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
+    std::optional<InitialSessionCoordinator::Ticket> initialSessionTicket_;
     QThread *thread_ = nullptr;
     QPointer<SessionWorker> worker_;
     std::vector<WorkerRequest> pendingWorkerRequests_;
@@ -237,8 +262,7 @@ private:
     bool readOnly_ = false;
     int pendingSelectAllRequests_ = 0;
     bool closing_ = false;
-    bool sessionStarted_ = false;
-    bool sessionStartCancelled_ = false;
+    SessionStartState sessionStartState_ = SessionStartState::Idle;
     quint64 nextSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;

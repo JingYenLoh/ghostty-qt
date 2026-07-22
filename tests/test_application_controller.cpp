@@ -24,7 +24,9 @@
 #include <cmath>
 #include <expected>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <utility>
 
 namespace {
 
@@ -122,6 +124,33 @@ struct WindowFactoryHarness {
     }
 };
 
+class ScopedEnvironmentVariable final {
+public:
+    ScopedEnvironmentVariable(QByteArray name, QByteArray value)
+        : name_(std::move(name))
+        , wasSet_(qEnvironmentVariableIsSet(name_.constData()))
+        , previousValue_(qgetenv(name_.constData()))
+    {
+        (void) qputenv(name_.constData(), value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        if (wasSet_) {
+            (void) qputenv(name_.constData(), previousValue_);
+        } else {
+            (void) qunsetenv(name_.constData());
+        }
+    }
+
+    Q_DISABLE_COPY_MOVE(ScopedEnvironmentVariable)
+
+private:
+    QByteArray name_;
+    bool wasSet_ = false;
+    QByteArray previousValue_;
+};
+
 LaunchOptions baseOptions(const QString &directory)
 {
     LaunchOptions options;
@@ -140,6 +169,13 @@ TerminalPane *onlyPane(TerminalWorkspace *workspace)
     const QList<TerminalPane *> panes =
         workspace->findChildren<TerminalPane *>();
     return panes.size() == 1 ? panes.constFirst() : nullptr;
+}
+
+TerminalController *onlyController(TerminalWorkspace *workspace)
+{
+    TerminalPane *const pane = onlyPane(workspace);
+    return pane != nullptr
+        ? pane->findChild<TerminalController *>() : nullptr;
 }
 
 PaneId activePaneId(TerminalWorkspace *workspace)
@@ -196,8 +232,14 @@ private Q_SLOTS:
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow();
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
-    void suppressedStartupPreservesFirstSurfaceOptions();
-    void failedLazyCreationDoesNotConsumeFirstSurfaceOptions();
+    void suppressedStartupPreservesFirstSessionOptions();
+    void failedLazyCreationDoesNotConsumeFirstSession();
+    void terminalInitializationFailurePromotesNextSession();
+    void waitingControllersCancelWithoutCreatingWorkers();
+    void immediateTabWinsInitialSessionLease();
+    void reverseExposureGrantsInitialSessionToFirstStarter();
+    void ordinaryInheritanceDoesNotWaitForFirstSession();
+    void deferredRequestsRemainOrderedAcrossStart();
     void ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy();
     void successfulReplacementCancelsDelayedQuit();
     void sourceLessActivationMatchesUpstreamInheritance();
@@ -206,7 +248,7 @@ private Q_SLOTS:
     void sourceLessActivationProjectsDesktopContext();
     void reentrantWindowCreationIsRejected();
     void showDestructionCannotLeaveHalfRegisteredWindow();
-    void failedInitialPresentationConsumesStartupDecision();
+    void failedInitialPresentationPreservesFirstSession();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
     void pendingQuitRehostsAfterItsWindowDisappears();
     void failedReplacementLeavesDelayedQuitArmed();
@@ -287,40 +329,32 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry_dat
 {
     QTest::addColumn<bool>("maximize");
     QTest::addColumn<bool>("fullscreen");
-    QTest::addColumn<bool>("switchTabBeforeResize");
 
-    QTest::newRow("maximized") << true << false << false;
-    QTest::newRow("fullscreen-hidden-first-tab") << false << true << true;
-    QTest::newRow("fullscreen-restores-maximized") << true << true << false;
+    QTest::newRow("maximized") << true << false;
+    QTest::newRow("fullscreen") << false << true;
+    QTest::newRow("fullscreen-restores-maximized") << true << true;
 }
 
 void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
 {
     QFETCH(bool, maximize);
     QFETCH(bool, fullscreen);
-    QFETCH(bool, switchTabBeforeResize);
 
-    QTemporaryDir temporary;
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/deferred-geometry-XXXXXX")));
     QVERIFY(temporary.isValid());
     const QString resultPath = temporary.filePath(QStringLiteral("winsize"));
-    const QString startPath = temporary.filePath(QStringLiteral("starts"));
-    const QString inputPath = temporary.filePath(QStringLiteral("input"));
 
     WindowFactoryHarness harness;
     harness.simulatedCompositorSize = QSize(913, 617);
-    harness.createTabAtPresentation = switchTabBeforeResize;
     LaunchOptions options = baseOptions(QDir::currentPath());
     options.windowWidth = 40;
     options.windowHeight = 12;
     options.maximize = maximize;
     options.fullscreen = fullscreen;
     options.program = {
-        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
-        QStringLiteral(
-            "printf '%s\\n' \"$$\" >> \"$1\"; IFS= read -r line; "
-            "stty size > \"$0\"; printf '%s' \"$line\" > \"$2\"; "
-            "exec sleep 30"),
-        resultPath, startPath, inputPath,
+        QStringLiteral(GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE),
+        resultPath,
     };
 
     ApplicationController application(options, harness.factory(), false);
@@ -347,10 +381,6 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
     QVERIFY(controller->findChild<QThread *>() == nullptr);
     QVERIFY(!initialPane->resizeOverlayVisible());
     QSignalSpy runningChanged(controller, &TerminalController::runningChanged);
-    controller->setReadOnly(true);
-    controller->sendRawText(QByteArrayLiteral("must-not-arrive\n"));
-    controller->setReadOnly(false);
-    controller->sendRawText(QByteArrayLiteral("queued-before-start\n"));
 
     QTRY_VERIFY_WITH_TIMEOUT(created->window->isExposed(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
@@ -364,49 +394,30 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
             created->window->devicePixelRatio());
     QVERIFY(expected.has_value());
     QVERIFY(controller->launchGeometry() == expected);
-    QCOMPARE(runningChanged.count(), 1);
-    QCOMPARE(runningChanged.constFirst().constFirst().toBool(), true);
     QTest::qWait(25);
     QVERIFY(!initialPane->resizeOverlayVisible());
 
-    // New tabs follow Ghostty's command-inheritance policy and do not replay
-    // the initial custom command, so this marker belongs only to the deferred
-    // first pane even in the hidden-first-tab row.
-    constexpr int expectedStarts = 1;
-    const auto startCount = [&startPath] {
-        QFile starts(startPath);
-        if (!starts.open(QIODevice::ReadOnly)) return 0;
-        const QByteArray contents = starts.readAll().simplified();
-        return contents.isEmpty()
-            ? 0 : static_cast<int>(contents.split(' ').size());
-    };
-    QTRY_COMPARE_WITH_TIMEOUT(startCount(), expectedStarts, 2000);
-    const auto inputContents = [&inputPath] {
-        QFile input(inputPath);
-        return input.open(QIODevice::ReadOnly)
-            ? input.readAll() : QByteArray{};
-    };
-    QTRY_COMPARE_WITH_TIMEOUT(
-        inputContents(), QByteArrayLiteral("queued-before-start"), 2000);
-
-    // Only the deferred initial pane receives the queued probe input, so this
-    // geometry record cannot be overwritten by the deliberately immediate
-    // second tab used by the hidden-pane case.
-    QVERIFY(QFileInfo::exists(resultPath));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(resultPath), 2000);
     QFile result(resultPath);
     QVERIFY(result.open(QIODevice::ReadOnly));
     const QList<QByteArray> dimensions =
-        result.readAll().simplified().split(' ');
-    QCOMPARE(dimensions.size(), 2);
-    QCOMPARE(dimensions.at(0).toInt(), expected->rows);
+        result.readAll().simplified().split(':');
+    QCOMPARE(dimensions.size(), 5);
+    QCOMPARE(dimensions.at(0), QByteArrayLiteral("ghostty-qt-pty-geometry"));
     QCOMPARE(dimensions.at(1).toInt(), expected->columns);
+    QCOMPARE(dimensions.at(2).toInt(), expected->rows);
+    QCOMPARE(dimensions.at(3).toInt(), expected->surfaceWidthPixels);
+    QCOMPARE(dimensions.at(4).toInt(), expected->surfaceHeightPixels);
 
     QEvent duplicateExpose(QEvent::Expose);
     QCoreApplication::sendEvent(created->window, &duplicateExpose);
     created->window->resize(created->window->size() + QSize(1, 1));
     QTest::qWait(25);
-    QCOMPARE(runningChanged.count(), 1);
-    QCOMPARE(startCount(), expectedStarts);
+    const auto startNotifications = std::ranges::count_if(
+        runningChanged, [](const QList<QVariant> &arguments) {
+            return arguments.constFirst().toBool();
+        });
+    QCOMPARE(startNotifications, 1);
     const std::optional<TerminalSessionGeometry> launchGeometry =
         controller->launchGeometry();
     QVERIFY(!controller->startSession(TerminalSessionGeometry{
@@ -953,7 +964,7 @@ void ApplicationControllerTest::workspaceLossRetiresOwningWindow()
     QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
 }
 
-void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
+void ApplicationControllerTest::suppressedStartupPreservesFirstSessionOptions()
 {
     WindowFactoryHarness localHarness;
     LaunchOptions options = baseOptions(QDir::currentPath());
@@ -989,8 +1000,14 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
     QTRY_COMPARE_WITH_TIMEOUT(local.windowCount(), 1, 1000);
     const ApplicationWindow firstWindow = local.windows().constFirst();
     const TerminalWorkspace *const first = firstWindow.workspace;
-    QCOMPARE(first->effectiveLaunchOptions().program, reloaded.program);
-    QVERIFY(first->effectiveLaunchOptions().hold);
+    QVERIFY(first->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!first->effectiveLaunchOptions().hold);
+    TerminalController *const firstController =
+        onlyController(firstWindow.workspace);
+    QVERIFY(firstController != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        firstController->launchProgram(), reloaded.program, 2000);
+    QVERIFY(firstController->launchHold());
     QCOMPARE(first->effectiveLaunchOptions().fontSize, 19.0);
     QCOMPARE(presentationWindowStates(firstWindow.window->windowStates()),
              Qt::WindowStates(Qt::WindowFullScreen));
@@ -1007,6 +1024,12 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
         local.windows().constLast().workspace;
     QVERIFY(second->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!second->effectiveLaunchOptions().hold);
+    TerminalController *const secondController =
+        onlyController(local.windows().constLast().workspace);
+    QVERIFY(secondController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(secondController->sessionStarted(), 2000);
+    QVERIFY(secondController->launchProgram().isEmpty());
+    QVERIFY(!secondController->launchHold());
 
     WindowFactoryHarness activationHarness;
     ApplicationController activated(
@@ -1018,9 +1041,14 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
         activated.windows().constFirst();
     const TerminalWorkspace *const activatedFirst =
         activatedFirstWindow.workspace;
-    QCOMPARE(activatedFirst->effectiveLaunchOptions().program,
-             options.program);
-    QVERIFY(activatedFirst->effectiveLaunchOptions().hold);
+    QVERIFY(activatedFirst->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!activatedFirst->effectiveLaunchOptions().hold);
+    TerminalController *const activatedFirstController =
+        onlyController(activatedFirstWindow.workspace);
+    QVERIFY(activatedFirstController != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        activatedFirstController->launchProgram(), options.program, 2000);
+    QVERIFY(activatedFirstController->launchHold());
     QCOMPARE(presentationWindowStates(
                  activatedFirstWindow.window->windowStates()),
              Qt::WindowStates(Qt::WindowFullScreen));
@@ -1033,9 +1061,16 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSurfaceOptions()
                 ->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!activated.windows().constLast().workspace
                  ->effectiveLaunchOptions().hold);
+    TerminalController *const activatedSecondController =
+        onlyController(activated.windows().constLast().workspace);
+    QVERIFY(activatedSecondController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        activatedSecondController->sessionStarted(), 2000);
+    QVERIFY(activatedSecondController->launchProgram().isEmpty());
+    QVERIFY(!activatedSecondController->launchHold());
 }
 
-void ApplicationControllerTest::failedLazyCreationDoesNotConsumeFirstSurfaceOptions()
+void ApplicationControllerTest::failedLazyCreationDoesNotConsumeFirstSession()
 {
     WindowFactoryHarness harness;
     harness.failOnCall = 1;
@@ -1054,10 +1089,335 @@ void ApplicationControllerTest::failedLazyCreationDoesNotConsumeFirstSurfaceOpti
     QVERIFY(controller.activateNoCommand());
     QCOMPARE(harness.calls, 2);
     QCOMPARE(controller.windowCount(), 1);
-    const LaunchOptions &actual = controller.windows().constFirst().workspace
-                                      ->effectiveLaunchOptions();
-    QCOMPARE(actual.program, options.program);
-    QVERIFY(actual.hold);
+    const ApplicationWindow actual = controller.windows().constFirst();
+    QVERIFY(actual.workspace->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!actual.workspace->effectiveLaunchOptions().hold);
+    TerminalController *const terminal = onlyController(actual.workspace);
+    QVERIFY(terminal != nullptr);
+    QCOMPARE(terminal->launchProgram(), options.program);
+    QVERIFY(terminal->launchHold());
+}
+
+void ApplicationControllerTest::terminalInitializationFailurePromotesNextSession()
+{
+    const InitialSessionCoordinator::Payload initialPayload{
+        .program = {QStringLiteral("/bin/true")},
+        .hold = true,
+    };
+    const auto coordinator =
+        std::make_shared<InitialSessionCoordinator>(initialPayload);
+
+    TerminalSessionLaunchOptions rejectedOptions;
+    rejectedOptions.workingDirectory = QDir::currentPath();
+    rejectedOptions.runtime.appearance.foregroundColor = QColor{};
+    TerminalController rejected(rejectedOptions, nullptr, coordinator);
+
+    TerminalSessionLaunchOptions acceptedOptions;
+    acceptedOptions.workingDirectory = QDir::currentPath();
+    TerminalController accepted(acceptedOptions, nullptr, coordinator);
+
+    QSignalSpy rejectedError(&rejected,
+                             &TerminalController::errorOccurred);
+    QSignalSpy rejectedExit(&rejected,
+                            &TerminalController::sessionExited);
+    QSignalSpy acceptedError(&accepted,
+                             &TerminalController::errorOccurred);
+
+    QVERIFY(rejected.startSession());
+    QVERIFY(accepted.startSession());
+
+    QTRY_COMPARE_WITH_TIMEOUT(rejectedError.count(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(rejectedExit.count(), 1, 2000);
+    QVERIFY(rejectedError.constFirst().constFirst().toString().contains(
+        QStringLiteral("Failed to initialize libghostty-vt")));
+    QTRY_VERIFY_WITH_TIMEOUT(accepted.sessionStarted(), 2000);
+    QCOMPARE(accepted.launchProgram(), initialPayload.program);
+    QVERIFY(accepted.launchHold());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        coordinator->state(), InitialSessionCoordinator::State::Consumed,
+        2000);
+    QVERIFY(acceptedError.isEmpty());
+}
+
+void ApplicationControllerTest::waitingControllersCancelWithoutCreatingWorkers()
+{
+    const auto coordinator = std::make_shared<InitialSessionCoordinator>();
+    const InitialSessionCoordinator::RequestResult holder =
+        coordinator->request();
+    QVERIFY(holder.granted());
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+
+    auto cancelled =
+        std::make_unique<TerminalController>(options, nullptr, coordinator);
+    QVERIFY(cancelled->startSession());
+    QVERIFY(!cancelled->sessionStarted());
+    QVERIFY(cancelled->findChild<QThread *>() == nullptr);
+    cancelled->beginShutdown();
+    QVERIFY(!cancelled->sessionStarted());
+    QVERIFY(cancelled->findChild<QThread *>() == nullptr);
+
+    {
+        auto destroyed =
+            std::make_unique<TerminalController>(options, nullptr, coordinator);
+        QVERIFY(destroyed->startSession());
+        QVERIFY(!destroyed->sessionStarted());
+        QVERIFY(destroyed->findChild<QThread *>() == nullptr);
+    }
+
+    QVERIFY(coordinator->release(holder.ticket));
+    QCOMPARE(coordinator->state(), InitialSessionCoordinator::State::Available);
+    const InitialSessionCoordinator::RequestResult next =
+        coordinator->request();
+    QVERIFY(next.granted());
+    QVERIFY(coordinator->release(next.ticket));
+}
+
+void ApplicationControllerTest::immediateTabWinsInitialSessionLease()
+{
+    const ScopedEnvironmentVariable shell(
+        QByteArrayLiteral("SHELL"), QByteArrayLiteral("/bin/sh"));
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/initial-session-tab-XXXXXX")));
+    QVERIFY(temporary.isValid());
+    const QString marker = temporary.filePath(QStringLiteral("starts"));
+
+    WindowFactoryHarness harness;
+    harness.createTabAtPresentation = true;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.fullscreen = true;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("printf 'initial\\n' >> \"$0\""), marker,
+    };
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+
+    TerminalPane *deferredPane = nullptr;
+    TerminalPane *immediatePane = nullptr;
+    const QList<TerminalPane *> panes =
+        created->workspace->findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    for (TerminalPane *const pane : panes) {
+        if (terminalPaneRenderProbe(pane).initialGeometry.has_value()) {
+            deferredPane = pane;
+        } else {
+            immediatePane = pane;
+        }
+    }
+    QVERIFY(deferredPane != nullptr);
+    QVERIFY(immediatePane != nullptr);
+
+    TerminalController *const immediate =
+        immediatePane->findChild<TerminalController *>();
+    TerminalController *const deferred =
+        deferredPane->findChild<TerminalController *>();
+    QVERIFY(immediate != nullptr);
+    QVERIFY(deferred != nullptr);
+    QVERIFY(immediate->sessionStarted());
+    QCOMPARE(immediate->launchProgram(), options.program);
+    QVERIFY(immediate->launchHold());
+    QCOMPARE(immediatePane->title(), QStringLiteral("sh"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(deferred->sessionStarted(), 2000);
+    QVERIFY(deferred->launchProgram().isEmpty());
+    QVERIFY(!deferred->launchHold());
+    QCOMPARE(deferredPane->title(), QStringLiteral("Terminal"));
+    const QStringList titles = created->workspace->tabTitles();
+    QVERIFY(titles.contains(QStringLiteral("sh")));
+    QVERIFY(titles.contains(QStringLiteral("Terminal")));
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(marker), 2000);
+    QFile starts(marker);
+    QVERIFY(starts.open(QIODevice::ReadOnly));
+    QCOMPARE(starts.readAll(), QByteArrayLiteral("initial\n"));
+}
+
+void ApplicationControllerTest::reverseExposureGrantsInitialSessionToFirstStarter()
+{
+    const ScopedEnvironmentVariable shell(
+        QByteArrayLiteral("SHELL"), QByteArrayLiteral("/bin/sh"));
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/initial-session-windows-XXXXXX")));
+    QVERIFY(temporary.isValid());
+    const QString marker = temporary.filePath(QStringLiteral("starts"));
+
+    int factoryCalls = 0;
+    bool suppressDeferredExposure = true;
+    ApplicationController::WindowFactory factory = [&]
+        -> std::expected<ApplicationWindow, QString> {
+        ++factoryCalls;
+        auto *window = new QQuickWindow;
+        window->resize(800, 500);
+        auto *workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        workspace->setSize(window->size());
+        if (factoryCalls == 1) {
+            connect(window, &QWindow::visibleChanged, window,
+                    [window, &suppressDeferredExposure](bool visible) {
+                        if (visible && suppressDeferredExposure) {
+                            window->hide();
+                        }
+                    });
+        }
+        return ApplicationWindow{window, workspace};
+    };
+
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.fullscreen = true;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("printf 'initial\\n' >> \"$0\""), marker,
+    };
+    ApplicationController controller(options, std::move(factory), false);
+
+    const auto deferredWindow = controller.createInitialWindow();
+    QVERIFY(deferredWindow.has_value());
+    TerminalController *const deferredController =
+        onlyController(deferredWindow->workspace);
+    QVERIFY(deferredController != nullptr);
+    QVERIFY(!deferredController->sessionStarted());
+
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(factoryCalls, 2);
+    const ApplicationWindow winningWindow = controller.windows().constLast();
+    TerminalController *const winningController =
+        onlyController(winningWindow.workspace);
+    QVERIFY(winningController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(winningController->sessionStarted(), 2000);
+    QCOMPARE(winningController->launchProgram(), options.program);
+    QVERIFY(winningController->launchHold());
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(marker), 2000);
+
+    // The pane scheduler normally supplies this geometry after exposure. Call
+    // the same public one-shot boundary directly so the test controls root
+    // start order independently of the offscreen compositor's window limit.
+    suppressDeferredExposure = false;
+    QVERIFY(deferredController->startSession(TerminalSessionGeometry{
+        .columns = 80,
+        .rows = 24,
+        .cellWidthPixels = 8,
+        .cellHeightPixels = 16,
+        .surfaceWidthPixels = 640,
+        .surfaceHeightPixels = 384,
+    }));
+    QTRY_VERIFY_WITH_TIMEOUT(deferredController->sessionStarted(), 2000);
+    QVERIFY(deferredController->launchProgram().isEmpty());
+    QVERIFY(!deferredController->launchHold());
+
+    QFile starts(marker);
+    QVERIFY(starts.open(QIODevice::ReadOnly));
+    QCOMPARE(starts.readAll(), QByteArrayLiteral("initial\n"));
+}
+
+void ApplicationControllerTest::ordinaryInheritanceDoesNotWaitForFirstSession()
+{
+    QTemporaryDir directories(QDir::current().filePath(
+        QStringLiteral("tmp/pre-session-inheritance-XXXXXX")));
+    QVERIFY(directories.isValid());
+    const QString sourceDirectory =
+        QDir(directories.path()).filePath(QStringLiteral("source"));
+    const QString configuredDirectory =
+        QDir(directories.path()).filePath(QStringLiteral("configured"));
+    QVERIFY(QDir().mkpath(sourceDirectory));
+    QVERIFY(QDir().mkpath(configuredDirectory));
+
+    int factoryCalls = 0;
+    ApplicationController::WindowFactory factory = [&]
+        -> std::expected<ApplicationWindow, QString> {
+        ++factoryCalls;
+        auto *window = new QQuickWindow;
+        window->resize(800, 500);
+        auto *workspace = new TerminalWorkspace(window->contentItem());
+        workspace->setParentItem(window->contentItem());
+        workspace->setSize(window->size());
+        if (factoryCalls == 1) {
+            connect(window, &QWindow::visibleChanged, window,
+                    [window](bool visible) {
+                        if (visible) window->hide();
+                    });
+        }
+        return ApplicationWindow{window, workspace};
+    };
+
+    LaunchOptions options = baseOptions(sourceDirectory);
+    options.fontSize = 13.0;
+    options.maximize = true;
+    ApplicationController controller(options, std::move(factory), false);
+    const auto deferred = controller.createInitialWindow();
+    QVERIFY(deferred.has_value());
+    TerminalPane *const sourcePane = onlyPane(deferred->workspace);
+    TerminalController *const sourceController =
+        onlyController(deferred->workspace);
+    QVERIFY(sourcePane != nullptr);
+    QVERIFY(sourceController != nullptr);
+    QVERIFY(!sourceController->sessionStarted());
+
+    LaunchOptions reloaded = options;
+    reloaded.workingDirectory = configuredDirectory;
+    reloaded.fontSize = 11.0;
+    reloaded.maximize = false;
+    controller.applyLaunchOptions(reloaded);
+    QVERIFY(sourcePane->executeConfiguredAction(
+        QStringLiteral("set_font_size:18")));
+    QVERIFY(sourcePane->executeConfiguredAction(
+        QStringLiteral("new_window")));
+
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 2000);
+    const ApplicationWindow inherited = controller.windows().constLast();
+    QCOMPARE(inherited.workspace->effectiveLaunchOptions().workingDirectory,
+             sourceDirectory);
+    QCOMPARE(inherited.workspace->effectiveLaunchOptions().fontSize, 18.0);
+    QVERIFY(inherited.workspace->effectiveLaunchOptions().program.isEmpty());
+    QVERIFY(!inherited.workspace->effectiveLaunchOptions().hold);
+
+    TerminalController *const winner = onlyController(inherited.workspace);
+    QVERIFY(winner != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(winner->sessionStarted(), 2000);
+    QCOMPARE(winner->launchProgram(), reloaded.program);
+    QVERIFY(winner->launchHold());
+    QVERIFY(!sourceController->sessionStarted());
+}
+
+void ApplicationControllerTest::deferredRequestsRemainOrderedAcrossStart()
+{
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/deferred-request-order-XXXXXX")));
+    QVERIFY(temporary.isValid());
+    const QString inputPath = temporary.filePath(QStringLiteral("input"));
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.maximize = true;
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "IFS= read -r line; printf '%s' \"$line\" > \"$0\"; "
+            "exec sleep 30"),
+        inputPath,
+    };
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+    TerminalController *const terminal = onlyController(created->workspace);
+    QVERIFY(terminal != nullptr);
+    QVERIFY(!terminal->sessionStarted());
+    QVERIFY(terminal->findChild<QThread *>() == nullptr);
+
+    terminal->setReadOnly(true);
+    terminal->sendRawText(QByteArrayLiteral("blocked\n"));
+    terminal->setReadOnly(false);
+    terminal->sendRawText(QByteArrayLiteral("delivered\n"));
+
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(inputPath), 2000);
+    QFile input(inputPath);
+    QVERIFY(input.open(QIODevice::ReadOnly));
+    QCOMPARE(input.readAll(), QByteArrayLiteral("delivered"));
+    QVERIFY(terminal->sessionStarted());
+    QVERIFY(terminal->findChild<QThread *>() != nullptr);
 }
 
 void ApplicationControllerTest::ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy()
@@ -1152,6 +1512,7 @@ void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
 
     closeWorkspace(noFocus);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!focusedPane->isRunning(), 1000);
     initial->window->requestActivate();
     QTRY_VERIFY_WITH_TIMEOUT(
         QGuiApplication::focusWindow() == initial->window, 1000);
@@ -1395,15 +1756,17 @@ void ApplicationControllerTest::showDestructionCannotLeaveHalfRegisteredWindow()
     QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
 }
 
-void ApplicationControllerTest::failedInitialPresentationConsumesStartupDecision()
+void ApplicationControllerTest::failedInitialPresentationPreservesFirstSession()
 {
     int factoryCalls = 0;
     ApplicationController::WindowFactory factory = [&]()
         -> std::expected<ApplicationWindow, QString> {
         ++factoryCalls;
         auto *window = new QQuickWindow;
+        window->resize(800, 500);
         auto *workspace = new TerminalWorkspace(window->contentItem());
         workspace->setParentItem(window->contentItem());
+        workspace->setSize(window->size());
         if (factoryCalls == 1) {
             connect(window, &QWindow::visibleChanged, window,
                     [guardedWorkspace = QPointer(workspace)](bool visible) {
@@ -1415,8 +1778,9 @@ void ApplicationControllerTest::failedInitialPresentationConsumesStartupDecision
         return ApplicationWindow{window, workspace};
     };
 
-    ApplicationController controller(
-        baseOptions(QDir::currentPath()), std::move(factory), false);
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.maximize = true;
+    ApplicationController controller(options, std::move(factory), false);
     const auto failed = controller.createInitialWindow();
     QVERIFY(!failed.has_value());
     QCOMPARE(factoryCalls, 1);
@@ -1434,6 +1798,11 @@ void ApplicationControllerTest::failedInitialPresentationConsumesStartupDecision
                 ->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!windows.constFirst().workspace
                  ->effectiveLaunchOptions().hold);
+    TerminalController *const terminal =
+        onlyController(windows.constFirst().workspace);
+    QVERIFY(terminal != nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(terminal->launchProgram(), options.program, 2000);
+    QVERIFY(terminal->launchHold());
 }
 
 void ApplicationControllerTest::explicitQuitAggregatesEveryWindowIntoOneConfirmation()

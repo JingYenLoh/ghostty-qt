@@ -161,6 +161,8 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void reportsTerminalInitializationSeparatelyFromChildSpawn();
+    void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
     void stripsDesktopActivationFromChildEnvironment();
     void fallsBackFromUnavailableWorkingDirectory_data();
@@ -456,7 +458,7 @@ void SessionWorkerTest::runsCommandThroughPty()
             "printf '%s' \"$response\" | od -An -tx1 | tr -d ' \\n'; "
             "printf '\\nghostty-qt-final\\n'")};
     options.hold = true;
-    worker.initialize(options);
+    QVERIFY(worker.initialize(options));
 
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(updateSpy.count() > 0, 5000);
@@ -473,6 +475,86 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildSpawn()
+{
+    SessionWorker worker;
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory =
+        QDir::current().filePath(QStringLiteral("tmp"));
+    QVERIFY(QDir().mkpath(options.workingDirectory));
+    options.program = {
+        QStringLiteral("/ghostty-qt-test/nonexistent-child"),
+    };
+    options.hold = true;
+
+    // Worker initialization is accepted as soon as libghostty-vt exists. A
+    // later child-spawn failure is reported independently and does not turn the
+    // accepted initialization into a false result.
+    std::optional<bool> initializationResult;
+    int errorsAtInitialization = -1;
+    QVERIFY(worker.initialize(
+        options, [&](bool initialized) {
+            initializationResult = initialized;
+            errorsAtInitialization = errorSpy.count();
+        }));
+    QCOMPARE(initializationResult, std::optional(true));
+    QCOMPARE(errorsAtInitialization, 0);
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
+        QStringLiteral("Program is not executable")));
+    QCOMPARE(exitSpy.count(), 1);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
+    QCOMPARE(exitSpy.constFirst().at(1).toInt(), 0);
+    QVERIFY(exitSpy.constFirst().at(2).toBool());
+
+    // The existing terminal makes a repeated attempt ineligible. It must not
+    // replay either the child diagnostic or the synthetic exit notification.
+    initializationResult.reset();
+    QVERIFY(!worker.initialize(
+        options, [&](bool initialized) {
+            initializationResult = initialized;
+        }));
+    QCOMPARE(initializationResult, std::optional(false));
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(exitSpy.count(), 1);
+
+    worker.shutdown();
+}
+
+void SessionWorkerTest::reportsTerminalInitializationFailure()
+{
+    SessionWorker worker;
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.runtime.appearance.foregroundColor = QColor{};
+    options.hold = true;
+
+    std::optional<bool> initializationResult;
+    int errorsAtInitialization = -1;
+    QVERIFY(!worker.initialize(
+        options, [&](bool initialized) {
+            initializationResult = initialized;
+            errorsAtInitialization = errorSpy.count();
+        }));
+
+    QCOMPARE(initializationResult, std::optional(false));
+    QCOMPARE(errorsAtInitialization, 0);
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
+        QStringLiteral("Failed to initialize libghostty-vt")));
+    QCOMPARE(exitSpy.count(), 1);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
+    QCOMPARE(exitSpy.constFirst().at(1).toInt(), 0);
+    QVERIFY(exitSpy.constFirst().at(2).toBool());
+
     worker.shutdown();
 }
 
