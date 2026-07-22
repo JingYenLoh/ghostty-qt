@@ -75,7 +75,6 @@ public:
             initialSessionCoordinator = {});
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
-    void applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot);
 
     QStringList tabTitles() const;
     QString currentTitle() const;

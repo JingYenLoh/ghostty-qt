@@ -6,11 +6,16 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMetaType>
 #include <QTest>
 
+#include <array>
+#include <chrono>
+#include <cstddef>
 #include <expected>
 #include <limits>
+#include <optional>
+#include <utility>
+#include <variant>
 
 namespace {
 
@@ -46,7 +51,9 @@ class GhosttyConfigExportTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    void parsesEveryValueWithExactTypes();
+    void parsesEveryValueWithExactSemantics();
+    void normalizesBoundaryValues();
+    void parsesEveryEnumSpelling();
     void parsesStructuredBindingSets();
     void rejectsMalformedEnvelope();
     void rejectsInvalidValues_data();
@@ -54,113 +61,338 @@ private Q_SLOTS:
     void rejectsInvalidBindings();
 };
 
-void GhosttyConfigExportTest::parsesEveryValueWithExactTypes()
+void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
 {
     const auto parsed = parseGhosttyConfigExportJson(json());
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
-    QCOMPARE(parsed->values.size(), 53);
+    const GhosttyConfigValues &values = parsed->values;
 
-    const auto requireType = [&parsed]<typename Value>(const QString &key) {
-        const auto found = parsed->values.constFind(key);
-        QVERIFY2(found != parsed->values.cend(), qPrintable(key));
-        QCOMPARE(found->metaType(), QMetaType::fromType<Value>());
-    };
-
-    for (const QString &key : {
-             QStringLiteral("working-directory"),
-             QStringLiteral("window-new-tab-position"),
-             QStringLiteral("window-show-tab-bar"),
-             QStringLiteral("fullscreen"),
-             QStringLiteral("cursor-style"),
-             QStringLiteral("confirm-close-surface"),
-             QStringLiteral("copy-on-select"),
-             QStringLiteral("middle-click-action"),
-             QStringLiteral("link-previews"),
-             QStringLiteral("resize-overlay"),
-             QStringLiteral("resize-overlay-position"),
-             QStringLiteral("gtk-single-instance"),
-         }) {
-        requireType.template operator()<QString>(key);
-    }
-    for (const QString &key : {
-             QStringLiteral("font-family"),
-             QStringLiteral("config-file"),
-         }) {
-        requireType.template operator()<QStringList>(key);
-    }
-    for (const QString &key : {
-             QStringLiteral("font-size"),
-             QStringLiteral("unfocused-split-opacity"),
-             QStringLiteral("cursor-opacity"),
-             QStringLiteral("faint-opacity"),
-         }) {
-        requireType.template operator()<double>(key);
-    }
-    for (const QString &key : {
-             QStringLiteral("window-width"),
-             QStringLiteral("window-height"),
-             QStringLiteral("resize-overlay-duration"),
-         }) {
-        requireType.template operator()<quint32>(key);
-    }
-    for (const QString &key : {
-             QStringLiteral("foreground"),
-             QStringLiteral("background"),
-             QStringLiteral("split-divider-color"),
-             QStringLiteral("search-foreground"),
-             QStringLiteral("search-selected-background"),
-             QStringLiteral("cursor-color"),
-         }) {
-        requireType.template operator()<QColor>(key);
-    }
-    for (const QString &key : {
-             QStringLiteral("split-inherit-working-directory"),
-             QStringLiteral("split-preserve-zoom"),
-             QStringLiteral("tab-inherit-working-directory"),
-             QStringLiteral("window-inherit-working-directory"),
-             QStringLiteral("window-inherit-font-size"),
-             QStringLiteral("maximize"),
-             QStringLiteral("clipboard-trim-trailing-spaces"),
-             QStringLiteral("clipboard-paste-protection"),
-             QStringLiteral("clipboard-paste-bracketed-safe"),
-             QStringLiteral("selection-clear-on-typing"),
-             QStringLiteral("selection-clear-on-copy"),
-             QStringLiteral("mouse-reporting"),
-             QStringLiteral("link-url"),
-             QStringLiteral("quit-after-last-window-closed"),
-             QStringLiteral("initial-window"),
-         }) {
-        requireType.template operator()<bool>(key);
-    }
-
-    requireType.template operator()<QVariantList>(QStringLiteral("palette"));
-    requireType.template operator()<quint64>(QStringLiteral("scrollback-limit"));
-    QCOMPARE(parsed->values.value(QStringLiteral("scrollback-limit"))
-                 .value<quint64>(),
-             std::numeric_limits<quint64>::max());
-    const QVariantList palette =
-        parsed->values.value(QStringLiteral("palette")).toList();
-    QCOMPARE(palette.size(), 256);
-    QCOMPARE(palette.constFirst().value<QColor>(), QColor(0, 0, 0));
-    QCOMPARE(palette.constLast().value<QColor>(), QColor(255, 255, 255));
-    QCOMPARE(parsed->values.value(QStringLiteral("font-family")).toStringList(),
+    QVERIFY(values.workingDirectoryPath.has_value());
+    QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
+    QCOMPARE(values.fontFamilies,
              QStringList({QStringLiteral("Mono One"),
                           QStringLiteral("Emoji")}));
-    QCOMPARE(parsed->values.value(QStringLiteral("selection-background"))
-                 .toString(),
-             QStringLiteral("cell-foreground"));
-    QCOMPARE(parsed->values.value(QStringLiteral("bold-color")).toString(),
-             QStringLiteral("bright"));
-    QCOMPARE(parsed->values.value(QStringLiteral("unfocused-split-fill"))
-                 .metaType(),
-             QMetaType::fromType<QString>());
-    QVERIFY(parsed->values.value(QStringLiteral("unfocused-split-fill"))
-                .toString()
-                .isEmpty());
-    QVERIFY(parsed->values.contains(
-        QStringLiteral("quit-after-last-window-closed-delay")));
-    QVERIFY(!parsed->values.value(
-        QStringLiteral("quit-after-last-window-closed-delay")).isValid());
+    QCOMPARE(values.fontSize, 13.5);
+
+    const GhosttyAppearanceConfig &appearance = values.appearance;
+    QCOMPARE(appearance.foreground, QColor(QStringLiteral("#112233")));
+    QCOMPARE(appearance.background, QColor(QStringLiteral("#445566")));
+    QCOMPARE(appearance.palette.size(), std::size_t{256});
+    for (std::size_t index = 0; index < appearance.palette.size(); ++index) {
+        const int component = static_cast<int>(index);
+        QCOMPARE(appearance.palette[index],
+                 QColor(component, component, component));
+    }
+
+    QVERIFY(!appearance.selectionForeground.has_value());
+    QVERIFY(appearance.selectionBackground.has_value());
+    const auto *selectionBackground =
+        std::get_if<GhosttyCellRelativeColor>(&*appearance.selectionBackground);
+    QVERIFY(selectionBackground != nullptr);
+    QCOMPARE(*selectionBackground, GhosttyCellRelativeColor::Foreground);
+
+    const auto *searchForeground =
+        std::get_if<QColor>(&appearance.searchForeground);
+    QVERIFY(searchForeground != nullptr);
+    QCOMPARE(*searchForeground, QColor(QStringLiteral("#010203")));
+    const auto *searchBackground =
+        std::get_if<GhosttyCellRelativeColor>(&appearance.searchBackground);
+    QVERIFY(searchBackground != nullptr);
+    QCOMPARE(*searchBackground, GhosttyCellRelativeColor::Background);
+    const auto *searchSelectedForeground =
+        std::get_if<GhosttyCellRelativeColor>(
+            &appearance.searchSelectedForeground);
+    QVERIFY(searchSelectedForeground != nullptr);
+    QCOMPARE(*searchSelectedForeground, GhosttyCellRelativeColor::Foreground);
+    const auto *searchSelectedBackground =
+        std::get_if<QColor>(&appearance.searchSelectedBackground);
+    QVERIFY(searchSelectedBackground != nullptr);
+    QCOMPARE(*searchSelectedBackground, QColor(QStringLiteral("#aabbcc")));
+
+    QVERIFY(appearance.cursorColor.has_value());
+    const auto *cursorColor = std::get_if<QColor>(&*appearance.cursorColor);
+    QVERIFY(cursorColor != nullptr);
+    QCOMPARE(*cursorColor, QColor(QStringLiteral("#abcdef")));
+    QCOMPARE(appearance.cursorOpacity, 0.625);
+    QCOMPARE(appearance.cursorStyle, TerminalCursorStyle::BlockHollow);
+    QVERIFY(!appearance.cursorBlink.has_value());
+    QVERIFY(appearance.cursorText.has_value());
+    const auto *cursorText =
+        std::get_if<GhosttyCellRelativeColor>(&*appearance.cursorText);
+    QVERIFY(cursorText != nullptr);
+    QCOMPARE(*cursorText, GhosttyCellRelativeColor::Background);
+    QVERIFY(appearance.boldColor.has_value());
+    const auto *boldColor =
+        std::get_if<GhosttyBoldBrightness>(&*appearance.boldColor);
+    QVERIFY(boldColor != nullptr);
+    QCOMPARE(*boldColor, GhosttyBoldBrightness::Bright);
+    QCOMPARE(appearance.faintOpacity, 0.375);
+
+    QCOMPARE(values.splitAppearance.unfocusedOpacity, 0.7);
+    QVERIFY(!values.splitAppearance.unfocusedFill.has_value());
+    QCOMPARE(values.splitAppearance.dividerColor,
+             std::optional<QColor>(QColor(QStringLiteral("#778899"))));
+    QVERIFY(!values.splitInheritWorkingDirectory);
+    QVERIFY(values.splitPreserveZoom);
+    QVERIFY(!values.tabInheritWorkingDirectory);
+    QVERIFY(values.windowInheritWorkingDirectory);
+    QVERIFY(!values.windowInheritFontSize);
+    QCOMPARE(values.windowNewTabPosition, WindowNewTabPosition::End);
+    QCOMPARE(values.windowShowTabBar, WindowShowTabBar::Always);
+    QCOMPARE(values.windowWidth, quint32{120});
+    QCOMPARE(values.windowHeight, quint32{40});
+    QVERIFY(values.maximize);
+    QCOMPARE(values.fullscreen, GhosttyFullscreenMode::NonNative);
+    QCOMPARE(values.resizeOverlay.mode, ResizeOverlayMode::Always);
+    QCOMPARE(values.resizeOverlay.position,
+             ResizeOverlayPosition::BottomRight);
+    QCOMPARE(values.resizeOverlay.duration, std::chrono::milliseconds{1250});
+
+    QCOMPARE(values.scrollbackLimitBytes,
+             std::numeric_limits<quint64>::max());
+    QCOMPARE(values.confirmCloseMode, ConfirmCloseMode::Always);
+    QVERIFY(!values.selectionClipboard.trimTrailingSpaces);
+    QCOMPARE(values.selectionClipboard.copyOnSelect,
+             TerminalCopyOnSelectMode::PrimaryAndClipboard);
+    QVERIFY(!values.selectionClipboard.clearOnTyping);
+    QVERIFY(values.selectionClipboard.clearOnCopy);
+    QVERIFY(!values.clipboardPaste.protection);
+    QVERIFY(values.clipboardPaste.bracketedSafe);
+    QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
+    QVERIFY(!values.mouseReporting);
+    QVERIFY(!values.linkUrl);
+    QCOMPARE(values.linkPreviews, LinkPreviewMode::Osc8);
+
+    QCOMPARE(values.configFiles.size(), qsizetype{2});
+    QCOMPARE(values.configFiles.at(0).path,
+             QStringLiteral("/work/include.ghostty"));
+    QVERIFY(!values.configFiles.at(0).optional);
+    QCOMPARE(values.configFiles.at(1).path,
+             QStringLiteral("/work/optional.ghostty"));
+    QVERIFY(values.configFiles.at(1).optional);
+    QVERIFY(!values.quitAfterLastWindowClosed);
+    QVERIFY(!values.quitAfterLastWindowClosedDelay.has_value());
+    QVERIFY(!values.initialWindow);
+    QCOMPARE(values.singleInstanceMode, SingleInstanceMode::Detect);
+
+    // Exercise both states of every nullable value. The primary fixture mixes
+    // null and configured values; this inverse fixture ensures neither state
+    // is represented by a textual or QVariant sentinel after decoding.
+    QJsonObject inverseNullability = object();
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("unfocused-split-fill"),
+                                   QStringLiteral("#102030"));
+    for (const QString &name : {
+             QStringLiteral("split-divider-color"),
+             QStringLiteral("selection-background"),
+             QStringLiteral("cursor-color"),
+             QStringLiteral("cursor-text"),
+             QStringLiteral("bold-color"),
+         }) {
+        inverseNullability = withValue(std::move(inverseNullability),
+                                       name,
+                                       QJsonValue::Null);
+    }
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("selection-foreground"),
+                                   QStringLiteral("cell-background"));
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("cursor-style-blink"),
+                                   false);
+    inverseNullability = withValue(
+        std::move(inverseNullability),
+        QStringLiteral("quit-after-last-window-closed-delay"),
+        0);
+
+    const auto inverse = parseGhosttyConfigExportJson(json(inverseNullability));
+    QVERIFY2(inverse.has_value(), qPrintable(errorMessage(inverse)));
+    QCOMPARE(inverse->values.splitAppearance.unfocusedFill,
+             std::optional<QColor>(QColor(QStringLiteral("#102030"))));
+    QVERIFY(!inverse->values.splitAppearance.dividerColor.has_value());
+    QVERIFY(inverse->values.appearance.selectionForeground.has_value());
+    const auto *inverseSelectionForeground =
+        std::get_if<GhosttyCellRelativeColor>(
+            &*inverse->values.appearance.selectionForeground);
+    QVERIFY(inverseSelectionForeground != nullptr);
+    QCOMPARE(*inverseSelectionForeground,
+             GhosttyCellRelativeColor::Background);
+    QVERIFY(!inverse->values.appearance.selectionBackground.has_value());
+    QVERIFY(!inverse->values.appearance.cursorColor.has_value());
+    QCOMPARE(inverse->values.appearance.cursorBlink,
+             std::optional<bool>(false));
+    QVERIFY(!inverse->values.appearance.cursorText.has_value());
+    QVERIFY(!inverse->values.appearance.boldColor.has_value());
+    QCOMPARE(inverse->values.quitAfterLastWindowClosedDelay,
+             std::optional(std::chrono::milliseconds::zero()));
+}
+
+void GhosttyConfigExportTest::normalizesBoundaryValues()
+{
+    QJsonObject lowValues = object();
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("working-directory"),
+                          QStringLiteral("inherit"));
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("cursor-opacity"), -2.0);
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("resize-overlay-duration"), 0);
+
+    const auto low = parseGhosttyConfigExportJson(json(lowValues));
+    QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
+    QVERIFY(!low->values.workingDirectoryPath.has_value());
+    QCOMPARE(low->values.appearance.cursorOpacity, 0.0);
+    QCOMPARE(low->values.resizeOverlay.duration,
+             std::chrono::milliseconds{250});
+
+    const auto high = parseGhosttyConfigExportJson(json(withValue(
+        object(), QStringLiteral("cursor-opacity"), 2.0)));
+    QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
+    QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
+}
+
+void GhosttyConfigExportTest::parsesEveryEnumSpelling()
+{
+    const auto verifyMappings = [](QLatin1StringView field,
+                                   const auto &mappings,
+                                   auto projection) {
+        for (const auto &[spelling, expected] : mappings) {
+            const auto parsed = parseGhosttyConfigExportJson(json(withValue(
+                object(), field.toString(), spelling.toString())));
+            QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+            QCOMPARE(projection(parsed->values), expected);
+        }
+    };
+
+    verifyMappings(
+        QLatin1StringView("window-new-tab-position"),
+        std::to_array<std::pair<QLatin1StringView, WindowNewTabPosition>>({
+            {QLatin1StringView("current"), WindowNewTabPosition::Current},
+            {QLatin1StringView("end"), WindowNewTabPosition::End},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.windowNewTabPosition;
+        });
+    verifyMappings(
+        QLatin1StringView("window-show-tab-bar"),
+        std::to_array<std::pair<QLatin1StringView, WindowShowTabBar>>({
+            {QLatin1StringView("always"), WindowShowTabBar::Always},
+            {QLatin1StringView("auto"), WindowShowTabBar::Auto},
+            {QLatin1StringView("never"), WindowShowTabBar::Never},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.windowShowTabBar;
+        });
+    verifyMappings(
+        QLatin1StringView("fullscreen"),
+        std::to_array<std::pair<QLatin1StringView, GhosttyFullscreenMode>>({
+            {QLatin1StringView("false"), GhosttyFullscreenMode::Disabled},
+            {QLatin1StringView("true"), GhosttyFullscreenMode::Enabled},
+            {QLatin1StringView("non-native"),
+             GhosttyFullscreenMode::NonNative},
+            {QLatin1StringView("non-native-visible-menu"),
+             GhosttyFullscreenMode::NonNativeVisibleMenu},
+            {QLatin1StringView("non-native-padded-notch"),
+             GhosttyFullscreenMode::NonNativePaddedNotch},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.fullscreen;
+        });
+    verifyMappings(
+        QLatin1StringView("cursor-style"),
+        std::to_array<std::pair<QLatin1StringView, TerminalCursorStyle>>({
+            {QLatin1StringView("block"), TerminalCursorStyle::Block},
+            {QLatin1StringView("bar"), TerminalCursorStyle::Bar},
+            {QLatin1StringView("underline"), TerminalCursorStyle::Underline},
+            {QLatin1StringView("block_hollow"),
+             TerminalCursorStyle::BlockHollow},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.appearance.cursorStyle;
+        });
+    verifyMappings(
+        QLatin1StringView("confirm-close-surface"),
+        std::to_array<std::pair<QLatin1StringView, ConfirmCloseMode>>({
+            {QLatin1StringView("false"), ConfirmCloseMode::Never},
+            {QLatin1StringView("true"),
+             ConfirmCloseMode::RunningProcesses},
+            {QLatin1StringView("always"), ConfirmCloseMode::Always},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.confirmCloseMode;
+        });
+    verifyMappings(
+        QLatin1StringView("copy-on-select"),
+        std::to_array<std::pair<QLatin1StringView,
+                                TerminalCopyOnSelectMode>>({
+            {QLatin1StringView("false"),
+             TerminalCopyOnSelectMode::Disabled},
+            {QLatin1StringView("true"), TerminalCopyOnSelectMode::Primary},
+            {QLatin1StringView("clipboard"),
+             TerminalCopyOnSelectMode::PrimaryAndClipboard},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.selectionClipboard.copyOnSelect;
+        });
+    verifyMappings(
+        QLatin1StringView("middle-click-action"),
+        std::to_array<std::pair<QLatin1StringView, MiddleClickAction>>({
+            {QLatin1StringView("primary-paste"),
+             MiddleClickAction::PrimaryPaste},
+            {QLatin1StringView("ignore"), MiddleClickAction::Ignore},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.middleClickAction;
+        });
+    verifyMappings(
+        QLatin1StringView("link-previews"),
+        std::to_array<std::pair<QLatin1StringView, LinkPreviewMode>>({
+            {QLatin1StringView("false"), LinkPreviewMode::Never},
+            {QLatin1StringView("true"), LinkPreviewMode::Always},
+            {QLatin1StringView("osc8"), LinkPreviewMode::Osc8},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.linkPreviews;
+        });
+    verifyMappings(
+        QLatin1StringView("resize-overlay"),
+        std::to_array<std::pair<QLatin1StringView, ResizeOverlayMode>>({
+            {QLatin1StringView("always"), ResizeOverlayMode::Always},
+            {QLatin1StringView("never"), ResizeOverlayMode::Never},
+            {QLatin1StringView("after-first"),
+             ResizeOverlayMode::AfterFirst},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.resizeOverlay.mode;
+        });
+    verifyMappings(
+        QLatin1StringView("resize-overlay-position"),
+        std::to_array<std::pair<QLatin1StringView,
+                                ResizeOverlayPosition>>({
+            {QLatin1StringView("center"), ResizeOverlayPosition::Center},
+            {QLatin1StringView("top-left"), ResizeOverlayPosition::TopLeft},
+            {QLatin1StringView("top-center"),
+             ResizeOverlayPosition::TopCenter},
+            {QLatin1StringView("top-right"), ResizeOverlayPosition::TopRight},
+            {QLatin1StringView("bottom-left"),
+             ResizeOverlayPosition::BottomLeft},
+            {QLatin1StringView("bottom-center"),
+             ResizeOverlayPosition::BottomCenter},
+            {QLatin1StringView("bottom-right"),
+             ResizeOverlayPosition::BottomRight},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.resizeOverlay.position;
+        });
+    verifyMappings(
+        QLatin1StringView("gtk-single-instance"),
+        std::to_array<std::pair<QLatin1StringView, SingleInstanceMode>>({
+            {QLatin1StringView("false"), SingleInstanceMode::Disabled},
+            {QLatin1StringView("true"), SingleInstanceMode::Enabled},
+            {QLatin1StringView("detect"), SingleInstanceMode::Detect},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.singleInstanceMode;
+        });
 }
 
 void GhosttyConfigExportTest::parsesStructuredBindingSets()
@@ -254,6 +486,16 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-field")
         << withoutValue(object(), QStringLiteral("font-size"))
         << QStringLiteral("values is missing field 'font-size'");
+    QTest::newRow("working-directory-empty")
+        << withValue(object(), QStringLiteral("working-directory"),
+                     QString{})
+        << QStringLiteral(
+               "values.working-directory must be 'inherit' or a finalized path");
+    QTest::newRow("working-directory-unfinalized-home")
+        << withValue(object(), QStringLiteral("working-directory"),
+                     QStringLiteral("home"))
+        << QStringLiteral(
+               "values.working-directory must be 'inherit' or a finalized path");
 
     QJsonObject extra = object();
     QJsonObject extraValues = extra.value(QStringLiteral("values")).toObject();
@@ -321,6 +563,14 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("font-family-member")
         << withValue(object(), QStringLiteral("font-family"), QJsonArray{true})
         << QStringLiteral("values.font-family[0] must be a string");
+    QTest::newRow("config-file-empty-path")
+        << withValue(object(), QStringLiteral("config-file"),
+                     QJsonArray{QString{}})
+        << QStringLiteral("values.config-file entries must contain a path");
+    QTest::newRow("config-file-empty-optional-path")
+        << withValue(object(), QStringLiteral("config-file"),
+                     QJsonArray{QStringLiteral("?")})
+        << QStringLiteral("values.config-file entries must contain a path");
 
     QJsonArray shortPalette = values().value(QStringLiteral("palette")).toArray();
     shortPalette.removeLast();

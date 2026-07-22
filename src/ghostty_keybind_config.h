@@ -57,9 +57,6 @@ struct GhosttyKeybindTable {
 };
 
 struct GhosttyKeybindConfig {
-    static constexpr int CurrentSchemaVersion = 1;
-
-    int schemaVersion = CurrentSchemaVersion;
     QVector<GhosttyKeybindDefinition> root;
     QVector<GhosttyKeybindTable> tables;
 
@@ -67,10 +64,9 @@ struct GhosttyKeybindConfig {
 };
 
 // The frontend can receive keybindings from the structured helper export or
-// from the flattened text fallback used by config-disabled builds. Keeping
-// the source tagged prevents callers from combining a configured flag, an
-// empty text list, and an unrelated structured value into contradictory
-// states.
+// from direct flattened-text injection in focused tests. Keeping the source
+// tagged distinguishes both from an unavailable backend and prevents callers
+// from combining unrelated representations into contradictory states.
 class GhosttyKeybindSource final {
 public:
     GhosttyKeybindSource() = default;

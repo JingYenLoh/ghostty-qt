@@ -773,14 +773,6 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
     QVector<Node> newNodes{Node{}};
     QHash<QString, quint32> newTableRoots;
 
-    if (config.schemaVersion != GhosttyKeybindConfig::CurrentSchemaVersion) {
-        report.records.append(record(
-            QStringLiteral("structured keybindings"), Disposition::Invalid,
-            Reason::None, QStringLiteral("unsupported structured schema version")));
-        clear();
-        return report;
-    }
-
     const auto sameTrigger = [](const Binding &left, const Binding &right) {
         if (left.keyKind != right.keyKind
             || left.modifiers != right.modifiers) {

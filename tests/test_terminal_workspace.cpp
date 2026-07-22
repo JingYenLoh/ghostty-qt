@@ -2528,11 +2528,9 @@ void TerminalWorkspaceTest::closeTabBatchConfirmationKeepsStableTargets()
         QCOMPARE(confirmation.count(), 1);
         QCOMPARE(workspace.tabCount(), 3);
 
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                               QStringLiteral("false"));
-        workspace.applyConfigSnapshot(snapshot);
+        LaunchOptions reloadedOptions = options;
+        reloadedOptions.confirmCloseMode = ConfirmCloseMode::Never;
+        workspace.applyLaunchOptions(reloadedOptions);
         QCOMPARE(resolved.count(), 1);
         QCOMPARE(tabIds(workspace), QVector<TabId>({first.tabId}));
     }
@@ -3445,10 +3443,9 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
              1);
     QVERIFY(configuredSourceController->mouseReportingEnabled());
 
-    GhosttyConfigSnapshot enabledSnapshot;
-    enabledSnapshot.availability = GhosttyConfigAvailability::Available;
-    enabledSnapshot.values.insert(QStringLiteral("mouse-reporting"), true);
-    workspace.applyConfigSnapshot(enabledSnapshot);
+    LaunchOptions enabledOptions = options;
+    enabledOptions.mouseReporting = true;
+    workspace.applyLaunchOptions(enabledOptions);
     QVERIFY(std::ranges::all_of(
         controllers,
         [](const TerminalController *controller) {
@@ -3466,7 +3463,7 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
                      return controller->mouseReportingEnabled();
                  }),
              2);
-    workspace.applyConfigSnapshot(enabledSnapshot);
+    workspace.applyLaunchOptions(enabledOptions);
     QVERIFY(std::ranges::all_of(
         controllers,
         [](const TerminalController *controller) {
@@ -5041,11 +5038,9 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
                  }));
         QCOMPARE(workspace.currentIndex(), 1);
 
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                               QStringLiteral("end"));
-        workspace.applyConfigSnapshot(snapshot);
+        LaunchOptions reloadedOptions = options;
+        reloadedOptions.windowNewTabPosition = WindowNewTabPosition::End;
+        workspace.applyLaunchOptions(reloadedOptions);
         const QVector<TabId> beforeEndInsert = tabIds(workspace);
 
         // Placement follows the selected tab policy, independently of the
@@ -5064,9 +5059,8 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
                  }));
         QCOMPARE(workspace.currentIndex(), 4);
 
-        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                               QStringLiteral("current"));
-        workspace.applyConfigSnapshot(snapshot);
+        reloadedOptions.windowNewTabPosition = WindowNewTabPosition::Current;
+        workspace.applyLaunchOptions(reloadedOptions);
         QCOMPARE(tabIds(workspace),
                  QVector<TabId>({
                      TabId(1), TabId(4), TabId(2), TabId(3), TabId(5),
@@ -5111,11 +5105,9 @@ void TerminalWorkspaceTest::newTabPositionReloadsAndKeepsBroadOrder()
         workspace.newTab();
         workspace.setCurrentIndex(1);
 
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                               QStringLiteral("end"));
-        workspace.applyConfigSnapshot(snapshot);
+        LaunchOptions reloadedOptions = options;
+        reloadedOptions.windowNewTabPosition = WindowNewTabPosition::End;
+        workspace.applyLaunchOptions(reloadedOptions);
 
         // End mode appends the stable broad source snapshot in order even
         // though every creation advances the selected tab.
@@ -5156,11 +5148,9 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(!workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 2);
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                           QStringLiteral("always"));
-    workspace.applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.windowShowTabBar = WindowShowTabBar::Always;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 3);
 
@@ -5169,9 +5159,8 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 3);
 
-    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                           QStringLiteral("never"));
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.windowShowTabBar = WindowShowTabBar::Never;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(!workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 4);
 
@@ -5180,9 +5169,8 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(!workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 4);
 
-    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                           QStringLiteral("auto"));
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.windowShowTabBar = WindowShowTabBar::Auto;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(!workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 4);
 
@@ -5191,9 +5179,8 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 5);
 
-    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                           QStringLiteral("always"));
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.confirmCloseMode = ConfirmCloseMode::Always;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(visibilityChanged.count(), 5);
     QSignalSpy confirmation(
         &workspace, &TerminalWorkspace::closeConfirmationRequested);
@@ -5204,16 +5191,14 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
 
     // Resolving a pending close during reload must publish the count-driven
     // auto transition exactly once; the reload path must not duplicate it.
-    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                           QStringLiteral("false"));
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.confirmCloseMode = ConfirmCloseMode::Never;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(workspace.tabCount(), 1);
     QVERIFY(!workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 6);
 
-    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                           QStringLiteral("always"));
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.windowShowTabBar = WindowShowTabBar::Always;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 7);
 
@@ -5693,10 +5678,9 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     const QRectF secondPaneGeometry(secondPane->position(), secondPane->size());
     QSignalSpy secondActivated(secondPane, &TerminalPane::activated);
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("split-divider-color"), firstColor);
-    workspace->applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.splitAppearance.dividerColor = firstColor;
+    workspace->applyLaunchOptions(reloadedOptions);
 
     dividers = splitDividerItems(workspace.get());
     QCOMPARE(dividers.size(), 1);
@@ -5761,8 +5745,8 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     }
     QSignalSpy thirdActivated(thirdPane, &TerminalPane::activated);
 
-    snapshot.values.insert(QStringLiteral("split-divider-color"), secondColor);
-    workspace->applyConfigSnapshot(snapshot);
+    reloadedOptions.splitAppearance.dividerColor = secondColor;
+    workspace->applyLaunchOptions(reloadedOptions);
     for (const DividerState &state : dividerStates) {
         QVERIFY(splitDividerItems(workspace.get()).contains(state.item));
         QCOMPARE(QRectF(state.item->position(), state.item->size()),
@@ -5784,8 +5768,8 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
 
     // Empty canonical output removes the custom node and reveals the
     // frontend's ordinary gap color without recreating the handles.
-    snapshot.values.insert(QStringLiteral("split-divider-color"), QString());
-    workspace->applyConfigSnapshot(snapshot);
+    reloadedOptions.splitAppearance.dividerColor.reset();
+    workspace->applyLaunchOptions(reloadedOptions);
     for (const DividerState &state : dividerStates) {
         QVERIFY(splitDividerItems(workspace.get()).contains(state.item));
         QCOMPARE(QRectF(state.item->position(), state.item->size()),
@@ -5800,8 +5784,8 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
 
     // Zoom destroys the handles. Unzoom recreates them with the newest
     // effective color rather than a stale construction-time value.
-    snapshot.values.insert(QStringLiteral("split-divider-color"), secondColor);
-    workspace->applyConfigSnapshot(snapshot);
+    reloadedOptions.splitAppearance.dividerColor = secondColor;
+    workspace->applyLaunchOptions(reloadedOptions);
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleSplitZoom,
         {tabId, thirdId, 0},
@@ -6034,11 +6018,10 @@ void TerminalWorkspaceTest::dimsUnfocusedSplitPanesAcrossLifecycle()
     const TerminalPaneRenderProbeSnapshot beforeReload =
         terminalPaneRenderProbe(secondPane);
     QSignalSpy firstActivated(firstPane, &TerminalPane::activated);
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 0.2);
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), secondFill);
-    workspace->applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.splitAppearance.unfocusedOpacity = 0.2;
+    reloadedOptions.splitAppearance.unfocusedFill = secondFill;
+    workspace->applyLaunchOptions(reloadedOptions);
     const QImage reloadedImage = window.grabWindow();
     QVERIFY(!reloadedImage.isNull());
     const TerminalPaneRenderProbeSnapshot afterReload =
@@ -6316,13 +6299,11 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
             .split(u'\n', Qt::SkipEmptyParts);
     };
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           configuredFallback);
-    snapshot.values.insert(
-        QStringLiteral("split-inherit-working-directory"), false);
-    workspace.applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.workingDirectory = configuredFallback;
+    reloadedOptions.inheritWorkingDirectory = false;
+    reloadedOptions.splitInheritWorkingDirectory = false;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourceRuntime.count(), 0);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
     QCOMPARE(sourcePane->findChild<TerminalController *>(), sourceController);
@@ -6350,11 +6331,9 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
     QSignalSpy fallbackRuntime(
         fallbackController, &TerminalController::runtimeOptionsRequested);
 
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           reloadedFallback);
-    snapshot.values.insert(
-        QStringLiteral("split-inherit-working-directory"), true);
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.workingDirectory = reloadedFallback;
+    reloadedOptions.splitInheritWorkingDirectory = true;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourceRuntime.count(), 0);
     QCOMPARE(fallbackRuntime.count(), 0);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
@@ -6498,15 +6477,13 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
         return result;
     };
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           reloadedFallback);
-    snapshot.values.insert(
-        QStringLiteral("tab-inherit-working-directory"), true);
-    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), true);
-    snapshot.values.insert(QStringLiteral("font-size"), 10.0);
-    workspace.applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.workingDirectory = reloadedFallback;
+    reloadedOptions.inheritWorkingDirectory = false;
+    reloadedOptions.tabInheritWorkingDirectory = true;
+    reloadedOptions.windowInheritFontSize = true;
+    reloadedOptions.fontSize = 10.0;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourcePane->fontPointSize(), 13.0);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
 
@@ -6561,13 +6538,11 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     // Reloaded false policies affect only subsequent inheritance decisions.
     // Existing working-directory reports remain intact; unadjusted children
     // still follow the ordinary live font-size setting.
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           disabledFallback);
-    snapshot.values.insert(
-        QStringLiteral("tab-inherit-working-directory"), false);
-    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), false);
-    snapshot.values.insert(QStringLiteral("font-size"), 9.0);
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.workingDirectory = disabledFallback;
+    reloadedOptions.tabInheritWorkingDirectory = false;
+    reloadedOptions.windowInheritFontSize = false;
+    reloadedOptions.fontSize = 9.0;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
     QCOMPARE(splitPane->currentDirectory(), childReportedDirectory);
     QCOMPARE(sourcePane->fontPointSize(), 13.0);
@@ -6585,13 +6560,11 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
 
     // Re-enable both policies, then use the original split tab. Empty-context
     // creation mirrors the QML button and must select its recorded active leaf.
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           reloadedFallback);
-    snapshot.values.insert(
-        QStringLiteral("tab-inherit-working-directory"), true);
-    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), true);
-    snapshot.values.insert(QStringLiteral("font-size"), 8.0);
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.workingDirectory = reloadedFallback;
+    reloadedOptions.tabInheritWorkingDirectory = true;
+    reloadedOptions.windowInheritFontSize = true;
+    reloadedOptions.fontSize = 8.0;
+    workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(disabledChild->fontPointSize(), 8.0);
     workspace.setCurrentIndex(0);
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, splitPaneId);
@@ -7183,10 +7156,9 @@ void TerminalWorkspaceTest::splitZoomNavigationPolicyReloadsLive()
     QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
-    workspace.applyConfigSnapshot(snapshot);
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.splitPreserveZoomNavigation = true;
+    workspace.applyLaunchOptions(reloadedOptions);
 
     // Reload changes policy only. The currently zoomed pane and logical split
     // tree remain untouched until a successful navigation occurs.
@@ -7231,8 +7203,8 @@ void TerminalWorkspaceTest::splitZoomNavigationPolicyReloadsLive()
     QVERIFY(firstPane->isVisible());
     QVERIFY(!secondPane->isVisible());
 
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), false);
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.splitPreserveZoomNavigation = false;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(workspace.tabModel()->entryAt(0)->zoomed);
     QCOMPARE(workspace.tabModel()->entryAt(0)->activePaneId, firstId);
 
@@ -7245,8 +7217,8 @@ void TerminalWorkspaceTest::splitZoomNavigationPolicyReloadsLive()
     QVERIFY(firstPane->isVisible());
     QVERIFY(secondPane->isVisible());
 
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
-    workspace.applyConfigSnapshot(snapshot);
+    reloadedOptions.splitPreserveZoomNavigation = true;
+    workspace.applyLaunchOptions(reloadedOptions);
     QVERIFY(workspace.dispatchAction({
         WorkspaceAction::ToggleSplitZoom,
         {tabId, secondId, 0},

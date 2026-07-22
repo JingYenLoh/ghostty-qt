@@ -309,13 +309,8 @@ void GhosttyConfigService::refreshWatchPaths()
     QStringList watchedSources = candidatePaths_;
     if (snapshot_.has_value()) {
         watchedSources.append(snapshot_->sourcePaths);
-        const QStringList configuredFiles =
-            snapshot_->values.value(QStringLiteral("config-file")).toStringList();
-        for (QString path : configuredFiles) {
-            if (path.startsWith(u'?')) {
-                path.remove(0, 1);
-            }
-            watchedSources.append(normalizedAbsolutePath(path));
+        for (const GhosttyConfigFile &file : snapshot_->values.configFiles) {
+            watchedSources.append(normalizedAbsolutePath(file.path));
         }
     }
     watchedSources = uniquePathsInOrder(watchedSources);

@@ -1,9 +1,9 @@
 #pragma once
 
+#include "ghostty_config_values.h"
 #include "ghostty_config_snapshot.h"
 #include "terminal_session_options.h"
 
-#include <QColor>
 #include <QByteArrayView>
 #include <QString>
 #include <QStringList>
@@ -12,78 +12,6 @@
 #include <chrono>
 #include <expected>
 #include <optional>
-
-enum class ConfirmCloseMode {
-    Never,
-    RunningProcesses,
-    Always,
-};
-
-// Mirrors Ghostty's link-previews configuration without leaking its canonical
-// text representation into the terminal UI.
-enum class LinkPreviewMode {
-    Never,
-    Always,
-    Osc8,
-};
-
-enum class MiddleClickAction {
-    PrimaryPaste,
-    Ignore,
-};
-
-enum class WindowNewTabPosition {
-    Current,
-    End,
-};
-
-enum class WindowShowTabBar {
-    Always,
-    Auto,
-    Never,
-};
-
-enum class ResizeOverlayMode {
-    Always,
-    Never,
-    AfterFirst,
-};
-
-enum class ResizeOverlayPosition {
-    Center,
-    TopLeft,
-    TopCenter,
-    TopRight,
-    BottomLeft,
-    BottomCenter,
-    BottomRight,
-};
-
-struct ResizeOverlayOptions {
-    ResizeOverlayMode mode = ResizeOverlayMode::AfterFirst;
-    ResizeOverlayPosition position = ResizeOverlayPosition::Center;
-    std::chrono::milliseconds duration{750};
-
-    bool operator==(const ResizeOverlayOptions &) const = default;
-};
-
-enum class SingleInstanceMode {
-    Detect,
-    Enabled,
-    Disabled,
-};
-
-// Ghostty dims an unfocused pane by compositing this fill over the terminal.
-// A missing fill resolves to the configured terminal background in the
-// frontend; opacity describes the terminal content that remains visible.
-struct SplitAppearance {
-    double unfocusedOpacity = 0.7;
-    std::optional<QColor> unfocusedFill;
-    // An unset divider preserves the Qt frontend's ordinary reserved gap.
-    std::optional<QColor> dividerColor;
-
-    bool operator==(const SplitAppearance &) const = default;
-};
 
 struct LaunchOptions {
     QString workingDirectory;
@@ -174,10 +102,10 @@ struct LaunchOptions {
     // Controls whether matched link destinations are shown before activation.
     // Ghostty defaults to previews for both regex and OSC 8 links.
     LinkPreviewMode linkPreviews = LinkPreviewMode::Always;
-    // The helper normally publishes Ghostty's finalized structured set. A
-    // tagged text alternative remains for config-disabled builds and direct
-    // compatibility tests; the unavailable alternative enables the built-in
-    // emergency shortcuts.
+    // The helper publishes Ghostty's finalized structured set. The tagged
+    // text alternative is retained for focused action/keybinding injection in
+    // tests; the unavailable alternative enables built-in emergency shortcuts
+    // when no configuration backend exists.
     GhosttyKeybindSource keybindSource;
     bool hold = false;
     bool showHelp = false;
@@ -198,10 +126,10 @@ TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
 TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
     const LaunchOptions &options);
 
-// Overlay the compatibility slice of an available Ghostty snapshot onto a
-// launch request. The function has no side effects and ignores malformed or
-// unavailable values. A byte-valued Ghostty scrollback-limit is marked as
-// Bytes and passed unchanged to the pinned libghostty max_scrollback field:
+// Project one complete, validated Ghostty snapshot onto a launch request while
+// preserving explicit command-line precedence. A byte-valued Ghostty
+// scrollback-limit is marked as Bytes and passed unchanged to the pinned
+// libghostty max_scrollback field:
 // despite that C field's legacy "lines" wording, the pinned implementation
 // forwards it to PageList's byte-sized logical history cap. The legacy
 // --scrollback-lines option is converted through the documented

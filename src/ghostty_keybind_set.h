@@ -106,12 +106,12 @@ class GhosttyKeybindSet final {
 public:
     static constexpr qsizetype MaximumActiveTables = 8;
 
-    // Replaces the current set from the explicit flattened-text fallback used
-    // by config-disabled and injected test callers. Later duplicate triggers
-    // replace earlier ones, matching Ghostty's config semantics.
+    // Replaces the current set from explicit flattened-text injection. Later
+    // duplicate triggers replace earlier ones, matching Ghostty's config
+    // semantics.
     [[nodiscard]] GhosttyKeybindLoadReport load(const QStringList &values);
 
-    // Production configuration uses the versioned, value-only dump of
+    // Production configuration uses the versioned structured projection of
     // Ghostty's finalized binding tries. Named tables and non-local leaves are
     // installed; matches expose the non-local flags to the frontend.
     [[nodiscard]] GhosttyKeybindLoadReport load(

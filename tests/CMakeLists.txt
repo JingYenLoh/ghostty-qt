@@ -1,12 +1,19 @@
 qt_add_executable(test-launch-options
     test_launch_options.cpp
+    ghostty_config_export_fixture.h
+    ghostty_config_snapshot_fixture.h
     ../src/launch_options.cpp
     ../src/launch_options.h
     ../src/terminal_appearance.h
     ../src/terminal_session_options.h
 )
 target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-target_link_libraries(test-launch-options PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_link_libraries(test-launch-options PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-config-export
+)
 add_test(NAME launch-options COMMAND test-launch-options)
 
 qt_add_executable(test-terminal-cell-metrics
@@ -518,6 +525,8 @@ set_tests_properties(ghostty-global-shortcut-portal PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-config-service
     test_ghostty_config_service.cpp
+    ghostty_config_export_fixture.h
+    ghostty_config_snapshot_fixture.h
     ../src/ghostty_config_loader.h
     ../src/ghostty_config_service.cpp
     ../src/ghostty_config_service.h
@@ -528,7 +537,9 @@ target_include_directories(test-ghostty-config-service PRIVATE
 )
 target_link_libraries(test-ghostty-config-service PRIVATE
     Qt6::Core
+    Qt6::Gui
     Qt6::Test
+    ghostty-qt-config-export
 )
 add_test(NAME ghostty-config-service COMMAND test-ghostty-config-service)
 set_tests_properties(ghostty-config-service PROPERTIES TIMEOUT 10)

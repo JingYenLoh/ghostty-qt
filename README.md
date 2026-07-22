@@ -235,9 +235,10 @@ $XDG_CONFIG_HOME/ghostty/config.ghostty
 
 If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
 `ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` action
-around two project-private JSON-v1 exports. Each export contains all 53
-finalized values consumed by the frontend plus the current and platform-default
-binding tries; the two complete documents must byte-match before publication.
+around two project-private JSON-v1 exports. Each export contains the complete
+finalized value slice consumed by the frontend plus the current and
+platform-default binding tries; the two complete documents must byte-match
+before publication.
 Syntax, file precedence, `config-file` includes, canonical values, nullable
 lifetime values, raw `gtk-single-instance`, `initial-window`, and finalized
 bindings therefore come from the exact pinned Ghostty implementation. Qt strictly

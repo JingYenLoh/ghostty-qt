@@ -1,5 +1,7 @@
 #include "ghostty_config_service.h"
 
+#include "ghostty_config_snapshot_fixture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -26,11 +28,10 @@ bool replaceFile(const QString &path, const QByteArray &contents)
     return file.commit();
 }
 
-GhosttyConfigSnapshot snapshotWithValue(int value, const QString &sourcePath = {})
+GhosttyConfigSnapshot snapshotWithMarker(int marker, const QString &sourcePath = {})
 {
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("test-value"), value);
+    GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
+    snapshot.values.windowWidth = static_cast<quint32>(marker);
     if (!sourcePath.isEmpty()) {
         snapshot.sourcePaths.append(sourcePath);
     }
@@ -96,7 +97,7 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
         expected,
         [&observed](const QStringList &paths) {
             observed = paths;
-            return snapshotWithValue(1);
+            return snapshotWithMarker(1);
         },
         20);
     QCOMPARE(observed, expected);
@@ -139,11 +140,11 @@ void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
                 bool ok = false;
                 const int value = QString::fromUtf8(file.readAll()).toInt(&ok);
                 if (ok) {
-                    return snapshotWithValue(value, *path);
+                    return snapshotWithMarker(value, *path);
                 }
             }
         }
-        return snapshotWithValue(0);
+        return snapshotWithMarker(0);
     };
 
     GhosttyConfigService service({primary, fallback}, loader, 35);
@@ -152,14 +153,12 @@ void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
     QVERIFY(service.watchedDirectories().contains(ghosttyDirectory));
 
     QVERIFY(replaceFile(primary, QByteArrayLiteral("1")));
-    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().value<int>(QStringLiteral("test-value")),
-                              std::optional<int>(1), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{1}, 1000);
     QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(primary), 1000);
     const int afterFirstReplacement = loads;
 
     QVERIFY(replaceFile(primary, QByteArrayLiteral("2")));
-    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().value<int>(QStringLiteral("test-value")),
-                              std::optional<int>(2), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2}, 1000);
     QVERIFY(loads > afterFirstReplacement);
     QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(primary), 1000);
 }
@@ -182,7 +181,7 @@ void GhosttyConfigServiceTest::watchesLoadedIncludePaths()
         {mainPath},
         [&loads, &includePath](const QStringList &) {
             ++loads;
-            GhosttyConfigSnapshot snapshot = snapshotWithValue(loads);
+            GhosttyConfigSnapshot snapshot = snapshotWithMarker(loads);
             snapshot.sourcePaths.append(includePath);
             return snapshot;
         },
@@ -212,10 +211,11 @@ void GhosttyConfigServiceTest::watchesMissingOptionalIncludeCreation()
     GhosttyConfigService service(
         {mainPath},
         [&loads, &optionalPath](const QStringList &) {
-            GhosttyConfigSnapshot snapshot = snapshotWithValue(++loads);
-            snapshot.values.insert(
-                QStringLiteral("config-file"),
-                QStringList({QStringLiteral("?") + optionalPath}));
+            GhosttyConfigSnapshot snapshot = snapshotWithMarker(++loads);
+            snapshot.values.configFiles.append(GhosttyConfigFile{
+                .path = optionalPath,
+                .optional = true,
+            });
             return snapshot;
         },
         30);
@@ -236,7 +236,7 @@ void GhosttyConfigServiceTest::debouncesReloadBursts()
     GhosttyConfigService service(
         {path},
         [&loads](const QStringList &) {
-            return snapshotWithValue(++loads);
+            return snapshotWithMarker(++loads);
         },
         60);
     QCOMPARE(loads, 1);
@@ -257,7 +257,7 @@ void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
         if (load > 1) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
-        return snapshotWithValue(load);
+        return snapshotWithMarker(load);
     });
     QCOMPARE(loads.load(), 1);
 
@@ -268,9 +268,7 @@ void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
     service.requestReload();
     QTRY_VERIFY_WITH_TIMEOUT(guiTimerFired, 200);
     QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        service.snapshot().value<int>(QStringLiteral("test-value")),
-        std::optional<int>(2), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2}, 1000);
 }
 
 void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
@@ -281,7 +279,7 @@ void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
         if (load == 2) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
         }
-        return snapshotWithValue(load);
+        return snapshotWithMarker(load);
     });
     QCOMPARE(loads.load(), 1);
 
@@ -289,13 +287,11 @@ void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
     QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
     service.reloadNow();
     QCOMPARE(loads.load(), 3);
-    QCOMPARE(service.snapshot().value<int>(QStringLiteral("test-value")),
-             std::optional<int>(3));
+    QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
 
     // The slow generation completes later but cannot replace generation 3.
     QTest::qWait(350);
-    QCOMPARE(service.snapshot().value<int>(QStringLiteral("test-value")),
-             std::optional<int>(3));
+    QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
 }
 
 void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
@@ -305,7 +301,7 @@ void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
         {},
         [&loads](const QStringList &) {
             ++loads;
-            return snapshotWithValue(17);
+            return snapshotWithMarker(17);
         },
         0);
     QCOMPARE(loads, 1);
@@ -314,9 +310,13 @@ void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
     service.reloadNow();
     QCOMPARE(loads, 2);
     QCOMPARE(changed.count(), 1);
-    QCOMPARE(qvariant_cast<GhosttyConfigSnapshot>(
-                 changed.constFirst().constFirst()),
-             service.snapshot());
+    const QVariant published = changed.constFirst().constFirst();
+    QCOMPARE(published.metaType(),
+             QMetaType::fromType<GhosttyConfigSnapshot>());
+    const auto *publishedSnapshot =
+        static_cast<const GhosttyConfigSnapshot *>(published.constData());
+    QVERIFY(publishedSnapshot != nullptr);
+    QCOMPARE(*publishedSnapshot, service.snapshot());
 }
 
 void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
@@ -332,7 +332,7 @@ void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
             if (fail) {
                 return std::unexpected(QStringLiteral("invalid config"));
             }
-            return snapshotWithValue(17);
+            return snapshotWithMarker(17);
         },
         20);
     QVERIFY(service.hasSnapshot());
@@ -355,7 +355,7 @@ void GhosttyConfigServiceTest::changedSubscriberMayDeleteAsyncService()
     std::atomic<int> loads = 0;
     QPointer<GhosttyConfigService> service = new GhosttyConfigService(
         [&loads](const QStringList &) {
-            return snapshotWithValue(++loads);
+            return snapshotWithMarker(++loads);
         });
     QCOMPARE(loads.load(), 1);
 
@@ -374,7 +374,7 @@ void GhosttyConfigServiceTest::failedSubscriberMayDeleteAsyncService()
         [&loads](const QStringList &) -> GhosttyConfigLoadResult {
             const int load = ++loads;
             if (load == 1) {
-                return snapshotWithValue(load);
+                return snapshotWithMarker(load);
             }
             return std::unexpected(QStringLiteral("delete-on-failure"));
         });

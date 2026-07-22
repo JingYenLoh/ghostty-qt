@@ -798,11 +798,12 @@ validation, defaults, and finalization. Each JSON document is one exact
 schema-v1 frontend projection containing all consumed values plus the finalized
 current and platform-default binding sets. The two JSON byte streams must
 match, preventing a valid A-to-B edit from publishing a mixed snapshot. The
-adapter strictly decodes the verified document into a
-value-only `GhosttyConfigSnapshot`; it never parses or merges Ghostty's
-human-oriented `+show-config` output. This keeps the unstable application API
-and all of its state outside the long-lived Qt process while avoiding a second
-configuration parser.
+adapter strictly decodes the verified document into one complete, strongly
+typed `GhosttyConfigSnapshot`; it never parses or merges Ghostty's
+human-oriented `+show-config` output. Configuration absence remains service
+state rather than a contradictory flag inside a snapshot. This keeps the
+unstable application API and all of its state outside the long-lived Qt
+process while avoiding a second configuration parser.
 
 `GhosttyConfigService` watches the legacy `ghostty/config`, preferred
 `ghostty/config.ghostty`, their nearest existing directories, existing include
@@ -837,15 +838,17 @@ resize-overlay presentation, included config files, and the finalized
 keybinding sets. The README and machine-checked parity ledger describe the
 individual keys. One strict schema-v1 document carries the whole slice,
 including nullable values such as `quit-after-last-window-closed-delay`; there
-is no separate defaults merge or partially populated snapshot.
-Appearance crosses threads as a
-value-only `TerminalAppearance`: terminal foreground/background, all 256
-palette defaults, selection and candidate/selected search colors, cursor
-color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed colors and
-Ghostty's cell-foreground and cell-background aliases remain distinct until
-the renderer has the target cell. Only the first configured font family is
-rendered. Explicit working-directory, font, and scrollback CLI options retain
-precedence.
+is no separate defaults merge or partially populated snapshot. Canonical enum
+tags, optional include markers, working-directory inheritance, and nullable
+color alternatives are decoded only at this boundary. The fixed-size palette
+cannot carry fewer or more than 256 colors. Appearance then crosses worker
+threads as a value-only `TerminalAppearance`: terminal foreground/background,
+all 256 palette defaults, selection and candidate/selected search colors,
+cursor color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed
+colors and Ghostty's cell-foreground and cell-background aliases remain
+distinct until the renderer has the target cell. Only the first configured
+font family is rendered. Explicit working-directory, font, and scrollback CLI
+options retain precedence.
 
 Live reload updates font and appearance on existing panes without overriding a
 pane's manual font zoom. Directory and font inheritance booleans plus tab
@@ -1335,11 +1338,13 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-global-shortcut-portal` verifies XDG trigger conversion, registry
   eligibility and collisions, response-before-reply races, activation routing,
   reload cleanup, and stale callback rejection on a private D-Bus daemon.
-- `ghostty-config-service` verifies standard paths, file/directory and include
-  watches, atomic replacement, debounce, and retention of the last good value.
+- `ghostty-config-service` verifies standard paths, typed file/directory and
+  optional-include watches, atomic replacement, debounce, queued snapshot
+  transport, and retention of the last good value.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
-  frontend projection, including exact shapes and types, nullable fields,
-  canonical colors, the full unsigned scrollback range, and binding trees.
+  frontend projection, including exact shapes, semantic enums, typed nullable
+  fields and include entries, canonical colors, the fixed 256-color palette,
+  the full unsigned scrollback range, and binding trees.
 - `ghostty-config-process-loader` verifies the four-process
   validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser

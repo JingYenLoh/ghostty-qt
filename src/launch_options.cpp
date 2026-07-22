@@ -5,15 +5,19 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QLocale>
-#include <QMetaType>
-#include <QVariant>
 
-#include <algorithm>
 #include <cmath>
+#include <utility>
+#include <variant>
 
 namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
+
+template<typename... Visitor>
+struct Overloaded : Visitor... {
+    using Visitor::operator()...;
+};
 
 std::optional<bool> parseGhosttyBoolean(QStringView value)
 {
@@ -32,147 +36,96 @@ std::optional<bool> parseGhosttyBoolean(QStringView value)
     return std::nullopt;
 }
 
-std::optional<QColor> configColor(const GhosttyConfigSnapshot &snapshot,
-                                  const QString &key)
+TerminalColorValue toTerminalColor(const GhosttyTerminalColor &configured)
 {
-    const auto it = snapshot.values.constFind(key);
-    if (it == snapshot.values.cend() || !it->isValid()) {
-        return std::nullopt;
-    }
-
-    const QColor color = it->value<QColor>();
-    return color.isValid() ? std::optional<QColor>(color) : std::nullopt;
+    return std::visit(
+        Overloaded{
+            [](const QColor &color) {
+                return TerminalColorValue::fromColor(color);
+            },
+            [](GhosttyCellRelativeColor relative) {
+                switch (relative) {
+                case GhosttyCellRelativeColor::Foreground:
+                    return TerminalColorValue{
+                        .kind = TerminalColorKind::CellForeground,
+                        .color = {},
+                    };
+                case GhosttyCellRelativeColor::Background:
+                    return TerminalColorValue{
+                        .kind = TerminalColorKind::CellBackground,
+                        .color = {},
+                    };
+                }
+                std::unreachable();
+            },
+        },
+        configured);
 }
 
-std::optional<TerminalColorValue> configTerminalColor(
-    const GhosttyConfigSnapshot &snapshot, const QString &key)
+TerminalColorValue toTerminalColor(
+    const std::optional<GhosttyTerminalColor> &configured)
 {
-    const auto it = snapshot.values.constFind(key);
-    if (it == snapshot.values.cend() || !it->isValid()) {
-        return std::nullopt;
-    }
-    if (it->metaType() == QMetaType::fromType<QString>()) {
-        const QString value = it->toString();
-        if (value.isEmpty()) {
-            return TerminalColorValue{};
-        }
-        if (value == QStringLiteral("cell-foreground")) {
-            return TerminalColorValue{
-                .kind = TerminalColorKind::CellForeground,
-                .color = {},
-            };
-        }
-        if (value == QStringLiteral("cell-background")) {
-            return TerminalColorValue{
-                .kind = TerminalColorKind::CellBackground,
-                .color = {},
-            };
-        }
-        return std::nullopt;
-    }
-    const QColor color = it->value<QColor>();
-    if (!color.isValid()) {
-        return std::nullopt;
-    }
-    return TerminalColorValue::fromColor(color);
+    return configured ? toTerminalColor(*configured) : TerminalColorValue{};
 }
 
-std::optional<TerminalCursorStyle> configCursorStyle(const QVariant &value)
+TerminalBoldColor toTerminalBoldColor(
+    const std::optional<GhosttyBoldColor> &configured)
 {
-    if (value.metaType() != QMetaType::fromType<QString>()) {
-        return std::nullopt;
+    if (!configured) {
+        return {};
     }
-    const QString style = value.toString();
-    if (style == QStringLiteral("block")) return TerminalCursorStyle::Block;
-    if (style == QStringLiteral("bar")) return TerminalCursorStyle::Bar;
-    if (style == QStringLiteral("underline")) return TerminalCursorStyle::Underline;
-    if (style == QStringLiteral("block_hollow")) {
-        return TerminalCursorStyle::BlockHollow;
-    }
-    return std::nullopt;
+    return std::visit(
+        Overloaded{
+            [](const QColor &color) {
+                return TerminalBoldColor{
+                    .kind = TerminalBoldColorKind::Color,
+                    .color = color,
+                };
+            },
+            [](GhosttyBoldBrightness brightness) {
+                switch (brightness) {
+                case GhosttyBoldBrightness::Bright:
+                    return TerminalBoldColor{
+                        .kind = TerminalBoldColorKind::Bright,
+                        .color = {},
+                    };
+                }
+                std::unreachable();
+            },
+        },
+        *configured);
 }
 
-std::optional<TerminalBoldColor> configBoldColor(const QVariant &value)
+TerminalAppearance toTerminalAppearance(
+    const GhosttyAppearanceConfig &configured)
 {
-    if (value.metaType() == QMetaType::fromType<QString>()) {
-        const QString bold = value.toString();
-        if (bold.isEmpty()) return TerminalBoldColor{};
-        if (bold == QStringLiteral("bright")) {
-            return TerminalBoldColor{
-                .kind = TerminalBoldColorKind::Bright,
-                .color = {},
-            };
-        }
-        return std::nullopt;
-    }
-    const QColor color = value.value<QColor>();
-    if (!color.isValid()) return std::nullopt;
-    return TerminalBoldColor{
-        .kind = TerminalBoldColorKind::Color,
-        .color = color,
+    TerminalAppearance result{
+        .foregroundColor = configured.foreground,
+        .backgroundColor = configured.background,
+        .palette = {},
+        .selectionForeground = toTerminalColor(
+            configured.selectionForeground),
+        .selectionBackground = toTerminalColor(
+            configured.selectionBackground),
+        .searchForeground = toTerminalColor(configured.searchForeground),
+        .searchBackground = toTerminalColor(configured.searchBackground),
+        .searchSelectedForeground = toTerminalColor(
+            configured.searchSelectedForeground),
+        .searchSelectedBackground = toTerminalColor(
+            configured.searchSelectedBackground),
+        .cursorColor = toTerminalColor(configured.cursorColor),
+        .cursorStyle = configured.cursorStyle,
+        .cursorBlink = configured.cursorBlink,
+        .cursorOpacity = configured.cursorOpacity,
+        .cursorTextColor = toTerminalColor(configured.cursorText),
+        .boldColor = toTerminalBoldColor(configured.boldColor),
+        .faintOpacity = configured.faintOpacity,
     };
-}
-
-std::optional<QVector<QColor>> configPalette(const QVariant &value)
-{
-    const QVariantList entries = value.toList();
-    if (entries.size() != 256) return std::nullopt;
-    QVector<QColor> palette;
-    palette.reserve(entries.size());
-    for (const QVariant &entry : entries) {
-        const QColor color = entry.value<QColor>();
-        if (!color.isValid()) return std::nullopt;
-        palette.append(color);
-    }
-    return palette;
-}
-
-std::optional<double> configUnitInterval(const QVariant &value)
-{
-    bool valid = false;
-    const double result = value.toDouble(&valid);
-    if (!valid || !std::isfinite(result) || result < 0.0 || result > 1.0) {
-        return std::nullopt;
+    result.palette.reserve(static_cast<qsizetype>(configured.palette.size()));
+    for (const QColor &color : configured.palette) {
+        result.palette.append(color);
     }
     return result;
-}
-
-std::optional<double> configClampedUnitInterval(const QVariant &value)
-{
-    bool valid = false;
-    const double result = value.toDouble(&valid);
-    if (!valid || !std::isfinite(result)) {
-        return std::nullopt;
-    }
-    return std::clamp(result, 0.0, 1.0);
-}
-
-void applyNullableConfigColor(const GhosttyConfigSnapshot &snapshot,
-                              const QString &key,
-                              std::optional<QColor> &destination)
-{
-    const auto value = snapshot.values.constFind(key);
-    if (value == snapshot.values.cend()) {
-        return;
-    }
-    if (value->metaType() == QMetaType::fromType<QString>()
-        && value->toString().isEmpty()) {
-        destination.reset();
-        return;
-    }
-    const QColor color = value->value<QColor>();
-    if (color.isValid()) {
-        destination = color;
-    }
-}
-
-void applyConfigBool(const GhosttyConfigSnapshot &snapshot,
-                     const QString &key,
-                     bool &destination)
-{
-    if (const auto value = snapshot.value<bool>(key)) {
-        destination = *value;
-    }
 }
 
 void enforceExplicitCommandLifetime(const LaunchOptions &base,
@@ -221,349 +174,71 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot)
 {
     LaunchOptions result = base;
-    enforceExplicitCommandLifetime(base, result);
-    if (snapshot.availability != GhosttyConfigAvailability::Available) {
-        return result;
-    }
+    const GhosttyConfigValues &config = snapshot.values;
 
     if (!base.workingDirectoryExplicit) {
-        const auto directory = snapshot.value<QString>(
-            QStringLiteral("working-directory"));
-        if (directory.has_value()) {
-            result.inheritWorkingDirectory = directory->isEmpty()
-                || *directory == QLatin1StringView("inherit");
-            if (!result.inheritWorkingDirectory) {
-                // The helper has already finalized home and tilde expansion.
-                // Preserve the remaining path byte-for-byte at the QString
-                // boundary: lexical cleanup changes `symlink/../...` lookup.
-                result.workingDirectory = *directory;
-            }
+        result.inheritWorkingDirectory = !config.workingDirectoryPath;
+        if (config.workingDirectoryPath) {
+            // The helper has already finalized home and tilde expansion.
+            // Preserve the remaining path byte-for-byte at the QString
+            // boundary: lexical cleanup changes `symlink/../...` lookup.
+            result.workingDirectory = *config.workingDirectoryPath;
         }
+    }
+    if (!base.fontFamilyExplicit && !config.fontFamilies.isEmpty()) {
+        result.fontFamily = config.fontFamilies.constFirst();
+    }
+    if (!base.fontSizeExplicit && std::isfinite(config.fontSize) &&
+        config.fontSize > 0.0) {
+        result.fontSize = config.fontSize;
     }
 
-    if (!base.fontFamilyExplicit) {
-        const auto families = snapshot.value<QStringList>(QStringLiteral("font-family"));
-        if (families.has_value() && !families->isEmpty()) {
-            result.fontFamily = families->constFirst();
-        }
-    }
+    result.appearance = toTerminalAppearance(config.appearance);
+    result.splitAppearance = config.splitAppearance;
+    result.splitInheritWorkingDirectory = config.splitInheritWorkingDirectory;
+    result.splitPreserveZoomNavigation = config.splitPreserveZoom;
+    result.tabInheritWorkingDirectory = config.tabInheritWorkingDirectory;
+    result.windowInheritWorkingDirectory = config.windowInheritWorkingDirectory;
+    result.windowInheritFontSize = config.windowInheritFontSize;
+    result.windowNewTabPosition = config.windowNewTabPosition;
+    result.windowShowTabBar = config.windowShowTabBar;
+    result.windowWidth = config.windowWidth;
+    result.windowHeight = config.windowHeight;
+    result.resizeOverlay = config.resizeOverlay;
+    result.maximize = config.maximize;
+    // Ghostty documents every non-native mode as equivalent to native
+    // fullscreen away from macOS. This frontend is Linux-only.
+    result.fullscreen = config.fullscreen != GhosttyFullscreenMode::Disabled;
 
-    if (!base.fontSizeExplicit) {
-        const auto size = snapshot.value<double>(QStringLiteral("font-size"));
-        if (size.has_value() && std::isfinite(*size) && *size > 0.0) {
-            result.fontSize = *size;
-        }
-    }
-
-    if (const auto foreground = configColor(
-            snapshot, QStringLiteral("foreground"))) {
-        result.appearance.foregroundColor = *foreground;
-    }
-    if (const auto background = configColor(
-            snapshot, QStringLiteral("background"))) {
-        result.appearance.backgroundColor = *background;
-    }
-    if (const auto opacity = configClampedUnitInterval(
-            snapshot.values.value(QStringLiteral("unfocused-split-opacity")))) {
-        result.splitAppearance.unfocusedOpacity =
-            std::clamp(*opacity, 0.15, 1.0);
-    }
-    applyNullableConfigColor(
-        snapshot, QStringLiteral("unfocused-split-fill"),
-        result.splitAppearance.unfocusedFill);
-    applyNullableConfigColor(
-        snapshot, QStringLiteral("split-divider-color"),
-        result.splitAppearance.dividerColor);
-    applyConfigBool(
-        snapshot, QStringLiteral("split-inherit-working-directory"),
-        result.splitInheritWorkingDirectory);
-    applyConfigBool(
-        snapshot, QStringLiteral("split-preserve-zoom"),
-        result.splitPreserveZoomNavigation);
-    applyConfigBool(
-        snapshot, QStringLiteral("tab-inherit-working-directory"),
-        result.tabInheritWorkingDirectory);
-    applyConfigBool(
-        snapshot, QStringLiteral("window-inherit-working-directory"),
-        result.windowInheritWorkingDirectory);
-    applyConfigBool(
-        snapshot, QStringLiteral("window-inherit-font-size"),
-        result.windowInheritFontSize);
-    const auto newTabPosition = snapshot.value<QString>(
-        QStringLiteral("window-new-tab-position"));
-    if (newTabPosition == QStringLiteral("current")) {
-        result.windowNewTabPosition = WindowNewTabPosition::Current;
-    } else if (newTabPosition == QStringLiteral("end")) {
-        result.windowNewTabPosition = WindowNewTabPosition::End;
-    }
-    const auto showTabBar = snapshot.value<QString>(
-        QStringLiteral("window-show-tab-bar"));
-    if (showTabBar == QStringLiteral("always")) {
-        result.windowShowTabBar = WindowShowTabBar::Always;
-    } else if (showTabBar == QStringLiteral("auto")) {
-        result.windowShowTabBar = WindowShowTabBar::Auto;
-    } else if (showTabBar == QStringLiteral("never")) {
-        result.windowShowTabBar = WindowShowTabBar::Never;
-    }
-    if (const auto width = snapshot.value<quint32>(
-            QStringLiteral("window-width"))) {
-        result.windowWidth = *width;
-    }
-    if (const auto height = snapshot.value<quint32>(
-            QStringLiteral("window-height"))) {
-        result.windowHeight = *height;
-    }
-    if (const auto mode = snapshot.value<QString>(
-            QStringLiteral("resize-overlay"))) {
-        if (*mode == QStringLiteral("always")) {
-            result.resizeOverlay.mode = ResizeOverlayMode::Always;
-        } else if (*mode == QStringLiteral("never")) {
-            result.resizeOverlay.mode = ResizeOverlayMode::Never;
-        } else if (*mode == QStringLiteral("after-first")) {
-            result.resizeOverlay.mode = ResizeOverlayMode::AfterFirst;
-        }
-    }
-    if (const auto position = snapshot.value<QString>(
-            QStringLiteral("resize-overlay-position"))) {
-        if (*position == QStringLiteral("center")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::Center;
-        } else if (*position == QStringLiteral("top-left")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::TopLeft;
-        } else if (*position == QStringLiteral("top-center")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::TopCenter;
-        } else if (*position == QStringLiteral("top-right")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::TopRight;
-        } else if (*position == QStringLiteral("bottom-left")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::BottomLeft;
-        } else if (*position == QStringLiteral("bottom-center")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::BottomCenter;
-        } else if (*position == QStringLiteral("bottom-right")) {
-            result.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
-        }
-    }
-    if (const auto duration = snapshot.value<quint32>(
-            QStringLiteral("resize-overlay-duration"))) {
-        // Ghostty's GTK widget constrains this property to at least 250 ms.
-        result.resizeOverlay.duration = std::chrono::milliseconds(
-            std::max(*duration, quint32{250}));
-    }
-    applyConfigBool(snapshot, QStringLiteral("maximize"), result.maximize);
-    if (const auto fullscreen = snapshot.value<QString>(
-            QStringLiteral("fullscreen"))) {
-        if (*fullscreen == QStringLiteral("false")) {
-            result.fullscreen = false;
-        } else if (*fullscreen == QStringLiteral("true")
-                   || *fullscreen == QStringLiteral("non-native")
-                   || *fullscreen
-                       == QStringLiteral("non-native-visible-menu")
-                   || *fullscreen
-                       == QStringLiteral("non-native-padded-notch")) {
-            // Ghostty documents every non-native mode as equivalent to native
-            // fullscreen away from macOS. This frontend is Linux-only.
-            result.fullscreen = true;
-        }
-    }
-    applyConfigBool(
-        snapshot, QStringLiteral("quit-after-last-window-closed"),
-        result.quitAfterLastWindowClosed);
+    result.quitAfterLastWindowClosed = config.quitAfterLastWindowClosed;
+    result.quitAfterLastWindowClosedDelay =
+        config.quitAfterLastWindowClosedDelay;
     if (!base.initialWindowExplicit) {
-        applyConfigBool(snapshot, QStringLiteral("initial-window"),
-                        result.initialWindow);
-    }
-    const auto delay = snapshot.values.constFind(
-        QStringLiteral("quit-after-last-window-closed-delay"));
-    if (delay != snapshot.values.cend()) {
-        if (!delay->isValid()) {
-            result.quitAfterLastWindowClosedDelay.reset();
-        } else if (delay->metaType() == QMetaType::fromType<quint32>()) {
-            result.quitAfterLastWindowClosedDelay =
-                std::chrono::milliseconds(delay->value<quint32>());
-        }
+        result.initialWindow = config.initialWindow;
     }
     if (!base.singleInstanceModeExplicit) {
-        if (const auto mode = snapshot.value<QString>(
-                QStringLiteral("gtk-single-instance"))) {
-            if (*mode == QStringLiteral("true")) {
-                result.singleInstanceMode = SingleInstanceMode::Enabled;
-            } else if (*mode == QStringLiteral("false")) {
-                result.singleInstanceMode = SingleInstanceMode::Disabled;
-            } else if (*mode == QStringLiteral("detect")) {
-                result.singleInstanceMode = SingleInstanceMode::Detect;
-            }
-        }
+        result.singleInstanceMode = config.singleInstanceMode;
     }
+
+    if (!base.scrollbackLimitExplicit) {
+        result.scrollbackLimit = {
+            .value = config.scrollbackLimitBytes,
+            .unit = ScrollbackLimitUnit::Bytes,
+        };
+    }
+    result.confirmCloseMode = config.confirmCloseMode;
+    result.selectionClipboard = config.selectionClipboard;
+    result.clipboardPaste = config.clipboardPaste;
+    result.middleClickAction = config.middleClickAction;
+    result.mouseReporting = config.mouseReporting;
+    result.linkUrl = config.linkUrl;
+    result.linkPreviews = config.linkPreviews;
+    result.keybindSource =
+        GhosttyKeybindSource::structured(snapshot.keybindings);
+
     // Match Ghostty's `-e` contract: an explicitly supplied command always
     // exits with its final window and never inherits a lingering delay.
     enforceExplicitCommandLifetime(base, result);
-    if (const auto palette = configPalette(
-            snapshot.values.value(QStringLiteral("palette")))) {
-        result.appearance.palette = *palette;
-    }
-    if (const auto selectionForeground = configTerminalColor(
-            snapshot, QStringLiteral("selection-foreground"))) {
-        result.appearance.selectionForeground = *selectionForeground;
-    }
-    if (const auto selectionBackground = configTerminalColor(
-            snapshot, QStringLiteral("selection-background"))) {
-        result.appearance.selectionBackground = *selectionBackground;
-    }
-    if (const auto searchForeground = configTerminalColor(
-            snapshot, QStringLiteral("search-foreground"));
-        searchForeground
-        && searchForeground->kind != TerminalColorKind::Unset) {
-        result.appearance.searchForeground = *searchForeground;
-    }
-    if (const auto searchBackground = configTerminalColor(
-            snapshot, QStringLiteral("search-background"));
-        searchBackground
-        && searchBackground->kind != TerminalColorKind::Unset) {
-        result.appearance.searchBackground = *searchBackground;
-    }
-    if (const auto searchSelectedForeground = configTerminalColor(
-            snapshot, QStringLiteral("search-selected-foreground"));
-        searchSelectedForeground
-        && searchSelectedForeground->kind != TerminalColorKind::Unset) {
-        result.appearance.searchSelectedForeground = *searchSelectedForeground;
-    }
-    if (const auto searchSelectedBackground = configTerminalColor(
-            snapshot, QStringLiteral("search-selected-background"));
-        searchSelectedBackground
-        && searchSelectedBackground->kind != TerminalColorKind::Unset) {
-        result.appearance.searchSelectedBackground = *searchSelectedBackground;
-    }
-    if (const auto cursor = configTerminalColor(
-            snapshot, QStringLiteral("cursor-color"))) {
-        result.appearance.cursorColor = *cursor;
-    }
-    if (const auto cursorStyle = configCursorStyle(
-            snapshot.values.value(QStringLiteral("cursor-style")))) {
-        result.appearance.cursorStyle = *cursorStyle;
-    }
-    const QVariant cursorBlink =
-        snapshot.values.value(QStringLiteral("cursor-style-blink"));
-    if (cursorBlink.metaType() == QMetaType::fromType<bool>()) {
-        result.appearance.cursorBlink = cursorBlink.toBool();
-    } else if (cursorBlink.metaType() == QMetaType::fromType<QString>()
-               && cursorBlink.toString().isEmpty()) {
-        result.appearance.cursorBlink.reset();
-    }
-    if (const auto cursorOpacity = configClampedUnitInterval(
-            snapshot.values.value(QStringLiteral("cursor-opacity")))) {
-        result.appearance.cursorOpacity = *cursorOpacity;
-    }
-    if (const auto cursorText = configTerminalColor(
-            snapshot, QStringLiteral("cursor-text"))) {
-        result.appearance.cursorTextColor = *cursorText;
-    }
-    if (const auto boldColor = configBoldColor(
-            snapshot.values.value(QStringLiteral("bold-color")))) {
-        result.appearance.boldColor = *boldColor;
-    }
-    if (const auto faintOpacity = configUnitInterval(
-            snapshot.values.value(QStringLiteral("faint-opacity")))) {
-        result.appearance.faintOpacity = *faintOpacity;
-    }
-
-    const auto scrollback = snapshot.values.constFind(
-        QStringLiteral("scrollback-limit"));
-    if (!base.scrollbackLimitExplicit && scrollback != snapshot.values.cend()) {
-        bool valid = false;
-        const qulonglong byteLimit = scrollback->toULongLong(&valid);
-        // QVariant converts signed -1 to UINT64_MAX successfully, so retain
-        // the canonical sign check while still accepting Ghostty's full usize
-        // range when the snapshot stores a quint64.
-        const bool negative = scrollback->toString().startsWith(u'-');
-        if (valid && !negative) {
-            result.scrollbackLimit = {
-                .value = static_cast<quint64>(byteLimit),
-                .unit = ScrollbackLimitUnit::Bytes,
-            };
-        }
-    }
-
-    const auto confirm = snapshot.value<QString>(
-        QStringLiteral("confirm-close-surface"));
-    if (confirm == QStringLiteral("false")) {
-        result.confirmCloseMode = ConfirmCloseMode::Never;
-    } else if (confirm == QStringLiteral("true")) {
-        result.confirmCloseMode = ConfirmCloseMode::RunningProcesses;
-    } else if (confirm == QStringLiteral("always")) {
-        result.confirmCloseMode = ConfirmCloseMode::Always;
-    }
-
-    applyConfigBool(snapshot, QStringLiteral("link-url"), result.linkUrl);
-
-    const QVariant linkPreviews = snapshot.values.value(
-        QStringLiteral("link-previews"));
-    if (linkPreviews.metaType() == QMetaType::fromType<QString>()) {
-        const QString canonical = linkPreviews.toString();
-        if (canonical == QStringLiteral("false")) {
-            result.linkPreviews = LinkPreviewMode::Never;
-        } else if (canonical == QStringLiteral("true")) {
-            result.linkPreviews = LinkPreviewMode::Always;
-        } else if (canonical == QStringLiteral("osc8")) {
-            result.linkPreviews = LinkPreviewMode::Osc8;
-        }
-    }
-
-    applyConfigBool(
-        snapshot, QStringLiteral("clipboard-trim-trailing-spaces"),
-        result.selectionClipboard.trimTrailingSpaces);
-    applyConfigBool(
-        snapshot, QStringLiteral("clipboard-paste-protection"),
-        result.clipboardPaste.protection);
-    applyConfigBool(
-        snapshot, QStringLiteral("clipboard-paste-bracketed-safe"),
-        result.clipboardPaste.bracketedSafe);
-
-    const QVariant copyOnSelect = snapshot.values.value(
-        QStringLiteral("copy-on-select"));
-    if (copyOnSelect.metaType() == QMetaType::fromType<QString>()) {
-        const QString canonical = copyOnSelect.toString();
-        if (canonical == QStringLiteral("false")) {
-            result.selectionClipboard.copyOnSelect =
-                TerminalCopyOnSelectMode::Disabled;
-        } else if (canonical == QStringLiteral("true")) {
-            result.selectionClipboard.copyOnSelect =
-                TerminalCopyOnSelectMode::Primary;
-        } else if (canonical == QStringLiteral("clipboard")) {
-            result.selectionClipboard.copyOnSelect =
-                TerminalCopyOnSelectMode::PrimaryAndClipboard;
-        }
-    }
-
-    applyConfigBool(
-        snapshot, QStringLiteral("selection-clear-on-typing"),
-        result.selectionClipboard.clearOnTyping);
-    applyConfigBool(
-        snapshot, QStringLiteral("selection-clear-on-copy"),
-        result.selectionClipboard.clearOnCopy);
-
-    const QVariant middleClickAction = snapshot.values.value(
-        QStringLiteral("middle-click-action"));
-    if (middleClickAction.metaType() == QMetaType::fromType<QString>()) {
-        const QString canonical = middleClickAction.toString();
-        if (canonical == QStringLiteral("primary-paste")) {
-            result.middleClickAction = MiddleClickAction::PrimaryPaste;
-        } else if (canonical == QStringLiteral("ignore")) {
-            result.middleClickAction = MiddleClickAction::Ignore;
-        }
-    }
-
-    applyConfigBool(
-        snapshot, QStringLiteral("mouse-reporting"), result.mouseReporting);
-
-    const auto keybindings = snapshot.value<QStringList>(QStringLiteral("keybind"));
-    if (keybindings.has_value()) {
-        result.keybindSource = GhosttyKeybindSource::text(*keybindings);
-    }
-    if (snapshot.keybindConfig.has_value()) {
-        // The structured projection is the authoritative, fully finalized
-        // Ghostty set. Explicit flattened values remain available only to
-        // config-disabled and injected test callers.
-        result.keybindSource =
-            GhosttyKeybindSource::structured(*snapshot.keybindConfig);
-    }
 
     return result;
 }

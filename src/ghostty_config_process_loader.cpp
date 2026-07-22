@@ -230,17 +230,11 @@ void appendConfiguredActionDiagnostics(
     }
 }
 
-QString configPathWithoutOptionalMarker(QString path)
-{
-    if (path.startsWith(u'?')) path.remove(0, 1);
-    return normalizedAbsolutePath(path);
-}
-
 void appendExistingSource(QStringList &sources,
                           QSet<QString> &seen,
                           const QString &path)
 {
-    const QString normalized = configPathWithoutOptionalMarker(path);
+    const QString normalized = normalizedAbsolutePath(path);
     if (!normalized.isEmpty() && QFileInfo(normalized).isFile()
         && !seen.contains(normalized)) {
         seen.insert(normalized);
@@ -270,9 +264,8 @@ void populateSourcePaths(GhosttyConfigSnapshot &snapshot,
         snapshot.sourcePaths, seen,
         candidateNamed(candidatePaths,
                        QString::fromLatin1(PreferredConfigName)));
-    for (const QString &path :
-         snapshot.values.value(QStringLiteral("config-file")).toStringList()) {
-        appendExistingSource(snapshot.sourcePaths, seen, path);
+    for (const GhosttyConfigFile &file : snapshot.values.configFiles) {
+        appendExistingSource(snapshot.sourcePaths, seen, file.path);
     }
 }
 
@@ -381,15 +374,11 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
                     .arg(exported.error()));
         }
 
-        GhosttyConfigSnapshot snapshot{
-            .availability = GhosttyConfigAvailability::Available,
-            .values = std::move(exported->values),
-            .keybindConfig = std::move(exported->keybindings),
-            .diagnostics = {},
-            .sourcePaths = {},
-        };
+        GhosttyKeybindConfig defaultKeybindings =
+            std::move(exported->defaultKeybindings);
+        GhosttyConfigSnapshot snapshot(std::move(*exported));
         appendConfiguredActionDiagnostics(
-            snapshot, *snapshot.keybindConfig, exported->defaultKeybindings);
+            snapshot, snapshot.keybindings, defaultKeybindings);
         populateSourcePaths(snapshot, candidatePaths);
 
         // Successful validator output and the first exporter stderr may carry

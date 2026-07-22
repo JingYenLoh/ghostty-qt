@@ -108,11 +108,12 @@ split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the raw false/true/detect `gtk-single-instance` mode,
 the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
-export and process-loader tests verify exact field/type validation, malformed
-canonical values, nullable values, transaction consistency, and default-aware
-keybinding diagnostics; launch-option tests verify their value-only overlay
-and worker-boundary projection; adapter tests verify that config-default changes
-preserve OSC/DECSCUSR terminal overrides; and `terminal-pane-render` verifies
+export and process-loader tests verify exact wire validation, typed semantic
+values, nullable alternatives, transaction consistency, and default-aware
+keybinding diagnostics; launch-option tests verify CLI precedence and the
+typed snapshot's worker-boundary projection; adapter tests verify that
+config-default changes preserve OSC/DECSCUSR terminal overrides; and
+`terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
 rules, and live preview policy. Workspace render tests cover dimming's actual
 focus and search predicate, configured-background fallback, live reload,

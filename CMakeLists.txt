@@ -484,6 +484,7 @@ target_compile_options(ghostty-qt-action-pipeline PRIVATE
 add_library(ghostty-qt-config-export STATIC
     src/ghostty_config_export.cpp
     src/ghostty_config_export.h
+    src/ghostty_config_values.h
     src/ghostty_keybind_config.h
 )
 target_include_directories(ghostty-qt-config-export PUBLIC
@@ -533,6 +534,7 @@ qt_add_executable(ghostty-qt
     src/ghostty_config_service.cpp
     src/ghostty_config_service.h
     src/ghostty_config_snapshot.h
+    src/ghostty_config_values.h
     src/ghostty_keybind_config.h
     src/ghostty_global_shortcut_portal.cpp
     src/ghostty_global_shortcut_portal.h

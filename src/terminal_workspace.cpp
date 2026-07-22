@@ -523,11 +523,6 @@ bool TerminalWorkspace::armInitialSessionStart()
     return armed;
 }
 
-void TerminalWorkspace::applyConfigSnapshot(const GhosttyConfigSnapshot &snapshot)
-{
-    applyLaunchOptions(applyGhosttyConfigSnapshot(defaultOptions_, snapshot));
-}
-
 void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options)
 {
     const bool wasTabBarVisible = tabBarVisible();

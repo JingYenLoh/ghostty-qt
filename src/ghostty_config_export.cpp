@@ -5,10 +5,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
-#include <QVariant>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <concepts>
 #include <limits>
@@ -300,75 +300,111 @@ ParseResult<QStringList> readStringList(const QJsonValue &value,
     return result;
 }
 
-ParseResult<QString> readEnum(const QJsonValue &value,
-                              const QString &context,
-                              Fields allowed)
+ParseResult<QVector<GhosttyConfigFile>> readConfigFiles(
+    const QJsonValue &value, const QString &context)
 {
-    auto result = readString(value, context);
-    if (!result) return std::unexpected(std::move(result.error()));
-    if (std::ranges::none_of(allowed, [&result](QLatin1StringView candidate) {
-            return *result == candidate;
-        })) {
-        return std::unexpected(
-            QStringLiteral("%1 has unsupported value '%2'")
-                .arg(context, *result));
+    auto paths = readStringList(value, context);
+    if (!paths) return std::unexpected(std::move(paths.error()));
+
+    QVector<GhosttyConfigFile> result;
+    result.reserve(paths->size());
+    for (QString &encoded : *paths) {
+        const bool optional = encoded.startsWith(u'?');
+        if (optional) encoded.remove(0, 1);
+        if (encoded.isEmpty()) {
+            return std::unexpected(
+                QStringLiteral("%1 entries must contain a path").arg(context));
+        }
+        result.append({
+            .path = std::move(encoded),
+            .optional = optional,
+        });
     }
     return result;
 }
 
-ParseResult<QVariant> readOptionalRgb(const QJsonValue &value,
-                                      const QString &context)
+template<typename Enum, std::size_t Size>
+ParseResult<Enum> readEnum(
+    const QJsonValue &value,
+    const QString &context,
+    const std::array<std::pair<QLatin1StringView, Enum>, Size> &allowed)
 {
-    if (value.isNull()) return QVariant(QString{});
-    auto color = readRgbColor(value, context);
-    if (!color) return std::unexpected(std::move(color.error()));
-    return QVariant::fromValue(*color);
+    auto text = readString(value, context);
+    if (!text) return std::unexpected(std::move(text.error()));
+    const auto match =
+        std::ranges::find_if(allowed, [&text](const auto &candidate) {
+            return *text == candidate.first;
+        });
+    if (match == allowed.cend()) {
+        return std::unexpected(
+            QStringLiteral("%1 has unsupported value '%2'")
+                .arg(context, *text));
+    }
+    return match->second;
 }
 
-ParseResult<QVariant> readTerminalColor(const QJsonValue &value,
-                                        const QString &context,
-                                        bool nullable)
+ParseResult<std::optional<QColor>> readOptionalRgb(
+    const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::nullopt;
+    auto color = readRgbColor(value, context);
+    if (!color) return std::unexpected(std::move(color.error()));
+    return *color;
+}
+
+ParseResult<GhosttyTerminalColor> readTerminalColor(
+    const QJsonValue &value, const QString &context)
 {
     if (value.isNull()) {
-        if (nullable) return QVariant(QString{});
         return std::unexpected(
             QStringLiteral("%1 must not be null").arg(context));
     }
     if (value.isString()) {
         const QString sentinel = value.toString();
-        if (sentinel == QStringLiteral("cell-foreground")
-            || sentinel == QStringLiteral("cell-background")) {
-            return QVariant(sentinel);
+        if (sentinel == QStringLiteral("cell-foreground")) {
+            return GhosttyCellRelativeColor::Foreground;
+        }
+        if (sentinel == QStringLiteral("cell-background")) {
+            return GhosttyCellRelativeColor::Background;
         }
     }
     auto color = readRgbColor(value, context);
     if (!color) return std::unexpected(std::move(color.error()));
-    return QVariant::fromValue(*color);
+    return *color;
 }
 
-ParseResult<QVariant> readOptionalBoolean(const QJsonValue &value,
-                                          const QString &context)
+ParseResult<std::optional<GhosttyTerminalColor>> readOptionalTerminalColor(
+    const QJsonValue &value, const QString &context)
 {
-    if (value.isNull()) return QVariant(QString{});
+    if (value.isNull()) return std::nullopt;
+    auto color = readTerminalColor(value, context);
+    if (!color) return std::unexpected(std::move(color.error()));
+    return std::move(*color);
+}
+
+ParseResult<std::optional<bool>> readOptionalBoolean(
+    const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::nullopt;
     auto result = readBoolean(value, context);
     if (!result) return std::unexpected(std::move(result.error()));
-    return QVariant(*result);
+    return *result;
 }
 
-ParseResult<QVariant> readBoldColor(const QJsonValue &value,
-                                    const QString &context)
+ParseResult<std::optional<GhosttyBoldColor>> readBoldColor(
+    const QJsonValue &value, const QString &context)
 {
-    if (value.isNull()) return QVariant(QString{});
+    if (value.isNull()) return std::nullopt;
     if (value.isString() && value.toString() == QStringLiteral("bright")) {
-        return QVariant(QStringLiteral("bright"));
+        return GhosttyBoldColor{GhosttyBoldBrightness::Bright};
     }
     auto color = readRgbColor(value, context);
     if (!color) return std::unexpected(std::move(color.error()));
-    return QVariant::fromValue(*color);
+    return GhosttyBoldColor{*color};
 }
 
-ParseResult<QVariantList> readPalette(const QJsonValue &value,
-                                      const QString &context)
+ParseResult<std::array<QColor, 256>> readPalette(
+    const QJsonValue &value, const QString &context)
 {
     auto array = readArray(value, context);
     if (!array) return std::unexpected(std::move(array.error()));
@@ -377,258 +413,368 @@ ParseResult<QVariantList> readPalette(const QJsonValue &value,
             QStringLiteral("%1 must contain exactly 256 colors")
                 .arg(context));
     }
-    QVariantList result;
-    result.reserve(array->size());
+    std::array<QColor, 256> result;
     for (qsizetype index = 0; index < array->size(); ++index) {
         auto color = readRgbColor(
             array->at(index),
             QStringLiteral("%1[%2]").arg(context).arg(index));
         if (!color) return std::unexpected(std::move(color.error()));
-        result.append(QVariant::fromValue(*color));
+        result[static_cast<std::size_t>(index)] = *color;
     }
     return result;
 }
 
-ParseResult<QVariantMap> readValues(const QJsonValue &value)
+ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 {
     constexpr QLatin1StringView Context("values");
     auto object = readExactObject(value, Context.toString(), ValueFields);
     if (!object) return std::unexpected(std::move(object.error()));
 
-    QVariantMap result;
+    GhosttyConfigValues result;
     const auto fieldValue = [&object](QLatin1StringView name) {
         return object->value(name);
     };
     const auto context = [](QLatin1StringView name) {
         return childContext(QStringLiteral("values"), name);
     };
-    const auto insert = [&result](QLatin1StringView name, auto &&parsed) {
-        result.insert(name.toString(),
-                      QVariant::fromValue(std::forward<decltype(parsed)>(parsed)));
+    const auto assign = [&](QLatin1StringView name,
+                            auto &destination,
+                            auto reader) -> ParseResult<void> {
+        auto parsed = reader(fieldValue(name), context(name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        destination = std::move(*parsed);
+        return {};
+    };
+    const auto assignBoolean = [&](QLatin1StringView name,
+                                   bool &destination) -> ParseResult<void> {
+        return assign(name, destination, readBoolean);
     };
 
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("working-directory"),
-         })) {
+    {
+        constexpr QLatin1StringView name("working-directory");
         auto parsed = readString(fieldValue(name), context(name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, std::move(*parsed));
+        if (parsed->isEmpty() || *parsed == QLatin1StringView("home")) {
+            return std::unexpected(
+                QStringLiteral("%1 must be 'inherit' or a finalized path")
+                    .arg(context(name)));
+        }
+        if (*parsed == QLatin1StringView("inherit")) {
+            result.workingDirectoryPath.reset();
+        } else {
+            result.workingDirectoryPath = std::move(*parsed);
+        }
     }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("font-family"),
-             QLatin1StringView("config-file"),
+    if (auto parsed = assign(QLatin1StringView("font-family"),
+                             result.fontFamilies, readStringList);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("config-file"),
+                             result.configFiles, readConfigFiles);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+    const auto readDouble = [](const QJsonValue &entry,
+                               const QString &entryContext) {
+        return readFiniteDouble(entry, entryContext);
+    };
+    const auto readUint32 = [](const QJsonValue &entry,
+                               const QString &entryContext) {
+        return readUnsignedInteger<quint32>(entry, entryContext);
+    };
+    if (auto parsed = assign(QLatin1StringView("font-size"),
+                             result.fontSize, readDouble);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, QColor *>>({
+             {QLatin1StringView("foreground"),
+              &result.appearance.foreground},
+             {QLatin1StringView("background"),
+              &result.appearance.background},
          })) {
-        auto parsed = readStringList(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, std::move(*parsed));
-    }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("font-size"),
-             QLatin1StringView("cursor-opacity"),
-         })) {
-        auto parsed = readFiniteDouble(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
+        if (auto parsed = assign(name, *destination, readRgbColor); !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
     }
     {
         constexpr QLatin1StringView name("unfocused-split-opacity");
-        auto parsed = readFiniteDouble(fieldValue(name), context(name), 0.15, 1.0);
+        auto parsed = readFiniteDouble(
+            fieldValue(name), context(name), 0.15, 1.0);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
+        result.splitAppearance.unfocusedOpacity = *parsed;
     }
-    {
-        constexpr QLatin1StringView name("faint-opacity");
-        auto parsed = readFiniteDouble(fieldValue(name), context(name), 0.0, 1.0);
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
-    }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("foreground"),
-             QLatin1StringView("background"),
+    if (auto parsed = assign(QLatin1StringView("unfocused-split-fill"),
+                             result.splitAppearance.unfocusedFill,
+                             readOptionalRgb);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("split-divider-color"),
+                             result.splitAppearance.dividerColor,
+                             readOptionalRgb);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, bool *>>({
+             {QLatin1StringView("split-inherit-working-directory"),
+              &result.splitInheritWorkingDirectory},
+             {QLatin1StringView("split-preserve-zoom"),
+              &result.splitPreserveZoom},
+             {QLatin1StringView("tab-inherit-working-directory"),
+              &result.tabInheritWorkingDirectory},
+             {QLatin1StringView("window-inherit-working-directory"),
+              &result.windowInheritWorkingDirectory},
+             {QLatin1StringView("window-inherit-font-size"),
+              &result.windowInheritFontSize},
+             {QLatin1StringView("maximize"), &result.maximize},
+             {QLatin1StringView("clipboard-trim-trailing-spaces"),
+              &result.selectionClipboard.trimTrailingSpaces},
+             {QLatin1StringView("clipboard-paste-protection"),
+              &result.clipboardPaste.protection},
+             {QLatin1StringView("clipboard-paste-bracketed-safe"),
+              &result.clipboardPaste.bracketedSafe},
+             {QLatin1StringView("selection-clear-on-typing"),
+              &result.selectionClipboard.clearOnTyping},
+             {QLatin1StringView("selection-clear-on-copy"),
+              &result.selectionClipboard.clearOnCopy},
+             {QLatin1StringView("mouse-reporting"), &result.mouseReporting},
+             {QLatin1StringView("link-url"), &result.linkUrl},
+             {QLatin1StringView("quit-after-last-window-closed"),
+              &result.quitAfterLastWindowClosed},
+             {QLatin1StringView("initial-window"), &result.initialWindow},
          })) {
-        auto parsed = readRgbColor(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
-    }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("unfocused-split-fill"),
-             QLatin1StringView("split-divider-color"),
-         })) {
-        auto parsed = readOptionalRgb(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.insert(name.toString(), std::move(*parsed));
-    }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("split-inherit-working-directory"),
-             QLatin1StringView("split-preserve-zoom"),
-             QLatin1StringView("tab-inherit-working-directory"),
-             QLatin1StringView("window-inherit-working-directory"),
-             QLatin1StringView("window-inherit-font-size"),
-             QLatin1StringView("maximize"),
-             QLatin1StringView("clipboard-trim-trailing-spaces"),
-             QLatin1StringView("clipboard-paste-protection"),
-             QLatin1StringView("clipboard-paste-bracketed-safe"),
-             QLatin1StringView("selection-clear-on-typing"),
-             QLatin1StringView("selection-clear-on-copy"),
-             QLatin1StringView("mouse-reporting"),
-             QLatin1StringView("link-url"),
-             QLatin1StringView("quit-after-last-window-closed"),
-             QLatin1StringView("initial-window"),
-         })) {
-        auto parsed = readBoolean(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
+        if (auto parsed = assignBoolean(name, *destination); !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
     }
 
-    const auto addEnum = [&](QLatin1StringView name,
-                             Fields allowed) -> ParseResult<void> {
+    constexpr auto NewTabPositions =
+        std::to_array<std::pair<QLatin1StringView, WindowNewTabPosition>>({
+            {QLatin1StringView("current"), WindowNewTabPosition::Current},
+            {QLatin1StringView("end"), WindowNewTabPosition::End},
+        });
+    constexpr auto TabBarModes =
+        std::to_array<std::pair<QLatin1StringView, WindowShowTabBar>>({
+            {QLatin1StringView("always"), WindowShowTabBar::Always},
+            {QLatin1StringView("auto"), WindowShowTabBar::Auto},
+            {QLatin1StringView("never"), WindowShowTabBar::Never},
+        });
+    constexpr auto FullscreenModes =
+        std::to_array<std::pair<QLatin1StringView, GhosttyFullscreenMode>>({
+            {QLatin1StringView("false"), GhosttyFullscreenMode::Disabled},
+            {QLatin1StringView("true"), GhosttyFullscreenMode::Enabled},
+            {QLatin1StringView("non-native"),
+             GhosttyFullscreenMode::NonNative},
+            {QLatin1StringView("non-native-visible-menu"),
+             GhosttyFullscreenMode::NonNativeVisibleMenu},
+            {QLatin1StringView("non-native-padded-notch"),
+             GhosttyFullscreenMode::NonNativePaddedNotch},
+        });
+    constexpr auto CursorStyles =
+        std::to_array<std::pair<QLatin1StringView, TerminalCursorStyle>>({
+            {QLatin1StringView("block"), TerminalCursorStyle::Block},
+            {QLatin1StringView("bar"), TerminalCursorStyle::Bar},
+            {QLatin1StringView("underline"), TerminalCursorStyle::Underline},
+            {QLatin1StringView("block_hollow"),
+             TerminalCursorStyle::BlockHollow},
+        });
+    constexpr auto ConfirmCloseModes =
+        std::to_array<std::pair<QLatin1StringView, ConfirmCloseMode>>({
+            {QLatin1StringView("false"), ConfirmCloseMode::Never},
+            {QLatin1StringView("true"),
+             ConfirmCloseMode::RunningProcesses},
+            {QLatin1StringView("always"), ConfirmCloseMode::Always},
+        });
+    constexpr auto CopyOnSelectModes =
+        std::to_array<std::pair<QLatin1StringView,
+                                TerminalCopyOnSelectMode>>({
+            {QLatin1StringView("false"),
+             TerminalCopyOnSelectMode::Disabled},
+            {QLatin1StringView("true"),
+             TerminalCopyOnSelectMode::Primary},
+            {QLatin1StringView("clipboard"),
+             TerminalCopyOnSelectMode::PrimaryAndClipboard},
+        });
+    constexpr auto MiddleClickActions =
+        std::to_array<std::pair<QLatin1StringView, MiddleClickAction>>({
+            {QLatin1StringView("primary-paste"),
+             MiddleClickAction::PrimaryPaste},
+            {QLatin1StringView("ignore"), MiddleClickAction::Ignore},
+        });
+    constexpr auto LinkPreviewModes =
+        std::to_array<std::pair<QLatin1StringView, LinkPreviewMode>>({
+            {QLatin1StringView("false"), LinkPreviewMode::Never},
+            {QLatin1StringView("true"), LinkPreviewMode::Always},
+            {QLatin1StringView("osc8"), LinkPreviewMode::Osc8},
+        });
+    constexpr auto ResizeOverlayModes =
+        std::to_array<std::pair<QLatin1StringView, ResizeOverlayMode>>({
+            {QLatin1StringView("always"), ResizeOverlayMode::Always},
+            {QLatin1StringView("never"), ResizeOverlayMode::Never},
+            {QLatin1StringView("after-first"),
+             ResizeOverlayMode::AfterFirst},
+        });
+    constexpr auto ResizeOverlayPositions =
+        std::to_array<std::pair<QLatin1StringView,
+                                ResizeOverlayPosition>>({
+            {QLatin1StringView("center"), ResizeOverlayPosition::Center},
+            {QLatin1StringView("top-left"),
+             ResizeOverlayPosition::TopLeft},
+            {QLatin1StringView("top-center"),
+             ResizeOverlayPosition::TopCenter},
+            {QLatin1StringView("top-right"),
+             ResizeOverlayPosition::TopRight},
+            {QLatin1StringView("bottom-left"),
+             ResizeOverlayPosition::BottomLeft},
+            {QLatin1StringView("bottom-center"),
+             ResizeOverlayPosition::BottomCenter},
+            {QLatin1StringView("bottom-right"),
+             ResizeOverlayPosition::BottomRight},
+        });
+    constexpr auto SingleInstanceModes =
+        std::to_array<std::pair<QLatin1StringView, SingleInstanceMode>>({
+            {QLatin1StringView("false"), SingleInstanceMode::Disabled},
+            {QLatin1StringView("true"), SingleInstanceMode::Enabled},
+            {QLatin1StringView("detect"), SingleInstanceMode::Detect},
+        });
+
+    const auto assignEnum = [&](QLatin1StringView name,
+                                auto &destination,
+                                const auto &allowed) -> ParseResult<void> {
         auto parsed = readEnum(fieldValue(name), context(name), allowed);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, std::move(*parsed));
+        destination = *parsed;
         return {};
     };
-    constexpr auto NewTabPositions = std::to_array<QLatin1StringView>({
-        QLatin1StringView("current"), QLatin1StringView("end"),
-    });
-    constexpr auto TabBarModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("always"), QLatin1StringView("auto"),
-        QLatin1StringView("never"),
-    });
-    constexpr auto FullscreenModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("false"), QLatin1StringView("true"),
-        QLatin1StringView("non-native"),
-        QLatin1StringView("non-native-visible-menu"),
-        QLatin1StringView("non-native-padded-notch"),
-    });
-    constexpr auto CursorStyles = std::to_array<QLatin1StringView>({
-        QLatin1StringView("block"), QLatin1StringView("bar"),
-        QLatin1StringView("underline"), QLatin1StringView("block_hollow"),
-    });
-    constexpr auto ConfirmCloseModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("false"), QLatin1StringView("true"),
-        QLatin1StringView("always"),
-    });
-    constexpr auto CopyOnSelectModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("false"), QLatin1StringView("true"),
-        QLatin1StringView("clipboard"),
-    });
-    constexpr auto MiddleClickActions = std::to_array<QLatin1StringView>({
-        QLatin1StringView("primary-paste"), QLatin1StringView("ignore"),
-    });
-    constexpr auto LinkPreviewModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("false"), QLatin1StringView("true"),
-        QLatin1StringView("osc8"),
-    });
-    constexpr auto ResizeOverlayModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("always"), QLatin1StringView("never"),
-        QLatin1StringView("after-first"),
-    });
-    constexpr auto ResizeOverlayPositions = std::to_array<QLatin1StringView>({
-        QLatin1StringView("center"), QLatin1StringView("top-left"),
-        QLatin1StringView("top-center"), QLatin1StringView("top-right"),
-        QLatin1StringView("bottom-left"), QLatin1StringView("bottom-center"),
-        QLatin1StringView("bottom-right"),
-    });
-    constexpr auto SingleInstanceModes = std::to_array<QLatin1StringView>({
-        QLatin1StringView("false"), QLatin1StringView("true"),
-        QLatin1StringView("detect"),
-    });
-    if (auto parsed = addEnum(QLatin1StringView("window-new-tab-position"),
-                              NewTabPositions);
+    if (auto parsed = assignEnum(QLatin1StringView("window-new-tab-position"),
+                                 result.windowNewTabPosition,
+                                 NewTabPositions);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("window-show-tab-bar"),
-                              TabBarModes);
+    if (auto parsed = assignEnum(QLatin1StringView("window-show-tab-bar"),
+                                 result.windowShowTabBar,
+                                 TabBarModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("fullscreen"), FullscreenModes);
+    if (auto parsed = assignEnum(QLatin1StringView("fullscreen"),
+                                 result.fullscreen,
+                                 FullscreenModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("cursor-style"), CursorStyles);
+    if (auto parsed = assignEnum(QLatin1StringView("cursor-style"),
+                                 result.appearance.cursorStyle,
+                                 CursorStyles);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("confirm-close-surface"),
-                              ConfirmCloseModes);
+    if (auto parsed = assignEnum(QLatin1StringView("confirm-close-surface"),
+                                 result.confirmCloseMode,
+                                 ConfirmCloseModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("copy-on-select"),
-                              CopyOnSelectModes);
+    if (auto parsed = assignEnum(QLatin1StringView("copy-on-select"),
+                                 result.selectionClipboard.copyOnSelect,
+                                 CopyOnSelectModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("middle-click-action"),
-                              MiddleClickActions);
+    if (auto parsed = assignEnum(QLatin1StringView("middle-click-action"),
+                                 result.middleClickAction,
+                                 MiddleClickActions);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("link-previews"),
-                              LinkPreviewModes);
+    if (auto parsed = assignEnum(QLatin1StringView("link-previews"),
+                                 result.linkPreviews,
+                                 LinkPreviewModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("resize-overlay"),
-                              ResizeOverlayModes);
+    if (auto parsed = assignEnum(QLatin1StringView("resize-overlay"),
+                                 result.resizeOverlay.mode,
+                                 ResizeOverlayModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("resize-overlay-position"),
-                              ResizeOverlayPositions);
+    if (auto parsed = assignEnum(QLatin1StringView("resize-overlay-position"),
+                                 result.resizeOverlay.position,
+                                 ResizeOverlayPositions);
         !parsed) return std::unexpected(std::move(parsed.error()));
-    if (auto parsed = addEnum(QLatin1StringView("gtk-single-instance"),
-                              SingleInstanceModes);
+    if (auto parsed = assignEnum(QLatin1StringView("gtk-single-instance"),
+                                 result.singleInstanceMode,
+                                 SingleInstanceModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
 
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("window-width"),
-             QLatin1StringView("window-height"),
-             QLatin1StringView("resize-overlay-duration"),
+    if (auto parsed = assign(QLatin1StringView("window-width"),
+                             result.windowWidth, readUint32);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("window-height"),
+                             result.windowHeight, readUint32);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("palette"),
+                             result.appearance.palette, readPalette);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+
+    for (const auto [name, destination] :
+         std::to_array<std::pair<
+             QLatin1StringView,
+             std::optional<GhosttyTerminalColor> *>>({
+             {QLatin1StringView("selection-foreground"),
+              &result.appearance.selectionForeground},
+             {QLatin1StringView("selection-background"),
+              &result.appearance.selectionBackground},
+             {QLatin1StringView("cursor-color"),
+              &result.appearance.cursorColor},
+             {QLatin1StringView("cursor-text"),
+              &result.appearance.cursorText},
          })) {
-        auto parsed = readUnsignedInteger<quint32>(fieldValue(name), context(name));
+        auto parsed = readOptionalTerminalColor(fieldValue(name), context(name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
+        *destination = *parsed;
     }
-    {
-        constexpr QLatin1StringView name("palette");
-        auto parsed = readPalette(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, std::move(*parsed));
-    }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("selection-foreground"),
-             QLatin1StringView("selection-background"),
-             QLatin1StringView("cursor-color"),
-             QLatin1StringView("cursor-text"),
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView,
+                                 GhosttyTerminalColor *>>({
+             {QLatin1StringView("search-foreground"),
+              &result.appearance.searchForeground},
+             {QLatin1StringView("search-background"),
+              &result.appearance.searchBackground},
+             {QLatin1StringView("search-selected-foreground"),
+              &result.appearance.searchSelectedForeground},
+             {QLatin1StringView("search-selected-background"),
+              &result.appearance.searchSelectedBackground},
          })) {
-        auto parsed = readTerminalColor(fieldValue(name), context(name), true);
+        auto parsed = readTerminalColor(fieldValue(name), context(name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.insert(name.toString(), std::move(*parsed));
+        *destination = *parsed;
     }
-    for (const QLatin1StringView name : std::to_array<QLatin1StringView>({
-             QLatin1StringView("search-foreground"),
-             QLatin1StringView("search-background"),
-             QLatin1StringView("search-selected-foreground"),
-             QLatin1StringView("search-selected-background"),
-         })) {
-        auto parsed = readTerminalColor(fieldValue(name), context(name), false);
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.insert(name.toString(), std::move(*parsed));
-    }
+    if (auto parsed = assign(QLatin1StringView("cursor-style-blink"),
+                             result.appearance.cursorBlink,
+                             readOptionalBoolean);
+        !parsed) return std::unexpected(std::move(parsed.error()));
     {
-        constexpr QLatin1StringView name("cursor-style-blink");
-        auto parsed = readOptionalBoolean(fieldValue(name), context(name));
+        constexpr QLatin1StringView name("cursor-opacity");
+        auto parsed = readFiniteDouble(fieldValue(name), context(name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.insert(name.toString(), std::move(*parsed));
+        result.appearance.cursorOpacity = std::clamp(*parsed, 0.0, 1.0);
     }
+    if (auto parsed = assign(QLatin1StringView("bold-color"),
+                             result.appearance.boldColor, readBoldColor);
+        !parsed) return std::unexpected(std::move(parsed.error()));
     {
-        constexpr QLatin1StringView name("bold-color");
-        auto parsed = readBoldColor(fieldValue(name), context(name));
+        constexpr QLatin1StringView name("faint-opacity");
+        auto parsed = readFiniteDouble(
+            fieldValue(name), context(name), 0.0, 1.0);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.insert(name.toString(), std::move(*parsed));
+        result.appearance.faintOpacity = *parsed;
     }
-    {
-        constexpr QLatin1StringView name("scrollback-limit");
-        auto parsed = readDecimalUint64(fieldValue(name), context(name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        insert(name, *parsed);
-    }
+    if (auto parsed = assign(QLatin1StringView("scrollback-limit"),
+                             result.scrollbackLimitBytes,
+                             readDecimalUint64);
+        !parsed) return std::unexpected(std::move(parsed.error()));
+
     {
         constexpr QLatin1StringView name(
             "quit-after-last-window-closed-delay");
         const QJsonValue delay = fieldValue(name);
         if (delay.isNull()) {
-            result.insert(name.toString(), QVariant{});
+            result.quitAfterLastWindowClosedDelay.reset();
         } else {
             auto parsed = readUnsignedInteger<quint32>(delay, context(name));
             if (!parsed) return std::unexpected(std::move(parsed.error()));
-            insert(name, *parsed);
+            result.quitAfterLastWindowClosedDelay =
+                std::chrono::milliseconds(*parsed);
         }
+    }
+    {
+        constexpr QLatin1StringView name("resize-overlay-duration");
+        auto parsed = readUnsignedInteger<quint32>(
+            fieldValue(name), context(name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.resizeOverlay.duration =
+            std::chrono::milliseconds(std::max(*parsed, quint32{250}));
     }
 
     return result;
@@ -898,9 +1044,6 @@ parseGhosttyConfigExportJson(const QByteArray &json)
         return std::unexpected(std::move(defaultKeybindings.error()));
     }
 
-    return GhosttyConfigExport{
-        .values = std::move(*values),
-        .keybindings = std::move(*keybindings),
-        .defaultKeybindings = std::move(*defaultKeybindings),
-    };
+    return GhosttyConfigExport(std::move(*values), std::move(*keybindings),
+                               std::move(*defaultKeybindings));
 }

@@ -49,9 +49,10 @@ struct TerminalBoldColor {
     bool operator==(const TerminalBoldColor &) const = default;
 };
 
-// Value-only, Qt-thread-safe effective appearance. An empty palette means the
-// config backend is unavailable and libghostty should retain its built-in
-// palette. An available Ghostty snapshot supplies all 256 entries.
+// Value-only, Qt-thread-safe effective appearance. An empty palette is the
+// LaunchOptions fallback used when no configuration snapshot exists, so
+// libghostty retains its built-in palette. Every parsed Ghostty snapshot
+// supplies all 256 entries.
 struct TerminalAppearance {
     QColor foregroundColor = QColor(QStringLiteral("#d8dee9"));
     QColor backgroundColor = QColor(QStringLiteral("#1e222a"));

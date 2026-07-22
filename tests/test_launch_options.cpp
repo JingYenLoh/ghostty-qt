@@ -1,10 +1,13 @@
 #include "launch_options.h"
 
+#include "ghostty_config_snapshot_fixture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <array>
 #include <limits>
 
 namespace {
@@ -15,14 +18,112 @@ QString errorMessage(
     return result ? QString{} : result.error();
 }
 
-QVariantList testPalette()
+std::array<QColor, 256> testPalette()
 {
-    QVariantList palette;
-    palette.reserve(256);
+    std::array<QColor, 256> palette;
     for (int index = 0; index < 256; ++index) {
-        palette.append(QColor::fromRgb(index, 255 - index, index / 2));
+        palette[static_cast<std::size_t>(index)] =
+            QColor::fromRgb(index, 255 - index, index / 2);
     }
     return palette;
+}
+
+GhosttyConfigSnapshot completeSnapshot()
+{
+    GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
+    GhosttyConfigValues &values = snapshot.values;
+    values.workingDirectoryPath = QStringLiteral("/work/ghostty");
+    values.fontFamilies = {
+        QStringLiteral("Config Primary"),
+        QStringLiteral("Config Fallback"),
+    };
+    values.fontSize = 14.5;
+
+    values.appearance = {
+        .foreground = QColor(QStringLiteral("#112233")),
+        .background = QColor(QStringLiteral("#445566")),
+        .palette = testPalette(),
+        .selectionForeground =
+            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
+        .selectionBackground =
+            GhosttyTerminalColor{QColor(QStringLiteral("#223344"))},
+        .searchForeground =
+            GhosttyTerminalColor{GhosttyCellRelativeColor::Background},
+        .searchBackground =
+            GhosttyTerminalColor{QColor(QStringLiteral("#123456"))},
+        .searchSelectedForeground =
+            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
+        .searchSelectedBackground =
+            GhosttyTerminalColor{QColor(QStringLiteral("#654321"))},
+        .cursorColor =
+            GhosttyTerminalColor{GhosttyCellRelativeColor::Background},
+        .cursorStyle = TerminalCursorStyle::BlockHollow,
+        .cursorBlink = false,
+        .cursorOpacity = 0.625,
+        .cursorText =
+            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
+        .boldColor = GhosttyBoldColor{QColor(QStringLiteral("#abcdef"))},
+        .faintOpacity = 0.375,
+    };
+    values.splitAppearance = {
+        .unfocusedOpacity = 0.42,
+        .unfocusedFill = QColor(QStringLiteral("#778899")),
+        .dividerColor = QColor(QStringLiteral("#a1b2c3")),
+    };
+
+    values.splitInheritWorkingDirectory = false;
+    values.splitPreserveZoom = true;
+    values.tabInheritWorkingDirectory = false;
+    values.windowInheritWorkingDirectory = false;
+    values.windowInheritFontSize = false;
+    values.windowNewTabPosition = WindowNewTabPosition::End;
+    values.windowShowTabBar = WindowShowTabBar::Always;
+    values.windowWidth = 120;
+    values.windowHeight = 40;
+    values.maximize = true;
+    values.fullscreen = GhosttyFullscreenMode::NonNative;
+    values.resizeOverlay = {
+        .mode = ResizeOverlayMode::Always,
+        .position = ResizeOverlayPosition::BottomRight,
+        .duration = std::chrono::milliseconds(1'250),
+    };
+
+    values.scrollbackLimitBytes = 50'000'000;
+    values.confirmCloseMode = ConfirmCloseMode::Always;
+    values.selectionClipboard = {
+        .trimTrailingSpaces = false,
+        .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
+        .clearOnTyping = false,
+        .clearOnCopy = true,
+    };
+    values.clipboardPaste = {
+        .protection = false,
+        .bracketedSafe = true,
+    };
+    values.middleClickAction = MiddleClickAction::Ignore;
+    values.mouseReporting = false;
+    values.linkUrl = false;
+    values.linkPreviews = LinkPreviewMode::Osc8;
+    values.configFiles = {
+        {.path = QStringLiteral("/work/include.ghostty")},
+        {.path = QStringLiteral("/work/optional.ghostty"), .optional = true},
+    };
+    values.quitAfterLastWindowClosed = false;
+    values.quitAfterLastWindowClosedDelay.reset();
+    values.initialWindow = false;
+    values.singleInstanceMode = SingleInstanceMode::Detect;
+
+    snapshot.keybindings = {
+        .root = {GhosttyKeybindDefinition{
+            .sequence = {GhosttyKeybindTrigger{
+                .kind = GhosttyKeybindKeyKind::Unicode,
+                .unicodeCodepoint = quint32('n'),
+                .modifiers = GhosttyKeybindAlt,
+            }},
+            .actions = {QStringLiteral("new_tab")},
+        }},
+    };
+    return snapshot;
 }
 
 } // namespace
@@ -44,7 +145,6 @@ private Q_SLOTS:
     void rejectsUnknownOption();
     void rejectsMissingApplicationName();
     void overlaysGhosttySnapshotAndPreservesCliFonts();
-    void mapsKeybindingSources();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -59,7 +159,6 @@ private Q_SLOTS:
     void mapsSingleInstancePolicy();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
-    void ignoresUnavailableAndMalformedSnapshotValues();
     void removesOnlyTheInitialCommand();
     void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
@@ -165,12 +264,13 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
     QVERIFY(service->program.isEmpty());
     QVERIFY(shouldUseSingleInstance(*service, QByteArrayView("ghostty")));
 
-    GhosttyConfigSnapshot contradictory;
-    contradictory.availability = GhosttyConfigAvailability::Available;
-    contradictory.values.insert(
-        QStringLiteral("gtk-single-instance"), QStringLiteral("false"));
-    contradictory.values.insert(QStringLiteral("initial-window"), true);
-    QCOMPARE(applyGhosttyConfigSnapshot(*service, contradictory), *service);
+    GhosttyConfigSnapshot contradictory = completeSnapshot();
+    contradictory.values.singleInstanceMode = SingleInstanceMode::Disabled;
+    contradictory.values.initialWindow = true;
+    const LaunchOptions configured =
+        applyGhosttyConfigSnapshot(*service, contradictory);
+    QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Enabled);
+    QVERIFY(!configured.initialWindow);
 
     const auto detect = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
@@ -384,76 +484,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
                             .unit = ScrollbackLimitUnit::Lines};
     base.scrollbackLimitExplicit = true;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(
-        QStringLiteral("font-family"),
-        QStringList({QStringLiteral("Config Primary"),
-                     QStringLiteral("Config Fallback")}));
-    snapshot.values.insert(QStringLiteral("font-size"), 14.5);
-    snapshot.values.insert(QStringLiteral("foreground"), QColor(QStringLiteral("#112233")));
-    snapshot.values.insert(QStringLiteral("background"), QColor(QStringLiteral("#445566")));
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 0.42);
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
-                           QColor(QStringLiteral("#778899")));
-    snapshot.values.insert(QStringLiteral("split-divider-color"),
-                           QColor(QStringLiteral("#a1b2c3")));
-    snapshot.values.insert(QStringLiteral("palette"), testPalette());
-    snapshot.values.insert(QStringLiteral("selection-foreground"),
-                           QStringLiteral("cell-foreground"));
-    snapshot.values.insert(QStringLiteral("selection-background"),
-                           QColor(QStringLiteral("#223344")));
-    snapshot.values.insert(QStringLiteral("search-foreground"),
-                           QStringLiteral("cell-background"));
-    snapshot.values.insert(QStringLiteral("search-background"),
-                           QColor(QStringLiteral("#123456")));
-    snapshot.values.insert(QStringLiteral("search-selected-foreground"),
-                           QStringLiteral("cell-foreground"));
-    snapshot.values.insert(QStringLiteral("search-selected-background"),
-                           QColor(QStringLiteral("#654321")));
-    snapshot.values.insert(QStringLiteral("cursor-color"),
-                           QStringLiteral("cell-background"));
-    snapshot.values.insert(QStringLiteral("cursor-opacity"), 0.625);
-    snapshot.values.insert(QStringLiteral("cursor-style"),
-                           QStringLiteral("block_hollow"));
-    snapshot.values.insert(QStringLiteral("cursor-style-blink"), false);
-    snapshot.values.insert(QStringLiteral("cursor-text"),
-                           QStringLiteral("cell-foreground"));
-    snapshot.values.insert(QStringLiteral("bold-color"),
-                           QColor(QStringLiteral("#abcdef")));
-    snapshot.values.insert(QStringLiteral("faint-opacity"), 0.375);
-    snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(50'000'000));
-    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                           QStringLiteral("always"));
-    snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
-                           false);
-    snapshot.values.insert(QStringLiteral("clipboard-paste-protection"), false);
-    snapshot.values.insert(QStringLiteral("clipboard-paste-bracketed-safe"),
-                           true);
-    snapshot.values.insert(QStringLiteral("copy-on-select"),
-                           QStringLiteral("clipboard"));
-    snapshot.values.insert(QStringLiteral("selection-clear-on-typing"), false);
-    snapshot.values.insert(QStringLiteral("selection-clear-on-copy"), true);
-    snapshot.values.insert(QStringLiteral("middle-click-action"),
-                           QStringLiteral("ignore"));
-    snapshot.values.insert(QStringLiteral("mouse-reporting"), false);
-    snapshot.values.insert(QStringLiteral("link-url"), false);
-    snapshot.values.insert(QStringLiteral("link-previews"),
-                           QStringLiteral("osc8"));
-    snapshot.values.insert(
-        QStringLiteral("keybind"),
-        QStringList({QStringLiteral("alt+n=new_tab")}));
-    snapshot.keybindConfig = GhosttyKeybindConfig{
-        .schemaVersion = GhosttyKeybindConfig::CurrentSchemaVersion,
-        .root = {GhosttyKeybindDefinition{
-            .sequence = {GhosttyKeybindTrigger{
-                .kind = GhosttyKeybindKeyKind::Unicode,
-                .unicodeCodepoint = quint32('n'),
-                .modifiers = GhosttyKeybindAlt,
-            }},
-            .actions = {QStringLiteral("new_tab")},
-        }},
-    };
+    const GhosttyConfigSnapshot snapshot = completeSnapshot();
 
     const LaunchOptions cliResult = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(cliResult.fontFamily, QStringLiteral("CLI Family"));
@@ -518,7 +549,7 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QVERIFY(cliResult.keybindSource.isAvailable());
     QVERIFY(cliResult.keybindSource.text() == nullptr);
     QVERIFY(cliResult.keybindSource.structured() != nullptr);
-    QCOMPARE(*cliResult.keybindSource.structured(), *snapshot.keybindConfig);
+    QCOMPARE(*cliResult.keybindSource.structured(), snapshot.keybindings);
 
     base.fontFamilyExplicit = false;
     base.fontSizeExplicit = false;
@@ -530,130 +561,57 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
 }
 
-void LaunchOptionsTest::mapsKeybindingSources()
-{
-    const LaunchOptions base;
-
-    const LaunchOptions unavailable =
-        applyGhosttyConfigSnapshot(base, GhosttyConfigSnapshot{});
-    QVERIFY(!unavailable.keybindSource.isAvailable());
-
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    const QStringList textBindings = {
-        QStringLiteral("alt+t=new_tab"),
-    };
-    snapshot.values.insert(QStringLiteral("keybind"), textBindings);
-
-    const LaunchOptions textFallback =
-        applyGhosttyConfigSnapshot(base, snapshot);
-    QVERIFY(textFallback.keybindSource.isAvailable());
-    QVERIFY(textFallback.keybindSource.structured() == nullptr);
-    QVERIFY(textFallback.keybindSource.text() != nullptr);
-    QCOMPARE(*textFallback.keybindSource.text(), textBindings);
-
-    snapshot.values.insert(QStringLiteral("keybind"), QStringList{});
-    const LaunchOptions emptyTextFallback =
-        applyGhosttyConfigSnapshot(base, snapshot);
-    QVERIFY(emptyTextFallback.keybindSource.isAvailable());
-    QVERIFY(emptyTextFallback.keybindSource.structured() == nullptr);
-    QVERIFY(emptyTextFallback.keybindSource.text() != nullptr);
-    QVERIFY(emptyTextFallback.keybindSource.text()->isEmpty());
-
-    snapshot.keybindConfig = GhosttyKeybindConfig{};
-    const LaunchOptions structuredEmpty =
-        applyGhosttyConfigSnapshot(base, snapshot);
-    QVERIFY(structuredEmpty.keybindSource.text() == nullptr);
-    QVERIFY(structuredEmpty.keybindSource.structured() != nullptr);
-    QVERIFY(structuredEmpty.keybindSource.structured()->root.isEmpty());
-    QVERIFY(structuredEmpty.keybindSource.structured()->tables.isEmpty());
-
-    snapshot.keybindConfig->root = {GhosttyKeybindDefinition{
-        .sequence = {GhosttyKeybindTrigger{
-            .kind = GhosttyKeybindKeyKind::Unicode,
-            .unicodeCodepoint = quint32('n'),
-            .modifiers = GhosttyKeybindAlt,
-        }},
-        .actions = {QStringLiteral("new_window")},
-    }};
-    const LaunchOptions structured =
-        applyGhosttyConfigSnapshot(base, snapshot);
-    QVERIFY(structured.keybindSource.text() == nullptr);
-    QVERIFY(structured.keybindSource.structured() != nullptr);
-    QCOMPARE(structured.keybindSource.structured()->root,
-             snapshot.keybindConfig->root);
-}
-
 void LaunchOptionsTest::mapsLinkPreviewModes_data()
 {
-    QTest::addColumn<QString>("canonical");
-    QTest::addColumn<LinkPreviewMode>("expected");
+    QTest::addColumn<LinkPreviewMode>("configured");
 
-    QTest::newRow("false") << QStringLiteral("false")
-                            << LinkPreviewMode::Never;
-    QTest::newRow("true") << QStringLiteral("true")
-                           << LinkPreviewMode::Always;
-    QTest::newRow("osc8") << QStringLiteral("osc8")
-                           << LinkPreviewMode::Osc8;
+    QTest::newRow("never") << LinkPreviewMode::Never;
+    QTest::newRow("always") << LinkPreviewMode::Always;
+    QTest::newRow("osc8") << LinkPreviewMode::Osc8;
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes()
 {
-    QFETCH(QString, canonical);
-    QFETCH(LinkPreviewMode, expected);
+    QFETCH(LinkPreviewMode, configured);
 
     LaunchOptions base;
     base.linkPreviews = LinkPreviewMode::Never;
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("link-previews"), canonical);
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.linkPreviews = configured;
 
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).linkPreviews, expected);
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).linkPreviews,
+             configured);
 }
 
 void LaunchOptionsTest::mapsClipboardModes()
 {
-    const struct {
-        QString canonical;
-        TerminalCopyOnSelectMode expected;
-    } copyModes[] = {
-        {QStringLiteral("false"), TerminalCopyOnSelectMode::Disabled},
-        {QStringLiteral("true"), TerminalCopyOnSelectMode::Primary},
-        {QStringLiteral("clipboard"),
-         TerminalCopyOnSelectMode::PrimaryAndClipboard},
-    };
-    for (const auto &testCase : copyModes) {
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("copy-on-select"),
-                               testCase.canonical);
+    for (const TerminalCopyOnSelectMode configured : {
+             TerminalCopyOnSelectMode::Disabled,
+             TerminalCopyOnSelectMode::Primary,
+             TerminalCopyOnSelectMode::PrimaryAndClipboard,
+         }) {
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.selectionClipboard.copyOnSelect = configured;
         QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot)
                      .selectionClipboard.copyOnSelect,
-                 testCase.expected);
+                 configured);
     }
 
-    const struct {
-        QString canonical;
-        MiddleClickAction expected;
-    } middleClickActions[] = {
-        {QStringLiteral("primary-paste"), MiddleClickAction::PrimaryPaste},
-        {QStringLiteral("ignore"), MiddleClickAction::Ignore},
-    };
-    for (const auto &testCase : middleClickActions) {
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("middle-click-action"),
-                               testCase.canonical);
+    for (const MiddleClickAction configured : {
+             MiddleClickAction::PrimaryPaste,
+             MiddleClickAction::Ignore,
+         }) {
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.middleClickAction = configured;
         QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot).middleClickAction,
-                 testCase.expected);
+                 configured);
     }
 
     for (const bool enabled : {false, true}) {
         LaunchOptions base;
         base.mouseReporting = !enabled;
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("mouse-reporting"), enabled);
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.mouseReporting = enabled;
         QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).mouseReporting,
                  enabled);
     }
@@ -668,17 +626,13 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     base.windowInheritWorkingDirectory = true;
     base.windowInheritFontSize = true;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("working-directory"),
-                           QStringLiteral("/base/link/../target"));
-    snapshot.values.insert(
-        QStringLiteral("split-inherit-working-directory"), false);
-    snapshot.values.insert(
-        QStringLiteral("tab-inherit-working-directory"), false);
-    snapshot.values.insert(
-        QStringLiteral("window-inherit-working-directory"), false);
-    snapshot.values.insert(QStringLiteral("window-inherit-font-size"), false);
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.workingDirectoryPath =
+        QStringLiteral("/base/link/../target");
+    snapshot.values.splitInheritWorkingDirectory = false;
+    snapshot.values.tabInheritWorkingDirectory = false;
+    snapshot.values.windowInheritWorkingDirectory = false;
+    snapshot.values.windowInheritFontSize = false;
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.workingDirectory,
@@ -699,39 +653,10 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     QVERIFY(!result.windowInheritFontSize);
 
     base.workingDirectoryExplicit = false;
-    for (const QString &fallback : {
-             QString{}, QStringLiteral("inherit"),
-         }) {
-        snapshot.values.insert(QStringLiteral("working-directory"), fallback);
-        result = applyGhosttyConfigSnapshot(base, snapshot);
-        QCOMPARE(result.workingDirectory,
-                 QStringLiteral("/launch-directory"));
-        QVERIFY(result.inheritWorkingDirectory);
-    }
-
-    snapshot.values.insert(QStringLiteral("working-directory"), false);
-    snapshot.values.insert(
-        QStringLiteral("split-inherit-working-directory"),
-        QStringLiteral("false"));
-    snapshot.values.insert(
-        QStringLiteral("tab-inherit-working-directory"),
-        QStringLiteral("false"));
-    snapshot.values.insert(
-        QStringLiteral("window-inherit-working-directory"),
-        QStringLiteral("false"));
-    snapshot.values.insert(
-        QStringLiteral("window-inherit-font-size"),
-        QStringLiteral("false"));
+    snapshot.values.workingDirectoryPath.reset();
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.workingDirectory, QStringLiteral("/launch-directory"));
-    QVERIFY(!result.inheritWorkingDirectory);
-    QVERIFY(result.splitInheritWorkingDirectory);
-    QVERIFY(result.tabInheritWorkingDirectory);
-    QVERIFY(result.windowInheritWorkingDirectory);
-    QVERIFY(result.windowInheritFontSize);
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
+    QVERIFY(result.inheritWorkingDirectory);
 }
 
 void LaunchOptionsTest::mapsSplitPreserveZoom()
@@ -739,28 +664,14 @@ void LaunchOptionsTest::mapsSplitPreserveZoom()
     LaunchOptions base;
     base.splitPreserveZoomNavigation = false;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), true);
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.splitPreserveZoom = true;
     QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
                 .splitPreserveZoomNavigation);
 
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"), false);
+    snapshot.values.splitPreserveZoom = false;
     QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
                  .splitPreserveZoomNavigation);
-
-    base.splitPreserveZoomNavigation = true;
-    snapshot.values.insert(QStringLiteral("split-preserve-zoom"),
-                           QStringLiteral("navigation"));
-    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
-                .splitPreserveZoomNavigation);
-
-    snapshot.values.remove(QStringLiteral("split-preserve-zoom"));
-    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
-                .splitPreserveZoomNavigation);
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsNewTabPosition()
@@ -768,65 +679,30 @@ void LaunchOptionsTest::mapsNewTabPosition()
     LaunchOptions base;
     base.windowNewTabPosition = WindowNewTabPosition::End;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                           QStringLiteral("current"));
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.windowNewTabPosition = WindowNewTabPosition::Current;
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
              WindowNewTabPosition::Current);
 
-    snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                           QStringLiteral("end"));
+    snapshot.values.windowNewTabPosition = WindowNewTabPosition::End;
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
              WindowNewTabPosition::End);
-
-    for (const QVariant &invalid : {
-             QVariant(QStringLiteral("after")), QVariant(false),
-         }) {
-        snapshot.values.insert(QStringLiteral("window-new-tab-position"),
-                               invalid);
-        QCOMPARE(
-            applyGhosttyConfigSnapshot(base, snapshot).windowNewTabPosition,
-            WindowNewTabPosition::End);
-    }
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsWindowShowTabBar()
 {
-    const struct {
-        QString canonical;
-        WindowShowTabBar expected;
-    } modes[] = {
-        {QStringLiteral("always"), WindowShowTabBar::Always},
-        {QStringLiteral("auto"), WindowShowTabBar::Auto},
-        {QStringLiteral("never"), WindowShowTabBar::Never},
-    };
-
     LaunchOptions base;
     base.windowShowTabBar = WindowShowTabBar::Never;
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    for (const auto &mode : modes) {
-        snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                               mode.canonical);
-        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowShowTabBar,
-                 mode.expected);
-    }
-
-    for (const QVariant &invalid : {
-             QVariant(QStringLiteral("sometimes")), QVariant(true),
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    for (const WindowShowTabBar mode : {
+             WindowShowTabBar::Always,
+             WindowShowTabBar::Auto,
+             WindowShowTabBar::Never,
          }) {
-        snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                               invalid);
+        snapshot.values.windowShowTabBar = mode;
         QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowShowTabBar,
-                 WindowShowTabBar::Never);
+                 mode);
     }
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsWindowCellDimensions()
@@ -835,54 +711,30 @@ void LaunchOptionsTest::mapsWindowCellDimensions()
     base.windowWidth = 91;
     base.windowHeight = 31;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("window-width"),
-                           QVariant::fromValue<quint32>(120));
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.windowWidth = 120;
+    snapshot.values.windowHeight = 40;
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.windowWidth, quint32(120));
-    QCOMPARE(result.windowHeight, quint32(31));
+    QCOMPARE(result.windowHeight, quint32(40));
 
-    snapshot.values.clear();
-    snapshot.values.insert(QStringLiteral("window-height"),
-                           QVariant::fromValue<quint32>(0));
+    snapshot.values.windowWidth = 0;
+    snapshot.values.windowHeight = 0;
     result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.windowWidth, quint32(91));
+    QCOMPARE(result.windowWidth, quint32(0));
     QCOMPARE(result.windowHeight, quint32(0));
 
-    snapshot.values.insert(QStringLiteral("window-width"),
-                           QVariant::fromValue<quint32>(10));
-    snapshot.values.insert(QStringLiteral("window-height"),
-                           QVariant::fromValue<quint32>(4));
+    snapshot.values.windowWidth = 10;
+    snapshot.values.windowHeight = 4;
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.windowWidth, quint32(10));
     QCOMPARE(result.windowHeight, quint32(4));
 
-    snapshot.values.insert(
-        QStringLiteral("window-width"),
-        QVariant::fromValue<quint32>(std::numeric_limits<quint32>::max()));
-    snapshot.values.insert(
-        QStringLiteral("window-height"),
-        QVariant::fromValue<quint32>(std::numeric_limits<quint32>::max()));
+    snapshot.values.windowWidth = std::numeric_limits<quint32>::max();
+    snapshot.values.windowHeight = std::numeric_limits<quint32>::max();
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.windowWidth, std::numeric_limits<quint32>::max());
     QCOMPARE(result.windowHeight, std::numeric_limits<quint32>::max());
-
-    for (const QVariant &malformed : {
-             QVariant(QStringLiteral("80")), QVariant::fromValue<qint64>(80),
-             QVariant::fromValue<double>(80.0),
-         }) {
-        snapshot.values.insert(QStringLiteral("window-width"), malformed);
-        snapshot.values.insert(QStringLiteral("window-height"), malformed);
-        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
-    }
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    snapshot.values.insert(QStringLiteral("window-width"),
-                           QVariant::fromValue<quint32>(120));
-    snapshot.values.insert(QStringLiteral("window-height"),
-                           QVariant::fromValue<quint32>(40));
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsResizeOverlay()
@@ -894,14 +746,12 @@ void LaunchOptionsTest::mapsResizeOverlay()
         .duration = std::chrono::milliseconds(900),
     };
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("resize-overlay"),
-                           QStringLiteral("always"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
-                           QStringLiteral("bottom-right"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
-                           QVariant::fromValue<quint32>(1'234));
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.resizeOverlay = {
+        .mode = ResizeOverlayMode::Always,
+        .position = ResizeOverlayPosition::BottomRight,
+        .duration = std::chrono::milliseconds(1'234),
+    };
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::Always);
     QCOMPARE(result.resizeOverlay.position,
@@ -909,31 +759,16 @@ void LaunchOptionsTest::mapsResizeOverlay()
     QCOMPARE(result.resizeOverlay.duration,
              std::chrono::milliseconds(1'234));
 
-    snapshot.values.insert(QStringLiteral("resize-overlay"),
-                           QStringLiteral("after-first"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
-                           QStringLiteral("top-center"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
-                           QVariant::fromValue<quint32>(0));
+    snapshot.values.resizeOverlay = {
+        .mode = ResizeOverlayMode::AfterFirst,
+        .position = ResizeOverlayPosition::TopCenter,
+        .duration = std::chrono::milliseconds(250),
+    };
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::AfterFirst);
     QCOMPARE(result.resizeOverlay.position,
              ResizeOverlayPosition::TopCenter);
     QCOMPARE(result.resizeOverlay.duration, std::chrono::milliseconds(250));
-
-    snapshot.values.insert(QStringLiteral("resize-overlay"),
-                           QStringLiteral("sometimes"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
-                           QStringLiteral("left"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
-                           qint64(750));
-    result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.resizeOverlay, base.resizeOverlay);
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    snapshot.values.insert(QStringLiteral("resize-overlay"),
-                           QStringLiteral("always"));
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsStartupWindowState()
@@ -942,56 +777,35 @@ void LaunchOptionsTest::mapsStartupWindowState()
     base.maximize = true;
     base.fullscreen = true;
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("maximize"), false);
-    snapshot.values.insert(QStringLiteral("fullscreen"),
-                           QStringLiteral("false"));
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.maximize = false;
+    snapshot.values.fullscreen = GhosttyFullscreenMode::Disabled;
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(!result.maximize);
     QVERIFY(!result.fullscreen);
 
-    snapshot.values.insert(QStringLiteral("maximize"), true);
-    for (const QString &mode : {
-             QStringLiteral("true"),
-             QStringLiteral("non-native"),
-             QStringLiteral("non-native-visible-menu"),
-             QStringLiteral("non-native-padded-notch"),
+    snapshot.values.maximize = true;
+    for (const GhosttyFullscreenMode mode : {
+             GhosttyFullscreenMode::Enabled,
+             GhosttyFullscreenMode::NonNative,
+             GhosttyFullscreenMode::NonNativeVisibleMenu,
+             GhosttyFullscreenMode::NonNativePaddedNotch,
          }) {
-        snapshot.values.insert(QStringLiteral("fullscreen"), mode);
+        snapshot.values.fullscreen = mode;
         result = applyGhosttyConfigSnapshot(base, snapshot);
         QVERIFY(result.maximize);
         QVERIFY(result.fullscreen);
     }
-
-    LaunchOptions unchanged;
-    snapshot.values.insert(QStringLiteral("maximize"),
-                           QStringLiteral("true"));
-    snapshot.values.insert(QStringLiteral("fullscreen"), true);
-    QCOMPARE(applyGhosttyConfigSnapshot(unchanged, snapshot), unchanged);
-
-    snapshot.values.insert(QStringLiteral("maximize"), true);
-    snapshot.values.insert(QStringLiteral("fullscreen"),
-                           QStringLiteral("native"));
-    result = applyGhosttyConfigSnapshot(unchanged, snapshot);
-    QVERIFY(result.maximize);
-    QVERIFY(!result.fullscreen);
-
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
 }
 
 void LaunchOptionsTest::mapsApplicationLifetime()
 {
     LaunchOptions base;
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed"), false);
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed-delay"),
-        QVariant::fromValue<quint32>(1'500));
-    snapshot.values.insert(QStringLiteral("initial-window"), false);
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.quitAfterLastWindowClosed = false;
+    snapshot.values.quitAfterLastWindowClosedDelay =
+        std::chrono::milliseconds(1'500);
+    snapshot.values.initialWindow = false;
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(!result.quitAfterLastWindowClosed);
@@ -999,52 +813,33 @@ void LaunchOptionsTest::mapsApplicationLifetime()
              std::optional(std::chrono::milliseconds(1'500)));
     QVERIFY(!result.initialWindow);
 
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed-delay"),
-        QVariant::fromValue<quint32>(0));
+    snapshot.values.quitAfterLastWindowClosedDelay =
+        std::chrono::milliseconds::zero();
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.quitAfterLastWindowClosedDelay,
              std::optional(std::chrono::milliseconds::zero()));
 
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed-delay"), QVariant{});
+    snapshot.values.quitAfterLastWindowClosedDelay.reset();
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
 
-    base.quitAfterLastWindowClosed = false;
-    base.quitAfterLastWindowClosedDelay = std::chrono::milliseconds(75);
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed"),
-        QStringLiteral("false"));
-    snapshot.values.insert(
-        QStringLiteral("quit-after-last-window-closed-delay"),
-        QStringLiteral("1500"));
-    snapshot.values.insert(QStringLiteral("initial-window"),
-                           QStringLiteral("false"));
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot), base);
-
+    base.initialWindow = true;
+    base.initialWindowExplicit = true;
     base.program = {QStringLiteral("/bin/true")};
+    snapshot.values.quitAfterLastWindowClosedDelay =
+        std::chrono::milliseconds(75);
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(result.quitAfterLastWindowClosed);
     QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(result.initialWindow);
-
-    base.initialWindow = false;
-    snapshot.availability = GhosttyConfigAvailability::Unavailable;
-    result = applyGhosttyConfigSnapshot(base, snapshot);
-    QVERIFY(result.quitAfterLastWindowClosed);
-    QVERIFY(!result.quitAfterLastWindowClosedDelay.has_value());
-    QVERIFY(!result.initialWindow);
 }
 
 void LaunchOptionsTest::mapsSingleInstancePolicy()
 {
     LaunchOptions base;
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
 
-    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
-                           QStringLiteral("true"));
+    snapshot.values.singleInstanceMode = SingleInstanceMode::Enabled;
     LaunchOptions options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Enabled);
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView("ghostty")));
@@ -1054,25 +849,18 @@ void LaunchOptionsTest::mapsSingleInstancePolicy()
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
     options.hasUnforwardedLaunchPayload = false;
 
-    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
-                           QStringLiteral("false"));
+    snapshot.values.singleInstanceMode = SingleInstanceMode::Disabled;
     options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Disabled);
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
 
-    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
-                           QStringLiteral("detect"));
+    snapshot.values.singleInstanceMode = SingleInstanceMode::Detect;
     options = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView{}));
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView("ghostty")));
     options.hasUnforwardedLaunchPayload = true;
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
-
-    snapshot.values.insert(QStringLiteral("gtk-single-instance"),
-                           QStringLiteral("invalid"));
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).singleInstanceMode,
-             SingleInstanceMode::Detect);
 }
 
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
@@ -1083,34 +871,23 @@ void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
         .unfocusedFill = QColor(Qt::red),
     };
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), -2.0);
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
-                           QColor(QStringLiteral("#123456")));
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.splitAppearance = {
+        .unfocusedOpacity = 0.15,
+        .unfocusedFill = QColor(QStringLiteral("#123456")),
+    };
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.splitAppearance.unfocusedOpacity, 0.15);
     QCOMPARE(result.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#123456"))));
 
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"), 2.0);
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), QString());
+    snapshot.values.splitAppearance = {
+        .unfocusedOpacity = 1.0,
+        .unfocusedFill = std::nullopt,
+    };
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.splitAppearance.unfocusedOpacity, 1.0);
     QVERIFY(!result.splitAppearance.unfocusedFill.has_value());
-
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
-                           QStringLiteral("not-a-number"));
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
-                           QStringLiteral("not-a-color"));
-    result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.splitAppearance, base.splitAppearance);
-
-    snapshot.values.insert(
-        QStringLiteral("unfocused-split-opacity"),
-        std::numeric_limits<double>::quiet_NaN());
-    result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.splitAppearance, base.splitAppearance);
 }
 
 void LaunchOptionsTest::restoresNullableAppearanceDefaults()
@@ -1133,111 +910,26 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     base.splitAppearance.unfocusedFill = QColor(Qt::cyan);
     base.splitAppearance.dividerColor = QColor(Qt::blue);
 
-    GhosttyConfigSnapshot snapshot;
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    snapshot.values.insert(QStringLiteral("selection-foreground"), QString());
-    snapshot.values.insert(QStringLiteral("selection-background"), QString());
-    snapshot.values.insert(QStringLiteral("cursor-color"), QString());
-    snapshot.values.insert(QStringLiteral("cursor-style-blink"), QString());
-    snapshot.values.insert(QStringLiteral("cursor-text"), QString());
-    snapshot.values.insert(QStringLiteral("bold-color"), QString());
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"), QString());
-    snapshot.values.insert(QStringLiteral("split-divider-color"), QString());
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.appearance.selectionForeground.reset();
+    snapshot.values.appearance.selectionBackground.reset();
+    snapshot.values.appearance.cursorColor.reset();
+    snapshot.values.appearance.cursorBlink.reset();
+    snapshot.values.appearance.cursorText.reset();
+    snapshot.values.appearance.boldColor.reset();
+    snapshot.values.splitAppearance.unfocusedFill.reset();
+    snapshot.values.splitAppearance.dividerColor.reset();
 
-    const TerminalAppearance appearance =
-        applyGhosttyConfigSnapshot(base, snapshot).appearance;
+    const LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
+    const TerminalAppearance &appearance = result.appearance;
     QCOMPARE(appearance.selectionForeground.kind, TerminalColorKind::Unset);
     QCOMPARE(appearance.selectionBackground.kind, TerminalColorKind::Unset);
     QCOMPARE(appearance.cursorColor.kind, TerminalColorKind::Unset);
     QVERIFY(!appearance.cursorBlink.has_value());
     QCOMPARE(appearance.cursorTextColor.kind, TerminalColorKind::Unset);
     QCOMPARE(appearance.boldColor.kind, TerminalBoldColorKind::Unset);
-    QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
-                 .splitAppearance.unfocusedFill.has_value());
-    QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
-                 .splitAppearance.dividerColor.has_value());
-}
-
-void LaunchOptionsTest::ignoresUnavailableAndMalformedSnapshotValues()
-{
-    LaunchOptions base;
-    base.fontFamily = QStringLiteral("Base Family");
-    base.fontSize = 13.0;
-    base.scrollbackLimit = {.value = 900, .unit = ScrollbackLimitUnit::Lines};
-
-    GhosttyConfigSnapshot snapshot;
-    snapshot.values.insert(QStringLiteral("font-size"), -2.0);
-    snapshot.values.insert(QStringLiteral("foreground"), QStringLiteral("not-a-color"));
-    snapshot.values.insert(QStringLiteral("palette"), QVariantList{QColor(Qt::red)});
-    snapshot.values.insert(QStringLiteral("selection-background"),
-                           QStringLiteral("not-an-alias"));
-    snapshot.values.insert(QStringLiteral("search-background"), QString());
-    snapshot.values.insert(QStringLiteral("search-selected-foreground"),
-                           QStringLiteral("not-an-alias"));
-    snapshot.values.insert(QStringLiteral("cursor-opacity"), 2.0);
-    snapshot.values.insert(QStringLiteral("cursor-style"),
-                           QStringLiteral("beam"));
-    snapshot.values.insert(QStringLiteral("cursor-style-blink"),
-                           QStringLiteral("sometimes"));
-    snapshot.values.insert(QStringLiteral("bold-color"),
-                           QStringLiteral("dim"));
-    snapshot.values.insert(QStringLiteral("faint-opacity"), -0.5);
-    snapshot.values.insert(QStringLiteral("scrollback-limit"), qint64(-1));
-    snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                           QStringLiteral("sometimes"));
-    snapshot.values.insert(QStringLiteral("link-url"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("link-previews"),
-                           true);
-    snapshot.values.insert(QStringLiteral("clipboard-trim-trailing-spaces"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("clipboard-paste-protection"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("clipboard-paste-bracketed-safe"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("copy-on-select"), true);
-    snapshot.values.insert(QStringLiteral("selection-clear-on-typing"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("selection-clear-on-copy"),
-                           QStringLiteral("true"));
-    snapshot.values.insert(QStringLiteral("middle-click-action"), false);
-    snapshot.values.insert(QStringLiteral("mouse-reporting"),
-                           QStringLiteral("false"));
-    snapshot.values.insert(QStringLiteral("window-show-tab-bar"),
-                           QStringLiteral("sometimes"));
-    snapshot.values.insert(QStringLiteral("window-width"), qint64(80));
-    snapshot.values.insert(QStringLiteral("window-height"),
-                           QStringLiteral("24"));
-    snapshot.values.insert(QStringLiteral("resize-overlay"), true);
-    snapshot.values.insert(QStringLiteral("resize-overlay-position"),
-                           QStringLiteral("left"));
-    snapshot.values.insert(QStringLiteral("resize-overlay-duration"),
-                           qint64(750));
-    snapshot.values.insert(QStringLiteral("split-divider-color"),
-                           QStringLiteral("not-a-color"));
-    snapshot.values.insert(QStringLiteral("unfocused-split-opacity"),
-                           QStringLiteral("not-a-number"));
-    snapshot.values.insert(QStringLiteral("unfocused-split-fill"),
-                           QStringLiteral("not-a-color"));
-    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).fontFamily, base.fontFamily);
-
-    snapshot.availability = GhosttyConfigAvailability::Available;
-    const LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.fontSize, base.fontSize);
-    QCOMPARE(result.appearance, base.appearance);
-    QCOMPARE(result.scrollbackLimit, base.scrollbackLimit);
-    QCOMPARE(result.confirmCloseMode, base.confirmCloseMode);
-    QCOMPARE(result.linkUrl, base.linkUrl);
-    QCOMPARE(result.linkPreviews, base.linkPreviews);
-    QCOMPARE(result.selectionClipboard, base.selectionClipboard);
-    QCOMPARE(result.clipboardPaste, base.clipboardPaste);
-    QCOMPARE(result.middleClickAction, base.middleClickAction);
-    QCOMPARE(result.mouseReporting, base.mouseReporting);
-    QCOMPARE(result.windowShowTabBar, base.windowShowTabBar);
-    QCOMPARE(result.windowWidth, base.windowWidth);
-    QCOMPARE(result.windowHeight, base.windowHeight);
-    QCOMPARE(result.resizeOverlay, base.resizeOverlay);
-    QCOMPARE(result.splitAppearance, base.splitAppearance);
+    QVERIFY(!result.splitAppearance.unfocusedFill.has_value());
+    QVERIFY(!result.splitAppearance.dividerColor.has_value());
 }
 
 void LaunchOptionsTest::projectsTerminalSessionOptions()

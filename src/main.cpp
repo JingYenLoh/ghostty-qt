@@ -1014,13 +1014,11 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
         return false;
     }
 
-    const auto applyMode = [workspace](const QString &mode) {
-        GhosttyConfigSnapshot snapshot;
-        snapshot.availability = GhosttyConfigAvailability::Available;
-        snapshot.values.insert(QStringLiteral("confirm-close-surface"),
-                               QStringLiteral("false"));
-        snapshot.values.insert(QStringLiteral("window-show-tab-bar"), mode);
-        workspace->applyConfigSnapshot(snapshot);
+    const auto applyMode = [workspace](WindowShowTabBar mode) {
+        LaunchOptions options = workspace->effectiveLaunchOptions();
+        options.confirmCloseMode = ConfirmCloseMode::Never;
+        options.windowShowTabBar = mode;
+        workspace->applyLaunchOptions(options);
     };
     const auto exercise = [workspace, tabBar, windowToolbar, applyMode] {
         auto *const timer = new QTimer(workspace);
@@ -1038,7 +1036,7 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                             workspace, tabBar, 1, false, "auto with one tab")) {
                         return;
                     }
-                    applyMode(QStringLiteral("auto"));
+                    applyMode(WindowShowTabBar::Auto);
                     workspace->newTab();
                     break;
                 case 1:
@@ -1054,14 +1052,14 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                             "auto after returning to one tab")) {
                         return;
                     }
-                    applyMode(QStringLiteral("always"));
+                    applyMode(WindowShowTabBar::Always);
                     break;
                 case 3:
                     if (!verifyTabBarTestState(
                             workspace, tabBar, 1, true, "always with one tab")) {
                         return;
                     }
-                    applyMode(QStringLiteral("never"));
+                    applyMode(WindowShowTabBar::Never);
                     break;
                 case 4:
                     if (!verifyTabBarTestState(
@@ -1074,7 +1072,7 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                         QCoreApplication::exit(1);
                         return;
                     }
-                    applyMode(QStringLiteral("auto"));
+                    applyMode(WindowShowTabBar::Auto);
                     break;
                 case 5:
                     if (!verifyTabBarTestState(
