@@ -554,6 +554,7 @@ qt_add_qml_module(ghostty-qt
     QML_FILES
         qml/Main.qml
         qml/ReadOnlyOverlay.qml
+        qml/ResizeOverlay.qml
         qml/SearchOverlay.qml
 )
 

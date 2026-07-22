@@ -50,6 +50,10 @@ class TerminalWorkspace : public QQuickItem {
                READ readOnlyOverlayComponent
                WRITE setReadOnlyOverlayComponent
                NOTIFY readOnlyOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *resizeOverlayComponent
+               READ resizeOverlayComponent
+               WRITE setResizeOverlayComponent
+               NOTIFY resizeOverlayComponentChanged)
 
 public:
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
@@ -98,6 +102,11 @@ public:
         return readOnlyOverlayComponent_;
     }
     void setReadOnlyOverlayComponent(QQmlComponent *component);
+    QQmlComponent *resizeOverlayComponent() const
+    {
+        return resizeOverlayComponent_;
+    }
+    void setResizeOverlayComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
@@ -142,6 +151,7 @@ Q_SIGNALS:
     void applicationQuitCancelled();
     void searchOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
+    void resizeOverlayComponentChanged();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -203,7 +213,7 @@ private:
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate);
     void createSearchOverlay(TerminalPane *pane);
-    void createReadOnlyOverlay(TerminalPane *pane);
+    [[nodiscard]] std::vector<PaneHandle> allPanes() const;
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
         PaneId sourcePaneId = {},
@@ -335,4 +345,5 @@ private:
     bool topologyMutation_ = false;
     QQmlComponent *searchOverlayComponent_ = nullptr;
     QQmlComponent *readOnlyOverlayComponent_ = nullptr;
+    QQmlComponent *resizeOverlayComponent_ = nullptr;
 };

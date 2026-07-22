@@ -81,6 +81,11 @@ ApplicationWindow {
         ReadOnlyOverlay {}
     }
 
+    Component {
+        id: terminalResizeOverlayFactory
+        ResizeOverlay {}
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -164,6 +169,7 @@ ApplicationWindow {
             anchors.fill: parent
             searchOverlayComponent: terminalSearchOverlayFactory
             readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
+            resizeOverlayComponent: terminalResizeOverlayFactory
         }
     }
 

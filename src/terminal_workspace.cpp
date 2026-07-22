@@ -32,8 +32,9 @@ namespace {
 
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
-constexpr auto readOnlyOverlayProperty =
+constexpr auto kReadOnlyOverlayProperty =
     "_ghosttyQtReadOnlyOverlayAttached";
+constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
 {
@@ -116,6 +117,51 @@ struct TerminalWorkspace::Node {
     std::unique_ptr<Node> first;
     std::unique_ptr<Node> second;
 };
+
+namespace {
+
+void clearPaneOverlay(TerminalPane *pane, const char *property)
+{
+    QObject *const overlay = pane->property(property).value<QObject *>();
+    pane->setProperty(property, {});
+    delete overlay;
+}
+
+void attachPaneOverlay(QQmlComponent *component,
+                       TerminalPane *pane,
+                       const char *property,
+                       const char *description)
+{
+    if (pane == nullptr || component == nullptr
+        || pane->property(property).value<QObject *>() != nullptr) {
+        return;
+    }
+
+    QObject *const overlay = component->createWithInitialProperties({
+        {QStringLiteral("terminalPane"),
+         QVariant::fromValue(static_cast<QObject *>(pane))},
+    });
+    if (overlay == nullptr) {
+        qWarning().noquote()
+            << "Could not create" << description << ':'
+            << component->errorString();
+        return;
+    }
+
+    auto *const overlayItem = qobject_cast<QQuickItem *>(overlay);
+    if (overlayItem == nullptr) {
+        qWarning().noquote()
+            << description << "component did not create a QQuickItem";
+        delete overlay;
+        return;
+    }
+
+    overlay->setParent(pane);
+    overlayItem->setParentItem(pane);
+    pane->setProperty(property, QVariant::fromValue(overlay));
+}
+
+} // namespace
 
 struct TerminalWorkspace::Tab {
     TabId id;
@@ -305,12 +351,8 @@ void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
             }
         });
 
-        for (const std::unique_ptr<Tab> &tab : tabs_) {
-            std::vector<PaneHandle> panes;
-            tab->root->collectPanes(panes);
-            for (const PaneHandle &handle : panes) {
-                createSearchOverlay(handle.pane);
-            }
+        for (const PaneHandle &handle : allPanes()) {
+            createSearchOverlay(handle.pane);
         }
     }
 
@@ -357,15 +399,9 @@ void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
     // Unlike the app's normal one-time assignment, the public QML property
     // may be replaced. Tear down the old factory's products so every existing
     // pane can attach an object created by the replacement.
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<PaneHandle> panes;
-        tab->root->collectPanes(panes);
-        for (const PaneHandle &handle : panes) {
-            QObject *overlay = handle.pane
-                ->property(readOnlyOverlayProperty).value<QObject *>();
-            handle.pane->setProperty(readOnlyOverlayProperty, {});
-            delete overlay;
-        }
+    const std::vector<PaneHandle> panes = allPanes();
+    for (const PaneHandle &handle : panes) {
+        clearPaneOverlay(handle.pane, kReadOnlyOverlayProperty);
     }
 
     readOnlyOverlayComponent_ = component;
@@ -376,48 +412,54 @@ void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
             }
         });
 
-        for (const std::unique_ptr<Tab> &tab : tabs_) {
-            std::vector<PaneHandle> panes;
-            tab->root->collectPanes(panes);
-            for (const PaneHandle &handle : panes) {
-                createReadOnlyOverlay(handle.pane);
-            }
+        for (const PaneHandle &handle : panes) {
+            attachPaneOverlay(readOnlyOverlayComponent_, handle.pane,
+                              kReadOnlyOverlayProperty,
+                              "terminal read-only overlay");
         }
     }
 
     Q_EMIT readOnlyOverlayComponentChanged();
 }
 
-void TerminalWorkspace::createReadOnlyOverlay(TerminalPane *pane)
+void TerminalWorkspace::setResizeOverlayComponent(QQmlComponent *component)
 {
-    if (pane == nullptr || readOnlyOverlayComponent_ == nullptr
-        || pane->property(readOnlyOverlayProperty).value<QObject *>()
-            != nullptr) {
+    if (resizeOverlayComponent_ == component) {
         return;
     }
 
-    QObject *overlay = readOnlyOverlayComponent_->createWithInitialProperties({
-        {QStringLiteral("terminalPane"),
-         QVariant::fromValue(static_cast<QObject *>(pane))},
-    });
-    if (overlay == nullptr) {
-        qWarning().noquote()
-            << "Could not create terminal read-only overlay:"
-            << readOnlyOverlayComponent_->errorString();
-        return;
+    const std::vector<PaneHandle> panes = allPanes();
+    for (const PaneHandle &handle : panes) {
+        clearPaneOverlay(handle.pane, kResizeOverlayProperty);
     }
 
-    auto *overlayItem = qobject_cast<QQuickItem *>(overlay);
-    if (overlayItem == nullptr) {
-        qWarning() << "Terminal read-only overlay component did not create a QQuickItem";
-        delete overlay;
-        return;
+    resizeOverlayComponent_ = component;
+    if (component != nullptr) {
+        connect(component, &QObject::destroyed, this, [this, component] {
+            if (resizeOverlayComponent_ == component) {
+                setResizeOverlayComponent(nullptr);
+            }
+        });
+
+        for (const PaneHandle &handle : panes) {
+            attachPaneOverlay(resizeOverlayComponent_, handle.pane,
+                              kResizeOverlayProperty,
+                              "terminal resize overlay");
+        }
     }
 
-    overlay->setParent(pane);
-    overlayItem->setParentItem(pane);
-    pane->setProperty(readOnlyOverlayProperty,
-                      QVariant::fromValue(overlay));
+    Q_EMIT resizeOverlayComponentChanged();
+}
+
+std::vector<TerminalWorkspace::PaneHandle> TerminalWorkspace::allPanes() const
+{
+    std::vector<PaneHandle> panes;
+    for (const std::unique_ptr<Tab> &tab : tabs_) {
+        if (tab->root != nullptr) {
+            tab->root->collectPanes(panes);
+        }
+    }
+    return panes;
 }
 
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
@@ -977,7 +1019,12 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 beginUnsafePaste(requestId, text, paneId);
             });
     createSearchOverlay(pane);
-    createReadOnlyOverlay(pane);
+    attachPaneOverlay(readOnlyOverlayComponent_, pane,
+                      kReadOnlyOverlayProperty,
+                      "terminal read-only overlay");
+    attachPaneOverlay(resizeOverlayComponent_, pane,
+                      kResizeOverlayProperty,
+                      "terminal resize overlay");
     return {paneId, pane};
 }
 

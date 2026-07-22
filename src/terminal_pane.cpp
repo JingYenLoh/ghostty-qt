@@ -8,6 +8,7 @@
 #include "terminal_pane_render_probe_p.h"
 
 #include <QClipboard>
+#include <QChronoTimer>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -49,6 +50,12 @@
 #include <utility>
 
 namespace {
+
+constexpr qreal kResizeOverlayWidth = 120.0;
+constexpr qreal kResizeOverlayHeight = 40.0;
+constexpr auto kMinimumResizeOverlayDuration = std::chrono::milliseconds(250);
+constexpr auto kResizeOverlayStartupSuppression =
+    std::chrono::milliseconds(250);
 
 constexpr float kMinimumActionFontSize = 1.0F;
 constexpr float kMaximumActionFontSize = 255.0F;
@@ -689,6 +696,9 @@ TerminalPane::TerminalPane(
     , appearance_(options.appearance)
     , splitAppearance_(options.splitAppearance)
     , defaultFontPointSize_(options.fontSize)
+    , resizeOverlayStartupSuppressionEnds_(
+          std::chrono::steady_clock::now()
+          + kResizeOverlayStartupSuppression)
     , sessionStartMode_(startMode)
 {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -736,6 +746,10 @@ TerminalPane::TerminalPane(
         cursorBlinkOn_ = !cursorBlinkOn_;
         update();
     });
+    resizeOverlayTimer_ = new QChronoTimer(this);
+    resizeOverlayTimer_->setSingleShot(true);
+    connect(resizeOverlayTimer_, &QChronoTimer::timeout,
+            this, &TerminalPane::hideResizeOverlay);
 
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
@@ -1080,6 +1094,9 @@ void TerminalPane::tryDeferredSessionStart()
     deferredSessionStartCandidate_.reset();
     deferredSessionViewportSizeProvider_ = {};
     disconnectDeferredSessionWindowSignals();
+    // The hidden normal geometry may differ from the compositor-assigned
+    // viewport. Record the committed grid without presenting it as a resize.
+    noteTerminalGridSize(*geometry);
     (void) controller_->startSession(geometry);
 }
 
@@ -1093,6 +1110,41 @@ QString TerminalPane::title() const
         return QFileInfo(options_.program.constFirst()).fileName();
     }
     return QStringLiteral("Terminal");
+}
+
+QRectF TerminalPane::resizeOverlayRect() const
+{
+    const qreal centerX = std::max(
+        0.0, (width() - kResizeOverlayWidth) / 2.0);
+    const qreal right = std::max(0.0, width() - kResizeOverlayWidth);
+    const qreal centerY = std::max(
+        0.0, (height() - kResizeOverlayHeight) / 2.0);
+    const qreal bottom = std::max(0.0, height() - kResizeOverlayHeight);
+
+    QPointF position;
+    switch (options_.resizeOverlay.position) {
+    case ResizeOverlayPosition::Center:
+        position = {centerX, centerY};
+        break;
+    case ResizeOverlayPosition::TopLeft:
+        break;
+    case ResizeOverlayPosition::TopCenter:
+        position.setX(centerX);
+        break;
+    case ResizeOverlayPosition::TopRight:
+        position.setX(right);
+        break;
+    case ResizeOverlayPosition::BottomLeft:
+        position.setY(bottom);
+        break;
+    case ResizeOverlayPosition::BottomCenter:
+        position = {centerX, bottom};
+        break;
+    case ResizeOverlayPosition::BottomRight:
+        position = {right, bottom};
+        break;
+    }
+    return {position, QSizeF(kResizeOverlayWidth, kResizeOverlayHeight)};
 }
 
 std::optional<QString> TerminalPane::effectiveSurfaceTitle() const
@@ -1233,6 +1285,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.mouseReporting = options.mouseReporting;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
+    updated.resizeOverlay = options.resizeOverlay;
     updated.keybindConfig = options.keybindConfig;
     updated.keybindings = options.keybindings;
     updated.keybindingsConfigured = options.keybindingsConfigured;
@@ -1248,6 +1301,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
     const bool linkPreviewModeChanged =
         options_.linkPreviews != updated.linkPreviews;
+    const ResizeOverlayOptions previousResizeOverlay = options_.resizeOverlay;
     const TerminalSessionRuntimeOptions previousRuntime =
         toTerminalSessionRuntimeOptions(options_);
     const TerminalSessionRuntimeOptions updatedRuntime =
@@ -1286,6 +1340,17 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
+    if (previousResizeOverlay.position != options_.resizeOverlay.position) {
+        Q_EMIT resizeOverlayRectChanged();
+    }
+    if (options_.resizeOverlay.mode == ResizeOverlayMode::Never) {
+        cancelPendingResizeOverlay();
+        hideResizeOverlay();
+    } else if (resizeOverlayVisible_
+               && previousResizeOverlay.duration
+                   != options_.resizeOverlay.duration) {
+        restartResizeOverlayTimer();
+    }
     if (activeSequenceToken_ != 0) {
         controller_->resolveSequence(activeSequenceToken_,
                                      TerminalSequenceResolution::Drop);
@@ -1364,6 +1429,9 @@ void TerminalPane::beginShutdown()
     deferredSessionStartCandidate_.reset();
     deferredSessionViewportSizeProvider_ = {};
     disconnectDeferredSessionWindowSignals();
+    resizeOverlayShuttingDown_ = true;
+    cancelPendingResizeOverlay();
+    hideResizeOverlay();
     controller_->beginShutdown();
 }
 
@@ -2030,6 +2098,7 @@ void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGe
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size()) {
+        Q_EMIT resizeOverlayRectChanged();
         deferredSessionStartCandidate_.reset();
         updateTerminalSize();
         scheduleDeferredSessionStart();
@@ -2112,10 +2181,109 @@ void TerminalPane::updateTerminalSize()
         terminalRows_ = geometry->rows;
         terminalResizePending_ = true;
     }
+    noteTerminalGridSize(*geometry);
     controller_->resizeTerminal(
         geometry->columns, geometry->rows,
         geometry->cellWidthPixels, geometry->cellHeightPixels,
         geometry->surfaceWidthPixels, geometry->surfaceHeightPixels);
+}
+
+void TerminalPane::noteTerminalGridSize(
+    const TerminalSessionGeometry &geometry)
+{
+    const QSize grid(geometry.columns, geometry.rows);
+    const bool firstGrid = !resizeOverlayGrid_.has_value();
+    if (!firstGrid && *resizeOverlayGrid_ == grid) {
+        return;
+    }
+    resizeOverlayGrid_ = grid;
+
+    // Deferred windows may traverse hidden normal and compositor geometries
+    // before their worker exists. Those are launch negotiation, not resizes.
+    if (controller_ == nullptr || !controller_->sessionStarted()) {
+        return;
+    }
+    if (options_.resizeOverlay.mode == ResizeOverlayMode::AfterFirst
+        && (firstGrid
+            || std::chrono::steady_clock::now()
+                < resizeOverlayStartupSuppressionEnds_)) {
+        return;
+    }
+    scheduleResizeOverlay();
+}
+
+void TerminalPane::scheduleResizeOverlay()
+{
+    if (options_.resizeOverlay.mode == ResizeOverlayMode::Never
+        || resizeOverlayShuttingDown_
+        || resizeOverlayUpdateScheduled_
+        || !resizeOverlayGrid_.has_value()) {
+        return;
+    }
+    resizeOverlayUpdateScheduled_ = true;
+    const quint64 generation = ++resizeOverlayUpdateGeneration_;
+    QTimer::singleShot(0, this, [this, generation] {
+        if (generation != resizeOverlayUpdateGeneration_) {
+            return;
+        }
+        resizeOverlayUpdateScheduled_ = false;
+        showPendingResizeOverlay();
+    });
+}
+
+void TerminalPane::cancelPendingResizeOverlay()
+{
+    if (!resizeOverlayUpdateScheduled_) {
+        return;
+    }
+    resizeOverlayUpdateScheduled_ = false;
+    ++resizeOverlayUpdateGeneration_;
+}
+
+void TerminalPane::showPendingResizeOverlay()
+{
+    if (options_.resizeOverlay.mode == ResizeOverlayMode::Never
+        || resizeOverlayShuttingDown_
+        || controller_ == nullptr || !controller_->sessionStarted()
+        || !resizeOverlayGrid_.has_value()) {
+        return;
+    }
+
+    const QString text = QStringLiteral("%1 x %2")
+        .arg(resizeOverlayGrid_->width())
+        .arg(resizeOverlayGrid_->height());
+    if (resizeOverlayText_ != text) {
+        resizeOverlayText_ = text;
+        Q_EMIT resizeOverlayTextChanged();
+    }
+    if (!resizeOverlayVisible_) {
+        resizeOverlayVisible_ = true;
+        Q_EMIT resizeOverlayVisibleChanged();
+    }
+    restartResizeOverlayTimer();
+}
+
+void TerminalPane::hideResizeOverlay()
+{
+    if (resizeOverlayTimer_ != nullptr) {
+        resizeOverlayTimer_->stop();
+    }
+    if (!resizeOverlayVisible_) {
+        return;
+    }
+    resizeOverlayVisible_ = false;
+    Q_EMIT resizeOverlayVisibleChanged();
+}
+
+void TerminalPane::restartResizeOverlayTimer()
+{
+    if (resizeOverlayTimer_ == nullptr) {
+        return;
+    }
+    resizeOverlayTimer_->setInterval(
+        std::max(options_.resizeOverlay.duration,
+                 kMinimumResizeOverlayDuration));
+    resizeOverlayTimer_->start();
 }
 
 std::optional<TerminalSessionGeometry>

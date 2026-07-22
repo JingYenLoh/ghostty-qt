@@ -400,6 +400,21 @@
       "scope": "linux",
       "note": "The private structured export preserves null versus configured zero and applies Ghostty's exact whole-millisecond truncation and c_uint saturation. One application-owned QChronoTimer starts only after a real final surface closes, is cancelled by a successfully presented replacement, remains armed after factory failure, is bypassed by explicit quit and explicit-command launches, and is reconciled on live reload without moving an identical deadline. Pinned config prose describes a never-windowed initial timeout, but the GTK App lacks the startup timer method; this follows executable GTK behavior while intentionally repairing its separate stale-timer reload edge."
     },
+    "resize-overlay": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "The exact always/never/after-first mode controls one input-transparent 120x40-logical-pixel QML item per pane. Only accepted authoritative column/row changes schedule it: synchronous bursts coalesce to the newest grid, a later grid restarts the single QChronoTimer, raw pixel and DPR-only changes are inert, and split panes remain independent. After-first suppresses each pane's initial grid and further layout settling during Ghostty's initial 250 ms delay; always includes the first ordinary immediate grid, while pre-worker compositor negotiation is never classified as a resize, and never cancels visible or queued presentation. Reload applies live."
+    },
+    "resize-overlay-duration": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "The private structured export preserves Ghostty's finalized whole-millisecond duration. The pane timer applies the pinned GTK 250 ms minimum and 750 ms default; a duration reload restarts an already visible overlay from the new value."
+    },
+    "resize-overlay-position": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "All seven exact values—center, top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right—map in logical coordinates relative to the owning pane. Reload moves an existing visible overlay immediately, independently for split panes and at any device scale."
+    },
     "search-background": {
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."
@@ -874,7 +889,7 @@
         },
         "new_window": {
           "status": "partial",
-          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. The first-ever surface after suppressed startup retains current one-shot program/hold; every subsequent window clears them. Each window initializes one workspace before presentation, requires matching visual and QObject ownership, registers lifetime/keybindings/config fanout, checkpoints reentrant destruction, and can recreate a resident process after every old root and worker is retired. Bare-secondary and standard desktop Activate requests consume the same source-less path, including the pinned null-parent cwd/configured-font distinction and exact one-shot activation-token/startup-ID presentation. The +new-window/org.gtk.Actions payload, functional standard ActivateAction, and initial geometry inheritance remain incomplete."
+          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. The first-ever surface after suppressed startup retains current one-shot program/hold; every subsequent window clears them. Each window initializes one workspace before presentation, requires matching visual and QObject ownership, registers lifetime/keybindings/config fanout, checkpoints reentrant destruction, and can recreate a resident process after every old root and worker is retired. Bare-secondary and standard desktop Activate requests consume the same source-less path, including the pinned null-parent cwd/configured-font distinction and exact one-shot activation-token/startup-ID presentation. The +new-window/org.gtk.Actions payload and functional standard ActivateAction remain incomplete."
         },
         "next_tab": {
           "status": "partial",

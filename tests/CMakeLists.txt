@@ -385,6 +385,7 @@ add_test(
             dragsExactNestedSplitDividerAndPreservesFocus
             splitDividerColorReloadsWithoutRelayout
             dimsUnfocusedSplitPanesAcrossLifecycle
+            resizeOverlayIsPaneLocalAndScalesWithDpr
 )
 set_tests_properties(terminal-workspace-divider-hidpi PROPERTIES
     TIMEOUT 15

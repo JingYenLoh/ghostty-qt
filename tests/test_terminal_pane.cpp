@@ -1,6 +1,8 @@
 #include "launch_options.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
+#include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
@@ -169,6 +171,9 @@ class TerminalPaneTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void resizeOverlayPositions_data();
+    void resizeOverlayPositions();
+    void resizeOverlayCoalescesAndRestarts();
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
     void executesTypedFontSizeActions();
@@ -202,6 +207,162 @@ private Q_SLOTS:
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
+
+void TerminalPaneTest::resizeOverlayPositions_data()
+{
+    QTest::addColumn<int>("position");
+    QTest::addColumn<QPointF>("expectedTopLeft");
+
+    QTest::newRow("center")
+        << static_cast<int>(ResizeOverlayPosition::Center)
+        << QPointF(190.0, 130.0);
+    QTest::newRow("top-left")
+        << static_cast<int>(ResizeOverlayPosition::TopLeft)
+        << QPointF(0.0, 0.0);
+    QTest::newRow("top-center")
+        << static_cast<int>(ResizeOverlayPosition::TopCenter)
+        << QPointF(190.0, 0.0);
+    QTest::newRow("top-right")
+        << static_cast<int>(ResizeOverlayPosition::TopRight)
+        << QPointF(380.0, 0.0);
+    QTest::newRow("bottom-left")
+        << static_cast<int>(ResizeOverlayPosition::BottomLeft)
+        << QPointF(0.0, 260.0);
+    QTest::newRow("bottom-center")
+        << static_cast<int>(ResizeOverlayPosition::BottomCenter)
+        << QPointF(190.0, 260.0);
+    QTest::newRow("bottom-right")
+        << static_cast<int>(ResizeOverlayPosition::BottomRight)
+        << QPointF(380.0, 260.0);
+}
+
+void TerminalPaneTest::resizeOverlayPositions()
+{
+    QFETCH(int, position);
+    QFETCH(QPointF, expectedTopLeft);
+
+    ShellEnvironment shell;
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.resizeOverlay.position =
+        static_cast<ResizeOverlayPosition>(position);
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(500.0, 300.0));
+    const QRectF rect = pane.resizeOverlayRect();
+    QCOMPARE(rect.topLeft(), expectedTopLeft);
+    QCOMPARE(rect.size(), QSizeF(120.0, 40.0));
+}
+
+void TerminalPaneTest::resizeOverlayCoalescesAndRestarts()
+{
+    ShellEnvironment shell;
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.resizeOverlay = {
+        .mode = ResizeOverlayMode::AfterFirst,
+        .position = ResizeOverlayPosition::Center,
+        .duration = std::chrono::milliseconds(250),
+    };
+
+    {
+        LaunchOptions alwaysOptions = options;
+        alwaysOptions.resizeOverlay.mode = ResizeOverlayMode::Always;
+        TerminalPane always(alwaysOptions);
+        always.setSize(QSizeF(500.0, 300.0));
+        QTRY_VERIFY_WITH_TIMEOUT(always.resizeOverlayVisible(), 1000);
+    }
+    {
+        LaunchOptions neverOptions = options;
+        neverOptions.resizeOverlay.mode = ResizeOverlayMode::Never;
+        TerminalPane never(neverOptions);
+        never.setSize(QSizeF(500.0, 300.0));
+        never.setWidth(700.0);
+        QCoreApplication::processEvents();
+        QVERIFY(!never.resizeOverlayVisible());
+    }
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(500.0, 300.0));
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.resizeOverlayVisible());
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        options.fontFamily, options.fontSize);
+    const auto initialGeometry = terminalSessionGeometryForViewport(
+        pane.width(), pane.height(), metrics.cellWidth, metrics.cellHeight,
+        1.0);
+    QVERIFY(initialGeometry.has_value());
+    pane.setWidth(
+        (static_cast<qreal>(initialGeometry->columns) + 0.5)
+        * metrics.cellWidth);
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.resizeOverlayVisible());
+    // Match Ghostty's initial 250 ms settling window: further layout churn
+    // while a pane is first appearing is not a user-visible resize either.
+    QTest::qWait(275);
+    QVERIFY(!pane.resizeOverlayVisible());
+
+    QSignalSpy textChanged(&pane, &TerminalPane::resizeOverlayTextChanged);
+    QSignalSpy visibilityChanged(
+        &pane, &TerminalPane::resizeOverlayVisibleChanged);
+    pane.setWidth(580.0);
+    pane.setWidth(660.0);
+    pane.setWidth(740.0);
+    QTRY_VERIFY_WITH_TIMEOUT(pane.resizeOverlayVisible(), 1000);
+    QCOMPARE(textChanged.count(), 1);
+    QCOMPARE(visibilityChanged.count(), 1);
+
+    const auto expected = terminalSessionGeometryForViewport(
+        pane.width(), pane.height(), metrics.cellWidth, metrics.cellHeight,
+        1.0);
+    QVERIFY(expected.has_value());
+    QCOMPARE(pane.resizeOverlayText(),
+             QStringLiteral("%1 x %2")
+                 .arg(expected->columns)
+                 .arg(expected->rows));
+
+    QTest::qWait(150);
+    pane.setWidth(820.0);
+    QTRY_COMPARE_WITH_TIMEOUT(textChanged.count(), 2, 1000);
+    QTest::qWait(150);
+    QVERIFY(pane.resizeOverlayVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!pane.resizeOverlayVisible(), 300);
+
+    LaunchOptions reloaded = options;
+    reloaded.resizeOverlay.mode = ResizeOverlayMode::Always;
+    reloaded.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
+    reloaded.resizeOverlay.duration = std::chrono::milliseconds(400);
+    QSignalSpy rectChanged(&pane, &TerminalPane::resizeOverlayRectChanged);
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(rectChanged.count(), 1);
+    QCOMPARE(pane.resizeOverlayRect().topLeft(), QPointF(700.0, 260.0));
+    pane.setWidth(900.0);
+    QTRY_VERIFY_WITH_TIMEOUT(pane.resizeOverlayVisible(), 1000);
+
+    reloaded.resizeOverlay.mode = ResizeOverlayMode::Never;
+    pane.applyRuntimeOptions(reloaded);
+    QVERIFY(!pane.resizeOverlayVisible());
+    pane.setWidth(1'000.0);
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.resizeOverlayVisible());
+
+    // A same-turn re-enable must not revive work queued before `never`.
+    reloaded.resizeOverlay.mode = ResizeOverlayMode::Always;
+    pane.applyRuntimeOptions(reloaded);
+    pane.setWidth(1'080.0);
+    LaunchOptions disabledAgain = reloaded;
+    disabledAgain.resizeOverlay.mode = ResizeOverlayMode::Never;
+    pane.applyRuntimeOptions(disabledAgain);
+    pane.applyRuntimeOptions(reloaded);
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.resizeOverlayVisible());
+    pane.setWidth(1'160.0);
+    QTRY_VERIFY_WITH_TIMEOUT(pane.resizeOverlayVisible(), 1000);
+}
 
 void TerminalPaneTest::runsCursorBlinkTimerOnlyWhenNeeded()
 {

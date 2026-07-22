@@ -147,7 +147,7 @@ GhosttyConfigProcessLoaderOptions fakeOptions(const ConfigFixture &fixture,
     environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":4,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[{"sequence":[{"kind":"unicode","codepoint":116,"mods":3}],"actions":["new_tab"],"flags":{"consumed":true,"all":false,"global":false,"performable":false}}],"tables":[]}})json"));
+            R"json({"version":1,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[{"sequence":[{"kind":"unicode","codepoint":116,"mods":3}],"actions":["new_tab"],"flags":{"consumed":true,"all":false,"global":false,"performable":false}}],"tables":[]}})json"));
     if (!mode.isEmpty()) {
         environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_MODE"), mode);
     }
@@ -224,7 +224,7 @@ private Q_SLOTS:
 void GhosttyConfigProcessLoaderTest::parsesStructuredConfigJson()
 {
     const QByteArray json = QByteArrayLiteral(R"json({
-        "version": 4,
+        "version": 1,
         "application": {
             "quit-after-last-window-closed": false,
             "quit-after-last-window-closed-delay-ms": 1500,
@@ -306,7 +306,7 @@ void GhosttyConfigProcessLoaderTest::parsesStructuredConfigJson()
 void GhosttyConfigProcessLoaderTest::parsesEmptyStructuredConfigJson()
 {
     const auto parsed = parseGhosttyConfigExportJson(
-        QByteArrayLiteral(R"json({"version":4,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
+        QByteArrayLiteral(R"json({"version":1,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
     QCOMPARE(parsed->schemaVersion,
              GhosttyConfigExport::CurrentSchemaVersion);
@@ -331,7 +331,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
 
     parsed = parseGhosttyConfigExportJson(
         QByteArrayLiteral(R"json({
-            "version":4,
+            "version":1,
             "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
             "keybindings":{"root":[{
                     "sequence":[{"kind":"unicode","codepoint":55296,"mods":0}],
@@ -343,13 +343,6 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
     QVERIFY(parsed.error().contains(QStringLiteral("Unicode scalar")));
 
     parsed = parseGhosttyConfigExportJson(
-        QByteArrayLiteral(R"json({"version":5,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
-    QVERIFY(!parsed.has_value());
-    QCOMPARE(parsed.error(),
-             QStringLiteral(
-                 "Unsupported Ghostty structured config JSON schema version"));
-
-    parsed = parseGhosttyConfigExportJson(
         QByteArrayLiteral(R"json({"version":2,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json"));
     QVERIFY(!parsed.has_value());
     QCOMPARE(parsed.error(),
@@ -358,7 +351,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
 
     parsed = parseGhosttyConfigExportJson(
         QByteArrayLiteral(R"json({
-            "version":4,
+            "version":1,
             "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
             "keybindings":{"root":[],"tables":[
                     {"name":"modal","bindings":[]},
@@ -370,7 +363,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
              QStringLiteral("Duplicate Ghostty keybinding table 'modal'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":"true","quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -379,7 +372,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.quit-after-last-window-closed must be a boolean"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":4294967296,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -388,7 +381,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.quit-after-last-window-closed-delay-ms must be null or a uint32 integer"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":true},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -397,7 +390,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.gtk-single-instance must be false, true, or detect"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"desktop"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -406,7 +399,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.gtk-single-instance must be false, true, or detect"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -415,7 +408,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application is missing field 'gtk-single-instance'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"sometimes","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -424,7 +417,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.resize-overlay must be always, never, or after-first"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"left","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -433,7 +426,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.resize-overlay-position must be a supported position"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":4294967296,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -445,7 +438,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
              QByteArrayLiteral("-1"), QByteArrayLiteral("1.5"),
          }) {
         const QByteArray json = QByteArrayLiteral(
-            R"json({"version":4,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":)json")
+            R"json({"version":1,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":)json")
             + invalidDelay
             + QByteArrayLiteral(
                 R"json(,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},"keybindings":{"root":[],"tables":[]}})json");
@@ -456,7 +449,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
     }
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -465,7 +458,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application is missing field 'quit-after-last-window-closed-delay-ms'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect","extra":false},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -474,7 +467,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
              QStringLiteral("application has unexpected field 'extra'"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":"true","resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -483,7 +476,7 @@ void GhosttyConfigProcessLoaderTest::rejectsMalformedStructuredConfigJson()
         "application.initial-window must be a boolean"));
 
     parsed = parseGhosttyConfigExportJson(QByteArrayLiteral(R"json({
-        "version":4,
+        "version":1,
         "application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"detect"},
         "keybindings":{"root":[],"tables":[]}
     })json"));
@@ -1425,7 +1418,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
     options.environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":4,"application":{"quit-after-last-window-closed":false,"quit-after-last-window-closed-delay-ms":1500,"initial-window":false,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"false"},"keybindings":{"root":[],"tables":[]}})json"));
+            R"json({"version":1,"application":{"quit-after-last-window-closed":false,"quit-after-last-window-closed-delay-ms":1500,"initial-window":false,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"false"},"keybindings":{"root":[],"tables":[]}})json"));
 
     GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(options)(fixture.candidates());
@@ -1453,7 +1446,7 @@ void GhosttyConfigProcessLoaderTest::loadsStructuredApplicationLifetimeValues()
     options.environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON"),
         QStringLiteral(
-            R"json({"version":4,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"true"},"keybindings":{"root":[],"tables":[]}})json"));
+            R"json({"version":1,"application":{"quit-after-last-window-closed":true,"quit-after-last-window-closed-delay-ms":null,"initial-window":true,"resize-overlay":"after-first","resize-overlay-position":"center","resize-overlay-duration-ms":750,"gtk-single-instance":"true"},"keybindings":{"root":[],"tables":[]}})json"));
     result = makeGhosttyConfigProcessLoader(options)(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.value(

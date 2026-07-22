@@ -925,6 +925,22 @@ allocation, the byte-valued Ghostty limit applies when a pane is created; a
 reload affects later panes. `config-file` contributes parser input and watcher
 paths rather than a direct renderer setting.
 
+Resize presentation is likewise frontend-only. Each `TerminalPane` owns the
+latest accepted terminal grid, a single-shot `QChronoTimer`, and three QML
+properties for resize-overlay visibility, text, and pane-relative geometry.
+Only a changed column/row pair schedules presentation; a zero-delay GUI turn
+coalesces synchronous resize bursts to the latest authoritative grid, and a
+subsequent grid restarts the duration. The first accepted grid and further
+layout churn during Ghostty's initial 250 ms settling delay remain hidden in
+the default `after-first` mode. The deferred maximized/fullscreen path records
+its final compositor geometry while the controller is still unstarted, so
+pre-worker negotiation is not classified as a resize even in `always` mode.
+`never` cancels queued and visible presentation. A mode, position, or duration
+reload updates the pane-owned state directly; it does not enqueue worker work,
+alter PTY geometry, rebuild rendered rows, or couple split panes. The QML item
+is a 120-by-40 logical-pixel disabled rectangle, so Qt scales it for DPR while
+it remains input-transparent and local to its leaf pane.
+
 The pinned terminal allocation limit is byte-valued. Ghostty's
 `scrollback-limit` therefore passes through exactly. The older
 `--scrollback-lines` CLI remains accepted through an explicit estimate of
@@ -934,7 +950,7 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 ## Keybinding compatibility boundary
 
-The config helper exposes a project-private JSON v4 envelope containing
+The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, raw single-instance values, and the
 lossless resize-overlay mode, position, and whole-millisecond duration plus
 Ghostty's finalized binding sets after defaults, includes, `clear`, overrides,
@@ -1240,7 +1256,13 @@ The default CTest suite has focused layers for each ownership boundary:
   source stability, local OSC 7/reset fallback, manual font zoom, and
   future-creation policy reloads. Workspace/QML coverage also verifies exact
   live `always`/`auto`/`never` tab-strip visibility, including one/two-tab
-  transitions while the surrounding toolbar remains visible, plus coalesced
+  transitions while the surrounding toolbar remains visible. Resize-overlay
+  coverage verifies all seven pane-relative positions, exact logical size,
+  startup and deferred-start suppression, latest-grid coalescing, timer
+  restart, grid-preserving pixel-resize rejection, split locality, live mode,
+  position, and duration reload, and a disabled real QML item. The focused
+  scale-factor-two run additionally checks physical capture dimensions while
+  preserving logical geometry. Workspace coverage also verifies coalesced
   fullscreen/maximize routing across panes and windows and prior-visibility
   restoration across fullscreen. It also sends real pointer gestures
   through nested divider gaps to verify exact-split targeting, T-junctions,

@@ -15,13 +15,16 @@
 #include <QQuickItem>
 #include <QRectF>
 #include <QSet>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
 
+#include <chrono>
 #include <functional>
 #include <optional>
 
+class QChronoTimer;
 class QFocusEvent;
 class QEvent;
 class QHoverEvent;
@@ -48,6 +51,12 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
     Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY searchMatchLabelChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
+    Q_PROPERTY(bool resizeOverlayVisible READ resizeOverlayVisible
+               NOTIFY resizeOverlayVisibleChanged)
+    Q_PROPERTY(QString resizeOverlayText READ resizeOverlayText
+               NOTIFY resizeOverlayTextChanged)
+    Q_PROPERTY(QRectF resizeOverlayRect READ resizeOverlayRect
+               NOTIFY resizeOverlayRectChanged)
 
 public:
     explicit TerminalPane(
@@ -78,6 +87,9 @@ public:
     bool isRunning() const;
     bool hasActiveProcess() const;
     bool isReadOnly() const;
+    bool resizeOverlayVisible() const { return resizeOverlayVisible_; }
+    QString resizeOverlayText() const { return resizeOverlayText_; }
+    QRectF resizeOverlayRect() const;
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
@@ -127,6 +139,9 @@ Q_SIGNALS:
     void searchUiFocusRequested();
     void processStateChanged();
     void readOnlyChanged(bool readOnly);
+    void resizeOverlayVisibleChanged();
+    void resizeOverlayTextChanged();
+    void resizeOverlayRectChanged();
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();
@@ -168,6 +183,12 @@ private:
 
     void updateMetrics();
     void updateTerminalSize();
+    void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
+    void scheduleResizeOverlay();
+    void cancelPendingResizeOverlay();
+    void showPendingResizeOverlay();
+    void hideResizeOverlay();
+    void restartResizeOverlayTimer();
     [[nodiscard]] std::optional<TerminalSessionGeometry>
     currentSessionGeometry(
         std::optional<QSizeF> viewportSize = std::nullopt) const;
@@ -260,6 +281,15 @@ private:
     bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
+    QChronoTimer *resizeOverlayTimer_ = nullptr;
+    std::chrono::steady_clock::time_point
+        resizeOverlayStartupSuppressionEnds_;
+    std::optional<QSize> resizeOverlayGrid_;
+    QString resizeOverlayText_;
+    bool resizeOverlayVisible_ = false;
+    bool resizeOverlayUpdateScheduled_ = false;
+    quint64 resizeOverlayUpdateGeneration_ = 0;
+    bool resizeOverlayShuttingDown_ = false;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;

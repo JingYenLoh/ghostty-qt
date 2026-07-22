@@ -18,7 +18,7 @@ comptime {
 }
 
 /// Export values that Ghostty's text formatter cannot represent losslessly as
-/// the project-private JSON v4 schema. The returned allocation follows
+/// the project-private JSON v1 schema. The returned allocation follows
 /// ghostty_string_s ownership and is released by ghostty_string_free.
 export fn ghostty_qt_config_json(defaults: bool) String {
     return configJson(defaults) catch |err| {
@@ -40,7 +40,7 @@ fn configJson(defaults: bool) !String {
     var json: std.json.Stringify = .{ .writer = &output.writer };
     try json.beginObject();
     try json.objectField("version");
-    try json.write(@as(u8, 4));
+    try json.write(@as(u8, 1));
 
     try json.objectField("application");
     try json.beginObject();

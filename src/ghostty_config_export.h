@@ -13,7 +13,7 @@
 // generation. Milliseconds intentionally match Duration.asMilliseconds(),
 // which is the conversion used by the pinned Linux GTK frontend.
 struct GhosttyConfigExport {
-    static constexpr int CurrentSchemaVersion = 4;
+    static constexpr int CurrentSchemaVersion = 1;
     static_assert(GhosttyKeybindConfig::CurrentSchemaVersion
                   == CurrentSchemaVersion);
 

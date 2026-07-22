@@ -264,6 +264,7 @@ void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation()
     LaunchOptions options = baseOptions(QDir::currentPath());
     options.maximize = maximize;
     options.fullscreen = fullscreen;
+    options.resizeOverlay.mode = ResizeOverlayMode::Always;
     ApplicationController controller(options, harness.factory(), false);
 
     const auto created = controller.createInitialWindow();
@@ -342,6 +343,7 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
     QVERIFY(!controller->sessionStarted());
     QVERIFY(!controller->running());
     QVERIFY(!controller->activeProcess());
+    QVERIFY(!initialPane->resizeOverlayVisible());
     QSignalSpy runningChanged(controller, &TerminalController::runningChanged);
     controller->setReadOnly(true);
     controller->sendRawText(QByteArrayLiteral("must-not-arrive\n"));
@@ -361,6 +363,8 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
     QVERIFY(controller->launchGeometry() == expected);
     QCOMPARE(runningChanged.count(), 1);
     QCOMPARE(runningChanged.constFirst().constFirst().toBool(), true);
+    QTest::qWait(25);
+    QVERIFY(!initialPane->resizeOverlayVisible());
 
     // New tabs follow Ghostty's command-inheritance policy and do not replay
     // the initial custom command, so this marker belongs only to the deferred

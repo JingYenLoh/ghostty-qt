@@ -128,7 +128,7 @@ if(CONFIG_HELPER_NAME)
        OR single_instance_json_error
        OR initial_window_json_error
        OR initial_window_value_json_error
-       OR NOT structured_schema EQUAL 3
+       OR NOT structured_schema EQUAL 1
        OR NOT lifetime_type STREQUAL "BOOLEAN"
        OR NOT initial_window_type STREQUAL "BOOLEAN"
        OR NOT initial_window

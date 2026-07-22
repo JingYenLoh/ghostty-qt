@@ -297,6 +297,7 @@ private Q_SLOTS:
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
     void readOnlyBlocksUiActivityLatchAndProtectsClose();
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
+    void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
@@ -1577,6 +1578,133 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     workspace.requestWindowClose();
     QCOMPARE(confirmation.count(), 3);
     QCOMPARE(quit.count(), 1);
+}
+
+void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.resizeOverlay = {
+        .mode = ResizeOverlayMode::AfterFirst,
+        .position = ResizeOverlayPosition::TopCenter,
+        .duration = std::chrono::milliseconds(250),
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath =
+        QFINDTESTDATA("../qml/ResizeOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(
+        &engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(902, 602);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    workspace->setResizeOverlayComponent(&overlayComponent);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    if (qEnvironmentVariableIsSet("GHOSTTY_QT_EXPECT_HIDPI")) {
+        QVERIFY(window.devicePixelRatio() >= 2.0);
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId =
+        workspace->tabModel()->entryAt(0)->activePaneId;
+    TerminalPane *firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        workspace->findChildren<TerminalPane *>().size(), 2, 1000);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+
+    auto *firstOverlay = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalResizeOverlay"),
+        Qt::FindDirectChildrenOnly);
+    auto *secondOverlay = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalResizeOverlay"),
+        Qt::FindDirectChildrenOnly);
+    QVERIFY(firstOverlay != nullptr);
+    QVERIFY(secondOverlay != nullptr);
+    QVERIFY(!firstOverlay->isEnabled());
+    QVERIFY(!secondOverlay->isEnabled());
+    QCOMPARE(firstOverlay->parentItem(), firstPane);
+    QCOMPARE(secondOverlay->parentItem(), secondPane);
+    QCOMPARE(firstOverlay->size(), QSizeF(120.0, 40.0));
+    QCOMPARE(secondOverlay->size(), QSizeF(120.0, 40.0));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !firstPane->resizeOverlayVisible()
+            && !secondPane->resizeOverlayVisible(),
+        1000);
+
+    LaunchOptions visibleOptions = options;
+    visibleOptions.resizeOverlay.duration = std::chrono::milliseconds(2'000);
+    workspace->applyLaunchOptions(visibleOptions);
+    QTest::qWait(275);
+    firstPane->setWidth(firstPane->width() + 100.0);
+    QTRY_VERIFY_WITH_TIMEOUT(firstPane->resizeOverlayVisible(), 1000);
+    QVERIFY(!secondPane->resizeOverlayVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QVERIFY(!secondOverlay->isVisible());
+    QCOMPARE(firstOverlay->position(),
+             firstPane->resizeOverlayRect().topLeft());
+    QCOMPARE(firstOverlay->size(), firstPane->resizeOverlayRect().size());
+
+    const QImage frame = window.grabWindow();
+    QVERIFY(!frame.isNull());
+    const qreal physicalScale =
+        static_cast<qreal>(frame.width()) / window.width();
+    QVERIFY(qAbs(physicalScale - window.devicePixelRatio()) < 0.01);
+    QCOMPARE(qRound(firstOverlay->width() * physicalScale),
+             qRound(120.0 * window.devicePixelRatio()));
+    QCOMPARE(qRound(firstOverlay->height() * physicalScale),
+             qRound(40.0 * window.devicePixelRatio()));
+
+    LaunchOptions reloaded = visibleOptions;
+    reloaded.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
+    reloaded.resizeOverlay.duration = std::chrono::milliseconds(500);
+    workspace->applyLaunchOptions(reloaded);
+    QCOMPARE(firstOverlay->position(),
+             firstPane->resizeOverlayRect().topLeft());
+    QCOMPARE(firstPane->resizeOverlayRect().bottomRight(),
+             QPointF(firstPane->width(), firstPane->height()));
+    QVERIFY(firstPane->resizeOverlayVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!firstPane->resizeOverlayVisible(), 750);
+
+    firstPane->setWidth(firstPane->width() + 100.0);
+    QTRY_VERIFY_WITH_TIMEOUT(firstPane->resizeOverlayVisible(), 1000);
+
+    reloaded.resizeOverlay.mode = ResizeOverlayMode::Never;
+    workspace->applyLaunchOptions(reloaded);
+    QVERIFY(!firstPane->resizeOverlayVisible());
+    QVERIFY(!secondPane->resizeOverlayVisible());
+    QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
+
+    workspace->setResizeOverlayComponent(nullptr);
+    QVERIFY(firstPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalResizeOverlay"),
+                Qt::FindDirectChildrenOnly)
+            == nullptr);
+    QVERIFY(secondPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalResizeOverlay"),
+                Qt::FindDirectChildrenOnly)
+            == nullptr);
+    workspace.reset();
+    window.close();
 }
 
 void TerminalWorkspaceTest::readOnlyNaturalExitPromptsExactlyOnce()
