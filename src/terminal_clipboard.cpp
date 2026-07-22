@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QMimeData>
 #include <QThread>
 
 namespace {
@@ -34,17 +35,31 @@ void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
     }
 }
 
+std::optional<QString> readTerminalClipboard(
+    QClipboard *clipboard, TerminalClipboardSource source)
+{
+    assertGuiThread();
+    if (clipboard == nullptr
+        || (source == TerminalClipboardSource::Primary
+            && !clipboard->supportsSelection())) {
+        return std::nullopt;
+    }
+
+    const QClipboard::Mode mode = source == TerminalClipboardSource::Primary
+        ? QClipboard::Selection
+        : QClipboard::Clipboard;
+    const QMimeData *const mimeData = clipboard->mimeData(mode);
+    if (mimeData == nullptr || !mimeData->hasText()) {
+        return std::nullopt;
+    }
+    return mimeData->text();
+}
+
 QString readMiddleClickClipboard(QClipboard *clipboard,
                                  TerminalCopyOnSelectMode copyOnSelect)
 {
-    assertGuiThread();
-    if (clipboard == nullptr) {
-        return {};
-    }
-
     const TerminalClipboardSource source = terminalMiddleClickSource(
-        copyOnSelect, clipboard->supportsSelection());
-    return clipboard->text(source == TerminalClipboardSource::Primary
-                               ? QClipboard::Selection
-                               : QClipboard::Clipboard);
+        copyOnSelect,
+        clipboard != nullptr && clipboard->supportsSelection());
+    return readTerminalClipboard(clipboard, source).value_or(QString{});
 }

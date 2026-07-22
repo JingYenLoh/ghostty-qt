@@ -785,6 +785,10 @@
           "status": "not_applicable",
           "scope": "macos"
         },
+        "clear_screen": {
+          "status": "blocked_upstream",
+          "note": "Ghostty's semantic clear is not an escape-sequence alias: it is inert on the alternate screen, clears selection and scrollback, distinguishes semantic prompts, clears Kitty graphics when appropriate, and conditionally writes form feed to the child. Official libghostty-vt exposes neither that composite operation nor a sufficient exact primitive set; the required public contract is tracked in REQUIRES_UPSTREAM.md."
+        },
         "close_all_windows": {
           "status": "not_applicable",
           "scope": "linux",
@@ -829,8 +833,8 @@
           "status": "supported"
         },
         "end_key_sequence": {
-          "status": "partial",
-          "note": "Root and named-table sequences flush their staged leaders; a normally consumed binding suppresses its terminator while an explicitly unconsumed binding encodes it."
+          "status": "supported",
+          "note": "Root and named-table sequences flush only their staged leaders. A normally consumed binding suppresses its terminating key, an explicitly unconsumed binding subsequently encodes that key, broad fanout flushes inactive-pane sequences, and an invocation without an active sequence is a successful no-op."
         },
         "end_search": {
           "status": "partial",
@@ -857,8 +861,8 @@
           "note": "Parses the required payload with Ghostty's f32 grammar, clamps the delta to 0..255 (including pinned NaN/infinity behavior), computes min(current+delta, 255) in binary32, and marks each targeted pane manually adjusted even for an effective no-op."
         },
         "ignore": {
-          "status": "partial",
-          "note": "Root and named-table bindings suppress VT encoding with Ghostty consume and catch-all invalid-sequence semantics; all/global dispatch ignores local consumption flags."
+          "status": "supported",
+          "note": "The exact app-scoped no-op suppresses press/repeat encoding even on unconsumed bindings, deliberately leaves the corresponding release unsuppressed, wins in the root pre-pass before active named tables, and preserves Ghostty's bare catch-all invalid-sequence drop. All/global executes once and retains the same special release behavior."
         },
         "inspector": {
           "scope": "qt_mapping"
@@ -892,24 +896,25 @@
           "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. After suppressed startup, whichever session successfully initializes first receives the current one-shot program and hold values. Constructing, registering, presenting, or closing a deferred window before session start does not consume them; later sessions use ordinary launch defaults. Each window initializes one workspace before presentation, requires matching visual and QObject ownership, registers lifetime/keybindings/config fanout, checkpoints reentrant destruction, and can recreate a resident process after every old root and worker is retired. Bare-secondary and standard desktop Activate requests consume the same source-less path, including the pinned null-parent cwd/configured-font distinction and exact one-shot activation-token/startup-ID presentation. The +new-window/org.gtk.Actions payload and functional standard ActivateAction remain incomplete."
         },
         "next_tab": {
-          "status": "partial",
-          "note": "Local root triggers route the action through the typed catalog and workspace."
+          "status": "supported",
+          "note": "Accepts only the exact void spelling, advances with wraparound from the containing window's currently selected tab even when invoked by an inactive source surface, and reports false when no distinct target exists. All/global applies once per stable pane in each workspace, so the net movement is the pane count modulo the tab count."
         },
         "open_config": {
           "status": "supported",
           "note": "Accepts only the exact void spelling and routes one process-scoped request for local, root, all, or global dispatch, including with zero windows. Linux edit selection examines preferred XDG config.ghostty before legacy config, chooses the first non-empty file or otherwise the first existing empty file, recursively creates the preferred path when neither exists, and uses exclusive creation so contents and concurrent creators are preserved. The selected local-file URL is opened through Qt desktop services; preparation and launch failures are logged without falling through to PTY input. This is the GUI action, not the separately tracked +edit-config CLI contract."
         },
         "paste_from_clipboard": {
-          "status": "partial",
-          "note": "Local root bindings paste through the existing safety and bracketed-paste path."
+          "status": "supported",
+          "note": "Accepts only the exact void spelling and reads the standard clipboard on the GUI thread. A missing text MIME representation is not performed, an explicitly present empty text representation is performed without PTY bytes, and non-empty text uses the worker-owned bracketed-paste, unsafe-paste confirmation, read-only, and active-screen safety path. All/global reaches every pane."
         },
         "paste_from_selection": {
-          "status": "partial",
-          "scope": "linux"
+          "status": "supported",
+          "scope": "linux",
+          "note": "Accepts only the exact void spelling and reads the Linux primary selection directly on the GUI thread, without the middle-click standard-clipboard fallback. Text MIME presence, explicit-empty behavior, worker paste safety, read-only filtering, and broad pane fanout match paste_from_clipboard; platforms without primary-selection support report the action unperformed."
         },
         "previous_tab": {
-          "status": "partial",
-          "note": "Local root triggers route the action through the typed catalog and workspace."
+          "status": "supported",
+          "note": "Accepts only the exact void spelling, moves with wraparound from the containing window's currently selected tab even when invoked by an inactive source surface, and reports false when no distinct target exists. All/global applies once per stable pane in each workspace, so the net movement is the pane count modulo the tab count."
         },
         "prompt_surface_title": {
           "status": "supported",
@@ -922,6 +927,11 @@
         "quit": {
           "status": "supported",
           "note": "The exact void action is process-scoped and available with zero windows. It snapshots every live workspace before mutation, lets a safe active window host one confirmation when an inactive pane is running or read-only, leaves every window untouched on cancellation, then starts every workspace's worker shutdown before committing one irreversible process quit. It bypasses disabled/delayed last-window policy, handles an already approved host, rehosts if the dialog workspace disappears, and remains idempotent after commitment."
+        },
+        "redo": {
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Pinned Ghostty implements redo only on macOS; the Linux GTK application explicitly leaves it unimplemented."
         },
         "reload_config": {
           "status": "partial",
@@ -985,7 +995,7 @@
         },
         "select_all": {
           "status": "supported",
-          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction. Automatic-copy MIME format parity is tracked separately by copy-on-select."
+          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction. The remaining exact mixed plain-plus-HTML automatic-copy payload limitation is tracked by copy_to_clipboard and REQUIRES_UPSTREAM.md."
         },
         "set_font_size": {
           "status": "supported",
@@ -1058,6 +1068,15 @@
         "toggle_window_float_on_top": {
           "status": "not_applicable",
           "scope": "macos"
+        },
+        "unbind": {
+          "status": "supported",
+          "note": "Implemented at configuration finalization by the pinned Ghostty helper: it removes the target binding before the structured trie reaches Qt. The directive is intentionally absent from the runtime action catalog and cannot execute or appear in a finalized action chain."
+        },
+        "undo": {
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Pinned Ghostty implements undo only on macOS; the Linux GTK application explicitly leaves it unimplemented."
         }
       }
     },

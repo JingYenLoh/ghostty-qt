@@ -25,8 +25,8 @@ the required internal prompt traversal:
 The public `GhosttyTerminalScrollViewportTag` currently exposes top, bottom,
 row-delta, and absolute-row scrolling, but not prompt-delta scrolling. This was
 last verified against official upstream commit
-`f3c9a2b7262a989ba7e9408d00471fda8f788d16` on 2026-07-18. The ghostty-qt
-submodule remains at the revision recorded by the parent repository.
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-23. The ghostty-qt
+submodule remains at that official revision.
 
 ### Why ghostty-qt does not scan prompts itself
 
@@ -101,6 +101,89 @@ Once the API is present in an official, publicly reachable Ghostty commit:
 
 Shell-script injection, command notifications, and prompt-aware close
 detection are separate parity stages and are not implied by prompt navigation.
+
+## Semantic screen clearing
+
+**Status:** blocked on an upstream public API.
+
+Ghostty's `clear_screen` binding is a semantic terminal operation, not an
+alias for writing a conventional CSI clear sequence. At the official pinned
+revision, `Surface.performBindingAction` first reports the action unperformed
+on the alternate screen. On the primary screen it delegates to
+`Termio.clearScreen`, which atomically:
+
+- clears the active selection and scrollback;
+- when the cursor is not at a semantic prompt, erases only content above the
+  cursor, clears the screen's Kitty graphics state, and writes nothing to the
+  child; or
+- when the cursor is at a semantic prompt, erases the complete screen and
+  writes one form-feed byte (`0x0c`) to the child so the shell can repaint.
+
+Official `libghostty-vt` exposes neither this composite mutation nor enough
+stable primitives to reproduce it exactly. In particular, an embedder cannot
+invoke the private prompt test, erase the precise internal ranges, or apply
+the operation's Kitty-image and selection policy through the public API. This
+was verified against official upstream commit
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-23.
+
+### Why ghostty-qt does not send an escape sequence
+
+Sending `CSI 2 J`, `CSI 3 J`, or form feed through terminal input would act on
+the wrong side of the emulator boundary and would be observably different.
+It could not return false for the alternate screen before consuming a
+`performable:` binding, would not reproduce the prompt-dependent range, and
+would not atomically coordinate scrollback, selection, compressed pages, and
+Kitty graphics. It could also send bytes to the child in the non-prompt case,
+where Ghostty intentionally sends none.
+
+The project therefore keeps `clear_screen` unavailable rather than carrying a
+local Ghostty patch or a Qt approximation.
+
+### Required upstream contract
+
+The official terminal C API needs an append-only operation that delegates to
+Ghostty's existing semantic clear implementation and reports one of three
+outcomes to the embedding frontend:
+
+- no operation because the alternate screen is active;
+- terminal state cleared with no child input required; or
+- terminal state cleared and one form-feed byte required for the child.
+
+The operation must preserve Ghostty's exact selection, compressed-scrollback,
+cursor/prompt, erase-range, and Kitty-image behavior. The result must be
+available synchronously so a frontend can implement Ghostty's performable
+keybinding semantics and enqueue any required form feed in order on its PTY
+worker. The exact enum and function shape remain an upstream decision, and
+existing public enum ordinals and struct layouts must remain ABI-compatible.
+
+### Upstream acceptance evidence
+
+Public C tests should verify:
+
+- alternate-screen no-op with no mutation and an unperformed result;
+- primary-screen non-prompt clearing above the cursor only, with no form feed;
+- semantic-prompt complete clearing with exactly one form-feed result;
+- selection clearing;
+- scrollback clearing across restored/compressed pages;
+- Kitty graphics deletion in the same cases as the internal operation; and
+- stable results when no scrollback, selection, graphics, or visible content
+  exists.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once the contract is available in an official, publicly reachable Ghostty
+commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Parse the exact void `clear_screen` action into the typed pane-action
+   pipeline.
+3. Invoke the new operation on `SessionWorker` and enqueue form feed only for
+   the result that requests it.
+4. Return false for the alternate-screen result so `performable:` bindings
+   fall through exactly.
+5. Exercise local and all/global bindings across primary and alternate panes.
+6. Promote `clear_screen` in `docs/ghostty-parity.json` only after the public
+   adapter and PTY-ordering tests pass.
 
 ## Exact clipboard selection formatting
 

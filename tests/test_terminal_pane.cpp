@@ -2061,6 +2061,22 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
 
     QClipboard *const clipboard = QGuiApplication::clipboard();
     QVERIFY(clipboard != nullptr);
+
+    auto *nonText = new QMimeData;
+    nonText->setData(QStringLiteral("application/octet-stream"),
+                     QByteArrayLiteral("not text"));
+    clipboard->setMimeData(nonText, QClipboard::Clipboard);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("paste_from_clipboard")));
+    QCOMPARE(pasted.count(), 0);
+
+    auto *emptyText = new QMimeData;
+    emptyText->setData(QStringLiteral("text/plain"), QByteArray{});
+    clipboard->setMimeData(emptyText, QClipboard::Clipboard);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("paste_from_clipboard")));
+    QCOMPARE(pasted.count(), 0);
+
     clipboard->setText(QStringLiteral("shortcut\npaste"),
                        QClipboard::Clipboard);
 
@@ -2085,6 +2101,24 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
              QStringLiteral("configured\npaste"));
 
     if (clipboard->supportsSelection()) {
+        clipboard->setText(QStringLiteral("standard must not be used"),
+                           QClipboard::Clipboard);
+        auto *nonTextSelection = new QMimeData;
+        nonTextSelection->setData(
+            QStringLiteral("application/octet-stream"),
+            QByteArrayLiteral("not text"));
+        clipboard->setMimeData(nonTextSelection, QClipboard::Selection);
+        QVERIFY(!pane.executeConfiguredAction(
+            QStringLiteral("paste_from_selection")));
+        QCOMPARE(pasted.count(), 2);
+
+        auto *emptySelection = new QMimeData;
+        emptySelection->setData(QStringLiteral("text/plain"), QByteArray{});
+        clipboard->setMimeData(emptySelection, QClipboard::Selection);
+        QVERIFY(pane.executeConfiguredAction(
+            QStringLiteral("paste_from_selection")));
+        QCOMPARE(pasted.count(), 2);
+
         clipboard->setText(QStringLiteral("selection\npaste"),
                            QClipboard::Selection);
         QVERIFY(pane.executeConfiguredAction(
@@ -2092,6 +2126,11 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
         QCOMPARE(pasted.count(), 3);
         QCOMPARE(pasted.constLast().constFirst().toString(),
                  QStringLiteral("selection\npaste"));
+    } else {
+        clipboard->setText(QStringLiteral("standard must not be used"),
+                           QClipboard::Clipboard);
+        QVERIFY(!pane.executeConfiguredAction(
+            QStringLiteral("paste_from_selection")));
     }
 
     const int beforeMiddleClick = pasted.count();
@@ -4585,6 +4624,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
             .name = QStringLiteral("edité"),
             .bindings = {
                 binding({unicode('n')}, QStringLiteral("new_tab")),
+                binding({unicode('x'), unicode('e')},
+                        QStringLiteral("end_key_sequence")),
                 binding({escape},
                         QStringLiteral("deactivate_key_table")),
             },
@@ -4604,6 +4645,8 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
     QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
 
     const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
                                QString text) {
@@ -4640,6 +4683,19 @@ void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()
     QCOMPARE(tableChanges.count(), 1);
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(newTab.count(), 1);
+
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(resolved.count(), 0);
+    press(Qt::Key_E, Qt::NoModifier, QStringLiteral("e"));
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constLast().at(1)),
+             TerminalSequenceResolution::Flush);
+    // With no active sequence, the exact void action remains a successful
+    // safe no-op and emits no synthetic worker resolution.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("end_key_sequence")));
+    QCOMPARE(resolved.count(), 1);
 
     // A performable activation of the already-innermost table behaves as an
     // absent binding and reaches the terminal.

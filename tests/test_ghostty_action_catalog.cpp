@@ -104,20 +104,23 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QVERIFY(!result.parameter.has_value());
     }
 
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("end_key_sequence")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("end_key_sequence:now")));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("copy_url_to_clipboard")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("copy_url_to_clipboard:")));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("copy_title_to_clipboard")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("copy_title_to_clipboard:")));
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("copy_title_to_clipboard:ignored")));
+    const QStringList directVoidActions{
+        QStringLiteral("paste_from_clipboard"),
+        QStringLiteral("paste_from_selection"),
+        QStringLiteral("copy_url_to_clipboard"),
+        QStringLiteral("copy_title_to_clipboard"),
+        QStringLiteral("end_key_sequence"),
+        QStringLiteral("close_window"),
+    };
+    for (const QString &action : directVoidActions) {
+        QVERIFY2(GhosttyActionCatalog::isImplemented(action),
+                 qPrintable(action));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(action + u':'),
+                 qPrintable(action));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(
+                     action + QStringLiteral(":ignored")),
+                 qPrintable(action));
+    }
     QVERIFY(GhosttyActionCatalog::isImplemented(
         QStringLiteral("prompt_surface_title")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
@@ -412,6 +415,22 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         QCOMPARE(GhosttyActionCatalog::parseApplicationAction(serialized),
                  std::optional{testCase.action});
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
+    }
+
+    for (const QString &unsupported : {
+             QStringLiteral("unbind"),
+             QStringLiteral("close_all_windows"),
+             QStringLiteral("toggle_quick_terminal"),
+             QStringLiteral("toggle_visibility"),
+             QStringLiteral("check_for_updates"),
+             QStringLiteral("show_gtk_inspector"),
+             QStringLiteral("undo"),
+             QStringLiteral("redo"),
+         }) {
+        QVERIFY(!GhosttyActionCatalog::parseApplicationAction(unsupported));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(unsupported));
+        QCOMPARE(GhosttyActionCatalog::scope(unsupported),
+                 GhosttyActionScope::Application);
     }
 
     for (const QString &rejected : {
@@ -858,12 +877,29 @@ void GhosttyActionCatalogTest::rejectsMalformedSearchPaneActions()
 
 void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
 {
-    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("quit")),
-             GhosttyActionScope::Application);
-    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("reload_config")),
-             GhosttyActionScope::Application);
-    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_window")),
-             GhosttyActionScope::Application);
+    const QStringList applicationActions{
+        QStringLiteral("ignore"),
+        QStringLiteral("unbind"),
+        QStringLiteral("open_config"),
+        QStringLiteral("reload_config"),
+        QStringLiteral("close_all_windows"),
+        QStringLiteral("quit"),
+        QStringLiteral("toggle_quick_terminal"),
+        QStringLiteral("toggle_visibility"),
+        QStringLiteral("check_for_updates"),
+        QStringLiteral("show_gtk_inspector"),
+        QStringLiteral("new_window"),
+        QStringLiteral("undo"),
+        QStringLiteral("redo"),
+    };
+    for (const QString &action : applicationActions) {
+        QCOMPARE(GhosttyActionCatalog::scope(action),
+                 GhosttyActionScope::Application);
+        // Scope follows the action name in Binding.Action.scope(), not the
+        // validity of the serialized parameter spelling.
+        QCOMPARE(GhosttyActionCatalog::scope(action + u':'),
+                 GhosttyActionScope::Application);
+    }
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("new_tab")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_surface")),

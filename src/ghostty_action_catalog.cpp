@@ -6,11 +6,13 @@
 #include <QStringDecoder>
 #include <QtCore/qnamespace.h>
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <locale.h>
 #include <memory>
+#include <ranges>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -307,52 +309,96 @@ std::optional<QString> decodeActionUtf8String(QStringView value)
     return result;
 }
 
-bool isVoidAction(QStringView actionName)
+struct WorkspaceVoidActionSpec {
+    QLatin1StringView name;
+    WorkspaceAction action;
+    std::optional<qint64> contextValue;
+};
+
+constexpr std::array<WorkspaceVoidActionSpec, 11> kWorkspaceVoidActions{{
+    {QLatin1StringView("new_tab"), WorkspaceAction::NewTab, std::nullopt},
+    {QLatin1StringView("close_surface"), WorkspaceAction::ClosePane,
+     std::nullopt},
+    {QLatin1StringView("previous_tab"), WorkspaceAction::ChangeTabRelative,
+     -1},
+    {QLatin1StringView("next_tab"), WorkspaceAction::ChangeTabRelative, 1},
+    {QLatin1StringView("last_tab"), WorkspaceAction::ActivateLastTab,
+     std::nullopt},
+    {QLatin1StringView("toggle_split_zoom"), WorkspaceAction::ToggleSplitZoom,
+     std::nullopt},
+    {QLatin1StringView("toggle_fullscreen"), WorkspaceAction::ToggleFullscreen,
+     std::nullopt},
+    {QLatin1StringView("toggle_maximize"), WorkspaceAction::ToggleMaximize,
+     std::nullopt},
+    {QLatin1StringView("equalize_splits"), WorkspaceAction::EqualizeSplits,
+     std::nullopt},
+    {QLatin1StringView("prompt_surface_title"),
+     WorkspaceAction::PromptSurfaceTitle, std::nullopt},
+    {QLatin1StringView("prompt_tab_title"), WorkspaceAction::PromptTabTitle,
+     std::nullopt},
+}};
+
+constexpr std::array<QLatin1StringView, 8> kParameterizedWorkspaceActions{{
+    QLatin1StringView("close_tab"),
+    QLatin1StringView("new_split"),
+    QLatin1StringView("goto_split"),
+    QLatin1StringView("goto_tab"),
+    QLatin1StringView("move_tab"),
+    QLatin1StringView("set_surface_title"),
+    QLatin1StringView("set_tab_title"),
+    QLatin1StringView("resize_split"),
+}};
+
+struct ApplicationActionSpec {
+    QLatin1StringView name;
+    std::optional<ApplicationAction> implementedAction;
+};
+
+// Binding.Action.scope() classifies all of these as application actions even
+// when GTK does not implement them. `unbind` is a configuration-finalization
+// directive and therefore deliberately has no runtime ApplicationAction.
+constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
+    {QLatin1StringView("ignore"), ApplicationAction::Ignore},
+    {QLatin1StringView("unbind"), std::nullopt},
+    {QLatin1StringView("open_config"), ApplicationAction::OpenConfig},
+    {QLatin1StringView("reload_config"), ApplicationAction::ReloadConfig},
+    {QLatin1StringView("close_all_windows"), std::nullopt},
+    {QLatin1StringView("quit"), ApplicationAction::Quit},
+    {QLatin1StringView("toggle_quick_terminal"), std::nullopt},
+    {QLatin1StringView("toggle_visibility"), std::nullopt},
+    {QLatin1StringView("check_for_updates"), std::nullopt},
+    {QLatin1StringView("show_gtk_inspector"), std::nullopt},
+    {QLatin1StringView("new_window"), ApplicationAction::NewWindow},
+    {QLatin1StringView("undo"), std::nullopt},
+    {QLatin1StringView("redo"), std::nullopt},
+}};
+
+constexpr std::array<QLatin1StringView, 6> kDirectVoidSurfaceActions{{
+    QLatin1StringView("paste_from_clipboard"),
+    QLatin1StringView("paste_from_selection"),
+    QLatin1StringView("copy_url_to_clipboard"),
+    QLatin1StringView("copy_title_to_clipboard"),
+    QLatin1StringView("end_key_sequence"),
+    QLatin1StringView("close_window"),
+}};
+
+template <typename Spec, std::size_t Size>
+const Spec *findActionSpec(QStringView name,
+                           const std::array<Spec, Size> &specs)
 {
-    return equals(actionName, QLatin1StringView("new_tab"))
-        || equals(actionName, QLatin1StringView("close_surface"))
-        || equals(actionName, QLatin1StringView("previous_tab"))
-        || equals(actionName, QLatin1StringView("next_tab"))
-        || equals(actionName, QLatin1StringView("last_tab"))
-        || equals(actionName, QLatin1StringView("toggle_split_zoom"))
-        || equals(actionName, QLatin1StringView("toggle_fullscreen"))
-        || equals(actionName, QLatin1StringView("toggle_maximize"))
-        || equals(actionName, QLatin1StringView("equalize_splits"))
-        || equals(actionName, QLatin1StringView("prompt_surface_title"))
-        || equals(actionName, QLatin1StringView("prompt_tab_title"));
+    const auto match = std::ranges::find_if(
+        specs, [name](const Spec &spec) { return name == spec.name; });
+    return match == specs.end() ? nullptr : std::addressof(*match);
 }
 
-bool isCatalogAction(QStringView actionName)
+template <std::size_t Size>
+bool containsActionName(QStringView name,
+                        const std::array<QLatin1StringView, Size> &names)
 {
-    return isVoidAction(actionName)
-        || equals(actionName, QLatin1StringView("close_tab"))
-        || equals(actionName, QLatin1StringView("new_split"))
-        || equals(actionName, QLatin1StringView("goto_split"))
-        || equals(actionName, QLatin1StringView("goto_tab"))
-        || equals(actionName, QLatin1StringView("move_tab"))
-        || equals(actionName, QLatin1StringView("set_surface_title"))
-        || equals(actionName, QLatin1StringView("set_tab_title"))
-        || equals(actionName, QLatin1StringView("resize_split"));
-}
-
-bool isApplicationAction(QStringView name)
-{
-    // Keep this list synchronized with Binding.Action.scope(). `unbind` does
-    // not survive finalized configuration, but classifying it is harmless and
-    // makes the mapping complete.
-    return equals(name, QLatin1StringView("ignore"))
-        || equals(name, QLatin1StringView("unbind"))
-        || equals(name, QLatin1StringView("open_config"))
-        || equals(name, QLatin1StringView("reload_config"))
-        || equals(name, QLatin1StringView("close_all_windows"))
-        || equals(name, QLatin1StringView("quit"))
-        || equals(name, QLatin1StringView("toggle_quick_terminal"))
-        || equals(name, QLatin1StringView("toggle_visibility"))
-        || equals(name, QLatin1StringView("check_for_updates"))
-        || equals(name, QLatin1StringView("show_gtk_inspector"))
-        || equals(name, QLatin1StringView("new_window"))
-        || equals(name, QLatin1StringView("undo"))
-        || equals(name, QLatin1StringView("redo"));
+    return std::ranges::any_of(
+        names, [name](QLatin1StringView candidate) {
+            return name == candidate;
+        });
 }
 
 } // namespace
@@ -385,77 +431,24 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
         return reject(Error::InvalidFormat, actionName, parameter);
     }
 
-    if (!isCatalogAction(actionName)) {
+    const WorkspaceVoidActionSpec *const voidAction =
+        findActionSpec(actionName, kWorkspaceVoidActions);
+    if (voidAction == nullptr
+        && !containsActionName(actionName,
+                               kParameterizedWorkspaceActions)) {
         return reject(Error::UnsupportedAction, actionName, parameter);
     }
 
     // Ghostty's void actions reject the presence of a colon, including a
     // trailing colon with an empty value.
-    if (isVoidAction(actionName) && parameter.has_value()) {
-        return reject(Error::InvalidFormat, actionName, parameter);
-    }
-
-    if (equals(actionName, QLatin1StringView("new_tab"))) {
-        return accept(WorkspaceAction::NewTab, context, actionName, parameter);
-    }
-    if (equals(actionName, QLatin1StringView("close_surface"))) {
-        return accept(WorkspaceAction::ClosePane, context, actionName, parameter);
-    }
-    if (equals(actionName, QLatin1StringView("previous_tab"))) {
-        context.value = -1;
-        return accept(WorkspaceAction::ChangeTabRelative,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("next_tab"))) {
-        context.value = 1;
-        return accept(WorkspaceAction::ChangeTabRelative,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("last_tab"))) {
-        return accept(WorkspaceAction::ActivateLastTab,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("toggle_split_zoom"))) {
-        return accept(WorkspaceAction::ToggleSplitZoom,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("toggle_fullscreen"))) {
-        return accept(WorkspaceAction::ToggleFullscreen,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("toggle_maximize"))) {
-        return accept(WorkspaceAction::ToggleMaximize,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("equalize_splits"))) {
-        return accept(WorkspaceAction::EqualizeSplits,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("prompt_surface_title"))) {
-        return accept(WorkspaceAction::PromptSurfaceTitle,
-                      context,
-                      actionName,
-                      parameter);
-    }
-    if (equals(actionName, QLatin1StringView("prompt_tab_title"))) {
-        return accept(WorkspaceAction::PromptTabTitle,
-                      context,
-                      actionName,
-                      parameter);
+    if (voidAction != nullptr) {
+        if (parameter.has_value()) {
+            return reject(Error::InvalidFormat, actionName, parameter);
+        }
+        if (voidAction->contextValue.has_value()) {
+            context.value = *voidAction->contextValue;
+        }
+        return accept(voidAction->action, context, actionName, parameter);
     }
     if (equals(actionName, QLatin1StringView("goto_tab"))) {
         if (!parameter.has_value()) {
@@ -938,12 +931,7 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
             || *parameter == QLatin1StringView("plain")
             || *parameter == QLatin1StringView("mixed");
     }
-    if (name == QLatin1StringView("paste_from_clipboard")
-        || name == QLatin1StringView("paste_from_selection")
-        || name == QLatin1StringView("copy_url_to_clipboard")
-        || name == QLatin1StringView("copy_title_to_clipboard")
-        || name == QLatin1StringView("end_key_sequence")
-        || name == QLatin1StringView("close_window")) {
+    if (containsActionName(name, kDirectVoidSurfaceActions)) {
         return !parameter.has_value();
     }
     return translate(serializedAction).accepted();
@@ -956,28 +944,16 @@ GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
         parseSerializedAction(serializedAction);
     if (parsed.parameter.has_value()) return std::nullopt;
 
-    if (parsed.name == QLatin1StringView("ignore")) {
-        return ApplicationAction::Ignore;
-    }
-    if (parsed.name == QLatin1StringView("new_window")) {
-        return ApplicationAction::NewWindow;
-    }
-    if (parsed.name == QLatin1StringView("open_config")) {
-        return ApplicationAction::OpenConfig;
-    }
-    if (parsed.name == QLatin1StringView("reload_config")) {
-        return ApplicationAction::ReloadConfig;
-    }
-    if (parsed.name == QLatin1StringView("quit")) {
-        return ApplicationAction::Quit;
-    }
-    return std::nullopt;
+    const ApplicationActionSpec *const spec =
+        findActionSpec(parsed.name, kApplicationActions);
+    return spec != nullptr ? spec->implementedAction : std::nullopt;
 }
 
 GhosttyActionScope GhosttyActionCatalog::scope(
     QStringView serializedAction)
 {
-    return isApplicationAction(parseSerializedAction(serializedAction).name)
+    return findActionSpec(parseSerializedAction(serializedAction).name,
+                          kApplicationActions) != nullptr
         ? GhosttyActionScope::Application
         : GhosttyActionScope::Surface;
 }

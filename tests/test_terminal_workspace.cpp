@@ -306,6 +306,7 @@ private Q_SLOTS:
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
+    void relativeTabActionsUseCurrentSelectionAndBroadFanout();
     void alwaysModePromptsForIdleShell();
     void multiPaneShutdownGracePeriodsOverlap();
     void closeTabModesUseStableOriginsAndPreserveFocus();
@@ -319,6 +320,7 @@ private Q_SLOTS:
     void closeTabBatchShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
+    void broadPasteActionsReachEveryPane();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
@@ -2149,6 +2151,61 @@ void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()
     QCOMPARE(activeForwarded.count(), 0);
 }
 
+void TerminalWorkspaceTest::relativeTabActionsUseCurrentSelectionAndBroadFanout()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    workspace.newTab();
+    const CurrentTabProbe third = currentTabProbe(workspace);
+    QVERIFY(first.pane && second.pane && third.pane);
+
+    // The source surface identifies the window, but previous/next advance
+    // from that window's current page. An inactive first-tab source must not
+    // make this jump relative to the first tab itself.
+    workspace.setCurrentIndex(2);
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("next_tab")));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             first.tabId);
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("previous_tab")));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             third.tabId);
+
+    // Broad dispatch applies the relative action once per surface. Four
+    // surfaces over three tabs therefore produce a net one-tab movement.
+    workspace.setCurrentIndex(0);
+    workspace.splitRight();
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 4);
+
+    TerminalWorkspace otherWorkspace;
+    QTRY_COMPARE_WITH_TIMEOUT(otherWorkspace.tabCount(), 1, 1000);
+    otherWorkspace.newTab();
+    otherWorkspace.setCurrentIndex(0);
+    otherWorkspace.splitRight();
+    QCOMPARE(otherWorkspace.findChildren<TerminalPane *>().size(), 3);
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&workspace);
+    bindings.registerWorkspace(&otherWorkspace);
+    bindings.dispatchBroadActions({QStringLiteral("next_tab")});
+    QCOMPARE(workspace.currentIndex(), 1);      // 0 + 4 mod 3
+    QCOMPARE(otherWorkspace.currentIndex(), 1); // 0 + 3 mod 2
+
+    bindings.dispatchBroadActions({QStringLiteral("previous_tab")});
+    QCOMPARE(workspace.currentIndex(), 0);
+    QCOMPARE(otherWorkspace.currentIndex(), 0);
+}
+
 void TerminalWorkspaceTest::alwaysModePromptsForIdleShell()
 {
     ShellEnvironment shell;
@@ -2917,13 +2974,41 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
             .sequence = {unicode('r', GhosttyKeybindCtrl)},
             .actions = {QStringLiteral("reload_config")},
         },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('i', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("ignore")},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('g', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("ignore")},
+            .flags = GhosttyKeybindFlags{.global = true},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {unicode('a', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("ignore")},
+            .flags = GhosttyKeybindFlags{.all = true},
+        },
     };
     options.keybindConfig.tables = {GhosttyKeybindTable{
         .name = QStringLiteral("modal"),
-        .bindings = {GhosttyKeybindDefinition{
-            .sequence = {unicode('r', GhosttyKeybindCtrl)},
-            .actions = {QStringLiteral("new_tab")},
-        }},
+        .bindings = {
+            GhosttyKeybindDefinition{
+                .sequence = {unicode('r', GhosttyKeybindCtrl)},
+                .actions = {QStringLiteral("new_tab")},
+            },
+            GhosttyKeybindDefinition{
+                .sequence = {unicode('i', GhosttyKeybindCtrl)},
+                .actions = {QStringLiteral("new_tab")},
+            },
+            GhosttyKeybindDefinition{
+                .sequence = {unicode('g', GhosttyKeybindCtrl)},
+                .actions = {QStringLiteral("new_tab")},
+            },
+            GhosttyKeybindDefinition{
+                .sequence = {unicode('a', GhosttyKeybindCtrl)},
+                .actions = {QStringLiteral("new_tab")},
+            },
+        },
     }};
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
@@ -2958,6 +3043,30 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(pane->activeKeyTables(),
              QStringList({QStringLiteral("modal")}));
+
+    const auto exerciseIgnore = [&](Qt::Key key, QChar text,
+                                    int expectedActionCount) {
+        const int beforeForwarded = forwarded.count();
+        QKeyEvent press(QEvent::KeyPress, key, Qt::ControlModifier,
+                        QString(text));
+        QCoreApplication::sendEvent(pane, &press);
+        QCOMPARE(reload.count(), expectedActionCount);
+        QCOMPARE(qvariant_cast<ApplicationAction>(
+                     reload.constLast().constFirst()),
+                 ApplicationAction::Ignore);
+        QCOMPARE(workspace.tabCount(), 1);
+        QCOMPARE(forwarded.count(), beforeForwarded);
+
+        // Ignore is press-only in Ghostty's input effects. Unlike other root
+        // and broad actions, it deliberately leaves the release available to
+        // normal terminal encoding.
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::ControlModifier);
+        QCoreApplication::sendEvent(pane, &release);
+        QCOMPARE(forwarded.count(), beforeForwarded + 1);
+    };
+    exerciseIgnore(Qt::Key_I, QChar(0x09), 2);
+    exerciseIgnore(Qt::Key_G, QChar(0x07), 3);
+    exerciseIgnore(Qt::Key_A, QChar(0x01), 4);
 }
 
 void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
@@ -3108,6 +3217,71 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         {QStringLiteral("close_tab:other")});
     QCOMPARE(quit.count(), 0);
     QCOMPARE(tabIds(workspace), QVector<TabId>({firstTabId}));
+}
+
+void TerminalWorkspaceTest::broadPasteActionsReachEveryPane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.clipboardPaste.protection = false;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    workspace.splitRight();
+    workspace.newTab();
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+
+    std::vector<std::unique_ptr<QSignalSpy>> pasted;
+    pasted.reserve(static_cast<size_t>(panes.size()));
+    for (TerminalPane *pane : panes) {
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        pasted.push_back(std::make_unique<QSignalSpy>(
+            controller, &TerminalController::pasteRequested));
+    }
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&workspace);
+
+    clipboard->setText(QStringLiteral("standard broad paste"),
+                       QClipboard::Clipboard);
+    bindings.dispatchBroadActions(
+        {QStringLiteral("paste_from_clipboard")});
+    for (const auto &spy : pasted) {
+        QCOMPARE(spy->count(), 1);
+        QCOMPARE(spy->constLast().constFirst().toString(),
+                 QStringLiteral("standard broad paste"));
+    }
+
+    clipboard->setText(QStringLiteral("standard is not primary"),
+                       QClipboard::Clipboard);
+    if (clipboard->supportsSelection()) {
+        clipboard->setText(QStringLiteral("primary broad paste"),
+                           QClipboard::Selection);
+    }
+    bindings.dispatchBroadActions(
+        {QStringLiteral("paste_from_selection")});
+    for (const auto &spy : pasted) {
+        const int expectedCount = clipboard->supportsSelection() ? 2 : 1;
+        QCOMPARE(spy->count(), expectedCount);
+        if (clipboard->supportsSelection()) {
+            QCOMPARE(spy->constLast().constFirst().toString(),
+                     QStringLiteral("primary broad paste"));
+        }
+    }
+
+    clipboard->clear(QClipboard::Clipboard);
+    if (clipboard->supportsSelection()) {
+        clipboard->clear(QClipboard::Selection);
+    }
 }
 
 void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()

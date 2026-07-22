@@ -1157,12 +1157,18 @@ bool TerminalWorkspace::changeTabRelativeImpl(int delta, TabId origin)
     if (tabs_.empty()) {
         return false;
     }
-    const int count = static_cast<int>(tabs_.size());
-    const int base = origin.isValid() ? tabIndexForId(origin) : currentIndex_;
-    if (base < 0) {
+    // Ghostty uses the source surface to resolve its containing window, then
+    // advances from that window's currently selected tab. Keep the stable
+    // source validation without letting inactive-pane or broad dispatch use
+    // the source tab as the navigation base.
+    if (origin.isValid() && tabById(origin) == nullptr) {
         return false;
     }
-    const int target = (base + delta % count + count) % count;
+    const int count = static_cast<int>(tabs_.size());
+    if (currentIndex_ < 0) {
+        return false;
+    }
+    const int target = (currentIndex_ + delta % count + count) % count;
     if (target == currentIndex_) {
         return false;
     }

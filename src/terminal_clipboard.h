@@ -5,6 +5,8 @@
 #include <QString>
 #include <QtGlobal>
 
+#include <optional>
+
 class QClipboard;
 
 enum class TerminalClipboardSource : quint8 {
@@ -46,5 +48,10 @@ constexpr TerminalClipboardSource terminalMiddleClickSource(
 // These are GUI adapters: callers must remain on the QGuiApplication thread.
 void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
                             TerminalClipboardDestination destination);
+// A present empty string is distinct from a clipboard without a text MIME
+// representation. Explicit primary reads never fall back to the standard
+// clipboard; middle-click fallback remains a separate policy below.
+std::optional<QString> readTerminalClipboard(
+    QClipboard *clipboard, TerminalClipboardSource source);
 QString readMiddleClickClipboard(QClipboard *clipboard,
                                  TerminalCopyOnSelectMode copyOnSelect);

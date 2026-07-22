@@ -1011,8 +1011,16 @@ operations from leaking input. Supported actions then pass through
 `GhosttyActionCatalog`. Catalog parsing routes workspace actions through the
 same typed dispatcher used by QML controls, while viewport, font-size,
 selection, search, terminal-control, and named-key-table actions become owned
-typed pane requests. Pane-local copy, paste, and reload actions still use their
-terminal operations directly.
+typed pane requests. One constexpr descriptor set owns the simple void
+workspace mappings, and another owns every application-scoped Ghostty name
+alongside its optional Qt implementation; complex numeric, enum, tuple, and
+escaped-string grammars remain explicit parsers. This keeps upstream scope
+classification independent from frontend support without repeating action
+names across validation and dispatch. Pane-local copy, paste, and reload
+actions still use their terminal operations directly. GUI clipboard reads
+distinguish an absent text MIME representation from an explicitly present
+empty string, and an explicit primary-selection paste never inherits the
+separate middle-click fallback policy.
 Page actions use the full terminal height; fractional pages multiply in f32
 and truncate toward zero, while line and absolute-row parameters retain their
 pinned i16 and usize bounds. Non-finite or unsafe fractional values are

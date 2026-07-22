@@ -2647,11 +2647,16 @@ bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
         return title && !title->isEmpty();
     }
     if (name == QLatin1StringView("paste_from_clipboard")) {
-        return !QGuiApplication::clipboard()->text().isEmpty();
+        return readTerminalClipboard(
+                   QGuiApplication::clipboard(),
+                   TerminalClipboardSource::Standard)
+            .has_value();
     }
     if (name == QLatin1StringView("paste_from_selection")) {
-        return !QGuiApplication::clipboard()->text(
-            QClipboard::Selection).isEmpty();
+        return readTerminalClipboard(
+                   QGuiApplication::clipboard(),
+                   TerminalClipboardSource::Primary)
+            .has_value();
     }
     if (name == QLatin1StringView("close_window")
         || name == QLatin1StringView("end_key_sequence")) {
@@ -2808,16 +2813,17 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
         return true;
     }
     if (name == QLatin1StringView("paste_from_clipboard")) {
-        const QString text = QGuiApplication::clipboard()->text();
-        if (text.isEmpty()) return false;
-        pasteText(text);
+        const std::optional<QString> text = readTerminalClipboard(
+            QGuiApplication::clipboard(), TerminalClipboardSource::Standard);
+        if (!text.has_value()) return false;
+        if (!text->isEmpty()) pasteText(*text);
         return true;
     }
     if (name == QLatin1StringView("paste_from_selection")) {
-        const QString text =
-            QGuiApplication::clipboard()->text(QClipboard::Selection);
-        if (text.isEmpty()) return false;
-        pasteText(text);
+        const std::optional<QString> text = readTerminalClipboard(
+            QGuiApplication::clipboard(), TerminalClipboardSource::Primary);
+        if (!text.has_value()) return false;
+        if (!text->isEmpty()) pasteText(*text);
         return true;
     }
     if (name == QLatin1StringView("end_key_sequence")) {
