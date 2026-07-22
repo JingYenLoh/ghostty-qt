@@ -754,8 +754,7 @@ TerminalPane::TerminalPane(
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
     sessionOptions.initialGeometry = std::move(initialGeometry);
-    controller_ = new TerminalController(
-        sessionOptions, this, sessionStartMode_);
+    controller_ = new TerminalController(sessionOptions, this);
     controller_->setMouseReportingEnabled(options.mouseReporting);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
@@ -909,6 +908,10 @@ TerminalPane::TerminalPane(
                     QTimer::singleShot(0, this, [this] { Q_EMIT requestClose(); });
                 }
             });
+
+    if (sessionStartMode_ == TerminalSessionStartMode::Immediate) {
+        (void) controller_->startSession();
+    }
 }
 
 TerminalPane::~TerminalPane()

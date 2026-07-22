@@ -10,7 +10,7 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | --- | --- | --- |
 | Window and chrome | Qt Quick, QML, Quick Controls 2 | Window, tab strip, toolbar, and confirmation dialogs. |
 | Terminal item and workspace | C++23, Qt Quick | Scene-graph rendering, input events, focus, tabs, and a recursive split tree. |
-| Session orchestration | Qt Core/Gui on a dedicated `QThread` per pane | PTY I/O, child lifecycle, immutable frame snapshots, and queued UI communication. |
+| Session orchestration | Qt Core/Gui on a dedicated `QThread` per started pane | PTY I/O, child lifecycle, immutable frame snapshots, and queued UI communication. |
 | Ghostty adapter | C++23 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, search-snapshot, and deferred-effect operations. |
 | Terminal engine | Zig-built static `libghostty-vt` through its C API | VT parsing, terminal state, render-state iteration, selection, and key/mouse/paste encoding. |
 | Configuration | Qt file-watching service plus a helper process | Uses the exact pinned Ghostty application parser, then exposes only selected typed values to the Qt application. |
@@ -37,8 +37,9 @@ ApplicationController (UI thread, process lifetime)
      -> TerminalWorkspace (UI thread, recursive tabs/splits)
         -> TerminalPane (QQuickItem with scene-graph contents)
            -> TerminalController (UI thread)
-              <queued signals>
-              -> SessionWorker (one dedicated QThread)
+              -> on accepted session start:
+                 <queued signals>
+                 -> SessionWorker (one dedicated QThread)
                  -> GhosttyVtAdapter
                     -> libghostty-vt terminal/render/input handles
                  -> PTY master <-> child process group
@@ -67,10 +68,11 @@ session starts, the pane projects `LaunchOptions` to
 appearance, URL-matching state, and an optional one-shot initial geometry owned
 by the session. The geometry is not produced by the reusable `LaunchOptions`
 projection: a workspace supplies it explicitly only while constructing its
-first pane. Live reloads cross the
-queued controller/worker boundary as `TerminalSessionRuntimeOptions`, which is
-limited to appearance and URL matching. Working directory, program, hold, and
-the existing terminal's scrollback allocation are launch-only by construction.
+first pane. Before session start, the controller folds the newest runtime
+values into that pending launch state. Later live reloads cross the queued
+controller/worker boundary as `TerminalSessionRuntimeOptions`, which is limited
+to appearance and URL matching. Working directory, program, hold, and the
+existing terminal's scrollback allocation are launch-only by construction.
 A separate launch bit distinguishes process-cwd inheritance from a concrete
 CLI, config, or OSC-derived directory; this prevents a display path from
 silently turning `inherit` into a `chdir` and `PWD` rewrite.
@@ -868,21 +870,22 @@ layout resize. Pane scene attachment and window screen/scale changes also
 re-emit the unchanged logical viewport so physical geometry cannot remain at a
 stale device scale. A normal window keeps this immediate pre-map path. For an
 initially maximized or fullscreen window, workspace initialization still
-constructs and registers the first pane/controller synchronously but leaves its
-worker uninitialized on a non-running thread. After the one activation-aware
+constructs and registers only the first pane/controller synchronously; no
+worker or session thread exists yet. After the one activation-aware
 presentation, the pane coalesces hidden and compositor resize state, waits for
 a valid exposed viewport to remain stable across two presented-frame
-boundaries, and starts the worker exactly once with that newest geometry. An
-inactive first tab derives
-its pending leaf size from the workspace's current logical split tree rather
-than retaining hidden normal geometry. Runtime reload and resize state received
-while pending are folded into the launch snapshot; read-only, focus, and other
-queued requests retain their order behind worker initialization. A shutdown
-before exposure cancels the launch; teardown starts the dormant thread only
-long enough to move the uninitialized worker back to the GUI thread and delete
-it without delivering queued calls. Close policy therefore sees no process to
-confirm. Normal windows, the bare-QML fallback, and every later tab or split
-retain immediate startup. The workspace-owned `split-preserve-zoom` navigation
+boundaries, and starts exactly one lazily created worker with that newest
+geometry. An inactive first tab derives its pending leaf size from the
+workspace's current logical split tree rather than retaining hidden normal
+geometry. Runtime reload and resize state received
+while pending are folded into the launch snapshot. A typed controller-owned
+FIFO retains read-only, focus, input, selection, search, and other worker
+requests in their original order behind initialization. A shutdown before
+exposure cancels the launch and drops that FIFO; destroying the lightweight
+controller creates no worker, thread, terminal, PTY, or child. Close policy
+therefore sees no process to confirm. Normal windows, the bare-QML fallback,
+and every later tab or split retain immediate startup. The workspace-owned
+`split-preserve-zoom` navigation
 bit also reloads without a pane or worker update and is consulted by each
 subsequent successful
 `goto_split`; it never changes the current zoom merely because configuration

@@ -18,6 +18,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 
 #include <algorithm>
 #include <cmath>
@@ -343,6 +344,7 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
     QVERIFY(!controller->sessionStarted());
     QVERIFY(!controller->running());
     QVERIFY(!controller->activeProcess());
+    QVERIFY(controller->findChild<QThread *>() == nullptr);
     QVERIFY(!initialPane->resizeOverlayVisible());
     QSignalSpy runningChanged(controller, &TerminalController::runningChanged);
     controller->setReadOnly(true);
@@ -352,6 +354,7 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
 
     QTRY_VERIFY_WITH_TIMEOUT(created->window->isExposed(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
+    QVERIFY(controller->findChild<QThread *>() != nullptr);
     const TerminalCellMetrics metrics = terminalCellMetrics(
         options.fontFamily, options.fontSize);
     const std::optional<TerminalSessionGeometry> expected =

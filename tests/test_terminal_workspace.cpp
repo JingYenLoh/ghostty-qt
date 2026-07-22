@@ -21,6 +21,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QUrl>
 #include <QtQml/qqml.h>
 
@@ -481,6 +482,7 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         QVERIFY(!controller->sessionStarted());
         QVERIFY(!controller->running());
         QVERIFY(!controller->activeProcess());
+        QVERIFY(controller->findChild<QThread *>() == nullptr);
         QVERIFY(!workspace->closeAssessment().needsConfirmation);
 
         QVERIFY(workspace->armInitialSessionStart());
@@ -489,6 +491,7 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
         QTest::qWait(25);
         QVERIFY(!controller->sessionStarted());
+        QVERIFY(controller->findChild<QThread *>() == nullptr);
         QVERIFY(!workspace->closeAssessment().needsConfirmation);
     }
 

@@ -9,6 +9,9 @@
 #include <QThread>
 
 #include <algorithm>
+#include <functional>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace {
@@ -22,9 +25,107 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
 
 } // namespace
 
+template<typename... SignalArgs, typename... WorkerArgs>
+void TerminalController::relayWorkerRequest(
+    void (TerminalController::*signal)(SignalArgs...),
+    void (SessionWorker::*slot)(WorkerArgs...))
+{
+    connect(this, signal, this,
+            [this, slot](SignalArgs... args) {
+                auto values = std::make_tuple(
+                    std::decay_t<SignalArgs>(args)...);
+                enqueueWorkerRequest(
+                    [slot, values = std::move(values)](
+                        SessionWorker &worker) mutable {
+                        std::apply(
+                            [&worker, slot](auto &...unpacked) {
+                                std::invoke(slot, worker, unpacked...);
+                            },
+                            values);
+                    });
+            });
+}
+
+void TerminalController::connectWorkerRequestRelays()
+{
+    relayWorkerRequest(&TerminalController::resizeRequested,
+                       &SessionWorker::resizeTerminal);
+    relayWorkerRequest(&TerminalController::keyRequested,
+                       &SessionWorker::sendKey);
+    relayWorkerRequest(&TerminalController::sequenceKeyStagingRequested,
+                       &SessionWorker::stageSequenceKey);
+    relayWorkerRequest(&TerminalController::sequenceResolutionRequested,
+                       &SessionWorker::resolveSequence);
+    relayWorkerRequest(&TerminalController::inputMethodRequested,
+                       &SessionWorker::sendInputMethod);
+    relayWorkerRequest(&TerminalController::csiRequested,
+                       &SessionWorker::sendCsi);
+    relayWorkerRequest(&TerminalController::escapeRequested,
+                       &SessionWorker::sendEscape);
+    relayWorkerRequest(&TerminalController::rawTextRequested,
+                       &SessionWorker::sendRawText);
+    relayWorkerRequest(&TerminalController::resetTerminalRequested,
+                       &SessionWorker::resetTerminal);
+    relayWorkerRequest(&TerminalController::mouseRequested,
+                       &SessionWorker::sendMouse);
+    relayWorkerRequest(&TerminalController::focusRequested,
+                       &SessionWorker::setFocused);
+    relayWorkerRequest(&TerminalController::pasteRequested,
+                       &SessionWorker::paste);
+    relayWorkerRequest(&TerminalController::confirmPasteRequested,
+                       &SessionWorker::confirmPaste);
+    relayWorkerRequest(&TerminalController::cancelPasteRequested,
+                       &SessionWorker::cancelPaste);
+    relayWorkerRequest(&TerminalController::copyRequested,
+                       &SessionWorker::copySelection);
+    relayWorkerRequest(&TerminalController::clearSelectionRequested,
+                       &SessionWorker::clearSelection);
+    relayWorkerRequest(&TerminalController::beginSelectionRequested,
+                       &SessionWorker::beginSelection);
+    relayWorkerRequest(&TerminalController::updateSelectionRequested,
+                       &SessionWorker::updateSelection);
+    relayWorkerRequest(&TerminalController::endSelectionRequested,
+                       &SessionWorker::endSelection);
+    relayWorkerRequest(&TerminalController::selectAllRequested,
+                       &SessionWorker::selectAll);
+    relayWorkerRequest(&TerminalController::selectionAdjustmentRequested,
+                       &SessionWorker::adjustSelection);
+    relayWorkerRequest(&TerminalController::scrollRequested,
+                       &SessionWorker::scrollViewport);
+    relayWorkerRequest(&TerminalController::searchRequested,
+                       &SessionWorker::search);
+    relayWorkerRequest(&TerminalController::serializedSearchRequested,
+                       &SessionWorker::searchSerialized);
+    relayWorkerRequest(&TerminalController::searchCancellationRequested,
+                       &SessionWorker::cancelSearch);
+    relayWorkerRequest(&TerminalController::searchNavigationRequested,
+                       &SessionWorker::navigateSearch);
+    relayWorkerRequest(&TerminalController::searchSelectionRequested,
+                       &SessionWorker::requestSearchSelection);
+    relayWorkerRequest(&TerminalController::hyperlinkQueryRequested,
+                       &SessionWorker::queryHyperlink);
+    relayWorkerRequest(
+        &TerminalController::hyperlinkQueryCancellationRequested,
+        &SessionWorker::cancelHyperlinkQuery);
+    relayWorkerRequest(
+        &TerminalController::hyperlinkActivationPreparationRequested,
+        &SessionWorker::prepareHyperlinkActivation);
+    relayWorkerRequest(
+        &TerminalController::hyperlinkActivationCommitRequested,
+        &SessionWorker::commitHyperlinkActivation);
+    relayWorkerRequest(
+        &TerminalController::hyperlinkActivationCancellationRequested,
+        &SessionWorker::cancelHyperlinkActivation);
+    relayWorkerRequest(&TerminalController::runtimeOptionsRequested,
+                       &SessionWorker::applyRuntimeOptions);
+    relayWorkerRequest(&TerminalController::readOnlyRequested,
+                       &SessionWorker::setReadOnly);
+    relayWorkerRequest(&TerminalController::shutdownRequested,
+                       &SessionWorker::shutdown);
+}
+
 TerminalController::TerminalController(
-    const TerminalSessionLaunchOptions &options, QObject *parent,
-    TerminalSessionStartMode startMode)
+    const TerminalSessionLaunchOptions &options, QObject *parent)
     : QObject(parent)
     , launchOptions_(options)
     , currentDirectory_(options.inheritWorkingDirectory
@@ -47,91 +148,14 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
 
-    thread_ = new QThread(this);
-    worker_ = new SessionWorker;
-    worker_->moveToThread(thread_);
+    connectWorkerRequestRelays();
+}
 
-    connect(this, &TerminalController::resizeRequested,
-            worker_, &SessionWorker::resizeTerminal, Qt::QueuedConnection);
-    connect(this, &TerminalController::keyRequested,
-            worker_, &SessionWorker::sendKey, Qt::QueuedConnection);
-    connect(this, &TerminalController::sequenceKeyStagingRequested,
-            worker_, &SessionWorker::stageSequenceKey, Qt::QueuedConnection);
-    connect(this, &TerminalController::sequenceResolutionRequested,
-            worker_, &SessionWorker::resolveSequence, Qt::QueuedConnection);
-    connect(this, &TerminalController::inputMethodRequested,
-            worker_, &SessionWorker::sendInputMethod, Qt::QueuedConnection);
-    connect(this, &TerminalController::csiRequested,
-            worker_, &SessionWorker::sendCsi, Qt::QueuedConnection);
-    connect(this, &TerminalController::escapeRequested,
-            worker_, &SessionWorker::sendEscape, Qt::QueuedConnection);
-    connect(this, &TerminalController::rawTextRequested,
-            worker_, &SessionWorker::sendRawText, Qt::QueuedConnection);
-    connect(this, &TerminalController::resetTerminalRequested,
-            worker_, &SessionWorker::resetTerminal, Qt::QueuedConnection);
-    connect(this, &TerminalController::mouseRequested,
-            worker_, &SessionWorker::sendMouse, Qt::QueuedConnection);
-    connect(this, &TerminalController::focusRequested,
-            worker_, &SessionWorker::setFocused, Qt::QueuedConnection);
-    connect(this, &TerminalController::pasteRequested,
-            worker_, &SessionWorker::paste, Qt::QueuedConnection);
-    connect(this, &TerminalController::confirmPasteRequested,
-            worker_, &SessionWorker::confirmPaste, Qt::QueuedConnection);
-    connect(this, &TerminalController::cancelPasteRequested,
-            worker_, &SessionWorker::cancelPaste, Qt::QueuedConnection);
-    connect(this, &TerminalController::copyRequested,
-            worker_, &SessionWorker::copySelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::clearSelectionRequested,
-            worker_, &SessionWorker::clearSelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::beginSelectionRequested,
-            worker_, &SessionWorker::beginSelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::updateSelectionRequested,
-            worker_, &SessionWorker::updateSelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::endSelectionRequested,
-            worker_, &SessionWorker::endSelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::selectAllRequested,
-            worker_, &SessionWorker::selectAll, Qt::QueuedConnection);
-    connect(this, &TerminalController::selectionAdjustmentRequested,
-            worker_, &SessionWorker::adjustSelection, Qt::QueuedConnection);
-    connect(this, &TerminalController::scrollRequested,
-            worker_, &SessionWorker::scrollViewport, Qt::QueuedConnection);
-    connect(this, &TerminalController::searchRequested,
-            worker_, &SessionWorker::search, Qt::QueuedConnection);
-    connect(this, &TerminalController::serializedSearchRequested,
-            worker_, &SessionWorker::searchSerialized, Qt::QueuedConnection);
-    connect(this, &TerminalController::searchCancellationRequested,
-            worker_, &SessionWorker::cancelSearch, Qt::QueuedConnection);
-    connect(this, &TerminalController::searchNavigationRequested,
-            worker_, &SessionWorker::navigateSearch, Qt::QueuedConnection);
-    connect(this, &TerminalController::searchSelectionRequested,
-            worker_, &SessionWorker::requestSearchSelection,
-            Qt::QueuedConnection);
-    connect(this, &TerminalController::hyperlinkQueryRequested,
-            worker_, &SessionWorker::queryHyperlink, Qt::QueuedConnection);
-    connect(this, &TerminalController::hyperlinkQueryCancellationRequested,
-            worker_, &SessionWorker::cancelHyperlinkQuery,
-            Qt::QueuedConnection);
-    connect(this,
-            &TerminalController::hyperlinkActivationPreparationRequested,
-            worker_, &SessionWorker::prepareHyperlinkActivation,
-            Qt::QueuedConnection);
-    connect(this, &TerminalController::hyperlinkActivationCommitRequested,
-            worker_, &SessionWorker::commitHyperlinkActivation,
-            Qt::QueuedConnection);
-    connect(this,
-            &TerminalController::hyperlinkActivationCancellationRequested,
-            worker_, &SessionWorker::cancelHyperlinkActivation,
-            Qt::QueuedConnection);
-    connect(this, &TerminalController::runtimeOptionsRequested,
-            worker_, &SessionWorker::applyRuntimeOptions, Qt::QueuedConnection);
-    connect(this, &TerminalController::readOnlyRequested,
-            worker_, &SessionWorker::setReadOnly, Qt::QueuedConnection);
-    connect(this, &TerminalController::shutdownRequested,
-            worker_, &SessionWorker::shutdown, Qt::QueuedConnection);
-
-    connect(worker_, &SessionWorker::terminalUpdated,
+void TerminalController::connectWorkerResults(SessionWorker *worker)
+{
+    connect(worker, &SessionWorker::terminalUpdated,
             this, &TerminalController::terminalUpdated, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::titleChanged, this,
+    connect(worker, &SessionWorker::titleChanged, this,
             [this](const QString &title) {
                 // Empty terminal metadata means no title and restores the
                 // pane's launch fallback. set_surface_title: instead installs
@@ -142,13 +166,13 @@ TerminalController::TerminalController(
                 baseTitle_ = std::move(next);
                 Q_EMIT titleChanged(this->title());
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::currentDirectoryChanged, this,
+    connect(worker, &SessionWorker::currentDirectoryChanged, this,
             [this](const QString &directory) {
                 if (currentDirectory_ == directory) return;
                 currentDirectory_ = directory;
                 Q_EMIT currentDirectoryChanged(currentDirectory_);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::mouseTrackingChanged, this,
+    connect(worker, &SessionWorker::mouseTrackingChanged, this,
             [this](bool enabled) {
                 if (terminalMouseTracking_ == enabled) return;
                 const bool previous = mouseTracking();
@@ -158,19 +182,19 @@ TerminalController::TerminalController(
                     Q_EMIT mouseTrackingChanged(mouseTracking());
                 }
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::activeProcessChanged, this,
+    connect(worker, &SessionWorker::activeProcessChanged, this,
             [this](bool active) {
                 if (activeProcess_ == active) return;
                 activeProcess_ = active;
                 Q_EMIT activeProcessChanged(activeProcess_);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::selectionAvailableChanged, this,
+    connect(worker, &SessionWorker::selectionAvailableChanged, this,
             [this](bool available) {
                 if (selectionAvailable_ == available) return;
                 selectionAvailable_ = available;
                 Q_EMIT selectionAvailableChanged(selectionAvailable_);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::selectAllCompleted, this,
+    connect(worker, &SessionWorker::selectAllCompleted, this,
             [this](bool available) {
                 pendingSelectAllRequests_ = std::max(
                     0, pendingSelectAllRequests_ - 1);
@@ -178,7 +202,7 @@ TerminalController::TerminalController(
                 selectionAvailable_ = available;
                 Q_EMIT selectionAvailableChanged(selectionAvailable_);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::hyperlinkResolved, this,
+    connect(worker, &SessionWorker::hyperlinkResolved, this,
             [this](quint64 requestId, quint64 contentRevision,
                    TerminalHyperlinkState state, TerminalLinkKind kind,
                    const QByteArray &uri,
@@ -196,7 +220,7 @@ TerminalController::TerminalController(
                                              targetCell, matchingCells);
                 }
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::hyperlinkActivationResolved, this,
+    connect(worker, &SessionWorker::hyperlinkActivationResolved, this,
             [this](quint64 requestId, quint64 contentRevision,
                    TerminalLinkKind kind, const QByteArray &uri) {
                 if (requestId != activeHyperlinkActivationId_) {
@@ -206,7 +230,7 @@ TerminalController::TerminalController(
                 Q_EMIT hyperlinkActivationResolved(
                     contentRevision, kind, uri);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::searchUpdated, this,
+    connect(worker, &SessionWorker::searchUpdated, this,
             [this](const TerminalSearchUpdate &update) {
                 if (update.generation != activeSearchGeneration_) {
                     return;
@@ -214,7 +238,7 @@ TerminalController::TerminalController(
                 searchExpected_ = update.active;
                 Q_EMIT searchUpdated(update);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::searchSelectionReady, this,
+    connect(worker, &SessionWorker::searchSelectionReady, this,
             [this](quint64 requestId, bool available, const QString &text) {
                 if (requestId != activeSearchSelectionRequestId_) {
                     return;
@@ -222,20 +246,20 @@ TerminalController::TerminalController(
                 activeSearchSelectionRequestId_ = 0;
                 Q_EMIT searchSelectionReady(available, text);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::clipboardTextReady, this,
+    connect(worker, &SessionWorker::clipboardTextReady, this,
             [](const QString &text,
                TerminalClipboardDestination destination) {
                 writeTerminalClipboard(QGuiApplication::clipboard(), text,
                                        destination);
             }, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::unsafePasteConfirmationRequested,
+    connect(worker, &SessionWorker::unsafePasteConfirmationRequested,
             this, &TerminalController::unsafePasteConfirmationRequested,
             Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::errorOccurred,
+    connect(worker, &SessionWorker::errorOccurred,
             this, &TerminalController::errorOccurred, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::bell,
+    connect(worker, &SessionWorker::bell,
             this, &TerminalController::bell, Qt::QueuedConnection);
-    connect(worker_, &SessionWorker::sessionExited, this,
+    connect(worker, &SessionWorker::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
                 if (closing_) return;
                 // Invalidate queued search progress and selection-derived
@@ -253,10 +277,52 @@ TerminalController::TerminalController(
                 }
                 Q_EMIT sessionExited(exitCode, signalNumber, hold);
             }, Qt::QueuedConnection);
+}
 
-    if (startMode == TerminalSessionStartMode::Immediate) {
-        (void) startSession();
+void TerminalController::enqueueWorkerRequest(WorkerRequest request)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    if (worker_.isNull()) {
+        if (sessionStartCancelled_ || closing_) {
+            return;
+        }
+        pendingWorkerRequests_.push_back(std::move(request));
+        return;
     }
+
+    const QPointer<SessionWorker> worker = worker_;
+    QMetaObject::invokeMethod(
+        worker.data(),
+        [worker, request = std::move(request)]() mutable {
+            if (worker != nullptr) {
+                std::invoke(request, *worker);
+            }
+        },
+        Qt::QueuedConnection);
+}
+
+void TerminalController::createWorkerRuntime()
+{
+    Q_ASSERT(thread_ == nullptr);
+    Q_ASSERT(worker_.isNull());
+
+    thread_ = new QThread(this);
+    auto *worker = new SessionWorker;
+    worker_ = worker;
+    worker->moveToThread(thread_);
+    connectWorkerResults(worker);
+    connect(thread_, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread_, &QThread::started, worker,
+            [worker, launchOptions = launchOptions_] {
+                worker->initialize(launchOptions);
+            });
+
+    std::vector<WorkerRequest> pending =
+        std::exchange(pendingWorkerRequests_, {});
+    for (WorkerRequest &request : pending) {
+        enqueueWorkerRequest(std::move(request));
+    }
+    thread_->start();
 }
 
 bool TerminalController::startSession(
@@ -278,12 +344,7 @@ bool TerminalController::startSession(
     running_ = true;
     activeProcess_ = true;
 
-    connect(thread_, &QThread::finished, worker_, &QObject::deleteLater);
-    connect(thread_, &QThread::started, worker_,
-            [worker = worker_, launchOptions = launchOptions_] {
-                worker->initialize(launchOptions);
-            });
-    thread_->start();
+    createWorkerRuntime();
 
     QPointer<TerminalController> guard(this);
     if (notifyRunning) {
@@ -299,34 +360,16 @@ bool TerminalController::startSession(
 TerminalController::~TerminalController()
 {
     closing_ = true;
-    if (!sessionStarted_ && thread_ != nullptr && worker_ != nullptr) {
-        // The worker already owns every pre-start queued request, but its
-        // affinity thread has never run. Move it home from that thread's
-        // started callback, quit before entering the event loop, then delete
-        // it synchronously on this controller's thread. Pending MetaCall
-        // events migrate with the worker and QObject destruction removes them
-        // without invoking an uninitialized session.
-        QThread *const controllerThread = QObject::thread();
-        QThread *const workerThread = thread_;
-        SessionWorker *const worker = worker_;
-        connect(workerThread, &QThread::started, worker,
-                [controllerThread, workerThread, worker] {
-                    (void) worker->moveToThread(controllerThread);
-                    workerThread->quit();
-                }, Qt::DirectConnection);
-        workerThread->start();
-        workerThread->wait();
-        delete worker_;
-        worker_ = nullptr;
-        return;
-    }
-    if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
-        QMetaObject::invokeMethod(worker_, &SessionWorker::shutdown,
-                                  Qt::BlockingQueuedConnection);
+    pendingWorkerRequests_.clear();
+    if (thread_ != nullptr && thread_->isRunning()) {
+        if (worker_ != nullptr) {
+            QMetaObject::invokeMethod(worker_.data(), &SessionWorker::shutdown,
+                                      Qt::BlockingQueuedConnection);
+        }
         thread_->quit();
         thread_->wait();
     }
-    worker_ = nullptr;
+    worker_.clear();
 }
 
 void TerminalController::setSurfaceTitle(QString title)
@@ -375,6 +418,7 @@ void TerminalController::beginShutdown()
 {
     if (!sessionStarted_) {
         sessionStartCancelled_ = true;
+        pendingWorkerRequests_.clear();
         return;
     }
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {

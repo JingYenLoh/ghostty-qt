@@ -6,10 +6,13 @@
 #include <QByteArray>
 #include <QObject>
 #include <QPoint>
+#include <QPointer>
 #include <QString>
 #include <QVector>
 
+#include <functional>
 #include <optional>
+#include <vector>
 
 class QThread;
 class SessionWorker;
@@ -26,9 +29,7 @@ class TerminalController final : public QObject {
 
 public:
     explicit TerminalController(const TerminalSessionLaunchOptions &options,
-                                QObject *parent = nullptr,
-                                TerminalSessionStartMode startMode =
-                                    TerminalSessionStartMode::Immediate);
+                                QObject *parent = nullptr);
     ~TerminalController() override;
 
     QString title() const
@@ -206,6 +207,16 @@ Q_SIGNALS:
     void shutdownRequested();
 
 private:
+    using WorkerRequest = std::function<void(SessionWorker &)>;
+
+    template<typename... SignalArgs, typename... WorkerArgs>
+    void relayWorkerRequest(
+        void (TerminalController::*signal)(SignalArgs...),
+        void (SessionWorker::*slot)(WorkerArgs...));
+    void connectWorkerRequestRelays();
+    void enqueueWorkerRequest(WorkerRequest request);
+    void createWorkerRuntime();
+    void connectWorkerResults(SessionWorker *worker);
     void notePotentialActivity();
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
@@ -213,7 +224,8 @@ private:
 
     TerminalSessionLaunchOptions launchOptions_;
     QThread *thread_ = nullptr;
-    SessionWorker *worker_ = nullptr;
+    QPointer<SessionWorker> worker_;
+    std::vector<WorkerRequest> pendingWorkerRequests_;
     std::optional<QString> baseTitle_;
     QString currentDirectory_;
     bool terminalMouseTracking_ = false;
