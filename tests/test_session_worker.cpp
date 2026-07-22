@@ -161,6 +161,7 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void initializesGeometryBeforeSpawningChild();
     void stripsDesktopActivationFromChildEnvironment();
     void fallsBackFromUnavailableWorkingDirectory_data();
     void fallsBackFromUnavailableWorkingDirectory();
@@ -472,6 +473,51 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::initializesGeometryBeforeSpawningChild()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral(GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE),
+    };
+    options.hold = true;
+    options.initialGeometry = TerminalSessionGeometry{
+        .columns = 43,
+        .rows = 17,
+        .cellWidthPixels = 11,
+        .cellHeightPixels = 19,
+        // Deliberately differ from the exact cell-grid product so this also
+        // proves forkpty receives the explicit surface pixel dimensions.
+        .surfaceWidthPixels = 487,
+        .surfaceHeightPixels = 337,
+    };
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+
+    const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
+    QCOMPARE(finalFrame.columns, 43);
+    QCOMPARE(finalFrame.rows, 17);
+    const QString finalContents = frameText(finalFrame);
+    QVERIFY2(finalContents.contains(
+                 QStringLiteral(
+                     "ghostty-qt-pty-geometry:43:17:487:337")),
+             qPrintable(finalContents));
     worker.shutdown();
 }
 

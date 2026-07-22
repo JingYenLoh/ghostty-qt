@@ -28,10 +28,34 @@ set_tests_properties(terminal-cell-metrics PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-terminal-geometry
+    test_terminal_geometry.cpp
+    ../src/terminal_geometry.cpp
+    ../src/terminal_geometry.h
+    ../src/terminal_session_options.h
+)
+target_include_directories(test-terminal-geometry PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-geometry PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+)
+add_test(NAME terminal-geometry COMMAND test-terminal-geometry)
+set_tests_properties(terminal-geometry PROPERTIES TIMEOUT 10)
+
 add_executable(fake-ghostty-cli-helper
     fake_ghostty_cli_helper.cpp
 )
 target_compile_options(fake-ghostty-cli-helper PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
+add_executable(pty-geometry-probe
+    pty_geometry_probe.cpp
+)
+target_compile_options(pty-geometry-probe PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
@@ -153,6 +177,8 @@ qt_add_executable(test-application-controller
     ../src/terminal_clipboard.h
     ../src/terminal_cell_metrics.cpp
     ../src/terminal_cell_metrics.h
+    ../src/terminal_geometry.cpp
+    ../src/terminal_geometry.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_workspace.cpp
@@ -229,6 +255,7 @@ qt_add_executable(test-session-worker
 target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+    GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
 )
 target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
@@ -241,7 +268,10 @@ target_link_libraries(test-session-worker PRIVATE
     ghostty-qt-vt-adapter
     util
 )
-add_dependencies(test-session-worker ghostty-qt-terminfo)
+add_dependencies(test-session-worker
+    ghostty-qt-terminfo
+    pty-geometry-probe
+)
 add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
@@ -254,6 +284,8 @@ qt_add_executable(test-terminal-pane
     ../src/terminal_clipboard.h
     ../src/terminal_cell_metrics.cpp
     ../src/terminal_cell_metrics.h
+    ../src/terminal_geometry.cpp
+    ../src/terminal_geometry.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_pane_render_probe_p.h
@@ -306,6 +338,8 @@ qt_add_executable(test-terminal-workspace
     ../src/terminal_clipboard.h
     ../src/terminal_cell_metrics.cpp
     ../src/terminal_cell_metrics.h
+    ../src/terminal_geometry.cpp
+    ../src/terminal_geometry.h
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
     ../src/terminal_osc8_index.h

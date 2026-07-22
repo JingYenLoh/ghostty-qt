@@ -474,6 +474,16 @@ void SessionWorker::initialize(const TerminalSessionLaunchOptions &options)
     }
 
     options_ = options;
+    if (options.initialGeometry.has_value()) {
+        const TerminalSessionGeometry &geometry = *options.initialGeometry;
+        // With neither libghostty nor a PTY created yet, the normal resize
+        // path is a side-effect-free geometry seed and keeps all bounds in
+        // one place.
+        resizeTerminal(
+            geometry.columns, geometry.rows,
+            geometry.cellWidthPixels, geometry.cellHeightPixels,
+            geometry.surfaceWidthPixels, geometry.surfaceHeightPixels);
+    }
     shuttingDown_ = false;
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
@@ -841,21 +851,24 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
                                    int cellHeightPixels, int surfaceWidthPixels,
                                    int surfaceHeightPixels)
 {
-    const int nextColumns = std::clamp(columns, 1, static_cast<int>(UINT16_MAX));
-    const int nextRows = std::clamp(rows, 1, static_cast<int>(UINT16_MAX));
-    const int nextCellWidth = std::max(cellWidthPixels, 1);
-    const int nextCellHeight = std::max(cellHeightPixels, 1);
-    const int nextSurfaceWidth = std::max(surfaceWidthPixels, 1);
-    const int nextSurfaceHeight = std::max(surfaceHeightPixels, 1);
+    const TerminalSessionGeometry normalized =
+        normalizedTerminalSessionGeometry({
+            .columns = columns,
+            .rows = rows,
+            .cellWidthPixels = cellWidthPixels,
+            .cellHeightPixels = cellHeightPixels,
+            .surfaceWidthPixels = surfaceWidthPixels,
+            .surfaceHeightPixels = surfaceHeightPixels,
+        });
 
     if (vt_ != nullptr) {
         const GhosttyVtAdapter::Geometry geometry{
-            .columns = nextColumns,
-            .rows = nextRows,
-            .cellWidthPixels = nextCellWidth,
-            .cellHeightPixels = nextCellHeight,
-            .surfaceWidthPixels = nextSurfaceWidth,
-            .surfaceHeightPixels = nextSurfaceHeight,
+            .columns = normalized.columns,
+            .rows = normalized.rows,
+            .cellWidthPixels = normalized.cellWidthPixels,
+            .cellHeightPixels = normalized.cellHeightPixels,
+            .surfaceWidthPixels = normalized.surfaceWidthPixels,
+            .surfaceHeightPixels = normalized.surfaceHeightPixels,
         };
         if (!vt_->resize(geometry)) {
             Q_EMIT errorOccurred(QStringLiteral("libghostty rejected the terminal resize."));
@@ -868,12 +881,12 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
         scheduleFrame();
     }
 
-    columns_ = nextColumns;
-    rows_ = nextRows;
-    cellWidthPixels_ = nextCellWidth;
-    cellHeightPixels_ = nextCellHeight;
-    surfaceWidthPixels_ = nextSurfaceWidth;
-    surfaceHeightPixels_ = nextSurfaceHeight;
+    columns_ = normalized.columns;
+    rows_ = normalized.rows;
+    cellWidthPixels_ = normalized.cellWidthPixels;
+    cellHeightPixels_ = normalized.cellHeightPixels;
+    surfaceWidthPixels_ = normalized.surfaceWidthPixels;
+    surfaceHeightPixels_ = normalized.surfaceHeightPixels;
 
     if (vt_ != nullptr) {
         markSearchContentChanged();

@@ -1,6 +1,8 @@
 #include "terminal_workspace.h"
 
 #include "ghostty_action_catalog.h"
+#include "terminal_cell_metrics.h"
+#include "terminal_geometry.h"
 #include "terminal_pane.h"
 
 #include <QCursor>
@@ -427,7 +429,14 @@ bool TerminalWorkspace::initialize(const LaunchOptions &options)
     if (initialized_) return false;
     initialized_ = true;
     applyLaunchOptions(options);
-    createNewTab();
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        options.fontFamily, options.fontSize);
+    const qreal devicePixelRatio =
+        window() != nullptr ? window()->devicePixelRatio() : 1.0;
+    createNewTab(
+        {}, terminalSessionGeometryForViewport(
+                width(), height(), metrics.cellWidth, metrics.cellHeight,
+                devicePixelRatio));
     return true;
 }
 
@@ -800,10 +809,12 @@ WorkspaceCloseAssessment TerminalWorkspace::closeAssessment() const
 }
 
 TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
-    const LaunchOptions &options)
+    const LaunchOptions &options,
+    std::optional<TerminalSessionGeometry> initialGeometry)
 {
     const PaneId paneId(nextPaneId_++);
-    auto *pane = new TerminalPane(options, this);
+    auto *pane = new TerminalPane(
+        options, this, std::move(initialGeometry));
     pane->setVisible(false);
     pane->setWorkspaceActionHandler(
         [this, paneId](WorkspaceActionRequest request) {
@@ -918,7 +929,9 @@ void TerminalWorkspace::newTab()
     dispatchAction({WorkspaceAction::NewTab, {}});
 }
 
-void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
+void TerminalWorkspace::createNewTab(
+    PaneId sourcePaneId,
+    std::optional<TerminalSessionGeometry> initialGeometry)
 {
     const bool wasTabBarVisible = tabBarVisible();
     LaunchOptions options = effectiveOptions_;
@@ -942,7 +955,8 @@ void TerminalWorkspace::createNewTab(PaneId sourcePaneId)
         ? currentIndex_ + 1
         : static_cast<int>(tabs_.size());
 
-    const PaneHandle pane = createPane(options);
+    const PaneHandle pane = createPane(
+        options, std::move(initialGeometry));
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);
     tab->root = std::make_unique<Node>(pane);

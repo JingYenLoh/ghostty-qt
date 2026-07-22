@@ -205,6 +205,7 @@ TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
         .program = options.program,
         .scrollbackLimit = options.scrollbackLimit,
         .hold = options.hold,
+        .initialGeometry = std::nullopt,
         .runtime = toTerminalSessionRuntimeOptions(options),
     };
 }

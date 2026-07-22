@@ -626,7 +626,7 @@
         "window-height": {
           "status": "partial",
           "scope": "qt_mapping",
-          "note": "The finalized u32 cell count participates only when paired with nonzero window-width. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The settled pre-map grid matches the request when screen or compositor constraints permit it, but SessionWorker still forks at 80x24 before its first queued resize, so exact child-observed pre-exec dimensions remain incomplete."
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-width. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The first pane snapshots the resulting workspace viewport and DPR through a one-shot session geometry that initializes libghostty and forkpty before child exec; an immediate ioctl probe confirms identical rows, columns, and PTY pixels, while tabs and splits cannot inherit the seed. Status remains partial because an initially maximized/fullscreen compositor publishes its final mapped extent only after the child has started at the exact hidden normal geometry."
         },
         "window-inherit-font-size": {
           "status": "partial",
@@ -648,7 +648,7 @@
         "window-width": {
           "status": "partial",
           "scope": "qt_mapping",
-          "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The settled pre-map grid matches the request when screen or compositor constraints permit it, but SessionWorker still forks at 80x24 before its first queued resize, so exact child-observed pre-exec dimensions remain incomplete."
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. The first pane snapshots the resulting workspace viewport and DPR through a one-shot session geometry that initializes libghostty and forkpty before child exec; an immediate ioctl probe confirms identical rows, columns, and PTY pixels, while tabs and splits cannot inherit the seed. Status remains partial because an initially maximized/fullscreen compositor publishes its final mapped extent only after the child has started at the exact hidden normal geometry."
         },
         "working-directory": {
           "status": "partial",

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 
 enum class ScrollbackLimitUnit {
     Lines,
@@ -63,6 +64,35 @@ struct TerminalSessionRuntimeOptions {
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;
 };
 
+// Complete value needed to construct libghostty and the PTY at the same
+// geometry. The optional launch-time instance is consumed before either is
+// created; later resizes use this representation after the GUI has laid out
+// the pane.
+struct TerminalSessionGeometry {
+    int columns = 80;
+    int rows = 24;
+    int cellWidthPixels = 8;
+    int cellHeightPixels = 16;
+    int surfaceWidthPixels = 640;
+    int surfaceHeightPixels = 384;
+
+    bool operator==(const TerminalSessionGeometry &) const = default;
+};
+
+inline TerminalSessionGeometry normalizedTerminalSessionGeometry(
+    TerminalSessionGeometry geometry) noexcept
+{
+    constexpr int maximumCells =
+        static_cast<int>(std::numeric_limits<quint16>::max());
+    geometry.columns = std::clamp(geometry.columns, 1, maximumCells);
+    geometry.rows = std::clamp(geometry.rows, 1, maximumCells);
+    geometry.cellWidthPixels = std::max(geometry.cellWidthPixels, 1);
+    geometry.cellHeightPixels = std::max(geometry.cellHeightPixels, 1);
+    geometry.surfaceWidthPixels = std::max(geometry.surfaceWidthPixels, 1);
+    geometry.surfaceHeightPixels = std::max(geometry.surfaceHeightPixels, 1);
+    return geometry;
+}
+
 // One-time process and terminal construction settings. Runtime state is
 // composed here so initialization and reload use the same representation.
 struct TerminalSessionLaunchOptions {
@@ -71,6 +101,10 @@ struct TerminalSessionLaunchOptions {
     QStringList program;
     ScrollbackLimit scrollbackLimit;
     bool hold = false;
+    // Frontend window dimensions never enter the reusable LaunchOptions
+    // projection. The workspace supplies this one-shot value only for its
+    // first pane so tabs and splits cannot inherit window-level geometry.
+    std::optional<TerminalSessionGeometry> initialGeometry;
     TerminalSessionRuntimeOptions runtime;
 
     bool operator==(const TerminalSessionLaunchOptions &) const = default;

@@ -282,6 +282,7 @@ class TerminalWorkspaceTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initialGeometrySeedsOnlyFirstPane();
     void runningProgramPromptsThenResolvesOnceOnExit();
     void distinguishesWindowCloseFromApplicationQuit();
     void applicationQuitEscalatesCloseLifecycle();
@@ -340,6 +341,37 @@ private Q_SLOTS:
     void routesWindowStateActionsToHostWindows();
     void inactiveTabResizeAppliesWhenActivated();
 };
+
+void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(options));
+    QCOMPARE(workspace.tabCount(), 1);
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(terminalPaneRenderProbe(first.pane).initialGeometry.has_value());
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.pane != first.pane);
+    QVERIFY(!terminalPaneRenderProbe(second.pane).initialGeometry.has_value());
+
+    const CurrentTabProbe third = splitRightProbe(workspace);
+    QVERIFY(third.pane != nullptr);
+    QVERIFY(third.pane != second.pane);
+    QVERIFY(!terminalPaneRenderProbe(third.pane).initialGeometry.has_value());
+}
 
 void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
 {

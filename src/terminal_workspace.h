@@ -192,11 +192,15 @@ private:
         SplitNavigation,
     };
 
-    PaneHandle createPane(const LaunchOptions &options);
+    PaneHandle createPane(
+        const LaunchOptions &options,
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     void createSearchOverlay(TerminalPane *pane);
     void createReadOnlyOverlay(TerminalPane *pane);
     bool executeAction(const WorkspaceActionRequest &request);
-    void createNewTab(PaneId sourcePaneId = {});
+    void createNewTab(
+        PaneId sourcePaneId = {},
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     void activateTab(TabId id);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);

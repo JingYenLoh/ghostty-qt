@@ -2,14 +2,21 @@
 
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 
+#include "terminal_session_options.h"
+
 #include <QColor>
 #include <QRectF>
 #include <QtGlobal>
 #include <QVector>
 
+#include <optional>
+
 class TerminalPane;
 
 struct TerminalPaneRenderProbeSnapshot {
+    // Captured before the controller starts so tests can verify the one-shot
+    // first-pane launch contract independently of scene-graph rendering.
+    std::optional<TerminalSessionGeometry> initialGeometry;
     quint64 paintSerial = 0;
     quint64 rootSerial = 0;
     quint64 unfocusedSplitOverlaySerial = 0;

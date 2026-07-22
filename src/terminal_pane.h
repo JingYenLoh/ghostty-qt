@@ -11,6 +11,7 @@
 #include <QMetaObject>
 #include <QMutex>
 #include <QPoint>
+#include <QPointer>
 #include <QQuickItem>
 #include <QRectF>
 #include <QSet>
@@ -22,6 +23,7 @@
 #include <optional>
 
 class QFocusEvent;
+class QEvent;
 class QHoverEvent;
 class QInputMethodEvent;
 class QKeyEvent;
@@ -29,6 +31,7 @@ class QMouseEvent;
 class QSGNode;
 class QTimer;
 class QWheelEvent;
+class QQuickWindow;
 class TerminalController;
 struct TerminalFontSizeRequest;
 struct TerminalKeyTableRequest;
@@ -47,7 +50,10 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
 
 public:
-    explicit TerminalPane(const LaunchOptions &options, QQuickItem *parent = nullptr);
+    explicit TerminalPane(
+        const LaunchOptions &options,
+        QQuickItem *parent = nullptr,
+        std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     ~TerminalPane() override;
 
     QString title() const;
@@ -130,6 +136,7 @@ Q_SIGNALS:
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode,
                              UpdatePaintNodeData *updateData) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
@@ -240,6 +247,8 @@ private:
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
     QMetaObject::Connection windowActiveConnection_;
+    QMetaObject::Connection windowScreenConnection_;
+    QPointer<QQuickWindow> observedWindow_;
     QSet<quint64> consumedKeys_;
     quint64 activeSequenceToken_ = 0;
     bool hoverInside_ = false;

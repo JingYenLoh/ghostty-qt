@@ -878,6 +878,8 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+    QSignalSpy resizeRequested(controller,
+                               &TerminalController::resizeRequested);
 
     firstWindow.show();
     secondWindow.show();
@@ -915,8 +917,17 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     pane->setParentItem(nullptr);
     firstWindow.update();
     QVERIFY(!firstWindow.grabWindow().isNull());
+    resizeRequested.clear();
     pane->setParentItem(secondWindow.contentItem());
     pane->setSize(windowSize);
+    QTRY_VERIFY_WITH_TIMEOUT(!resizeRequested.isEmpty(), 1000);
+    resizeRequested.clear();
+    Q_EMIT secondWindow.screenChanged(secondWindow.screen());
+    QCOMPARE(resizeRequested.count(), 1);
+    resizeRequested.clear();
+    QEvent devicePixelRatioChange(QEvent::DevicePixelRatioChange);
+    QCoreApplication::sendEvent(&secondWindow, &devicePixelRatioChange);
+    QCOMPARE(resizeRequested.count(), 1);
     pane->update();
     const QImage rebuiltImage = secondWindow.grabWindow();
     QVERIFY(!rebuiltImage.isNull());

@@ -1166,6 +1166,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.program, options.program);
     QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
     QCOMPARE(launch.hold, options.hold);
+    QVERIFY(!launch.initialGeometry.has_value());
     QCOMPARE(launch.runtime, runtime);
 
     QVERIFY(QMetaType::fromType<TerminalSessionLaunchOptions>().isValid());

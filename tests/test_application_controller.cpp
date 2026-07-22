@@ -1,6 +1,8 @@
 #include "application_controller.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_geometry.h"
 #include "terminal_pane.h"
+#include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
 
 #include <QDir>
@@ -60,10 +62,16 @@ struct WindowFactoryHarness {
             auto *workspace =
                 new TerminalWorkspace(window->contentItem());
             workspace->setParentItem(window->contentItem());
-            workspace->setSize(QSizeF(window->size()));
-            const auto resizeWorkspace = [window, workspace] {
-                workspace->setSize(QSizeF(window->size()));
+            const auto resizeWorkspace = [this, window, workspace] {
+                workspace->setSize(QSizeF(
+                    std::max(0.0,
+                             static_cast<qreal>(window->width())
+                                 - chromeWidth),
+                    std::max(0.0,
+                             static_cast<qreal>(window->height())
+                                 - chromeHeight)));
             };
+            resizeWorkspace();
             QObject::connect(window, &QWindow::widthChanged,
                              workspace, resizeWorkspace);
             QObject::connect(window, &QWindow::heightChanged,
@@ -396,6 +404,17 @@ void ApplicationControllerTest::configuresInitialWindowGeometryBeforePresentatio
     }
     QCOMPARE(created->window->size(), expected);
     QCOMPARE(harness.presentations.constFirst().size, expected);
+
+    TerminalPane *const pane = onlyPane(created->workspace);
+    QVERIFY(pane != nullptr);
+    const std::optional<TerminalSessionGeometry> expectedInitialGeometry =
+        terminalSessionGeometryForViewport(
+            created->workspace->width(), created->workspace->height(),
+            metrics.cellWidth, metrics.cellHeight,
+            created->window->devicePixelRatio());
+    QVERIFY(expectedInitialGeometry.has_value());
+    QVERIFY(terminalPaneRenderProbe(pane).initialGeometry
+            == expectedInitialGeometry);
 }
 
 void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()

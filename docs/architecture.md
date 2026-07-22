@@ -64,7 +64,10 @@ divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
 session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
-appearance, and URL-matching state owned by the session. Live reloads cross the
+appearance, URL-matching state, and an optional one-shot initial geometry owned
+by the session. The geometry is not produced by the reusable `LaunchOptions`
+projection: a workspace supplies it explicitly only while constructing its
+first pane. Live reloads cross the
 queued controller/worker boundary as `TerminalSessionRuntimeOptions`, which is
 limited to appearance and URL matching. Working directory, program, hold, and
 the existing terminal's scrollback allocation are launch-only by construction.
@@ -838,16 +841,29 @@ window, including resident and desktop-activation replacements, without
 changing any live window's state. The
 paired window dimensions are likewise future-window creation policy. Their
 cell-to-pixel conversion uses each new window's resolved font size, including
-source-pane inheritance, and runs before the workspace and its first pane are
-constructed. Existing roots retain both their size and minimum hint on reload.
-The worker currently initializes `libghostty-vt` and `forkpty` with its legacy
-80-by-24 defaults before the GUI thread's first queued pane resize arrives;
-the terminal therefore settles to the requested grid before presentation when
-screen or compositor constraints permit it, but an immediately executing
-child can observe one transient 80-by-24
-winsize. A first-pane-only initial-geometry transport remains required for
-exact pre-exec parity without leaking window dimensions into later tabs or
-splits. The workspace-owned `split-preserve-zoom` navigation bit also reloads
+source-pane inheritance, and runs before workspace initialization constructs
+its first pane. Existing roots retain both their size and minimum hint on reload.
+During one-shot workspace initialization, the authoritative logical workspace
+viewport, resolved terminal cell metrics, and selected window's device-pixel
+ratio are converted to a complete `TerminalSessionGeometry`. The same
+overflow-safe conversion drives later pane resizes, flooring the cell grid,
+rounding physical extents, bounding rows and columns to the PTY range, and
+rejecting nonfinite or not-yet-laid-out viewports. Only the initial `createNewTab`
+path moves this value through `TerminalPane` into the worker thread's captured
+launch options. `SessionWorker` applies it before both `libghostty-vt`
+construction and `forkpty`, so the first frame, scrollback estimate, and an
+immediately executing child share the actual screen-clamped pre-map geometry.
+Linux exposes PTY pixel extents as 16-bit fields, so only synthetic surfaces
+wider or taller than 65,535 physical pixels saturate at that final kernel
+boundary while libghostty retains the overflow-safe `int` extent.
+Ordinary new-tab and split paths have no seed and continue with their own
+layout resize. Pane scene attachment and window screen/scale changes also
+re-emit the unchanged logical viewport so physical geometry cannot remain at a
+stale device scale. A maximized or fullscreen compositor cannot publish its mapped
+extent while the root is still hidden; such a window starts at its exact normal
+geometry and receives the compositor-assigned extent through the ordinary
+first live resize after presentation. The workspace-owned
+`split-preserve-zoom` navigation bit also reloads
 without a
 pane or worker update and is consulted by each subsequent successful
 `goto_split`; it never changes the current zoom merely because configuration
