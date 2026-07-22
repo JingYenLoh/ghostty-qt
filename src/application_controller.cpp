@@ -174,7 +174,7 @@ ApplicationController::ApplicationController(
     connect(keybindings_.get(),
             &GhosttyApplicationKeybindings::applicationActionRequested,
             this, [this](ApplicationAction action) {
-                (void) dispatch(action);
+                dispatchRequestedAction(action);
             });
 }
 
@@ -521,6 +521,27 @@ bool ApplicationController::dispatch(ApplicationAction action,
     return false;
 }
 
+void ApplicationController::dispatchRequestedAction(
+    ApplicationAction action,
+    TerminalWorkspace *sourceWorkspace,
+    PaneId sourcePaneId)
+{
+    if (action != ApplicationAction::Quit) {
+        (void) dispatch(action, sourceWorkspace, sourcePaneId);
+        return;
+    }
+
+    // A keybinding chain can request quit before executing later actions.
+    // Commit the destructive application lifecycle only after the chain has
+    // unwound. The controller outlives every workspace, so a preceding
+    // close_window cannot discard the later process-wide quit request.
+    const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
+    QTimer::singleShot(0, this, [this, guardedSource, sourcePaneId] {
+        (void) dispatch(ApplicationAction::Quit,
+                        guardedSource.data(), sourcePaneId);
+    });
+}
+
 LaunchOptions ApplicationController::nextWindowOptions(
     TerminalWorkspace *sourceWorkspace,
     PaneId sourcePaneId) const
@@ -675,7 +696,7 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
             this, [this, guarded = QPointer(workspace)](
                       ApplicationAction action, PaneId paneId) {
                 if (guarded != nullptr) {
-                    (void) dispatch(action, guarded, paneId);
+                    dispatchRequestedAction(action, guarded, paneId);
                 }
             });
     connect(workspace, &TerminalWorkspace::workspaceActivated,

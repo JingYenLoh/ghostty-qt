@@ -373,13 +373,39 @@ constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
     {QLatin1StringView("redo"), std::nullopt},
 }};
 
-constexpr std::array<QLatin1StringView, 6> kDirectVoidSurfaceActions{{
-    QLatin1StringView("paste_from_clipboard"),
-    QLatin1StringView("paste_from_selection"),
-    QLatin1StringView("copy_url_to_clipboard"),
-    QLatin1StringView("copy_title_to_clipboard"),
-    QLatin1StringView("end_key_sequence"),
-    QLatin1StringView("close_window"),
+enum class DirectSurfaceParameter : quint8 {
+    Void,
+    CopyFormat,
+};
+
+struct DirectSurfaceActionSpec {
+    QLatin1StringView name;
+    GhosttyPaneActionKind kind;
+    DirectSurfaceParameter parameter;
+};
+
+constexpr std::array<DirectSurfaceActionSpec, 7> kDirectSurfaceActions{{
+    {QLatin1StringView("copy_to_clipboard"),
+     GhosttyPaneActionKind::CopyToClipboardMixed,
+     DirectSurfaceParameter::CopyFormat},
+    {QLatin1StringView("paste_from_clipboard"),
+     GhosttyPaneActionKind::PasteFromClipboard,
+     DirectSurfaceParameter::Void},
+    {QLatin1StringView("paste_from_selection"),
+     GhosttyPaneActionKind::PasteFromSelection,
+     DirectSurfaceParameter::Void},
+    {QLatin1StringView("copy_url_to_clipboard"),
+     GhosttyPaneActionKind::CopyUrlToClipboard,
+     DirectSurfaceParameter::Void},
+    {QLatin1StringView("copy_title_to_clipboard"),
+     GhosttyPaneActionKind::CopyTitleToClipboard,
+     DirectSurfaceParameter::Void},
+    {QLatin1StringView("end_key_sequence"),
+     GhosttyPaneActionKind::EndKeySequence,
+     DirectSurfaceParameter::Void},
+    {QLatin1StringView("close_window"),
+     GhosttyPaneActionKind::CloseWindow,
+     DirectSurfaceParameter::Void},
 }};
 
 template <typename Spec, std::size_t Size>
@@ -417,12 +443,12 @@ GhosttySerializedActionView GhosttyActionCatalog::parseSerializedAction(
     return result;
 }
 
-GhosttyActionTranslation GhosttyActionCatalog::translate(
-    QStringView serializedAction,
+namespace {
+
+GhosttyActionTranslation translateWorkspaceAction(
+    GhosttySerializedActionView parsed,
     WorkspaceActionContext context)
 {
-    const GhosttySerializedActionView parsed =
-        parseSerializedAction(serializedAction);
     const QStringView actionName = parsed.name;
     const OptionalView parameter = parsed.parameter;
 
@@ -643,13 +669,70 @@ GhosttyActionTranslation GhosttyActionCatalog::translate(
                   parameter);
 }
 
-std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
-    QStringView serializedAction)
+GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
+    GhosttySerializedActionView parsed)
 {
-    const GhosttySerializedActionView parsed =
-        parseSerializedAction(serializedAction);
+    if (parsed.name.isEmpty()) {
+        return std::unexpected(Error::InvalidFormat);
+    }
+
+    const DirectSurfaceActionSpec *const spec =
+        findActionSpec(parsed.name, kDirectSurfaceActions);
+    if (spec == nullptr) {
+        return std::unexpected(Error::UnsupportedAction);
+    }
+
+    switch (spec->parameter) {
+    case DirectSurfaceParameter::Void: {
+        if (parsed.parameter.has_value()) {
+            return std::unexpected(Error::InvalidFormat);
+        }
+        GhosttyPaneAction action;
+        action.kind = spec->kind;
+        return action;
+    }
+    case DirectSurfaceParameter::CopyFormat: {
+        GhosttyPaneAction action;
+        if (!parsed.parameter.has_value()
+            || *parsed.parameter == QLatin1StringView("mixed")) {
+            action.kind = GhosttyPaneActionKind::CopyToClipboardMixed;
+            return action;
+        }
+        if (*parsed.parameter == QLatin1StringView("plain")) {
+            action.kind = GhosttyPaneActionKind::CopyToClipboardPlain;
+            return action;
+        }
+        if (*parsed.parameter == QLatin1StringView("vt")
+            || *parsed.parameter == QLatin1StringView("html")) {
+            return std::unexpected(Error::UnsupportedParameter);
+        }
+        return std::unexpected(Error::InvalidFormat);
+    }
+    }
+    std::unreachable();
+}
+
+std::optional<ApplicationAction> parseApplicationActionView(
+    GhosttySerializedActionView parsed)
+{
+    if (parsed.parameter.has_value()) return std::nullopt;
+
+    const ApplicationActionSpec *const spec =
+        findActionSpec(parsed.name, kApplicationActions);
+    return spec != nullptr ? spec->implementedAction : std::nullopt;
+}
+
+std::optional<GhosttyPaneAction> parsePaneActionView(
+    GhosttySerializedActionView parsed)
+{
     const QStringView name = parsed.name;
     const OptionalView parameter = parsed.parameter;
+
+    if (GhosttyDirectSurfaceActionParseResult direct =
+            parseDirectSurfaceActionView(parsed);
+        direct.has_value()) {
+        return std::move(*direct);
+    }
 
     const auto viewportAction = [](TerminalViewportRequest::Kind kind) {
         GhosttyPaneAction action;
@@ -912,41 +995,77 @@ std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
     return action;
 }
 
+std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
+    GhosttySerializedActionView parsed,
+    WorkspaceActionContext context)
+{
+    // Application names retain their upstream scope even when this frontend
+    // does not implement them. Do not reinterpret an unsupported application
+    // action through a surface parser.
+    if (const ApplicationActionSpec *const spec =
+            findActionSpec(parsed.name, kApplicationActions)) {
+        if (!parsed.parameter.has_value()
+            && spec->implementedAction.has_value()) {
+            return GhosttyConfiguredAction{*spec->implementedAction};
+        }
+        return std::nullopt;
+    }
+
+    if (std::optional<GhosttyPaneAction> action =
+            parsePaneActionView(parsed)) {
+        return GhosttyConfiguredAction{std::move(*action)};
+    }
+
+    GhosttyActionTranslation translated =
+        translateWorkspaceAction(parsed, context);
+    if (translated.accepted()) {
+        return GhosttyConfiguredAction{std::move(*translated.request)};
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+GhosttyActionTranslation GhosttyActionCatalog::translate(
+    QStringView serializedAction,
+    WorkspaceActionContext context)
+{
+    return translateWorkspaceAction(parseSerializedAction(serializedAction),
+                                    context);
+}
+
+std::optional<GhosttyConfiguredAction>
+GhosttyActionCatalog::parseConfiguredAction(
+    QStringView serializedAction,
+    WorkspaceActionContext context)
+{
+    return parseConfiguredActionView(parseSerializedAction(serializedAction),
+                                     context);
+}
+
 bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
 {
-    if (parseApplicationAction(serializedAction).has_value()) {
-        return true;
-    }
-    if (parsePaneAction(serializedAction).has_value()) {
-        return true;
-    }
+    return parseConfiguredAction(serializedAction).has_value();
+}
 
-    const GhosttySerializedActionView parsed =
-        parseSerializedAction(serializedAction);
-    const QStringView name = parsed.name;
-    const OptionalView parameter = parsed.parameter;
+std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
+    QStringView serializedAction)
+{
+    return parsePaneActionView(parseSerializedAction(serializedAction));
+}
 
-    if (name == QLatin1StringView("copy_to_clipboard")) {
-        return !parameter.has_value()
-            || *parameter == QLatin1StringView("plain")
-            || *parameter == QLatin1StringView("mixed");
-    }
-    if (containsActionName(name, kDirectVoidSurfaceActions)) {
-        return !parameter.has_value();
-    }
-    return translate(serializedAction).accepted();
+GhosttyDirectSurfaceActionParseResult
+GhosttyActionCatalog::parseDirectSurfaceAction(QStringView serializedAction)
+{
+    return parseDirectSurfaceActionView(
+        parseSerializedAction(serializedAction));
 }
 
 std::optional<ApplicationAction>
 GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
 {
-    const GhosttySerializedActionView parsed =
-        parseSerializedAction(serializedAction);
-    if (parsed.parameter.has_value()) return std::nullopt;
-
-    const ApplicationActionSpec *const spec =
-        findActionSpec(parsed.name, kApplicationActions);
-    return spec != nullptr ? spec->implementedAction : std::nullopt;
+    return parseApplicationActionView(
+        parseSerializedAction(serializedAction));
 }
 
 GhosttyActionScope GhosttyActionCatalog::scope(
@@ -956,4 +1075,59 @@ GhosttyActionScope GhosttyActionCatalog::scope(
                           kApplicationActions) != nullptr
         ? GhosttyActionScope::Application
         : GhosttyActionScope::Surface;
+}
+
+GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
+    const GhosttyConfiguredAction &action) noexcept
+{
+    if (const auto *application = std::get_if<ApplicationAction>(&action)) {
+        return *application == ApplicationAction::Ignore
+            ? GhosttyActionInputEffect::Ignore
+            : GhosttyActionInputEffect::None;
+    }
+    if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {
+        return pane->kind == GhosttyPaneActionKind::CloseWindow
+            ? GhosttyActionInputEffect::ClosingAction
+            : GhosttyActionInputEffect::None;
+    }
+    const auto &workspace = std::get<WorkspaceActionRequest>(action);
+    return workspace.action == WorkspaceAction::ClosePane
+            || workspace.action == WorkspaceAction::CloseTab
+        ? GhosttyActionInputEffect::ClosingAction
+        : GhosttyActionInputEffect::None;
+}
+
+GhosttyActionInputEffect GhosttyActionCatalog::combinedInputEffect(
+    const QStringList &actions)
+{
+    bool ignored = false;
+    for (const QString &serialized : actions) {
+        const std::optional<GhosttyConfiguredAction> action =
+            parseConfiguredAction(serialized);
+        if (!action.has_value()) continue;
+        switch (inputEffect(*action)) {
+        case GhosttyActionInputEffect::None:
+            break;
+        case GhosttyActionInputEffect::Ignore:
+            ignored = true;
+            break;
+        case GhosttyActionInputEffect::ClosingAction:
+            return GhosttyActionInputEffect::ClosingAction;
+        }
+    }
+    return ignored ? GhosttyActionInputEffect::Ignore
+                   : GhosttyActionInputEffect::None;
+}
+
+bool GhosttyActionCatalog::shouldCoalesceBroadClose(
+    const GhosttyConfiguredAction &action) noexcept
+{
+    if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {
+        return pane->kind == GhosttyPaneActionKind::CloseWindow;
+    }
+    const auto *workspace = std::get_if<WorkspaceActionRequest>(&action);
+    return workspace != nullptr
+        && (workspace->action == WorkspaceAction::ClosePane
+            || (workspace->action == WorkspaceAction::CloseTab
+                && workspace->context.closeTabMode == CloseTabMode::This));
 }

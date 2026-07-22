@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -57,23 +58,6 @@ quint64 keyEventIdentity(const QKeyEvent *event)
     const quint64 logical = static_cast<quint64>(
         static_cast<quint32>(event->key()));
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
-}
-
-bool containsIgnore(const QStringList &actions)
-{
-    return std::ranges::any_of(actions, [](const QString &action) {
-        return action == QLatin1StringView("ignore");
-    });
-}
-
-bool closesEverySurface(QStringView action)
-{
-    // Other/right retain their originating tab during ordinary per-surface
-    // fanout. Only actions that close the source itself converge on quit.
-    return action == QLatin1StringView("close_surface")
-        || action == QLatin1StringView("close_tab")
-        || action == QLatin1StringView("close_tab:this")
-        || action == QLatin1StringView("close_window");
 }
 
 } // namespace
@@ -205,7 +189,10 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
         // broad close of surfaces, tabs, or windows therefore converges on the
         // same confirmed workspace shutdown, without overwriting its single
         // pending-close dialog state during fanout.
-        if (closesEverySurface(action)) {
+        const std::optional<GhosttyConfiguredAction> parsed =
+            GhosttyActionCatalog::parseConfiguredAction(action);
+        if (parsed.has_value()
+            && GhosttyActionCatalog::shouldCoalesceBroadClose(*parsed)) {
             for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
                 if (workspace != nullptr) workspace->requestWindowClose();
             }
@@ -250,7 +237,8 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
 
     if (match->global) {
         dispatchBroadActions(match->actions);
-        if (!containsIgnore(match->actions)) {
+        if (GhosttyActionCatalog::combinedInputEffect(match->actions)
+            != GhosttyActionInputEffect::Ignore) {
             consumedKeys_.insert(keyEventIdentity(keyEvent));
         }
         return true;
@@ -269,7 +257,8 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
     // App.keyEvent consumes a root app binding before surface/table lookup,
     // independently of its unconsumed/performable flags.
     (void) executeApplicationActions(match->actions);
-    if (!containsIgnore(match->actions)) {
+    if (GhosttyActionCatalog::combinedInputEffect(match->actions)
+        != GhosttyActionInputEffect::Ignore) {
         consumedKeys_.insert(keyEventIdentity(keyEvent));
     }
     return true;

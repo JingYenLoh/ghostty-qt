@@ -232,6 +232,7 @@ private Q_SLOTS:
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow();
     void preservesCompositeSourceAndWindowInheritancePolicies();
     void residentProcessReloadsRecreatesAndQuitsWithZeroWindows();
+    void configuredQuitWaitsForCompleteActionChain();
     void suppressedStartupPreservesFirstSessionOptions();
     void failedLazyCreationDoesNotConsumeFirstSession();
     void terminalInitializationFailurePromotesNextSession();
@@ -853,6 +854,36 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
     QVERIFY(controller.dispatch(ApplicationAction::Quit));
     QCOMPARE(committed.count(), 1);
     QCOMPARE(quit.count(), 1);
+}
+
+void ApplicationControllerTest::configuredQuitWaitsForCompleteActionChain()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindings = {
+        QStringLiteral("ctrl+k=quit"),
+        QStringLiteral("chain=new_tab"),
+    };
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(initial->workspace->tabCount(), 1, 1000);
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    QVERIFY(pane != nullptr);
+
+    QSignalSpy quit(&controller, &ApplicationController::quitRequested);
+    const QPointer<TerminalWorkspace> guardedWorkspace(initial->workspace);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
+                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QCoreApplication::sendEvent(pane, &press);
+
+    // The application owner commits quit on the next event-loop turn, after
+    // the pane has executed the remaining surface action in the chain.
+    QCOMPARE(initial->workspace->tabCount(), 2);
+    QCOMPARE(quit.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+    QVERIFY(guardedWorkspace.isNull());
 }
 
 void ApplicationControllerTest::rejectsWorkspaceOutsideWindowOwnership()

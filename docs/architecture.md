@@ -1007,20 +1007,37 @@ as bytes under a generation token. A consumed match drops them; an invalid,
 unconsumed, or unavailable performable match flushes the prefix and current key
 atomically; `end_key_sequence` flushes only the leaders. This preserves the VT
 mode that existed at each leader press and prevents reload or stale queued
-operations from leaking input. Supported actions then pass through
-`GhosttyActionCatalog`. Catalog parsing routes workspace actions through the
-same typed dispatcher used by QML controls, while viewport, font-size,
-selection, search, terminal-control, and named-key-table actions become owned
-typed pane requests. One constexpr descriptor set owns the simple void
-workspace mappings, and another owns every application-scoped Ghostty name
-alongside its optional Qt implementation; complex numeric, enum, tuple, and
+operations from leaking input. Each local action then passes once through
+`GhosttyActionCatalog`, which returns one owning variant for application,
+pane, or workspace execution. Workspace actions use the same typed dispatcher
+as QML controls; viewport, font-size, selection, search, terminal-control,
+named-key-table, clipboard, sequence, and window actions become typed pane
+requests. One constexpr descriptor set owns the simple void workspace
+mappings, another owns every application-scoped Ghostty name alongside its
+optional Qt implementation, and a third owns the frontend clipboard/sequence
+actions and their parameter policy. Complex numeric, enum, tuple, and
 escaped-string grammars remain explicit parsers. This keeps upstream scope
 classification independent from frontend support without repeating action
-names across validation and dispatch. Pane-local copy, paste, and reload
-actions still use their terminal operations directly. GUI clipboard reads
+names across validation and dispatch.
+
+`TerminalPane` performs that typed value directly instead of running a
+separate eligibility parse. Dynamic state is checked at the operation: cleanup
+such as `end_search` still runs when it reports not performed, while clipboard,
+title, hover, search, and selection state cannot become stale between preflight
+and execution. Per-action results keep actual performance separate from the
+typed input effect. The complete chain always runs; afterward, any successful
+member makes a syntactically present close take precedence over `ignore`,
+matching Ghostty's press/release lifecycle. GUI clipboard reads still
 distinguish an absent text MIME representation from an explicitly present
 empty string, and an explicit primary-selection paste never inherits the
 separate middle-click fallback policy.
+
+Destructive lifecycle commitment belongs to the object that owns that
+lifecycle, not to the pane action interpreter. A pane-originated window close
+is queued on `TerminalWorkspace`, and a keybinding-originated application quit
+is queued on `ApplicationController`; direct programmatic close and quit APIs
+remain synchronous. This lets every configured action chain unwind before a
+close-approval observer can synchronously destroy its pane or workspace.
 Page actions use the full terminal height; fractional pages multiply in f32
 and truncate toward zero, while line and absolute-row parameters retain their
 pinned i16 and usize bounds. Non-finite or unsafe fractional values are
@@ -1309,8 +1326,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `workspace-foundation` verifies stable tab identity after row removal and
   movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
-  action-string parsing—including the five search actions and exact navigation
-  grammar—and deterministic malformed/unsupported results.
+  action-string parsing—including the five search actions, exact navigation
+  grammar, owning configured-action alternatives, typed input effects, and
+  direct-surface error categories—and deterministic malformed/unsupported
+  results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
   locations, shifted/unshifted Unicode matching, shared-prefix sequences,
   catch-all priority and recovery, local/broad flags, action chains, named-table

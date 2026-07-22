@@ -39,6 +39,7 @@ class QWheelEvent;
 class QQuickWindow;
 class InitialSessionCoordinator;
 class TerminalController;
+enum class GhosttyActionInputEffect : quint8;
 struct TerminalFontSizeRequest;
 struct TerminalKeyTableRequest;
 
@@ -188,6 +189,11 @@ private:
         ConsumePressAndRelease,
     };
 
+    struct ConfiguredActionOutcome {
+        bool performed;
+        GhosttyActionInputEffect effect;
+    };
+
     void updateMetrics();
     void updateTerminalSize();
     void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
@@ -208,11 +214,10 @@ private:
     void setFontPointSize(qreal points);
     KeyHandling handleShortcut(QKeyEvent *event);
     KeyHandling handleConfiguredShortcut(QKeyEvent *event);
-    bool canExecuteConfiguredAction(QStringView action) const;
+    [[nodiscard]] ConfiguredActionOutcome performConfiguredAction(
+        QStringView action);
     int viewportPageRows() const;
     void applyFontSizeRequest(const TerminalFontSizeRequest &request);
-    [[nodiscard]] bool canApplyKeyTableRequest(
-        const TerminalKeyTableRequest &request) const;
     [[nodiscard]] bool applyKeyTableRequest(
         const TerminalKeyTableRequest &request);
     void beginLocalSelection(const QPointF &position, int clickCount,
@@ -228,6 +233,7 @@ private:
     bool hyperlinkModifiersMatch(Qt::KeyboardModifiers modifiers) const;
     void updateHyperlinkHover(const QPointF &position,
                               Qt::KeyboardModifiers modifiers);
+    [[nodiscard]] std::optional<QByteArray> hoveredUrlForCopy() const;
     void updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers);
     void recomputeHyperlinkHover();
     void refreshHyperlinkHover();

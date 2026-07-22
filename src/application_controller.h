@@ -112,6 +112,10 @@ private:
         const TerminalWorkspace *workspace) const;
     [[nodiscard]] std::vector<QPointer<TerminalWorkspace>>
     workspaceSnapshot() const;
+    void dispatchRequestedAction(
+        ApplicationAction action,
+        TerminalWorkspace *sourceWorkspace = nullptr,
+        PaneId sourcePaneId = {});
     void registerWindow(ApplicationWindow window);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);
     void retireWindow(QQuickWindow *window);

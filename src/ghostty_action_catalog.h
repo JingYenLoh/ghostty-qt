@@ -6,9 +6,12 @@
 
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 #include <QStringView>
 
+#include <expected>
 #include <optional>
+#include <variant>
 
 // The rejection categories are deliberately stable so configuration and
 // command-palette callers can report the same result for the same input.
@@ -22,6 +25,12 @@ enum class GhosttyActionTranslationError {
 enum class GhosttyActionScope {
     Application,
     Surface,
+};
+
+enum class GhosttyActionInputEffect : quint8 {
+    None,
+    Ignore,
+    ClosingAction,
 };
 
 // Non-owning tokenization of Ghostty's serialized Action.parse format. The
@@ -56,6 +65,14 @@ enum class GhosttyPaneActionKind {
     Reset,
     ToggleReadOnly,
     ToggleMouseReporting,
+    CopyToClipboardMixed,
+    CopyToClipboardPlain,
+    PasteFromClipboard,
+    PasteFromSelection,
+    CopyUrlToClipboard,
+    CopyTitleToClipboard,
+    EndKeySequence,
+    CloseWindow,
 };
 
 struct TerminalFontSizeRequest {
@@ -102,6 +119,14 @@ struct GhosttyPaneAction {
     QString payload;
 };
 
+using GhosttyDirectSurfaceActionParseResult =
+    std::expected<GhosttyPaneAction, GhosttyActionTranslationError>;
+
+using GhosttyConfiguredAction = std::variant<
+    ApplicationAction,
+    GhosttyPaneAction,
+    WorkspaceActionRequest>;
+
 struct GhosttyActionTranslation {
     std::optional<WorkspaceActionRequest> request;
     GhosttyActionTranslationError error =
@@ -135,6 +160,15 @@ public:
         QStringView serializedAction,
         WorkspaceActionContext context = {});
 
+    // Parse one complete executable action into an owning value. This is the
+    // preferred execution boundary: callers do not need separate validation,
+    // performability, and dispatch parses, and payloads remain valid across
+    // synchronous configuration reloads.
+    [[nodiscard]] static std::optional<GhosttyConfiguredAction>
+    parseConfiguredAction(
+        QStringView serializedAction,
+        WorkspaceActionContext context = {});
+
     // True when the current Qt frontend implements this exact serialized
     // action, including parameter validation. This includes pane-local
     // clipboard/zoom/scroll/reload actions as well as typed workspace actions.
@@ -149,6 +183,12 @@ public:
     [[nodiscard]] static std::optional<GhosttyPaneAction> parsePaneAction(
         QStringView serializedAction);
 
+    // Preserve precise diagnostics for the frontend-owned clipboard,
+    // sequence, and window actions while the older pane parser retains its
+    // optional compatibility API.
+    [[nodiscard]] static GhosttyDirectSurfaceActionParseResult
+    parseDirectSurfaceAction(QStringView serializedAction);
+
     // Parse the exact parameterless application actions supported by this
     // frontend. The optional is empty for malformed spellings as well as
     // application actions that are not implemented yet.
@@ -161,8 +201,26 @@ public:
     // through the workspace model.
     [[nodiscard]] static GhosttyActionScope scope(
         QStringView serializedAction);
+
+    // Input lifecycle policy is derived from typed action identity rather
+    // than serialized spellings. ClosingAction includes every close-tab
+    // mode, even when the originating pane itself survives.
+    [[nodiscard]] static GhosttyActionInputEffect inputEffect(
+        const GhosttyConfiguredAction &action) noexcept;
+
+    // Combine one serialized chain with Ghostty's closing-before-ignore
+    // precedence. Unsupported entries have no input effect.
+    [[nodiscard]] static GhosttyActionInputEffect combinedInputEffect(
+        const QStringList &actions);
+
+    // Broad close_surface, close_window, and close_tab:this operations
+    // converge on one window close per workspace. Other/right tab modes keep
+    // their ordinary per-surface fanout.
+    [[nodiscard]] static bool shouldCoalesceBroadClose(
+        const GhosttyConfiguredAction &action) noexcept;
 };
 
 Q_DECLARE_METATYPE(GhosttyActionTranslationError)
 Q_DECLARE_METATYPE(GhosttyActionScope)
+Q_DECLARE_METATYPE(GhosttyActionInputEffect)
 Q_DECLARE_METATYPE(GhosttyPaneActionKind)

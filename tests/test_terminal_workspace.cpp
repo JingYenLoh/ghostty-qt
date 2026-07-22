@@ -290,6 +290,7 @@ private Q_SLOTS:
     void deferredInitialSessionCancelsAndScopesToFirstPane();
     void runningProgramPromptsThenResolvesOnceOnExit();
     void distinguishesWindowCloseFromApplicationQuit();
+    void configuredCloseChainSurvivesSynchronousWorkspaceDestruction();
     void applicationQuitEscalatesCloseLifecycle();
     void closingOnlyPaneRemovesTab();
     void closeSurfaceUsesStableOriginsAndAdjacentFocus();
@@ -588,7 +589,7 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
 
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("close_window")));
-        QCOMPARE(windowClose.count(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
         QCOMPARE(applicationQuit.count(), 0);
     }
 
@@ -636,6 +637,47 @@ void TerminalWorkspaceTest::distinguishesWindowCloseFromApplicationQuit()
     QCOMPARE(applicationQuit.count(), 1);
 }
 
+void TerminalWorkspaceTest::configuredCloseChainSurvivesSynchronousWorkspaceDestruction()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.keybindingsConfigured = true;
+    options.keybindings = {
+        QStringLiteral("ctrl+k=close_window"),
+        QStringLiteral("chain=new_tab"),
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    auto *workspace = new TerminalWorkspace;
+    const QPointer<TerminalWorkspace> guardedWorkspace(workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+
+    int approvals = 0;
+    connect(workspace, &TerminalWorkspace::windowCloseApproved,
+            [&approvals, workspace] {
+                ++approvals;
+                delete workspace;
+            });
+
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
+                    Qt::ControlModifier, QString(QChar(0x0b)));
+    QCoreApplication::sendEvent(pane, &press);
+
+    // The later action runs before the lifecycle owner commits the close.
+    // The approval observer may then destroy the entire QObject hierarchy
+    // synchronously without returning into a half-executed pane chain.
+    QVERIFY(!guardedWorkspace.isNull());
+    QCOMPARE(guardedWorkspace->tabCount(), 2);
+    QCOMPARE(approvals, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(guardedWorkspace.isNull(), 1000);
+    QCOMPARE(approvals, 1);
+}
+
 void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
@@ -659,7 +701,7 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
 
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("close_window")));
-        QCOMPARE(windowClose.count(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
         QCOMPARE(applicationQuit.count(), 0);
         workspace.requestApplicationQuitConfirmation(
             workspace.closeAssessment());
@@ -687,7 +729,7 @@ void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
 
         QVERIFY(pane->executeConfiguredAction(
             QStringLiteral("close_window")));
-        QCOMPARE(confirmation.count(), 1);
+        QTRY_COMPARE_WITH_TIMEOUT(confirmation.count(), 1, 1000);
         workspace.requestApplicationQuitConfirmation(
             workspace.closeAssessment());
         QCOMPARE(confirmation.count(), 1);
@@ -3100,6 +3142,15 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
             .flags = GhosttyKeybindFlags{.all = true},
         },
         GhosttyKeybindDefinition{
+            .sequence = {unicode('p', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("copy_to_clipboard")},
+            .flags = GhosttyKeybindFlags{
+                .consumed = false,
+                .all = true,
+                .performable = true,
+            },
+        },
+        GhosttyKeybindDefinition{
             .sequence = {unicode('x', GhosttyKeybindCtrl), unicode('n')},
             .actions = {QStringLiteral("new_tab")},
         },
@@ -3137,6 +3188,9 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         controller, &TerminalController::sequenceResolutionRequested);
     QSignalSpy inactiveSequenceResolution(
         inactiveController, &TerminalController::sequenceResolutionRequested);
+    QSignalSpy activeCopy(controller, &TerminalController::copyRequested);
+    QSignalSpy inactiveCopy(
+        inactiveController, &TerminalController::copyRequested);
 
     // An external all/global action can end sequences staged in panes that no
     // longer have focus. It must reset both the matcher and worker token.
@@ -3186,6 +3240,18 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  reload.constFirst().constFirst()),
              ApplicationAction::ReloadConfig);
+    QCOMPARE(forwarded.count(), 0);
+
+    // Broad bindings ignore performable/unconsumed and remain consumed even
+    // when no target has the dynamic state required to execute the action.
+    QKeyEvent unavailableCopy(QEvent::KeyPress, Qt::Key_P,
+                              Qt::ControlModifier, QString(QChar(0x10)));
+    QCoreApplication::sendEvent(activePane, &unavailableCopy);
+    QKeyEvent unavailableCopyRelease(QEvent::KeyRelease, Qt::Key_P,
+                                     Qt::ControlModifier);
+    QCoreApplication::sendEvent(activePane, &unavailableCopyRelease);
+    QCOMPARE(activeCopy.count(), 0);
+    QCOMPARE(inactiveCopy.count(), 0);
     QCOMPARE(forwarded.count(), 0);
 
     // Application-scoped broad actions execute once, not once per pane.

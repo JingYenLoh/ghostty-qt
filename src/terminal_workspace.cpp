@@ -987,8 +987,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
         dispatchAction({WorkspaceAction::ChangeTabRelative,
                         {tabIdForPane(paneId), paneId, delta}});
     });
+    // Close approval may synchronously destroy this workspace. Queue pane
+    // requests so a multi-action keybinding always unwinds first.
     connect(pane, &TerminalPane::requestCloseWindow, this,
-            &TerminalWorkspace::requestWindowClose);
+            &TerminalWorkspace::requestWindowClose,
+            Qt::QueuedConnection);
     connect(pane, &TerminalPane::applicationActionRequested, this,
             [this, paneId](ApplicationAction action) {
                 Q_EMIT applicationActionRequested(action, paneId);

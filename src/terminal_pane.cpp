@@ -2491,48 +2491,50 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
 
     // `global:` implies `all:` at runtime even though Ghostty retains the raw
     // flags independently. Broad bindings ignore unconsumed/performable and
-    // always suppress terminal encoding. `ignore` retains Ghostty's special
-    // press-only handling, so a release is not marked as a consumed binding.
+    // are considered performed even when no target changes state.
     if (step.match.all || step.match.global) {
-        Q_EMIT broadActionsRequested(step.match.actions);
+        const GhosttyActionInputEffect effect =
+            GhosttyActionCatalog::combinedInputEffect(step.match.actions);
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
             activeSequenceToken_ = 0;
         }
-        const bool ignored = std::any_of(
-            step.match.actions.cbegin(), step.match.actions.cend(),
-            [](const QString &action) {
-                return action == QLatin1StringView("ignore");
-            });
-        return ignored ? KeyHandling::ConsumePress
-                       : KeyHandling::ConsumePressAndRelease;
+        // Closing takes priority over ignore so the corresponding release can
+        // never reach a surface that the complete broad chain may destroy.
+        const KeyHandling handling = effect == GhosttyActionInputEffect::Ignore
+            ? KeyHandling::ConsumePress
+            : KeyHandling::ConsumePressAndRelease;
+        // Emit last: a close action may synchronously destroy the originating
+        // workspace, and therefore this pane, through an approval observer.
+        // All pane state needed for the event has already been finalized.
+        Q_EMIT broadActionsRequested(step.match.actions);
+        return handling;
     }
 
     bool performed = false;
     bool ignored = false;
     bool hasClosingAction = false;
     for (const QString &action : step.match.actions) {
-        if (canExecuteConfiguredAction(action)) {
-            const bool actionPerformed = executeConfiguredAction(action);
-            performed = actionPerformed || performed;
-            if (actionPerformed) {
-                ignored = ignored
-                    || action == QLatin1StringView("ignore");
-                const QStringView actionName =
-                    GhosttyActionCatalog::parseSerializedAction(action).name;
-                hasClosingAction = hasClosingAction
-                    || actionName == QLatin1StringView("close_surface")
-                    || actionName == QLatin1StringView("close_tab")
-                    || actionName == QLatin1StringView("close_window");
-            }
+        const ConfiguredActionOutcome outcome =
+            performConfiguredAction(action);
+        performed = outcome.performed || performed;
+        switch (outcome.effect) {
+        case GhosttyActionInputEffect::None:
+            break;
+        case GhosttyActionInputEffect::Ignore:
+            ignored = true;
+            break;
+        case GhosttyActionInputEffect::ClosingAction:
+            hasClosingAction = true;
+            break;
         }
     }
     // Ghostty executes the complete chain, then treats surface/tab/window
-    // closure as terminal for this event. TerminalWorkspace uses deleteLater,
-    // so chained actions remain safe until this callback returns. `quit` is
-    // deliberately not a closing surface action in the pinned implementation.
-    if (hasClosingAction) {
+    // closure as terminal for this event. Lifecycle owners defer pane-sourced
+    // window close and quit commitment until this callback returns. `quit` is
+    // deliberately not a closing action in the pinned implementation.
+    if (performed && hasClosingAction) {
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
@@ -2544,7 +2546,7 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // binding. A performable binding with no effective action acts as though
     // it did not exist; every other match follows the binding's consume flag,
     // independently of whether an action happened to change state.
-    if (ignored) {
+    if (performed && ignored) {
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
@@ -2582,88 +2584,24 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     return KeyHandling::PassThrough;
 }
 
-bool TerminalPane::canExecuteConfiguredAction(QStringView action) const
+std::optional<QByteArray> TerminalPane::hoveredUrlForCopy() const
 {
-    if (GhosttyActionCatalog::parseApplicationAction(action).has_value()) {
-        return true;
-    }
-    const std::optional<GhosttyPaneAction> paneAction =
-        GhosttyActionCatalog::parsePaneAction(action);
-    if (paneAction.has_value()) {
-        if (paneAction->kind == GhosttyPaneActionKind::KeyTable) {
-            return canApplyKeyTableRequest(paneAction->keyTable);
-        }
-        const bool needsSelection =
-            paneAction->kind == GhosttyPaneActionKind::AdjustSelection
-            || paneAction->kind == GhosttyPaneActionKind::SearchSelection
-            || (paneAction->kind == GhosttyPaneActionKind::ScrollViewport
-                && paneAction->viewport.kind
-                    == TerminalViewportRequest::Kind::Selection);
-        if (needsSelection && !controller_->selectionExpected()) {
-            return false;
-        }
-        if (paneAction->kind == GhosttyPaneActionKind::EndSearch) {
-            // Ghostty always dispatches end_search so the GUI can clean up
-            // stale UI, even though execution reports false without an
-            // active engine.
-            return true;
-        }
-        if (paneAction->kind == GhosttyPaneActionKind::NavigateSearch) {
-            return searchEngineActive_ || controller_->searchExpected();
-        }
-        return true;
-    }
+    if (!hyperlinkModifiersMatch(hoverModifiers_)) return std::nullopt;
 
-    if (!GhosttyActionCatalog::isImplemented(action)) {
-        return false;
+    QMutexLocker locker(&renderMutex_);
+    const int index = hoverCell_.y() * frame_.columns + hoverCell_.x();
+    const bool hoveredCellIsLinked = hoverCell_.x() >= 0
+        && hoverCell_.x() < frame_.columns
+        && hoverCell_.y() >= 0 && hoverCell_.y() < frame_.rows
+        && hoveredHyperlinkColumns_ == frame_.columns
+        && hoveredHyperlinkRows_ == frame_.rows
+        && hoveredHyperlinkCellIndexes_.contains(index);
+    if (hoveredHyperlinkUri_.isEmpty()
+        || hoveredHyperlinkCell_ != hoverCell_
+        || !hoveredCellIsLinked) {
+        return std::nullopt;
     }
-    const GhosttySerializedActionView parsed =
-        GhosttyActionCatalog::parseSerializedAction(action);
-    const QStringView name = parsed.name;
-
-    if (name == QLatin1StringView("copy_to_clipboard")) {
-        return controller_->selectionExpected();
-    }
-    if (name == QLatin1StringView("copy_url_to_clipboard")) {
-        bool hoveredCellIsLinked = false;
-        {
-            QMutexLocker locker(&renderMutex_);
-            const int index = hoverCell_.y() * frame_.columns
-                + hoverCell_.x();
-            hoveredCellIsLinked = hoverCell_.x() >= 0
-                && hoverCell_.x() < frame_.columns
-                && hoverCell_.y() >= 0 && hoverCell_.y() < frame_.rows
-                && hoveredHyperlinkColumns_ == frame_.columns
-                && hoveredHyperlinkRows_ == frame_.rows
-                && hoveredHyperlinkCellIndexes_.contains(index);
-        }
-        return !hoveredHyperlinkUri_.isEmpty()
-            && hoveredHyperlinkCell_ == hoverCell_
-            && hoveredCellIsLinked
-            && hyperlinkModifiersMatch(hoverModifiers_);
-    }
-    if (name == QLatin1StringView("copy_title_to_clipboard")) {
-        const std::optional<QString> title = effectiveSurfaceTitle();
-        return title && !title->isEmpty();
-    }
-    if (name == QLatin1StringView("paste_from_clipboard")) {
-        return readTerminalClipboard(
-                   QGuiApplication::clipboard(),
-                   TerminalClipboardSource::Standard)
-            .has_value();
-    }
-    if (name == QLatin1StringView("paste_from_selection")) {
-        return readTerminalClipboard(
-                   QGuiApplication::clipboard(),
-                   TerminalClipboardSource::Primary)
-            .has_value();
-    }
-    if (name == QLatin1StringView("close_window")
-        || name == QLatin1StringView("end_key_sequence")) {
-        return true;
-    }
-
-    return GhosttyActionCatalog::translate(action).accepted();
+    return hoveredHyperlinkUri_;
 }
 
 int TerminalPane::viewportPageRows() const
@@ -2674,27 +2612,42 @@ int TerminalPane::viewportPageRows() const
 
 bool TerminalPane::executeConfiguredAction(QStringView action)
 {
-    // Broad action fanout calls this public boundary without the normal
-    // performability preflight. Apply the catalog grammar before any action
-    // can mutate pane or application state.
-    if (const std::optional<ApplicationAction> applicationAction =
-            GhosttyActionCatalog::parseApplicationAction(action)) {
-        Q_EMIT applicationActionRequested(*applicationAction);
-        return true;
+    return performConfiguredAction(action).performed;
+}
+
+TerminalPane::ConfiguredActionOutcome
+TerminalPane::performConfiguredAction(QStringView serializedAction)
+{
+    std::optional<GhosttyConfiguredAction> parsed =
+        GhosttyActionCatalog::parseConfiguredAction(serializedAction);
+    if (!parsed.has_value()) {
+        return {false, GhosttyActionInputEffect::None};
     }
 
-    const std::optional<GhosttyPaneAction> paneAction =
-        GhosttyActionCatalog::parsePaneAction(action);
-    if (paneAction.has_value()) {
+    GhosttyConfiguredAction action = std::move(*parsed);
+    const GhosttyActionInputEffect effect =
+        GhosttyActionCatalog::inputEffect(action);
+    const auto outcome = [effect](bool performed) {
+        return ConfiguredActionOutcome{performed, effect};
+    };
+
+    if (const auto *application = std::get_if<ApplicationAction>(&action)) {
+        const ApplicationAction value = *application;
+        const ConfiguredActionOutcome result = outcome(true);
+        Q_EMIT applicationActionRequested(value);
+        return result;
+    }
+
+    if (const auto *paneAction = std::get_if<GhosttyPaneAction>(&action)) {
         switch (paneAction->kind) {
         case GhosttyPaneActionKind::ScrollViewport:
             if (paneAction->viewport.kind
                     == TerminalViewportRequest::Kind::Selection
                 && !controller_->selectionExpected()) {
-                return false;
+                return outcome(false);
             }
             controller_->scrollViewport(paneAction->viewport);
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::ScrollPageUp:
         case GhosttyPaneActionKind::ScrollPageDown: {
             TerminalViewportRequest request;
@@ -2704,147 +2657,138 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
                     == GhosttyPaneActionKind::ScrollPageUp
                 ? -rows : rows;
             controller_->scrollViewport(request);
-            return true;
+            return outcome(true);
         }
         case GhosttyPaneActionKind::ScrollPageFractional: {
             const std::optional<qint64> delta = fractionalPageDelta(
                 paneAction->pageFraction, viewportPageRows());
-            if (!delta.has_value()) return false;
+            if (!delta.has_value()) return outcome(false);
             TerminalViewportRequest request;
             request.kind = TerminalViewportRequest::Kind::Delta;
             request.delta = *delta;
             controller_->scrollViewport(request);
-            return true;
+            return outcome(true);
         }
         case GhosttyPaneActionKind::FontSize:
             applyFontSizeRequest(paneAction->fontSize);
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::KeyTable:
-            return applyKeyTableRequest(paneAction->keyTable);
+            return outcome(applyKeyTableRequest(paneAction->keyTable));
         case GhosttyPaneActionKind::SelectAll:
             controller_->selectAll();
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::AdjustSelection:
-            if (!controller_->selectionExpected()) return false;
+            if (!controller_->selectionExpected()) return outcome(false);
             controller_->adjustSelection(paneAction->selectionAdjustment);
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::StartSearch:
             startSearchUi();
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::EndSearch: {
             const bool performed = searchEngineActive_
                 || controller_->searchExpected();
+            // Always clean up stale UI even when the backend had no active
+            // search and the action therefore reports not performed.
             endSearchUi();
-            return performed;
+            return outcome(performed);
         }
         case GhosttyPaneActionKind::SearchSelection:
-            if (!controller_->selectionExpected()) return false;
+            if (!controller_->selectionExpected()) return outcome(false);
             controller_->requestSearchSelection();
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::Search: {
             // Binding.Action.format serializes arbitrary bytes with Zig
             // escapes. Preserve the payload until the worker decodes it.
             const bool hadSearch = searchEngineActive_
                 || controller_->searchExpected();
             controller_->searchSerialized(paneAction->payload.toUtf8());
-            return !paneAction->payload.isEmpty() || hadSearch;
+            return outcome(!paneAction->payload.isEmpty() || hadSearch);
         }
         case GhosttyPaneActionKind::NavigateSearch:
-            if (!controller_->searchExpected()) return false;
+            if (!controller_->searchExpected()) return outcome(false);
             controller_->navigateSearch(paneAction->searchDirection);
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::Csi:
             controller_->sendCsi(paneAction->payload.toUtf8());
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::Esc:
             controller_->sendEscape(paneAction->payload.toUtf8());
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::Text:
             // Ghostty validates Zig string escapes only when performing the
             // action. Keep the serialized bytes intact until the worker so a
             // malformed binding is still consumed without writing to the PTY.
             controller_->sendRawText(paneAction->payload.toUtf8());
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::Reset:
             controller_->resetTerminal();
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::ToggleReadOnly:
             controller_->setReadOnly(!controller_->readOnly());
-            return true;
+            return outcome(true);
         case GhosttyPaneActionKind::ToggleMouseReporting:
             controller_->setMouseReportingEnabled(
                 !controller_->mouseReportingEnabled());
-            return true;
+            return outcome(true);
+        case GhosttyPaneActionKind::CopyToClipboardMixed:
+        case GhosttyPaneActionKind::CopyToClipboardPlain:
+            if (!controller_->selectionExpected()) return outcome(false);
+            // The catalog keeps the mixed/plain identity even though both
+            // currently use libghostty-vt's public plain-text copy path.
+            copySelection();
+            return outcome(true);
+        case GhosttyPaneActionKind::PasteFromClipboard:
+        case GhosttyPaneActionKind::PasteFromSelection: {
+            const TerminalClipboardSource source = paneAction->kind
+                    == GhosttyPaneActionKind::PasteFromClipboard
+                ? TerminalClipboardSource::Standard
+                : TerminalClipboardSource::Primary;
+            const std::optional<QString> text = readTerminalClipboard(
+                QGuiApplication::clipboard(), source);
+            if (!text.has_value()) return outcome(false);
+            if (!text->isEmpty()) pasteText(*text);
+            return outcome(true);
+        }
+        case GhosttyPaneActionKind::CopyUrlToClipboard: {
+            QClipboard *const clipboard = QGuiApplication::clipboard();
+            const std::optional<QByteArray> uri = hoveredUrlForCopy();
+            if (clipboard == nullptr || !uri.has_value()) {
+                return outcome(false);
+            }
+            auto *mimeData = new QMimeData;
+            mimeData->setData(QStringLiteral("text/plain"), *uri);
+            clipboard->setMimeData(mimeData);
+            return outcome(true);
+        }
+        case GhosttyPaneActionKind::CopyTitleToClipboard: {
+            const std::optional<QString> title = effectiveSurfaceTitle();
+            QClipboard *const clipboard = QGuiApplication::clipboard();
+            if (!title || title->isEmpty() || clipboard == nullptr) {
+                return outcome(false);
+            }
+            writeTerminalClipboard(
+                clipboard, *title, TerminalClipboardDestination::Standard);
+            return outcome(true);
+        }
+        case GhosttyPaneActionKind::EndKeySequence:
+            keybinds_.resetSequence();
+            if (activeSequenceToken_ != 0) {
+                controller_->resolveSequence(
+                    activeSequenceToken_,
+                    TerminalSequenceResolution::Flush);
+                activeSequenceToken_ = 0;
+            }
+            return outcome(true);
+        case GhosttyPaneActionKind::CloseWindow: {
+            const ConfiguredActionOutcome result = outcome(true);
+            Q_EMIT requestCloseWindow();
+            return result;
+        }
         }
     }
 
-    if (!GhosttyActionCatalog::isImplemented(action)) {
-        return false;
-    }
-    const GhosttySerializedActionView parsed =
-        GhosttyActionCatalog::parseSerializedAction(action);
-    const QStringView name = parsed.name;
-
-    if (name == QLatin1StringView("copy_to_clipboard")) {
-        copySelection();
-        return true;
-    }
-    if (name == QLatin1StringView("copy_url_to_clipboard")) {
-        // Broad (`all:`/`global:`) bindings execute without the normal
-        // performability preflight, so validate again at this public boundary.
-        if (!canExecuteConfiguredAction(action)
-            || QGuiApplication::clipboard() == nullptr) {
-            return false;
-        }
-        auto *mimeData = new QMimeData;
-        mimeData->setData(QStringLiteral("text/plain"),
-                          hoveredHyperlinkUri_);
-        QGuiApplication::clipboard()->setMimeData(mimeData);
-        return true;
-    }
-    if (name == QLatin1StringView("copy_title_to_clipboard")) {
-        const std::optional<QString> title = effectiveSurfaceTitle();
-        QClipboard *const clipboard = QGuiApplication::clipboard();
-        if (!title || title->isEmpty() || clipboard == nullptr) {
-            return false;
-        }
-        writeTerminalClipboard(
-            clipboard, *title, TerminalClipboardDestination::Standard);
-        return true;
-    }
-    if (name == QLatin1StringView("paste_from_clipboard")) {
-        const std::optional<QString> text = readTerminalClipboard(
-            QGuiApplication::clipboard(), TerminalClipboardSource::Standard);
-        if (!text.has_value()) return false;
-        if (!text->isEmpty()) pasteText(*text);
-        return true;
-    }
-    if (name == QLatin1StringView("paste_from_selection")) {
-        const std::optional<QString> text = readTerminalClipboard(
-            QGuiApplication::clipboard(), TerminalClipboardSource::Primary);
-        if (!text.has_value()) return false;
-        if (!text->isEmpty()) pasteText(*text);
-        return true;
-    }
-    if (name == QLatin1StringView("end_key_sequence")) {
-        keybinds_.resetSequence();
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Flush);
-            activeSequenceToken_ = 0;
-        }
-        return true;
-    }
-    if (name == QLatin1StringView("close_window")) {
-        Q_EMIT requestCloseWindow();
-        return true;
-    }
-    const GhosttyActionTranslation translated =
-        GhosttyActionCatalog::translate(action);
-    if (!translated.accepted()) {
-        return false;
-    }
-    WorkspaceActionRequest request = *translated.request;
+    WorkspaceActionRequest request =
+        std::move(std::get<WorkspaceActionRequest>(action));
     if (request.action == WorkspaceAction::SplitAuto) {
         const qreal devicePixelRatio = window() != nullptr
             ? window()->devicePixelRatio()
@@ -2858,34 +2802,34 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
             : WorkspaceAction::SplitDown;
     }
     if (workspaceActionHandler_) {
-        return workspaceActionHandler_(request);
+        return outcome(workspaceActionHandler_(request));
     }
     switch (request.action) {
     case WorkspaceAction::NewTab:
         Q_EMIT requestNewTab();
-        return true;
+        return outcome(true);
     case WorkspaceAction::CloseTab:
         Q_EMIT requestCloseTab(request.context.closeTabMode);
-        return true;
+        return outcome(true);
     case WorkspaceAction::ClosePane:
         Q_EMIT requestClose();
-        return true;
+        return outcome(true);
     case WorkspaceAction::SplitLeft:
     case WorkspaceAction::SplitRight:
     case WorkspaceAction::SplitUp:
     case WorkspaceAction::SplitDown:
     case WorkspaceAction::SplitAuto:
         Q_EMIT requestSplit(request.action);
-        return true;
+        return outcome(true);
     case WorkspaceAction::NavigatePane:
         Q_EMIT requestNavigate(static_cast<int>(request.context.value));
-        return true;
+        return outcome(true);
     case WorkspaceAction::ChangeTabRelative:
         Q_EMIT requestTabChange(static_cast<int>(request.context.value));
-        return true;
+        return outcome(true);
     case WorkspaceAction::SetSurfaceTitle:
         setSurfaceTitle(std::move(request.payload));
-        return true;
+        return outcome(true);
     case WorkspaceAction::ActivateTab:
     case WorkspaceAction::ActivatePane:
     case WorkspaceAction::NavigatePaneRelative:
@@ -2900,9 +2844,9 @@ bool TerminalPane::executeConfiguredAction(QStringView action)
     case WorkspaceAction::ToggleSplitZoom:
     case WorkspaceAction::ToggleFullscreen:
     case WorkspaceAction::ToggleMaximize:
-        return false;
+        return outcome(false);
     }
-    return false;
+    return outcome(false);
 }
 
 void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
@@ -3827,20 +3771,6 @@ void TerminalPane::applyFontSizeRequest(
 
     manuallyZoomed_ = true;
     setFontPointSize(points);
-}
-
-bool TerminalPane::canApplyKeyTableRequest(
-    const TerminalKeyTableRequest &request) const
-{
-    switch (request.kind) {
-    case TerminalKeyTableRequest::Kind::Activate:
-    case TerminalKeyTableRequest::Kind::ActivateOnce:
-        return keybinds_.canActivateTable(request.name);
-    case TerminalKeyTableRequest::Kind::Deactivate:
-    case TerminalKeyTableRequest::Kind::DeactivateAll:
-        return keybinds_.hasActiveTables();
-    }
-    return false;
 }
 
 bool TerminalPane::applyKeyTableRequest(

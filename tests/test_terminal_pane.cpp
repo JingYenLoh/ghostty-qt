@@ -191,6 +191,7 @@ private Q_SLOTS:
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
+    void routesBroadConfiguredActionEffects();
     void routesTypedCloseTabModes();
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
@@ -2607,6 +2608,11 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("chain=ignore"),
         QStringLiteral("performable:ctrl+c=copy_to_clipboard:mixed"),
         QStringLiteral("performable:ctrl+d=copy_title_to_clipboard"),
+        QStringLiteral("performable:alt+e=end_search"),
+        QStringLiteral("unconsumed:ctrl+h=close_tab:right"),
+        QStringLiteral("chain=ignore"),
+        QStringLiteral("alt+t=copy_title_to_clipboard"),
+        QStringLiteral("chain=paste_from_clipboard"),
     };
 
     TerminalPane pane(options);
@@ -2628,6 +2634,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy copied(controller, &TerminalController::copyRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
 
     QKeyEvent configuredNewTab(QEvent::KeyPress, Qt::Key_N,
                                Qt::AltModifier, QStringLiteral("n"));
@@ -2687,6 +2695,10 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                                 Qt::ControlModifier, QString(QChar(0x02)));
     QCoreApplication::sendEvent(&pane, &consumedEmptyCopy);
     QCOMPARE(forwarded.count(), beforeOpenConfig);
+    QCOMPARE(copied.count(), 0);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("copy_to_clipboard")));
+    QCOMPARE(copied.count(), 0);
 
     // Unconsumed actions still run, then allow normal VT encoding.
     const int beforeUnconsumedReload = forwarded.count();
@@ -2743,6 +2755,24 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
                         Qt::ControlModifier, QString(QChar(0x03)));
     QCoreApplication::sendEvent(&pane, &emptyCopy);
     QCOMPARE(forwarded.count(), beforeEmptyCopy + 1);
+    QCOMPARE(copied.count(), 0);
+
+    // A performable action can still have mandatory cleanup. Empty retained
+    // search text opens only the UI, so end_search closes that UI while
+    // reporting not performed and allowing both key events through.
+    pane.setSearchUiText(QString{});
+    QVERIFY(pane.executeConfiguredAction(QStringLiteral("start_search")));
+    QVERIFY(pane.searchUiActive());
+    const int beforeCleanup = forwarded.count();
+    QKeyEvent cleanupPress(QEvent::KeyPress, Qt::Key_E,
+                           Qt::AltModifier, QStringLiteral("e"));
+    QCoreApplication::sendEvent(&pane, &cleanupPress);
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(forwarded.count(), beforeCleanup + 1);
+    QKeyEvent cleanupRelease(QEvent::KeyRelease, Qt::Key_E,
+                             Qt::AltModifier, QStringLiteral("e"));
+    QCoreApplication::sendEvent(&pane, &cleanupRelease);
+    QCOMPARE(forwarded.count(), beforeCleanup + 2);
 
     // The title action follows the same performable contract: absent or
     // explicit-empty raw titles pass through, while a non-empty base consumes
@@ -2779,16 +2809,49 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QVector<WorkspaceActionRequest> workspaceRequests;
     pane.setWorkspaceActionHandler(
         [&workspaceRequests](WorkspaceActionRequest request) {
-        workspaceRequests.append(request);
-        return request.action != WorkspaceAction::NavigatePane;
-    });
+            workspaceRequests.append(request);
+            return request.action != WorkspaceAction::NavigatePane
+                && request.action != WorkspaceAction::CloseTab;
+        });
+
+    // Closing is a chain input effect, not the close handler's return value.
+    // The later ignore performs, both actions run, and close takes precedence
+    // over ignore so neither press nor release reaches the PTY.
+    const int beforeRejectedClose = forwarded.count();
+    const int beforeRejectedCloseIgnore =
+        applicationActionCount(ApplicationAction::Ignore);
+    QKeyEvent rejectedClosePress(QEvent::KeyPress, Qt::Key_H,
+                                 Qt::ControlModifier, QString(QChar(0x08)));
+    QCoreApplication::sendEvent(&pane, &rejectedClosePress);
+    QCOMPARE(workspaceRequests.size(), 1);
+    QCOMPARE(workspaceRequests.constLast().action,
+             WorkspaceAction::CloseTab);
+    QCOMPARE(applicationActionCount(ApplicationAction::Ignore),
+             beforeRejectedCloseIgnore + 1);
+    QCOMPARE(forwarded.count(), beforeRejectedClose);
+    QKeyEvent rejectedCloseRelease(QEvent::KeyRelease, Qt::Key_H,
+                                   Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &rejectedCloseRelease);
+    QCOMPARE(forwarded.count(), beforeRejectedClose);
+
+    // Mutable GUI state is read at execution, not captured while parsing the
+    // chain. The paste sees the title written by the preceding action.
+    const QString chainedTitle = QStringLiteral("chain title");
+    pane.setSurfaceTitle(chainedTitle);
+    clipboard->setText(QStringLiteral("old clipboard"));
+    const int beforeTitlePaste = pasted.count();
+    QKeyEvent titlePaste(QEvent::KeyPress, Qt::Key_T,
+                         Qt::AltModifier, QStringLiteral("t"));
+    QCoreApplication::sendEvent(&pane, &titlePaste);
+    QCOMPARE(pasted.count(), beforeTitlePaste + 1);
+    QCOMPARE(pasted.constLast().constFirst().toString(), chainedTitle);
 
     const int beforeFullscreen = forwarded.count();
     QKeyEvent fullscreenPress(QEvent::KeyPress, Qt::Key_Return,
                               Qt::ControlModifier, QStringLiteral("\r"));
     QCoreApplication::sendEvent(&pane, &fullscreenPress);
-    QCOMPARE(workspaceRequests.size(), 1);
-    QCOMPARE(workspaceRequests.constFirst().action,
+    QCOMPARE(workspaceRequests.size(), 2);
+    QCOMPARE(workspaceRequests.constLast().action,
              WorkspaceAction::ToggleFullscreen);
     QCOMPARE(forwarded.count(), beforeFullscreen);
     QKeyEvent fullscreenRelease(QEvent::KeyRelease, Qt::Key_Return,
@@ -2797,13 +2860,13 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(forwarded.count(), beforeFullscreen);
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("toggle_fullscreen:")));
-    QCOMPARE(workspaceRequests.size(), 1);
+    QCOMPARE(workspaceRequests.size(), 2);
 
     const int beforeMaximize = forwarded.count();
     QKeyEvent maximizePress(QEvent::KeyPress, Qt::Key_M,
                             Qt::AltModifier, QStringLiteral("m"));
     QCoreApplication::sendEvent(&pane, &maximizePress);
-    QCOMPARE(workspaceRequests.size(), 2);
+    QCOMPARE(workspaceRequests.size(), 3);
     QCOMPARE(workspaceRequests.constLast().action,
              WorkspaceAction::ToggleMaximize);
     QCOMPARE(forwarded.count(), beforeMaximize);
@@ -2813,13 +2876,84 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(forwarded.count(), beforeMaximize);
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("toggle_maximize:")));
-    QCOMPARE(workspaceRequests.size(), 2);
+    QCOMPARE(workspaceRequests.size(), 3);
 
     const int beforeUnavailableNavigation = forwarded.count();
     QKeyEvent unavailableNavigation(QEvent::KeyPress, Qt::Key_G,
                                     Qt::ControlModifier, QString(QChar(0x07)));
     QCoreApplication::sendEvent(&pane, &unavailableNavigation);
     QCOMPARE(forwarded.count(), beforeUnavailableNavigation + 1);
+}
+
+void TerminalPaneTest::routesBroadConfiguredActionEffects()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindingsConfigured = true;
+    const auto controlKey = [](quint32 codepoint) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = GhosttyKeybindCtrl,
+        };
+    };
+    options.keybindConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {controlKey('u')},
+            .actions = {
+                QStringLiteral("close_tab:right"),
+                QStringLiteral("ignore"),
+            },
+            .flags = GhosttyKeybindFlags{
+                .consumed = false,
+                .all = true,
+            },
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {controlKey('p')},
+            .actions = {QStringLiteral("copy_to_clipboard")},
+            .flags = GhosttyKeybindFlags{
+                .consumed = false,
+                .all = true,
+                .performable = true,
+            },
+        },
+    };
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy broadActions(&pane, &TerminalPane::broadActionsRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy copied(controller, &TerminalController::copyRequested);
+
+    // A broad closing action takes precedence over a later ignore action, so
+    // the release remains suppressed even though ignore is press-only alone.
+    QKeyEvent closePress(QEvent::KeyPress, Qt::Key_U,
+                         Qt::ControlModifier, QString(QChar(0x15)));
+    QCoreApplication::sendEvent(&pane, &closePress);
+    QCOMPARE(broadActions.count(), 1);
+    QCOMPARE(broadActions.constFirst().constFirst().toStringList(),
+             QStringList({QStringLiteral("close_tab:right"),
+                          QStringLiteral("ignore")}));
+    QKeyEvent closeRelease(QEvent::KeyRelease, Qt::Key_U,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &closeRelease);
+    QCOMPARE(forwarded.count(), 0);
+
+    // Broad dispatch ignores performable and is considered performed even
+    // when the originating pane lacks the action's dynamic state.
+    QKeyEvent copyPress(QEvent::KeyPress, Qt::Key_P,
+                        Qt::ControlModifier, QString(QChar(0x10)));
+    QCoreApplication::sendEvent(&pane, &copyPress);
+    QCOMPARE(broadActions.count(), 2);
+    QCOMPARE(copied.count(), 0);
+    QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_P,
+                          Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &copyRelease);
+    QCOMPARE(forwarded.count(), 0);
 }
 
 void TerminalPaneTest::routesTypedCloseTabModes()
@@ -2899,6 +3033,7 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy scrolls(controller, &TerminalController::scrollRequested);
     QSignalSpy selectAll(controller, &TerminalController::selectAllRequested);
+    QSignalSpy copied(controller, &TerminalController::copyRequested);
     QSignalSpy adjustments(
         controller, &TerminalController::selectionAdjustmentRequested);
 
@@ -3017,6 +3152,16 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
                  adjustments.constFirst().constFirst()),
              TerminalSelectionAdjustment::Right);
     QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 3000);
+
+    for (const QString &copyAction : {
+             QStringLiteral("copy_to_clipboard"),
+             QStringLiteral("copy_to_clipboard:plain"),
+             QStringLiteral("copy_to_clipboard:mixed"),
+         }) {
+        QVERIFY2(pane.executeConfiguredAction(copyAction),
+                 qPrintable(copyAction));
+    }
+    QCOMPARE(copied.count(), 3);
 
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("scroll_to_selection")));
