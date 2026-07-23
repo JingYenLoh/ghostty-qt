@@ -23,6 +23,19 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
             || input.text.contains(u'\n') || input.text.contains(u'\r'));
 }
 
+TerminalActionResult failedTerminalActionResult(quint64 requestId)
+{
+    return {
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+}
+
 } // namespace
 
 template<typename... SignalArgs, typename... WorkerArgs>
@@ -78,6 +91,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::cancelPaste);
     relayWorkerRequest(&TerminalController::copyRequested,
                        &SessionWorker::copySelection);
+    relayWorkerRequest(&TerminalController::copyActionRequested,
+                       &SessionWorker::copySelectionAction);
     relayWorkerRequest(&TerminalController::writeTerminalFileRequested,
                        &SessionWorker::writeTerminalFile);
     relayWorkerRequest(&TerminalController::clearSelectionRequested,
@@ -90,6 +105,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::endSelection);
     relayWorkerRequest(&TerminalController::selectAllRequested,
                        &SessionWorker::selectAll);
+    relayWorkerRequest(&TerminalController::selectAllActionRequested,
+                       &SessionWorker::selectAllAction);
     relayWorkerRequest(&TerminalController::selectionAdjustmentRequested,
                        &SessionWorker::adjustSelection);
     relayWorkerRequest(&TerminalController::scrollRequested,
@@ -151,6 +168,7 @@ TerminalController::TerminalController(
     qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalActionResult>();
     qRegisterMetaType<TerminalWriteFileAction>();
 
     if (initialSessionCoordinator_ != nullptr) {
@@ -266,9 +284,16 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 writeTerminalClipboard(QGuiApplication::clipboard(), text,
                                        destination);
             }, Qt::QueuedConnection);
-    connect(worker, &SessionWorker::terminalFileOpenRequested,
-            this, &TerminalController::terminalFileOpenRequested,
-            Qt::QueuedConnection);
+    connect(worker, &SessionWorker::terminalActionFinished, this,
+            [this](const TerminalActionResult &result) {
+                if (!pendingTerminalActionRequests_.remove(
+                        result.requestId)) {
+                    return;
+                }
+                pendingSelectAllActionRequests_.remove(
+                    result.requestId);
+                Q_EMIT terminalActionReady(result);
+            }, Qt::QueuedConnection);
     connect(worker, &SessionWorker::unsafePasteConfirmationRequested,
             this, &TerminalController::unsafePasteConfirmationRequested,
             Qt::QueuedConnection);
@@ -393,8 +418,11 @@ void TerminalController::tryStartSession()
                 sessionStartState_ = SessionStartState::Cancelled;
                 pendingWorkerRequests_.clear();
                 cancelInitialSessionRequest();
+                const QPointer<TerminalController> guard(this);
                 Q_EMIT errorOccurred(QStringLiteral(
                     "The initial-session lease had no launch payload"));
+                if (guard == nullptr) return;
+                failPendingTerminalActions();
                 return;
             }
             programChanged = applyInitialSessionPayload(*result.payload);
@@ -406,8 +434,11 @@ void TerminalController::tryStartSession()
             sessionStartState_ = SessionStartState::Cancelled;
             pendingWorkerRequests_.clear();
             cancelInitialSessionRequest();
+            const QPointer<TerminalController> guard(this);
             Q_EMIT errorOccurred(QStringLiteral(
                 "The initial-session lease became invalid"));
+            if (guard == nullptr) return;
+            failPendingTerminalActions();
             return;
         }
     }
@@ -459,6 +490,8 @@ TerminalController::~TerminalController()
 {
     closing_ = true;
     pendingWorkerRequests_.clear();
+    pendingTerminalActionRequests_.clear();
+    pendingSelectAllActionRequests_.clear();
     if (thread_ != nullptr && thread_->isRunning()) {
         if (worker_ != nullptr) {
             QMetaObject::invokeMethod(worker_.data(), &SessionWorker::shutdown,
@@ -519,6 +552,7 @@ void TerminalController::beginShutdown()
         sessionStartState_ = SessionStartState::Cancelled;
         pendingWorkerRequests_.clear();
         cancelInitialSessionRequest();
+        failPendingTerminalActions();
         return;
     }
     if (thread_ != nullptr && thread_->isRunning() && worker_ != nullptr) {
@@ -700,10 +734,62 @@ void TerminalController::copySelection()
     Q_EMIT copyRequested();
 }
 
-void TerminalController::writeTerminalFile(
-    const TerminalWriteFileAction &action)
+bool TerminalController::beginTerminalActionRequest(
+    quint64 requestId, bool selectAll)
 {
-    Q_EMIT writeTerminalFileRequested(action);
+    if (requestId == 0
+        || pendingTerminalActionRequests_.contains(requestId)
+        || sessionStartState_ == SessionStartState::Cancelled
+        || closing_) {
+        return false;
+    }
+
+    pendingTerminalActionRequests_.insert(requestId);
+    if (selectAll) {
+        ++pendingSelectAllRequests_;
+        pendingSelectAllActionRequests_.insert(requestId);
+    }
+    return true;
+}
+
+bool TerminalController::copySelectionAction(quint64 requestId)
+{
+    if (!beginTerminalActionRequest(requestId, false)) {
+        return false;
+    }
+    Q_EMIT copyActionRequested(requestId);
+    return true;
+}
+
+bool TerminalController::writeTerminalFile(
+    quint64 requestId, const TerminalWriteFileAction &action)
+{
+    if (!beginTerminalActionRequest(requestId, false)) {
+        return false;
+    }
+    Q_EMIT writeTerminalFileRequested(requestId, action);
+    return true;
+}
+
+void TerminalController::failPendingTerminalActions()
+{
+    QList<quint64> requestIds =
+        pendingTerminalActionRequests_.values();
+    pendingTerminalActionRequests_.clear();
+    for (quint64 requestId : std::as_const(requestIds)) {
+        if (pendingSelectAllActionRequests_.remove(requestId)) {
+            pendingSelectAllRequests_ = std::max(
+                0, pendingSelectAllRequests_ - 1);
+        }
+    }
+    std::ranges::sort(requestIds);
+
+    const QPointer<TerminalController> guard(this);
+    for (quint64 requestId : requestIds) {
+        Q_EMIT terminalActionReady(
+            failedTerminalActionResult(requestId));
+        if (guard == nullptr) return;
+    }
 }
 
 void TerminalController::clearSelection()
@@ -731,6 +817,16 @@ void TerminalController::selectAll()
 {
     ++pendingSelectAllRequests_;
     Q_EMIT selectAllRequested();
+}
+
+bool TerminalController::selectAllAction(quint64 requestId)
+{
+    if (!beginTerminalActionRequest(requestId, true)) {
+        return false;
+    }
+
+    Q_EMIT selectAllActionRequested(requestId);
+    return true;
 }
 
 void TerminalController::adjustSelection(TerminalSelectionAdjustment adjustment)

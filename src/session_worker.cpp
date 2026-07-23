@@ -1416,9 +1416,64 @@ void SessionWorker::copySelection()
                     options_.runtime.selectionClipboard.clearOnCopy);
 }
 
-void SessionWorker::writeTerminalFile(
-    const TerminalWriteFileAction &action)
+void SessionWorker::copySelectionAction(quint64 requestId)
 {
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT terminalActionFinished(result);
+    });
+    if (vt_ == nullptr) {
+        return;
+    }
+    if (!vt_->hasSelection()) {
+        result.outcome = TerminalActionOutcome::Unavailable;
+        return;
+    }
+
+    const QString text = vt_->selectedText(
+        options_.runtime.selectionClipboard.trimTrailingSpaces);
+    if (text.isNull()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to format terminal selection"));
+        return;
+    }
+
+    result.outcome = TerminalActionOutcome::Success;
+    result.effect = TerminalActionEffect::Clipboard;
+    result.performed = true;
+    result.payload = text;
+    result.clipboardDestination =
+        TerminalClipboardDestination::Standard;
+    if (options_.runtime.selectionClipboard.clearOnCopy) {
+        // Publish the reconciled selection state before the correlated result
+        // reaches the GUI and resumes a dependent action-chain entry.
+        clearSelectionState();
+    }
+}
+
+void SessionWorker::writeTerminalFile(
+    quint64 requestId, const TerminalWriteFileAction &action)
+{
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT terminalActionFinished(result);
+    });
     if (vt_ == nullptr) {
         return;
     }
@@ -1455,6 +1510,8 @@ void SessionWorker::writeTerminalFile(
     noteCompressionActivity();
     switch (snapshot.status) {
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Unavailable:
+        result.outcome = TerminalActionOutcome::Unavailable;
+        result.performed = true;
         return;
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Failed:
         Q_EMIT errorOccurred(
@@ -1541,18 +1598,23 @@ void SessionWorker::writeTerminalFile(
     // Upstream intentionally keeps successful artifacts available after the
     // action completes. Failures above retain QTemporaryDir's cleanup.
     directory.setAutoRemove(false);
+    result.outcome = TerminalActionOutcome::Success;
+    result.performed = true;
+    result.payload = canonicalPath;
     switch (action.disposition) {
     case TerminalFileDisposition::Copy:
-        Q_EMIT clipboardTextReady(
-            canonicalPath, TerminalClipboardDestination::Standard);
+        result.effect = TerminalActionEffect::Clipboard;
+        result.clipboardDestination =
+            TerminalClipboardDestination::Standard;
         return;
     case TerminalFileDisposition::Paste:
         // This is deliberately raw path input: no bracketed-paste framing,
         // newline, quoting, viewport change, or selection side effect.
         queueInputWrite(QFile::encodeName(canonicalPath));
+        result.effect = TerminalActionEffect::None;
         return;
     case TerminalFileDisposition::Open:
-        Q_EMIT terminalFileOpenRequested(canonicalPath);
+        result.effect = TerminalActionEffect::OpenFile;
         return;
     }
 }
@@ -1640,6 +1702,60 @@ void SessionWorker::selectAll()
     if (selected) {
         scheduleFrame();
     }
+}
+
+void SessionWorker::selectAllAction(quint64 requestId)
+{
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT selectAllCompleted(selectionAvailable_);
+        Q_EMIT terminalActionFinished(result);
+    });
+
+    if (vt_ == nullptr) {
+        syncSelectionAvailability();
+        return;
+    }
+
+    const bool selected = vt_->selectAll();
+    syncSelectionAvailability();
+    result.performed = true;
+    if (!selected) {
+        result.outcome = TerminalActionOutcome::Unavailable;
+        return;
+    }
+
+    result.outcome = TerminalActionOutcome::Success;
+    std::optional<TerminalClipboardDestination> destination;
+    switch (options_.runtime.selectionClipboard.copyOnSelect) {
+    case TerminalCopyOnSelectMode::Disabled:
+        break;
+    case TerminalCopyOnSelectMode::Primary:
+        destination = TerminalClipboardDestination::Primary;
+        break;
+    case TerminalCopyOnSelectMode::PrimaryAndClipboard:
+        destination =
+            TerminalClipboardDestination::PrimaryAndStandard;
+        break;
+    }
+    if (destination.has_value()) {
+        const QString text = vt_->selectedText(
+            options_.runtime.selectionClipboard.trimTrailingSpaces);
+        if (!text.isNull()) {
+            result.effect = TerminalActionEffect::Clipboard;
+            result.payload = text;
+            result.clipboardDestination = *destination;
+        }
+    }
+    scheduleFrame();
 }
 
 void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)

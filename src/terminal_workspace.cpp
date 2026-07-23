@@ -495,6 +495,28 @@ QVector<QPointer<TerminalPane>> TerminalWorkspace::paneSnapshot() const
     return panes;
 }
 
+QVector<TerminalWorkspace::BroadPaneTarget>
+TerminalWorkspace::broadPaneSnapshot() const
+{
+    QVector<BroadPaneTarget> panes;
+    forEachPane([&panes](const PaneHandle &handle) {
+        if (handle.pane != nullptr) {
+            panes.append({
+                .paneId = handle.id,
+                .pane = handle.pane,
+            });
+        }
+    });
+    return panes;
+}
+
+bool TerminalWorkspace::broadPaneTargetIsLive(
+    const BroadPaneTarget &target) const
+{
+    return target.pane != nullptr
+        && paneForId(target.paneId) == target.pane;
+}
+
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 {
     defaultOptions_ = options;

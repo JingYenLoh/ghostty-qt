@@ -4,7 +4,9 @@
 #include "ghostty_keybind_set.h"
 #include "key_event_snapshot.h"
 #include "launch_options.h"
+#include "terminal_action_result.h"
 
+#include <QInputMethodEvent>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
@@ -59,8 +61,18 @@ private:
         QPointer<QObject> target;
         KeyEventSnapshot event;
     };
+    struct DeferredInputMethodEvent {
+        QPointer<QObject> target;
+        QString preedit;
+        QList<QInputMethodEvent::Attribute> attributes;
+        QString commit;
+        int replacementStart = 0;
+        int replacementLength = 0;
+    };
     using DeferredInput = std::variant<
-        DeferredKeyEvent, GhosttyCompiledActionChain>;
+        DeferredKeyEvent, DeferredInputMethodEvent,
+        GhosttyCompiledActionChain>;
+    struct BroadExecution;
 
     void beginConfigurationUpdate() noexcept;
     void endConfigurationUpdate();
@@ -72,6 +84,15 @@ private:
         const GhosttyCompiledActionChain &actions);
     void dispatchCompiledBroadActions(
         const GhosttyCompiledActionChain &actions);
+    void continueBroadExecution();
+    void resolveBroadTarget(
+        quint64 generation, qsizetype targetIndex,
+        TerminalActionExecutionResult result,
+        bool deferContinuation = false);
+    void deferBroadExecutionContinuation(quint64 generation);
+    void resumeReadyBroadExecution();
+    [[nodiscard]] static bool broadExecutionHasLostTarget(
+        const BroadExecution &execution);
 
     GhosttyKeybindState rootState_;
     QVector<QPointer<TerminalWorkspace>> workspaces_;
@@ -80,5 +101,10 @@ private:
     int configurationUpdateDepth_ = 0;
     int keyEventDispatchDepth_ = 0;
     bool drainingDeferredInputs_ = false;
+    const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
+    const QInputMethodEvent *replayingDeferredInputMethodEvent_ =
+        nullptr;
+    quint64 nextBroadExecutionGeneration_ = 0;
+    std::shared_ptr<BroadExecution> broadExecution_;
     std::unique_ptr<GhosttyGlobalShortcutPortal> portal_;
 };

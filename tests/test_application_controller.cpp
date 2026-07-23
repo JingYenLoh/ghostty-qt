@@ -241,6 +241,7 @@ private Q_SLOTS:
     void windowGeometryReloadAffectsOnlyFutureWindows();
     void sharesOneKeybindProgramGenerationAcrossWindows();
     void globalBindingWaitsForPaneReloadTransaction();
+    void terminalBarrierWaitsForConfigurationTransaction();
     void rootReleaseWaitsForNestedReloadTransaction();
     void windowCreationCatchesUpReloadFromFactory();
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data();
@@ -836,6 +837,103 @@ void ApplicationControllerTest::globalBindingWaitsForPaneReloadTransaction()
     QVERIFY(!firstTerminal->mouseReportingEnabled());
     QVERIFY(!laterTerminal->mouseReportingEnabled());
     QCOMPARE(laterForwarded.count(), 0);
+}
+
+void ApplicationControllerTest::
+    terminalBarrierWaitsForConfigurationTransaction()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    GhosttyKeybindConfig config;
+    config.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Unicode,
+                    .unicodeCodepoint = 'g',
+                    .modifiers = GhosttyKeybindCtrl,
+                },
+            },
+            .actions = {
+                QStringLiteral("write_screen_file:open"),
+                QStringLiteral("increase_font_size:1"),
+            },
+            .flags = GhosttyKeybindFlags{.global = true},
+        },
+    };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    TerminalController *const terminal =
+        onlyController(initial->workspace);
+    QVERIFY(pane != nullptr);
+    QVERIFY(terminal != nullptr);
+
+    quint64 requestId = 0;
+    connect(
+        terminal,
+        &TerminalController::writeTerminalFileRequested,
+        pane,
+        [&requestId](
+            quint64 emittedRequestId,
+            const TerminalWriteFileAction &) {
+            requestId = emittedRequestId;
+        });
+    bool insideConfigurationFanout = false;
+    bool openedDuringConfigurationFanout = false;
+    int openAttempts = 0;
+    pane->setUrlOpener(
+        [&](const QUrl &) {
+            ++openAttempts;
+            openedDuringConfigurationFanout |=
+                insideConfigurationFanout;
+            return true;
+        });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+        QString(QChar(0x07)));
+    QCoreApplication::sendEvent(pane, &press);
+    QVERIFY(requestId != 0);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &release);
+
+    LaunchOptions reloaded = options;
+    reloaded.fontSize = options.fontSize + 5.0;
+    reloaded.selectionClipboard.trimTrailingSpaces =
+        !options.selectionClipboard.trimTrailingSpaces;
+    bool injected = false;
+    connect(
+        terminal, &TerminalController::runtimeOptionsRequested,
+        pane, [&] {
+            if (injected) return;
+            injected = true;
+            insideConfigurationFanout = true;
+            Q_EMIT terminal->terminalActionReady({
+                .requestId = requestId,
+                .outcome = TerminalActionOutcome::Success,
+                .effect = TerminalActionEffect::OpenFile,
+                .performed = true,
+                .payload =
+                    QStringLiteral("/tmp/config-barrier-result.txt"),
+                .clipboardDestination =
+                    TerminalClipboardDestination::Standard,
+            });
+            QCoreApplication::processEvents();
+            insideConfigurationFanout = false;
+        });
+
+    controller.applyLaunchOptions(reloaded);
+
+    QVERIFY(injected);
+    QVERIFY(!openedDuringConfigurationFanout);
+    QCOMPARE(openAttempts, 1);
+    QCOMPARE(pane->fontPointSize(), reloaded.fontSize + 1.0);
 }
 
 void ApplicationControllerTest::rootReleaseWaitsForNestedReloadTransaction()

@@ -301,10 +301,20 @@ exact selection ranges, including alternate-screen behavior, soft-wrap
 unwrapping, preserved trailing spaces, trailing blank-row removal, and the
 ready-empty versus unavailable distinction. Worker and pane cases verify exact
 basenames and bytes, persistent owner-only artifacts, copy and desktop-open
-relays, raw FIFO-ordered path writes without paste framing, read-only
-suppression after creation, no-data effects, broad per-surface fanout, and
-receiver teardown safety. Tests that inspect persistent artifacts remove their
-temporary directories explicitly.
+effects, raw FIFO-ordered path writes without paste framing, read-only
+suppression after creation, no-data effects, correlated success/unavailable/
+failure completion, and receiver teardown safety. Pane chains verify exact-ID
+matching, correlated select-all copy-on-select, clipboard/open commitment
+before continuation, duplicate-ID rejection, nested-loop early completion,
+worker-performed state across a rejected GUI opener, replay-reentrant key/IME
+FIFO order, focus-epoch handling, destruction during finalization, and
+cancellation before deferred session startup. Broad coverage
+starts every pane before waiting, resolves workers in reverse order, commits
+effects in stable snapshot order, holds later actions and input behind the
+barrier, preserves replay-reentrant process input order, waits for
+configuration fanout, and treats synchronously or asynchronously destroyed
+targets as resolved without redirecting their effects. Tests that inspect
+persistent artifacts remove their temporary directories explicitly.
 Other adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
 directory fallback. They additionally verify same-batch valid/invalid OSC 7

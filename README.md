@@ -503,8 +503,11 @@ Each successful action leaves a persistent `screen.txt`, `history.txt`, or
 is mode `0600`. `copy` places the absolute path in the standard clipboard,
 `paste` writes the raw filesystem path bytes to the PTY without quoting,
 bracketed-paste framing, or a newline, and `open` sends the local file URL to
-the desktop handler. Read-only mode still permits artifact creation but
-suppresses the `paste` disposition's PTY bytes.
+the desktop handler. Worker-dependent copy/open effects complete before the
+next entry in the same keybinding action chain; broad actions prepare every
+pane concurrently and publish those effects in stable workspace/tab/tree
+order. Read-only mode still permits artifact creation but suppresses the
+`paste` disposition's PTY bytes.
 
 Font bindings support `increase_font_size:<points>`,
 `decrease_font_size:<points>`, `set_font_size:<points>`, and
@@ -719,9 +722,10 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported; styled HTML/VT clipboard formats are not yet emitted.
 - Selection-dependent `performable` bindings use asynchronously reconciled UI
-  state. Immediate select-all chains retain worker order, but a separate key
-  event can still race a blank select-all completion or terminal-driven
-  selection change; worker-authoritative performability remains planned.
+  state. Configured select-all chains wait for worker completion and publish
+  any copy-on-select clipboard effect before continuing, but a separate key
+  event can still race a terminal-driven selection change;
+  worker-authoritative performability remains planned.
 - The first appearance slice covers the full palette, selection, cursor,
   bold, faint, and split appearance settings documented above. Dynamic
   light/dark theme switching, font fallback lists, palette

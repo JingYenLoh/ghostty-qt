@@ -14,6 +14,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QFontMetricsF>
+#include <QFocusEvent>
 #include <QImage>
 #include <QHoverEvent>
 #include <QInputMethodEvent>
@@ -23,6 +24,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
+#include <QSet>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -35,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -59,6 +62,20 @@ bool updatesContain(const QSignalSpy &spy, const QString &needle)
         Q_ASSERT(applied);
     }
     return frameText(frame).contains(needle);
+}
+
+TerminalActionResult successfulOpenFileResult(
+    quint64 requestId, const QString &path)
+{
+    return {
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::OpenFile,
+        .performed = true,
+        .payload = path,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
 }
 
 TerminalFrame accumulatedFrame(const QSignalSpy &spy)
@@ -246,6 +263,15 @@ private Q_SLOTS:
     void routesTypedCloseTabModes();
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
+    void suspendsTerminalActionChainsUntilCorrelatedEffectsCommit();
+    void cancelsPendingTerminalActionChainsBeforeSessionStart();
+    void rejectsDuplicateTerminalActionRequestIds();
+    void handlesCompletionReentrantlyDuringTerminalActionStart();
+    void retainsWorkerPerformedStateWhenGuiEffectFails();
+    void defersInputMethodDuringTerminalActionChains();
+    void preservesDeferredInputFifoDuringReplayReentrancy();
+    void survivesDestructionDuringDelayedActionFinalization();
+    void dropsPendingConsumedKeyOwnershipOnFocusLoss();
     void routesTerminalFileActions();
     void dropsQueuedTerminalFileOpenAfterTeardown();
     void routesSearchActionsAndRetainsUiState();
@@ -2781,7 +2807,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
-    QSignalSpy copied(controller, &TerminalController::copyRequested);
+    QSignalSpy copied(
+        controller, &TerminalController::copyActionRequested);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
 
     QKeyEvent configuredNewTab(QEvent::KeyPress, Qt::Key_N,
@@ -3238,8 +3265,10 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy scrolls(controller, &TerminalController::scrollRequested);
-    QSignalSpy selectAll(controller, &TerminalController::selectAllRequested);
-    QSignalSpy copied(controller, &TerminalController::copyRequested);
+    QSignalSpy selectAll(
+        controller, &TerminalController::selectAllActionRequested);
+    QSignalSpy copied(
+        controller, &TerminalController::copyActionRequested);
     QSignalSpy adjustments(
         controller, &TerminalController::selectionAdjustmentRequested);
 
@@ -3350,8 +3379,9 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
         QEvent::KeyPress, Qt::Key_Y, Qt::AltModifier, QStringLiteral("y"));
     QCoreApplication::sendEvent(&pane, &chainedSelection);
     QCOMPARE(selectAll.count(), 1);
-    QCOMPARE(adjustments.count(), 1);
-    QCOMPARE(scrolls.count(), beforeUnsafe + 1);
+    QTRY_COMPARE_WITH_TIMEOUT(adjustments.count(), 1, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        scrolls.count(), beforeUnsafe + 1, 3000);
     QCOMPARE(requestAt(beforeUnsafe).kind,
              TerminalViewportRequest::Kind::Selection);
     QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
@@ -3368,6 +3398,13 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
                  qPrintable(copyAction));
     }
     QCOMPARE(copied.count(), 3);
+    QSet<quint64> copyRequestIds;
+    for (const QList<QVariant> &arguments : copied) {
+        const quint64 requestId = arguments.constFirst().toULongLong();
+        QVERIFY(requestId != 0);
+        copyRequestIds.insert(requestId);
+    }
+    QCOMPARE(copyRequestIds.size(), copied.count());
 
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("scroll_to_selection")));
@@ -3454,6 +3491,676 @@ void TerminalPaneTest::routesTerminalControlActions()
     QCOMPARE(reset.count(), 1);
 }
 
+void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=select_all"),
+        QStringLiteral("chain=copy_to_clipboard:plain"),
+        QStringLiteral("chain=write_screen_file:open"),
+        QStringLiteral("chain=paste_from_clipboard"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QSignalSpy selectAll(
+        controller, &TerminalController::selectAllActionRequested);
+    QSignalSpy copies(
+        controller, &TerminalController::copyActionRequested);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString sentinel = QStringLiteral("correlated-chain-sentinel");
+    const QString copiedText = QStringLiteral("correlated selection");
+    clipboard->setText(sentinel, QClipboard::Clipboard);
+    const auto clipboardCleanup = qScopeGuard([clipboard] {
+        clipboard->clear(QClipboard::Clipboard);
+    });
+
+    QStringList effectOrder;
+    QString clipboardAtOpen;
+    QString clipboardAtPaste;
+    QList<QUrl> openedUrls;
+    pane.setUrlOpener(
+        [&](const QUrl &url) {
+            effectOrder.append(QStringLiteral("open"));
+            clipboardAtOpen =
+                clipboard->text(QClipboard::Clipboard);
+            openedUrls.append(url);
+            return true;
+        });
+    connect(
+        controller, &TerminalController::pasteRequested, &pane,
+        [&](const QString &) {
+            effectOrder.append(QStringLiteral("paste"));
+            clipboardAtPaste =
+                clipboard->text(QClipboard::Clipboard);
+        });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QCOMPARE(selectAll.count(), 1);
+    QCOMPARE(copies.count(), 0);
+    QCOMPARE(files.count(), 0);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(openedUrls.size(), 0);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), sentinel);
+    QCOMPARE(forwarded.count(), 0);
+
+    // The release arrives while the chain is worker-suspended. It must stay
+    // deferred until the aggregate consumed outcome is known.
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    QCOMPARE(forwarded.count(), 0);
+
+    const quint64 selectAllRequestId =
+        selectAll.constFirst().constFirst().toULongLong();
+    QVERIFY(selectAllRequestId != 0);
+    Q_EMIT controller->terminalActionReady({
+        .requestId = selectAllRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::None,
+        .performed = true,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCoreApplication::processEvents();
+    QCOMPARE(copies.count(), 1);
+    QCOMPARE(files.count(), 0);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), sentinel);
+
+    const quint64 copyRequestId =
+        copies.constFirst().constFirst().toULongLong();
+    QVERIFY(copyRequestId != 0);
+    QVERIFY(copyRequestId != selectAllRequestId);
+    const quint64 unrelatedRequestId =
+        copyRequestId == std::numeric_limits<quint64>::max()
+        ? copyRequestId - 1 : copyRequestId + 1;
+    Q_EMIT controller->terminalActionReady({
+        .requestId = unrelatedRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::Clipboard,
+        .performed = true,
+        .payload = QStringLiteral("wrong result"),
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCoreApplication::processEvents();
+    QCOMPARE(files.count(), 0);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), sentinel);
+
+    Q_EMIT controller->terminalActionReady({
+        .requestId = copyRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::Clipboard,
+        .performed = true,
+        .payload = copiedText,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+
+    // The pane connection is queued: neither the GUI effect nor the later
+    // action may overtake delivery of the correlated completion.
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), sentinel);
+    QCOMPARE(files.count(), 0);
+    QCoreApplication::processEvents();
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), copiedText);
+    QCOMPARE(files.count(), 1);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(openedUrls.size(), 0);
+
+    const QList<QVariant> fileArguments = files.constFirst();
+    QCOMPARE(fileArguments.size(), 2);
+    const quint64 fileRequestId =
+        fileArguments.constFirst().toULongLong();
+    QVERIFY(fileRequestId != 0);
+    QVERIFY(fileRequestId != copyRequestId);
+    const TerminalWriteFileAction fileAction =
+        qvariant_cast<TerminalWriteFileAction>(
+            fileArguments.at(1));
+    QCOMPARE(fileAction.location, TerminalFileLocation::Screen);
+    QCOMPARE(fileAction.disposition, TerminalFileDisposition::Open);
+    QCOMPARE(fileAction.format, TerminalFileFormat::Plain);
+
+    const QString artifactPath =
+        QStringLiteral("/tmp/correlated-terminal-screen.txt");
+    Q_EMIT controller->terminalActionReady({
+        .requestId = fileRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::OpenFile,
+        .performed = true,
+        .payload = artifactPath,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCOMPARE(openedUrls.size(), 0);
+    QCOMPARE(pasted.count(), 0);
+    QCoreApplication::processEvents();
+
+    QCOMPARE(
+        openedUrls,
+        QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), copiedText);
+    QCOMPARE(
+        effectOrder,
+        QStringList({
+            QStringLiteral("open"),
+            QStringLiteral("paste"),
+        }));
+    QCOMPARE(clipboardAtOpen, copiedText);
+    QCOMPARE(clipboardAtPaste, copiedText);
+    QCOMPARE(forwarded.count(), 0);
+}
+
+void TerminalPaneTest::cancelsPendingTerminalActionChainsBeforeSessionStart()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:copy"),
+        QStringLiteral("chain=paste_from_clipboard"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy completions(
+        controller, &TerminalController::terminalActionReady);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString sentinel =
+        QStringLiteral("cancelled-action-chain-clipboard");
+    clipboard->setText(sentinel, QClipboard::Clipboard);
+    const auto clipboardCleanup = qScopeGuard([clipboard] {
+        clipboard->clear(QClipboard::Clipboard);
+    });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    QCOMPARE(files.count(), 1);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(forwarded.count(), 0);
+
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    QVERIFY(requestId != 0);
+    controller->beginShutdown();
+    QCOMPARE(completions.count(), 1);
+    const TerminalActionResult completion =
+        qvariant_cast<TerminalActionResult>(
+            completions.constFirst().constFirst());
+    QCOMPARE(completion.requestId, requestId);
+    QCOMPARE(completion.outcome, TerminalActionOutcome::Failed);
+    QCOMPARE(completion.effect, TerminalActionEffect::None);
+    QVERIFY(!completion.performed);
+
+    QTRY_COMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), sentinel);
+    QCOMPARE(forwarded.count(), 0);
+}
+
+void TerminalPaneTest::rejectsDuplicateTerminalActionRequestIds()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy requests(
+        controller, &TerminalController::copyActionRequested);
+    QSignalSpy completions(
+        controller, &TerminalController::terminalActionReady);
+
+    constexpr quint64 requestId = 42;
+    QVERIFY(controller->copySelectionAction(requestId));
+    QVERIFY(!controller->copySelectionAction(requestId));
+    QVERIFY(!controller->copySelectionAction(0));
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(completions.count(), 0);
+
+    controller->beginShutdown();
+    QCOMPARE(completions.count(), 1);
+    const TerminalActionResult completion =
+        qvariant_cast<TerminalActionResult>(
+            completions.constFirst().constFirst());
+    QCOMPARE(completion.requestId, requestId);
+    QCOMPARE(completion.outcome, TerminalActionOutcome::Failed);
+    QVERIFY(!completion.performed);
+}
+
+void TerminalPaneTest::handlesCompletionReentrantlyDuringTerminalActionStart()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+        QStringLiteral("chain=paste_from_clipboard"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString clipboardText =
+        QStringLiteral("reentrant-completion-clipboard");
+    clipboard->setText(clipboardText, QClipboard::Clipboard);
+    const auto clipboardCleanup = qScopeGuard([clipboard] {
+        clipboard->clear(QClipboard::Clipboard);
+    });
+
+    const QString artifactPath =
+        QStringLiteral("/tmp/reentrant-terminal-action.txt");
+    QList<QUrl> openedUrls;
+    pane.setUrlOpener([&openedUrls](const QUrl &url) {
+        openedUrls.append(url);
+        return true;
+    });
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    connect(
+        controller, &TerminalController::writeTerminalFileRequested,
+        &pane,
+        [controller, artifactPath](
+            quint64 requestId, const TerminalWriteFileAction &) {
+            Q_EMIT controller->terminalActionReady(
+                successfulOpenFileResult(requestId, artifactPath));
+            // Exercise a modal/nested event loop while the request signal is
+            // still unwinding through startConfiguredAction().
+            QCoreApplication::processEvents();
+        });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QCOMPARE(
+        openedUrls,
+        QList<QUrl>{QUrl::fromLocalFile(artifactPath)});
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), clipboardText);
+
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    QCOMPARE(forwarded.count(), 0);
+
+    // A stranded continuation would retain key deferral and swallow these.
+    QKeyEvent ordinaryPress(
+        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+        QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+    QKeyEvent ordinaryRelease(
+        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &ordinaryRelease);
+    QCOMPARE(forwarded.count(), 2);
+}
+
+void TerminalPaneTest::retainsWorkerPerformedStateWhenGuiEffectFails()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral(
+            "performable:alt+b=write_screen_file:open"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    int openAttempts = 0;
+    pane.setUrlOpener([&openAttempts](const QUrl &) {
+        ++openAttempts;
+        return false;
+    });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QCOMPARE(files.count(), 1);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/unhandled-terminal-action.txt")));
+    QCoreApplication::processEvents();
+
+    QCOMPARE(openAttempts, 1);
+    // Artifact creation is the authoritative performed operation. A desktop
+    // opener rejection must not turn a performable binding into PTY fallback.
+    QCOMPARE(forwarded.count(), 0);
+}
+
+void TerminalPaneTest::defersInputMethodDuringTerminalActionChains()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+        QStringLiteral("chain=text:after"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy rawText(controller, &TerminalController::rawTextRequested);
+    QSignalSpy inputMethod(
+        controller, &TerminalController::inputMethodRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QStringList order;
+    pane.setUrlOpener([&order](const QUrl &) {
+        order.append(QStringLiteral("open"));
+        return true;
+    });
+    connect(
+        controller, &TerminalController::rawTextRequested, &pane,
+        [&order](const QByteArray &) {
+            order.append(QStringLiteral("chain"));
+        });
+    connect(
+        controller, &TerminalController::inputMethodRequested, &pane,
+        [&order](const TerminalInputMethodInput &) {
+            order.append(QStringLiteral("ime"));
+        });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QCOMPARE(files.count(), 1);
+
+    QInputMethodEvent inputEvent;
+    inputEvent.setCommitString(QStringLiteral("committed later"));
+    QCoreApplication::sendEvent(&pane, &inputEvent);
+    QCOMPARE(inputMethod.count(), 0);
+    QCOMPARE(rawText.count(), 0);
+
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/ime-order-terminal-action.txt")));
+    QCoreApplication::processEvents();
+
+    QCOMPARE(rawText.count(), 1);
+    QCOMPARE(inputMethod.count(), 1);
+    const TerminalInputMethodInput committed =
+        qvariant_cast<TerminalInputMethodInput>(
+            inputMethod.constFirst().constFirst());
+    QCOMPARE(committed.commitText, QStringLiteral("committed later"));
+    QCOMPARE(
+        order,
+        QStringList({
+            QStringLiteral("open"),
+            QStringLiteral("chain"),
+            QStringLiteral("ime"),
+        }));
+    QCOMPARE(forwarded.count(), 0);
+}
+
+void TerminalPaneTest::preservesDeferredInputFifoDuringReplayReentrancy()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    pane.setUrlOpener([](const QUrl &) { return true; });
+
+    QStringList order;
+    bool injected = false;
+    connect(
+        controller, &TerminalController::keyRequested, &pane,
+        [&](const TerminalKeyInput &input) {
+            order.append(QStringLiteral("%1-%2")
+                             .arg(QChar(input.key))
+                             .arg(input.pressed
+                                      ? QStringLiteral("press")
+                                      : QStringLiteral("release")));
+            if (injected || input.key != Qt::Key_C
+                || !input.pressed) {
+                return;
+            }
+            injected = true;
+            QKeyEvent nestedKey(
+                QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
+                QStringLiteral("e"));
+            QCoreApplication::sendEvent(&pane, &nestedKey);
+            QInputMethodEvent nestedInput;
+            nestedInput.setCommitString(QStringLiteral("new-ime"));
+            QCoreApplication::sendEvent(&pane, &nestedInput);
+        });
+    connect(
+        controller, &TerminalController::inputMethodRequested,
+        &pane, [&order](const TerminalInputMethodInput &input) {
+            order.append(
+                QStringLiteral("ime:%1").arg(input.commitText));
+        });
+
+    QKeyEvent trigger(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &trigger);
+    QCOMPARE(files.count(), 1);
+    QKeyEvent triggerRelease(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &triggerRelease);
+
+    QKeyEvent cPress(
+        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+        QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &cPress);
+    QInputMethodEvent oldInput;
+    oldInput.setCommitString(QStringLiteral("old-ime"));
+    QCoreApplication::sendEvent(&pane, &oldInput);
+    QKeyEvent cRelease(
+        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &cRelease);
+    QKeyEvent dPress(
+        QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+        QStringLiteral("d"));
+    QCoreApplication::sendEvent(&pane, &dPress);
+    QVERIFY(order.isEmpty());
+
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/reentrant-input-fifo.txt")));
+    QCoreApplication::processEvents();
+
+    QVERIFY(injected);
+    QCOMPARE(
+        order,
+        QStringList({
+            QStringLiteral("C-press"),
+            QStringLiteral("ime:old-ime"),
+            QStringLiteral("C-release"),
+            QStringLiteral("D-press"),
+            QStringLiteral("E-press"),
+            QStringLiteral("ime:new-ime"),
+        }));
+}
+
+void TerminalPaneTest::survivesDestructionDuringDelayedActionFinalization()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral(
+            "performable:alt+b=write_screen_file:copy"),
+    });
+
+    auto *pane = new TerminalPane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    const QPointer<TerminalPane> guard(pane);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    connect(
+        controller, &TerminalController::keyRequested, this,
+        [pane](const TerminalKeyInput &) {
+            delete pane;
+        });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(pane, &press);
+    QCOMPARE(files.count(), 1);
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady({
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCoreApplication::processEvents();
+    QVERIFY(guard.isNull());
+}
+
+void TerminalPaneTest::dropsPendingConsumedKeyOwnershipOnFocusLoss()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    pane.setUrlOpener([](const QUrl &) { return true; });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QCOMPARE(files.count(), 1);
+
+    QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusOut);
+
+    // A new press/release pair for the same logical key may arrive after the
+    // pane regains focus while the old action is still pending. Its release
+    // belongs to the new focus epoch and must not stand in for the original
+    // binding release.
+    QFocusEvent focusIn(QEvent::FocusIn, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusIn);
+    QKeyEvent ordinaryPress(
+        QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+    QKeyEvent ordinaryRelease(
+        QEvent::KeyRelease, Qt::Key_B, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &ordinaryRelease);
+    QCOMPARE(forwarded.count(), 0);
+
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/focus-loss-terminal-action.txt")));
+    QCoreApplication::processEvents();
+
+    // The original Alt+B release went elsewhere on focus loss. Draining the
+    // new epoch must forward both ordinary events without manufacturing a
+    // stale consumed-key identity for either release.
+    QCOMPARE(forwarded.count(), 2);
+}
+
 void TerminalPaneTest::routesTerminalFileActions()
 {
     const QString printfExecutable =
@@ -3503,15 +4210,22 @@ void TerminalPaneTest::routesTerminalFileActions()
         QStringLiteral("write_screen_file:open")));
     QCOMPARE(requests.count(), 2);
 
+    const quint64 selectionRequestId =
+        requests.at(0).at(0).toULongLong();
+    QVERIFY(selectionRequestId != 0);
     const TerminalWriteFileAction selectionRequest =
         qvariant_cast<TerminalWriteFileAction>(
-            requests.at(0).constFirst());
+            requests.at(0).at(1));
     QCOMPARE(selectionRequest.location, TerminalFileLocation::Selection);
     QCOMPARE(selectionRequest.disposition, TerminalFileDisposition::Open);
     QCOMPARE(selectionRequest.format, TerminalFileFormat::Plain);
+    const quint64 screenRequestId =
+        requests.at(1).at(0).toULongLong();
+    QVERIFY(screenRequestId != 0);
+    QVERIFY(screenRequestId != selectionRequestId);
     const TerminalWriteFileAction screenRequest =
         qvariant_cast<TerminalWriteFileAction>(
-            requests.at(1).constFirst());
+            requests.at(1).at(1));
     QCOMPARE(screenRequest.location, TerminalFileLocation::Screen);
     QCOMPARE(screenRequest.disposition, TerminalFileDisposition::Open);
     QCOMPARE(screenRequest.format, TerminalFileFormat::Plain);
@@ -3556,14 +4270,26 @@ void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
         ++openCount;
         return true;
     });
+    QSignalSpy requests(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("write_screen_file:open")));
+    QCOMPARE(requests.count(), 1);
+    const quint64 requestId =
+        requests.constFirst().constFirst().toULongLong();
+    QVERIFY(requestId != 0);
+
     const QPointer<TerminalPane> guardedPane(pane);
-    QVERIFY(QMetaObject::invokeMethod(
-        controller,
-        [controller] {
-            Q_EMIT controller->terminalFileOpenRequested(
-                QStringLiteral("/tmp/stale-terminal-file.txt"));
-        },
-        Qt::QueuedConnection));
+    Q_EMIT controller->terminalActionReady({
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::OpenFile,
+        .performed = true,
+        .payload =
+            QStringLiteral("/tmp/stale-terminal-file.txt"),
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
 
     delete pane;
     QVERIFY(guardedPane.isNull());

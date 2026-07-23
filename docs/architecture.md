@@ -1068,11 +1068,14 @@ Configuration fanout is also one process input transaction. While the root
 matcher and workspaces move to a new generation,
 `GhosttyApplicationKeybindings` stores reentrant key events as owning value
 snapshots and stores portal/all/global activations as owning compiled action
-chains in the same FIFO. It drains that FIFO only after both configuration
-fanout and any outer root key event have finished, so a release cannot race the
-press's consumed-key bookkeeping and a broad action cannot observe a mixture
-of old and new panes. Each pane applies the same rule locally around its
-runtime snapshot and sequence state.
+chains in the same FIFO. A worker-dependent broad action retains that FIFO
+until its correlated per-pane barrier completes as well. It drains only after
+configuration fanout, any outer root key event, and the current broad action
+have finished, so a release cannot race the press's consumed-key bookkeeping,
+a later activation cannot overtake terminal state, and a broad action cannot
+observe a mixture of old and new panes. Each pane applies the same rule locally
+around its runtime snapshot, sequence state, and suspended worker-dependent
+action chain.
 
 New-tab and split construction keep a pane detached until its handlers are
 wired, then register it as pending before QObject, visual-parent, or QML
@@ -1136,6 +1139,51 @@ an absent text MIME representation from an explicitly present empty string,
 and an explicit primary-selection paste never inherits the separate
 middle-click fallback policy.
 
+Actions whose authoritative input belongs to `SessionWorker` return a
+correlated result instead of publishing a GUI side effect independently.
+`select_all`, `copy_to_clipboard`, and the three terminal-file actions
+currently use this protocol. A local chain suspends at such an entry, retains
+its staged-sequence token and aggregate performed state, and defers later key
+or IME input. Accepted request IDs are nonzero and unique among the pane's
+in-flight operations; rejected duplicates publish no second result for the
+same correlation. The worker reports success, unavailable data, or failure
+plus any clipboard/open effect; the pane attempts that effect on the GUI
+thread before resuming the next entry. Desktop-opener or clipboard-service
+availability does not erase the worker's authoritative performed state after
+the terminal operation itself succeeded.
+Only after the final entry does the pane apply closing, ignore, performable,
+and consumed precedence and replay or suppress the retained key release.
+Cancelled pre-start sessions synthesize failed results, while stale results
+and destroyed-pane callbacks are ignored by request ID. A completion delivered
+through a nested event loop while request dispatch is still unwinding is held
+as an early result and consumed by that same continuation frame, rather than
+recursively duplicating its sequence token or key-event deferral.
+Deferred key snapshots retain their focus epoch, and both pane-local and
+process-level drains identify the exact event currently being replayed. New
+key or IME input arriving through a nested event loop therefore joins the tail
+of the existing FIFO instead of overtaking older snapshots or borrowing a
+consumed release from another focus epoch.
+The legacy synchronous `executeConfiguredAction()` API still returns an
+optimistic `true` when one of these operations is pending; local chains and
+the broad coordinator use the internal completion path for the authoritative
+performed value.
+
+Process-wide fanout adds an action-major barrier around the same protocol. For
+each worker-dependent entry it takes a fresh workspace/tab/tree snapshot,
+starts preparation on every target concurrently, and buffers the correlated
+results. Once all live targets have resolved, GUI effects commit in snapshot
+order before the next chain entry begins. Thus a later clipboard consumer sees
+the completed copy, and the last broad clipboard writer is deterministic even
+when pane workers finish in another order. A pane or workspace destroyed while
+preparation is pending resolves its target as unperformed and cannot redirect
+an effect to a replacement pane with the same surrounding topology.
+Any barrier which resolves a target through destruction resumes on a later
+event turn, including destruction delivered while target startup is still
+unwinding, so deferred input cannot re-enter a child while its QObject parent
+is tearing down. A ready barrier also remains paused until any process-wide
+configuration fanout finishes; effects and later entries can therefore never
+observe a mixed keybinding/runtime generation.
+
 Destructive lifecycle commitment belongs to the object that owns that
 lifecycle, not to the pane action interpreter. `TerminalWorkspace` commits a
 close synchronously: it rejects later structural actions and starts every pane
@@ -1168,10 +1216,13 @@ to a stale rendered frame while resize is in flight. The controller likewise
 tracks queued select-all intent for action-chain performability; the worker
 reports completion even on a blank terminal, reconciling that intent with the
 authoritative selection state without exposing speculative QML state.
-This closes deterministic action-chain ordering; a separate key event during
-the reconciliation window can still observe pending or cached state. Moving
-the performability decision into worker-side input dispatch is the remaining
-boundary for exact selection-dependent timing.
+Configured select-all additionally returns any copy-on-select clipboard
+payload through its correlated result, so a later chain entry cannot overtake
+that GUI effect. This closes deterministic action-chain ordering; a separate
+key event during a terminal-driven selection reconciliation window can still
+observe pending or cached state. Moving the performability decision into
+worker-side input dispatch is the remaining boundary for exact
+selection-dependent timing.
 
 Terminal-control actions follow the same catalog-to-pane-to-controller route
 but mutate the session only on `SessionWorker`. The structured Ghostty helper
@@ -1210,21 +1261,15 @@ Disposition remains ordered after that same worker snapshot. `paste` enqueues
 the encoded absolute path directly in the PTY write FIFO, without entering the
 clipboard paste, quoting, newline, bracketed-paste, viewport, or activity
 paths; the normal worker-side read-only gate can therefore suppress the bytes
-without suppressing file creation. `copy` relays the path as plain text to the
-standard clipboard, while `open` relays a local-file URL through the
-controller to the pane's injected desktop opener. Receiver-bound queued
-connections discard either GUI effect if its pane is destroyed. A missing
-history or selection performs the binding without an artifact or GUI/PTY
-effect, matching the pinned action's no-data behavior.
-
-`copy` and `open` complete asynchronously after the binding chain has already
-continued on the GUI thread. Consequently, a later clipboard consumer in that
-same chain can still observe the previous clipboard value, and simultaneous
-broad copy actions do not have a deterministic last-writer order across pane
-workers. The `paste` disposition remains FIFO-ordered because creation and the
-raw write happen in one worker operation. Closing the remaining sequencing gap
-requires correlated asynchronous action-chain continuations rather than
-moving terminal snapshots back to the GUI thread.
+without suppressing file creation. `copy` returns the path for a GUI-thread
+standard-clipboard commit, while `open` returns it for the pane's injected
+desktop local-file opener. Those effects commit before a local chain resumes
+and, for broad actions, only after every target has prepared its result. The
+`paste` result is released after its raw path has entered the worker's PTY
+write FIFO. A missing history or selection reports unavailable but still
+performs the binding without an artifact or GUI/PTY effect, matching the
+pinned action's no-data behavior. Receiver-bound request ownership discards a
+GUI effect if its pane is destroyed.
 
 Formatting and file I/O currently complete synchronously on the session
 worker. That preserves a single ordering point for terminal state and raw
@@ -1449,8 +1494,9 @@ The default CTest suite has focused layers for each ownership boundary:
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, byte-exact terminal-control action writes, reset cache
-  synchronization, process exit, explicit-program activity, and an interactive
-  shell's idle/job/idle foreground transitions. Read-only cases cover ordered
+  synchronization, correlated terminal-action outcomes and effects, process
+  exit, explicit-program activity, and an interactive shell's idle/job/idle
+  foreground transitions. Read-only cases cover ordered
   toggles, suppressed key/IME/mouse/paste/raw user input, continued output,
   protocol replies, focus bookkeeping, terminal-local work, and clean
   resumption without replay. It also verifies
@@ -1485,7 +1531,10 @@ The default CTest suite has focused layers for each ownership boundary:
   through nested divider gaps to verify exact-split targeting, T-junctions,
   focus preservation, endpoint clamping, cancellation, zoom/tab/scene
   lifecycle, ratio persistence, terminal-cell hit regions, and nullable live
-  divider recoloring. A focused second CTest run repeats the nested drag and
+  divider recoloring. Correlated broad-action cases resolve worker results in
+  reverse order while asserting snapshot-ordered effects, barrier-delayed
+  chain entries and key input, and safe target destruction. A focused second
+  CTest run repeats the nested drag and
   color capture at a scale factor of two to keep geometry in logical
   coordinates while checking physical pixels.
 - `workspace-foundation` verifies stable tab identity after row removal and
@@ -1532,7 +1581,8 @@ The default CTest suite has focused layers for each ownership boundary:
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,
-  release suppression, reload cancellation, and tracked OSC 8 hover, copy, and
+  release suppression, reload cancellation, correlated worker-action chain
+  suspension/cancellation, and tracked OSC 8 hover, copy, and
   release-only activation through a real PTY-backed pane, including live
   output, viewport hiding/restoration, resize-safe masks, and mouse-capture
   modifier transitions. The same path covers live `link-url` enable/disable,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "initial_session_coordinator.h"
+#include "terminal_action_result.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
@@ -9,6 +10,7 @@
 #include <QObject>
 #include <QPoint>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -112,12 +114,18 @@ public:
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     void copySelection();
-    void writeTerminalFile(const TerminalWriteFileAction &action);
+    // Correlated request IDs must be non-zero and unique among in-flight
+    // actions. A false return means the request was not accepted and no
+    // terminalActionReady signal will be published for that invocation.
+    [[nodiscard]] bool copySelectionAction(quint64 requestId);
+    [[nodiscard]] bool writeTerminalFile(
+        quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelection();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);
     void selectAll();
+    [[nodiscard]] bool selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
     // Search requests are generation-scoped so an incremental scan can yield
@@ -162,7 +170,7 @@ Q_SIGNALS:
     void searchSelectionReady(bool available, const QString &text);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
-    void terminalFileOpenRequested(const QString &path);
+    void terminalActionReady(const TerminalActionResult &result);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -187,13 +195,16 @@ Q_SIGNALS:
     void confirmPasteRequested(quint64 requestId);
     void cancelPasteRequested(quint64 requestId);
     void copyRequested();
-    void writeTerminalFileRequested(const TerminalWriteFileAction &action);
+    void copyActionRequested(quint64 requestId);
+    void writeTerminalFileRequested(
+        quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelectionRequested();
     void beginSelectionRequested(int column, int row, int clickCount,
                                  bool rectangular);
     void updateSelectionRequested(int column, int row, bool rectangular);
     void endSelectionRequested(int column, int row);
     void selectAllRequested();
+    void selectAllActionRequested(quint64 requestId);
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
     void searchRequested(quint64 generation, const QByteArray &needle);
@@ -238,6 +249,9 @@ private:
     [[nodiscard]] bool applyInitialSessionPayload(
         const InitialSessionCoordinator::Payload &payload);
     void cancelInitialSessionRequest();
+    [[nodiscard]] bool beginTerminalActionRequest(
+        quint64 requestId, bool selectAll);
+    void failPendingTerminalActions();
     void notePotentialActivity();
     // Sequence leaders cross to SessionWorker immediately for mode-sensitive
     // VT encoding, but their bytes remain staged until their owning pane
@@ -261,6 +275,8 @@ private:
     QThread *thread_ = nullptr;
     QPointer<SessionWorker> worker_;
     std::vector<WorkerRequest> pendingWorkerRequests_;
+    QSet<quint64> pendingTerminalActionRequests_;
+    QSet<quint64> pendingSelectAllActionRequests_;
     std::optional<QString> baseTitle_;
     QString currentDirectory_;
     bool terminalMouseTracking_ = false;

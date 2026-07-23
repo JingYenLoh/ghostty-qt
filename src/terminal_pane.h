@@ -5,12 +5,14 @@
 #include "key_event_snapshot.h"
 #include "launch_options.h"
 #include "revision_counter.h"
+#include "terminal_action_result.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
 
 #include <QByteArray>
 #include <QFont>
+#include <QHash>
 #include <QMetaObject>
 #include <QMutex>
 #include <QPoint>
@@ -29,6 +31,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <variant>
 
 class QChronoTimer;
 class QFocusEvent;
@@ -195,11 +198,36 @@ protected:
 
 private:
     friend class GhosttyApplicationKeybindings;
+    friend class TerminalWorkspace;
 
     enum class KeyHandling {
         PassThrough,
         ConsumePress,
         ConsumePressAndRelease,
+    };
+
+    using ConfiguredActionCompletion =
+        std::function<void(TerminalActionExecutionResult)>;
+    struct DeferredKeyInput {
+        KeyEventSnapshot event;
+        quint64 focusEpoch = 0;
+    };
+    using DeferredPaneInput =
+        std::variant<DeferredKeyInput, TerminalInputMethodInput>;
+
+    struct PendingLocalActionChain {
+        GhosttyCompiledActionChain chain;
+        qsizetype nextEntry = 0;
+        bool performed = false;
+        quint64 sequenceToken = 0;
+        TerminalKeyInput currentInput;
+        quint64 keyIdentity = 0;
+        quint64 keyFocusEpoch = 0;
+        bool consumed = true;
+        bool performable = false;
+        bool ownsKeyDeferral = false;
+        bool startingAction = false;
+        std::optional<TerminalActionExecutionResult> earlyResult;
     };
 
     void updateMetrics();
@@ -242,6 +270,17 @@ private:
         std::optional<TerminalKeyInput> current = std::nullopt);
     [[nodiscard]] bool performConfiguredAction(
         const GhosttyConfiguredAction &action);
+    [[nodiscard]] TerminalActionExecutionStart startConfiguredAction(
+        const GhosttyConfiguredAction &action,
+        ConfiguredActionCompletion completion);
+    [[nodiscard]] bool commitConfiguredActionResult(
+        const TerminalActionExecutionResult &result);
+    [[nodiscard]] quint64 nextTerminalActionRequestId();
+    void handleTerminalActionResult(const TerminalActionResult &result);
+    [[nodiscard]] std::optional<KeyHandling> continueLocalActionChain(
+        const std::shared_ptr<PendingLocalActionChain> &chain);
+    [[nodiscard]] KeyHandling finishLocalActionChain(
+        PendingLocalActionChain &chain, bool delayed);
     [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
     [[nodiscard]] bool performWorkspaceAction(WorkspaceActionRequest request);
     int viewportPageRows() const;
@@ -345,12 +384,17 @@ private:
     quint64 deferredSessionPresentedFrame_ = 0;
     quint64 deferredSessionCandidateFrame_ = 0;
     QSet<quint64> consumedKeys_;
-    std::deque<KeyEventSnapshot> deferredKeyEvents_;
+    quint64 keyFocusEpoch_ = 0;
+    std::deque<DeferredPaneInput> deferredInputs_;
     int keyEventDeferralDepth_ = 0;
     int keyEventDispatchDepth_ = 0;
     bool drainingDeferredKeyEvents_ = false;
+    const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
     quint64 activeSequenceToken_ = 0;
     QVector<quint64> executingSequenceTokens_;
+    quint64 nextTerminalActionRequestId_ = 0;
+    QHash<quint64, ConfiguredActionCompletion>
+        pendingTerminalActionCompletions_;
     bool hoverInside_ = false;
     QPointF hoverPosition_;
     QPoint hoverCell_{-1, -1};

@@ -62,7 +62,52 @@ quint64 keyEventIdentity(const QKeyEvent *event)
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
+quint64 keyEventIdentity(const KeyEventSnapshot &event)
+{
+    const quint64 physical =
+        static_cast<quint64>(event.nativeScanCode);
+    const quint64 logical = static_cast<quint64>(
+        static_cast<quint32>(event.key));
+    return physical != 0 ? (quint64{1} << 63U) | physical : logical;
+}
+
+bool actionRequiresTerminalBarrier(
+    const GhosttyConfiguredAction &action)
+{
+    const auto *paneAction = std::get_if<GhosttyPaneAction>(&action);
+    return paneAction != nullptr
+        && (std::holds_alternative<
+                GhosttyPaneActions::CopyToClipboard>(*paneAction)
+            || std::holds_alternative<
+                GhosttyPaneActions::SelectAll>(*paneAction)
+            || std::holds_alternative<TerminalWriteFileAction>(
+                *paneAction));
+}
+
 } // namespace
+
+struct GhosttyApplicationKeybindings::BroadExecution {
+    struct Target {
+        QPointer<TerminalWorkspace> workspace;
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+        bool resolved = false;
+        TerminalActionExecutionResult result;
+        QMetaObject::Connection paneDestruction;
+        QMetaObject::Connection workspaceDestruction;
+    };
+
+    quint64 generation = 0;
+    GhosttyCompiledActionChain actions;
+    qsizetype entryIndex = 0;
+    bool barrierInitialized = false;
+    bool startingTargets = false;
+    bool continuing = false;
+    bool continuationMustDefer = false;
+    bool continuationQueued = false;
+    qsizetype unresolvedTargets = 0;
+    QVector<Target> targets;
+};
 
 GhosttyApplicationKeybindings::GhosttyApplicationKeybindings(
     const LaunchOptions &options,
@@ -110,13 +155,18 @@ void GhosttyApplicationKeybindings::endConfigurationUpdate()
 {
     Q_ASSERT(configurationUpdateDepth_ > 0);
     --configurationUpdateDepth_;
-    if (configurationUpdateDepth_ == 0) drainDeferredInputs();
+    if (configurationUpdateDepth_ == 0) {
+        resumeReadyBroadExecution();
+        drainDeferredInputs();
+    }
 }
 
 void GhosttyApplicationKeybindings::dispatchOrDeferBroadActions(
     GhosttyCompiledActionChain actions)
 {
-    if (configurationUpdateDepth_ != 0) {
+    if (configurationUpdateDepth_ != 0
+        || drainingDeferredInputs_
+        || broadExecution_ != nullptr) {
         deferredInputs_.emplace_back(std::move(actions));
         return;
     }
@@ -126,7 +176,7 @@ void GhosttyApplicationKeybindings::dispatchOrDeferBroadActions(
 void GhosttyApplicationKeybindings::drainDeferredInputs()
 {
     if (configurationUpdateDepth_ != 0 || keyEventDispatchDepth_ != 0
-        || drainingDeferredInputs_) {
+        || broadExecution_ != nullptr || drainingDeferredInputs_) {
         return;
     }
 
@@ -134,14 +184,41 @@ void GhosttyApplicationKeybindings::drainDeferredInputs()
     drainingDeferredInputs_ = true;
     while (guard != nullptr && guard->configurationUpdateDepth_ == 0
            && guard->keyEventDispatchDepth_ == 0
+           && guard->broadExecution_ == nullptr
            && !guard->deferredInputs_.empty()) {
         DeferredInput deferred =
             std::move(guard->deferredInputs_.front());
         guard->deferredInputs_.pop_front();
         if (auto *key = std::get_if<DeferredKeyEvent>(&deferred)) {
-            if (key->target == nullptr) continue;
+            if (key->target == nullptr) {
+                if (!key->event.pressed) {
+                    guard->consumedKeys_.remove(
+                        keyEventIdentity(key->event));
+                }
+                continue;
+            }
             QKeyEvent replay = key->event.replay();
+            guard->replayingDeferredKeyEvent_ = &replay;
             QCoreApplication::sendEvent(key->target, &replay);
+            if (guard != nullptr) {
+                guard->replayingDeferredKeyEvent_ = nullptr;
+            }
+        } else if (auto *inputMethod =
+                       std::get_if<DeferredInputMethodEvent>(
+                           &deferred)) {
+            if (inputMethod->target == nullptr) continue;
+            QInputMethodEvent replay(
+                inputMethod->preedit, inputMethod->attributes);
+            replay.setCommitString(
+                inputMethod->commit,
+                inputMethod->replacementStart,
+                inputMethod->replacementLength);
+            guard->replayingDeferredInputMethodEvent_ = &replay;
+            QCoreApplication::sendEvent(
+                inputMethod->target, &replay);
+            if (guard != nullptr) {
+                guard->replayingDeferredInputMethodEvent_ = nullptr;
+            }
         } else {
             guard->dispatchCompiledBroadActions(
                 std::get<GhosttyCompiledActionChain>(deferred));
@@ -229,44 +306,323 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
 void GhosttyApplicationKeybindings::dispatchCompiledBroadActions(
     const GhosttyCompiledActionChain &actions)
 {
+    if (broadExecution_ != nullptr) {
+        deferredInputs_.emplace_back(actions);
+        return;
+    }
+
+    do {
+        ++nextBroadExecutionGeneration_;
+    } while (nextBroadExecutionGeneration_ == 0);
+    broadExecution_ = std::make_shared<BroadExecution>(
+        BroadExecution{
+            .generation = nextBroadExecutionGeneration_,
+            .actions = actions,
+            .entryIndex = 0,
+            .barrierInitialized = false,
+            .startingTargets = false,
+            .continuing = false,
+            .continuationMustDefer = false,
+            .continuationQueued = false,
+            .unresolvedTargets = 0,
+            .targets = {},
+        });
+    continueBroadExecution();
+}
+
+void GhosttyApplicationKeybindings::continueBroadExecution()
+{
+    const std::shared_ptr<BroadExecution> execution = broadExecution_;
+    if (execution == nullptr || execution->continuing
+        || configurationUpdateDepth_ != 0) {
+        return;
+    }
+
+    const quint64 generation = execution->generation;
     const QPointer<GhosttyApplicationKeybindings> guard(this);
+    execution->continuing = true;
+    const auto continuingGuard = qScopeGuard([guard, execution] {
+        if (guard != nullptr
+            && guard->broadExecution_ == execution) {
+            execution->continuing = false;
+        }
+    });
+    const auto stillCurrent = [guard, execution, generation] {
+        return guard != nullptr
+            && guard->broadExecution_ == execution
+            && execution->generation == generation;
+    };
+
     // Ghostty dispatches chains action-major: each surface receives action N
-    // before any surface receives action N+1. App actions run only once.
-    for (const GhosttyCompiledAction &entry : actions.entries) {
+    // before any surface receives action N+1. Worker-owned actions add a
+    // per-entry barrier: prepare on every target concurrently, publish their
+    // GUI effects in snapshot order, and only then advance the chain.
+    while (execution->entryIndex < execution->actions.entries.size()) {
+        const GhosttyCompiledAction &entry =
+            execution->actions.entries.at(execution->entryIndex);
         if (entry.scope == GhosttyActionScope::Application) {
             const auto *application = entry.getIf<ApplicationAction>();
             if (application != nullptr) {
                 Q_EMIT applicationActionRequested(*application);
-                if (guard == nullptr) return;
+                if (!stillCurrent()) return;
             }
+            ++execution->entryIndex;
             continue;
         }
 
-        if (!entry.action.has_value()) continue;
-
-        const QVector<QPointer<TerminalWorkspace>> workspaces =
-            workspaceSnapshot();
+        if (!entry.action.has_value()) {
+            ++execution->entryIndex;
+            continue;
+        }
 
         // In the current frontend every surface belongs to a tab/window. A
         // broad close of surfaces, tabs, or windows therefore converges on the
         // same confirmed workspace shutdown, without overwriting its single
         // pending-close dialog state during fanout.
         if (GhosttyActionCatalog::shouldCoalesceBroadClose(*entry.action)) {
+            const QVector<QPointer<TerminalWorkspace>> workspaces =
+                workspaceSnapshot();
             for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
                 if (workspace != nullptr) workspace->requestWindowClose();
-                if (guard == nullptr) return;
+                if (!stillCurrent()) return;
             }
+            ++execution->entryIndex;
             continue;
         }
 
-        for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
-            if (workspace != nullptr) {
-                (void) workspace->executeSurfaceActionOnAllPanes(
-                    *entry.action);
-                if (guard == nullptr) return;
+        if (!actionRequiresTerminalBarrier(*entry.action)) {
+            const QVector<QPointer<TerminalWorkspace>> workspaces =
+                workspaceSnapshot();
+            for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+                if (workspace != nullptr) {
+                    (void) workspace->executeSurfaceActionOnAllPanes(
+                        *entry.action);
+                    if (!stillCurrent()) return;
+                }
+            }
+            ++execution->entryIndex;
+            continue;
+        }
+
+        if (!execution->barrierInitialized) {
+            execution->barrierInitialized = true;
+            execution->startingTargets = true;
+            execution->continuationMustDefer = false;
+            execution->continuationQueued = false;
+            execution->targets.clear();
+
+            // A fresh snapshot for each action matches Ghostty's action-major
+            // fanout: topology changes from the previous entry affect the
+            // target set of the next entry, never the entry already running.
+            const QVector<QPointer<TerminalWorkspace>> workspaces =
+                workspaceSnapshot();
+            for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
+                if (workspace == nullptr) continue;
+                const QVector<TerminalWorkspace::BroadPaneTarget> panes =
+                    workspace->broadPaneSnapshot();
+                for (const TerminalWorkspace::BroadPaneTarget &pane : panes) {
+                    execution->targets.append({
+                        .workspace = workspace,
+                        .paneId = pane.paneId,
+                        .pane = pane.pane,
+                        .resolved = false,
+                        .result = {},
+                        .paneDestruction = {},
+                        .workspaceDestruction = {},
+                    });
+                }
+            }
+
+            execution->unresolvedTargets = execution->targets.size();
+            for (qsizetype index = 0;
+                 index < execution->targets.size(); ++index) {
+                BroadExecution::Target &target =
+                    execution->targets[index];
+                if (target.workspace == nullptr || target.pane == nullptr) {
+                    resolveBroadTarget(
+                        generation, index,
+                        TerminalActionExecutionResult{});
+                    if (!stillCurrent()) return;
+                    continue;
+                }
+
+                target.paneDestruction = connect(
+                    target.pane, &QObject::destroyed, this,
+                    [this, generation, index] {
+                        resolveBroadTarget(
+                            generation, index,
+                            TerminalActionExecutionResult{}, true);
+                    });
+                target.workspaceDestruction = connect(
+                    target.workspace, &QObject::destroyed, this,
+                    [this, generation, index] {
+                        resolveBroadTarget(
+                            generation, index,
+                            TerminalActionExecutionResult{}, true);
+                    });
+
+                const QPointer<GhosttyApplicationKeybindings>
+                    completionGuard(this);
+                TerminalActionExecutionStart start =
+                    target.pane->startConfiguredAction(
+                        *entry.action,
+                        [completionGuard, generation, index](
+                            TerminalActionExecutionResult result) {
+                            if (completionGuard != nullptr) {
+                                completionGuard->resolveBroadTarget(
+                                    generation, index,
+                                    std::move(result));
+                            }
+                        });
+                if (!stillCurrent()) return;
+                if (!start.pending) {
+                    resolveBroadTarget(
+                        generation, index, std::move(start.result));
+                    if (!stillCurrent()) return;
+                }
+            }
+            execution->startingTargets = false;
+
+            if (execution->unresolvedTargets != 0) {
+                return;
+            }
+            execution->continuationMustDefer =
+                execution->continuationMustDefer
+                || broadExecutionHasLostTarget(*execution);
+            if (execution->continuationMustDefer) {
+                deferBroadExecutionContinuation(generation);
+                return;
             }
         }
+
+        // All worker results are now known. Publish side effects only for
+        // panes which still occupy their snapshotted identity, and do so in
+        // the deterministic registration/tab/tree order of the snapshot.
+        for (BroadExecution::Target &target : execution->targets) {
+            if (target.workspace != nullptr && target.pane != nullptr
+                && target.workspace->broadPaneTargetIsLive({
+                    .paneId = target.paneId,
+                    .pane = target.pane,
+                })) {
+                (void) target.pane->commitConfiguredActionResult(
+                    target.result);
+                if (!stillCurrent()) return;
+            }
+            QObject::disconnect(target.paneDestruction);
+            QObject::disconnect(target.workspaceDestruction);
+        }
+        execution->targets.clear();
+        execution->barrierInitialized = false;
+        execution->continuationMustDefer = false;
+        execution->continuationQueued = false;
+        ++execution->entryIndex;
     }
+
+    if (!stillCurrent()) return;
+    broadExecution_.reset();
+    drainDeferredInputs();
+}
+
+void GhosttyApplicationKeybindings::resolveBroadTarget(
+    quint64 generation, qsizetype targetIndex,
+    TerminalActionExecutionResult result, bool deferContinuation)
+{
+    const std::shared_ptr<BroadExecution> execution = broadExecution_;
+    if (execution == nullptr || execution->generation != generation
+        || targetIndex < 0 || targetIndex >= execution->targets.size()) {
+        return;
+    }
+
+    BroadExecution::Target &target = execution->targets[targetIndex];
+    execution->continuationMustDefer =
+        execution->continuationMustDefer || deferContinuation;
+    if (deferContinuation) {
+        QObject::disconnect(target.paneDestruction);
+        QObject::disconnect(target.workspaceDestruction);
+    }
+    if (target.resolved) return;
+
+    target.resolved = true;
+    target.result = std::move(result);
+    Q_ASSERT(execution->unresolvedTargets > 0);
+    --execution->unresolvedTargets;
+    if (execution->unresolvedTargets == 0
+        && !execution->startingTargets) {
+        execution->continuationMustDefer =
+            execution->continuationMustDefer
+            || broadExecutionHasLostTarget(*execution);
+        if (configurationUpdateDepth_ != 0
+            || execution->continuing) {
+            return;
+        }
+        if (!execution->continuationMustDefer) {
+            continueBroadExecution();
+            return;
+        }
+        deferBroadExecutionContinuation(generation);
+    }
+}
+
+void GhosttyApplicationKeybindings::deferBroadExecutionContinuation(
+    quint64 generation)
+{
+    const std::shared_ptr<BroadExecution> execution = broadExecution_;
+    if (execution == nullptr || execution->generation != generation
+        || execution->continuationQueued) {
+        return;
+    }
+
+    execution->continuationQueued = true;
+    const QPointer<GhosttyApplicationKeybindings> guard(this);
+    QMetaObject::invokeMethod(
+        this,
+        [guard, generation] {
+            if (guard == nullptr
+                || guard->broadExecution_ == nullptr
+                || guard->broadExecution_->generation != generation) {
+                return;
+            }
+            const std::shared_ptr<BroadExecution> currentExecution =
+                guard->broadExecution_;
+            currentExecution->continuationQueued = false;
+            if (currentExecution->unresolvedTargets != 0
+                || currentExecution->startingTargets
+                || currentExecution->continuing
+                || guard->configurationUpdateDepth_ != 0) {
+                return;
+            }
+            guard->continueBroadExecution();
+        },
+        Qt::QueuedConnection);
+}
+
+void GhosttyApplicationKeybindings::resumeReadyBroadExecution()
+{
+    const std::shared_ptr<BroadExecution> execution = broadExecution_;
+    if (execution == nullptr || configurationUpdateDepth_ != 0
+        || execution->continuing || execution->startingTargets
+        || execution->unresolvedTargets != 0) {
+        return;
+    }
+    execution->continuationMustDefer =
+        execution->continuationMustDefer
+        || broadExecutionHasLostTarget(*execution);
+    if (execution->continuationMustDefer) {
+        deferBroadExecutionContinuation(execution->generation);
+    } else {
+        continueBroadExecution();
+    }
+}
+
+bool GhosttyApplicationKeybindings::broadExecutionHasLostTarget(
+    const BroadExecution &execution)
+{
+    return std::ranges::any_of(
+        execution.targets,
+        [](const BroadExecution::Target &target) {
+            return target.workspace == nullptr
+                || target.pane == nullptr;
+        });
 }
 
 bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
@@ -277,12 +633,44 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
     }
     const bool keyPress = event->type() == QEvent::KeyPress;
     const bool keyRelease = event->type() == QEvent::KeyRelease;
-    if ((keyPress || keyRelease) && configurationUpdateDepth_ > 0) {
-        deferredInputs_.emplace_back(DeferredKeyEvent{
-            .target = watched,
-            .event = KeyEventSnapshot::capture(
-                *static_cast<QKeyEvent *>(event)),
-        });
+    auto *pane = qobject_cast<TerminalPane *>(watched);
+    const bool inputMethod =
+        event->type() == QEvent::InputMethod && pane != nullptr;
+    const bool currentReplay =
+        (keyPress || keyRelease)
+        && replayingDeferredKeyEvent_
+            == static_cast<QKeyEvent *>(event);
+    const bool currentInputMethodReplay =
+        inputMethod
+        && replayingDeferredInputMethodEvent_
+            == static_cast<QInputMethodEvent *>(event);
+    if ((keyPress || keyRelease || inputMethod)
+        && (configurationUpdateDepth_ > 0
+            || broadExecution_ != nullptr
+            || (drainingDeferredInputs_
+                && !currentReplay
+                && !currentInputMethodReplay))) {
+        if (inputMethod) {
+            const auto *input =
+                static_cast<QInputMethodEvent *>(event);
+            deferredInputs_.emplace_back(
+                DeferredInputMethodEvent{
+                    .target = watched,
+                    .preedit = input->preeditString(),
+                    .attributes = input->attributes(),
+                    .commit = input->commitString(),
+                    .replacementStart =
+                        input->replacementStart(),
+                    .replacementLength =
+                        input->replacementLength(),
+                });
+        } else {
+            deferredInputs_.emplace_back(DeferredKeyEvent{
+                .target = watched,
+                .event = KeyEventSnapshot::capture(
+                    *static_cast<QKeyEvent *>(event)),
+            });
+        }
         event->accept();
         return true;
     }
@@ -298,7 +686,6 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
         --dispatchGuard->keyEventDispatchDepth_;
         dispatchGuard->drainDeferredInputs();
     });
-    auto *pane = qobject_cast<TerminalPane *>(watched);
     auto *keyEvent = static_cast<QKeyEvent *>(event);
     if (pane != nullptr && pane->deferKeyEventIfNeeded(*keyEvent)) {
         event->accept();

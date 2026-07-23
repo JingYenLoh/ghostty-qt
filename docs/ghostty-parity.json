@@ -808,7 +808,7 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
+          "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. Worker completion is correlated with its originating action: local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "copy_title_to_clipboard": {
           "status": "partial",
@@ -999,7 +999,7 @@
         },
         "select_all": {
           "status": "supported",
-          "note": "Installs Ghostty's full selectable-content range and enqueues the configured automatic clipboard copy from the same session-thread transaction. The remaining exact mixed plain-plus-HTML automatic-copy payload limitation is tracked by copy_to_clipboard and REQUIRES_UPSTREAM.md."
+          "note": "Installs Ghostty's full selectable-content range and prepares the configured automatic clipboard copy from the same session-thread transaction. Its correlated result suspends local chains and process-wide action-major fanout until the GUI clipboard effect commits; broad effects publish in stable workspace/tab/tree order. The remaining exact mixed plain-plus-HTML automatic-copy payload limitation is tracked by copy_to_clipboard and REQUIRES_UPSTREAM.md."
         },
         "set_font_size": {
           "status": "supported",
@@ -1084,15 +1084,15 @@
         },
         "write_screen_file": {
           "status": "partial",
-          "note": "Accepts the required copy, paste, or open disposition with omitted or explicit plain format and consumes valid no-data invocations. It formats the complete active PageList with soft wraps removed, trailing spaces retained, and trailing blank rows dropped: primary includes history plus screen, while alternate contains only its own page. The persistent screen.txt artifact is mode 0600 inside a deliberately stricter mode-0700 temporary directory; pinned Ghostty leaves the directory at its umask-derived default. Copy publishes the absolute path as standard-clipboard text, paste writes its raw filesystem bytes without newline, quoting, or bracketed-paste framing, and open uses the desktop local-file handler. Styled VT and HTML formats are recognized but remain unsupported: libghostty-vt's public terminal formatter can emit styled content, but its C options do not expose the exact effective foreground, background, and palette path used by the pinned ScreenFormatter action, so byte-compatible parity still needs a bridge or an explicitly validated equivalent."
+          "note": "Accepts the required copy, paste, or open disposition with omitted or explicit plain format and consumes valid no-data invocations. It formats the complete active PageList with soft wraps removed, trailing spaces retained, and trailing blank rows dropped: primary includes history plus screen, while alternate contains only its own page. The persistent screen.txt artifact is mode 0600 inside a deliberately stricter mode-0700 temporary directory; pinned Ghostty leaves the directory at its umask-derived default. Copy publishes the absolute path as standard-clipboard text, paste writes its raw filesystem bytes without newline, quoting, or bracketed-paste framing, and open uses the desktop local-file handler. Correlated completion suspends a local chain until its GUI effect commits; all/global actions prepare every pane concurrently, then commit in stable workspace/tab/tree order before the next entry. Styled VT and HTML formats are recognized but remain unsupported: libghostty-vt's public terminal formatter can emit styled content, but its C options do not expose the exact effective foreground, background, and palette path used by the pinned ScreenFormatter action, so byte-compatible parity still needs a bridge or an explicitly validated equivalent."
         },
         "write_scrollback_file": {
           "status": "partial",
-          "note": "Implements the same plain copy, paste, and open pipeline as write_screen_file but formats only primary-screen history into history.txt; alternate-screen use and an empty history are performed no-ops with no artifact. Successful files persist as mode 0600 under a mode-0700 directory instead of pinned Ghostty's umask-derived directory mode. Styled VT and HTML output remains unsupported until the public terminal formatter is bridged to or validated against the pinned ScreenFormatter color options."
+          "note": "Implements the same correlated plain copy, paste, and open pipeline as write_screen_file but formats only primary-screen history into history.txt; alternate-screen use and an empty history are performed no-ops with no artifact. Successful files persist as mode 0600 under a mode-0700 directory instead of pinned Ghostty's umask-derived directory mode. Styled VT and HTML output remains unsupported until the public terminal formatter is bridged to or validated against the pinned ScreenFormatter color options."
         },
         "write_selection_file": {
           "status": "partial",
-          "note": "Implements the same plain copy, paste, and open pipeline as write_screen_file for the current active selection, preserving inclusive endpoints and rectangular shape in selection.txt; no selection is a performed no-op with no artifact. Successful files persist as mode 0600 under a mode-0700 directory instead of pinned Ghostty's umask-derived directory mode. Styled VT and HTML output remains unsupported until the public terminal formatter is bridged to or validated against the pinned ScreenFormatter color options."
+          "note": "Implements the same correlated plain copy, paste, and open pipeline as write_screen_file for the current active selection, preserving inclusive endpoints and rectangular shape in selection.txt; no selection is a performed no-op with no artifact. Successful files persist as mode 0600 under a mode-0700 directory instead of pinned Ghostty's umask-derived directory mode. Styled VT and HTML output remains unsupported until the public terminal formatter is bridged to or validated against the pinned ScreenFormatter color options."
         }
       }
     },

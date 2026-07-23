@@ -24,6 +24,7 @@
 #include <variant>
 #include <vector>
 
+class GhosttyApplicationKeybindings;
 class InitialSessionCoordinator;
 class TerminalPane;
 
@@ -191,11 +192,17 @@ protected:
     void itemChange(ItemChange change, const ItemChangeData &value) override;
 
 private:
+    friend class GhosttyApplicationKeybindings;
+
     QAbstractItemModel *qmlTabModel() { return &tabModel_; }
 
     struct Node;
     struct Tab;
     struct PaneHandle;
+    struct BroadPaneTarget {
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+    };
     struct PaneOverlaySlot {
         QPointer<QQmlComponent> component;
         QMetaObject::Connection destructionConnection;
@@ -266,6 +273,9 @@ private:
     template<typename Visitor>
     void forEachPane(Visitor &&visitor) const;
     [[nodiscard]] QVector<QPointer<TerminalPane>> paneSnapshot() const;
+    [[nodiscard]] QVector<BroadPaneTarget> broadPaneSnapshot() const;
+    [[nodiscard]] bool broadPaneTargetIsLive(
+        const BroadPaneTarget &target) const;
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
         PaneId sourcePaneId = {},

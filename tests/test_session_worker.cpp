@@ -69,6 +69,15 @@ bool spyContainsBool(const QSignalSpy &spy, bool expected)
     });
 }
 
+TerminalActionResult terminalActionResultAt(
+    const QSignalSpy &spy, qsizetype index)
+{
+    Q_ASSERT(index >= 0 && index < spy.size());
+    Q_ASSERT(!spy.at(index).isEmpty());
+    return qvariant_cast<TerminalActionResult>(
+        spy.at(index).constFirst());
+}
+
 std::optional<TerminalSearchUpdate> latestSearchUpdate(
     const QSignalSpy &spy, quint64 generation)
 {
@@ -487,7 +496,7 @@ void SessionWorkerTest::runsCommandThroughPty()
 void SessionWorkerTest::writesPersistentTerminalFiles()
 {
     qRegisterMetaType<TerminalUpdate>();
-    qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalActionResult>();
     QString screenPath;
     QString historyPath;
     QString selectionPath;
@@ -505,10 +514,8 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         SessionWorker worker;
         worker.resizeTerminal(12, 3, 8, 16, 96, 48);
         QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
-        QSignalSpy clipboardSpy(
-            &worker, &SessionWorker::clipboardTextReady);
-        QSignalSpy openSpy(
-            &worker, &SessionWorker::terminalFileOpenRequested);
+        QSignalSpy actionSpy(
+            &worker, &SessionWorker::terminalActionFinished);
         QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
         QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -532,32 +539,55 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
         QTRY_VERIFY_WITH_TIMEOUT(
             updatesContain(updateSpy, QStringLiteral("screen-2")), 1000);
 
-        worker.writeTerminalFile({
+        worker.writeTerminalFile(101, {
             .location = TerminalFileLocation::Screen,
             .disposition = TerminalFileDisposition::Copy,
         });
-        QCOMPARE(clipboardSpy.count(), 1);
-        QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
-                     clipboardSpy.constFirst().at(1)),
+        QCOMPARE(actionSpy.count(), 1);
+        const TerminalActionResult screenResult =
+            terminalActionResultAt(actionSpy, 0);
+        QCOMPARE(screenResult.requestId, quint64{101});
+        QCOMPARE(screenResult.outcome, TerminalActionOutcome::Success);
+        QCOMPARE(screenResult.effect, TerminalActionEffect::Clipboard);
+        QVERIFY(screenResult.performed);
+        QCOMPARE(screenResult.clipboardDestination,
                  TerminalClipboardDestination::Standard);
-        screenPath = clipboardSpy.constFirst().at(0).toString();
+        screenPath = screenResult.payload;
 
-        worker.writeTerminalFile({
+        worker.writeTerminalFile(202, {
             .location = TerminalFileLocation::Scrollback,
             .disposition = TerminalFileDisposition::Open,
         });
-        QCOMPARE(openSpy.count(), 1);
-        historyPath = openSpy.constFirst().constFirst().toString();
+        QCOMPARE(actionSpy.count(), 2);
+        const TerminalActionResult historyResult =
+            terminalActionResultAt(actionSpy, 1);
+        QCOMPARE(historyResult.requestId, quint64{202});
+        QCOMPARE(historyResult.outcome, TerminalActionOutcome::Success);
+        QCOMPARE(historyResult.effect, TerminalActionEffect::OpenFile);
+        QVERIFY(historyResult.performed);
+        QCOMPARE(historyResult.clipboardDestination,
+                 TerminalClipboardDestination::Standard);
+        historyPath = historyResult.payload;
 
         worker.beginSelection(0, 0, 1, true);
         worker.updateSelection(8, 1, true);
         worker.endSelection(8, 1);
-        worker.writeTerminalFile({
+        worker.writeTerminalFile(303, {
             .location = TerminalFileLocation::Selection,
             .disposition = TerminalFileDisposition::Copy,
         });
-        QCOMPARE(clipboardSpy.count(), 2);
-        selectionPath = clipboardSpy.at(1).constFirst().toString();
+        QCOMPARE(actionSpy.count(), 3);
+        const TerminalActionResult selectionResult =
+            terminalActionResultAt(actionSpy, 2);
+        QCOMPARE(selectionResult.requestId, quint64{303});
+        QCOMPARE(selectionResult.outcome,
+                 TerminalActionOutcome::Success);
+        QCOMPARE(selectionResult.effect,
+                 TerminalActionEffect::Clipboard);
+        QVERIFY(selectionResult.performed);
+        QCOMPARE(selectionResult.clipboardDestination,
+                 TerminalClipboardDestination::Standard);
+        selectionPath = selectionResult.payload;
 
         QCOMPARE(QFileInfo(screenPath).fileName(),
                  QStringLiteral("screen.txt"));
@@ -651,7 +681,7 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
 
 void SessionWorkerTest::skipsUnavailableTerminalFiles()
 {
-    qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalActionResult>();
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir controlDirectory(
@@ -667,10 +697,8 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
              QFileInfo(artifactRoot).canonicalFilePath());
 
     SessionWorker worker;
-    QSignalSpy clipboardSpy(
-        &worker, &SessionWorker::clipboardTextReady);
-    QSignalSpy openSpy(
-        &worker, &SessionWorker::terminalFileOpenRequested);
+    QSignalSpy actionSpy(
+        &worker, &SessionWorker::terminalActionFinished);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -681,25 +709,60 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
     QVERIFY(worker.initialize(options));
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
 
-    worker.writeTerminalFile({
+    worker.writeTerminalFile(404, {
         .location = TerminalFileLocation::Scrollback,
         .disposition = TerminalFileDisposition::Copy,
     });
-    worker.writeTerminalFile({
+    QCOMPARE(actionSpy.count(), 1);
+    const TerminalActionResult historyResult =
+        terminalActionResultAt(actionSpy, 0);
+    QCOMPARE(historyResult.requestId, quint64{404});
+    QCOMPARE(historyResult.outcome,
+             TerminalActionOutcome::Unavailable);
+    QCOMPARE(historyResult.effect, TerminalActionEffect::None);
+    QVERIFY(historyResult.performed);
+    QVERIFY(historyResult.payload.isEmpty());
+    QCOMPARE(historyResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
+
+    worker.writeTerminalFile(505, {
         .location = TerminalFileLocation::Selection,
         .disposition = TerminalFileDisposition::Open,
     });
+    QCOMPARE(actionSpy.count(), 2);
+    const TerminalActionResult selectionResult =
+        terminalActionResultAt(actionSpy, 1);
+    QCOMPARE(selectionResult.requestId, quint64{505});
+    QCOMPARE(selectionResult.outcome,
+             TerminalActionOutcome::Unavailable);
+    QCOMPARE(selectionResult.effect, TerminalActionEffect::None);
+    QVERIFY(selectionResult.performed);
+    QVERIFY(selectionResult.payload.isEmpty());
+    QCOMPARE(selectionResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
 
-    QVERIFY(clipboardSpy.isEmpty());
-    QVERIFY(openSpy.isEmpty());
+    worker.writeTerminalFile(606, {
+        .location = TerminalFileLocation::Screen,
+        .disposition = TerminalFileDisposition::Copy,
+        .format = static_cast<TerminalFileFormat>(0xff),
+    });
+    QCOMPARE(actionSpy.count(), 3);
+    const TerminalActionResult failedResult =
+        terminalActionResultAt(actionSpy, 2);
+    QCOMPARE(failedResult.requestId, quint64{606});
+    QCOMPARE(failedResult.outcome, TerminalActionOutcome::Failed);
+    QCOMPARE(failedResult.effect, TerminalActionEffect::None);
+    QVERIFY(!failedResult.performed);
+    QVERIFY(failedResult.payload.isEmpty());
+    QCOMPARE(failedResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
+
     QVERIFY(QDir(artifactRoot)
                 .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
                 .isEmpty());
-    QVERIFY2(errorSpy.isEmpty(),
-             errorSpy.isEmpty()
-                 ? ""
-                 : qPrintable(
-                       errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.constFirst().constFirst().toString(),
+             QStringLiteral("Unsupported terminal file format"));
     worker.shutdown();
 }
 
@@ -2037,6 +2100,7 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
 void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
 {
     qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalActionResult>();
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
     QTemporaryDir controlDirectory(
@@ -2064,6 +2128,8 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
     SessionWorker worker;
     worker.resizeTerminal(80, 8, 8, 16, 640, 128);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy actionSpy(
+        &worker, &SessionWorker::terminalActionFinished);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -2093,10 +2159,19 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
         5000);
 
     worker.sendRawText(QByteArrayLiteral("BEFORE"));
-    worker.writeTerminalFile({
+    worker.writeTerminalFile(707, {
         .location = TerminalFileLocation::Screen,
         .disposition = TerminalFileDisposition::Paste,
     });
+    QCOMPARE(actionSpy.count(), 1);
+    const TerminalActionResult pasteResult =
+        terminalActionResultAt(actionSpy, 0);
+    QCOMPARE(pasteResult.requestId, quint64{707});
+    QCOMPARE(pasteResult.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(pasteResult.effect, TerminalActionEffect::None);
+    QVERIFY(pasteResult.performed);
+    QCOMPARE(pasteResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
     QStringList artifactDirectories =
         QDir(artifactRoot).entryList(
             QDir::Dirs | QDir::NoDotAndDotDot);
@@ -2107,6 +2182,7 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
             .filePath(QStringLiteral("screen.txt"));
     QVERIFY(QFileInfo::exists(firstPath));
     QCOMPARE(QFile::encodeName(firstPath).size(), pathSize);
+    QCOMPARE(pasteResult.payload, firstPath);
     worker.sendRawText(QByteArrayLiteral("AFTER"));
 
     const QByteArray expectedOrderedBytes =
@@ -2123,14 +2199,25 @@ void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
         1000);
 
     worker.setReadOnly(true);
-    worker.writeTerminalFile({
+    worker.writeTerminalFile(808, {
         .location = TerminalFileLocation::Screen,
         .disposition = TerminalFileDisposition::Paste,
     });
+    QCOMPARE(actionSpy.count(), 2);
+    const TerminalActionResult readOnlyResult =
+        terminalActionResultAt(actionSpy, 1);
+    QCOMPARE(readOnlyResult.requestId, quint64{808});
+    QCOMPARE(readOnlyResult.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(readOnlyResult.effect, TerminalActionEffect::None);
+    QVERIFY(readOnlyResult.performed);
+    QCOMPARE(readOnlyResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
     artifactDirectories =
         QDir(artifactRoot).entryList(
             QDir::Dirs | QDir::NoDotAndDotDot);
     QCOMPARE(artifactDirectories.size(), 2);
+    QVERIFY(QFileInfo::exists(readOnlyResult.payload));
+    QVERIFY(readOnlyResult.payload != pasteResult.payload);
     QTest::qWait(100);
     QVERIFY(!updatesContain(
         updateSpy, QStringLiteral("readonly-byte:")));
@@ -2770,10 +2857,13 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalActionResult>();
     SessionWorker worker;
     worker.resizeTerminal(16, 4, 8, 16, 128, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy actionSpy(
+        &worker, &SessionWorker::terminalActionFinished);
     QSignalSpy selectionSpy(&worker,
                             &SessionWorker::selectionAvailableChanged);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
@@ -2814,11 +2904,10 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     selectionSpy.clear();
     updateSpy.clear();
     QStringList lifecycle;
-    const QMetaObject::Connection copiedConnection = connect(
-        &worker, &SessionWorker::clipboardTextReady, &worker,
-        [&lifecycle](const QString &,
-                     TerminalClipboardDestination) {
-            lifecycle.append(QStringLiteral("copied"));
+    const QMetaObject::Connection completedConnection = connect(
+        &worker, &SessionWorker::terminalActionFinished, &worker,
+        [&lifecycle](const TerminalActionResult &) {
+            lifecycle.append(QStringLiteral("completed"));
         });
     const QMetaObject::Connection selectionConnection = connect(
         &worker, &SessionWorker::selectionAvailableChanged, &worker,
@@ -2827,34 +2916,64 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
                                        : QStringLiteral("cleared"));
         });
 
-    worker.copySelection();
-    QCOMPARE(clipboardSpy.count(), 1);
-    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
-             QStringLiteral("abc   "));
-    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
-                 clipboardSpy.constFirst().at(1)),
+    worker.copySelectionAction(909);
+    QCOMPARE(actionSpy.count(), 1);
+    QCOMPARE(clipboardSpy.count(), 0);
+    const TerminalActionResult copiedResult =
+        terminalActionResultAt(actionSpy, 0);
+    QCOMPARE(copiedResult.requestId, quint64{909});
+    QCOMPARE(copiedResult.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(copiedResult.effect, TerminalActionEffect::Clipboard);
+    QVERIFY(copiedResult.performed);
+    QCOMPARE(copiedResult.payload, QStringLiteral("abc   "));
+    QCOMPARE(copiedResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
     QCOMPARE(lifecycle,
-             QStringList({QStringLiteral("copied"),
-                          QStringLiteral("cleared")}));
+             QStringList({QStringLiteral("cleared"),
+                          QStringLiteral("completed")}));
     QVERIFY(spyContainsBool(selectionSpy, false));
     QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 1000);
 
-    worker.copySelection();
-    QCOMPARE(clipboardSpy.count(), 1);
-    disconnect(copiedConnection);
+    worker.copySelectionAction(1'010);
+    QCOMPARE(actionSpy.count(), 2);
+    QCOMPARE(clipboardSpy.count(), 0);
+    const TerminalActionResult unavailableResult =
+        terminalActionResultAt(actionSpy, 1);
+    QCOMPARE(unavailableResult.requestId, quint64{1'010});
+    QCOMPARE(unavailableResult.outcome,
+             TerminalActionOutcome::Unavailable);
+    QCOMPARE(unavailableResult.effect, TerminalActionEffect::None);
+    QVERIFY(!unavailableResult.performed);
+    QVERIFY(unavailableResult.payload.isEmpty());
+    QCOMPARE(unavailableResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
+
+    disconnect(completedConnection);
     disconnect(selectionConnection);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
+
+    worker.copySelectionAction(1'111);
+    QCOMPARE(actionSpy.count(), 3);
+    const TerminalActionResult failedResult =
+        terminalActionResultAt(actionSpy, 2);
+    QCOMPARE(failedResult.requestId, quint64{1'111});
+    QCOMPARE(failedResult.outcome, TerminalActionOutcome::Failed);
+    QCOMPARE(failedResult.effect, TerminalActionEffect::None);
+    QVERIFY(!failedResult.performed);
+    QVERIFY(failedResult.payload.isEmpty());
+    QCOMPARE(failedResult.clipboardDestination,
+             TerminalClipboardDestination::Standard);
 }
 
 void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalActionResult>();
     SessionWorker worker;
     worker.resizeTerminal(16, 4, 8, 16, 128, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
@@ -2862,6 +2981,8 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     QSignalSpy selectionSpy(&worker,
                             &SessionWorker::selectionAvailableChanged);
     QSignalSpy selectAllSpy(&worker, &SessionWorker::selectAllCompleted);
+    QSignalSpy actionSpy(
+        &worker, &SessionWorker::terminalActionFinished);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -2919,14 +3040,20 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     worker.applyRuntimeOptions(options.runtime);
     QCOMPARE(clipboardSpy.count(), 0);
 
-    worker.selectAll();
+    worker.selectAllAction(1'212);
     QCOMPARE(selectAllSpy.count(), 1);
     QVERIFY(selectAllSpy.constFirst().constFirst().toBool());
-    QCOMPARE(clipboardSpy.count(), 1);
-    QVERIFY(clipboardSpy.constFirst().at(0).toString().contains(
+    QCOMPARE(clipboardSpy.count(), 0);
+    QCOMPARE(actionSpy.count(), 1);
+    const TerminalActionResult selectAllResult =
+        terminalActionResultAt(actionSpy, 0);
+    QCOMPARE(selectAllResult.requestId, quint64{1'212});
+    QCOMPARE(selectAllResult.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(selectAllResult.effect, TerminalActionEffect::Clipboard);
+    QVERIFY(selectAllResult.performed);
+    QVERIFY(selectAllResult.payload.contains(
         QStringLiteral("auto-copy")));
-    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
-                 clipboardSpy.constFirst().at(1)),
+    QCOMPARE(selectAllResult.clipboardDestination,
              TerminalClipboardDestination::PrimaryAndStandard);
     QVERIFY(spyContainsBool(selectionSpy, true));
     QVERIFY(!spyContainsBool(selectionSpy, false));

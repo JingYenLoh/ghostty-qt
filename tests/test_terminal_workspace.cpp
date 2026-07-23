@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQmlComponent>
@@ -66,6 +67,27 @@ public:
 private:
     bool wasSet_ = false;
     QByteArray previous_;
+};
+
+class KeyReleaseReceiver final : public QObject {
+public:
+    int releaseCount() const noexcept
+    {
+        return releaseCount_;
+    }
+
+protected:
+    bool event(QEvent *event) override
+    {
+        if (event != nullptr
+            && event->type() == QEvent::KeyRelease) {
+            ++releaseCount_;
+        }
+        return QObject::event(event);
+    }
+
+private:
+    int releaseCount_ = 0;
 };
 
 class ResistantShellFixture final {
@@ -144,6 +166,20 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
         && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+TerminalActionResult successfulOpenFileResult(
+    quint64 requestId, const QString &path)
+{
+    return {
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::OpenFile,
+        .performed = true,
+        .payload = path,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
 }
 
 QVector<TabId> tabIds(TerminalWorkspace &workspace)
@@ -350,6 +386,11 @@ private Q_SLOTS:
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadPasteActionsReachEveryPane();
     void broadWriteScreenOpenCreatesDistinctPerPaneArtifacts();
+    void broadTerminalBarrierOrdersCommitsAndDefersInputs();
+    void broadDeferredInputFifoSurvivesReplayReentrancy();
+    void broadTerminalBarrierSkipsDestroyedTargets();
+    void finalBroadTargetDestructionDefersKeyReplay();
+    void destroyedDeferredReleaseClearsGlobalConsumption();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
@@ -2064,7 +2105,11 @@ void TerminalWorkspaceTest::terminalControlSubmissionPromptsBeforeWorkerRoundTri
     TerminalController *controller =
         pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QVERIFY(!controller->activeProcess());
+    // Starting the worker and reaching the first idle prompt are independent
+    // asynchronous transitions. Wait for both instead of assuming the
+    // instrumented and non-instrumented builds settle within the same delay.
+    QTRY_VERIFY_WITH_TIMEOUT(controller->running(), 1500);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 1500);
 
     // Malformed text remains consumed/no-op and must not manufacture active
     // work. A valid canonical newline, however, latches activity on the UI
@@ -4265,6 +4310,559 @@ void TerminalWorkspaceTest::
     QCOMPARE(artifactDirectories.size(), panes.size());
 }
 
+void TerminalWorkspaceTest::
+    broadTerminalBarrierOrdersCommitsAndDefersInputs()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = 'g',
+            .modifiers = GhosttyKeybindCtrl,
+        }},
+        .actions = {QStringLiteral("increase_font_size:4")},
+        .flags = GhosttyKeybindFlags{.global = true},
+    }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    constexpr qsizetype targetCount = 3;
+    std::array<std::unique_ptr<TerminalWorkspace>, targetCount> workspaces;
+    QVector<TerminalPane *> panes;
+    QVector<TerminalController *> controllers;
+    QVector<quint64> requestIds(targetCount, 0);
+    QVector<qreal> initialFontSizes;
+    QVector<QVector<qreal>> fontSizes(targetCount);
+    QVector<qsizetype> openOrder;
+    QVector<QString> openedPaths(targetCount);
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        workspaces[static_cast<std::size_t>(index)] =
+            std::make_unique<TerminalWorkspace>();
+        TerminalWorkspace *const workspace =
+            workspaces[static_cast<std::size_t>(index)].get();
+        QVERIFY(workspace->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        QCOMPARE(workspace->tabCount(), 1);
+        bindings.registerWorkspace(workspace);
+
+        TerminalPane *const pane =
+            workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        panes.append(pane);
+        controllers.append(controller);
+        initialFontSizes.append(pane->fontPointSize());
+
+        pane->setUrlOpener(
+            [&, index](const QUrl &url) {
+                openedPaths[index] = url.toLocalFile();
+                openOrder.append(index);
+                return true;
+            });
+        connect(
+            pane, &TerminalPane::fontPointSizeChanged, this,
+            [&, index] {
+                fontSizes[index].append(
+                    panes.at(index)->fontPointSize());
+            });
+        connect(
+            controller,
+            &TerminalController::writeTerminalFileRequested,
+            this,
+            [&, index](
+                quint64 requestId,
+                const TerminalWriteFileAction &) {
+                QCOMPARE(requestIds.at(index), quint64(0));
+                requestIds[index] = requestId;
+            });
+    }
+
+    bindings.dispatchBroadActions({
+        QStringLiteral("write_screen_file:open"),
+        QStringLiteral("increase_font_size:1"),
+    });
+
+    // Every target begins the worker-owned action before the coordinator
+    // waits. No opener or later action may run while one result is missing.
+    QVERIFY(std::ranges::all_of(
+        requestIds, [](quint64 requestId) { return requestId != 0; }));
+    QVERIFY(openOrder.isEmpty());
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        QCOMPARE(panes.at(index)->fontPointSize(),
+                 initialFontSizes.at(index));
+        QVERIFY(fontSizes.at(index).isEmpty());
+    }
+
+    // Both a later external broad request and a root global key event join
+    // the same FIFO behind the active barrier.
+    bindings.dispatchBroadActions({
+        QStringLiteral("increase_font_size:2"),
+    });
+    QKeyEvent keyPress(
+        QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+        QString(QChar(0x07)));
+    QCoreApplication::sendEvent(panes.constFirst(), &keyPress);
+    QKeyEvent keyRelease(
+        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QCoreApplication::sendEvent(panes.constFirst(), &keyRelease);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        QCOMPARE(panes.at(index)->fontPointSize(),
+                 initialFontSizes.at(index));
+    }
+
+    // Resolve the targets in reverse registration order. Partial completion
+    // must remain invisible; the final result publishes every effect in the
+    // stable workspace snapshot order.
+    for (qsizetype index = targetCount - 1; index > 0; --index) {
+        Q_EMIT controllers.at(index)->terminalActionReady(
+            successfulOpenFileResult(
+                requestIds.at(index),
+                QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt")
+                    .arg(index)));
+        QCoreApplication::processEvents();
+        QVERIFY(openOrder.isEmpty());
+        for (qsizetype fontIndex = 0;
+             fontIndex < targetCount; ++fontIndex) {
+            QCOMPARE(
+                panes.at(fontIndex)->fontPointSize(),
+                initialFontSizes.at(fontIndex));
+        }
+    }
+    Q_EMIT controllers.constFirst()->terminalActionReady(
+        successfulOpenFileResult(
+            requestIds.constFirst(),
+            QStringLiteral("/tmp/ghostty-qt-barrier-0.txt")));
+    QCoreApplication::processEvents();
+
+    QCOMPARE(openOrder, QVector<qsizetype>({0, 1, 2}));
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const qreal initial = initialFontSizes.at(index);
+        QCOMPARE(
+            openedPaths.at(index),
+            QStringLiteral("/tmp/ghostty-qt-barrier-%1.txt")
+                .arg(index));
+        QCOMPARE(
+            fontSizes.at(index),
+            QVector<qreal>({initial + 1.0,
+                            initial + 3.0,
+                            initial + 7.0}));
+        QCOMPARE(panes.at(index)->fontPointSize(), initial + 7.0);
+    }
+}
+
+void TerminalWorkspaceTest::
+    broadDeferredInputFifoSurvivesReplayReentrancy()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(
+        options, TerminalSessionStartMode::Deferred));
+    TerminalPane *const pane =
+        workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    pane->setUrlOpener([](const QUrl &) { return true; });
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&workspace);
+    quint64 requestId = 0;
+    connect(
+        controller,
+        &TerminalController::writeTerminalFileRequested,
+        this,
+        [&requestId](
+            quint64 emittedRequestId,
+            const TerminalWriteFileAction &) {
+            requestId = emittedRequestId;
+        });
+
+    QStringList order;
+    bool injected = false;
+    connect(
+        controller, &TerminalController::keyRequested, pane,
+        [&](const TerminalKeyInput &input) {
+            order.append(QStringLiteral("%1-%2")
+                             .arg(QChar(input.key))
+                             .arg(input.pressed
+                                      ? QStringLiteral("press")
+                                      : QStringLiteral("release")));
+            if (injected || input.key != Qt::Key_C
+                || !input.pressed) {
+                return;
+            }
+            injected = true;
+            QKeyEvent nested(
+                QEvent::KeyPress, Qt::Key_E, Qt::NoModifier,
+                QStringLiteral("e"));
+            QCoreApplication::sendEvent(pane, &nested);
+            QInputMethodEvent nestedInput;
+            nestedInput.setCommitString(
+                QStringLiteral("new-ime"));
+            QCoreApplication::sendEvent(pane, &nestedInput);
+            bindings.dispatchBroadActions(
+                {QStringLiteral("increase_font_size:1")});
+        });
+    connect(
+        controller, &TerminalController::inputMethodRequested, pane,
+        [&order](const TerminalInputMethodInput &input) {
+            order.append(
+                QStringLiteral("ime:%1").arg(input.commitText));
+        });
+    connect(
+        pane, &TerminalPane::fontPointSizeChanged, pane,
+        [&order] { order.append(QStringLiteral("font")); });
+
+    bindings.dispatchBroadActions(
+        {QStringLiteral("write_screen_file:open")});
+    QVERIFY(requestId != 0);
+
+    QKeyEvent cPress(
+        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+        QStringLiteral("c"));
+    QCoreApplication::sendEvent(pane, &cPress);
+    QInputMethodEvent oldInput;
+    oldInput.setCommitString(QStringLiteral("old-ime"));
+    QCoreApplication::sendEvent(pane, &oldInput);
+    QKeyEvent cRelease(
+        QEvent::KeyRelease, Qt::Key_C, Qt::NoModifier);
+    QCoreApplication::sendEvent(pane, &cRelease);
+    QKeyEvent dPress(
+        QEvent::KeyPress, Qt::Key_D, Qt::NoModifier,
+        QStringLiteral("d"));
+    QCoreApplication::sendEvent(pane, &dPress);
+    QVERIFY(order.isEmpty());
+
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/global-reentrant-input-fifo.txt")));
+    QCoreApplication::processEvents();
+
+    QVERIFY(injected);
+    QCOMPARE(
+        order,
+        QStringList({
+            QStringLiteral("C-press"),
+            QStringLiteral("ime:old-ime"),
+            QStringLiteral("C-release"),
+            QStringLiteral("D-press"),
+            QStringLiteral("E-press"),
+            QStringLiteral("ime:new-ime"),
+            QStringLiteral("font"),
+        }));
+}
+
+void TerminalWorkspaceTest::
+    broadTerminalBarrierSkipsDestroyedTargets()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    constexpr qsizetype targetCount = 3;
+    std::array<QPointer<TerminalWorkspace>, targetCount> workspaces;
+    std::array<QPointer<TerminalPane>, targetCount> panes;
+    std::array<QPointer<TerminalController>, targetCount> controllers;
+    QVector<quint64> requestIds(targetCount, 0);
+    QVector<qsizetype> openOrder;
+    const auto cleanup = qScopeGuard([&workspaces] {
+        for (QPointer<TerminalWorkspace> &workspace : workspaces) {
+            delete workspace.data();
+        }
+    });
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        workspaces[static_cast<std::size_t>(index)] =
+            new TerminalWorkspace;
+        TerminalWorkspace *const workspace =
+            workspaces[static_cast<std::size_t>(index)].data();
+        QVERIFY(workspace->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        bindings.registerWorkspace(workspace);
+
+        panes[static_cast<std::size_t>(index)] =
+            workspace->findChild<TerminalPane *>();
+        QVERIFY(panes[static_cast<std::size_t>(index)] != nullptr);
+        controllers[static_cast<std::size_t>(index)] =
+            panes[static_cast<std::size_t>(index)]
+                ->findChild<TerminalController *>();
+        QVERIFY(controllers[static_cast<std::size_t>(index)]
+                != nullptr);
+
+        panes[static_cast<std::size_t>(index)]->setUrlOpener(
+            [&, index](const QUrl &) {
+                openOrder.append(index);
+                return true;
+            });
+        connect(
+            controllers[static_cast<std::size_t>(index)],
+            &TerminalController::writeTerminalFileRequested,
+            this,
+            [&, index](
+                quint64 requestId,
+                const TerminalWriteFileAction &) {
+                requestIds[index] = requestId;
+            });
+    }
+
+    QSignalSpy applicationActions(
+        &bindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
+    bool resumedInsideEarlierDestroyedObserver = false;
+    connect(
+        workspaces[1], &QObject::destroyed, this,
+        [&] {
+            // This observer predates the broad snapshot's destruction
+            // connection. A nested event turn can therefore deliver the
+            // remaining results before the coordinator's destroyed slot.
+            Q_EMIT controllers[2]->terminalActionReady(
+                successfulOpenFileResult(
+                    requestIds.at(2),
+                    QStringLiteral(
+                        "/tmp/ghostty-qt-survivor-2.txt")));
+            Q_EMIT controllers[0]->terminalActionReady(
+                successfulOpenFileResult(
+                    requestIds.at(0),
+                    QStringLiteral(
+                        "/tmp/ghostty-qt-survivor-0.txt")));
+            QCoreApplication::processEvents();
+            resumedInsideEarlierDestroyedObserver =
+                !openOrder.isEmpty()
+                || applicationActions.count() != 0;
+        });
+    bindings.dispatchBroadActions({
+        QStringLiteral("write_screen_file:open"),
+        QStringLiteral("reload_config"),
+    });
+    QVERIFY(std::ranges::all_of(
+        requestIds, [](quint64 requestId) { return requestId != 0; }));
+    QCOMPARE(applicationActions.count(), 0);
+
+    // A prepared result remains buffered until the whole barrier resolves.
+    // Destroying that target afterward must retain destruction observation,
+    // skip its effect, and keep waiting for both live targets.
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulOpenFileResult(
+            requestIds.at(1),
+            QStringLiteral("/tmp/ghostty-qt-dead-target.txt")));
+    QCoreApplication::processEvents();
+    QVERIFY(openOrder.isEmpty());
+
+    delete workspaces[1].data();
+    QVERIFY(workspaces[1].isNull());
+    QVERIFY(panes[1].isNull());
+    QVERIFY(controllers[1].isNull());
+    QVERIFY(!resumedInsideEarlierDestroyedObserver);
+    QVERIFY(openOrder.isEmpty());
+    QCOMPARE(applicationActions.count(), 0);
+    QCoreApplication::processEvents();
+
+    QTRY_COMPARE(
+        openOrder, QVector<qsizetype>({0, 2}));
+    QCOMPARE(applicationActions.count(), 1);
+    QCOMPARE(qvariant_cast<ApplicationAction>(
+                 applicationActions.constFirst().constFirst()),
+             ApplicationAction::ReloadConfig);
+}
+
+void TerminalWorkspaceTest::
+    finalBroadTargetDestructionDefersKeyReplay()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = 'g',
+            .modifiers = GhosttyKeybindCtrl,
+        }},
+        .actions = {QStringLiteral("increase_font_size:1")},
+        .flags = GhosttyKeybindFlags{.global = true},
+    }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    QPointer<TerminalWorkspace> barrierWorkspace =
+        new TerminalWorkspace;
+    QVERIFY(barrierWorkspace->initialize(
+        options, TerminalSessionStartMode::Deferred));
+    bindings.registerWorkspace(barrierWorkspace);
+
+    TerminalController *const barrierController =
+        barrierWorkspace->findChild<TerminalController *>();
+    QVERIFY(barrierController != nullptr);
+
+    quint64 requestId = 0;
+    QPointer<TerminalWorkspace> survivor;
+    TerminalPane *survivorPane = nullptr;
+    qreal initialFontSize = 0.0;
+    bool dispatchingBroadAction = false;
+    bool deletingWorkspace = false;
+    bool replayedBeforeDispatchReturned = false;
+    bool replayedDuringDestruction = false;
+    const auto cleanup = qScopeGuard([&survivor] {
+        delete survivor.data();
+    });
+    connect(
+        barrierController,
+        &TerminalController::writeTerminalFileRequested,
+        this,
+        [&](
+            quint64 emittedRequestId,
+            const TerminalWriteFileAction &) {
+            requestId = emittedRequestId;
+            // This workspace is registered after the current entry's target
+            // snapshot. Its key events join the active process FIFO.
+            survivor = new TerminalWorkspace;
+            QVERIFY(survivor->initialize(
+                options, TerminalSessionStartMode::Deferred));
+            bindings.registerWorkspace(survivor);
+            survivorPane = survivor->findChild<TerminalPane *>();
+            QVERIFY(survivorPane != nullptr);
+            initialFontSize = survivorPane->fontPointSize();
+            connect(
+                survivorPane, &TerminalPane::fontPointSizeChanged,
+                this, [&] {
+                    replayedBeforeDispatchReturned |=
+                        dispatchingBroadAction;
+                    replayedDuringDestruction |= deletingWorkspace;
+                });
+
+            QKeyEvent keyPress(
+                QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+                QString(QChar(0x07)));
+            QCoreApplication::sendEvent(survivorPane, &keyPress);
+            QKeyEvent keyRelease(
+                QEvent::KeyRelease, Qt::Key_G,
+                Qt::ControlModifier);
+            QCoreApplication::sendEvent(survivorPane, &keyRelease);
+            QCOMPARE(
+                survivorPane->fontPointSize(), initialFontSize);
+
+            // Resolve the sole target while request dispatch is still
+            // unwinding. The continuation must remember that destruction
+            // requires a later event turn even though target startup has not
+            // finished yet.
+            deletingWorkspace = true;
+            delete barrierWorkspace.data();
+            deletingWorkspace = false;
+        });
+
+    dispatchingBroadAction = true;
+    bindings.dispatchBroadActions(
+        {QStringLiteral("write_screen_file:open")});
+    dispatchingBroadAction = false;
+
+    QVERIFY(requestId != 0);
+    QVERIFY(barrierWorkspace.isNull());
+    QVERIFY(survivor != nullptr);
+    QVERIFY(survivorPane != nullptr);
+    QVERIFY(!replayedBeforeDispatchReturned);
+    QVERIFY(!replayedDuringDestruction);
+    QCOMPARE(survivorPane->fontPointSize(), initialFontSize);
+
+    QCoreApplication::processEvents();
+    QVERIFY(!replayedBeforeDispatchReturned);
+    QVERIFY(!replayedDuringDestruction);
+    QCOMPARE(survivorPane->fontPointSize(), initialFontSize + 1.0);
+}
+
+void TerminalWorkspaceTest::
+    destroyedDeferredReleaseClearsGlobalConsumption()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = 'g',
+            .modifiers = GhosttyKeybindCtrl,
+        }},
+        .actions = {QStringLiteral("write_screen_file:open")},
+        .flags = GhosttyKeybindFlags{.global = true},
+    }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    QPointer<TerminalWorkspace> workspace = new TerminalWorkspace;
+    QVERIFY(workspace->initialize(
+        options, TerminalSessionStartMode::Deferred));
+    bindings.registerWorkspace(workspace);
+    TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    quint64 requestId = 0;
+    connect(
+        controller,
+        &TerminalController::writeTerminalFileRequested,
+        this,
+        [&requestId](
+            quint64 emittedRequestId,
+            const TerminalWriteFileAction &) {
+            requestId = emittedRequestId;
+        });
+
+    // The global press is consumed and starts a terminal barrier. Its
+    // matching release is then deferred with the originating pane target.
+    QKeyEvent keyPress(
+        QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier,
+        QString(QChar(0x07)));
+    QCoreApplication::sendEvent(pane, &keyPress);
+    QVERIFY(requestId != 0);
+    QKeyEvent deferredRelease(
+        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &deferredRelease);
+
+    delete workspace.data();
+    QVERIFY(workspace.isNull());
+    QCoreApplication::processEvents();
+
+    // The dropped release must retire the consumed identity. Otherwise this
+    // unrelated receiver's later release with the same logical key is eaten
+    // by the process-level application filter.
+    KeyReleaseReceiver receiver;
+    QKeyEvent laterRelease(
+        QEvent::KeyRelease, Qt::Key_G, Qt::ControlModifier);
+    QCoreApplication::sendEvent(&receiver, &laterRelease);
+    QCOMPARE(receiver.releaseCount(), 1);
+}
+
 void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
@@ -4321,7 +4919,7 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
         scrollSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::scrollRequested));
         selectAllSpies.emplace_back(std::make_unique<QSignalSpy>(
-            controller, &TerminalController::selectAllRequested));
+            controller, &TerminalController::selectAllActionRequested));
         adjustmentSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::selectionAdjustmentRequested));
         csiSpies.emplace_back(std::make_unique<QSignalSpy>(

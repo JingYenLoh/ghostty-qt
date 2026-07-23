@@ -648,6 +648,15 @@ quint64 keyEventIdentity(const QKeyEvent *event)
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
+quint64 keyEventIdentity(const KeyEventSnapshot &event)
+{
+    const quint64 physical =
+        static_cast<quint64>(event.nativeScanCode);
+    const quint64 logical = static_cast<quint64>(
+        static_cast<quint32>(event.key));
+    return physical != 0 ? (quint64{1} << 63U) | physical : logical;
+}
+
 std::optional<qint64> fractionalPageDelta(float fraction, int pageRows)
 {
     if (!std::isfinite(fraction) || pageRows <= 0) return std::nullopt;
@@ -850,15 +859,9 @@ TerminalPane::TerminalPane(
             this, [this](quint64 requestId, const QString &text) {
                 Q_EMIT unsafePasteRequested(requestId, text, this);
             });
-    connect(controller_, &TerminalController::terminalFileOpenRequested,
-            this, [this](const QString &path) {
-                if (path.isEmpty()) return;
-                const std::function<bool(const QUrl &)> opener = urlOpener_;
-                if (opener) {
-                    static_cast<void>(
-                        opener(QUrl::fromLocalFile(path)));
-                }
-            });
+    connect(controller_, &TerminalController::terminalActionReady,
+            this, &TerminalPane::handleTerminalActionResult,
+            Qt::QueuedConnection);
     connect(controller_, &TerminalController::hyperlinkResolved, this,
             &TerminalPane::handleHyperlinkResult);
     connect(controller_, &TerminalController::hyperlinkActivationResolved,
@@ -2405,14 +2408,22 @@ void TerminalPane::endKeyEventDispatch()
 
 bool TerminalPane::deferKeyEventIfNeeded(const QKeyEvent &event)
 {
-    if (keyEventDeferralDepth_ == 0) return false;
+    const bool isCurrentReplay =
+        replayingDeferredKeyEvent_ == &event;
+    if (keyEventDeferralDepth_ == 0
+        && (!drainingDeferredKeyEvents_ || isCurrentReplay)) {
+        return false;
+    }
     deferKeyEvent(event);
     return true;
 }
 
 void TerminalPane::deferKeyEvent(const QKeyEvent &event)
 {
-    deferredKeyEvents_.push_back(KeyEventSnapshot::capture(event));
+    deferredInputs_.emplace_back(DeferredKeyInput{
+        .event = KeyEventSnapshot::capture(event),
+        .focusEpoch = keyFocusEpoch_,
+    });
 }
 
 void TerminalPane::drainDeferredKeyEvents()
@@ -2425,12 +2436,21 @@ void TerminalPane::drainDeferredKeyEvents()
     const QPointer<TerminalPane> guard(this);
     drainingDeferredKeyEvents_ = true;
     while (guard != nullptr && guard->keyEventDeferralDepth_ == 0
-           && !guard->deferredKeyEvents_.empty()) {
-        KeyEventSnapshot input =
-            std::move(guard->deferredKeyEvents_.front());
-        guard->deferredKeyEvents_.pop_front();
-        QKeyEvent replay = input.replay();
-        QCoreApplication::sendEvent(guard, &replay);
+           && !guard->deferredInputs_.empty()) {
+        DeferredPaneInput input =
+            std::move(guard->deferredInputs_.front());
+        guard->deferredInputs_.pop_front();
+        if (const auto *key = std::get_if<DeferredKeyInput>(&input)) {
+            QKeyEvent replay = key->event.replay();
+            guard->replayingDeferredKeyEvent_ = &replay;
+            QCoreApplication::sendEvent(guard, &replay);
+            if (guard != nullptr) {
+                guard->replayingDeferredKeyEvent_ = nullptr;
+            }
+        } else {
+            guard->controller_->sendInputMethod(
+                std::get<TerminalInputMethodInput>(input));
+        }
     }
     if (guard != nullptr) guard->drainingDeferredKeyEvents_ = false;
 }
@@ -2734,61 +2754,25 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         return handling;
     }
 
-    executingSequenceTokens_.append(matchedSequenceToken);
-    const auto sequenceExecutionGuard = qScopeGuard([guard] {
-        if (guard != nullptr && !guard->executingSequenceTokens_.isEmpty()) {
-            guard->executingSequenceTokens_.removeLast();
-        }
-    });
-
-    bool performed = false;
-    for (const GhosttyCompiledAction &entry :
-         step.match.actionChain.entries) {
-        if (!entry.action.has_value()) continue;
-        performed = performConfiguredAction(*entry.action) || performed;
-        if (guard == nullptr) {
-            // Known lifecycle effects are deferred and therefore complete the
-            // chain. For an unexpected destructive embedding callback, stop
-            // without touching the deleted pane again.
-            return KeyHandling::ConsumePressAndRelease;
-        }
-    }
-    // Ghostty executes the complete chain, then treats surface/tab/window
-    // closure as terminal for this event. Lifecycle owners defer pane-sourced
-    // window close and quit commitment until this callback returns. `quit` is
-    // deliberately not a closing action in the pinned implementation.
-    if (performed && step.match.actionChain.inputEffect
-            == GhosttyActionInputEffect::ClosingAction) {
-        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
-        return KeyHandling::ConsumePressAndRelease;
-    }
-    // Ghostty's ignore action suppresses encoding even on an unconsumed
-    // binding. A performable binding with no effective action acts as though
-    // it did not exist; every other match follows the binding's consume flag,
-    // independently of whether an action happened to change state.
-    if (performed && step.match.actionChain.inputEffect
-            == GhosttyActionInputEffect::Ignore) {
-        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
-        return KeyHandling::ConsumePress;
-    }
-    if (step.match.performable && !performed) {
-        if (resolveExecutingSequence(
-                TerminalSequenceResolution::FlushAndSendCurrent,
-                currentInput)) {
-            return KeyHandling::ConsumePress;
-        }
-        return KeyHandling::PassThrough;
-    }
-    if (step.match.consumed) {
-        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
-        return KeyHandling::ConsumePressAndRelease;
-    }
-    if (resolveExecutingSequence(
-            TerminalSequenceResolution::FlushAndSendCurrent,
-            currentInput)) {
-        return KeyHandling::ConsumePress;
-    }
-    return KeyHandling::PassThrough;
+    auto chain = std::make_shared<PendingLocalActionChain>(
+        PendingLocalActionChain{
+            .chain = step.match.actionChain,
+            .sequenceToken = matchedSequenceToken,
+            .currentInput = currentInput,
+            .keyIdentity = keyEventIdentity(event),
+            .keyFocusEpoch = keyFocusEpoch_,
+            .consumed = step.match.consumed,
+            .performable = step.match.performable,
+            .ownsKeyDeferral = false,
+            .startingAction = false,
+            .earlyResult = std::nullopt,
+        });
+    const std::optional<KeyHandling> handling =
+        continueLocalActionChain(chain);
+    // A pending worker action retains an additional key-event deferral
+    // beyond this stack frame. Accept only the press for now; final release
+    // handling is decided from the completed aggregate performed state.
+    return handling.value_or(KeyHandling::ConsumePress);
 }
 
 std::optional<QByteArray> TerminalPane::hoveredUrlForCopy() const
@@ -2817,17 +2801,342 @@ int TerminalPane::viewportPageRows() const
     return std::max(1, terminalRows_);
 }
 
+std::optional<TerminalPane::KeyHandling>
+TerminalPane::continueLocalActionChain(
+    const std::shared_ptr<PendingLocalActionChain> &chain)
+{
+    const QPointer<TerminalPane> guard(this);
+    executingSequenceTokens_.append(chain->sequenceToken);
+    bool sequenceAttached = true;
+    const auto sequenceGuard = qScopeGuard(
+        [guard, chain, &sequenceAttached] {
+        if (!sequenceAttached) return;
+        if (guard == nullptr
+            || guard->executingSequenceTokens_.isEmpty()) {
+            return;
+        }
+        chain->sequenceToken =
+            guard->executingSequenceTokens_.takeLast();
+    });
+
+    while (chain->nextEntry < chain->chain.entries.size()) {
+        const GhosttyCompiledAction &entry =
+            chain->chain.entries.at(chain->nextEntry++);
+        if (!entry.action.has_value()) continue;
+
+        chain->startingAction = true;
+        TerminalActionExecutionStart start = startConfiguredAction(
+            *entry.action,
+            [guard, chain](TerminalActionExecutionResult result) {
+                if (chain->startingAction) {
+                    chain->earlyResult = std::move(result);
+                    return;
+                }
+                if (guard == nullptr) return;
+                const bool performed =
+                    guard->commitConfiguredActionResult(result);
+                if (guard == nullptr) return;
+                chain->performed = performed || chain->performed;
+                (void) guard->continueLocalActionChain(chain);
+            });
+        chain->startingAction = false;
+        if (guard == nullptr) {
+            // Known lifecycle effects are owner-deferred. An unexpected
+            // destructive embedding callback cancels this local continuation.
+            return KeyHandling::ConsumePressAndRelease;
+        }
+        if (chain->earlyResult.has_value()) {
+            TerminalActionExecutionResult result =
+                std::move(*chain->earlyResult);
+            chain->earlyResult.reset();
+            chain->performed =
+                commitConfiguredActionResult(result)
+                || chain->performed;
+            if (guard == nullptr) {
+                return KeyHandling::ConsumePressAndRelease;
+            }
+            continue;
+        }
+        if (start.pending) {
+            if (!chain->ownsKeyDeferral) {
+                beginKeyEventDeferral();
+                chain->ownsKeyDeferral = true;
+            }
+            return std::nullopt;
+        }
+        chain->performed =
+            commitConfiguredActionResult(start.result)
+            || chain->performed;
+        if (guard == nullptr) {
+            return KeyHandling::ConsumePressAndRelease;
+        }
+    }
+
+    chain->sequenceToken = executingSequenceTokens_.takeLast();
+    sequenceAttached = false;
+    const KeyHandling handling =
+        finishLocalActionChain(*chain, chain->ownsKeyDeferral);
+    if (guard == nullptr) {
+        return KeyHandling::ConsumePressAndRelease;
+    }
+    if (!chain->ownsKeyDeferral) {
+        return handling;
+    }
+
+    const bool matchingReleaseDeferred = std::ranges::any_of(
+        deferredInputs_, [chain](const DeferredPaneInput &input) {
+            const auto *event =
+                std::get_if<DeferredKeyInput>(&input);
+            return event != nullptr
+                && event->focusEpoch == chain->keyFocusEpoch
+                && !event->event.pressed
+                && keyEventIdentity(event->event)
+                    == chain->keyIdentity;
+        });
+    if (handling == KeyHandling::ConsumePressAndRelease
+        && (chain->keyFocusEpoch == keyFocusEpoch_
+            || matchingReleaseDeferred)) {
+        consumedKeys_.insert(chain->keyIdentity);
+    }
+    chain->ownsKeyDeferral = false;
+    endKeyEventDeferral();
+    return std::nullopt;
+}
+
+TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
+    PendingLocalActionChain &chain, bool delayed)
+{
+    const auto resolve = [this, &chain](
+                             TerminalSequenceResolution resolution,
+                             bool withCurrent = false) {
+        return resolveSequenceToken(
+            std::exchange(chain.sequenceToken, 0), resolution,
+            withCurrent
+                ? std::optional<TerminalKeyInput>(chain.currentInput)
+                : std::nullopt);
+    };
+
+    // Ghostty executes the complete chain, then applies this precedence to
+    // the aggregate performed state.
+    if (chain.performed && chain.chain.inputEffect
+            == GhosttyActionInputEffect::ClosingAction) {
+        (void) resolve(TerminalSequenceResolution::Drop);
+        return KeyHandling::ConsumePressAndRelease;
+    }
+    if (chain.performed && chain.chain.inputEffect
+            == GhosttyActionInputEffect::Ignore) {
+        (void) resolve(TerminalSequenceResolution::Drop);
+        return KeyHandling::ConsumePress;
+    }
+    if (chain.performable && !chain.performed) {
+        if (resolve(
+                TerminalSequenceResolution::FlushAndSendCurrent, true)) {
+            return KeyHandling::ConsumePress;
+        }
+        if (delayed) controller_->sendKey(chain.currentInput);
+        return KeyHandling::PassThrough;
+    }
+    if (chain.consumed) {
+        (void) resolve(TerminalSequenceResolution::Drop);
+        return KeyHandling::ConsumePressAndRelease;
+    }
+    if (resolve(TerminalSequenceResolution::FlushAndSendCurrent, true)) {
+        return KeyHandling::ConsumePress;
+    }
+    if (delayed) controller_->sendKey(chain.currentInput);
+    return KeyHandling::PassThrough;
+}
+
 bool TerminalPane::executeConfiguredAction(QStringView action)
 {
     const std::optional<GhosttyConfiguredAction> parsed =
         GhosttyActionCatalog::parseConfiguredAction(action);
-    return parsed.has_value() && performConfiguredAction(*parsed);
+    return parsed.has_value() && executeConfiguredAction(*parsed);
 }
 
 bool TerminalPane::executeConfiguredAction(
     const GhosttyConfiguredAction &action)
 {
-    return performConfiguredAction(action);
+    const QPointer<TerminalPane> guard(this);
+    TerminalActionExecutionStart start = startConfiguredAction(
+        action, [guard](TerminalActionExecutionResult result) {
+            if (guard != nullptr) {
+                (void) guard->commitConfiguredActionResult(result);
+            }
+        });
+    if (guard == nullptr) {
+        return start.result.performed;
+    }
+    return start.pending
+        ? start.result.performed
+        : commitConfiguredActionResult(start.result);
+}
+
+TerminalActionExecutionStart
+TerminalPane::startConfiguredAction(
+    const GhosttyConfiguredAction &action,
+    ConfiguredActionCompletion completion)
+{
+    const auto *paneAction = std::get_if<GhosttyPaneAction>(&action);
+    if (paneAction != nullptr) {
+        namespace PaneAction = GhosttyPaneActions;
+        if (std::holds_alternative<PaneAction::SelectAll>(
+                *paneAction)) {
+            const quint64 requestId = nextTerminalActionRequestId();
+            pendingTerminalActionCompletions_.insert(
+                requestId, std::move(completion));
+            const QPointer<TerminalPane> guard(this);
+            const bool accepted =
+                controller_->selectAllAction(requestId);
+            if (guard == nullptr) {
+                return {};
+            }
+            if (!accepted) {
+                pendingTerminalActionCompletions_.remove(requestId);
+                return {};
+            }
+            return {
+                .pending = true,
+                .result = {
+                    .performed = true,
+                    .terminalAction = std::nullopt,
+                },
+            };
+        }
+        if (std::holds_alternative<PaneAction::CopyToClipboard>(
+                *paneAction)) {
+            if (!controller_->selectionExpected()) {
+                return {
+                    .pending = false,
+                    .result = {
+                        .performed = false,
+                        .terminalAction = std::nullopt,
+                    },
+                };
+            }
+            const quint64 requestId = nextTerminalActionRequestId();
+            pendingTerminalActionCompletions_.insert(
+                requestId, std::move(completion));
+            const QPointer<TerminalPane> guard(this);
+            const bool accepted =
+                controller_->copySelectionAction(requestId);
+            if (guard == nullptr) {
+                return {};
+            }
+            if (!accepted) {
+                pendingTerminalActionCompletions_.remove(requestId);
+                return {};
+            }
+            return {
+                .pending = true,
+                // Preserve the prior immediate API contract for direct
+                // programmatic dispatch. Correlated chains use the worker's
+                // authoritative completion instead.
+                .result = {
+                    .performed = true,
+                    .terminalAction = std::nullopt,
+                },
+            };
+        }
+        if (const auto *fileAction =
+                std::get_if<TerminalWriteFileAction>(paneAction);
+            fileAction != nullptr) {
+            const quint64 requestId = nextTerminalActionRequestId();
+            pendingTerminalActionCompletions_.insert(
+                requestId, std::move(completion));
+            const QPointer<TerminalPane> guard(this);
+            const bool accepted =
+                controller_->writeTerminalFile(requestId, *fileAction);
+            if (guard == nullptr) {
+                return {};
+            }
+            if (!accepted) {
+                pendingTerminalActionCompletions_.remove(requestId);
+                return {};
+            }
+            return {
+                .pending = true,
+                .result = {
+                    .performed = true,
+                    .terminalAction = std::nullopt,
+                },
+            };
+        }
+    }
+
+    return {
+        .pending = false,
+        .result = {
+            .performed = performConfiguredAction(action),
+            .terminalAction = std::nullopt,
+        },
+    };
+}
+
+bool TerminalPane::commitConfiguredActionResult(
+    const TerminalActionExecutionResult &result)
+{
+    if (!result.terminalAction.has_value()) {
+        return result.performed;
+    }
+    const TerminalActionResult &terminal = *result.terminalAction;
+    if (!terminal.performed) {
+        return false;
+    }
+
+    switch (terminal.effect) {
+    case TerminalActionEffect::None:
+        return true;
+    case TerminalActionEffect::Clipboard: {
+        QClipboard *const clipboard = QGuiApplication::clipboard();
+        if (clipboard != nullptr) {
+            writeTerminalClipboard(
+                clipboard, terminal.payload,
+                terminal.clipboardDestination);
+        }
+        return true;
+    }
+    case TerminalActionEffect::OpenFile: {
+        if (!terminal.payload.isEmpty()) {
+            const std::function<bool(const QUrl &)> opener = urlOpener_;
+            if (opener) {
+                static_cast<void>(
+                    opener(QUrl::fromLocalFile(terminal.payload)));
+            }
+        }
+        return true;
+    }
+    }
+    return false;
+}
+
+quint64 TerminalPane::nextTerminalActionRequestId()
+{
+    do {
+        ++nextTerminalActionRequestId_;
+    } while (nextTerminalActionRequestId_ == 0
+             || pendingTerminalActionCompletions_.contains(
+                 nextTerminalActionRequestId_));
+    return nextTerminalActionRequestId_;
+}
+
+void TerminalPane::handleTerminalActionResult(
+    const TerminalActionResult &result)
+{
+    auto iterator =
+        pendingTerminalActionCompletions_.find(result.requestId);
+    if (iterator == pendingTerminalActionCompletions_.end()) {
+        return;
+    }
+    ConfiguredActionCompletion completion =
+        std::move(iterator.value());
+    pendingTerminalActionCompletions_.erase(iterator);
+    if (completion) {
+        completion({
+            .performed = result.performed,
+            .terminalAction = result,
+        });
+    }
 }
 
 bool TerminalPane::performConfiguredAction(
@@ -3021,10 +3330,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const TerminalWriteFileAction &value) {
-                controller_->writeTerminalFile(value);
-                // Missing history or selection remains a performed no-op so
-                // performable bindings preserve upstream fallthrough rules.
-                return true;
+                return executeConfiguredAction(
+                    GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const PaneAction::Paste &value) {
                 const TerminalClipboardSource source =
@@ -3150,7 +3457,14 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
         .preeditTransition = hadPreedit || !nextPreedit.isNull(),
     };
     if (!input.commitText.isEmpty() || input.preeditTransition) {
-        controller_->sendInputMethod(input);
+        if (keyEventDeferralDepth_ != 0
+            || drainingDeferredKeyEvents_) {
+            deferredInputs_.emplace_back(input);
+        } else {
+            const QPointer<TerminalPane> guard(this);
+            controller_->sendInputMethod(input);
+            if (guard == nullptr) return;
+        }
     }
     update();
     event->accept();
@@ -3950,6 +4264,8 @@ void TerminalPane::focusInEvent(QFocusEvent *event)
 
 void TerminalPane::focusOutEvent(QFocusEvent *event)
 {
+    ++keyFocusEpoch_;
+    consumedKeys_.clear();
     cursorTimer_->stop();
     cursorBlinkOn_ = true;
     hoverInside_ = false;
