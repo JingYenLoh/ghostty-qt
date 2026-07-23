@@ -227,7 +227,10 @@ Session and pane tests cover payload-specific typed execution without
 keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
 reload cancellation, full/fractional/line/absolute viewport movement,
 selection-target scrolling,
-select-all, endpoint adjustment/autoscroll, byte-exact CSI/ESC/text actions,
+select-all, endpoint adjustment/autoscroll, worker-authoritative
+selection-dependent performability across stale-false and stale-true GUI
+cache windows, exact empty/nonempty selection-search effects, byte-exact
+CSI/ESC/text actions,
 full-reset cache synchronization, long OSC 8 URI extraction across viewport
 and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
 latest-request coalescing, stale-result rejection, stable live-output hover,
@@ -336,12 +339,20 @@ matching, correlated select-all copy-on-select, clipboard/open commitment
 before continuation, duplicate-ID rejection, nested-loop early completion,
 worker-performed state across a rejected GUI opener, replay-reentrant key/IME
 FIFO order, focus-epoch handling, destruction during finalization, and
-cancellation before deferred session startup. Broad coverage
+cancellation before deferred session startup. Lifecycle cases additionally
+hold both queued and delayed search/file effects across session exit or
+graceful shutdown, verify that no stale GUI effect is published, and verify
+that suspended chains still resolve their input barriers. Broad coverage
 starts every pane before waiting, resolves workers in reverse order, commits
 effects in stable snapshot order, holds later actions and input behind the
 barrier, preserves replay-reentrant process input order, waits for
 configuration fanout, and treats synchronously or asynchronously destroyed
-targets as resolved without redirecting their effects. Tests that inspect
+targets as resolved without redirecting their effects. Selection-specific
+cases cover action-major adjust/scroll/search/copy barriers and resumable
+search-effect publication when an observer destroys a workspace, without
+duplicating earlier effects or advancing during teardown. A buffered broad
+search effect also expires if its originating pane exits before the remaining
+targets resolve. Tests that inspect
 persistent artifacts remove their temporary directories explicitly.
 Other adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch

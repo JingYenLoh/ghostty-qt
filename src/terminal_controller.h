@@ -80,13 +80,6 @@ public:
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     bool selectionAvailable() const { return selectionAvailable_; }
     bool readOnly() const { return readOnly_; }
-    // True while an earlier queued select-all may establish a selection.
-    // This lets a Ghostty action chain enqueue its dependent actions in order
-    // without exposing speculative state through the Q_PROPERTY.
-    bool selectionExpected() const
-    {
-        return selectionAvailable_ || pendingSelectAllRequests_ > 0;
-    }
     void resizeTerminal(int columns, int rows, int cellWidthPixels,
                         int cellHeightPixels, int surfaceWidthPixels,
                         int surfaceHeightPixels);
@@ -127,14 +120,17 @@ public:
     void selectAll();
     [[nodiscard]] bool selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
+    [[nodiscard]] bool adjustSelectionAction(
+        quint64 requestId, TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    [[nodiscard]] bool scrollToSelectionAction(quint64 requestId);
     // Search requests are generation-scoped so an incremental scan can yield
     // to PTY and UI work without publishing results from a superseded query.
     void search(const QString &text);
     void searchSerialized(const QByteArray &serializedText);
     void cancelSearch();
     void navigateSearch(TerminalSearchDirection direction);
-    void requestSearchSelection();
+    [[nodiscard]] bool searchSelectionAction(quint64 requestId);
     [[nodiscard]] bool searchExpected() const { return searchExpected_; }
     void requestHyperlink(int column, int row, quint64 contentRevision);
     void cancelHyperlinkRequest();
@@ -167,7 +163,6 @@ Q_SIGNALS:
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
-    void searchSelectionReady(bool available, const QString &text);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void terminalActionReady(const TerminalActionResult &result);
@@ -206,14 +201,17 @@ Q_SIGNALS:
     void selectAllRequested();
     void selectAllActionRequested(quint64 requestId);
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
+    void selectionAdjustmentActionRequested(
+        quint64 requestId, TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
+    void scrollToSelectionActionRequested(quint64 requestId);
     void searchRequested(quint64 generation, const QByteArray &needle);
     void serializedSearchRequested(quint64 generation,
                                    const QByteArray &serializedNeedle);
     void searchCancellationRequested(quint64 generation);
     void searchNavigationRequested(quint64 generation,
                                    TerminalSearchDirection direction);
-    void searchSelectionRequested(quint64 requestId);
+    void searchSelectionActionRequested(quint64 requestId);
     void hyperlinkQueryRequested(quint64 requestId, quint64 contentRevision,
                                  int column, int row);
     void hyperlinkQueryCancellationRequested(quint64 requestId);
@@ -249,8 +247,7 @@ private:
     [[nodiscard]] bool applyInitialSessionPayload(
         const InitialSessionCoordinator::Payload &payload);
     void cancelInitialSessionRequest();
-    [[nodiscard]] bool beginTerminalActionRequest(
-        quint64 requestId, bool selectAll);
+    [[nodiscard]] bool beginTerminalActionRequest(quint64 requestId);
     void failPendingTerminalActions();
     void notePotentialActivity();
     // Sequence leaders cross to SessionWorker immediately for mode-sensitive
@@ -267,7 +264,6 @@ private:
         const std::optional<TerminalKeyInput> &current = std::nullopt);
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
-    quint64 nextSearchSelectionRequestId();
 
     TerminalSessionLaunchOptions launchOptions_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
@@ -276,7 +272,6 @@ private:
     QPointer<SessionWorker> worker_;
     std::vector<WorkerRequest> pendingWorkerRequests_;
     QSet<quint64> pendingTerminalActionRequests_;
-    QSet<quint64> pendingSelectAllActionRequests_;
     std::optional<QString> baseTitle_;
     QString currentDirectory_;
     bool terminalMouseTracking_ = false;
@@ -286,7 +281,6 @@ private:
     bool explicitProgram_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
-    int pendingSelectAllRequests_ = 0;
     bool closing_ = false;
     SessionStartState sessionStartState_ = SessionStartState::Idle;
     quint64 nextSequenceToken_ = 0;
@@ -297,7 +291,5 @@ private:
     quint64 activeHyperlinkActivationId_ = 0;
     quint64 nextSearchGeneration_ = 0;
     quint64 activeSearchGeneration_ = 0;
-    quint64 nextSearchSelectionRequestId_ = 0;
-    quint64 activeSearchSelectionRequestId_ = 0;
     bool searchExpected_ = false;
 };

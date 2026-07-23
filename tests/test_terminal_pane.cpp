@@ -323,9 +323,14 @@ private Q_SLOTS:
     void routesBroadConfiguredActionEffects();
     void routesTypedCloseTabModes();
     void routesViewportAndSelectionActions();
+    void selectionActionPerformabilityUsesWorkerState_data();
+    void selectionActionPerformabilityUsesWorkerState();
     void routesTerminalControlActions();
     void suspendsTerminalActionChainsUntilCorrelatedEffectsCommit();
     void cancelsPendingTerminalActionChainsBeforeSessionStart();
+    void dropsQueuedTerminalEffectWhenShutdownBegins();
+    void dropsPreExitSearchSelectionEffectOnSessionExit_data();
+    void dropsPreExitSearchSelectionEffectOnSessionExit();
     void rejectsDuplicateTerminalActionRequestIds();
     void handlesCompletionReentrantlyDuringTerminalActionStart();
     void retainsWorkerPerformedStateWhenGuiEffectFails();
@@ -1316,7 +1321,9 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     };
     options.hold = true;
 
-    TerminalPane pane(options);
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QSignalSpy activeSpy(&pane, &TerminalPane::searchUiActiveChanged);
@@ -1396,9 +1403,97 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     QVERIFY(!pane.executeConfiguredAction(QStringLiteral("end_search")));
     QVERIFY(!pane.searchUiActive());
 
-    // No selection means Ghostty's search_selection action is not
-    // performable and must not synthesize an empty query.
-    QVERIFY(!pane.executeConfiguredAction(QStringLiteral("search_selection")));
+    QSignalSpy searchSelection(
+        controller, &TerminalController::searchSelectionActionRequested);
+    QSignalSpy searchRequests(
+        controller, &TerminalController::searchRequested);
+
+    pane.endSearchUi();
+    pane.setSearchUiText(QStringLiteral("retained query"));
+    const int nonEmptySearchBefore = searchRequests.count();
+    const int nonEmptyTextBefore = textSpy.count();
+    const int nonEmptyFocusBefore = focusSpy.count();
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("search_selection")));
+    QCOMPARE(searchSelection.count(), 1);
+    const quint64 nonEmptyRequestId =
+        searchSelection.constFirst().constFirst().toULongLong();
+    const QString selectedText = QStringLiteral("  selected query  ");
+    Q_EMIT controller->terminalActionReady({
+        .requestId = nonEmptyRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::StartSearch,
+        .performed = true,
+        .payload = selectedText,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCoreApplication::processEvents();
+    QVERIFY(pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(), selectedText);
+    QCOMPARE(textSpy.count(), nonEmptyTextBefore + 1);
+    QCOMPARE(focusSpy.count(), nonEmptyFocusBefore + 1);
+    QCOMPARE(searchRequests.count(), nonEmptySearchBefore + 2);
+    QCOMPARE(searchRequests.at(nonEmptySearchBefore).at(1).toByteArray(),
+             QByteArrayLiteral("retained query"));
+    QCOMPARE(searchRequests.at(nonEmptySearchBefore + 1).at(1).toByteArray(),
+             selectedText.toUtf8());
+
+    // A valid empty selection opens and focuses search while retaining the
+    // previous entry text, matching Ghostty's GTK frontend sequencing.
+    pane.endSearchUi();
+    pane.setSearchUiText(QStringLiteral("retained empty selection"));
+    const int emptySearchBefore = searchRequests.count();
+    const int emptyTextBefore = textSpy.count();
+    const int emptyFocusBefore = focusSpy.count();
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("search_selection")));
+    QCOMPARE(searchSelection.count(), 2);
+    const quint64 emptyRequestId =
+        searchSelection.at(1).constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady({
+        .requestId = emptyRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::StartSearch,
+        .performed = true,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    });
+    QCoreApplication::processEvents();
+    QVERIFY(pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(),
+             QStringLiteral("retained empty selection"));
+    QCOMPARE(textSpy.count(), emptyTextBefore);
+    QCOMPARE(focusSpy.count(), emptyFocusBefore + 1);
+    QCOMPARE(searchRequests.count(), emptySearchBefore + 1);
+    QCOMPARE(searchRequests.constLast().at(1).toByteArray(),
+             QByteArrayLiteral("retained empty selection"));
+
+    // An unavailable selection is a pure unperformed result: no overlay,
+    // retained-text, focus, or backend-search mutation.
+    pane.endSearchUi();
+    const int unavailableSearchBefore = searchRequests.count();
+    const int unavailableTextBefore = textSpy.count();
+    const int unavailableFocusBefore = focusSpy.count();
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("search_selection")));
+    QCOMPARE(searchSelection.count(), 3);
+    const quint64 unavailableRequestId =
+        searchSelection.at(2).constFirst().toULongLong();
+    Q_EMIT controller->terminalActionReady({
+        .requestId = unavailableRequestId,
+        .outcome = TerminalActionOutcome::Unavailable,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+    });
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(),
+             QStringLiteral("retained empty selection"));
+    QCOMPARE(textSpy.count(), unavailableTextBefore);
+    QCOMPARE(focusSpy.count(), unavailableFocusBefore);
+    QCOMPARE(searchRequests.count(), unavailableSearchBefore);
 }
 
 void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
@@ -3638,6 +3733,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy copied(
         controller, &TerminalController::copyActionRequested);
+    QSignalSpy terminalActions(
+        controller, &TerminalController::terminalActionReady);
     QSignalSpy pasted(controller, &TerminalController::pasteRequested);
 
     QKeyEvent configuredNewTab(QEvent::KeyPress, Qt::Key_N,
@@ -3692,16 +3789,21 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCOMPARE(applicationActionCount(ApplicationAction::OpenConfig), 1);
     QCOMPARE(forwarded.count(), beforeOpenConfig);
 
-    // A normal consumed binding suppresses terminal input even when its
-    // state-dependent action has nothing to copy.
+    // A normal consumed binding suppresses terminal input even when the
+    // worker authoritatively reports that there is nothing to copy.
     QKeyEvent consumedEmptyCopy(QEvent::KeyPress, Qt::Key_B,
                                 Qt::ControlModifier, QString(QChar(0x02)));
     QCoreApplication::sendEvent(&pane, &consumedEmptyCopy);
+    QCOMPARE(copied.count(), 1);
+    QTRY_COMPARE(terminalActions.count(), 1);
     QCOMPARE(forwarded.count(), beforeOpenConfig);
-    QCOMPARE(copied.count(), 0);
-    QVERIFY(!pane.executeConfiguredAction(
+
+    // Direct programmatic dispatch reports that the correlated request was
+    // accepted; its eventual performed state is delivered asynchronously.
+    QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("copy_to_clipboard")));
-    QCOMPARE(copied.count(), 0);
+    QCOMPARE(copied.count(), 2);
+    QTRY_COMPARE(terminalActions.count(), 2);
 
     // Unconsumed actions still run, then allow normal VT encoding.
     const int beforeUnconsumedReload = forwarded.count();
@@ -3751,14 +3853,15 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QCoreApplication::sendEvent(&pane, &quitRelease);
     QCOMPARE(forwarded.count(), beforeQuitChain + 1);
 
-    // A performable copy without a selection is not performed and therefore
-    // falls through to terminal input.
+    // A performable copy waits for the worker's selection decision, then an
+    // unavailable result falls through to terminal input.
     const int beforeEmptyCopy = forwarded.count();
     QKeyEvent emptyCopy(QEvent::KeyPress, Qt::Key_C,
                         Qt::ControlModifier, QString(QChar(0x03)));
     QCoreApplication::sendEvent(&pane, &emptyCopy);
-    QCOMPARE(forwarded.count(), beforeEmptyCopy + 1);
-    QCOMPARE(copied.count(), 0);
+    QCOMPARE(copied.count(), 3);
+    QTRY_COMPARE(terminalActions.count(), 3);
+    QTRY_COMPARE(forwarded.count(), beforeEmptyCopy + 1);
 
     // A performable action can still have mandatory cleanup. Empty retained
     // search text opens only the UI, so end_search closes that UI while
@@ -4094,12 +4197,17 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QSignalSpy updates(controller, &TerminalController::terminalUpdated);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy scrolls(controller, &TerminalController::scrollRequested);
+    QSignalSpy selectionScrolls(
+        controller, &TerminalController::scrollToSelectionActionRequested);
     QSignalSpy selectAll(
         controller, &TerminalController::selectAllActionRequested);
     QSignalSpy copied(
         controller, &TerminalController::copyActionRequested);
-    QSignalSpy adjustments(
-        controller, &TerminalController::selectionAdjustmentRequested);
+    QSignalSpy selectionAdjustments(
+        controller,
+        &TerminalController::selectionAdjustmentActionRequested);
+    QSignalSpy terminalActions(
+        controller, &TerminalController::terminalActionReady);
 
     // Before the first worker frame, page actions use the worker's actual
     // 24-row startup geometry rather than the legacy 20-row fallback.
@@ -4125,18 +4233,20 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
              qint64(requestedRows));
     scrolls.clear();
 
-    // Selection-dependent performable bindings act as absent until the
-    // worker's cached selection state says they can run.
+    // Selection-dependent performable bindings always ask the worker. A
+    // blank selection resolves as unavailable and only then reaches the PTY.
     QKeyEvent missingScrollSelection(
         QEvent::KeyPress, Qt::Key_U, Qt::AltModifier, QStringLiteral("u"));
     QCoreApplication::sendEvent(&pane, &missingScrollSelection);
-    QCOMPARE(forwarded.count(), 1);
-    QCOMPARE(scrolls.count(), 0);
+    QCOMPARE(selectionScrolls.count(), 1);
+    QTRY_COMPARE(terminalActions.count(), 1);
+    QTRY_COMPARE(forwarded.count(), 1);
     QKeyEvent missingAdjustment(
         QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
     QCoreApplication::sendEvent(&pane, &missingAdjustment);
-    QCOMPARE(forwarded.count(), 2);
-    QCOMPARE(adjustments.count(), 0);
+    QCOMPARE(selectionAdjustments.count(), 1);
+    QTRY_COMPARE(terminalActions.count(), 2);
+    QTRY_COMPARE(forwarded.count(), 2);
 
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updates, QStringLiteral("pane-action-selection")), 5000);
@@ -4194,27 +4304,37 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
         QStringLiteral("scroll_page_fractional:inf")));
     QCOMPARE(scrolls.count(), beforeUnsafe);
 
-    QVERIFY(!pane.executeConfiguredAction(
+    QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("scroll_to_selection")));
-    QVERIFY(!pane.executeConfiguredAction(
+    QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("adjust_selection:right")));
     QCOMPARE(scrolls.count(), beforeUnsafe);
-    QCOMPARE(adjustments.count(), 0);
+    QCOMPARE(selectionScrolls.count(), 2);
+    QCOMPARE(selectionAdjustments.count(), 2);
+    QTRY_COMPARE(terminalActions.count(), 4);
+    for (int index = 2; index < 4; ++index) {
+        const TerminalActionResult result =
+            qvariant_cast<TerminalActionResult>(
+                terminalActions.at(index).constFirst());
+        QCOMPARE(result.outcome, TerminalActionOutcome::Unavailable);
+        QVERIFY(!result.performed);
+    }
 
-    // Select-all intent makes its immediately following dependent actions
-    // performable while all three requests retain their worker queue order.
-    // This preserves Ghostty action chains without a UI round trip.
+    selectionScrolls.clear();
+    selectionAdjustments.clear();
+    terminalActions.clear();
+
+    // The chain waits for each correlated result. Select-all establishes the
+    // worker selection before adjustment and scroll run, without consulting
+    // the asynchronously updated GUI selection cache.
     QKeyEvent chainedSelection(
         QEvent::KeyPress, Qt::Key_Y, Qt::AltModifier, QStringLiteral("y"));
     QCoreApplication::sendEvent(&pane, &chainedSelection);
     QCOMPARE(selectAll.count(), 1);
-    QTRY_COMPARE_WITH_TIMEOUT(adjustments.count(), 1, 3000);
-    QTRY_COMPARE_WITH_TIMEOUT(
-        scrolls.count(), beforeUnsafe + 1, 3000);
-    QCOMPARE(requestAt(beforeUnsafe).kind,
-             TerminalViewportRequest::Kind::Selection);
+    QTRY_COMPARE_WITH_TIMEOUT(selectionAdjustments.count(), 1, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(selectionScrolls.count(), 1, 3000);
     QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
-                 adjustments.constFirst().constFirst()),
+                 selectionAdjustments.constFirst().at(1)),
              TerminalSelectionAdjustment::Right);
     QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 3000);
 
@@ -4237,14 +4357,12 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
 
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("scroll_to_selection")));
-    QCOMPARE(scrolls.count(), beforeUnsafe + 2);
-    QCOMPARE(requestAt(beforeUnsafe + 1).kind,
-             TerminalViewportRequest::Kind::Selection);
+    QCOMPARE(selectionScrolls.count(), 2);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("adjust_selection:right")));
-    QCOMPARE(adjustments.count(), 2);
+    QCOMPARE(selectionAdjustments.count(), 2);
     QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
-                 adjustments.at(1).constFirst()),
+                 selectionAdjustments.at(1).at(1)),
              TerminalSelectionAdjustment::Right);
 
     const int beforeBoundActions = forwarded.count();
@@ -4254,9 +4372,98 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QKeyEvent availableAdjustment(
         QEvent::KeyPress, Qt::Key_I, Qt::AltModifier, QStringLiteral("i"));
     QCoreApplication::sendEvent(&pane, &availableAdjustment);
+    QTRY_COMPARE(selectionScrolls.count(), 3);
+    QTRY_COMPARE(selectionAdjustments.count(), 3);
     QCOMPARE(forwarded.count(), beforeBoundActions);
-    QCOMPARE(scrolls.count(), beforeUnsafe + 3);
-    QCOMPARE(adjustments.count(), 3);
+}
+
+void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState_data()
+{
+    QTest::addColumn<QString>("action");
+
+    QTest::newRow("copy")
+        << QStringLiteral("copy_to_clipboard:plain");
+    QTest::newRow("search")
+        << QStringLiteral("search_selection");
+    QTest::newRow("scroll")
+        << QStringLiteral("scroll_to_selection");
+    QTest::newRow("adjust")
+        << QStringLiteral("adjust_selection:right");
+}
+
+void TerminalPaneTest::selectionActionPerformabilityUsesWorkerState()
+{
+    QFETCH(QString, action);
+    qRegisterMetaType<TerminalActionResult>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf 'worker-authoritative-selection'; sleep 5"),
+    };
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("performable:alt+x=%1").arg(action),
+    });
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy completions(
+        controller, &TerminalController::terminalActionReady);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updates, QStringLiteral("worker-authoritative-selection")),
+        5000);
+    QVERIFY(!controller->selectionAvailable());
+
+    // Stale-false cache: select-all and the action retain FIFO order on the
+    // worker even though the GUI has not received selection availability.
+    controller->selectAll();
+    QVERIFY(!controller->selectionAvailable());
+    QKeyEvent selectedPress(
+        QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+        QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &selectedPress);
+    QTRY_COMPARE_WITH_TIMEOUT(completions.count(), 1, 3000);
+    const TerminalActionResult selectedResult =
+        qvariant_cast<TerminalActionResult>(
+            completions.constFirst().constFirst());
+    QCOMPARE(selectedResult.outcome, TerminalActionOutcome::Success);
+    QVERIFY(selectedResult.performed);
+    QCOMPARE(forwarded.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 3000);
+
+    QKeyEvent selectedRelease(
+        QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &selectedRelease);
+    QCoreApplication::processEvents();
+    const int forwardedBeforeClear = forwarded.count();
+
+    // Stale-true cache: the worker processes clear-selection first and
+    // reports the immediately following action unavailable. Only after that
+    // authoritative result does the performable binding replay to the PTY.
+    controller->clearSelection();
+    QVERIFY(controller->selectionAvailable());
+    QKeyEvent clearedPress(
+        QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+        QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &clearedPress);
+    QTRY_COMPARE_WITH_TIMEOUT(completions.count(), 2, 3000);
+    const TerminalActionResult clearedResult =
+        qvariant_cast<TerminalActionResult>(
+            completions.at(1).constFirst());
+    QCOMPARE(clearedResult.outcome, TerminalActionOutcome::Unavailable);
+    QVERIFY(!clearedResult.performed);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        forwarded.count(), forwardedBeforeClear + 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 3000);
 }
 
 void TerminalPaneTest::routesTerminalControlActions()
@@ -4328,6 +4535,9 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     options.hold = true;
     options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("alt+b=select_all"),
+        QStringLiteral("chain=adjust_selection:right"),
+        QStringLiteral("chain=scroll_to_selection"),
+        QStringLiteral("chain=search_selection"),
         QStringLiteral("chain=copy_to_clipboard:plain"),
         QStringLiteral("chain=write_screen_file:open"),
         QStringLiteral("chain=paste_from_clipboard"),
@@ -4341,6 +4551,13 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
 
     QSignalSpy selectAll(
         controller, &TerminalController::selectAllActionRequested);
+    QSignalSpy adjustments(
+        controller,
+        &TerminalController::selectionAdjustmentActionRequested);
+    QSignalSpy selectionScrolls(
+        controller, &TerminalController::scrollToSelectionActionRequested);
+    QSignalSpy searchSelection(
+        controller, &TerminalController::searchSelectionActionRequested);
     QSignalSpy copies(
         controller, &TerminalController::copyActionRequested);
     QSignalSpy files(
@@ -4361,6 +4578,11 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     QString clipboardAtOpen;
     QString clipboardAtPaste;
     QList<QUrl> openedUrls;
+    connect(
+        &pane, &TerminalPane::searchUiFocusRequested, &pane,
+        [&effectOrder] {
+            effectOrder.append(QStringLiteral("search"));
+        });
     pane.setUrlOpener(
         [&](const QUrl &url) {
             effectOrder.append(QStringLiteral("open"));
@@ -4382,6 +4604,9 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
         QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &press);
     QCOMPARE(selectAll.count(), 1);
+    QCOMPARE(adjustments.count(), 0);
+    QCOMPARE(selectionScrolls.count(), 0);
+    QCOMPARE(searchSelection.count(), 0);
     QCOMPARE(copies.count(), 0);
     QCOMPARE(files.count(), 0);
     QCOMPARE(pasted.count(), 0);
@@ -4409,9 +4634,62 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
             TerminalClipboardDestination::Standard,
     });
     QCoreApplication::processEvents();
-    QCOMPARE(copies.count(), 1);
+    QCOMPARE(adjustments.count(), 1);
+    QCOMPARE(selectionScrolls.count(), 0);
+    QCOMPARE(searchSelection.count(), 0);
+    QCOMPARE(copies.count(), 0);
     QCOMPARE(files.count(), 0);
     QCOMPARE(clipboard->text(QClipboard::Clipboard), sentinel);
+
+    const quint64 adjustmentRequestId =
+        adjustments.constFirst().constFirst().toULongLong();
+    QVERIFY(adjustmentRequestId != 0);
+    QCOMPARE(qvariant_cast<TerminalSelectionAdjustment>(
+                 adjustments.constFirst().at(1)),
+             TerminalSelectionAdjustment::Right);
+    Q_EMIT controller->terminalActionReady({
+        .requestId = adjustmentRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::None,
+        .performed = true,
+    });
+    QCoreApplication::processEvents();
+    QCOMPARE(selectionScrolls.count(), 1);
+    QCOMPARE(searchSelection.count(), 0);
+    QCOMPARE(copies.count(), 0);
+
+    const quint64 scrollRequestId =
+        selectionScrolls.constFirst().constFirst().toULongLong();
+    QVERIFY(scrollRequestId != 0);
+    Q_EMIT controller->terminalActionReady({
+        .requestId = scrollRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::None,
+        .performed = true,
+    });
+    QCoreApplication::processEvents();
+    QCOMPARE(searchSelection.count(), 1);
+    QCOMPARE(copies.count(), 0);
+
+    const quint64 searchRequestId =
+        searchSelection.constFirst().constFirst().toULongLong();
+    QVERIFY(searchRequestId != 0);
+    const QString selectionQuery =
+        QStringLiteral("correlated selection query");
+    Q_EMIT controller->terminalActionReady({
+        .requestId = searchRequestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::StartSearch,
+        .performed = true,
+        .payload = selectionQuery,
+    });
+    QCOMPARE(copies.count(), 0);
+    QVERIFY(!pane.searchUiActive());
+    QCoreApplication::processEvents();
+    QVERIFY(pane.searchUiActive());
+    QCOMPARE(pane.searchUiText(), selectionQuery);
+    QCOMPARE(effectOrder, QStringList({QStringLiteral("search")}));
+    QCOMPARE(copies.count(), 1);
 
     const quint64 copyRequestId =
         copies.constFirst().constFirst().toULongLong();
@@ -4489,6 +4767,7 @@ void TerminalPaneTest::suspendsTerminalActionChainsUntilCorrelatedEffectsCommit(
     QCOMPARE(
         effectOrder,
         QStringList({
+            QStringLiteral("search"),
             QStringLiteral("open"),
             QStringLiteral("paste"),
         }));
@@ -4559,6 +4838,233 @@ void TerminalPaneTest::cancelsPendingTerminalActionChainsBeforeSessionStart()
     QCOMPARE(forwarded.count(), 0);
 }
 
+void TerminalPaneTest::dropsQueuedTerminalEffectWhenShutdownBegins()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=write_screen_file:open"),
+        QStringLiteral("chain=paste_from_clipboard"),
+    });
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    // Keep the request pending while retaining a real started-worker shutdown
+    // signal. The test supplies the correlated result explicitly.
+    QVERIFY(QObject::disconnect(
+        controller, &TerminalController::writeTerminalFileRequested,
+        nullptr, nullptr));
+
+    QSignalSpy files(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy inputMethods(
+        controller, &TerminalController::inputMethodRequested);
+    QStringList dispatchOrder;
+    connect(controller, &TerminalController::shutdownRequested,
+            this, [&dispatchOrder] {
+                dispatchOrder.append(QStringLiteral("shutdown"));
+            });
+    connect(controller, &TerminalController::pasteRequested,
+            this, [&dispatchOrder] {
+                dispatchOrder.append(QStringLiteral("paste"));
+            });
+    connect(controller, &TerminalController::keyRequested,
+            this, [&dispatchOrder] {
+                dispatchOrder.append(QStringLiteral("key"));
+            });
+    connect(controller, &TerminalController::inputMethodRequested,
+            this, [&dispatchOrder] {
+                dispatchOrder.append(QStringLiteral("ime"));
+            });
+    int openCount = 0;
+    pane.setUrlOpener([&openCount](const QUrl &) {
+        ++openCount;
+        return true;
+    });
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString sentinel =
+        QStringLiteral("shutdown-terminal-action-chain");
+    clipboard->setText(sentinel, QClipboard::Clipboard);
+    const auto clipboardCleanup = qScopeGuard([clipboard] {
+        clipboard->clear(QClipboard::Clipboard);
+    });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    QCOMPARE(files.count(), 1);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(forwarded.count(), 0);
+    QCOMPARE(inputMethods.count(), 0);
+
+    // Unrelated input joins the suspended pane FIFO. Shutdown must reach the
+    // worker queue before resolving the barrier releases either item.
+    QKeyEvent ordinaryPress(
+        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+        QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+    QInputMethodEvent deferredIme;
+    deferredIme.setCommitString(QStringLiteral("deferred-ime"));
+    QCoreApplication::sendEvent(&pane, &deferredIme);
+    QCOMPARE(forwarded.count(), 0);
+    QCOMPARE(inputMethods.count(), 0);
+
+    const quint64 requestId =
+        files.constFirst().constFirst().toULongLong();
+    QVERIFY(requestId != 0);
+    Q_EMIT controller->terminalActionReady(
+        successfulOpenFileResult(
+            requestId,
+            QStringLiteral("/tmp/pre-shutdown-terminal-action.txt")));
+    QCOMPARE(openCount, 0);
+    QCOMPARE(pasted.count(), 0);
+
+    // Shutdown invalidates both a completion still held by the worker and a
+    // successful GUI-effect result already posted to the pane.
+    pane.beginShutdown();
+    QCOMPARE(openCount, 0);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(forwarded.count(), 1);
+    QCOMPARE(inputMethods.count(), 1);
+    QCOMPARE(dispatchOrder, QStringList({
+        QStringLiteral("shutdown"),
+        QStringLiteral("paste"),
+        QStringLiteral("key"),
+        QStringLiteral("ime"),
+    }));
+
+    // Once graceful shutdown begins, no new worker-backed configured action
+    // may enter the correlated request lifecycle.
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("write_screen_file:open")));
+    QCOMPARE(files.count(), 1);
+
+    QCoreApplication::processEvents();
+    QCOMPARE(openCount, 0);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), sentinel);
+    QCOMPARE(files.count(), 1);
+    QCOMPARE(forwarded.count(), 1);
+    QCOMPARE(inputMethods.count(), 1);
+}
+
+void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit_data()
+{
+    QTest::addColumn<bool>("resultQueuedBeforeExit");
+
+    QTest::newRow("result-posted-before-exit") << true;
+    QTest::newRow("result-arrives-after-exit") << false;
+}
+
+void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
+{
+    QFETCH(bool, resultQueuedBeforeExit);
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("alt+b=search_selection"),
+        QStringLiteral("chain=paste_from_clipboard"),
+    });
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QSignalSpy searchSelections(
+        controller, &TerminalController::searchSelectionActionRequested);
+    QSignalSpy searchRequests(
+        controller, &TerminalController::searchRequested);
+    QSignalSpy focusRequests(
+        &pane, &TerminalPane::searchUiFocusRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString sentinel =
+        QStringLiteral("pre-exit-search-selection-chain");
+    clipboard->setText(sentinel, QClipboard::Clipboard);
+    const auto clipboardCleanup = qScopeGuard([clipboard] {
+        clipboard->clear(QClipboard::Clipboard);
+    });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_B, Qt::AltModifier,
+        QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &press);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_B, Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &release);
+    QCOMPARE(searchSelections.count(), 1);
+    QCOMPARE(pasted.count(), 0);
+    QCOMPARE(forwarded.count(), 0);
+    QVERIFY(!pane.searchUiActive());
+
+    const quint64 requestId =
+        searchSelections.constFirst().constFirst().toULongLong();
+    QVERIFY(requestId != 0);
+    const TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = TerminalActionEffect::StartSearch,
+        .performed = true,
+        .payload = QStringLiteral("selection from exited session"),
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+
+    if (resultQueuedBeforeExit) {
+        // terminalActionReady is queued once more at the pane boundary, so
+        // this result is posted but has not committed its UI effect yet.
+        Q_EMIT controller->terminalActionReady(result);
+        QVERIFY(!pane.searchUiActive());
+    }
+
+    // A held terminal remains alive after the child exits, allowing us to
+    // observe whether stale selection-derived UI work is resurrected.
+    Q_EMIT controller->sessionExited(0, 0, true);
+    QVERIFY(!pane.searchUiActive());
+
+    if (!resultQueuedBeforeExit) {
+        Q_EMIT controller->terminalActionReady(result);
+    }
+
+    QCoreApplication::processEvents();
+    QVERIFY(!pane.searchUiActive());
+    QCOMPARE(focusRequests.count(), 0);
+    QCOMPARE(searchRequests.count(), 0);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), sentinel);
+    QCOMPARE(forwarded.count(), 0);
+
+    // The failed stale action still resolves the chain and releases its input
+    // barrier; unrelated input must not remain trapped behind it.
+    QKeyEvent ordinaryPress(
+        QEvent::KeyPress, Qt::Key_C, Qt::NoModifier,
+        QStringLiteral("c"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+    QCOMPARE(forwarded.count(), 1);
+}
+
 void TerminalPaneTest::rejectsDuplicateTerminalActionRequestIds()
 {
     LaunchOptions options;
@@ -4571,26 +5077,61 @@ void TerminalPaneTest::rejectsDuplicateTerminalActionRequestIds()
         TerminalSessionStartMode::Deferred);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
-    QSignalSpy requests(
+    QSignalSpy copies(
         controller, &TerminalController::copyActionRequested);
+    QSignalSpy adjustments(
+        controller,
+        &TerminalController::selectionAdjustmentActionRequested);
+    QSignalSpy selectionScrolls(
+        controller, &TerminalController::scrollToSelectionActionRequested);
+    QSignalSpy searchSelections(
+        controller, &TerminalController::searchSelectionActionRequested);
     QSignalSpy completions(
         controller, &TerminalController::terminalActionReady);
 
-    constexpr quint64 requestId = 42;
-    QVERIFY(controller->copySelectionAction(requestId));
-    QVERIFY(!controller->copySelectionAction(requestId));
+    constexpr quint64 copyRequestId = 42;
+    constexpr quint64 adjustmentRequestId = 43;
+    constexpr quint64 scrollRequestId = 44;
+    constexpr quint64 searchRequestId = 45;
+    QVERIFY(controller->copySelectionAction(copyRequestId));
+    QVERIFY(!controller->copySelectionAction(copyRequestId));
+    QVERIFY(!controller->adjustSelectionAction(
+        copyRequestId, TerminalSelectionAdjustment::Left));
+    QVERIFY(!controller->scrollToSelectionAction(copyRequestId));
+    QVERIFY(!controller->searchSelectionAction(copyRequestId));
+
     QVERIFY(!controller->copySelectionAction(0));
-    QCOMPARE(requests.count(), 1);
+    QVERIFY(!controller->adjustSelectionAction(
+        0, TerminalSelectionAdjustment::Left));
+    QVERIFY(!controller->scrollToSelectionAction(0));
+    QVERIFY(!controller->searchSelectionAction(0));
+
+    QVERIFY(controller->adjustSelectionAction(
+        adjustmentRequestId, TerminalSelectionAdjustment::Right));
+    QVERIFY(controller->scrollToSelectionAction(scrollRequestId));
+    QVERIFY(controller->searchSelectionAction(searchRequestId));
+    QCOMPARE(copies.count(), 1);
+    QCOMPARE(adjustments.count(), 1);
+    QCOMPARE(selectionScrolls.count(), 1);
+    QCOMPARE(searchSelections.count(), 1);
     QCOMPARE(completions.count(), 0);
 
     controller->beginShutdown();
-    QCOMPARE(completions.count(), 1);
-    const TerminalActionResult completion =
-        qvariant_cast<TerminalActionResult>(
-            completions.constFirst().constFirst());
-    QCOMPARE(completion.requestId, requestId);
-    QCOMPARE(completion.outcome, TerminalActionOutcome::Failed);
-    QVERIFY(!completion.performed);
+    QCOMPARE(completions.count(), 4);
+    const QList<quint64> expectedRequestIds{
+        copyRequestId,
+        adjustmentRequestId,
+        scrollRequestId,
+        searchRequestId,
+    };
+    for (qsizetype index = 0; index < expectedRequestIds.size(); ++index) {
+        const TerminalActionResult completion =
+            qvariant_cast<TerminalActionResult>(
+                completions.at(index).constFirst());
+        QCOMPARE(completion.requestId, expectedRequestIds.at(index));
+        QCOMPARE(completion.outcome, TerminalActionOutcome::Failed);
+        QVERIFY(!completion.performed);
+    }
 }
 
 void TerminalPaneTest::handlesCompletionReentrantlyDuringTerminalActionStart()

@@ -236,6 +236,22 @@ TerminalActionResult successfulOpenFileResult(
     };
 }
 
+TerminalActionResult successfulTerminalActionResult(
+    quint64 requestId,
+    TerminalActionEffect effect = TerminalActionEffect::None,
+    const QString &payload = {})
+{
+    return {
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Success,
+        .effect = effect,
+        .performed = true,
+        .payload = payload,
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+}
+
 QVector<TabId> tabIds(TerminalWorkspace &workspace)
 {
     QVector<TabId> result;
@@ -443,6 +459,9 @@ private Q_SLOTS:
     void broadPasteActionsReachEveryPane();
     void broadWriteScreenOpenCreatesDistinctPerPaneArtifacts();
     void broadTerminalBarrierOrdersCommitsAndDefersInputs();
+    void broadSelectionBarriersOrderEffects();
+    void broadRetainedSearchResultExpiresOnSessionExit();
+    void searchEffectDestructionDefersBroadContinuation();
     void broadDeferredInputFifoSurvivesReplayReentrancy();
     void broadTerminalBarrierSkipsDestroyedTargets();
     void finalBroadTargetDestructionDefersKeyReplay();
@@ -4227,9 +4246,10 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
         controller, &TerminalController::sequenceResolutionRequested);
     QSignalSpy inactiveSequenceResolution(
         inactiveController, &TerminalController::sequenceResolutionRequested);
-    QSignalSpy activeCopy(controller, &TerminalController::copyRequested);
+    QSignalSpy activeCopy(
+        controller, &TerminalController::copyActionRequested);
     QSignalSpy inactiveCopy(
-        inactiveController, &TerminalController::copyRequested);
+        inactiveController, &TerminalController::copyActionRequested);
 
     // An external all/global action can end sequences staged in panes that no
     // longer have focus. It must reset both the matcher and worker token.
@@ -4283,20 +4303,24 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
 
     // Broad bindings ignore performable/unconsumed and remain consumed even
     // when no target has the dynamic state required to execute the action.
+    // Each worker is still asked: its correlated result, rather than the
+    // GUI's eventually-consistent selection cache, decides performability.
     QKeyEvent unavailableCopy(QEvent::KeyPress, Qt::Key_P,
                               Qt::ControlModifier, QString(QChar(0x10)));
     QCoreApplication::sendEvent(activePane, &unavailableCopy);
     QKeyEvent unavailableCopyRelease(QEvent::KeyRelease, Qt::Key_P,
                                      Qt::ControlModifier);
     QCoreApplication::sendEvent(activePane, &unavailableCopyRelease);
-    QCOMPARE(activeCopy.count(), 0);
-    QCOMPARE(inactiveCopy.count(), 0);
+    QCOMPARE(activeCopy.count(), 1);
+    QCOMPARE(inactiveCopy.count(), 1);
+    QVERIFY(activeCopy.constFirst().constFirst().toULongLong() != 0);
+    QVERIFY(inactiveCopy.constFirst().constFirst().toULongLong() != 0);
     QCOMPARE(forwarded.count(), 0);
 
     // Application-scoped broad actions execute once, not once per pane.
     applicationBindings.dispatchBroadActions(
         {QStringLiteral("new_window")});
-    QCOMPARE(reload.count(), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(reload.count(), 2, 1000);
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  reload.constLast().constFirst()),
              ApplicationAction::NewWindow);
@@ -4306,7 +4330,7 @@ void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()
 
     applicationBindings.dispatchBroadActions(
         {QStringLiteral("open_config")});
-    QCOMPARE(reload.count(), 3);
+    QTRY_COMPARE_WITH_TIMEOUT(reload.count(), 3, 1000);
     QCOMPARE(qvariant_cast<ApplicationAction>(
                  reload.constLast().constFirst()),
              ApplicationAction::OpenConfig);
@@ -4610,6 +4634,476 @@ void TerminalWorkspaceTest::
                             initial + 7.0}));
         QCOMPARE(panes.at(index)->fontPointSize(), initial + 7.0);
     }
+}
+
+void TerminalWorkspaceTest::broadSelectionBarriersOrderEffects()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    constexpr qsizetype targetCount = 2;
+    std::array<std::unique_ptr<TerminalWorkspace>, targetCount> workspaces;
+    std::array<TerminalPane *, targetCount> panes{};
+    std::array<TerminalController *, targetCount> controllers{};
+    std::array<quint64, targetCount> adjustmentIds{};
+    std::array<quint64, targetCount> scrollIds{};
+    std::array<quint64, targetCount> searchIds{};
+    std::array<quint64, targetCount> copyIds{};
+    std::array<qreal, targetCount> initialFontSizes{};
+    QStringList requestOrder;
+    QStringList effectOrder;
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        workspaces[slot] = std::make_unique<TerminalWorkspace>();
+        QVERIFY(workspaces[slot]->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        bindings.registerWorkspace(workspaces[slot].get());
+
+        panes[slot] =
+            workspaces[slot]->findChild<TerminalPane *>();
+        QVERIFY(panes[slot] != nullptr);
+        controllers[slot] =
+            panes[slot]->findChild<TerminalController *>();
+        QVERIFY(controllers[slot] != nullptr);
+        initialFontSizes[slot] = panes[slot]->fontPointSize();
+
+        connect(
+            controllers[slot],
+            &TerminalController::selectionAdjustmentActionRequested,
+            this,
+            [&, index, slot](
+                quint64 requestId,
+                TerminalSelectionAdjustment adjustment) {
+                QCOMPARE(adjustmentIds[slot], quint64(0));
+                QCOMPARE(adjustment,
+                         TerminalSelectionAdjustment::Right);
+                adjustmentIds[slot] = requestId;
+                requestOrder.append(
+                    QStringLiteral("adjust:%1").arg(index));
+            });
+        connect(
+            controllers[slot],
+            &TerminalController::scrollToSelectionActionRequested,
+            this,
+            [&, index, slot](quint64 requestId) {
+                QCOMPARE(scrollIds[slot], quint64(0));
+                scrollIds[slot] = requestId;
+                requestOrder.append(
+                    QStringLiteral("scroll:%1").arg(index));
+            });
+        connect(
+            controllers[slot],
+            &TerminalController::searchSelectionActionRequested,
+            this,
+            [&, index, slot](quint64 requestId) {
+                QCOMPARE(searchIds[slot], quint64(0));
+                searchIds[slot] = requestId;
+                requestOrder.append(
+                    QStringLiteral("search:%1").arg(index));
+            });
+        connect(
+            controllers[slot],
+            &TerminalController::copyActionRequested,
+            this,
+            [&, index, slot](quint64 requestId) {
+                QCOMPARE(copyIds[slot], quint64(0));
+                copyIds[slot] = requestId;
+                requestOrder.append(
+                    QStringLiteral("copy:%1").arg(index));
+                effectOrder.append(
+                    QStringLiteral("copy-request:%1").arg(index));
+            });
+        connect(
+            panes[slot], &TerminalPane::searchUiFocusRequested,
+            this, [&, index] {
+                effectOrder.append(
+                    QStringLiteral("search-effect:%1").arg(index));
+            });
+    }
+
+    bindings.dispatchBroadActions({
+        QStringLiteral("adjust_selection:right"),
+        QStringLiteral("scroll_to_selection"),
+        QStringLiteral("search_selection"),
+        QStringLiteral("copy_to_clipboard"),
+        QStringLiteral("increase_font_size:1"),
+    });
+
+    QCOMPARE(
+        requestOrder,
+        QStringList({QStringLiteral("adjust:0"),
+                     QStringLiteral("adjust:1")}));
+    QVERIFY(std::ranges::all_of(
+        adjustmentIds,
+        [](quint64 requestId) { return requestId != 0; }));
+    QVERIFY(std::ranges::all_of(
+        scrollIds, [](quint64 requestId) { return requestId == 0; }));
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(adjustmentIds[1]));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+    QCOMPARE(requestOrder.size(), 2);
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(adjustmentIds[0]));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+    QCOMPARE(
+        requestOrder,
+        QStringList({QStringLiteral("adjust:0"),
+                     QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"),
+                     QStringLiteral("scroll:1")}));
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(scrollIds[1]));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+    QCOMPARE(requestOrder.size(), 4);
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(scrollIds[0]));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+    QCOMPARE(
+        requestOrder,
+        QStringList({QStringLiteral("adjust:0"),
+                     QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"),
+                     QStringLiteral("scroll:1"),
+                     QStringLiteral("search:0"),
+                     QStringLiteral("search:1")}));
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(
+            searchIds[1], TerminalActionEffect::StartSearch,
+            QStringLiteral("selected one")));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+    QVERIFY(effectOrder.isEmpty());
+    QCOMPARE(requestOrder.size(), 6);
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(
+            searchIds[0], TerminalActionEffect::StartSearch,
+            QStringLiteral("selected zero")));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+
+    QCOMPARE(
+        effectOrder,
+        QStringList({QStringLiteral("search-effect:0"),
+                     QStringLiteral("search-effect:1"),
+                     QStringLiteral("copy-request:0"),
+                     QStringLiteral("copy-request:1")}));
+    QCOMPARE(
+        requestOrder,
+        QStringList({QStringLiteral("adjust:0"),
+                     QStringLiteral("adjust:1"),
+                     QStringLiteral("scroll:0"),
+                     QStringLiteral("scroll:1"),
+                     QStringLiteral("search:0"),
+                     QStringLiteral("search:1"),
+                     QStringLiteral("copy:0"),
+                     QStringLiteral("copy:1")}));
+    QVERIFY(panes[0]->searchUiActive());
+    QVERIFY(panes[1]->searchUiActive());
+    QCOMPARE(panes[0]->searchUiText(),
+             QStringLiteral("selected zero"));
+    QCOMPARE(panes[1]->searchUiText(),
+             QStringLiteral("selected one"));
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        QCOMPARE(panes[slot]->fontPointSize(),
+                 initialFontSizes[slot]);
+    }
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(copyIds[1]));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        QCOMPARE(panes[slot]->fontPointSize(),
+                 initialFontSizes[slot]);
+    }
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(copyIds[0]));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        QCOMPARE(panes[slot]->fontPointSize(),
+                 initialFontSizes[slot] + 1.0);
+    }
+}
+
+void TerminalWorkspaceTest::
+    broadRetainedSearchResultExpiresOnSessionExit()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    constexpr qsizetype targetCount = 2;
+    std::array<std::unique_ptr<TerminalWorkspace>, targetCount> workspaces;
+    std::array<TerminalPane *, targetCount> panes{};
+    std::array<TerminalController *, targetCount> controllers{};
+    std::array<quint64, targetCount> requestIds{};
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        workspaces[slot] = std::make_unique<TerminalWorkspace>();
+        QVERIFY(workspaces[slot]->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        bindings.registerWorkspace(workspaces[slot].get());
+
+        panes[slot] =
+            workspaces[slot]->findChild<TerminalPane *>();
+        QVERIFY(panes[slot] != nullptr);
+        controllers[slot] =
+            panes[slot]->findChild<TerminalController *>();
+        QVERIFY(controllers[slot] != nullptr);
+        connect(
+            controllers[slot],
+            &TerminalController::searchSelectionActionRequested,
+            this,
+            [&, slot](quint64 requestId) {
+                requestIds[slot] = requestId;
+            });
+    }
+
+    QSignalSpy staleActive(
+        panes[0], &TerminalPane::searchUiActiveChanged);
+    QSignalSpy staleText(
+        panes[0], &TerminalPane::searchUiTextChanged);
+    QSignalSpy staleFocus(
+        panes[0], &TerminalPane::searchUiFocusRequested);
+    QSignalSpy staleSearch(
+        controllers[0], &TerminalController::searchRequested);
+    QSignalSpy survivorActive(
+        panes[1], &TerminalPane::searchUiActiveChanged);
+    QSignalSpy survivorText(
+        panes[1], &TerminalPane::searchUiTextChanged);
+    QSignalSpy survivorFocus(
+        panes[1], &TerminalPane::searchUiFocusRequested);
+    QSignalSpy applicationActions(
+        &bindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
+
+    bindings.dispatchBroadActions({
+        QStringLiteral("search_selection"),
+        QStringLiteral("reload_config"),
+    });
+    QVERIFY(requestIds[0] != 0);
+    QVERIFY(requestIds[1] != 0);
+
+    // The pane consumes this completion and hands the stamped result to the
+    // process barrier. Publication remains blocked on target one.
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(
+            requestIds[0], TerminalActionEffect::StartSearch,
+            QStringLiteral("expired selection")));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+    QVERIFY(!panes[0]->searchUiActive());
+    QCOMPARE(staleActive.count(), 0);
+    QCOMPARE(staleText.count(), 0);
+    QCOMPARE(staleFocus.count(), 0);
+    QCOMPARE(staleSearch.count(), 0);
+    QCOMPARE(applicationActions.count(), 0);
+
+    // A held surface survives its child exit, but crossing that lifecycle
+    // boundary expires the result already retained by BroadExecution.
+    Q_EMIT controllers[0]->sessionExited(0, 0, true);
+    QVERIFY(!panes[0]->searchUiActive());
+    QCOMPARE(staleActive.count(), 0);
+    QCOMPARE(staleText.count(), 0);
+    QCOMPARE(staleFocus.count(), 0);
+    QCOMPARE(staleSearch.count(), 0);
+    QCOMPARE(applicationActions.count(), 0);
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(
+            requestIds[1], TerminalActionEffect::StartSearch,
+            QStringLiteral("current selection")));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+
+    // Target zero's stale effect is rejected at publication. The live target
+    // commits once, and the following application action proves the barrier
+    // and chain completed exactly once.
+    QVERIFY(!panes[0]->searchUiActive());
+    QVERIFY(panes[0]->searchUiText().isEmpty());
+    QCOMPARE(staleActive.count(), 0);
+    QCOMPARE(staleText.count(), 0);
+    QCOMPARE(staleFocus.count(), 0);
+    QCOMPARE(staleSearch.count(), 0);
+    QVERIFY(panes[1]->searchUiActive());
+    QCOMPARE(panes[1]->searchUiText(),
+             QStringLiteral("current selection"));
+    QCOMPARE(survivorActive.count(), 1);
+    QCOMPARE(survivorText.count(), 1);
+    QCOMPARE(survivorFocus.count(), 1);
+    QCOMPARE(applicationActions.count(), 1);
+    QCOMPARE(
+        qvariant_cast<ApplicationAction>(
+            applicationActions.constFirst().constFirst()),
+        ApplicationAction::ReloadConfig);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents();
+    QCOMPARE(staleActive.count(), 0);
+    QCOMPARE(staleText.count(), 0);
+    QCOMPARE(staleFocus.count(), 0);
+    QCOMPARE(staleSearch.count(), 0);
+    QCOMPARE(survivorActive.count(), 1);
+    QCOMPARE(survivorText.count(), 1);
+    QCOMPARE(survivorFocus.count(), 1);
+    QCOMPARE(applicationActions.count(), 1);
+}
+
+void TerminalWorkspaceTest::
+    searchEffectDestructionDefersBroadContinuation()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    constexpr qsizetype targetCount = 2;
+    std::array<std::unique_ptr<TerminalWorkspace>, targetCount> workspaces;
+    std::array<QPointer<TerminalPane>, targetCount> panes{};
+    std::array<QPointer<TerminalController>, targetCount> controllers{};
+    std::array<quint64, targetCount> searchIds{};
+    std::array<quint64, targetCount> copyIds{};
+    int firstSearchEffects = 0;
+    int survivorSearchEffects = 0;
+    int firstCopyRequests = 0;
+    int survivorCopyRequests = 0;
+    bool deletingFirstWorkspace = false;
+    bool survivorEffectDuringDestruction = false;
+    bool copyStartedDuringDestruction = false;
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    for (qsizetype index = 0; index < targetCount; ++index) {
+        const std::size_t slot = static_cast<std::size_t>(index);
+        workspaces[slot] = std::make_unique<TerminalWorkspace>();
+        QVERIFY(workspaces[slot]->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        bindings.registerWorkspace(workspaces[slot].get());
+        panes[slot] =
+            workspaces[slot]->findChild<TerminalPane *>();
+        QVERIFY(panes[slot] != nullptr);
+        controllers[slot] =
+            panes[slot]->findChild<TerminalController *>();
+        QVERIFY(controllers[slot] != nullptr);
+        connect(
+            controllers[slot],
+            &TerminalController::searchSelectionActionRequested,
+            this,
+            [&, slot](quint64 requestId) {
+                searchIds[slot] = requestId;
+            });
+    }
+
+    connect(
+        panes[0], &TerminalPane::searchUiActiveChanged,
+        this, [&] {
+            ++firstSearchEffects;
+            deletingFirstWorkspace = true;
+            workspaces[0].reset();
+            deletingFirstWorkspace = false;
+        });
+    connect(
+        panes[1], &TerminalPane::searchUiFocusRequested,
+        this, [&] {
+            ++survivorSearchEffects;
+            survivorEffectDuringDestruction |=
+                deletingFirstWorkspace;
+        });
+    connect(
+        controllers[0], &TerminalController::copyActionRequested,
+        this, [&](quint64 requestId) {
+            ++firstCopyRequests;
+            copyIds[0] = requestId;
+            copyStartedDuringDestruction |=
+                deletingFirstWorkspace;
+        });
+    connect(
+        controllers[1], &TerminalController::copyActionRequested,
+        this, [&](quint64 requestId) {
+            ++survivorCopyRequests;
+            copyIds[1] = requestId;
+            copyStartedDuringDestruction |=
+                deletingFirstWorkspace;
+        });
+    QSignalSpy applicationActions(
+        &bindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
+
+    bindings.dispatchBroadActions({
+        QStringLiteral("search_selection"),
+        QStringLiteral("copy_to_clipboard"),
+        QStringLiteral("reload_config"),
+    });
+    QVERIFY(searchIds[0] != 0);
+    QVERIFY(searchIds[1] != 0);
+
+    // Prepare the first snapshot entry without completing the barrier. The
+    // survivor emits the final result so deleting target zero during its
+    // StartSearch publication cannot invalidate the signal sender.
+    Q_EMIT controllers[0]->terminalActionReady(
+        successfulTerminalActionResult(
+            searchIds[0], TerminalActionEffect::StartSearch,
+            QStringLiteral("destroy me")));
+    QCoreApplication::sendPostedEvents(panes[0], QEvent::MetaCall);
+    QCOMPARE(firstSearchEffects, 0);
+    QCOMPARE(survivorSearchEffects, 0);
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(
+            searchIds[1], TerminalActionEffect::StartSearch,
+            QStringLiteral("survivor")));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+
+    QVERIFY(workspaces[0] == nullptr);
+    QVERIFY(panes[0] == nullptr);
+    QVERIFY(controllers[0] == nullptr);
+    QCOMPARE(firstSearchEffects, 1);
+    QCOMPARE(survivorSearchEffects, 0);
+    QCOMPARE(firstCopyRequests, 0);
+    QCOMPARE(survivorCopyRequests, 0);
+    QCOMPARE(applicationActions.count(), 0);
+    QVERIFY(!survivorEffectDuringDestruction);
+    QVERIFY(!copyStartedDuringDestruction);
+
+    // Destruction observed while committing target zero pauses the commit
+    // cursor. A later event turn resumes at target one exactly once, then
+    // takes a fresh snapshot for the copy entry.
+    QCoreApplication::processEvents();
+    QCOMPARE(firstSearchEffects, 1);
+    QCOMPARE(survivorSearchEffects, 1);
+    QCOMPARE(firstCopyRequests, 0);
+    QCOMPARE(survivorCopyRequests, 1);
+    QVERIFY(copyIds[1] != 0);
+    QCOMPARE(applicationActions.count(), 0);
+    QVERIFY(!survivorEffectDuringDestruction);
+    QVERIFY(!copyStartedDuringDestruction);
+    QVERIFY(panes[1]->searchUiActive());
+    QCOMPARE(panes[1]->searchUiText(),
+             QStringLiteral("survivor"));
+
+    Q_EMIT controllers[1]->terminalActionReady(
+        successfulTerminalActionResult(copyIds[1]));
+    QCoreApplication::sendPostedEvents(panes[1], QEvent::MetaCall);
+    QCOMPARE(applicationActions.count(), 1);
+    QCOMPARE(
+        qvariant_cast<ApplicationAction>(
+            applicationActions.constFirst().constFirst()),
+        ApplicationAction::ReloadConfig);
+    QCOMPARE(firstSearchEffects, 1);
+    QCOMPARE(survivorSearchEffects, 1);
 }
 
 void TerminalWorkspaceTest::
@@ -5055,7 +5549,9 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
 
     std::vector<std::unique_ptr<QSignalSpy>> scrollSpies;
     std::vector<std::unique_ptr<QSignalSpy>> selectAllSpies;
-    std::vector<std::unique_ptr<QSignalSpy>> adjustmentSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> adjustmentActionSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> scrollToSelectionSpies;
+    std::vector<std::unique_ptr<QSignalSpy>> searchSelectionSpies;
     std::vector<std::unique_ptr<QSignalSpy>> csiSpies;
     std::vector<std::unique_ptr<QSignalSpy>> resetSpies;
     std::vector<TerminalController *> controllers;
@@ -5072,8 +5568,18 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
             controller, &TerminalController::scrollRequested));
         selectAllSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::selectAllActionRequested));
-        adjustmentSpies.emplace_back(std::make_unique<QSignalSpy>(
-            controller, &TerminalController::selectionAdjustmentRequested));
+        adjustmentActionSpies.emplace_back(
+            std::make_unique<QSignalSpy>(
+                controller,
+                &TerminalController::selectionAdjustmentActionRequested));
+        scrollToSelectionSpies.emplace_back(
+            std::make_unique<QSignalSpy>(
+                controller,
+                &TerminalController::scrollToSelectionActionRequested));
+        searchSelectionSpies.emplace_back(
+            std::make_unique<QSignalSpy>(
+                controller,
+                &TerminalController::searchSelectionActionRequested));
         csiSpies.emplace_back(std::make_unique<QSignalSpy>(
             controller, &TerminalController::csiRequested));
         resetSpies.emplace_back(std::make_unique<QSignalSpy>(
@@ -5153,15 +5659,34 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("toggle_mouse_reporting:")));
 
-    // Selection-dependent actions are not performable on any blank surface,
-    // and broad dispatch must not manufacture a worker request for them.
-    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+    // Selection-dependent actions always reach each worker. The worker owns
+    // the live VT state and decides whether its correlated request performed;
+    // a stale GUI selection cache cannot suppress or falsely accept them.
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("adjust_selection:left")));
-    QVERIFY(!workspace.executeSurfaceActionOnAllPanes(
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
         QStringLiteral("scroll_to_selection")));
+    QVERIFY(workspace.executeSurfaceActionOnAllPanes(
+        QStringLiteral("search_selection")));
     for (qsizetype i = 0; i < panes.size(); ++i) {
-        QCOMPARE(adjustmentSpies.at(static_cast<std::size_t>(i))->count(), 0);
-        QCOMPARE(scrollSpies.at(static_cast<std::size_t>(i))->count(), 0);
+        const auto &adjustment =
+            adjustmentActionSpies.at(static_cast<std::size_t>(i));
+        QCOMPARE(adjustment->count(), 1);
+        QVERIFY(adjustment->constFirst().at(0).toULongLong() != 0);
+        QCOMPARE(
+            qvariant_cast<TerminalSelectionAdjustment>(
+                adjustment->constFirst().at(1)),
+            TerminalSelectionAdjustment::Left);
+
+        const auto &scroll =
+            scrollToSelectionSpies.at(static_cast<std::size_t>(i));
+        QCOMPARE(scroll->count(), 1);
+        QVERIFY(scroll->constFirst().constFirst().toULongLong() != 0);
+
+        const auto &search =
+            searchSelectionSpies.at(static_cast<std::size_t>(i));
+        QCOMPARE(search->count(), 1);
+        QVERIFY(search->constFirst().constFirst().toULongLong() != 0);
     }
 
     QVERIFY(workspace.executeSurfaceActionOnAllPanes(

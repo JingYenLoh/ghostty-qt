@@ -1074,20 +1074,6 @@ TerminalPane::TerminalPane(
             });
     connect(controller_, &TerminalController::searchUpdated, this,
             &TerminalPane::handleSearchUpdate);
-    connect(controller_, &TerminalController::searchSelectionReady, this,
-            [this](bool available, const QString &text) {
-                if (!available) {
-                    return;
-                }
-                const bool textChanged = searchUiText_ != text;
-                searchUiText_ = text;
-                setSearchUiActive(true);
-                if (textChanged) {
-                    Q_EMIT searchUiTextChanged();
-                }
-                controller_->search(text);
-                Q_EMIT searchUiFocusRequested();
-            });
     connect(controller_,
             &TerminalController::unsafePasteConfirmationRequested,
             this, [this](quint64 requestId, const QString &text) {
@@ -1136,15 +1122,23 @@ TerminalPane::TerminalPane(
             });
     connect(controller_, &TerminalController::sessionExited, this,
             [this](int exitCode, int signalNumber, bool hold) {
+                const QPointer<TerminalPane> guard(this);
+                // Advance before any destruction-capable UI notification.
+                // Results already queued to this pane, or retained by a
+                // process-wide barrier, belong to the pre-exit epoch.
+                advanceTerminalActionEpoch();
                 clearHyperlinkHover();
+                if (guard == nullptr) return;
                 cancelHyperlinkPress();
                 cancelPendingHyperlinkActivation();
-                // TerminalController invalidates worker progress and pending
-                // search_selection replies before forwarding sessionExited.
+                // TerminalController invalidates worker progress and fails
+                // unresolved terminal actions before forwarding sessionExited.
                 setSearchUiActive(false);
+                if (guard == nullptr) return;
                 searchEngineActive_ = false;
                 searchMatchLabel_ = QStringLiteral("0/0");
                 Q_EMIT searchMatchLabelChanged();
+                if (guard == nullptr) return;
                 {
                     QMutexLocker locker(&renderMutex_);
                     clearPendingSearchUpdateLocked();
@@ -1160,8 +1154,11 @@ TerminalPane::TerminalPane(
                             : QStringLiteral("Process exited with status %1").arg(exitCode);
                     }
                 }
+                failStaleTerminalActionCompletions();
+                if (guard == nullptr) return;
                 update();
                 Q_EMIT sessionEnded(this, exitCode, signalNumber);
+                if (guard == nullptr) return;
                 if (!hold && !hasError) {
                     QTimer::singleShot(0, this, [this] { Q_EMIT requestClose(); });
                 }
@@ -1739,6 +1736,19 @@ void TerminalPane::setUrlOpener(std::function<bool(const QUrl &)> opener)
 
 void TerminalPane::beginShutdown()
 {
+    const QPointer<TerminalPane> guard(this);
+    if (terminalActionsAccepted_) {
+        terminalActionsAccepted_ = false;
+        advanceTerminalActionEpoch();
+    }
+    // Queue worker teardown before resolving a suspended action chain. Its
+    // completion may release pane- or process-level input deferral and replay
+    // key/IME work; worker queue ordering then makes that replay inert instead
+    // of delivering it to a dying PTY.
+    controller_->beginShutdown();
+    if (guard == nullptr) return;
+    failStaleTerminalActionCompletions();
+    if (guard == nullptr) return;
     deferredSessionStartArmed_ = false;
     deferredSessionStartCandidate_.reset();
     deferredSessionViewportSizeProvider_ = {};
@@ -1746,17 +1756,45 @@ void TerminalPane::beginShutdown()
     resizeOverlayShuttingDown_ = true;
     cancelPendingResizeOverlay();
     hideResizeOverlay();
-    controller_->beginShutdown();
 }
 
 void TerminalPane::startSearchUi()
 {
+    const QPointer<TerminalPane> guard(this);
     if (!searchUiActive_) {
         setSearchUiActive(true);
+        if (guard == nullptr || !searchUiActive_) return;
         // Ghostty retains the last entry text. Reopening the UI starts a fresh
         // generation so results cannot outlive terminal mutations that
         // happened while the overlay was hidden.
         controller_->search(searchUiText_);
+        if (guard == nullptr || !searchUiActive_) return;
+    }
+    Q_EMIT searchUiFocusRequested();
+}
+
+void TerminalPane::startSearchUiWithSelection(const QString &text)
+{
+    const QPointer<TerminalPane> guard(this);
+    const bool wasActive = searchUiActive_;
+    setSearchUiActive(true);
+    if (guard == nullptr || !searchUiActive_) return;
+    if (!wasActive) {
+        controller_->search(searchUiText_);
+        if (guard == nullptr || !searchUiActive_) return;
+    }
+    if (!text.isEmpty()) {
+        const bool textChanged = searchUiText_ != text;
+        searchUiText_ = text;
+        if (textChanged) {
+            Q_EMIT searchUiTextChanged();
+            if (guard == nullptr || !searchUiActive_
+                || searchUiText_ != text) {
+                return;
+            }
+        }
+        controller_->search(text);
+        if (guard == nullptr || !searchUiActive_) return;
     }
     Q_EMIT searchUiFocusRequested();
 }
@@ -3337,90 +3375,88 @@ TerminalPane::startConfiguredAction(
     const GhosttyConfiguredAction &action,
     ConfiguredActionCompletion completion)
 {
+    const auto startTerminalAction =
+        [this, &completion](auto &&request)
+            -> TerminalActionExecutionStart {
+        if (!terminalActionsAccepted_) {
+            return {};
+        }
+        const quint64 requestId = nextTerminalActionRequestId();
+        pendingTerminalActionCompletions_.insert(
+            requestId, {
+                .completion = std::move(completion),
+                .epoch = terminalActionEpoch_,
+            });
+        const QPointer<TerminalPane> guard(this);
+        const bool accepted = std::invoke(
+            std::forward<decltype(request)>(request), requestId);
+        if (guard == nullptr) {
+            return {};
+        }
+        if (!accepted) {
+            pendingTerminalActionCompletions_.remove(requestId);
+            return {};
+        }
+        return {
+            .pending = true,
+            // Preserve the immediate API contract for direct programmatic
+            // dispatch. Correlated local and broad chains consume the
+            // worker's authoritative performed value.
+            .result = {
+                .performed = true,
+                .terminalAction = std::nullopt,
+            },
+        };
+    };
+
     const auto *paneAction = std::get_if<GhosttyPaneAction>(&action);
     if (paneAction != nullptr) {
         namespace PaneAction = GhosttyPaneActions;
         if (std::holds_alternative<PaneAction::SelectAll>(
                 *paneAction)) {
-            const quint64 requestId = nextTerminalActionRequestId();
-            pendingTerminalActionCompletions_.insert(
-                requestId, std::move(completion));
-            const QPointer<TerminalPane> guard(this);
-            const bool accepted =
-                controller_->selectAllAction(requestId);
-            if (guard == nullptr) {
-                return {};
-            }
-            if (!accepted) {
-                pendingTerminalActionCompletions_.remove(requestId);
-                return {};
-            }
-            return {
-                .pending = true,
-                .result = {
-                    .performed = true,
-                    .terminalAction = std::nullopt,
-                },
-            };
+            return startTerminalAction(
+                [this](quint64 requestId) {
+                    return controller_->selectAllAction(requestId);
+                });
         }
         if (std::holds_alternative<PaneAction::CopyToClipboard>(
                 *paneAction)) {
-            if (!controller_->selectionExpected()) {
-                return {
-                    .pending = false,
-                    .result = {
-                        .performed = false,
-                        .terminalAction = std::nullopt,
-                    },
-                };
-            }
-            const quint64 requestId = nextTerminalActionRequestId();
-            pendingTerminalActionCompletions_.insert(
-                requestId, std::move(completion));
-            const QPointer<TerminalPane> guard(this);
-            const bool accepted =
-                controller_->copySelectionAction(requestId);
-            if (guard == nullptr) {
-                return {};
-            }
-            if (!accepted) {
-                pendingTerminalActionCompletions_.remove(requestId);
-                return {};
-            }
-            return {
-                .pending = true,
-                // Preserve the prior immediate API contract for direct
-                // programmatic dispatch. Correlated chains use the worker's
-                // authoritative completion instead.
-                .result = {
-                    .performed = true,
-                    .terminalAction = std::nullopt,
-                },
-            };
+            return startTerminalAction(
+                [this](quint64 requestId) {
+                    return controller_->copySelectionAction(requestId);
+                });
+        }
+        if (const auto *adjustment =
+                std::get_if<PaneAction::AdjustSelection>(paneAction);
+            adjustment != nullptr) {
+            return startTerminalAction(
+                [this, value = adjustment->adjustment](quint64 requestId) {
+                    return controller_->adjustSelectionAction(
+                        requestId, value);
+                });
+        }
+        if (std::holds_alternative<PaneAction::ScrollToSelection>(
+                *paneAction)) {
+            return startTerminalAction(
+                [this](quint64 requestId) {
+                    return controller_->scrollToSelectionAction(requestId);
+                });
+        }
+        if (std::holds_alternative<PaneAction::SearchSelection>(
+                *paneAction)) {
+            return startTerminalAction(
+                [this](quint64 requestId) {
+                    return controller_->searchSelectionAction(requestId);
+                });
         }
         if (const auto *fileAction =
                 std::get_if<TerminalWriteFileAction>(paneAction);
             fileAction != nullptr) {
-            const quint64 requestId = nextTerminalActionRequestId();
-            pendingTerminalActionCompletions_.insert(
-                requestId, std::move(completion));
-            const QPointer<TerminalPane> guard(this);
-            const bool accepted =
-                controller_->writeTerminalFile(requestId, *fileAction);
-            if (guard == nullptr) {
-                return {};
-            }
-            if (!accepted) {
-                pendingTerminalActionCompletions_.remove(requestId);
-                return {};
-            }
-            return {
-                .pending = true,
-                .result = {
-                    .performed = true,
-                    .terminalAction = std::nullopt,
-                },
-            };
+            return startTerminalAction(
+                [this, value = *fileAction](quint64 requestId) {
+                    return controller_->writeTerminalFile(
+                        requestId, value);
+                });
         }
     }
 
@@ -3438,6 +3474,9 @@ bool TerminalPane::commitConfiguredActionResult(
 {
     if (!result.terminalAction.has_value()) {
         return result.performed;
+    }
+    if (result.terminalActionEpoch != terminalActionEpoch_) {
+        return false;
     }
     const TerminalActionResult &terminal = *result.terminalAction;
     if (!terminal.performed) {
@@ -3466,6 +3505,9 @@ bool TerminalPane::commitConfiguredActionResult(
         }
         return true;
     }
+    case TerminalActionEffect::StartSearch:
+        startSearchUiWithSelection(terminal.payload);
+        return true;
     }
     return false;
 }
@@ -3480,6 +3522,48 @@ quint64 TerminalPane::nextTerminalActionRequestId()
     return nextTerminalActionRequestId_;
 }
 
+void TerminalPane::advanceTerminalActionEpoch()
+{
+    do {
+        ++terminalActionEpoch_;
+    } while (terminalActionEpoch_ == 0);
+}
+
+void TerminalPane::failStaleTerminalActionCompletions()
+{
+    QList<quint64> requestIds;
+    requestIds.reserve(pendingTerminalActionCompletions_.size());
+    for (auto iterator = pendingTerminalActionCompletions_.cbegin();
+         iterator != pendingTerminalActionCompletions_.cend(); ++iterator) {
+        if (iterator->epoch != terminalActionEpoch_) {
+            requestIds.append(iterator.key());
+        }
+    }
+    std::ranges::sort(requestIds);
+
+    const QPointer<TerminalPane> guard(this);
+    for (quint64 requestId : requestIds) {
+        auto iterator =
+            pendingTerminalActionCompletions_.find(requestId);
+        if (iterator == pendingTerminalActionCompletions_.end()) {
+            continue;
+        }
+        PendingTerminalActionCompletion pending =
+            std::move(iterator.value());
+        pendingTerminalActionCompletions_.erase(iterator);
+        if (pending.completion) {
+            TerminalActionResult failed;
+            failed.requestId = requestId;
+            pending.completion({
+                .performed = false,
+                .terminalAction = std::move(failed),
+                .terminalActionEpoch = pending.epoch,
+            });
+        }
+        if (guard == nullptr) return;
+    }
+}
+
 void TerminalPane::handleTerminalActionResult(
     const TerminalActionResult &result)
 {
@@ -3488,13 +3572,21 @@ void TerminalPane::handleTerminalActionResult(
     if (iterator == pendingTerminalActionCompletions_.end()) {
         return;
     }
-    ConfiguredActionCompletion completion =
+    PendingTerminalActionCompletion pending =
         std::move(iterator.value());
     pendingTerminalActionCompletions_.erase(iterator);
-    if (completion) {
-        completion({
-            .performed = result.performed,
-            .terminalAction = result,
+    if (pending.completion) {
+        const bool current =
+            pending.epoch == terminalActionEpoch_;
+        TerminalActionResult resolved = result;
+        if (!current) {
+            resolved = {};
+            resolved.requestId = result.requestId;
+        }
+        pending.completion({
+            .performed = current && result.performed,
+            .terminalAction = std::move(resolved),
+            .terminalActionEpoch = pending.epoch,
         });
     }
 }
@@ -3547,9 +3639,9 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
             [&scroll](const PaneAction::ScrollToBottom &) {
                 return scroll(TerminalViewportRequest::Kind::Bottom);
             },
-            [this, &scroll](const PaneAction::ScrollToSelection &) {
-                return controller_->selectionExpected()
-                    && scroll(TerminalViewportRequest::Kind::Selection);
+            [this](const PaneAction::ScrollToSelection &value) {
+                return executeConfiguredAction(
+                    GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [&scroll](const PaneAction::ScrollToRow &value) {
                 return scroll(TerminalViewportRequest::Kind::Row,
@@ -3623,9 +3715,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const PaneAction::AdjustSelection &value) {
-                if (!controller_->selectionExpected()) return false;
-                controller_->adjustSelection(value.adjustment);
-                return true;
+                return executeConfiguredAction(
+                    GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const PaneAction::StartSearch &) {
                 startSearchUi();
@@ -3639,10 +3730,9 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 endSearchUi();
                 return performed;
             },
-            [this](const PaneAction::SearchSelection &) {
-                if (!controller_->selectionExpected()) return false;
-                controller_->requestSearchSelection();
-                return true;
+            [this](const PaneAction::SearchSelection &value) {
+                return executeConfiguredAction(
+                    GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const PaneAction::Search &value) {
                 const bool hadSearch = searchEngineActive_
@@ -3682,12 +3772,9 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                     !controller_->mouseReportingEnabled());
                 return true;
             },
-            [this](const PaneAction::CopyToClipboard &) {
-                if (!controller_->selectionExpected()) return false;
-                // Mixed/plain remain distinct typed values even though the
-                // public VT API currently exposes plain text for both.
-                copySelection();
-                return true;
+            [this](const PaneAction::CopyToClipboard &value) {
+                return executeConfiguredAction(
+                    GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const TerminalWriteFileAction &value) {
                 return executeConfiguredAction(

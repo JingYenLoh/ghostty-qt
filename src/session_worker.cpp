@@ -1771,6 +1771,45 @@ void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)
     }
 }
 
+void SessionWorker::adjustSelectionAction(
+    quint64 requestId, TerminalSelectionAdjustment adjustment)
+{
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT terminalActionFinished(result);
+    });
+    if (vt_ == nullptr) {
+        return;
+    }
+    if (!vt_->hasSelection()) {
+        result.outcome = TerminalActionOutcome::Unavailable;
+        return;
+    }
+    if (!vt_->adjustSelection(adjustment)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to adjust terminal selection"));
+        return;
+    }
+
+    markTerminalContentChanged();
+    if (searchState_->active) {
+        rebuildSearchVisibleCells();
+        publishSearchUpdate();
+    }
+    syncSelectionAvailability();
+    scheduleFrame();
+    result.outcome = TerminalActionOutcome::Success;
+    result.performed = true;
+}
+
 void SessionWorker::syncSelectionAvailability()
 {
     const bool available = vt_ != nullptr && vt_->hasSelection();
@@ -1806,6 +1845,45 @@ void SessionWorker::scrollViewport(const TerminalViewportRequest &request)
         }
         scheduleFrame();
     }
+}
+
+void SessionWorker::scrollToSelectionAction(quint64 requestId)
+{
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT terminalActionFinished(result);
+    });
+    if (vt_ == nullptr) {
+        return;
+    }
+    if (!vt_->hasSelection()) {
+        result.outcome = TerminalActionOutcome::Unavailable;
+        return;
+    }
+    if (!vt_->scrollViewport({
+            .kind = TerminalViewportRequest::Kind::Selection,
+        })) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to scroll to terminal selection"));
+        return;
+    }
+
+    markTerminalContentChanged();
+    if (searchState_->active) {
+        rebuildSearchVisibleCells();
+        publishSearchUpdate();
+    }
+    scheduleFrame();
+    result.outcome = TerminalActionOutcome::Success;
+    result.performed = true;
 }
 
 void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
@@ -2222,14 +2300,39 @@ void SessionWorker::navigateSearch(
     publishSearchUpdate();
 }
 
-void SessionWorker::requestSearchSelection(quint64 requestId)
+void SessionWorker::searchSelectionAction(quint64 requestId)
 {
-    if (requestId == 0) {
+    TerminalActionResult result{
+        .requestId = requestId,
+        .outcome = TerminalActionOutcome::Failed,
+        .effect = TerminalActionEffect::None,
+        .performed = false,
+        .payload = {},
+        .clipboardDestination =
+            TerminalClipboardDestination::Standard,
+    };
+    const auto completion = qScopeGuard([this, &result] {
+        Q_EMIT terminalActionFinished(result);
+    });
+    if (vt_ == nullptr) {
         return;
     }
-    const bool available = vt_ != nullptr && vt_->hasSelection();
-    const QString text = available ? vt_->selectedText(false) : QString{};
-    Q_EMIT searchSelectionReady(requestId, available, text);
+    if (!vt_->hasSelection()) {
+        result.outcome = TerminalActionOutcome::Unavailable;
+        return;
+    }
+
+    const QString text = vt_->selectedText(false);
+    if (text.isNull()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to format terminal selection"));
+        return;
+    }
+
+    result.outcome = TerminalActionOutcome::Success;
+    result.effect = TerminalActionEffect::StartSearch;
+    result.performed = true;
+    result.payload = text;
 }
 
 void SessionWorker::queryHyperlink(

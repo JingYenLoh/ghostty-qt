@@ -203,6 +203,7 @@ private Q_SLOTS:
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
+    void resolvesCorrelatedSelectionActions();
     void searchesIncrementallyAndNavigates();
     void preservesFormattedSearchBoundaries();
     void resetsTerminalStateAndWorkerCaches();
@@ -3167,6 +3168,114 @@ void SessionWorkerTest::routesTypedViewportAndSelectionOperations()
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
+}
+
+void SessionWorkerTest::resolvesCorrelatedSelectionActions()
+{
+    qRegisterMetaType<TerminalActionResult>();
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 6, 8, 16, 256, 96);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy actionSpy(&worker, &SessionWorker::terminalActionFinished);
+    QSignalSpy selectionSpy(&worker,
+                            &SessionWorker::selectionAvailableChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf 'selected text   \\r\\n'; "
+            "i=0; while [ $i -lt 40 ]; do printf 'selection-row-%03d\\n' $i; "
+            "i=$((i + 1)); done; printf 'selection-ready'; sleep 5"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("selection-ready")), 5000);
+
+    worker.adjustSelectionAction(1'301, TerminalSelectionAdjustment::Left);
+    worker.scrollToSelectionAction(1'302);
+    worker.searchSelectionAction(1'303);
+    QCOMPARE(actionSpy.count(), 3);
+    for (qsizetype index = 0; index < 3; ++index) {
+        const TerminalActionResult result =
+            terminalActionResultAt(actionSpy, index);
+        QCOMPARE(result.requestId, quint64{1'301} + index);
+        QCOMPARE(result.outcome, TerminalActionOutcome::Unavailable);
+        QCOMPARE(result.effect, TerminalActionEffect::None);
+        QVERIFY(!result.performed);
+        QVERIFY(result.payload.isEmpty());
+    }
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
+    worker.beginSelection(0, 0, 1, false);
+    worker.updateSelection(16, 0, false);
+    worker.endSelection(16, 0);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+
+    worker.searchSelectionAction(1'304);
+    worker.searchSelectionAction(1'305);
+    QCOMPARE(actionSpy.count(), 5);
+    for (qsizetype index = 3; index < 5; ++index) {
+        const TerminalActionResult result =
+            terminalActionResultAt(actionSpy, index);
+        QCOMPARE(result.requestId, quint64{1'301} + index);
+        QCOMPARE(result.outcome, TerminalActionOutcome::Success);
+        QCOMPARE(result.effect, TerminalActionEffect::StartSearch);
+        QVERIFY(result.performed);
+        QCOMPARE(result.payload, QStringLiteral("selected text   "));
+    }
+
+    worker.adjustSelectionAction(1'306, TerminalSelectionAdjustment::Left);
+    QCOMPARE(actionSpy.count(), 6);
+    const TerminalActionResult adjusted =
+        terminalActionResultAt(actionSpy, 5);
+    QCOMPARE(adjusted.requestId, quint64{1'306});
+    QCOMPARE(adjusted.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(adjusted.effect, TerminalActionEffect::None);
+    QVERIFY(adjusted.performed);
+    QVERIFY(adjusted.payload.isEmpty());
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Bottom,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 10, 1000);
+    worker.scrollToSelectionAction(1'307);
+    QCOMPARE(actionSpy.count(), 7);
+    const TerminalActionResult scrolled =
+        terminalActionResultAt(actionSpy, 6);
+    QCOMPARE(scrolled.requestId, quint64{1'307});
+    QCOMPARE(scrolled.outcome, TerminalActionOutcome::Success);
+    QCOMPARE(scrolled.effect, TerminalActionEffect::None);
+    QVERIFY(scrolled.performed);
+    QVERIFY(scrolled.payload.isEmpty());
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+
+    worker.adjustSelectionAction(1'308, TerminalSelectionAdjustment::Right);
+    worker.scrollToSelectionAction(1'309);
+    worker.searchSelectionAction(1'310);
+    QCOMPARE(actionSpy.count(), 10);
+    for (qsizetype index = 7; index < 10; ++index) {
+        const TerminalActionResult result =
+            terminalActionResultAt(actionSpy, index);
+        QCOMPARE(result.requestId, quint64{1'301} + index);
+        QCOMPARE(result.outcome, TerminalActionOutcome::Failed);
+        QCOMPARE(result.effect, TerminalActionEffect::None);
+        QVERIFY(!result.performed);
+        QVERIFY(result.payload.isEmpty());
+    }
 }
 
 void SessionWorkerTest::resetsTerminalStateAndWorkerCaches()

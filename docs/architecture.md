@@ -1185,16 +1185,26 @@ middle-click fallback policy.
 
 Actions whose authoritative input belongs to `SessionWorker` return a
 correlated result instead of publishing a GUI side effect independently.
-`select_all`, `copy_to_clipboard`, and the three terminal-file actions
-currently use this protocol. A local chain suspends at such an entry, retains
-its staged-sequence token and aggregate performed state, and defers later key
-or IME input. Accepted request IDs are nonzero and unique among the pane's
-in-flight operations; rejected duplicates publish no second result for the
-same correlation. The worker reports success, unavailable data, or failure
-plus any clipboard/open effect; the pane attempts that effect on the GUI
-thread before resuming the next entry. Desktop-opener or clipboard-service
-availability does not erase the worker's authoritative performed state after
-the terminal operation itself succeeded.
+`select_all`, `copy_to_clipboard`, `adjust_selection`,
+`scroll_to_selection`, `search_selection`, and the three terminal-file
+actions currently use this protocol. A local chain suspends at such an entry,
+retains its staged-sequence token and aggregate performed state, and defers
+later key or IME input. Accepted request IDs are nonzero and unique among the
+pane's in-flight operations; rejected duplicates publish no second result for
+the same correlation. The worker reports success, unavailable data, or
+failure plus any clipboard/open/search-overlay effect; the pane attempts that
+effect on the GUI thread before resuming the next entry. Desktop-opener or
+clipboard-service availability does not erase the worker's authoritative
+performed state after the terminal operation itself succeeded.
+Each completion also carries the pane lifecycle epoch in which it started.
+Session exit advances that epoch before UI observers run, resolves pending
+callbacks as failed, and prevents an already queued or broad-barrier-buffered
+clipboard/open/search effect from publishing afterward. A held pane can start
+new actions in the new epoch. Graceful pane shutdown establishes the same
+boundary, queues worker teardown before releasing any suspended input chain,
+and permanently rejects new worker-backed actions while its close grace period
+is still keeping the QObject alive. Deferred key or IME replay is consequently
+ordered behind PTY teardown rather than reaching a dying child.
 Only after the final entry does the pane apply closing, ignore, performable,
 and consumed precedence and replay or suppress the retained key release.
 Cancelled pre-start sessions synthesize failed results, while stale results
@@ -1221,12 +1231,15 @@ the completed copy, and the last broad clipboard writer is deterministic even
 when pane workers finish in another order. A pane or workspace destroyed while
 preparation is pending resolves its target as unperformed and cannot redirect
 an effect to a replacement pane with the same surrounding topology.
-Any barrier which resolves a target through destruction resumes on a later
+Effect publication itself is resumable: after each committed target it records
+the next snapshot index before observing synchronous destruction. Any barrier
+which loses a target during preparation or publication resumes on a later
 event turn, including destruction delivered while target startup is still
-unwinding, so deferred input cannot re-enter a child while its QObject parent
-is tearing down. A ready barrier also remains paused until any process-wide
-configuration fanout finishes; effects and later entries can therefore never
-observe a mixed keybinding/runtime generation.
+unwinding. Earlier clipboard/open/search effects are therefore never repeated,
+and neither a later target effect nor the next chain entry can re-enter a child
+while its QObject parent is tearing down. A ready barrier also remains paused
+until any process-wide configuration fanout finishes; effects and later
+entries can therefore never observe a mixed keybinding/runtime generation.
 
 Destructive lifecycle commitment belongs to the object that owns that
 lifecycle, not to the pane action interpreter. `TerminalWorkspace` commits a
@@ -1256,17 +1269,17 @@ and truncate toward zero, while line and absolute-row parameters retain their
 pinned i16 and usize bounds. Non-finite or unsafe fractional values are
 rejected instead of reproducing the pinned frontend's float-to-integer crash.
 The pane tracks the latest queued resize height so a page action cannot regress
-to a stale rendered frame while resize is in flight. The controller likewise
-tracks queued select-all intent for action-chain performability; the worker
-reports completion even on a blank terminal, reconciling that intent with the
-authoritative selection state without exposing speculative QML state.
-Configured select-all additionally returns any copy-on-select clipboard
-payload through its correlated result, so a later chain entry cannot overtake
-that GUI effect. This closes deterministic action-chain ordering; a separate
-key event during a terminal-driven selection reconciliation window can still
-observe pending or cached state. Moving the performability decision into
-worker-side input dispatch is the remaining boundary for exact
-selection-dependent timing.
+to a stale rendered frame while resize is in flight. Selection availability in
+the controller remains an informational GUI cache only. Copy, selection search,
+endpoint adjustment, and selection-target scrolling enqueue a correlated
+request behind earlier selection mutations and let the worker's current
+libghostty state decide performability. This removes both stale-false and
+stale-true races across separate input events: a successful action consumes
+the key, while an unavailable `performable` action resumes the retained input
+through normal VT encoding. Configured select-all is always performed once a
+terminal exists, even when the screen is blank, and additionally returns any
+copy-on-select clipboard payload through its correlated result so later chain
+entries cannot overtake that GUI effect.
 
 Terminal-control actions follow the same catalog-to-pane-to-controller route
 but mutate the session only on `SessionWorker`. The structured Ghostty helper

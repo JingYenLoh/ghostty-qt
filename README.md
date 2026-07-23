@@ -505,6 +505,10 @@ bindings support `csi`,
 destination or default-regex match currently accepted under the pointer.
 Raw-write actions return the viewport to the active area, while reset clears
 emulator state without sending bytes to the child.
+Selection-dependent copy, search, endpoint adjustment, and viewport movement
+decide performability on the session thread. A `performable` binding waits for
+that correlated decision, so a selection created or cleared immediately before
+the key event cannot race an asynchronously cached GUI value.
 
 The surface actions `write_screen_file`, `write_scrollback_file`, and
 `write_selection_file` require `:copy`, `:paste`, or `:open`; an optional
@@ -537,7 +541,9 @@ Search bindings support `start_search`, `end_search`, `search:<text>`,
 `search_selection`, and `navigate_search:next|previous`. `search:<text>`
 changes the engine needle without opening the overlay; an empty value stops
 matching but leaves the UI alone. `search_selection` opens the overlay only
-when a selection exists and preserves its untrimmed text. In the overlay,
+when a selection exists and preserves its untrimmed text. A valid empty
+selection still opens and focuses the overlay while retaining its previous
+entry text, matching Ghostty's GTK behavior. In the overlay,
 Enter selects the next result, Shift+Enter selects the previous result, and
 Escape ends search. Reopening search retains and selects the previous entry.
 
@@ -748,11 +754,6 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   the configured desktop services.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported; styled HTML/VT clipboard formats are not yet emitted.
-- Selection-dependent `performable` bindings use asynchronously reconciled UI
-  state. Configured select-all chains wait for worker completion and publish
-  any copy-on-select clipboard effect before continuing, but a separate key
-  event can still race a terminal-driven selection change;
-  worker-authoritative performability remains planned.
 - The first appearance slice covers the full palette, selection, cursor,
   bold, faint, split appearance, and the documented typography settings.
   Dynamic light/dark theme switching, Ghostty's embedded fallback resolver,

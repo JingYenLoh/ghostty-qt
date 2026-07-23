@@ -209,6 +209,10 @@ private:
 
     using ConfiguredActionCompletion =
         std::function<void(TerminalActionExecutionResult)>;
+    struct PendingTerminalActionCompletion {
+        ConfiguredActionCompletion completion;
+        quint64 epoch = 0;
+    };
     struct DeferredKeyInput {
         KeyEventSnapshot event;
         quint64 focusEpoch = 0;
@@ -279,6 +283,8 @@ private:
     [[nodiscard]] bool commitConfiguredActionResult(
         const TerminalActionExecutionResult &result);
     [[nodiscard]] quint64 nextTerminalActionRequestId();
+    void advanceTerminalActionEpoch();
+    void failStaleTerminalActionCompletions();
     void handleTerminalActionResult(const TerminalActionResult &result);
     [[nodiscard]] std::optional<KeyHandling> continueLocalActionChain(
         const std::shared_ptr<PendingLocalActionChain> &chain);
@@ -324,6 +330,7 @@ private:
                                    const QByteArray &uri);
     QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
     void startSearchUi();
+    void startSearchUiWithSelection(const QString &text);
     void setSearchUiActive(bool active);
     void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
     void installSearchDecorationsLocked(
@@ -393,7 +400,9 @@ private:
     quint64 activeSequenceToken_ = 0;
     QVector<quint64> executingSequenceTokens_;
     quint64 nextTerminalActionRequestId_ = 0;
-    QHash<quint64, ConfiguredActionCompletion>
+    quint64 terminalActionEpoch_ = 1;
+    bool terminalActionsAccepted_ = true;
+    QHash<quint64, PendingTerminalActionCompletion>
         pendingTerminalActionCompletions_;
     bool hoverInside_ = false;
     QPointF hoverPosition_;

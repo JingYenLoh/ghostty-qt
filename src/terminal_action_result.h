@@ -18,6 +18,7 @@ enum class TerminalActionEffect : quint8 {
     None,
     Clipboard,
     OpenFile,
+    StartSearch,
 };
 
 struct TerminalActionResult {
@@ -38,6 +39,10 @@ Q_DECLARE_METATYPE(TerminalActionResult)
 struct TerminalActionExecutionResult {
     bool performed = false;
     std::optional<TerminalActionResult> terminalAction;
+    // A worker result may be retained by a process-wide barrier after the
+    // pane has crossed a session lifecycle boundary. The originating pane
+    // stamps that result so a stale GUI effect cannot be published later.
+    quint64 terminalActionEpoch = 0;
 };
 
 struct TerminalActionExecutionStart {

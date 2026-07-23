@@ -83,14 +83,17 @@ public Q_SLOTS:
     void selectAll();
     void selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
+    void adjustSelectionAction(
+        quint64 requestId, TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
+    void scrollToSelectionAction(quint64 requestId);
     void search(quint64 generation, const QByteArray &needle);
     void searchSerialized(quint64 generation,
                           const QByteArray &serializedNeedle);
     void cancelSearch(quint64 generation);
     void navigateSearch(quint64 generation,
                         TerminalSearchDirection direction);
-    void requestSearchSelection(quint64 requestId);
+    void searchSelectionAction(quint64 requestId);
     void queryHyperlink(quint64 requestId, quint64 contentRevision,
                         int column, int row);
     void cancelHyperlinkQuery(quint64 requestId);
@@ -132,8 +135,6 @@ Q_SIGNALS:
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
-    void searchSelectionReady(quint64 requestId, bool available,
-                              const QString &text);
     void sessionExited(int exitCode, int signalNumber, bool hold);
     void errorOccurred(const QString &message);
 

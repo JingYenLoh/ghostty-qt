@@ -80,6 +80,12 @@ bool actionRequiresTerminalBarrier(
                 GhosttyPaneActions::CopyToClipboard>(*paneAction)
             || std::holds_alternative<
                 GhosttyPaneActions::SelectAll>(*paneAction)
+            || std::holds_alternative<
+                GhosttyPaneActions::AdjustSelection>(*paneAction)
+            || std::holds_alternative<
+                GhosttyPaneActions::ScrollToSelection>(*paneAction)
+            || std::holds_alternative<
+                GhosttyPaneActions::SearchSelection>(*paneAction)
             || std::holds_alternative<TerminalWriteFileAction>(
                 *paneAction));
 }
@@ -106,6 +112,7 @@ struct GhosttyApplicationKeybindings::BroadExecution {
     bool continuationMustDefer = false;
     bool continuationQueued = false;
     qsizetype unresolvedTargets = 0;
+    qsizetype publishIndex = 0;
     QVector<Target> targets;
 };
 
@@ -325,6 +332,7 @@ void GhosttyApplicationKeybindings::dispatchCompiledBroadActions(
             .continuationMustDefer = false,
             .continuationQueued = false,
             .unresolvedTargets = 0,
+            .publishIndex = 0,
             .targets = {},
         });
     continueBroadExecution();
@@ -409,6 +417,7 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             execution->startingTargets = true;
             execution->continuationMustDefer = false;
             execution->continuationQueued = false;
+            execution->publishIndex = 0;
             execution->targets.clear();
 
             // A fresh snapshot for each action matches Ghostty's action-major
@@ -441,7 +450,7 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
                 if (target.workspace == nullptr || target.pane == nullptr) {
                     resolveBroadTarget(
                         generation, index,
-                        TerminalActionExecutionResult{});
+                        TerminalActionExecutionResult{}, true);
                     if (!stillCurrent()) return;
                     continue;
                 }
@@ -498,7 +507,13 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
         // All worker results are now known. Publish side effects only for
         // panes which still occupy their snapshotted identity, and do so in
         // the deterministic registration/tab/tree order of the snapshot.
-        for (BroadExecution::Target &target : execution->targets) {
+        // Publication is resumable because a GUI effect can synchronously
+        // destroy a target. Advancing the cursor before deferring prevents
+        // both duplicate effects and the next chain entry from running
+        // inside QObject teardown.
+        while (execution->publishIndex < execution->targets.size()) {
+            BroadExecution::Target &target =
+                execution->targets[execution->publishIndex];
             if (target.workspace != nullptr && target.pane != nullptr
                 && target.workspace->broadPaneTargetIsLive({
                     .paneId = target.paneId,
@@ -510,11 +525,20 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             }
             QObject::disconnect(target.paneDestruction);
             QObject::disconnect(target.workspaceDestruction);
+            ++execution->publishIndex;
+            if (configurationUpdateDepth_ != 0) {
+                return;
+            }
+            if (execution->continuationMustDefer) {
+                deferBroadExecutionContinuation(generation);
+                return;
+            }
         }
         execution->targets.clear();
         execution->barrierInitialized = false;
         execution->continuationMustDefer = false;
         execution->continuationQueued = false;
+        execution->publishIndex = 0;
         ++execution->entryIndex;
     }
 
@@ -591,6 +615,9 @@ void GhosttyApplicationKeybindings::deferBroadExecutionContinuation(
                 || guard->configurationUpdateDepth_ != 0) {
                 return;
             }
+            // The queued turn satisfies the teardown deferral. Any new
+            // target loss during resumed publication sets this again.
+            currentExecution->continuationMustDefer = false;
             guard->continueBroadExecution();
         },
         Qt::QueuedConnection);
@@ -604,9 +631,6 @@ void GhosttyApplicationKeybindings::resumeReadyBroadExecution()
         || execution->unresolvedTargets != 0) {
         return;
     }
-    execution->continuationMustDefer =
-        execution->continuationMustDefer
-        || broadExecutionHasLostTarget(*execution);
     if (execution->continuationMustDefer) {
         deferBroadExecutionContinuation(execution->generation);
     } else {

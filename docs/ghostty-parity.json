@@ -432,7 +432,7 @@
     },
     "keybind": {
       "status": "partial",
-      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Immediate select-all chains preserve worker order, but a separate selection-dependent performable key can race asynchronously reconciled worker state. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
+      "note": "A private versioned export carries Ghostty's finalized root and named-table bindings. Per-surface table stacks, shared-prefix sequences, physical/Unicode/catch-all triggers, chains, local flags, stage-time VT encoding, invalid replay, application-wide all/global dispatch, and Linux XDG portal registration are implemented for the supported action subset. Selection-dependent copy, search, endpoint adjustment, and viewport movement use correlated worker-authoritative performability across separate input events; local and broad chains wait for ordered GUI effects before continuing. Portal registration intentionally matches the pinned GTK frontend's root/direct/single-action restriction."
     },
     "link": {
       "status": "planned",
@@ -859,7 +859,7 @@
         },
         "adjust_selection": {
           "status": "supported",
-          "note": "Adjusts the logical selection endpoint in every pinned direction and scrolls an endpoint outside the viewport back into view within one session-thread transaction."
+          "note": "Adjusts the logical selection endpoint in every pinned direction and scrolls an endpoint outside the viewport back into view within one session-thread transaction. Absence is worker-authoritatively unperformed; correlated local and broad barriers prevent a stale GUI selection cache from changing performability or action order."
         },
         "check_for_updates": {
           "status": "not_applicable",
@@ -888,7 +888,7 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. Worker completion is correlated with its originating action: local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
+          "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. Selection presence and formatting are worker-authoritative even across separate input events. Correlated local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "copy_title_to_clipboard": {
           "status": "partial",
@@ -1063,7 +1063,7 @@
         },
         "scroll_to_selection": {
           "status": "supported",
-          "note": "Normalizes the current selection to its visual top-left row and aligns that row to the viewport; absence remains non-performable."
+          "note": "Normalizes the current selection to its visual top-left row and aligns that row to the viewport; absence remains non-performable. The session worker decides that state at execution and returns a correlated result, so local performable keys and process-wide chains do not consult an asynchronously reconciled GUI cache."
         },
         "scroll_to_top": {
           "status": "supported",
@@ -1075,7 +1075,7 @@
         },
         "search_selection": {
           "status": "partial",
-          "note": "When a terminal selection exists, its untrimmed text becomes the needle and opens the pane overlay; without a selection the action is not performed. Search execution uses the cooperative frontend foundation."
+          "note": "When a terminal selection exists, its exact untrimmed text becomes the needle and opens the pane overlay; a valid empty selection opens and focuses while retaining the previous entry text, matching pinned GTK sequencing. Without a selection the worker-authoritative correlated action is not performed. Local and broad chains commit the ordered overlay effect before continuing; search execution uses the cooperative frontend foundation."
         },
         "select_all": {
           "status": "supported",

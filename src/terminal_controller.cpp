@@ -109,8 +109,14 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::selectAllAction);
     relayWorkerRequest(&TerminalController::selectionAdjustmentRequested,
                        &SessionWorker::adjustSelection);
+    relayWorkerRequest(
+        &TerminalController::selectionAdjustmentActionRequested,
+        &SessionWorker::adjustSelectionAction);
     relayWorkerRequest(&TerminalController::scrollRequested,
                        &SessionWorker::scrollViewport);
+    relayWorkerRequest(
+        &TerminalController::scrollToSelectionActionRequested,
+        &SessionWorker::scrollToSelectionAction);
     relayWorkerRequest(&TerminalController::searchRequested,
                        &SessionWorker::search);
     relayWorkerRequest(&TerminalController::serializedSearchRequested,
@@ -119,8 +125,9 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::cancelSearch);
     relayWorkerRequest(&TerminalController::searchNavigationRequested,
                        &SessionWorker::navigateSearch);
-    relayWorkerRequest(&TerminalController::searchSelectionRequested,
-                       &SessionWorker::requestSearchSelection);
+    relayWorkerRequest(
+        &TerminalController::searchSelectionActionRequested,
+        &SessionWorker::searchSelectionAction);
     relayWorkerRequest(&TerminalController::hyperlinkQueryRequested,
                        &SessionWorker::queryHyperlink);
     relayWorkerRequest(
@@ -228,8 +235,6 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             }, Qt::QueuedConnection);
     connect(worker, &SessionWorker::selectAllCompleted, this,
             [this](bool available) {
-                pendingSelectAllRequests_ = std::max(
-                    0, pendingSelectAllRequests_ - 1);
                 if (selectionAvailable_ == available) return;
                 selectionAvailable_ = available;
                 Q_EMIT selectionAvailableChanged(selectionAvailable_);
@@ -270,14 +275,6 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 searchExpected_ = update.active;
                 Q_EMIT searchUpdated(update);
             }, Qt::QueuedConnection);
-    connect(worker, &SessionWorker::searchSelectionReady, this,
-            [this](quint64 requestId, bool available, const QString &text) {
-                if (requestId != activeSearchSelectionRequestId_) {
-                    return;
-                }
-                activeSearchSelectionRequestId_ = 0;
-                Q_EMIT searchSelectionReady(available, text);
-            }, Qt::QueuedConnection);
     connect(worker, &SessionWorker::clipboardTextReady, this,
             [](const QString &text,
                TerminalClipboardDestination destination) {
@@ -290,8 +287,6 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                         result.requestId)) {
                     return;
                 }
-                pendingSelectAllActionRequests_.remove(
-                    result.requestId);
                 Q_EMIT terminalActionReady(result);
             }, Qt::QueuedConnection);
     connect(worker, &SessionWorker::unsafePasteConfirmationRequested,
@@ -308,14 +303,20 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 // queries before observers clear their UI. The held terminal
                 // remains readable, so also ask the worker to release search
                 // state and finish recompressing any pages restored by it.
+                const QPointer<TerminalController> guard(this);
                 cancelSearch();
+                if (guard == nullptr) return;
+                failPendingTerminalActions();
+                if (guard == nullptr) return;
                 if (activeProcess_) {
                     activeProcess_ = false;
                     Q_EMIT activeProcessChanged(false);
+                    if (guard == nullptr) return;
                 }
                 if (running_) {
                     running_ = false;
                     Q_EMIT runningChanged(false);
+                    if (guard == nullptr) return;
                 }
                 Q_EMIT sessionExited(exitCode, signalNumber, hold);
             }, Qt::QueuedConnection);
@@ -491,7 +492,6 @@ TerminalController::~TerminalController()
     closing_ = true;
     pendingWorkerRequests_.clear();
     pendingTerminalActionRequests_.clear();
-    pendingSelectAllActionRequests_.clear();
     if (thread_ != nullptr && thread_->isRunning()) {
         if (worker_ != nullptr) {
             QMetaObject::invokeMethod(worker_.data(), &SessionWorker::shutdown,
@@ -734,8 +734,7 @@ void TerminalController::copySelection()
     Q_EMIT copyRequested();
 }
 
-bool TerminalController::beginTerminalActionRequest(
-    quint64 requestId, bool selectAll)
+bool TerminalController::beginTerminalActionRequest(quint64 requestId)
 {
     if (requestId == 0
         || pendingTerminalActionRequests_.contains(requestId)
@@ -745,16 +744,12 @@ bool TerminalController::beginTerminalActionRequest(
     }
 
     pendingTerminalActionRequests_.insert(requestId);
-    if (selectAll) {
-        ++pendingSelectAllRequests_;
-        pendingSelectAllActionRequests_.insert(requestId);
-    }
     return true;
 }
 
 bool TerminalController::copySelectionAction(quint64 requestId)
 {
-    if (!beginTerminalActionRequest(requestId, false)) {
+    if (!beginTerminalActionRequest(requestId)) {
         return false;
     }
     Q_EMIT copyActionRequested(requestId);
@@ -764,7 +759,7 @@ bool TerminalController::copySelectionAction(quint64 requestId)
 bool TerminalController::writeTerminalFile(
     quint64 requestId, const TerminalWriteFileAction &action)
 {
-    if (!beginTerminalActionRequest(requestId, false)) {
+    if (!beginTerminalActionRequest(requestId)) {
         return false;
     }
     Q_EMIT writeTerminalFileRequested(requestId, action);
@@ -776,12 +771,6 @@ void TerminalController::failPendingTerminalActions()
     QList<quint64> requestIds =
         pendingTerminalActionRequests_.values();
     pendingTerminalActionRequests_.clear();
-    for (quint64 requestId : std::as_const(requestIds)) {
-        if (pendingSelectAllActionRequests_.remove(requestId)) {
-            pendingSelectAllRequests_ = std::max(
-                0, pendingSelectAllRequests_ - 1);
-        }
-    }
     std::ranges::sort(requestIds);
 
     const QPointer<TerminalController> guard(this);
@@ -815,13 +804,12 @@ void TerminalController::endSelection(int column, int row)
 
 void TerminalController::selectAll()
 {
-    ++pendingSelectAllRequests_;
     Q_EMIT selectAllRequested();
 }
 
 bool TerminalController::selectAllAction(quint64 requestId)
 {
-    if (!beginTerminalActionRequest(requestId, true)) {
+    if (!beginTerminalActionRequest(requestId)) {
         return false;
     }
 
@@ -834,9 +822,28 @@ void TerminalController::adjustSelection(TerminalSelectionAdjustment adjustment)
     Q_EMIT selectionAdjustmentRequested(adjustment);
 }
 
+bool TerminalController::adjustSelectionAction(
+    quint64 requestId, TerminalSelectionAdjustment adjustment)
+{
+    if (!beginTerminalActionRequest(requestId)) {
+        return false;
+    }
+    Q_EMIT selectionAdjustmentActionRequested(requestId, adjustment);
+    return true;
+}
+
 void TerminalController::scrollViewport(const TerminalViewportRequest &request)
 {
     Q_EMIT scrollRequested(request);
+}
+
+bool TerminalController::scrollToSelectionAction(quint64 requestId)
+{
+    if (!beginTerminalActionRequest(requestId)) {
+        return false;
+    }
+    Q_EMIT scrollToSelectionActionRequested(requestId);
+    return true;
 }
 
 quint64 TerminalController::nextSearchGeneration()
@@ -847,17 +854,8 @@ quint64 TerminalController::nextSearchGeneration()
     return nextSearchGeneration_;
 }
 
-quint64 TerminalController::nextSearchSelectionRequestId()
-{
-    do {
-        ++nextSearchSelectionRequestId_;
-    } while (nextSearchSelectionRequestId_ == 0);
-    return nextSearchSelectionRequestId_;
-}
-
 void TerminalController::search(const QString &text)
 {
-    activeSearchSelectionRequestId_ = 0;
     activeSearchGeneration_ = nextSearchGeneration();
     searchExpected_ = !text.isEmpty();
     Q_EMIT searchRequested(activeSearchGeneration_, text.toUtf8());
@@ -865,7 +863,6 @@ void TerminalController::search(const QString &text)
 
 void TerminalController::searchSerialized(const QByteArray &serializedText)
 {
-    activeSearchSelectionRequestId_ = 0;
     activeSearchGeneration_ = nextSearchGeneration();
     // Escape decoding intentionally stays on the worker. Treat the request as
     // active until its authoritative update arrives so an action chain such
@@ -876,7 +873,6 @@ void TerminalController::searchSerialized(const QByteArray &serializedText)
 
 void TerminalController::cancelSearch()
 {
-    activeSearchSelectionRequestId_ = 0;
     activeSearchGeneration_ = nextSearchGeneration();
     searchExpected_ = false;
     Q_EMIT searchCancellationRequested(activeSearchGeneration_);
@@ -890,10 +886,13 @@ void TerminalController::navigateSearch(TerminalSearchDirection direction)
     Q_EMIT searchNavigationRequested(activeSearchGeneration_, direction);
 }
 
-void TerminalController::requestSearchSelection()
+bool TerminalController::searchSelectionAction(quint64 requestId)
 {
-    activeSearchSelectionRequestId_ = nextSearchSelectionRequestId();
-    Q_EMIT searchSelectionRequested(activeSearchSelectionRequestId_);
+    if (!beginTerminalActionRequest(requestId)) {
+        return false;
+    }
+    Q_EMIT searchSelectionActionRequested(requestId);
+    return true;
 }
 
 quint64 TerminalController::nextHyperlinkRequestId()
