@@ -293,7 +293,19 @@ Per-pane read-only coverage exercises local and stable broad toggles, active-pan
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,
 clean input resumption, and unconditional pane/tab/workspace close confirmation
-for idle and exited children. Adapter and worker tests
+for idle and exited children. Plain file-action coverage checks the exact
+three-location and three-disposition grammar, shorthand versus explicit
+`,plain`, rejection of malformed parameters, and the recognized-but-unsupported
+VT/HTML formats. Adapter cases verify full active-page, primary-history, and
+exact selection ranges, including alternate-screen behavior, soft-wrap
+unwrapping, preserved trailing spaces, trailing blank-row removal, and the
+ready-empty versus unavailable distinction. Worker and pane cases verify exact
+basenames and bytes, persistent owner-only artifacts, copy and desktop-open
+relays, raw FIFO-ordered path writes without paste framing, read-only
+suppression after creation, no-data effects, broad per-surface fanout, and
+receiver teardown safety. Tests that inspect persistent artifacts remove their
+temporary directories explicitly.
+Other adapter and worker tests
 also cover local/remote OSC 7 filtering, encoded and raw paths, and stale launch
 directory fallback. They additionally verify same-batch valid/invalid OSC 7
 ordering, inherited logical `PWD`, exact symlink-sensitive concrete paths, and

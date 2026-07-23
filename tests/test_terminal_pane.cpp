@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QStyleHints>
@@ -245,6 +246,8 @@ private Q_SLOTS:
     void routesTypedCloseTabModes();
     void routesViewportAndSelectionActions();
     void routesTerminalControlActions();
+    void routesTerminalFileActions();
+    void dropsQueuedTerminalFileOpenAfterTeardown();
     void routesSearchActionsAndRetainsUiState();
     void interactsWithOsc8Hyperlinks();
     void interactsWithRegexLinksAndReloadsLinkUrl();
@@ -3449,6 +3452,123 @@ void TerminalPaneTest::routesTerminalControlActions()
     QVERIFY(!pane.executeConfiguredAction(QStringLiteral("reset:")));
     QCOMPARE(csi.count(), 1);
     QCOMPARE(reset.count(), 1);
+}
+
+void TerminalPaneTest::routesTerminalFileActions()
+{
+    const QString printfExecutable =
+        QStandardPaths::findExecutable(QStringLiteral("printf"));
+    QVERIFY(!printfExecutable.isEmpty());
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        printfExecutable,
+        QStringLiteral("pane-terminal-file-content"),
+    };
+    options.hold = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy requests(
+        controller, &TerminalController::writeTerminalFileRequested);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+
+    QList<QUrl> openedUrls;
+    QString artifactDirectoryPath;
+    const auto cleanupArtifact = qScopeGuard([&artifactDirectoryPath] {
+        if (!artifactDirectoryPath.isEmpty()) {
+            static_cast<void>(
+                QDir(artifactDirectoryPath).removeRecursively());
+        }
+    });
+    pane.setUrlOpener([&openedUrls](const QUrl &url) {
+        openedUrls.append(url);
+        return true;
+    });
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updates, QStringLiteral("pane-terminal-file-content")),
+        5000);
+
+    // Missing selection is still a performed action. Queue a screen write
+    // behind it as a worker-order barrier: receiving only screen.txt proves
+    // the earlier unavailable selection did not invoke the URL opener.
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("write_selection_file:open,plain")));
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("write_screen_file:open")));
+    QCOMPARE(requests.count(), 2);
+
+    const TerminalWriteFileAction selectionRequest =
+        qvariant_cast<TerminalWriteFileAction>(
+            requests.at(0).constFirst());
+    QCOMPARE(selectionRequest.location, TerminalFileLocation::Selection);
+    QCOMPARE(selectionRequest.disposition, TerminalFileDisposition::Open);
+    QCOMPARE(selectionRequest.format, TerminalFileFormat::Plain);
+    const TerminalWriteFileAction screenRequest =
+        qvariant_cast<TerminalWriteFileAction>(
+            requests.at(1).constFirst());
+    QCOMPARE(screenRequest.location, TerminalFileLocation::Screen);
+    QCOMPARE(screenRequest.disposition, TerminalFileDisposition::Open);
+    QCOMPARE(screenRequest.format, TerminalFileFormat::Plain);
+
+    QTRY_COMPARE_WITH_TIMEOUT(openedUrls.size(), 1, 5000);
+    const QUrl openedUrl = openedUrls.constFirst();
+    QVERIFY(openedUrl.isLocalFile());
+    const QFileInfo artifact(openedUrl.toLocalFile());
+    artifactDirectoryPath = artifact.absolutePath();
+    QVERIFY(artifact.isAbsolute());
+    QCOMPARE(artifact.fileName(), QStringLiteral("screen.txt"));
+    QVERIFY(artifact.isFile());
+
+    QFile file(artifact.filePath());
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(),
+             QByteArrayLiteral("pane-terminal-file-content"));
+    file.close();
+    QVERIFY(errors.isEmpty());
+
+    const QDir artifactDirectory = artifact.absoluteDir();
+    QVERIFY(artifactDirectory.dirName().startsWith(
+        QStringLiteral("ghostty-qt-")));
+    QVERIFY(QDir(artifactDirectoryPath).removeRecursively());
+}
+
+void TerminalPaneTest::dropsQueuedTerminalFileOpenAfterTeardown()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    auto *pane = new TerminalPane(
+        options, nullptr, std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    int openCount = 0;
+    pane->setUrlOpener([&openCount](const QUrl &) {
+        ++openCount;
+        return true;
+    });
+    const QPointer<TerminalPane> guardedPane(pane);
+    QVERIFY(QMetaObject::invokeMethod(
+        controller,
+        [controller] {
+            Q_EMIT controller->terminalFileOpenRequested(
+                QStringLiteral("/tmp/stale-terminal-file.txt"));
+        },
+        Qt::QueuedConnection));
+
+    delete pane;
+    QVERIFY(guardedPane.isNull());
+    QCoreApplication::processEvents();
+    QCOMPARE(openCount, 0);
 }
 
 void TerminalPaneTest::interactsWithOsc8Hyperlinks()

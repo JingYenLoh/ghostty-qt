@@ -2,6 +2,7 @@
 
 #include <ghostty/vt.h>
 
+#include <QScopeGuard>
 #include <QSet>
 
 #include <algorithm>
@@ -1344,6 +1345,138 @@ public:
         }
         output.resize(static_cast<qsizetype>(written));
         return QString::fromUtf8(output);
+    }
+
+    PlainFileSnapshot snapshotPlainFile(
+        TerminalFileLocation location) const
+    {
+        const auto withoutBytes = [](PlainFileSnapshotStatus status) {
+            return PlainFileSnapshot{
+                .status = status,
+                .bytes = {},
+            };
+        };
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        const GhosttySelection *selectionPointer = nullptr;
+
+        switch (location) {
+        case TerminalFileLocation::Screen:
+            // A null formatter selection means the complete active PageList.
+            // Let libghostty choose its actual mixed-width bottom-right
+            // instead of synthesizing an endpoint from the desired columns.
+            break;
+        case TerminalFileLocation::Selection: {
+            const GhosttyResult selectionResult = ghostty_terminal_get(
+                terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
+            if (selectionResult == GHOSTTY_NO_VALUE) {
+                return withoutBytes(
+                    PlainFileSnapshotStatus::Unavailable);
+            }
+            if (selectionResult != GHOSTTY_SUCCESS) {
+                return withoutBytes(PlainFileSnapshotStatus::Failed);
+            }
+            selectionPointer = &selection;
+            break;
+        }
+        case TerminalFileLocation::Scrollback: {
+            size_t scrollbackRows = 0;
+            if (ghostty_terminal_get(
+                    terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+                    &scrollbackRows) != GHOSTTY_SUCCESS) {
+                return withoutBytes(PlainFileSnapshotStatus::Failed);
+            }
+            if (scrollbackRows == 0) {
+                return withoutBytes(
+                    PlainFileSnapshotStatus::Unavailable);
+            }
+            GhosttyPoint start{};
+            start.tag = GHOSTTY_POINT_TAG_SCREEN;
+            start.value.coordinate = {
+                .x = 0,
+                .y = 0,
+            };
+            GhosttyPoint end{};
+            end.tag = GHOSTTY_POINT_TAG_ACTIVE;
+            end.value.coordinate = {
+                .x = 0,
+                .y = 0,
+            };
+            if (ghostty_terminal_grid_ref(
+                    terminal_, start, &selection.start)
+                    != GHOSTTY_SUCCESS
+                || ghostty_terminal_grid_ref(
+                    terminal_, end, &selection.end)
+                    != GHOSTTY_SUCCESS) {
+                return withoutBytes(PlainFileSnapshotStatus::Failed);
+            }
+            selection.rectangle = false;
+            // Move from active top to the immediately preceding history row,
+            // then ask libghostty for that stored page's real last column.
+            // This remains exact while lazy reflow leaves page widths mixed.
+            if (ghostty_terminal_selection_adjust(
+                    terminal_, &selection,
+                    GHOSTTY_SELECTION_ADJUST_UP) != GHOSTTY_SUCCESS
+                || ghostty_terminal_selection_adjust(
+                    terminal_, &selection,
+                    GHOSTTY_SELECTION_ADJUST_END_OF_LINE)
+                    != GHOSTTY_SUCCESS) {
+                return withoutBytes(PlainFileSnapshotStatus::Failed);
+            }
+            selectionPointer = &selection;
+            break;
+        }
+        }
+
+        GhosttyFormatterTerminalOptions options{};
+        options.size = sizeof(options);
+        options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        options.unwrap = true;
+        options.trim = false;
+        options.selection = selectionPointer;
+        options.extra.size = sizeof(options.extra);
+        options.extra.screen.size = sizeof(options.extra.screen);
+
+        GhosttyFormatter formatter = nullptr;
+        if (ghostty_formatter_terminal_new(
+                nullptr, &formatter, terminal_, options)
+            != GHOSTTY_SUCCESS) {
+            return withoutBytes(PlainFileSnapshotStatus::Failed);
+        }
+        const auto formatterCleanup = qScopeGuard([formatter] {
+            ghostty_formatter_free(formatter);
+        });
+
+        size_t required = 0;
+        GhosttyResult result = ghostty_formatter_format_buf(
+            formatter, nullptr, 0, &required);
+        if ((result != GHOSTTY_OUT_OF_SPACE
+             && result != GHOSTTY_SUCCESS)
+            || required
+                > static_cast<size_t>(
+                    std::numeric_limits<qsizetype>::max())) {
+            return withoutBytes(PlainFileSnapshotStatus::Failed);
+        }
+        if (required == 0) {
+            return withoutBytes(PlainFileSnapshotStatus::Ready);
+        }
+
+        QByteArray output(
+            static_cast<qsizetype>(required), Qt::Uninitialized);
+        size_t written = 0;
+        result = ghostty_formatter_format_buf(
+            formatter,
+            reinterpret_cast<uint8_t *>(output.data()),
+            static_cast<size_t>(output.size()), &written);
+        if (result != GHOSTTY_SUCCESS
+            || written > static_cast<size_t>(output.size())) {
+            return withoutBytes(PlainFileSnapshotStatus::Failed);
+        }
+        output.resize(static_cast<qsizetype>(written));
+        return {
+            .status = PlainFileSnapshotStatus::Ready,
+            .bytes = std::move(output),
+        };
     }
 
     bool hasSelection() const
@@ -3365,6 +3498,13 @@ GhosttyVtAdapter::PreparedPaste GhosttyVtAdapter::preparePaste(
 QString GhosttyVtAdapter::selectedText(bool trim) const
 {
     return impl_->selectedText(trim);
+}
+
+GhosttyVtAdapter::PlainFileSnapshot
+GhosttyVtAdapter::snapshotPlainFile(
+    TerminalFileLocation location) const
+{
+    return impl_->snapshotPlainFile(location);
 }
 
 bool GhosttyVtAdapter::hasSelection() const

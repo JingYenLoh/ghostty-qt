@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
@@ -14,6 +15,8 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
+
+#include <sys/stat.h>
 
 namespace {
 
@@ -161,6 +164,8 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void writesPersistentTerminalFiles();
+    void skipsUnavailableTerminalFiles();
     void reportsTerminalInitializationSeparatelyFromChildSpawn();
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
@@ -178,6 +183,7 @@ private Q_SLOTS:
     void sendsBracketedPasteThroughPty();
     void protectsPasteWithCorrelatedWorkerConfirmation();
     void sendsTerminalControlActionsThroughPty();
+    void pastesTerminalFilePathAsRawOrderedInput();
     void readOnlyBlocksSurfaceInputButPreservesProtocolReplies();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
@@ -475,6 +481,225 @@ void SessionWorkerTest::runsCommandThroughPty()
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
     QVERIFY(containsCursorBlinkReset(updateSpy));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::writesPersistentTerminalFiles()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    QString screenPath;
+    QString historyPath;
+    QString selectionPath;
+    const auto cleanupArtifacts = qScopeGuard([&] {
+        for (const QString &path :
+             {screenPath, historyPath, selectionPath}) {
+            if (path.isEmpty()) continue;
+            static_cast<void>(QFile::remove(path));
+            static_cast<void>(
+                QDir().rmdir(QFileInfo(path).absolutePath()));
+        }
+    });
+
+    {
+        SessionWorker worker;
+        worker.resizeTerminal(12, 3, 8, 16, 96, 48);
+        QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy clipboardSpy(
+            &worker, &SessionWorker::clipboardTextReady);
+        QSignalSpy openSpy(
+            &worker, &SessionWorker::terminalFileOpenRequested);
+        QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral(
+                "printf 'history-0  \\r\\n"
+                "history-1\\r\\n"
+                "screen-0  \\r\\n"
+                "screen-1\\r\\n"
+                "screen-2  '"),
+        };
+        options.hold = true;
+        options.runtime.selectionClipboard.copyOnSelect =
+            TerminalCopyOnSelectMode::Disabled;
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(updateSpy, QStringLiteral("screen-2")), 1000);
+
+        worker.writeTerminalFile({
+            .location = TerminalFileLocation::Screen,
+            .disposition = TerminalFileDisposition::Copy,
+        });
+        QCOMPARE(clipboardSpy.count(), 1);
+        QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                     clipboardSpy.constFirst().at(1)),
+                 TerminalClipboardDestination::Standard);
+        screenPath = clipboardSpy.constFirst().at(0).toString();
+
+        worker.writeTerminalFile({
+            .location = TerminalFileLocation::Scrollback,
+            .disposition = TerminalFileDisposition::Open,
+        });
+        QCOMPARE(openSpy.count(), 1);
+        historyPath = openSpy.constFirst().constFirst().toString();
+
+        worker.beginSelection(0, 0, 1, true);
+        worker.updateSelection(8, 1, true);
+        worker.endSelection(8, 1);
+        worker.writeTerminalFile({
+            .location = TerminalFileLocation::Selection,
+            .disposition = TerminalFileDisposition::Copy,
+        });
+        QCOMPARE(clipboardSpy.count(), 2);
+        selectionPath = clipboardSpy.at(1).constFirst().toString();
+
+        QCOMPARE(QFileInfo(screenPath).fileName(),
+                 QStringLiteral("screen.txt"));
+        QCOMPARE(QFileInfo(historyPath).fileName(),
+                 QStringLiteral("history.txt"));
+        QCOMPARE(QFileInfo(selectionPath).fileName(),
+                 QStringLiteral("selection.txt"));
+        QVERIFY(QFileInfo(screenPath).isAbsolute());
+        QVERIFY(QFileInfo(historyPath).isAbsolute());
+        QVERIFY(QFileInfo(selectionPath).isAbsolute());
+        QVERIFY(QFileInfo(screenPath).absolutePath()
+                != QFileInfo(historyPath).absolutePath());
+        QVERIFY(QFileInfo(screenPath).absolutePath()
+                != QFileInfo(selectionPath).absolutePath());
+        QVERIFY(QFileInfo(historyPath).absolutePath()
+                != QFileInfo(selectionPath).absolutePath());
+
+        QFile screenFile(screenPath);
+        QVERIFY(screenFile.open(QIODevice::ReadOnly));
+        QCOMPARE(screenFile.readAll(), QByteArrayLiteral(
+            "history-0  \n"
+            "history-1\n"
+            "screen-0  \n"
+            "screen-1\n"
+            "screen-2  "));
+        screenFile.close();
+
+        QFile historyFile(historyPath);
+        QVERIFY(historyFile.open(QIODevice::ReadOnly));
+        QCOMPARE(historyFile.readAll(), QByteArrayLiteral(
+            "history-0  \n"
+            "history-1"));
+        historyFile.close();
+
+        QFile selectionFile(selectionPath);
+        QVERIFY(selectionFile.open(QIODevice::ReadOnly));
+        QCOMPARE(selectionFile.readAll(), QByteArrayLiteral(
+            "screen-0\n"
+            "screen-1"));
+        selectionFile.close();
+
+        struct stat status {};
+        const QByteArray encodedScreenPath = QFile::encodeName(screenPath);
+        QVERIFY(::stat(encodedScreenPath.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0600});
+        const QByteArray encodedScreenDirectory =
+            QFile::encodeName(QFileInfo(screenPath).absolutePath());
+        QVERIFY(::stat(encodedScreenDirectory.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0700});
+
+        const QByteArray encodedHistoryPath = QFile::encodeName(historyPath);
+        QVERIFY(::stat(encodedHistoryPath.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0600});
+        const QByteArray encodedHistoryDirectory =
+            QFile::encodeName(QFileInfo(historyPath).absolutePath());
+        QVERIFY(::stat(encodedHistoryDirectory.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0700});
+
+        const QByteArray encodedSelectionPath =
+            QFile::encodeName(selectionPath);
+        QVERIFY(::stat(encodedSelectionPath.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0600});
+        const QByteArray encodedSelectionDirectory =
+            QFile::encodeName(QFileInfo(selectionPath).absolutePath());
+        QVERIFY(::stat(encodedSelectionDirectory.constData(), &status) == 0);
+        QCOMPARE(status.st_mode & 0777, mode_t{0700});
+
+        QVERIFY2(errorSpy.isEmpty(),
+                 errorSpy.isEmpty()
+                     ? ""
+                     : qPrintable(
+                           errorSpy.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    // Successful artifacts deliberately outlive both the action and worker.
+    QVERIFY(QFileInfo::exists(screenPath));
+    QVERIFY(QFileInfo::exists(historyPath));
+    QVERIFY(QFileInfo::exists(selectionPath));
+    const QString screenDirectory = QFileInfo(screenPath).absolutePath();
+    const QString historyDirectory = QFileInfo(historyPath).absolutePath();
+    const QString selectionDirectory =
+        QFileInfo(selectionPath).absolutePath();
+    QVERIFY(QFile::remove(screenPath));
+    QVERIFY(QFile::remove(historyPath));
+    QVERIFY(QFile::remove(selectionPath));
+    QVERIFY(QDir().rmdir(screenDirectory));
+    QVERIFY(QDir().rmdir(historyDirectory));
+    QVERIFY(QDir().rmdir(selectionDirectory));
+}
+
+void SessionWorkerTest::skipsUnavailableTerminalFiles()
+{
+    qRegisterMetaType<TerminalClipboardDestination>();
+    QVERIFY(QDir().mkpath(
+        QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(
+            QStringLiteral("tmp/write-file-missing-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString artifactRoot =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
+    QVERIFY(QDir().mkpath(artifactRoot));
+    const ScopedEnvironmentVariable temporaryDirectory(
+        QByteArrayLiteral("TMPDIR"), QFile::encodeName(artifactRoot));
+    QCOMPARE(QFileInfo(QDir::tempPath()).canonicalFilePath(),
+             QFileInfo(artifactRoot).canonicalFilePath());
+
+    SessionWorker worker;
+    QSignalSpy clipboardSpy(
+        &worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy openSpy(
+        &worker, &SessionWorker::terminalFileOpenRequested);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+
+    worker.writeTerminalFile({
+        .location = TerminalFileLocation::Scrollback,
+        .disposition = TerminalFileDisposition::Copy,
+    });
+    worker.writeTerminalFile({
+        .location = TerminalFileLocation::Selection,
+        .disposition = TerminalFileDisposition::Open,
+    });
+
+    QVERIFY(clipboardSpy.isEmpty());
+    QVERIFY(openSpy.isEmpty());
+    QVERIFY(QDir(artifactRoot)
+                .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                .isEmpty());
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(
+                       errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
@@ -1807,6 +2032,136 @@ void SessionWorkerTest::sendsTerminalControlActionsThroughPty()
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
+}
+
+void SessionWorkerTest::pastesTerminalFilePathAsRawOrderedInput()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    QVERIFY(QDir().mkpath(
+        QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(
+            QStringLiteral("tmp/write-file-paste-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString artifactRoot =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("artifacts"));
+    QVERIFY(QDir().mkpath(artifactRoot));
+    const ScopedEnvironmentVariable temporaryDirectory(
+        QByteArrayLiteral("TMPDIR"), QFile::encodeName(artifactRoot));
+    const QString canonicalArtifactRoot =
+        QFileInfo(artifactRoot).canonicalFilePath();
+    QCOMPARE(QFileInfo(QDir::tempPath()).canonicalFilePath(),
+             canonicalArtifactRoot);
+
+    const QString representativePath =
+        QDir(canonicalArtifactRoot).filePath(
+            QStringLiteral("ghostty-qt-XXXXXX/screen.txt"));
+    const qsizetype pathSize = QFile::encodeName(representativePath).size();
+    const qsizetype orderedPayloadSize =
+        QByteArrayLiteral("BEFORE").size() + pathSize
+        + QByteArrayLiteral("AFTER").size();
+
+    SessionWorker worker;
+    worker.resizeTerminal(80, 8, 8, 16, 640, 128);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[?2004hwrite-file-ready'; "
+            "payload=$(dd bs=1 count=\"$1\" 2>/dev/null); "
+            "printf '\\033[?2004l\\r\\nwrite-file-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nreadonly-ready'; "
+            "payload=$(dd bs=1 count=1 2>/dev/null); "
+            "printf '\\r\\nreadonly-byte:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\n'"),
+        QStringLiteral("write-file-paste-test"),
+        QString::number(orderedPayloadSize),
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("write-file-ready")),
+        5000);
+
+    worker.sendRawText(QByteArrayLiteral("BEFORE"));
+    worker.writeTerminalFile({
+        .location = TerminalFileLocation::Screen,
+        .disposition = TerminalFileDisposition::Paste,
+    });
+    QStringList artifactDirectories =
+        QDir(artifactRoot).entryList(
+            QDir::Dirs | QDir::NoDotAndDotDot);
+    QCOMPARE(artifactDirectories.size(), 1);
+    const QString firstPath =
+        QDir(QDir(canonicalArtifactRoot)
+                 .filePath(artifactDirectories.constFirst()))
+            .filePath(QStringLiteral("screen.txt"));
+    QVERIFY(QFileInfo::exists(firstPath));
+    QCOMPARE(QFile::encodeName(firstPath).size(), pathSize);
+    worker.sendRawText(QByteArrayLiteral("AFTER"));
+
+    const QByteArray expectedOrderedBytes =
+        QByteArrayLiteral("BEFORE") + QFile::encodeName(firstPath)
+        + QByteArrayLiteral("AFTER");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updateSpy,
+            QStringLiteral("write-file-bytes:")
+                + QString::fromLatin1(expectedOrderedBytes.toHex())),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("readonly-ready")),
+        1000);
+
+    worker.setReadOnly(true);
+    worker.writeTerminalFile({
+        .location = TerminalFileLocation::Screen,
+        .disposition = TerminalFileDisposition::Paste,
+    });
+    artifactDirectories =
+        QDir(artifactRoot).entryList(
+            QDir::Dirs | QDir::NoDotAndDotDot);
+    QCOMPARE(artifactDirectories.size(), 2);
+    QTest::qWait(100);
+    QVERIFY(!updatesContain(
+        updateSpy, QStringLiteral("readonly-byte:")));
+
+    // The rejected path is never replayed after the policy changes.
+    worker.setReadOnly(false);
+    worker.sendRawText(QByteArrayLiteral("Z"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("readonly-byte:5a")),
+        5000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(
+                       errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+
+    for (const QString &directoryName :
+         std::as_const(artifactDirectories)) {
+        const QString directoryPath =
+            QDir(artifactRoot).filePath(directoryName);
+        const QString artifactPath =
+            QDir(directoryPath).filePath(QStringLiteral("screen.txt"));
+        QVERIFY(QFile::remove(artifactPath));
+        QVERIFY(QDir().rmdir(directoryPath));
+    }
+    QVERIFY(QDir(artifactRoot)
+                .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                .isEmpty());
 }
 
 void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()

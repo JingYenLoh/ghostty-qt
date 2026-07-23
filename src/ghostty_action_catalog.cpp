@@ -649,6 +649,55 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
         return std::unexpected(Error::InvalidFormat);
     }
 
+    std::optional<TerminalFileLocation> fileLocation;
+    if (parsed.name == QLatin1StringView("write_screen_file")) {
+        fileLocation = TerminalFileLocation::Screen;
+    } else if (parsed.name
+               == QLatin1StringView("write_scrollback_file")) {
+        fileLocation = TerminalFileLocation::Scrollback;
+    } else if (parsed.name
+               == QLatin1StringView("write_selection_file")) {
+        fileLocation = TerminalFileLocation::Selection;
+    }
+    if (fileLocation.has_value()) {
+        if (!parsed.parameter.has_value()
+            || parsed.parameter->isEmpty()) {
+            return std::unexpected(Error::InvalidFormat);
+        }
+
+        const qsizetype comma = parsed.parameter->indexOf(u',');
+        const QStringView dispositionName = comma < 0
+            ? *parsed.parameter
+            : parsed.parameter->first(comma);
+        TerminalFileDisposition disposition;
+        if (dispositionName == QLatin1StringView("copy")) {
+            disposition = TerminalFileDisposition::Copy;
+        } else if (dispositionName == QLatin1StringView("paste")) {
+            disposition = TerminalFileDisposition::Paste;
+        } else if (dispositionName == QLatin1StringView("open")) {
+            disposition = TerminalFileDisposition::Open;
+        } else {
+            return std::unexpected(Error::InvalidFormat);
+        }
+
+        if (comma >= 0) {
+            const QStringView formatName =
+                parsed.parameter->sliced(comma + 1);
+            if (formatName == QLatin1StringView("vt")
+                || formatName == QLatin1StringView("html")) {
+                return std::unexpected(Error::UnsupportedParameter);
+            }
+            if (formatName != QLatin1StringView("plain")) {
+                return std::unexpected(Error::InvalidFormat);
+            }
+        }
+        return GhosttyPaneAction{TerminalWriteFileAction{
+            .location = *fileLocation,
+            .disposition = disposition,
+            .format = TerminalFileFormat::Plain,
+        }};
+    }
+
     if (parsed.name == QLatin1StringView("copy_to_clipboard")) {
         if (!parsed.parameter.has_value()
             || *parsed.parameter == QLatin1StringView("mixed")) {

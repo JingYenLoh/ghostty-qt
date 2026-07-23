@@ -1188,6 +1188,50 @@ The controller also performs a pure decode preview for newline-bearing actions
 so an immediate close request cannot outrun the worker's active-process signal;
 the actual terminal mutation remains worker-owned.
 
+Plain `write_screen_file`, `write_scrollback_file`, and
+`write_selection_file` actions also stay worker-owned through snapshot and
+artifact creation. `GhosttyVtAdapter` selects the native full screen, a
+derived primary-history range, or the current selection through libghostty's
+public terminal formatter with unwrapping enabled and trimming disabled.
+Full-screen output
+uses the formatter's native complete-PageList range so mixed-width pages under
+reflow retain their real endpoints; history derives its last row and column
+through libghostty selection adjustments for the same reason. The adapter's
+tri-state result distinguishes bytes that are ready—including a valid empty
+screen—from absent history or selection and formatter failure. The worker
+creates the artifact only for a ready result, fixes and verifies the temporary
+directory as owner-only mode `0700`, atomically creates and verifies the
+location-specific `.txt` file as mode `0600`, and disables automatic
+temporary-directory removal only after every write and permission check
+succeeds. This deliberately makes the successful artifact persistent while
+every failed or unavailable attempt cleans itself up.
+
+Disposition remains ordered after that same worker snapshot. `paste` enqueues
+the encoded absolute path directly in the PTY write FIFO, without entering the
+clipboard paste, quoting, newline, bracketed-paste, viewport, or activity
+paths; the normal worker-side read-only gate can therefore suppress the bytes
+without suppressing file creation. `copy` relays the path as plain text to the
+standard clipboard, while `open` relays a local-file URL through the
+controller to the pane's injected desktop opener. Receiver-bound queued
+connections discard either GUI effect if its pane is destroyed. A missing
+history or selection performs the binding without an artifact or GUI/PTY
+effect, matching the pinned action's no-data behavior.
+
+`copy` and `open` complete asynchronously after the binding chain has already
+continued on the GUI thread. Consequently, a later clipboard consumer in that
+same chain can still observe the previous clipboard value, and simultaneous
+broad copy actions do not have a deterministic last-writer order across pane
+workers. The `paste` disposition remains FIFO-ordered because creation and the
+raw write happen in one worker operation. Closing the remaining sequencing gap
+requires correlated asynchronous action-chain continuations rather than
+moving terminal snapshots back to the GUI thread.
+
+Formatting and file I/O currently complete synchronously on the session
+worker. That preserves a single ordering point for terminal state and raw
+paste, but a very large history or a stalled temporary filesystem can delay
+PTY reads and pane teardown. A future bounded, cancellable streaming formatter
+would remove that latency without weakening worker ownership.
+
 Read-only mode is a per-pane surface action with ordered UI and worker state.
 The pane publishes the new value immediately, refreshes its tab-model role, and
 queues the same transition ahead of subsequent input on the session thread.

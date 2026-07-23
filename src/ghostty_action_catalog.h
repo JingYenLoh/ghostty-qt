@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application_action.h"
+#include "terminal_write_file_action.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
@@ -246,6 +247,7 @@ using GhosttyPaneAction = std::variant<
     GhosttyPaneActions::Paste,
     GhosttyPaneActions::CopyUrlToClipboard,
     GhosttyPaneActions::CopyTitleToClipboard,
+    TerminalWriteFileAction,
     GhosttyPaneActions::EndKeySequence,
     GhosttyPaneActions::CloseWindow>;
 

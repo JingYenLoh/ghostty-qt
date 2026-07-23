@@ -15,6 +15,7 @@
 #include <QStringTokenizer>
 #include <QThread>
 #include <QTimer>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <array>
@@ -32,6 +33,7 @@
 #include <pty.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -50,6 +52,37 @@ constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
+
+QString terminalFileBaseName(TerminalFileLocation location)
+{
+    switch (location) {
+    case TerminalFileLocation::Screen:
+        return QStringLiteral("screen.txt");
+    case TerminalFileLocation::Scrollback:
+        return QStringLiteral("history.txt");
+    case TerminalFileLocation::Selection:
+        return QStringLiteral("selection.txt");
+    }
+    Q_UNREACHABLE_RETURN({});
+}
+
+bool terminalDirectoryHasPrivateMode(const QString &path)
+{
+    struct stat status {};
+    const QByteArray encodedPath = QFile::encodeName(path);
+    return ::stat(encodedPath.constData(), &status) == 0
+        && S_ISDIR(status.st_mode)
+        && (status.st_mode & 0777) == 0700;
+}
+
+bool terminalFileHasPrivateMode(const QFile &file)
+{
+    struct stat status {};
+    return file.isOpen() && file.handle() >= 0
+        && ::fstat(file.handle(), &status) == 0
+        && S_ISREG(status.st_mode)
+        && (status.st_mode & 0777) == 0600;
+}
 
 QString appendPath(QString directory, QStringView path)
 {
@@ -1381,6 +1414,147 @@ void SessionWorker::copySelection()
 {
     copySelectionTo(TerminalClipboardDestination::Standard,
                     options_.runtime.selectionClipboard.clearOnCopy);
+}
+
+void SessionWorker::writeTerminalFile(
+    const TerminalWriteFileAction &action)
+{
+    if (vt_ == nullptr) {
+        return;
+    }
+    if (action.format != TerminalFileFormat::Plain) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Unsupported terminal file format"));
+        return;
+    }
+    switch (action.location) {
+    case TerminalFileLocation::Screen:
+    case TerminalFileLocation::Scrollback:
+    case TerminalFileLocation::Selection:
+        break;
+    default:
+        Q_EMIT errorOccurred(
+            QStringLiteral("Invalid terminal file location"));
+        return;
+    }
+    switch (action.disposition) {
+    case TerminalFileDisposition::Copy:
+    case TerminalFileDisposition::Paste:
+    case TerminalFileDisposition::Open:
+        break;
+    default:
+        Q_EMIT errorOccurred(
+            QStringLiteral("Invalid terminal file disposition"));
+        return;
+    }
+
+    const GhosttyVtAdapter::PlainFileSnapshot snapshot =
+        vt_->snapshotPlainFile(action.location);
+    // Formatting can restore compressed scrollback pages. Give the existing
+    // idle compressor a chance to reclaim them after this worker operation.
+    noteCompressionActivity();
+    switch (snapshot.status) {
+    case GhosttyVtAdapter::PlainFileSnapshotStatus::Unavailable:
+        return;
+    case GhosttyVtAdapter::PlainFileSnapshotStatus::Failed:
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to format terminal contents"));
+        return;
+    case GhosttyVtAdapter::PlainFileSnapshotStatus::Ready:
+        break;
+    }
+
+    QTemporaryDir directory(
+        QDir::temp().filePath(QStringLiteral("ghostty-qt-XXXXXX")));
+    if (!directory.isValid()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to create terminal file directory: %1")
+                .arg(directory.errorString()));
+        return;
+    }
+    if (!QFile::setPermissions(
+            directory.path(),
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ExeOwner)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral(
+                "Failed to secure terminal file directory '%1'")
+                .arg(directory.path()));
+        return;
+    }
+    if (!terminalDirectoryHasPrivateMode(directory.path())) {
+        Q_EMIT errorOccurred(
+            QStringLiteral(
+                "Terminal file directory '%1' is not private")
+                .arg(directory.path()));
+        return;
+    }
+
+    const QString path = QDir(directory.path()).filePath(
+        terminalFileBaseName(action.location));
+    QFile file(path);
+    const QFileDevice::Permissions filePermissions =
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    if (!file.open(
+            QIODevice::WriteOnly | QIODevice::NewOnly,
+            filePermissions)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to create terminal file '%1': %2")
+                .arg(path, file.errorString()));
+        return;
+    }
+    if (!file.setPermissions(filePermissions)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to secure terminal file '%1': %2")
+                .arg(path, file.errorString()));
+        return;
+    }
+    if (!terminalFileHasPrivateMode(file)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Terminal file '%1' is not private")
+                .arg(path));
+        return;
+    }
+    if (file.write(snapshot.bytes) != snapshot.bytes.size()
+        || !file.flush()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to write terminal file '%1': %2")
+                .arg(path, file.errorString()));
+        return;
+    }
+    file.close();
+    if (file.error() != QFileDevice::NoError) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to close terminal file '%1': %2")
+                .arg(path, file.errorString()));
+        return;
+    }
+
+    const QString canonicalPath = QFileInfo(path).canonicalFilePath();
+    if (canonicalPath.isEmpty()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to resolve terminal file '%1'")
+                .arg(path));
+        return;
+    }
+
+    // Upstream intentionally keeps successful artifacts available after the
+    // action completes. Failures above retain QTemporaryDir's cleanup.
+    directory.setAutoRemove(false);
+    switch (action.disposition) {
+    case TerminalFileDisposition::Copy:
+        Q_EMIT clipboardTextReady(
+            canonicalPath, TerminalClipboardDestination::Standard);
+        return;
+    case TerminalFileDisposition::Paste:
+        // This is deliberately raw path input: no bracketed-paste framing,
+        // newline, quoting, viewport change, or selection side effect.
+        queueInputWrite(QFile::encodeName(canonicalPath));
+        return;
+    case TerminalFileDisposition::Open:
+        Q_EMIT terminalFileOpenRequested(canonicalPath);
+        return;
+    }
 }
 
 void SessionWorker::copySelectionTo(

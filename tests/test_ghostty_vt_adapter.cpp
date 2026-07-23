@@ -90,6 +90,8 @@ private Q_SLOTS:
     void selectsAndNavigatesViewportAtomically();
     void mapsAndRevealsSearchRanges();
     void formatsSelectionWithConfigurableTrimming();
+    void snapshotsPlainWriteFileRanges();
+    void snapshotsPlainWriteFileFormattingAndAlternateScreen();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
     void mapsEverySelectionAdjustment();
 };
@@ -1668,6 +1670,153 @@ void GhosttyVtAdapterTest::formatsSelectionWithConfigurableTrimming()
     QVERIFY(adapter->updateSelection(3, 0, false));
     adapter->endSelection(3, 0);
     QVERIFY(adapter->hasSelection());
+}
+
+void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
+{
+    using Status = GhosttyVtAdapter::PlainFileSnapshotStatus;
+
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const auto emptyScreen =
+        adapter->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(emptyScreen.status, Status::Ready);
+    QCOMPARE(emptyScreen.bytes, QByteArray{});
+    QCOMPARE(adapter->snapshotPlainFile(
+                 TerminalFileLocation::Scrollback).status,
+             Status::Unavailable);
+    QCOMPARE(adapter->snapshotPlainFile(
+                 TerminalFileLocation::Selection).status,
+             Status::Unavailable);
+
+    adapter->writeVt(QByteArrayLiteral(
+        "history-0  \r\n"
+        "history-1\r\n"
+        "screen-0  \r\n"
+        "screen-1\r\n"
+        "screen-2  "));
+
+    const auto screen =
+        adapter->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(screen.status, Status::Ready);
+    QCOMPARE(screen.bytes, QByteArrayLiteral(
+        "history-0  \n"
+        "history-1\n"
+        "screen-0  \n"
+        "screen-1\n"
+        "screen-2  "));
+
+    const auto scrollback =
+        adapter->snapshotPlainFile(TerminalFileLocation::Scrollback);
+    QCOMPARE(scrollback.status, Status::Ready);
+    QCOMPARE(scrollback.bytes, QByteArrayLiteral(
+        "history-0  \n"
+        "history-1"));
+
+    adapter->beginSelection(0, 2, 1, false);
+    QVERIFY(adapter->updateSelection(8, 2, false));
+    adapter->endSelection(8, 2);
+    const auto selection =
+        adapter->snapshotPlainFile(TerminalFileLocation::Selection);
+    QCOMPARE(selection.status, Status::Ready);
+    QCOMPARE(selection.bytes, QByteArrayLiteral("screen-2"));
+
+    adapter->clearSelection();
+    QCOMPARE(adapter->snapshotPlainFile(
+                 TerminalFileLocation::Selection).status,
+             Status::Unavailable);
+
+    GhosttyVtAdapter::Options rectangleOptions;
+    rectangleOptions.geometry.columns = 6;
+    rectangleOptions.geometry.rows = 3;
+    auto rectangle = GhosttyVtAdapter::create(rectangleOptions);
+    QVERIFY(rectangle != nullptr);
+    rectangle->writeVt(QByteArrayLiteral(
+        "abcdef\r\n"
+        "uvwxyz"));
+    rectangle->beginSelection(1, 0, 1, true);
+    QVERIFY(rectangle->updateSelection(4, 1, true));
+    rectangle->endSelection(4, 1);
+    const auto rectangularSelection =
+        rectangle->snapshotPlainFile(TerminalFileLocation::Selection);
+    QCOMPARE(rectangularSelection.status, Status::Ready);
+    QCOMPARE(rectangularSelection.bytes, QByteArrayLiteral(
+        "bcd\n"
+        "vwx"));
+}
+
+void GhosttyVtAdapterTest::
+    snapshotsPlainWriteFileFormattingAndAlternateScreen()
+{
+    using Status = GhosttyVtAdapter::PlainFileSnapshotStatus;
+
+    GhosttyVtAdapter::Options formattingOptions;
+    formattingOptions.geometry.columns = 6;
+    formattingOptions.geometry.rows = 4;
+    auto formatting = GhosttyVtAdapter::create(formattingOptions);
+    QVERIFY(formatting != nullptr);
+    formatting->writeVt(QByteArrayLiteral(
+        "abc  \r\n"
+        "ABCDEFGHI\r\n"
+        "last"));
+
+    const auto formatted =
+        formatting->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(formatted.status, Status::Ready);
+    QCOMPARE(formatted.bytes, QByteArrayLiteral(
+        "abc  \n"
+        "ABCDEFGHI\n"
+        "last"));
+
+    GhosttyVtAdapter::Options screenOptions;
+    screenOptions.geometry.columns = 12;
+    screenOptions.geometry.rows = 3;
+    auto screen = GhosttyVtAdapter::create(screenOptions);
+    QVERIFY(screen != nullptr);
+    screen->writeVt(QByteArrayLiteral(
+        "primary-0\r\n"
+        "primary-1\r\n"
+        "primary-2\r\n"
+        "primary-3"));
+
+    const auto primary =
+        screen->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(primary.status, Status::Ready);
+    QCOMPARE(primary.bytes, QByteArrayLiteral(
+        "primary-0\n"
+        "primary-1\n"
+        "primary-2\n"
+        "primary-3"));
+    const auto primaryScrollback =
+        screen->snapshotPlainFile(TerminalFileLocation::Scrollback);
+    QCOMPARE(primaryScrollback.status, Status::Ready);
+    QCOMPARE(primaryScrollback.bytes, QByteArrayLiteral("primary-0"));
+
+    screen->writeVt(QByteArrayLiteral(
+        "\033[?1049h"
+        "\033[H\033[2J"
+        "alternate"));
+    const auto alternate =
+        screen->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(alternate.status, Status::Ready);
+    QCOMPARE(alternate.bytes, QByteArrayLiteral("alternate"));
+    QCOMPARE(screen->snapshotPlainFile(
+                 TerminalFileLocation::Scrollback).status,
+             Status::Unavailable);
+
+    screen->writeVt(QByteArrayLiteral("\033[?1049l"));
+    const auto restored =
+        screen->snapshotPlainFile(TerminalFileLocation::Screen);
+    QCOMPARE(restored.status, Status::Ready);
+    QCOMPARE(restored.bytes, primary.bytes);
+    const auto restoredScrollback =
+        screen->snapshotPlainFile(TerminalFileLocation::Scrollback);
+    QCOMPARE(restoredScrollback.status, Status::Ready);
+    QCOMPARE(restoredScrollback.bytes, QByteArrayLiteral("primary-0"));
 }
 
 void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()

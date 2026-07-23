@@ -78,6 +78,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::cancelPaste);
     relayWorkerRequest(&TerminalController::copyRequested,
                        &SessionWorker::copySelection);
+    relayWorkerRequest(&TerminalController::writeTerminalFileRequested,
+                       &SessionWorker::writeTerminalFile);
     relayWorkerRequest(&TerminalController::clearSelectionRequested,
                        &SessionWorker::clearSelection);
     relayWorkerRequest(&TerminalController::beginSelectionRequested,
@@ -149,6 +151,7 @@ TerminalController::TerminalController(
     qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalWriteFileAction>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -263,6 +266,9 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 writeTerminalClipboard(QGuiApplication::clipboard(), text,
                                        destination);
             }, Qt::QueuedConnection);
+    connect(worker, &SessionWorker::terminalFileOpenRequested,
+            this, &TerminalController::terminalFileOpenRequested,
+            Qt::QueuedConnection);
     connect(worker, &SessionWorker::unsafePasteConfirmationRequested,
             this, &TerminalController::unsafePasteConfirmationRequested,
             Qt::QueuedConnection);
@@ -692,6 +698,12 @@ void TerminalController::notePotentialActivity()
 void TerminalController::copySelection()
 {
     Q_EMIT copyRequested();
+}
+
+void TerminalController::writeTerminalFile(
+    const TerminalWriteFileAction &action)
+{
+    Q_EMIT writeTerminalFileRequested(action);
 }
 
 void TerminalController::clearSelection()

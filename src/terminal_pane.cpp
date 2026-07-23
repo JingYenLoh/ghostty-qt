@@ -850,6 +850,15 @@ TerminalPane::TerminalPane(
             this, [this](quint64 requestId, const QString &text) {
                 Q_EMIT unsafePasteRequested(requestId, text, this);
             });
+    connect(controller_, &TerminalController::terminalFileOpenRequested,
+            this, [this](const QString &path) {
+                if (path.isEmpty()) return;
+                const std::function<bool(const QUrl &)> opener = urlOpener_;
+                if (opener) {
+                    static_cast<void>(
+                        opener(QUrl::fromLocalFile(path)));
+                }
+            });
     connect(controller_, &TerminalController::hyperlinkResolved, this,
             &TerminalPane::handleHyperlinkResult);
     connect(controller_, &TerminalController::hyperlinkActivationResolved,
@@ -3009,6 +3018,12 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 // Mixed/plain remain distinct typed values even though the
                 // public VT API currently exposes plain text for both.
                 copySelection();
+                return true;
+            },
+            [this](const TerminalWriteFileAction &value) {
+                controller_->writeTerminalFile(value);
+                // Missing history or selection remains a performed no-op so
+                // performable bindings preserve upstream fallthrough rules.
                 return true;
             },
             [this](const PaneAction::Paste &value) {

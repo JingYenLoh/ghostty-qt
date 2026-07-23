@@ -2,6 +2,7 @@
 
 #include "terminal_session_options.h"
 #include "terminal_types.h"
+#include "terminal_write_file_action.h"
 
 #include <QByteArray>
 #include <QElapsedTimer>
@@ -71,6 +72,7 @@ public Q_SLOTS:
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     void copySelection();
+    void writeTerminalFile(const TerminalWriteFileAction &action);
     void clearSelection();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
@@ -103,6 +105,7 @@ Q_SIGNALS:
     void mouseTrackingChanged(bool enabled);
     void clipboardTextReady(const QString &text,
                             TerminalClipboardDestination destination);
+    void terminalFileOpenRequested(const QString &path);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void bell();

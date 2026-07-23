@@ -32,6 +32,9 @@ the host-language comparison and remaining engineering risks.
   selection clearing after explicit copy or typed input, configurable
   middle-click paste, and worker-authoritative unsafe-paste review with
   correlated confirmation.
+- Plain-text screen, scrollback, and selection file actions, with the resulting
+  private temporary artifact copied as a path, pasted into the terminal, or
+  opened through the desktop URL handler.
 - Explicit OSC 8 hyperlinks and Ghostty's default regex-detected URLs/paths,
   with `Ctrl`-hover pointer/underline feedback, release-validated `Ctrl`-click
   opening through the desktop URL handler, and the `copy_url_to_clipboard`
@@ -388,6 +391,9 @@ after editing.
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy the selection / paste the clipboard. |
 | `Ctrl+Shift+A` | Select all terminal content. |
 | `Ctrl+Shift+F` | Open and focus the current pane's search overlay. |
+| `Ctrl+Shift+Super+J` | Write the active screen to a file and copy its path. |
+| `Ctrl+Shift+J` | Write the active screen to a file and paste its path. |
+| `Ctrl+Shift+Alt+J` | Write the active screen to a file and open it. |
 | `Ctrl+,` | Create if needed and open the Ghostty configuration file. |
 | `Ctrl+Shift+T` | Open a tab. |
 | `Ctrl+Shift+O` / `Ctrl+Shift+E` | Split right / split down. |
@@ -479,6 +485,26 @@ bindings support `csi`,
 destination or default-regex match currently accepted under the pointer.
 Raw-write actions return the viewport to the active area, while reset clears
 emulator state without sending bytes to the child.
+
+The surface actions `write_screen_file`, `write_scrollback_file`, and
+`write_selection_file` require `:copy`, `:paste`, or `:open`; an optional
+`,plain` is equivalent to the default plain-text format. The syntactically
+valid `,vt` and `,html` formats are not yet supported. Screen export formats the
+entire active page list, so the primary screen includes its scrollback while
+the alternate screen includes only alternate-screen content. Scrollback export
+uses primary history only and has no effect on the alternate screen or when
+history is absent. Selection export preserves the active selection's exact
+range and rectangular shape and has no effect when no selection exists. Plain
+formatting removes soft-wrap boundaries and trailing blank rows while retaining
+literal trailing spaces.
+
+Each successful action leaves a persistent `screen.txt`, `history.txt`, or
+`selection.txt` inside a fresh mode `0700` temporary directory; the file itself
+is mode `0600`. `copy` places the absolute path in the standard clipboard,
+`paste` writes the raw filesystem path bytes to the PTY without quoting,
+bracketed-paste framing, or a newline, and `open` sends the local file URL to
+the desktop handler. Read-only mode still permits artifact creation but
+suppresses the `paste` disposition's PTY bytes.
 
 Font bindings support `increase_font_size:<points>`,
 `decrease_font_size:<points>`, `set_font_size:<points>`, and

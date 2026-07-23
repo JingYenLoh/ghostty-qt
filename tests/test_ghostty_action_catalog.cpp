@@ -16,6 +16,8 @@ private Q_SLOTS:
     void parsesOwningConfiguredActions();
     void compilesOwningActionChains();
     void diagnosesDirectSurfaceActions();
+    void parsesWriteFileActionsExactly();
+    void rejectsMalformedWriteFileActions();
     void translatesParameterlessActions();
     void translatesParameterizedActions_data();
     void translatesParameterizedActions();
@@ -350,6 +352,134 @@ void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
         QVERIFY(!GhosttyActionCatalog::parsePaneAction(serialized));
         QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
         QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+    }
+}
+
+void GhosttyActionCatalogTest::parsesWriteFileActionsExactly()
+{
+    const struct {
+        const char *name;
+        TerminalFileLocation location;
+    } locations[] = {
+        {"write_screen_file", TerminalFileLocation::Screen},
+        {"write_scrollback_file", TerminalFileLocation::Scrollback},
+        {"write_selection_file", TerminalFileLocation::Selection},
+    };
+    const struct {
+        const char *name;
+        TerminalFileDisposition disposition;
+    } dispositions[] = {
+        {"copy", TerminalFileDisposition::Copy},
+        {"paste", TerminalFileDisposition::Paste},
+        {"open", TerminalFileDisposition::Open},
+    };
+
+    for (const auto &location : locations) {
+        for (const auto &disposition : dispositions) {
+            for (const QString &formatSuffix :
+                 {QString{}, QStringLiteral(",plain")}) {
+                const QString serialized =
+                    QString::fromLatin1(location.name) + u':'
+                    + QString::fromLatin1(disposition.name)
+                    + formatSuffix;
+                const GhosttyDirectSurfaceActionParseResult direct =
+                    GhosttyActionCatalog::parseDirectSurfaceAction(
+                        serialized);
+                QVERIFY2(direct.has_value(), qPrintable(serialized));
+                const auto *writeFile =
+                    std::get_if<TerminalWriteFileAction>(&*direct);
+                QVERIFY2(writeFile != nullptr, qPrintable(serialized));
+                QCOMPARE(writeFile->location, location.location);
+                QCOMPARE(writeFile->disposition,
+                         disposition.disposition);
+                QCOMPARE(writeFile->format,
+                         TerminalFileFormat::Plain);
+
+                const std::optional<GhosttyPaneAction> pane =
+                    GhosttyActionCatalog::parsePaneAction(serialized);
+                QVERIFY2(pane.has_value(), qPrintable(serialized));
+                QVERIFY(*pane == *direct);
+
+                const std::optional<GhosttyConfiguredAction> configured =
+                    GhosttyActionCatalog::parseConfiguredAction(
+                        serialized);
+                QVERIFY2(configured.has_value(), qPrintable(serialized));
+                QVERIFY(std::get<GhosttyPaneAction>(*configured)
+                        == *direct);
+                QCOMPARE(GhosttyActionCatalog::inputEffect(*configured),
+                         GhosttyActionInputEffect::None);
+                QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
+                QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                         GhosttyActionScope::Surface);
+
+                const GhosttyCompiledActionChain compiled =
+                    GhosttyActionCatalog::compileActionChain(
+                        {serialized});
+                QCOMPARE(compiled.entries.size(), 1);
+                QCOMPARE(compiled.entries.constFirst().scope,
+                         GhosttyActionScope::Surface);
+                QVERIFY(compiled.entries.constFirst().action.has_value());
+                QCOMPARE(compiled.inputEffect,
+                         GhosttyActionInputEffect::None);
+                QVERIFY(!compiled.applicationOnly);
+            }
+        }
+    }
+}
+
+void GhosttyActionCatalogTest::rejectsMalformedWriteFileActions()
+{
+    const QStringList malformed{
+        QStringLiteral("write_screen_file"),
+        QStringLiteral("write_screen_file:"),
+        QStringLiteral("write_screen_file:,plain"),
+        QStringLiteral("write_screen_file:bogus"),
+        QStringLiteral("write_screen_file:Copy"),
+        QStringLiteral("write_screen_file:copy,"),
+        QStringLiteral("write_screen_file:copy,Plain"),
+        QStringLiteral("write_screen_file:copy,plain,extra"),
+        QStringLiteral("write_screen_file:copy,,plain"),
+        QStringLiteral("write_screen_file:copy:plain"),
+        QStringLiteral("write_screen_file: copy"),
+        QStringLiteral("write_screen_file:copy "),
+        QStringLiteral("write_screen_file:copy, plain"),
+        QStringLiteral("write_scrollback_file"),
+        QStringLiteral("write_scrollback_file:"),
+        QStringLiteral("write_selection_file"),
+        QStringLiteral("write_selection_file:"),
+    };
+    for (const QString &serialized : malformed) {
+        const GhosttyDirectSurfaceActionParseResult result =
+            GhosttyActionCatalog::parseDirectSurfaceAction(serialized);
+        QVERIFY2(!result.has_value(), qPrintable(serialized));
+        QCOMPARE(result.error(),
+                 GhosttyActionTranslationError::InvalidFormat);
+        QVERIFY(!GhosttyActionCatalog::parsePaneAction(serialized));
+        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(
+            serialized));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+    }
+
+    for (const QString &name :
+         {QStringLiteral("write_screen_file"),
+          QStringLiteral("write_scrollback_file"),
+          QStringLiteral("write_selection_file")}) {
+        for (const QString &format :
+             {QStringLiteral("vt"), QStringLiteral("html")}) {
+            const QString serialized =
+                name + QStringLiteral(":copy,") + format;
+            const GhosttyDirectSurfaceActionParseResult result =
+                GhosttyActionCatalog::parseDirectSurfaceAction(
+                    serialized);
+            QVERIFY2(!result.has_value(), qPrintable(serialized));
+            QCOMPARE(result.error(),
+                     GhosttyActionTranslationError::
+                         UnsupportedParameter);
+            QVERIFY(!GhosttyActionCatalog::parsePaneAction(serialized));
+            QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(
+                serialized));
+            QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+        }
     }
 }
 

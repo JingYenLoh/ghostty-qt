@@ -3,6 +3,7 @@
 #include "initial_session_coordinator.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
+#include "terminal_write_file_action.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -111,6 +112,7 @@ public:
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
     void copySelection();
+    void writeTerminalFile(const TerminalWriteFileAction &action);
     void clearSelection();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
@@ -160,6 +162,7 @@ Q_SIGNALS:
     void searchSelectionReady(bool available, const QString &text);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
+    void terminalFileOpenRequested(const QString &path);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -184,6 +187,7 @@ Q_SIGNALS:
     void confirmPasteRequested(quint64 requestId);
     void cancelPasteRequested(quint64 requestId);
     void copyRequested();
+    void writeTerminalFileRequested(const TerminalWriteFileAction &action);
     void clearSelectionRequested();
     void beginSelectionRequested(int column, int row, int clickCount,
                                  bool rectangular);

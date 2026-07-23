@@ -19,6 +19,7 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
+#include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -348,6 +349,7 @@ private Q_SLOTS:
     void windowNavigationRetainsSurfaceScopeAndBroadFanout();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadPasteActionsReachEveryPane();
+    void broadWriteScreenOpenCreatesDistinctPerPaneArtifacts();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
@@ -4188,6 +4190,79 @@ void TerminalWorkspaceTest::broadPasteActionsReachEveryPane()
     if (clipboard->supportsSelection()) {
         clipboard->clear(QClipboard::Selection);
     }
+}
+
+void TerminalWorkspaceTest::
+    broadWriteScreenOpenCreatesDistinctPerPaneArtifacts()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QVector<QList<QUrl>> openedPerPane;
+    QSet<QString> artifactDirectories;
+    const auto cleanupArtifacts = qScopeGuard([&artifactDirectories] {
+        for (const QString &directory : artifactDirectories) {
+            static_cast<void>(QDir(directory).removeRecursively());
+        }
+    });
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(902.0, 602.0));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    workspace.splitRight();
+    workspace.newTab();
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+
+    openedPerPane.resize(panes.size());
+    for (qsizetype index = 0; index < panes.size(); ++index) {
+        panes.at(index)->setUrlOpener(
+            [&, index](const QUrl &url) {
+                openedPerPane[index].append(url);
+                if (url.isLocalFile()) {
+                    artifactDirectories.insert(
+                        QFileInfo(url.toLocalFile()).absolutePath());
+                }
+                return true;
+            });
+    }
+
+    GhosttyApplicationKeybindings bindings(options, false);
+    bindings.registerWorkspace(&workspace);
+    bindings.dispatchBroadActions(
+        {QStringLiteral("write_screen_file:open")});
+
+    const auto everyPaneOpenedOnce = [&openedPerPane] {
+        return std::ranges::all_of(
+            openedPerPane,
+            [](const QList<QUrl> &urls) { return urls.size() == 1; });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(everyPaneOpenedOnce(), 5000);
+
+    QSet<QString> artifactPaths;
+    for (const QList<QUrl> &opened : openedPerPane) {
+        const QUrl url = opened.constFirst();
+        QVERIFY(url.isLocalFile());
+        const QString path = url.toLocalFile();
+        const QFileInfo artifact(path);
+        QVERIFY(artifact.isAbsolute());
+        QVERIFY(artifact.isFile());
+        QCOMPARE(artifact.fileName(), QStringLiteral("screen.txt"));
+
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        static_cast<void>(file.readAll());
+        QCOMPARE(file.error(), QFileDevice::NoError);
+        artifactPaths.insert(artifact.canonicalFilePath());
+    }
+
+    QCOMPARE(artifactPaths.size(), panes.size());
+    QCOMPARE(artifactDirectories.size(), panes.size());
 }
 
 void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()

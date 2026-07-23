@@ -2,6 +2,7 @@
 
 #include "terminal_appearance.h"
 #include "terminal_types.h"
+#include "terminal_write_file_action.h"
 
 #include <QByteArray>
 #include <QByteArrayView>
@@ -53,6 +54,18 @@ public:
 
         friend bool operator==(const PreparedPaste &,
                                const PreparedPaste &) = default;
+    };
+
+    enum class PlainFileSnapshotStatus : quint8 {
+        Ready,
+        Unavailable,
+        Failed,
+    };
+
+    struct PlainFileSnapshot {
+        PlainFileSnapshotStatus status =
+            PlainFileSnapshotStatus::Failed;
+        QByteArray bytes;
     };
 
     // A short-lived, move-only snapshot of one unwrapped logical terminal
@@ -248,6 +261,11 @@ public:
                                const PastePreparationOptions &options) const;
 
     QString selectedText(bool trim = true) const;
+    // Snapshot the exact plain write_*_file range. Ready may contain zero
+    // bytes; Unavailable distinguishes a missing selection/history range from
+    // an adapter failure so the worker can preserve Ghostty's no-op behavior.
+    PlainFileSnapshot snapshotPlainFile(
+        TerminalFileLocation location) const;
     bool hasSelection() const;
     void clearSelection();
     void clearSelectionAndResetGesture();
