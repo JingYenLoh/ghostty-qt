@@ -98,6 +98,11 @@ public:
     {
         return effectiveOptions_;
     }
+    [[nodiscard]] WindowDecorationMode windowDecoration() const noexcept
+    {
+        return windowDecorationOverride_.value_or(
+            effectiveOptions_.windowDecoration);
+    }
     [[nodiscard]] const GhosttyKeybindProgram &keybindProgram() const noexcept
     {
         return keybindProgram_;
@@ -180,6 +185,7 @@ Q_SIGNALS:
     void workspaceActivated();
     void toggleFullscreenRequested();
     void toggleMaximizeRequested();
+    void windowDecorationChanged();
     void windowCloseApproved();
     void applicationQuitApproved();
     void applicationQuitCancelled();
@@ -345,6 +351,7 @@ private:
     bool resizeSplit(PaneId paneId, int direction, int amount);
     bool equalizeSplits(TabId tabId);
     bool toggleSplitZoom(TabId tabId);
+    void toggleWindowDecorations();
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
     WorkspaceCloseAssessment assessTabClose(const Tab &tab) const;
@@ -376,6 +383,10 @@ private:
 
     static LaunchOptions defaultOptions_;
     LaunchOptions effectiveOptions_;
+    // Ghostty's runtime toggle belongs to the containing top-level, not an
+    // individual pane. A present override masks live config reloads until the
+    // next toggle clears it and reveals the newest configured value.
+    std::optional<WindowDecorationMode> windowDecorationOverride_;
     GhosttyKeybindProgram keybindProgram_;
     RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;

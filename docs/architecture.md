@@ -1367,12 +1367,32 @@ snapshot as their creation source, so activating one new tab cannot redirect
 the next action's inherited directory or font size. Placement still resolves
 against the selected tab before each creation, matching Ghostty: in `current`
 mode the advancing selection produces one contiguous block in stable source
-order, while `end` appends that block. Fullscreen and maximize surface actions
-are coalesced once per workspace during broad fanout because every pane maps to
-the same synchronously toggled Qt host window; separate workspaces still
-receive independent transitions. This intentionally normalizes pinned GTK's
-per-surface broad toggles, which can cancel within a multi-pane window. Qt
-Quick exposes only one dominant visibility state, so QML retains whether a
+order, while `end` appends that block. Fullscreen, maximize, and window
+decoration surface actions are coalesced once per workspace during broad
+fanout because every pane maps to the same synchronously toggled Qt host
+window; separate workspaces still receive independent transitions. This
+intentionally normalizes pinned GTK's per-surface broad toggles, which can
+cancel within a multi-pane window.
+
+Each workspace also owns Ghostty's per-window optional decoration override.
+Without an override it follows the latest finalized `window-decoration`
+configuration. The first action installs `auto` over configured `none`, or
+`none` over any decorated preference; the second action clears the override
+and reveals whatever configuration is current then. ApplicationController
+projects only the effective `none` state to `Qt::FramelessWindowHint` before
+first presentation and on later state changes. `QWindow::setFlag` preserves
+all unrelated host hints, terminal objects, client geometry, and window state.
+Qt's public Wayland API cannot force the configured client/server preference,
+so initially decorated `auto`, `client`, and `server` windows all use the
+ordinary QPA decoration negotiation. Qt destroys the xdg-decoration object
+when an existing Wayland window becomes frameless and does not expose a public
+operation to recreate that negotiation. Clearing the hint therefore restores
+Qt client-side framing rather than a prior compositor-side frame. Recreating
+the native window could recover negotiation, but would add a separate
+surface/session handoff problem and is deliberately deferred rather than
+hidden inside this incremental action.
+
+Qt Quick exposes only one dominant visibility state, so QML retains whether a
 fullscreen window should restore maximized, windowed, minimized, or another
 prior visibility state. A maximize toggle during fullscreen changes that
 retained state between maximized and windowed without leaving fullscreen,

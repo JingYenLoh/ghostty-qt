@@ -45,6 +45,7 @@ struct WindowFactoryHarness {
         int visibilityBeforeFullscreen = QWindow::Windowed;
         QSize size;
         QSize minimumSize;
+        Qt::WindowFlags flags;
     };
 
     int calls = 0;
@@ -113,11 +114,13 @@ struct WindowFactoryHarness {
                                      .states = presentationWindowStates(
                                          window->windowStates()),
                                      .visibilityBeforeFullscreen =
-                                         window->property(
-                                             "visibilityBeforeFullscreen")
+                                         window
+                                             ->property(
+                                                 "visibilityBeforeFullscreen")
                                              .toInt(),
                                      .size = window->size(),
                                      .minimumSize = window->minimumSize(),
+                                     .flags = window->flags(),
                                  });
                              });
             return ApplicationWindow{window, workspace};
@@ -298,6 +301,9 @@ private Q_SLOTS:
     void initTestCase();
     void configuresInitialWindowStateBeforePresentation_data();
     void configuresInitialWindowStateBeforePresentation();
+    void configuresInitialWindowDecorationBeforePresentation_data();
+    void configuresInitialWindowDecorationBeforePresentation();
+    void togglesWindowDecorationsPerWindowAcrossReload();
     void defersNonWindowedSessionUntilExposedGeometry_data();
     void defersNonWindowedSessionUntilExposedGeometry();
     void windowStateReloadAffectsOnlyFutureWindows();
@@ -416,6 +422,147 @@ void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation()
              expectedRestoreVisibility);
     QCOMPARE(static_cast<int>(created->window->visibility()),
              expectedVisibility);
+}
+
+void ApplicationControllerTest::
+    configuresInitialWindowDecorationBeforePresentation_data()
+{
+    QTest::addColumn<int>("decoration");
+    QTest::addColumn<bool>("frameless");
+
+    QTest::newRow("auto") << static_cast<int>(WindowDecorationMode::Auto)
+                          << false;
+    QTest::newRow("client")
+        << static_cast<int>(WindowDecorationMode::Client) << false;
+    QTest::newRow("server")
+        << static_cast<int>(WindowDecorationMode::Server) << false;
+    QTest::newRow("none") << static_cast<int>(WindowDecorationMode::None)
+                          << true;
+}
+
+void ApplicationControllerTest::
+    configuresInitialWindowDecorationBeforePresentation()
+{
+    QFETCH(int, decoration);
+    QFETCH(bool, frameless);
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowDecoration = static_cast<WindowDecorationMode>(decoration);
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+    QCOMPARE(harness.presentations.size(), 1);
+    QCOMPARE(harness.presentations.constFirst().flags.testFlag(
+                 Qt::FramelessWindowHint),
+             frameless);
+    QCOMPARE(created->window->flags().testFlag(Qt::FramelessWindowHint),
+             frameless);
+}
+
+void ApplicationControllerTest::togglesWindowDecorationsPerWindowAcrossReload()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.windowDecoration = WindowDecorationMode::Auto;
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QQuickWindow *const firstWindow = initial->window;
+    TerminalWorkspace *const firstWorkspace = initial->workspace;
+    TerminalPane *const firstPane = onlyPane(firstWorkspace);
+    TerminalController *const firstController = onlyController(firstWorkspace);
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(firstController != nullptr);
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+
+    // The projection must mutate only the frameless hint. Client size,
+    // visibility/state, QML restore policy, and every terminal object remain
+    // intact across the live transition.
+    firstWindow->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+    const QSize initialSize = firstWindow->size();
+    const QWindow::Visibility initialVisibility = firstWindow->visibility();
+    const Qt::WindowStates initialStates = firstWindow->windowStates();
+    const QVariant initialFullscreenRestore =
+        firstWindow->property("visibilityBeforeFullscreen");
+    QVERIFY(firstWorkspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(firstWindow->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    QCOMPARE(firstWindow->size(), initialSize);
+    QCOMPARE(firstWindow->visibility(), initialVisibility);
+    QCOMPARE(firstWindow->windowStates(), initialStates);
+    QCOMPARE(firstWindow->property("visibilityBeforeFullscreen"),
+             initialFullscreenRestore);
+    QCOMPARE(onlyPane(firstWorkspace), firstPane);
+    QCOMPARE(onlyController(firstWorkspace), firstController);
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    const ApplicationWindow second = controller.windows().constLast();
+    QVERIFY(second.window != firstWindow);
+    QVERIFY(!second.window->flags().testFlag(Qt::FramelessWindowHint));
+
+    // The first window's None override masks reload; the ordinary second
+    // window follows it. Clearing the first override reveals the latest
+    // configured Server value, which Qt maps to an ordinary decorated host.
+    LaunchOptions reloaded = options;
+    reloaded.windowDecoration = WindowDecorationMode::Server;
+    controller.applyLaunchOptions(reloaded);
+    QVERIFY(firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(!second.window->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(firstWorkspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+
+    QVERIFY(second.workspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(second.window->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+
+    // A non-overridden window tracks None live. An overridden window remains
+    // frameless until its second toggle clears the override.
+    reloaded.windowDecoration = WindowDecorationMode::None;
+    controller.applyLaunchOptions(reloaded);
+    QVERIFY(firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(second.window->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(firstWorkspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+
+    reloaded.windowDecoration = WindowDecorationMode::Client;
+    controller.applyLaunchOptions(reloaded);
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(second.window->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(firstWorkspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(!firstWindow->flags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(second.workspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
+    QVERIFY(!second.window->flags().testFlag(Qt::FramelessWindowHint));
+
+    // New windows never inherit another window's runtime override; they use
+    // the newest configuration.
+    reloaded.windowDecoration = WindowDecorationMode::None;
+    controller.applyLaunchOptions(reloaded);
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 3, 1000);
+    const ApplicationWindow third = controller.windows().constLast();
+    QVERIFY(third.window->flags().testFlag(Qt::FramelessWindowHint));
 }
 
 void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry_data()

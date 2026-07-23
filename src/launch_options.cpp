@@ -209,6 +209,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.windowInheritFontSize = config.windowInheritFontSize;
     result.windowNewTabPosition = config.windowNewTabPosition;
     result.windowShowTabBar = config.windowShowTabBar;
+    result.windowDecoration = config.windowDecoration;
     result.windowWidth = config.windowWidth;
     result.windowHeight = config.windowHeight;
     result.resizeOverlay = config.resizeOverlay;

@@ -3885,7 +3885,7 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
     case WorkspaceAction::ToggleSplitZoom:
     case WorkspaceAction::ToggleFullscreen:
     case WorkspaceAction::ToggleMaximize:
-        return false;
+    case WorkspaceAction::ToggleWindowDecorations: return false;
     }
     return false;
 }

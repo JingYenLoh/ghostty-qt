@@ -66,6 +66,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("window-inherit-font-size"),
     QLatin1StringView("window-new-tab-position"),
     QLatin1StringView("window-show-tab-bar"),
+    QLatin1StringView("window-decoration"),
     QLatin1StringView("window-width"),
     QLatin1StringView("window-height"),
     QLatin1StringView("maximize"),
@@ -823,6 +824,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("auto"), WindowShowTabBar::Auto},
             {QLatin1StringView("never"), WindowShowTabBar::Never},
         });
+    constexpr auto WindowDecorations =
+        std::to_array<std::pair<QLatin1StringView, WindowDecorationMode>>({
+            {QLatin1StringView("auto"), WindowDecorationMode::Auto},
+            {QLatin1StringView("client"), WindowDecorationMode::Client},
+            {QLatin1StringView("server"), WindowDecorationMode::Server},
+            {QLatin1StringView("none"), WindowDecorationMode::None},
+        });
     constexpr auto FullscreenModes =
         std::to_array<std::pair<QLatin1StringView, GhosttyFullscreenMode>>({
             {QLatin1StringView("false"), GhosttyFullscreenMode::Disabled},
@@ -918,6 +926,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                  result.windowShowTabBar,
                                  TabBarModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("window-decoration"),
+                                 result.windowDecoration, WindowDecorations);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("fullscreen"),
                                  result.fullscreen,
                                  FullscreenModes);

@@ -41,6 +41,13 @@ enum class WindowShowTabBar {
     Never,
 };
 
+enum class WindowDecorationMode {
+    Auto,
+    Client,
+    Server,
+    None,
+};
+
 enum class ResizeOverlayMode {
     Always,
     Never,
@@ -160,6 +167,7 @@ struct GhosttyConfigValues {
     bool windowInheritFontSize = false;
     WindowNewTabPosition windowNewTabPosition = WindowNewTabPosition::Current;
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    WindowDecorationMode windowDecoration = WindowDecorationMode::Auto;
     quint32 windowWidth = 0;
     quint32 windowHeight = 0;
     bool maximize = false;

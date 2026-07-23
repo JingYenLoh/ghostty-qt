@@ -5786,12 +5786,17 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         QSignalSpy emptyMaximizeRequested(
             &emptyWorkspace,
             &TerminalWorkspace::toggleMaximizeRequested);
+        QSignalSpy emptyDecorationChanged(
+            &emptyWorkspace, &TerminalWorkspace::windowDecorationChanged);
         QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("toggle_fullscreen")));
         QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("toggle_maximize")));
+        QVERIFY(!emptyWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_window_decorations")));
         QCOMPARE(emptyFullscreenRequested.count(), 0);
         QCOMPARE(emptyMaximizeRequested.count(), 0);
+        QCOMPARE(emptyDecorationChanged.count(), 0);
     }
 
     // A populated workspace still cannot mutate window state until it is
@@ -5808,6 +5813,8 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         QSignalSpy unattachedMaximizeRequested(
             &unattachedWorkspace,
             &TerminalWorkspace::toggleMaximizeRequested);
+        QSignalSpy unattachedDecorationChanged(
+            &unattachedWorkspace, &TerminalWorkspace::windowDecorationChanged);
         QVERIFY(!unattachedWorkspace.dispatchAction({
             WorkspaceAction::ToggleFullscreen,
             {unattachedEntry->id, unattachedEntry->activePaneId, 0},
@@ -5816,12 +5823,19 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
             WorkspaceAction::ToggleMaximize,
             {unattachedEntry->id, unattachedEntry->activePaneId, 0},
         }));
+        QVERIFY(!unattachedWorkspace.dispatchAction({
+            WorkspaceAction::ToggleWindowDecorations,
+            {unattachedEntry->id, unattachedEntry->activePaneId, 0},
+        }));
         QVERIFY(!unattachedWorkspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("toggle_fullscreen")));
         QVERIFY(!unattachedWorkspace.executeSurfaceActionOnAllPanes(
             QStringLiteral("toggle_maximize")));
+        QVERIFY(!unattachedWorkspace.executeSurfaceActionOnAllPanes(
+            QStringLiteral("toggle_window_decorations")));
         QCOMPARE(unattachedFullscreenRequested.count(), 0);
         QCOMPARE(unattachedMaximizeRequested.count(), 0);
+        QCOMPARE(unattachedDecorationChanged.count(), 0);
     }
 
     QQuickWindow window;
@@ -5840,6 +5854,8 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         workspace.get(), &TerminalWorkspace::toggleFullscreenRequested);
     QSignalSpy maximizeRequested(
         workspace.get(), &TerminalWorkspace::toggleMaximizeRequested);
+    QSignalSpy decorationChanged(workspace.get(),
+                                 &TerminalWorkspace::windowDecorationChanged);
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
         {entry->id, entry->activePaneId, 0},
@@ -5850,6 +5866,13 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         {entry->id, entry->activePaneId, 0},
     }));
     QCOMPARE(maximizeRequested.count(), 1);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Auto);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {entry->id, entry->activePaneId, 0},
+    }));
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::None);
+    QCOMPARE(decorationChanged.count(), 1);
 
     QVERIFY(!workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
@@ -5859,8 +5882,13 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         WorkspaceAction::ToggleMaximize,
         {TabId(999'999), entry->activePaneId, 0},
     }));
+    QVERIFY(!workspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {entry->id, PaneId(999'999), 0},
+    }));
     QCOMPARE(fullscreenRequested.count(), 1);
     QCOMPARE(maximizeRequested.count(), 1);
+    QCOMPARE(decorationChanged.count(), 1);
 
     QVERIFY(workspace->dispatchAction({
         WorkspaceAction::ToggleFullscreen,
@@ -5870,8 +5898,14 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         WorkspaceAction::ToggleMaximize,
         {},
     }));
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleWindowDecorations,
+        {},
+    }));
     QCOMPARE(fullscreenRequested.count(), 2);
     QCOMPARE(maximizeRequested.count(), 2);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Auto);
+    QCOMPARE(decorationChanged.count(), 2);
 
     workspace->splitRight();
     workspace->newTab();
@@ -5900,6 +5934,44 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         QStringLiteral("toggle_maximize")));
     QCOMPARE(maximizeRequested.count(), 2);
 
+    decorationChanged.clear();
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_window_decorations")));
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::None);
+    QCOMPARE(decorationChanged.count(), 1);
+    QVERIFY(!workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_window_decorations:")));
+    QCOMPARE(decorationChanged.count(), 1);
+
+    // An override masks reload. The second toggle clears it rather than
+    // inverting its current value, revealing the newest configured mode.
+    LaunchOptions reloadedOptions = options;
+    reloadedOptions.windowDecoration = WindowDecorationMode::Server;
+    workspace->applyLaunchOptions(reloadedOptions);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::None);
+    QCOMPARE(decorationChanged.count(), 1);
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_window_decorations")));
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Server);
+    QCOMPARE(decorationChanged.count(), 2);
+
+    reloadedOptions.windowDecoration = WindowDecorationMode::None;
+    workspace->applyLaunchOptions(reloadedOptions);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::None);
+    QCOMPARE(decorationChanged.count(), 3);
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_window_decorations")));
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Auto);
+    QCOMPARE(decorationChanged.count(), 4);
+    reloadedOptions.windowDecoration = WindowDecorationMode::Client;
+    workspace->applyLaunchOptions(reloadedOptions);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Auto);
+    QCOMPARE(decorationChanged.count(), 4);
+    QVERIFY(workspace->executeSurfaceActionOnAllPanes(
+        QStringLiteral("toggle_window_decorations")));
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::Client);
+    QCOMPARE(decorationChanged.count(), 5);
+
     // Process-wide all/global dispatch visits every registered workspace,
     // while each multi-pane host receives exactly one state transition.
     QQuickWindow secondWindow;
@@ -5917,6 +5989,8 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
     QSignalSpy secondMaximizeRequested(
         secondWorkspace.get(),
         &TerminalWorkspace::toggleMaximizeRequested);
+    QSignalSpy secondDecorationChanged(
+        secondWorkspace.get(), &TerminalWorkspace::windowDecorationChanged);
     GhosttyApplicationKeybindings applicationBindings(options, false);
     applicationBindings.registerWorkspace(workspace.get());
     applicationBindings.registerWorkspace(secondWorkspace.get());
@@ -5931,6 +6005,13 @@ void TerminalWorkspaceTest::routesWindowStateActionsToHostWindows()
         {QStringLiteral("toggle_fullscreen")});
     QCOMPARE(fullscreenRequested.count(), 1);
     QCOMPARE(secondFullscreenRequested.count(), 1);
+    decorationChanged.clear();
+    applicationBindings.dispatchBroadActions(
+        {QStringLiteral("toggle_window_decorations")});
+    QCOMPARE(decorationChanged.count(), 1);
+    QCOMPARE(secondDecorationChanged.count(), 1);
+    QCOMPARE(workspace->windowDecoration(), WindowDecorationMode::None);
+    QCOMPARE(secondWorkspace->windowDecoration(), WindowDecorationMode::None);
 
     secondWorkspace.reset();
     secondWindow.close();

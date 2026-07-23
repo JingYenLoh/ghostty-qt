@@ -856,6 +856,16 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
     connect(window, &QObject::destroyed, this,
             [this, window] { retireWindow(window); });
     keybindings_->registerWorkspace(workspace);
+    connect(workspace, &TerminalWorkspace::windowDecorationChanged, this,
+            [this, guardedWindow = QPointer(window),
+             guardedWorkspace = QPointer(workspace)] {
+                syncWindowDecoration(guardedWindow, guardedWorkspace);
+            });
+    // Registration happens after workspace initialization but before the
+    // first show. Applying the requested frame here avoids a decorated flash,
+    // and the connection above keeps the same host in sync with reloads and
+    // its per-window runtime override.
+    syncWindowDecoration(window, workspace);
 
     connect(workspace, &TerminalWorkspace::applicationActionRequested,
             this, [this, guarded = QPointer(workspace)](
@@ -912,6 +922,24 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
                 });
             },
             Qt::SingleShotConnection);
+}
+
+void ApplicationController::syncWindowDecoration(QQuickWindow *window,
+                                                 TerminalWorkspace *workspace)
+{
+    if (window == nullptr || workspace == nullptr
+        || workspace->window() != window || !containsWorkspace(workspace)) {
+        return;
+    }
+    const bool frameless =
+        workspace->windowDecoration() == WindowDecorationMode::None;
+    if (window->flags().testFlag(Qt::FramelessWindowHint) == frameless) {
+        return;
+    }
+    // QWindow::setFlag changes only this hint. Reconstructing setFlags would
+    // drop unrelated host policy, while hide/show or geometry restoration
+    // would disturb compositor-owned fullscreen/maximized state.
+    window->setFlag(Qt::FramelessWindowHint, frameless);
 }
 
 void ApplicationController::noteWorkspaceActivated(

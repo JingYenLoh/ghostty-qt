@@ -1,3 +1,16 @@
+find_program(GHOSTTY_QT_CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+if(Git_FOUND AND GHOSTTY_QT_CLANG_FORMAT_EXECUTABLE)
+    add_test(NAME clang-format-hook
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/test_format_hook.sh"
+            "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(clang-format-hook PROPERTIES
+        TIMEOUT 20
+        ENVIRONMENT
+            "CLANG_FORMAT=${GHOSTTY_QT_CLANG_FORMAT_EXECUTABLE}"
+    )
+endif()
+
 qt_add_executable(test-launch-options
     test_launch_options.cpp
     ghostty_config_export_fixture.h
@@ -775,6 +788,21 @@ set_tests_properties(application-maximize-action PROPERTIES
     TIMEOUT 5
     ENVIRONMENT
         "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TOGGLE_MAXIMIZE=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_maximize_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
+add_test(
+    NAME application-window-decoration-action
+    COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+)
+set(_ghostty_qt_window_decoration_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-window-decoration-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_window_decoration_config_home}")
+set_tests_properties(application-window-decoration-action PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TOGGLE_WINDOW_DECORATIONS=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_window_decoration_config_home}"
     FAIL_REGULAR_EXPRESSION
         "Binding loop detected;QQmlApplicationEngine failed"
 )

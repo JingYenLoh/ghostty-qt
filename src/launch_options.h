@@ -61,6 +61,11 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Ghostty's normalized top-level decoration preference. The Qt host maps
+    // None exactly to a frameless window; ordinary decorated Qt windows retain
+    // the Auto, Client, or Server preference even where QPA cannot distinguish
+    // those protocol choices.
+    WindowDecorationMode windowDecoration = WindowDecorationMode::Auto;
     // Requested terminal grid for newly created windows. Zero retains the
     // frontend's ordinary sizing; presentation policy requires both values
     // to be nonzero before it derives a pixel geometry.

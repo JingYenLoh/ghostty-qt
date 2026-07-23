@@ -121,6 +121,7 @@ GhosttyConfigSnapshot completeSnapshot()
     values.windowInheritFontSize = false;
     values.windowNewTabPosition = WindowNewTabPosition::End;
     values.windowShowTabBar = WindowShowTabBar::Always;
+    values.windowDecoration = WindowDecorationMode::Server;
     values.windowWidth = 120;
     values.windowHeight = 40;
     values.maximize = true;
@@ -197,6 +198,7 @@ private Q_SLOTS:
     void mapsSplitPreserveZoom();
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
+    void mapsWindowDecoration();
     void mapsWindowCellDimensions();
     void mapsResizeOverlay();
     void mapsStartupWindowState();
@@ -281,6 +283,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
+    QCOMPARE(options.windowDecoration, WindowDecorationMode::Auto);
     QCOMPARE(options.windowWidth, quint32(0));
     QCOMPARE(options.windowHeight, quint32(0));
     QCOMPARE(options.resizeOverlay.mode, ResizeOverlayMode::AfterFirst);
@@ -870,6 +873,23 @@ void LaunchOptionsTest::mapsWindowShowTabBar()
     }
 }
 
+void LaunchOptionsTest::mapsWindowDecoration()
+{
+    LaunchOptions base;
+    base.windowDecoration = WindowDecorationMode::None;
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    for (const WindowDecorationMode mode : {
+             WindowDecorationMode::Auto,
+             WindowDecorationMode::Client,
+             WindowDecorationMode::Server,
+             WindowDecorationMode::None,
+         }) {
+        snapshot.values.windowDecoration = mode;
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).windowDecoration,
+                 mode);
+    }
+}
+
 void LaunchOptionsTest::mapsWindowCellDimensions()
 {
     LaunchOptions base;
@@ -1169,6 +1189,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.windowDecoration = WindowDecorationMode::None;
     frontendOnlyChanged.windowWidth = 132;
     frontendOnlyChanged.windowHeight = 43;
     frontendOnlyChanged.maximize = true;

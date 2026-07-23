@@ -176,6 +176,7 @@ inline QJsonObject values()
         {QStringLiteral("window-inherit-font-size"), false},
         {QStringLiteral("window-new-tab-position"), QStringLiteral("end")},
         {QStringLiteral("window-show-tab-bar"), QStringLiteral("always")},
+        {QStringLiteral("window-decoration"), QStringLiteral("server")},
         {QStringLiteral("window-width"), 120},
         {QStringLiteral("window-height"), 40},
         {QStringLiteral("maximize"), true},

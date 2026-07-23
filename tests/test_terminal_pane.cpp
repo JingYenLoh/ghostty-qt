@@ -3688,6 +3688,7 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
         QStringLiteral("ctrl+x=increase_font_size:2.5"),
         QStringLiteral("ctrl+enter=toggle_fullscreen"),
         QStringLiteral("alt+m=toggle_maximize"),
+        QStringLiteral("alt+d=toggle_window_decorations"),
         QStringLiteral("ctrl+w=close_tab:this"),
         QStringLiteral("ctrl+shift+w=close_surface"),
         QStringLiteral("ctrl+r=reload_config"),
@@ -3983,6 +3984,22 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("toggle_maximize:")));
     QCOMPARE(workspaceRequests.size(), 3);
+
+    const int beforeDecorations = forwarded.count();
+    QKeyEvent decorationsPress(QEvent::KeyPress, Qt::Key_D, Qt::AltModifier,
+                               QStringLiteral("d"));
+    QCoreApplication::sendEvent(&pane, &decorationsPress);
+    QCOMPARE(workspaceRequests.size(), 4);
+    QCOMPARE(workspaceRequests.constLast().action,
+             WorkspaceAction::ToggleWindowDecorations);
+    QCOMPARE(forwarded.count(), beforeDecorations);
+    QKeyEvent decorationsRelease(QEvent::KeyRelease, Qt::Key_D,
+                                 Qt::AltModifier);
+    QCoreApplication::sendEvent(&pane, &decorationsRelease);
+    QCOMPARE(forwarded.count(), beforeDecorations);
+    QVERIFY(!pane.executeConfiguredAction(
+        QStringLiteral("toggle_window_decorations:")));
+    QCOMPARE(workspaceRequests.size(), 4);
 
     const int beforeUnavailableNavigation = forwarded.count();
     QKeyEvent unavailableNavigation(QEvent::KeyPress, Qt::Key_G,

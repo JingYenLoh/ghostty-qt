@@ -670,6 +670,92 @@ bool installFullscreenActionTestHook(QQuickWindow *window,
     return true;
 }
 
+bool installWindowDecorationActionTestHook(QQuickWindow *window,
+                                           TerminalWorkspace *workspace)
+{
+    if (window == nullptr || workspace == nullptr) {
+        qCritical()
+            << "Window-decoration test hook could not find the QML window";
+        return false;
+    }
+
+    const auto exercise = [workspace, window] {
+        workspace->splitRight();
+        const QList<TerminalPane *> panes =
+            workspace->findChildren<TerminalPane *>();
+        if (panes.size() != 2
+            || window->flags().testFlag(Qt::FramelessWindowHint)) {
+            qCritical()
+                << "Window-decoration test hook could not establish its initial state";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+        const QSize size = window->size();
+        const QWindow::Visibility visibility = window->visibility();
+        const Qt::WindowStates states = window->windowStates();
+        const QVariant fullscreenRestore =
+            window->property("visibilityBeforeFullscreen");
+        if (!workspace->executeSurfaceActionOnAllPanes(
+                QStringLiteral("toggle_window_decorations"))) {
+            qCritical()
+                << "Window-decoration test hook could not remove decorations";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        QTimer::singleShot(
+            0, workspace,
+            [workspace, window, panes, size, visibility, states,
+             fullscreenRestore] {
+                if (!window->flags().testFlag(Qt::FramelessWindowHint)
+                    || !window->flags().testFlag(Qt::WindowDoesNotAcceptFocus)
+                    || window->size() != size
+                    || window->visibility() != visibility
+                    || window->windowStates() != states
+                    || window->property("visibilityBeforeFullscreen")
+                        != fullscreenRestore
+                    || workspace->findChildren<TerminalPane *>() != panes) {
+                    qCritical()
+                        << "QML window did not preserve its host and terminal state while removing decorations";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                if (!workspace->executeSurfaceActionOnAllPanes(
+                        QStringLiteral("toggle_window_decorations"))) {
+                    qCritical()
+                        << "Window-decoration test hook could not restore decorations";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                QTimer::singleShot(0, workspace, [window] {
+                    if (window->flags().testFlag(Qt::FramelessWindowHint)
+                        || !window->flags().testFlag(
+                            Qt::WindowDoesNotAcceptFocus)) {
+                        qCritical()
+                            << "QML window did not restore configured decorations";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    QCoreApplication::quit();
+                });
+            });
+    };
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 bool installInitialWindowStateTestHook(QQuickWindow *window,
                                        const LaunchOptions &options)
 {
@@ -1439,6 +1525,15 @@ int main(int argc, char *argv[])
             "GHOSTTY_QT_TEST_TOGGLE_MAXIMIZE") == 1) {
         if (!initialWindow
             || !installMaximizeActionTestHook(applicationWindow, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue(
+            "GHOSTTY_QT_TEST_TOGGLE_WINDOW_DECORATIONS")
+        == 1) {
+        if (!initialWindow
+            || !installWindowDecorationActionTestHook(applicationWindow,
+                                                      workspace)) {
             return 1;
         }
     }

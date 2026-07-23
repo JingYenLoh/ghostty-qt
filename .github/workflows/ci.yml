@@ -58,6 +58,7 @@ jobs:
           sudo apt-get install --no-install-recommends \
             build-essential \
             clang \
+            clang-format \
             cmake \
             curl \
             libdbus-1-dev \
@@ -90,6 +91,7 @@ jobs:
           test "$(./.local/bin/zig version)" = "0.15.2"
           test "$(git -C ghostty rev-parse HEAD)" = "$(cat GHOSTTY_REVISION)"
           test "$(qmake -query QT_VERSION)" = "${{ matrix.qt_version }}"
+          clang-format --version
           cmake --version
 
       - name: Configure

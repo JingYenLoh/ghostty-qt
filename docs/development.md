@@ -33,6 +33,51 @@ cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev -j8 --output-on-failure
 ```
 
+## C++ formatting
+
+Install `clang-format` as a development dependency; version 18 or newer is
+recommended. The repository's `.clang-format` captures the existing Qt/C++
+style. Format the changed lines in tracked C and C++ files before committing:
+
+```sh
+./scripts/check-format.sh --fix
+```
+
+Use `clang-format -i <files...>` for new files or intentional whole-file
+formatting.
+
+Enable the tracked pre-commit hook once per checkout:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook checks the exact changed lines in staged file contents, including
+partially staged files, without modifying the worktree. Run the same check
+directly with `./scripts/check-format.sh --staged`, check unstaged changes with
+`./scripts/check-format.sh --diff`, or format all tracked changes since `HEAD`
+with `./scripts/check-format.sh --fix`. The fix leaves the index untouched, so
+review and stage the result again before committing.
+
+## Wayland decoration qualification
+
+The automated application test uses Qt's offscreen platform and verifies the
+requested window flags, state, geometry, and pane/session identity. It cannot
+observe xdg-decoration negotiation. Changes to the decoration mapping should
+also be checked under a real Wayland compositor with:
+
+```text
+window-decoration = server
+keybind = ctrl+shift+d=toggle_window_decorations
+```
+
+Run `QT_QPA_PLATFORM=wayland ./build/dev/ghostty-qt`, toggle the frame twice in
+normal, maximized, and fullscreen states, and verify the terminal sessions
+remain intact. The current public-Qt boundary is expected: the initial window
+may receive compositor-side decoration, the first toggle is frameless, and the
+second uses Qt client-side decoration because the existing native surface
+cannot renegotiate its destroyed xdg-decoration object.
+
 The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie

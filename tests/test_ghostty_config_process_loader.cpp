@@ -741,6 +741,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
                        "window-inherit-font-size = false\n"
                        "window-new-tab-position = end\n"
                        "window-show-tab-bar = never\n"
+                       "window-decoration = server\n"
                        "window-width = 1\n"
                        "window-height = 1\n"
                        "maximize = true\n"
@@ -763,6 +764,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY(!result->values.windowInheritFontSize);
     QCOMPARE(result->values.windowNewTabPosition, WindowNewTabPosition::End);
     QCOMPARE(result->values.windowShowTabBar, WindowShowTabBar::Never);
+    QCOMPARE(result->values.windowDecoration, WindowDecorationMode::Server);
     QCOMPARE(result->values.windowWidth, quint32(10));
     QCOMPARE(result->values.windowHeight, quint32(4));
     QVERIFY(result->values.maximize);

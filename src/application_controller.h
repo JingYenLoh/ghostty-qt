@@ -125,6 +125,8 @@ private:
         TerminalWorkspace *sourceWorkspace = nullptr,
         PaneId sourcePaneId = {});
     void registerWindow(ApplicationWindow window);
+    void syncWindowDecoration(QQuickWindow *window,
+                              TerminalWorkspace *workspace);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);
     void retireWindow(QQuickWindow *window);
     void workspaceDestroyed(TerminalWorkspace *workspace,

@@ -627,6 +627,7 @@ void TerminalWorkspace::applyLaunchOptions(
     const RevisionCounter::Value revision = launchOptionsRevision_.advance();
     const QPointer<TerminalWorkspace> guard(this);
     const bool wasTabBarVisible = tabBarVisible();
+    const WindowDecorationMode previousWindowDecoration = windowDecoration();
     keybindProgram_ = std::move(keybindProgram);
     const GhosttyKeybindProgram appliedProgram = keybindProgram_;
     effectiveOptions_ = options;
@@ -637,6 +638,10 @@ void TerminalWorkspace::applyLaunchOptions(
             && guard->launchOptionsRevision_.isCurrent(revision)
             && guard->keybindProgram().isSameGeneration(appliedProgram);
     };
+    if (windowDecoration() != previousWindowDecoration) {
+        Q_EMIT windowDecorationChanged();
+        if (!stillCurrentUpdate()) return;
+    }
     if (tabBarVisible() != wasTabBarVisible) {
         Q_EMIT tabBarVisibleChanged();
         if (!stillCurrentUpdate()) return;
@@ -729,8 +734,9 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
         std::get_if<WorkspaceActionRequest>(&action);
     if (workspaceAction != nullptr
         && (workspaceAction->action == WorkspaceAction::ToggleFullscreen
+            || workspaceAction->action == WorkspaceAction::ToggleMaximize
             || workspaceAction->action
-                == WorkspaceAction::ToggleMaximize)) {
+                == WorkspaceAction::ToggleWindowDecorations)) {
         return !panes.empty() && dispatchAction(*workspaceAction);
     }
 
@@ -938,6 +944,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     }
     case WorkspaceAction::ToggleFullscreen:
     case WorkspaceAction::ToggleMaximize:
+    case WorkspaceAction::ToggleWindowDecorations:
         if ((request.context.paneId.isValid()
              && (paneForId(request.context.paneId) == nullptr
                  || !contextMatchesPane()))
@@ -948,12 +955,30 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         }
         if (request.action == WorkspaceAction::ToggleFullscreen) {
             Q_EMIT toggleFullscreenRequested();
-        } else {
+        } else if (request.action == WorkspaceAction::ToggleMaximize) {
             Q_EMIT toggleMaximizeRequested();
+        } else {
+            toggleWindowDecorations();
         }
         return true;
     }
     return false;
+}
+
+void TerminalWorkspace::toggleWindowDecorations()
+{
+    const WindowDecorationMode previous = windowDecoration();
+    if (windowDecorationOverride_.has_value()) {
+        windowDecorationOverride_.reset();
+    } else {
+        windowDecorationOverride_ =
+            effectiveOptions_.windowDecoration == WindowDecorationMode::None
+            ? WindowDecorationMode::Auto
+            : WindowDecorationMode::None;
+    }
+    if (windowDecoration() != previous) {
+        Q_EMIT windowDecorationChanged();
+    }
 }
 
 TerminalWorkspace::Tab *TerminalWorkspace::currentTab()

@@ -316,12 +316,11 @@ struct WorkspaceVoidActionSpec {
     std::optional<qint64> contextValue;
 };
 
-constexpr std::array<WorkspaceVoidActionSpec, 11> kWorkspaceVoidActions{{
+constexpr std::array<WorkspaceVoidActionSpec, 12> kWorkspaceVoidActions{{
     {QLatin1StringView("new_tab"), WorkspaceAction::NewTab, std::nullopt},
     {QLatin1StringView("close_surface"), WorkspaceAction::ClosePane,
      std::nullopt},
-    {QLatin1StringView("previous_tab"), WorkspaceAction::ChangeTabRelative,
-     -1},
+    {QLatin1StringView("previous_tab"), WorkspaceAction::ChangeTabRelative, -1},
     {QLatin1StringView("next_tab"), WorkspaceAction::ChangeTabRelative, 1},
     {QLatin1StringView("last_tab"), WorkspaceAction::ActivateLastTab,
      std::nullopt},
@@ -331,6 +330,8 @@ constexpr std::array<WorkspaceVoidActionSpec, 11> kWorkspaceVoidActions{{
      std::nullopt},
     {QLatin1StringView("toggle_maximize"), WorkspaceAction::ToggleMaximize,
      std::nullopt},
+    {QLatin1StringView("toggle_window_decorations"),
+     WorkspaceAction::ToggleWindowDecorations, std::nullopt},
     {QLatin1StringView("equalize_splits"), WorkspaceAction::EqualizeSplits,
      std::nullopt},
     {QLatin1StringView("prompt_surface_title"),

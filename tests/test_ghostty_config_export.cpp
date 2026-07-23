@@ -226,6 +226,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.windowInheritFontSize);
     QCOMPARE(values.windowNewTabPosition, WindowNewTabPosition::End);
     QCOMPARE(values.windowShowTabBar, WindowShowTabBar::Always);
+    QCOMPARE(values.windowDecoration, WindowDecorationMode::Server);
     QCOMPARE(values.windowWidth, quint32{120});
     QCOMPARE(values.windowHeight, quint32{40});
     QVERIFY(values.maximize);
@@ -368,6 +369,17 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }),
         [](const GhosttyConfigValues &values) {
             return values.windowShowTabBar;
+        });
+    verifyMappings(
+        QLatin1StringView("window-decoration"),
+        std::to_array<std::pair<QLatin1StringView, WindowDecorationMode>>({
+            {QLatin1StringView("auto"), WindowDecorationMode::Auto},
+            {QLatin1StringView("client"), WindowDecorationMode::Client},
+            {QLatin1StringView("server"), WindowDecorationMode::Server},
+            {QLatin1StringView("none"), WindowDecorationMode::None},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.windowDecoration;
         });
     verifyMappings(
         QLatin1StringView("fullscreen"),
@@ -975,6 +987,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     for (const QString &enumName : {
              QStringLiteral("window-new-tab-position"),
              QStringLiteral("window-show-tab-bar"),
+             QStringLiteral("window-decoration"),
              QStringLiteral("fullscreen"),
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),

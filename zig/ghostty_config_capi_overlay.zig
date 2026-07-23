@@ -148,6 +148,8 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.write(@tagName(config.@"window-new-tab-position"));
     try json.objectField("window-show-tab-bar");
     try json.write(@tagName(config.@"window-show-tab-bar"));
+    try json.objectField("window-decoration");
+    try json.write(@tagName(config.@"window-decoration"));
     try json.objectField("window-width");
     try json.write(config.@"window-width");
     try json.objectField("window-height");

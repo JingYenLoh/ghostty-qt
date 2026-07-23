@@ -718,6 +718,11 @@
           "status": "not_applicable",
           "scope": "x11"
         },
+        "window-decoration": {
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "The pinned helper finalizes auto/client/server/none, including boolean aliases, into a typed per-window policy. None maps exactly to Qt::FramelessWindowHint before first presentation and on live reload; initially decorated auto/client/server windows use ordinary Qt negotiation because public Qt exposes no stable per-window Wayland client-versus-server preference. On an existing Wayland native surface, clearing FramelessWindowHint restores Qt client-side framing rather than renegotiating a prior compositor-side frame. A per-window optional runtime override masks reload until its second toggle clears it, new windows use the latest configuration without inheriting another window's override, and flag changes preserve unrelated hints, client size, visibility/window state, and every pane/session identity."
+        },
         "window-height": {
           "status": "supported",
           "scope": "qt_mapping",
@@ -1148,6 +1153,11 @@
         "toggle_visibility": {
           "status": "not_applicable",
           "scope": "macos"
+        },
+        "toggle_window_decorations": {
+          "status": "partial",
+          "scope": "linux",
+          "note": "Accepts only the exact void spelling and requires a source surface attached to a host window. The first invocation installs the opposite none-versus-decorated override from the current configuration; the second clears that override and reveals the latest reloaded value. Local targets change only their containing window, while all/global fanout coalesces exactly once per workspace so multiple panes cannot cancel the toggle. The Qt projection mutates only FramelessWindowHint and leaves window state, geometry, unrelated flags, panes, and terminal workers intact. On Wayland, clearing the hint on an existing native surface restores Qt client-side framing instead of renegotiating prior compositor-side decoration; exact restoration requires native-surface recreation or private Qt APIs."
         },
         "toggle_window_float_on_top": {
           "status": "not_applicable",
