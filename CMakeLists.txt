@@ -219,7 +219,14 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/build.zig"
             "${GHOSTTY_SOURCE_DIR}/build.zig.zon"
             "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/action.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/args.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/edit_config.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/ghostty.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/ssh.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/ssh_cache.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/DiskCache.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/Entry.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/show_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/validate_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"
@@ -227,6 +234,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/terminfo/ghostty.zig"
         COMMENT "Building pinned Ghostty configuration parser"
         USES_TERMINAL
         VERBATIM)

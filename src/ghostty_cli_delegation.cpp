@@ -9,10 +9,15 @@
 
 namespace {
 
-bool isDelegatedAction(std::string_view argument) noexcept
+const GhosttyCliActionCatalogEntry *findPinnedAction(
+    std::string_view argument) noexcept
 {
-    return std::ranges::find(GhosttyQtDelegatedCliActions, argument)
-        != GhosttyQtDelegatedCliActions.end();
+    const auto action = std::ranges::find(
+        GhosttyPinnedCliActions, argument,
+        &GhosttyCliActionCatalogEntry::argument);
+    return action == GhosttyPinnedCliActions.end()
+        ? nullptr
+        : &*action;
 }
 
 std::error_code invalidArgument() noexcept
@@ -26,7 +31,8 @@ GhosttyCliActionSelection selectGhosttyCliAction(
     std::span<char *const> arguments) noexcept
 {
     if (arguments.empty()) return {};
-    std::string_view selected;
+    const GhosttyCliActionCatalogEntry *selected = nullptr;
+    std::string_view selectedArgument;
     for (char *const rawArgument : arguments.subspan(1)) {
         if (rawArgument == nullptr) {
             return {
@@ -42,31 +48,34 @@ GhosttyCliActionSelection selectGhosttyCliAction(
 
         // Pinned Ghostty stops looking at -e before an action. This frontend
         // additionally documents -- as its command boundary.
-        if (selected.empty()
+        if (selected == nullptr
             && (argument == "-e" || argument == "--")) {
             return {};
         }
         if (!argument.starts_with('+')) continue;
 
-        if (!selected.empty()) {
+        if (selected != nullptr) {
             return {
                 .disposition = GhosttyCliActionDisposition::Multiple,
                 .argument = argument,
             };
         }
-        if (!isDelegatedAction(argument)) {
+        selected = findPinnedAction(argument);
+        if (selected == nullptr) {
             return {
                 .disposition = GhosttyCliActionDisposition::Unsupported,
                 .argument = argument,
             };
         }
-        selected = argument;
+        selectedArgument = argument;
     }
 
-    if (selected.empty()) return {};
+    if (selected == nullptr) return {};
     return {
-        .disposition = GhosttyCliActionDisposition::Delegate,
-        .argument = selected,
+        .disposition = selected->isDelegated()
+            ? GhosttyCliActionDisposition::Delegate
+            : GhosttyCliActionDisposition::Unsupported,
+        .argument = selectedArgument,
     };
 }
 

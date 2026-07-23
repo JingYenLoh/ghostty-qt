@@ -1262,10 +1262,12 @@ the main executable and resolves the library from a relative private
 `${CMAKE_INSTALL_LIBDIR}/ghostty-qt` directory; disabling the option omits this
 configuration path entirely.
 
-The main executable and helper share one constexpr catalog containing the
-eight public configuration/inspection/validation actions. At the first line of
-process startup, before argument transcoding or any Qt object, the frontend
-classifies raw `argv`. The frontend's documented `--` command delimiter stops
+The main executable and helper share one constexpr catalog containing every
+pinned action spelling and a separate frontend-support decision. This preserves
+Ghostty's distinction between a known-but-unsupported action, an invalid
+spelling, and a second action without maintaining multiple policy lists. At the
+first line of process startup, before argument transcoding or any Qt object,
+the frontend classifies raw `argv`. The frontend's documented `--` command delimiter stops
 detection before its terminal payload. An exact earlier `-e` also suppresses
 delegation to match pinned Ghostty's detector ordering, although `-e` itself
 remains unsupported by the frontend launch parser. Standalone frontend
@@ -1287,6 +1289,15 @@ shell-style 127 or 126 without entering Qt. A configuration-disabled build
 retains classification so a supported action gets an immediate feature-boundary
 diagnostic instead of becoming a terminal program. Normal GUI launches perform
 no helper-path lookup.
+
+The pinned `+ssh` action then spawns and waits for the selected SSH child rather
+than replacing the helper. Ghostty owns its wrapper-option boundary, exact
+child arguments and streams, TERM/SendEnv options, destination resolution,
+built-in terminfo upload and fallback, standard XDG-state cache, and
+`128 + signal` child-status mapping. The companion `+ssh-cache` action owns the
+same cache's list/query/add/remove/prune/clear grammar and on-disk behavior.
+Both are explicit pre-Qt CLI actions; automatic shell-function injection
+remains a separate shell-integration parity item.
 
 The pinned `+edit-config` implementation then performs its own intentional
 second replacement. It loads standard configuration first, creating the
@@ -1463,10 +1474,11 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-cli-delegation` verifies the shared raw-argument classifier; same-PID
   process replacement; byte-exact argv, stdin, stdout, and stderr; environment,
   working-directory, and exit-status preservation; missing/unexecutable-helper
-  and config-disabled failures; all eight real pinned actions; action-option
-  order; pre-Qt operation; direct-helper equivalence; and the `+edit-config`
-  editor exec, preferred-file creation, path escaping, and environment
-  precedence.
+  and config-disabled failures; every delegated real pinned action;
+  action-option order; pre-Qt operation; direct-helper equivalence; the
+  `+edit-config` editor exec, preferred-file creation, path escaping, and
+  environment precedence; plus SSH child argv/streams/status, terminfo fallback
+  and cache suppression, and isolated SSH-cache lifecycle and file-mode repair.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus selection/cursor/text appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,

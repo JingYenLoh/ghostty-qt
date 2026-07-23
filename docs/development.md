@@ -81,8 +81,11 @@ human-oriented `+show-config` output.
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-keybinds`, `+show-config`, and `+validate-config`. A shared allowlist
-guards both binaries.
+`+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
+`+validate-config`. One shared catalog records every pinned action spelling
+and its explicit frontend support decision, so known-but-unsupported actions
+remain distinguishable from invalid spellings without maintaining parallel
+allowlists.
 The frontend classifies raw arguments and uses Linux `execv` before QString
 conversion or Qt initialization; it does not reuse the buffered, timeout-bound
 `QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
@@ -90,6 +93,15 @@ state, environment, PID, process/signal relationship, and exit status remain
 caller-owned. The helper's embedded application runtime is `none`, so
 runtime-specific config finalization can differ from GTK even though the action
 implementation is the exact pinned code.
+
+`+ssh` remains Ghostty's wrapper: the helper spawns and waits for the selected
+SSH child, prepends the pinned TERM/SendEnv options, optionally installs the
+built-in terminfo payload, and maps a child signal to `128 + signal`.
+`+ssh-cache` operates on Ghostty's standard
+`${XDG_STATE_HOME}/ghostty/ssh_cache`; tests must isolate `XDG_STATE_HOME`,
+`HOME`, and `TMPDIR` beneath repository-local `./tmp`. Explicit action support
+does not imply the separately tracked shell-script injection that wraps an
+ordinary `ssh` command automatically.
 
 `+edit-config` continues through the pinned helper into `/bin/sh -c` using the
 first non-empty `VISUAL` or `EDITOR` value and a shell-escaped standard config
@@ -164,11 +176,12 @@ The five focused config tests have distinct boundaries:
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a
-  byte-framed fake helper, all eight real action implementations, invalid and
-  reordered action options, the pinned editor exec and selection contract,
-  missing/unexecutable-helper failure, the config-off boundary, and
-  moved-prefix main-to-helper discovery. Every fixture lives under the
-  repository-local `./tmp` or build tree.
+  byte-framed fake helper, every delegated real action, invalid and reordered
+  action options, the pinned editor exec and selection contract, deterministic
+  SSH argument/stream/exit/signal and terminfo/cache phases, isolated SSH-cache
+  lifecycle and mode repair, missing/unexecutable-helper failure, the
+  config-off boundary, and moved-prefix main-to-helper discovery. Every fixture
+  lives under the repository-local `./tmp` or build tree.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.

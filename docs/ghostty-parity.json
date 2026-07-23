@@ -1139,6 +1139,14 @@
           "status": "supported",
           "note": "Delegates the pinned implementation through ghostty-qt's app-runtime=none helper; GTK-runtime-specific finalization is intentionally outside this embedded helper contract."
         },
+        "ssh": {
+          "status": "supported",
+          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. This supports explicit +ssh invocation; automatic shell-function injection remains separately tracked by shell-integration and shell-integration-features."
+        },
+        "ssh-cache": {
+          "status": "supported",
+          "note": "Delegates the pinned +ssh-cache manager through the relocatable embedded-runtime helper before Qt starts. Ghostty owns the standard XDG-state path, list, exact and bare-host query, add/update, remove, prune, and clear grammar, validation, 0600 repair, atomic on-disk updates, streams, and exit status. Tests use an isolated repository-local state directory; no Qt cache namespace or frontend reimplementation is introduced."
+        },
         "toggle-quick-terminal": {
           "scope": "wayland"
         },

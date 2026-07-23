@@ -54,7 +54,10 @@ void printHelp()
               "      --initial-window BOOLEAN    Request an initial window.\n";
 #if GHOSTTY_QT_CONFIG_ENABLED
     output << "\nPinned Ghostty CLI actions:\n";
-    for (const std::string_view action : GhosttyQtDelegatedCliActions) {
+    for (const GhosttyCliActionCatalogEntry &entry
+         : GhosttyPinnedCliActions) {
+        if (!entry.isDelegated()) continue;
+        const std::string_view action = entry.argument;
         output << "  "
                << QString::fromLatin1(
                       action.data(), static_cast<qsizetype>(action.size()))

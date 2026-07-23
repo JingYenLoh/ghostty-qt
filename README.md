@@ -87,7 +87,8 @@ the host-language comparison and remaining engineering risks.
   of applied appearance/session keys.
 - Transparent pre-Qt delegation of the pinned `+edit-config`,
   `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-  `+list-keybinds`, `+show-config`, and `+validate-config` implementations.
+  `+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
+  `+validate-config` implementations.
   These retain the caller's terminal, streams, process relationship,
   environment, working directory, and exact action exit status without
   requiring a working Wayland or Qt platform plugin.
@@ -344,7 +345,8 @@ actions:
 
 ```text
 +edit-config     +explain-config  +help          +list-actions
-+list-colors     +list-keybinds    +show-config   +validate-config
++list-colors     +list-keybinds    +show-config   +ssh
++ssh-cache       +validate-config
 ```
 
 They may use their pinned Ghostty action-specific flags and operands in the
@@ -368,6 +370,15 @@ whose application runtime is intentionally `none` rather than GTK. A
 development build configured with `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF` omits
 that helper and reports delegated actions as unavailable before attempting GUI
 startup.
+
+`+ssh` is the pinned Ghostty wrapper, including its own `--` argument boundary,
+TERM/SendEnv forwarding, optional built-in terminfo installation and fallback,
+standard XDG-state cache use, inherited child streams, and exit/signal-status
+mapping. `+ssh-cache` exposes the corresponding pinned list, query, add,
+remove, prune, and clear operations at
+`${XDG_STATE_HOME}/ghostty/ssh_cache`. These commands support explicit CLI
+invocation; automatic shell-function injection for an ordinary `ssh` command
+remains a separate shell-integration parity item.
 
 `+edit-config` is the pinned CLI action, distinct from the GUI `open_config`
 keybinding action. It loads the standard configuration (creating the preferred
