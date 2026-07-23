@@ -202,8 +202,8 @@ void appendConfiguredActionDiagnostics(
                              const QVector<GhosttyKeybindDefinition> *baseline) {
         if (isDefaultDefinition(definition, baseline)) return;
         for (const QString &action : definition.actions) {
-            if (GhosttyActionCatalog::isImplemented(action)
-                || reportedActions.contains(action)) {
+            if (reportedActions.contains(action)
+                || GhosttyActionCatalog::isImplemented(action)) {
                 continue;
             }
             reportedActions.insert(action);

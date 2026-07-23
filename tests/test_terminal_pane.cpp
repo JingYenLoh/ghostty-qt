@@ -2909,6 +2909,8 @@ void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
 
 void TerminalPaneTest::routesBroadConfiguredActionEffects()
 {
+    qRegisterMetaType<GhosttyCompiledActionChain>();
+
     LaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
@@ -2943,12 +2945,31 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
             },
         },
     };
+    GhosttyKeybindConfig reloadedConfig = config;
+    reloadedConfig.root.append(GhosttyKeybindDefinition{
+        .sequence = {controlKey('x')},
+        .actions = {QStringLiteral("new_tab")},
+    });
     options.keybindSource =
         GhosttyKeybindSource::structured(std::move(config));
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
+
+    // The match owns its compiled chain. Replacing the pane's keybinding trie
+    // from an earlier direct signal observer must not invalidate the argument
+    // seen by later observers or the remainder of the key event.
+    LaunchOptions reloaded = options;
+    reloaded.keybindSource =
+        GhosttyKeybindSource::structured(std::move(reloadedConfig));
+    bool reloadedDuringBroadDispatch = false;
+    connect(&pane, &TerminalPane::broadActionsRequested, &pane,
+            [&](const GhosttyCompiledActionChain &) {
+                if (reloadedDuringBroadDispatch) return;
+                reloadedDuringBroadDispatch = true;
+                pane.applyRuntimeOptions(reloaded);
+            });
     QSignalSpy broadActions(&pane, &TerminalPane::broadActionsRequested);
     QSignalSpy forwarded(controller, &TerminalController::keyRequested);
     QSignalSpy copied(controller, &TerminalController::copyRequested);
@@ -2958,10 +2979,33 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
     QKeyEvent closePress(QEvent::KeyPress, Qt::Key_U,
                          Qt::ControlModifier, QString(QChar(0x15)));
     QCoreApplication::sendEvent(&pane, &closePress);
+    QVERIFY(reloadedDuringBroadDispatch);
     QCOMPARE(broadActions.count(), 1);
-    QCOMPARE(broadActions.constFirst().constFirst().toStringList(),
+    const GhosttyCompiledActionChain closeChain =
+        qvariant_cast<GhosttyCompiledActionChain>(
+            broadActions.constFirst().constFirst());
+    QCOMPARE(closeChain.serializedActions(),
              QStringList({QStringLiteral("close_tab:right"),
                           QStringLiteral("ignore")}));
+    QCOMPARE(closeChain.inputEffect,
+             GhosttyActionInputEffect::ClosingAction);
+    QVERIFY(!closeChain.applicationOnly);
+    QCOMPARE(closeChain.entries.size(), 2);
+    QCOMPARE(closeChain.entries.at(0).scope,
+             GhosttyActionScope::Surface);
+    QVERIFY(closeChain.entries.at(0).action.has_value());
+    const auto *closeRequest = std::get_if<WorkspaceActionRequest>(
+        &*closeChain.entries.at(0).action);
+    QVERIFY(closeRequest != nullptr);
+    QCOMPARE(closeRequest->action, WorkspaceAction::CloseTab);
+    QCOMPARE(closeRequest->context.closeTabMode, CloseTabMode::Right);
+    QCOMPARE(closeChain.entries.at(1).scope,
+             GhosttyActionScope::Application);
+    QVERIFY(closeChain.entries.at(1).action.has_value());
+    const auto *ignore = std::get_if<ApplicationAction>(
+        &*closeChain.entries.at(1).action);
+    QVERIFY(ignore != nullptr);
+    QCOMPARE(*ignore, ApplicationAction::Ignore);
     QKeyEvent closeRelease(QEvent::KeyRelease, Qt::Key_U,
                            Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &closeRelease);
@@ -2973,6 +3017,20 @@ void TerminalPaneTest::routesBroadConfiguredActionEffects()
                         Qt::ControlModifier, QString(QChar(0x10)));
     QCoreApplication::sendEvent(&pane, &copyPress);
     QCOMPARE(broadActions.count(), 2);
+    const GhosttyCompiledActionChain copyChain =
+        qvariant_cast<GhosttyCompiledActionChain>(
+            broadActions.constLast().constFirst());
+    QCOMPARE(copyChain.serializedActions(),
+             QStringList({QStringLiteral("copy_to_clipboard")}));
+    QCOMPARE(copyChain.inputEffect, GhosttyActionInputEffect::None);
+    QVERIFY(!copyChain.applicationOnly);
+    QCOMPARE(copyChain.entries.size(), 1);
+    QVERIFY(copyChain.entries.constFirst().action.has_value());
+    const auto *paneAction = std::get_if<GhosttyPaneAction>(
+        &*copyChain.entries.constFirst().action);
+    QVERIFY(paneAction != nullptr);
+    QVERIFY(std::holds_alternative<
+            GhosttyPaneActions::CopyToClipboard>(*paneAction));
     QCOMPARE(copied.count(), 0);
     QKeyEvent copyRelease(QEvent::KeyRelease, Qt::Key_P,
                           Qt::ControlModifier);

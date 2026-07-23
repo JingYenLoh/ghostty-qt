@@ -993,7 +993,10 @@ named tables and owns its traversal and table-stack state. Sharing those
 immutable tries between panes is a later allocation optimization. Outside an
 active sequence, lookup walks the newest active table outward and then the
 root. A one-shot top table is popped as soon as it supplies a match, including
-a leader, catch-all, or performable binding. Lookup prioritizes
+a leader, catch-all, or performable binding. `GhosttyKeybindStep` reports that
+stack mutation directly, so `TerminalPane` can publish its property change
+without constructing and comparing before/after active-table name lists. This
+avoids two `QStringList` allocations on every keypress. Lookup prioritizes
 physical identity, then event Unicode, then the unshifted codepoint, then
 modifier-specific and bare catch-all entries at every depth. On
 Linux/Wayland, native XKB scan codes keep physical triggers and libghostty's
@@ -1003,35 +1006,47 @@ unmodified layout level through `QKeyEvent`, so the fallback unshifted
 codepoint remains US-layout-oriented for shifted punctuation. Reading Wayland
 keymap state directly is a later input-compatibility slice.
 
+Loading a trie generation compiles each canonical action chain once into an
+owning positional value. Every entry retains its exact serialized spelling,
+its upstream application/surface scope, and an optional executable action.
+Unsupported or malformed entries therefore remain inert in their original
+position instead of being dropped or accidentally reclassified. The chain
+also caches its combined input effect, with closing taking precedence over
+`ignore`, and whether every entry is application-scoped. A match copies this
+owning chain, so a synchronous configuration reload may replace the trie while
+the in-flight event safely finishes with the generation that matched it. The
+next event sees the newly compiled generation.
+
 Sequence leader presses are encoded immediately on the session thread and held
 as bytes under a generation token. A consumed match drops them; an invalid,
 unconsumed, or unavailable performable match flushes the prefix and current key
 atomically; `end_key_sequence` flushes only the leaders. This preserves the VT
 mode that existed at each leader press and prevents reload or stale queued
-operations from leaking input. Each local action then passes once through
-`GhosttyActionCatalog`, which returns one owning variant for application,
-pane, or workspace execution. Workspace actions use the same typed dispatcher
-as QML controls; viewport, font-size, selection, search, terminal-control,
-named-key-table, clipboard, sequence, and window actions become typed pane
-requests. One constexpr descriptor set owns the simple void workspace
-mappings, another owns every application-scoped Ghostty name alongside its
-optional Qt implementation, and a third owns the frontend clipboard/sequence
-actions and their parameter policy. Complex numeric, enum, tuple, and
+operations from leaking input. `GhosttyActionCatalog` compiles each executable
+entry into an owning application, pane, or workspace variant. The pane variant
+is payload-specific: each alternative contains only the data valid for that
+action, such as a scroll amount, table name, search needle, or serialized byte
+string, rather than a shared tag plus unrelated optional fields. Workspace
+actions use the same typed dispatcher as QML controls. One constexpr descriptor
+set owns the simple void workspace mappings, and another owns every
+application-scoped Ghostty name alongside its optional Qt implementation.
+Frontend clipboard/sequence actions and complex numeric, enum, tuple, and
 escaped-string grammars remain explicit parsers. This keeps upstream scope
 classification independent from frontend support without repeating action
 names across validation and dispatch.
 
-`TerminalPane` performs that typed value directly instead of running a
-separate eligibility parse. Dynamic state is checked at the operation: cleanup
-such as `end_search` still runs when it reports not performed, while clipboard,
-title, hover, search, and selection state cannot become stale between preflight
-and execution. Per-action results keep actual performance separate from the
-typed input effect. The complete chain always runs; afterward, any successful
-member makes a syntactically present close take precedence over `ignore`,
-matching Ghostty's press/release lifecycle. GUI clipboard reads still
-distinguish an absent text MIME representation from an explicitly present
-empty string, and an explicit primary-selection paste never inherits the
-separate middle-click fallback policy.
+The pane key-event path, application root filter, and all/global workspace
+fanout consume that same compiled chain; they do not parse actions or rescan
+scope and chain effects per keypress or per destination pane. Raw-string
+programmatic entry points compile once at their boundary before joining this
+typed route. Dynamic state remains late-bound at execution: cleanup such as
+`end_search` still runs when it reports not performed, while clipboard, title,
+hover, search, and selection state cannot become stale between preflight and
+execution. The complete chain always runs, and actual performance remains
+separate from the cached input effect. GUI clipboard reads still distinguish
+an absent text MIME representation from an explicitly present empty string,
+and an explicit primary-selection paste never inherits the separate
+middle-click fallback policy.
 
 Destructive lifecycle commitment belongs to the object that owns that
 lifecycle, not to the pane action interpreter. `TerminalWorkspace` commits a
@@ -1345,13 +1360,15 @@ The default CTest suite has focused layers for each ownership boundary:
   movement, tab model role updates, and typed action context dispatch.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
   action-string parsing—including the five search actions, exact navigation
-  grammar, owning configured-action alternatives, typed input effects, and
-  direct-surface error categories—and deterministic malformed/unsupported
-  results.
+  grammar, payload-specific owning alternatives, compiled positional chains,
+  typed input effects, and direct-surface error categories—and deterministic
+  malformed/unsupported results.
 - `ghostty-keybind-set` verifies delimiter edge cases, native physical-key
   locations, shifted/unshifted Unicode matching, shared-prefix sequences,
   catch-all priority and recovery, local/broad flags, action chains, named-table
   precedence and one-shot state, independent pane state, and Linux defaults.
+  It also verifies compile-on-load scope/effect metadata, inert unsupported
+  positional entries, and owning match snapshots that outlive trie reloads.
 - `ghostty-global-shortcut-portal` verifies XDG trigger conversion, registry
   eligibility and collisions, response-before-reply races, activation routing,
   reload cleanup, and stale callback rejection on a private D-Bus daemon.

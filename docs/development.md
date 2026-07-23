@@ -174,10 +174,15 @@ developer's real Ghostty configuration.
 
 `ghostty-keybind-set` covers finalized root and named-table tries, including
 Linux native physical locations, shifted punctuation lookup, sequences,
-catch-all fallback, table precedence/one-shot activation, action chains, and
-exact local `unconsumed`/`performable` behavior. Session and pane tests cover
-byte staging, invalid-sequence replay, table reset, reload cancellation,
-full/fractional/line/absolute viewport movement, selection-target scrolling,
+catch-all fallback, table precedence/one-shot activation, direct stack-change
+reporting without active-table list snapshots, action chains, and exact local
+`unconsumed`/`performable` behavior. It also checks compile-on-load
+owning chains, exact positional spellings, cached scope/effect/application-only
+metadata, inert unsupported entries, and match lifetime across trie reloads.
+Session and pane tests cover payload-specific typed execution without
+keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
+reload cancellation, full/fractional/line/absolute viewport movement,
+selection-target scrolling,
 select-all, endpoint adjustment/autoscroll, byte-exact CSI/ESC/text actions,
 full-reset cache synchronization, long OSC 8 URI extraction across viewport
 and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
@@ -190,6 +195,7 @@ the pointer remains on the link, occupied-guard release back to physical hit
 testing, left/right overlay relocation, and bounded/escaped destination
 presentation.
 Workspace tests cover application-action precedence, inactive-surface fanout,
+typed all/global chain reuse without per-pane parsing,
 owner-delayed lifecycle publication, final-surface and final-tab action-chain
 completion, synchronous host destruction after local/all/global key events,
 direct all-pane fanout unwinding under both normal close and unexpected

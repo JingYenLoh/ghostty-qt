@@ -579,9 +579,17 @@ bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
 
 bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
 {
+    const std::optional<GhosttyConfiguredAction> parsed =
+        GhosttyActionCatalog::parseConfiguredAction(action);
+    return parsed.has_value()
+        && executeSurfaceActionOnAllPanes(*parsed);
+}
+
+bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
+    const GhosttyConfiguredAction &action)
+{
     if (topologyMutation_
-        || GhosttyActionCatalog::scope(action)
-            == GhosttyActionScope::Application) {
+        || std::holds_alternative<ApplicationAction>(action)) {
         return false;
     }
 
@@ -603,13 +611,13 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
     // toggle synchronously once per pane would cancel itself for an even pane
     // count. Keep broad dispatch once per registered workspace/window while
     // leaving all other surface actions on the ordinary per-pane fanout path.
-    const GhosttyActionTranslation translated =
-        GhosttyActionCatalog::translate(action);
-    if (translated.accepted()
-        && (translated.request->action == WorkspaceAction::ToggleFullscreen
-            || translated.request->action
+    const auto *workspaceAction =
+        std::get_if<WorkspaceActionRequest>(&action);
+    if (workspaceAction != nullptr
+        && (workspaceAction->action == WorkspaceAction::ToggleFullscreen
+            || workspaceAction->action
                 == WorkspaceAction::ToggleMaximize)) {
-        return !panes.empty() && dispatchAction(*translated.request);
+        return !panes.empty() && dispatchAction(*workspaceAction);
     }
 
     const QPointer<TerminalWorkspace> guard(this);

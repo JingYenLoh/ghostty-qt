@@ -39,9 +39,6 @@ class QWheelEvent;
 class QQuickWindow;
 class InitialSessionCoordinator;
 class TerminalController;
-enum class GhosttyActionInputEffect : quint8;
-struct TerminalFontSizeRequest;
-struct TerminalKeyTableRequest;
 
 class TerminalPane final : public QQuickItem {
     Q_OBJECT
@@ -133,6 +130,7 @@ public:
     // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
     // implementation as a focused local binding.
     bool executeConfiguredAction(QStringView action);
+    bool executeConfiguredAction(const GhosttyConfiguredAction &action);
 
 Q_SIGNALS:
     void activated(TerminalPane *pane);
@@ -158,7 +156,7 @@ Q_SIGNALS:
     void requestTabChange(int delta);
     void requestCloseWindow();
     void applicationActionRequested(ApplicationAction action);
-    void broadActionsRequested(const QStringList &actions);
+    void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void unsafePasteRequested(quint64 requestId, const QString &text,
                               TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
@@ -189,11 +187,6 @@ private:
         ConsumePressAndRelease,
     };
 
-    struct ConfiguredActionOutcome {
-        bool performed;
-        GhosttyActionInputEffect effect;
-    };
-
     void updateMetrics();
     void updateTerminalSize();
     void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
@@ -216,12 +209,11 @@ private:
         QKeyEvent *event, const QPointer<TerminalPane> &guard);
     KeyHandling handleConfiguredShortcut(
         QKeyEvent *event, const QPointer<TerminalPane> &guard);
-    [[nodiscard]] ConfiguredActionOutcome performConfiguredAction(
-        QStringView action);
+    [[nodiscard]] bool performConfiguredAction(
+        const GhosttyConfiguredAction &action);
+    [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
+    [[nodiscard]] bool performWorkspaceAction(WorkspaceActionRequest request);
     int viewportPageRows() const;
-    void applyFontSizeRequest(const TerminalFontSizeRequest &request);
-    [[nodiscard]] bool applyKeyTableRequest(
-        const TerminalKeyTableRequest &request);
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,

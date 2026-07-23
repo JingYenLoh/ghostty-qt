@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application_action.h"
+#include "ghostty_action_catalog.h"
 #include "launch_options.h"
 #include "tab_list_model.h"
 #include "workspace_action.h"
@@ -122,6 +123,8 @@ public:
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
+    bool executeSurfaceActionOnAllPanes(
+        const GhosttyConfiguredAction &action);
 
     Q_INVOKABLE void setCurrentIndex(int index);
     Q_INVOKABLE void newTab();
@@ -154,7 +157,7 @@ Q_SIGNALS:
     void titlePromptResolved(quint64 promptId);
     void applicationActionRequested(ApplicationAction action,
                                     PaneId sourcePaneId);
-    void broadActionsRequested(const QStringList &actions);
+    void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();
     void toggleMaximizeRequested();

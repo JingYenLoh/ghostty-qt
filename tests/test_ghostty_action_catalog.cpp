@@ -6,12 +6,15 @@
 #include <cmath>
 #include <limits>
 
+namespace PaneAction = GhosttyPaneActions;
+
 class GhosttyActionCatalogTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
     void tokenizesSerializedActions();
     void parsesOwningConfiguredActions();
+    void compilesOwningActionChains();
     void diagnosesDirectSurfaceActions();
     void translatesParameterlessActions();
     void translatesParameterizedActions_data();
@@ -83,7 +86,9 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
         GhosttyActionCatalog::parseConfiguredAction(
             QStringLiteral("scroll_to_row:12"));
     QVERIFY(pane.has_value());
-    QCOMPARE(std::get<GhosttyPaneAction>(*pane).viewport.row, quint64(12));
+    QCOMPARE(std::get<PaneAction::ScrollToRow>(
+                 std::get<GhosttyPaneAction>(*pane)).row,
+             quint64(12));
 
     const WorkspaceActionContext context{
         TabId(7), PaneId(11), 13, 17, CloseTabMode::Other};
@@ -139,25 +144,151 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
              GhosttyActionInputEffect::None);
 }
 
+void GhosttyActionCatalogTest::compilesOwningActionChains()
+{
+    GhosttyCompiledActionChain compiled;
+    {
+        QStringList source{
+            QString::fromUtf8("reload_config"),
+            QString::fromUtf8("search:needle:with:colons"),
+            QString::fromUtf8("new_split:left"),
+            QString::fromUtf8("unsupported:surface"),
+            QString::fromUtf8("toggle_visibility"),
+            QString::fromUtf8("reload_config:bogus"),
+        };
+        compiled = GhosttyActionCatalog::compileActionChain(source);
+
+        source[0] = QStringLiteral("quit");
+        source[1].fill(u'x');
+        source.clear();
+    }
+
+    const QStringList serialized{
+        QStringLiteral("reload_config"),
+        QStringLiteral("search:needle:with:colons"),
+        QStringLiteral("new_split:left"),
+        QStringLiteral("unsupported:surface"),
+        QStringLiteral("toggle_visibility"),
+        QStringLiteral("reload_config:bogus"),
+    };
+
+    QCOMPARE(compiled.serializedActions(), serialized);
+    QCOMPARE(compiled.entries.size(), serialized.size());
+    QCOMPARE(compiled.inputEffect, GhosttyActionInputEffect::None);
+    QVERIFY(!compiled.applicationOnly);
+
+    const GhosttyCompiledAction &application = compiled.entries[0];
+    QCOMPARE(application.serialized, QStringLiteral("reload_config"));
+    QCOMPARE(application.scope, GhosttyActionScope::Application);
+    QVERIFY(application.action.has_value());
+    QCOMPARE(std::get<ApplicationAction>(*application.action),
+             ApplicationAction::ReloadConfig);
+
+    const GhosttyCompiledAction &pane = compiled.entries[1];
+    QCOMPARE(pane.serialized,
+             QStringLiteral("search:needle:with:colons"));
+    QCOMPARE(pane.scope, GhosttyActionScope::Surface);
+    QVERIFY(pane.action.has_value());
+    const GhosttyPaneAction &paneAction =
+        std::get<GhosttyPaneAction>(*pane.action);
+    QCOMPARE(std::get<PaneAction::Search>(paneAction).serializedNeedle,
+             QByteArrayLiteral("needle:with:colons"));
+
+    const GhosttyCompiledAction &workspace = compiled.entries[2];
+    QCOMPARE(workspace.serialized, QStringLiteral("new_split:left"));
+    QCOMPARE(workspace.scope, GhosttyActionScope::Surface);
+    QVERIFY(workspace.action.has_value());
+    QCOMPARE(std::get<WorkspaceActionRequest>(*workspace.action).action,
+             WorkspaceAction::SplitLeft);
+
+    const GhosttyCompiledAction &unsupportedSurface = compiled.entries[3];
+    QCOMPARE(unsupportedSurface.serialized,
+             QStringLiteral("unsupported:surface"));
+    QCOMPARE(unsupportedSurface.scope, GhosttyActionScope::Surface);
+    QVERIFY(!unsupportedSurface.action.has_value());
+
+    const GhosttyCompiledAction &unsupportedApplication =
+        compiled.entries[4];
+    QCOMPARE(unsupportedApplication.serialized,
+             QStringLiteral("toggle_visibility"));
+    QCOMPARE(unsupportedApplication.scope, GhosttyActionScope::Application);
+    QVERIFY(!unsupportedApplication.action.has_value());
+
+    const GhosttyCompiledAction &malformedApplication = compiled.entries[5];
+    QCOMPARE(malformedApplication.serialized,
+             QStringLiteral("reload_config:bogus"));
+    QCOMPARE(malformedApplication.scope, GhosttyActionScope::Application);
+    QVERIFY(!malformedApplication.action.has_value());
+
+    const GhosttyCompiledActionChain applicationOnly =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("reload_config"),
+            QStringLiteral("toggle_visibility"),
+            QStringLiteral("reload_config:bogus"),
+        });
+    QVERIFY(applicationOnly.applicationOnly);
+
+    const GhosttyCompiledActionChain surfaceScopedUnsupported =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("toggle_visibility"),
+            QStringLiteral("unsupported"),
+        });
+    QVERIFY(!surfaceScopedUnsupported.applicationOnly);
+
+    const GhosttyCompiledActionChain closingBeforeIgnore =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("ignore"),
+            QStringLiteral("close_tab:right"),
+            QStringLiteral("ignore"),
+        });
+    QCOMPARE(closingBeforeIgnore.inputEffect,
+             GhosttyActionInputEffect::ClosingAction);
+
+    const GhosttyCompiledActionChain ignored =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("unsupported"),
+            QStringLiteral("ignore"),
+        });
+    QCOMPARE(ignored.inputEffect, GhosttyActionInputEffect::Ignore);
+
+    const GhosttyCompiledActionChain empty =
+        GhosttyActionCatalog::compileActionChain({});
+    QVERIFY(empty.entries.isEmpty());
+    QVERIFY(empty.serializedActions().isEmpty());
+    QCOMPARE(empty.inputEffect, GhosttyActionInputEffect::None);
+    QVERIFY(empty.applicationOnly);
+
+    const GhosttyCompiledActionChain nanFontSize =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("set_font_size:nan"),
+        });
+    const GhosttyCompiledActionChain nanFontSizeCopy = nanFontSize;
+    QVERIFY(nanFontSize == nanFontSizeCopy);
+}
+
 void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
 {
     const struct {
         const char *serialized;
-        GhosttyPaneActionKind kind;
+        GhosttyPaneAction expected;
     } accepted[] = {
         {"copy_to_clipboard",
-         GhosttyPaneActionKind::CopyToClipboardMixed},
+         PaneAction::CopyToClipboard{
+             .format = PaneAction::CopyFormat::Mixed}},
         {"copy_to_clipboard:mixed",
-         GhosttyPaneActionKind::CopyToClipboardMixed},
+         PaneAction::CopyToClipboard{
+             .format = PaneAction::CopyFormat::Mixed}},
         {"copy_to_clipboard:plain",
-         GhosttyPaneActionKind::CopyToClipboardPlain},
-        {"paste_from_clipboard", GhosttyPaneActionKind::PasteFromClipboard},
-        {"paste_from_selection", GhosttyPaneActionKind::PasteFromSelection},
-        {"copy_url_to_clipboard", GhosttyPaneActionKind::CopyUrlToClipboard},
-        {"copy_title_to_clipboard",
-         GhosttyPaneActionKind::CopyTitleToClipboard},
-        {"end_key_sequence", GhosttyPaneActionKind::EndKeySequence},
-        {"close_window", GhosttyPaneActionKind::CloseWindow},
+         PaneAction::CopyToClipboard{
+             .format = PaneAction::CopyFormat::Plain}},
+        {"paste_from_clipboard",
+         PaneAction::Paste{.source = PaneAction::PasteSource::Clipboard}},
+        {"paste_from_selection",
+         PaneAction::Paste{.source = PaneAction::PasteSource::Selection}},
+        {"copy_url_to_clipboard", PaneAction::CopyUrlToClipboard{}},
+        {"copy_title_to_clipboard", PaneAction::CopyTitleToClipboard{}},
+        {"end_key_sequence", PaneAction::EndKeySequence{}},
+        {"close_window", PaneAction::CloseWindow{}},
     };
 
     for (const auto &testCase : accepted) {
@@ -165,17 +296,17 @@ void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
         const GhosttyDirectSurfaceActionParseResult direct =
             GhosttyActionCatalog::parseDirectSurfaceAction(serialized);
         QVERIFY2(direct.has_value(), testCase.serialized);
-        QCOMPARE(direct->kind, testCase.kind);
+        QVERIFY(*direct == testCase.expected);
 
         const std::optional<GhosttyPaneAction> pane =
             GhosttyActionCatalog::parsePaneAction(serialized);
         QVERIFY(pane.has_value());
-        QCOMPARE(pane->kind, testCase.kind);
+        QVERIFY(*pane == testCase.expected);
         const std::optional<GhosttyConfiguredAction> configured =
             GhosttyActionCatalog::parseConfiguredAction(serialized);
         QVERIFY(configured.has_value());
-        QCOMPARE(std::get<GhosttyPaneAction>(*configured).kind,
-                 testCase.kind);
+        QVERIFY(std::get<GhosttyPaneAction>(*configured)
+                == testCase.expected);
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
         QCOMPARE(GhosttyActionCatalog::scope(serialized),
                  GhosttyActionScope::Surface);
@@ -702,71 +833,84 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         return parsed.value();
     };
 
-    QCOMPARE(parse("scroll_to_top").viewport.kind,
-             TerminalViewportRequest::Kind::Top);
-    QCOMPARE(parse("scroll_to_bottom").viewport.kind,
-             TerminalViewportRequest::Kind::Bottom);
-    QCOMPARE(parse("scroll_to_selection").viewport.kind,
-             TerminalViewportRequest::Kind::Selection);
+    QVERIFY(std::holds_alternative<PaneAction::ScrollToTop>(
+        parse("scroll_to_top")));
+    QVERIFY(std::holds_alternative<PaneAction::ScrollToBottom>(
+        parse("scroll_to_bottom")));
+    QVERIFY(std::holds_alternative<PaneAction::ScrollToSelection>(
+        parse("scroll_to_selection")));
 
     const GhosttyPaneAction row = parse("scroll_to_row:+1__2");
-    QCOMPARE(row.kind, GhosttyPaneActionKind::ScrollViewport);
-    QCOMPARE(row.viewport.kind, TerminalViewportRequest::Kind::Row);
-    QCOMPARE(row.viewport.row, quint64(12));
-    QCOMPARE(parse("scroll_to_row:-0").viewport.row, quint64(0));
+    QCOMPARE(std::get<PaneAction::ScrollToRow>(row).row, quint64(12));
+    QCOMPARE(std::get<PaneAction::ScrollToRow>(
+                 parse("scroll_to_row:-0")).row,
+             quint64(0));
 
-    QCOMPARE(parse("scroll_page_up").kind,
-             GhosttyPaneActionKind::ScrollPageUp);
-    QCOMPARE(parse("scroll_page_down").kind,
-             GhosttyPaneActionKind::ScrollPageDown);
+    QVERIFY(std::holds_alternative<PaneAction::ScrollPageUp>(
+        parse("scroll_page_up")));
+    QVERIFY(std::holds_alternative<PaneAction::ScrollPageDown>(
+        parse("scroll_page_down")));
 
     const GhosttyPaneAction fraction =
         parse("scroll_page_fractional:+0.5");
-    QCOMPARE(fraction.kind,
-             GhosttyPaneActionKind::ScrollPageFractional);
-    QCOMPARE(fraction.pageFraction, 0.5F);
-    QCOMPARE(parse("scroll_page_fractional:0x1p-1").pageFraction, 0.5F);
-    QCOMPARE(parse("scroll_page_fractional:1e-1000").pageFraction, 0.0F);
+    QCOMPARE(std::get<PaneAction::ScrollPageFractional>(fraction).fraction,
+             0.5F);
+    QCOMPARE(std::get<PaneAction::ScrollPageFractional>(
+                 parse("scroll_page_fractional:0x1p-1")).fraction,
+             0.5F);
+    QCOMPARE(std::get<PaneAction::ScrollPageFractional>(
+                 parse("scroll_page_fractional:1e-1000")).fraction,
+             0.0F);
 
     const GhosttyPaneAction lines = parse("scroll_page_lines:-32_768");
-    QCOMPARE(lines.kind, GhosttyPaneActionKind::ScrollViewport);
-    QCOMPARE(lines.viewport.kind, TerminalViewportRequest::Kind::Delta);
-    QCOMPARE(lines.viewport.delta, qint64(-32768));
-    QCOMPARE(parse("scroll_page_lines:+32_767").viewport.delta,
-             qint64(32767));
+    QCOMPARE(std::get<PaneAction::ScrollPageLines>(lines).lines,
+             qint16(-32768));
+    QCOMPARE(std::get<PaneAction::ScrollPageLines>(
+                 parse("scroll_page_lines:+32_767")).lines,
+             qint16(32767));
 
-    QCOMPARE(parse("select_all").kind, GhosttyPaneActionKind::SelectAll);
+    QVERIFY(std::holds_alternative<PaneAction::SelectAll>(
+        parse("select_all")));
 
     const GhosttyPaneAction csi = parse("csi:38:2:255:0:0m");
-    QCOMPARE(csi.kind, GhosttyPaneActionKind::Csi);
-    QCOMPARE(csi.payload, QStringLiteral("38:2:255:0:0m"));
-    QCOMPARE(parse("csi:").payload, QString{});
+    QCOMPARE(std::get<PaneAction::SendCsi>(csi).serializedBytes,
+             QByteArrayLiteral("38:2:255:0:0m"));
+    QCOMPARE(std::get<PaneAction::SendCsi>(
+                 parse("csi:")).serializedBytes,
+             QByteArray{});
 
     const GhosttyPaneAction esc = parse("esc:]0:title:detail\a");
-    QCOMPARE(esc.kind, GhosttyPaneActionKind::Esc);
-    QCOMPARE(esc.payload, QStringLiteral("]0:title:detail\a"));
-    QCOMPARE(parse("esc:").payload, QString{});
+    QCOMPARE(std::get<PaneAction::SendEscape>(esc).serializedBytes,
+             QByteArrayLiteral("]0:title:detail\a"));
+    QCOMPARE(std::get<PaneAction::SendEscape>(
+                 parse("esc:")).serializedBytes,
+             QByteArray{});
 
     const GhosttyPaneAction text = parse(R"(text:hello\n\x00world)");
-    QCOMPARE(text.kind, GhosttyPaneActionKind::Text);
-    QCOMPARE(text.payload, QStringLiteral(R"(hello\n\x00world)"));
-    QCOMPARE(parse("text:").payload, QString{});
+    QCOMPARE(std::get<PaneAction::SendText>(text).serializedBytes,
+             QByteArrayLiteral(R"(hello\n\x00world)"));
+    QCOMPARE(std::get<PaneAction::SendText>(
+                 parse("text:")).serializedBytes,
+             QByteArray{});
 
     // Binding.Action.parse intentionally defers Zig-literal validation until
     // action execution, where a malformed literal is consumed but writes no
     // bytes.
-    QCOMPARE(parse(R"(text:\q)").payload, QStringLiteral(R"(\q)"));
-    QCOMPARE(parse("reset").kind, GhosttyPaneActionKind::Reset);
+    QCOMPARE(std::get<PaneAction::SendText>(
+                 parse(R"(text:\q)")).serializedBytes,
+             QByteArrayLiteral(R"(\q)"));
+    QVERIFY(std::holds_alternative<PaneAction::ResetTerminal>(
+        parse("reset")));
 
     const GhosttyPaneAction readOnly = parse("toggle_readonly");
-    QCOMPARE(readOnly.kind, GhosttyPaneActionKind::ToggleReadOnly);
+    QVERIFY(std::holds_alternative<PaneAction::ToggleReadOnly>(readOnly));
     QVERIFY(GhosttyActionCatalog::isImplemented(
         QStringLiteral("toggle_readonly")));
 
     const GhosttyPaneAction mouseReporting =
         parse("toggle_mouse_reporting");
-    QCOMPARE(mouseReporting.kind,
-             GhosttyPaneActionKind::ToggleMouseReporting);
+    QVERIFY(std::holds_alternative<PaneAction::ToggleMouseReporting>(
+        mouseReporting));
     QVERIFY(GhosttyActionCatalog::isImplemented(
         QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
@@ -824,8 +968,8 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         const QByteArray serialized = QByteArrayLiteral("adjust_selection:")
             + testCase.parameter;
         const GhosttyPaneAction action = parse(serialized.constData());
-        QCOMPARE(action.kind, GhosttyPaneActionKind::AdjustSelection);
-        QCOMPARE(action.selectionAdjustment, testCase.adjustment);
+        QCOMPARE(std::get<PaneAction::AdjustSelection>(action).adjustment,
+                 testCase.adjustment);
     }
 
     QVERIFY(!GhosttyActionCatalog::parsePaneAction(
@@ -842,45 +986,47 @@ void GhosttyActionCatalogTest::parsesFontSizePaneActions()
 
     const GhosttyPaneAction increase =
         parse(QStringLiteral("increase_font_size:1_2.5"));
-    QCOMPARE(increase.kind, GhosttyPaneActionKind::FontSize);
-    QCOMPARE(increase.fontSize.kind,
-             TerminalFontSizeRequest::Kind::Increase);
-    QCOMPARE(increase.fontSize.points, 12.5F);
+    QCOMPARE(std::get<PaneAction::IncreaseFontSize>(increase).points, 12.5F);
 
     const GhosttyPaneAction decrease =
         parse(QStringLiteral("decrease_font_size:-0"));
-    QCOMPARE(decrease.fontSize.kind,
-             TerminalFontSizeRequest::Kind::Decrease);
-    QCOMPARE(decrease.fontSize.points, 0.0F);
-    QVERIFY(std::signbit(decrease.fontSize.points));
+    const float decreasedPoints =
+        std::get<PaneAction::DecreaseFontSize>(decrease).points;
+    QCOMPARE(decreasedPoints, 0.0F);
+    QVERIFY(std::signbit(decreasedPoints));
 
     const GhosttyPaneAction set =
         parse(QStringLiteral("set_font_size:0x1.8p1"));
-    QCOMPARE(set.fontSize.kind, TerminalFontSizeRequest::Kind::Set);
-    QCOMPARE(set.fontSize.points, 3.0F);
+    QCOMPARE(std::get<PaneAction::SetFontSize>(set).points, 3.0F);
 
     const GhosttyPaneAction reset =
         parse(QStringLiteral("reset_font_size"));
-    QCOMPARE(reset.fontSize.kind, TerminalFontSizeRequest::Kind::Reset);
+    QVERIFY(std::holds_alternative<PaneAction::ResetFontSize>(reset));
 
     const GhosttyPaneAction infinity =
         parse(QStringLiteral("increase_font_size:InFiNiTy"));
-    QVERIFY(std::isinf(infinity.fontSize.points));
-    QVERIFY(infinity.fontSize.points > 0.0F);
+    const float infinityPoints =
+        std::get<PaneAction::IncreaseFontSize>(infinity).points;
+    QVERIFY(std::isinf(infinityPoints));
+    QVERIFY(infinityPoints > 0.0F);
 
     const GhosttyPaneAction negativeInfinity =
         parse(QStringLiteral("set_font_size:-INF"));
-    QVERIFY(std::isinf(negativeInfinity.fontSize.points));
-    QVERIFY(negativeInfinity.fontSize.points < 0.0F);
+    const float negativeInfinityPoints =
+        std::get<PaneAction::SetFontSize>(negativeInfinity).points;
+    QVERIFY(std::isinf(negativeInfinityPoints));
+    QVERIFY(negativeInfinityPoints < 0.0F);
 
     const GhosttyPaneAction overflow =
         parse(QStringLiteral("decrease_font_size:1e999"));
-    QVERIFY(std::isinf(overflow.fontSize.points));
+    QVERIFY(std::isinf(
+        std::get<PaneAction::DecreaseFontSize>(overflow).points));
 
     const GhosttyPaneAction nan =
         parse(QStringLiteral("set_font_size:-nAn"));
-    QVERIFY(std::isnan(nan.fontSize.points));
-    QVERIFY(!std::signbit(nan.fontSize.points));
+    const float nanPoints = std::get<PaneAction::SetFontSize>(nan).points;
+    QVERIFY(std::isnan(nanPoints));
+    QVERIFY(!std::signbit(nanPoints));
 
     const QStringList implemented{
         QStringLiteral("increase_font_size:1."),
@@ -900,31 +1046,31 @@ void GhosttyActionCatalogTest::parsesSearchPaneActions()
         return GhosttyActionCatalog::parsePaneAction(serialized).value();
     };
 
-    QCOMPARE(parse(QStringLiteral("start_search")).kind,
-             GhosttyPaneActionKind::StartSearch);
-    QCOMPARE(parse(QStringLiteral("end_search")).kind,
-             GhosttyPaneActionKind::EndSearch);
-    QCOMPARE(parse(QStringLiteral("search_selection")).kind,
-             GhosttyPaneActionKind::SearchSelection);
+    QVERIFY(std::holds_alternative<PaneAction::StartSearch>(
+        parse(QStringLiteral("start_search"))));
+    QVERIFY(std::holds_alternative<PaneAction::EndSearch>(
+        parse(QStringLiteral("end_search"))));
+    QVERIFY(std::holds_alternative<PaneAction::SearchSelection>(
+        parse(QStringLiteral("search_selection"))));
 
     const GhosttyPaneAction emptySearch = parse(QStringLiteral("search:"));
-    QCOMPARE(emptySearch.kind, GhosttyPaneActionKind::Search);
-    QCOMPARE(emptySearch.payload, QString{});
+    QCOMPARE(std::get<PaneAction::Search>(emptySearch).serializedNeedle,
+             QByteArray{});
 
     const GhosttyPaneAction search =
         parse(QStringLiteral("search:needle:with:colons"));
-    QCOMPARE(search.kind, GhosttyPaneActionKind::Search);
-    QCOMPARE(search.payload, QStringLiteral("needle:with:colons"));
+    QCOMPARE(std::get<PaneAction::Search>(search).serializedNeedle,
+             QByteArrayLiteral("needle:with:colons"));
 
     const GhosttyPaneAction previous =
         parse(QStringLiteral("navigate_search:previous"));
-    QCOMPARE(previous.kind, GhosttyPaneActionKind::NavigateSearch);
-    QCOMPARE(previous.searchDirection, TerminalSearchDirection::Previous);
+    QCOMPARE(std::get<PaneAction::NavigateSearch>(previous).direction,
+             TerminalSearchDirection::Previous);
 
     const GhosttyPaneAction next =
         parse(QStringLiteral("navigate_search:next"));
-    QCOMPARE(next.kind, GhosttyPaneActionKind::NavigateSearch);
-    QCOMPARE(next.searchDirection, TerminalSearchDirection::Next);
+    QCOMPARE(std::get<PaneAction::NavigateSearch>(next).direction,
+             TerminalSearchDirection::Next);
 
     const QStringList implemented{
         QStringLiteral("start_search"),
@@ -1127,40 +1273,33 @@ void GhosttyActionCatalogTest::recognizesKeyTableActions()
 
     const GhosttyPaneAction activate =
         parse(QStringLiteral("activate_key_table:copy:mode"));
-    QCOMPARE(activate.kind, GhosttyPaneActionKind::KeyTable);
-    QCOMPARE(activate.keyTable.kind,
-             TerminalKeyTableRequest::Kind::Activate);
-    QCOMPARE(activate.keyTable.name, QStringLiteral("copy:mode"));
+    QCOMPARE(std::get<PaneAction::ActivateKeyTable>(activate).name,
+             QStringLiteral("copy:mode"));
 
     const GhosttyPaneAction escaped = parse(QStringLiteral(
         R"(activate_key_table:\xc3\xa9\\quoted\")"));
-    QCOMPARE(escaped.keyTable.kind,
-             TerminalKeyTableRequest::Kind::Activate);
-    QCOMPARE(escaped.keyTable.name, QStringLiteral("é\\quoted\""));
+    QCOMPARE(std::get<PaneAction::ActivateKeyTable>(escaped).name,
+             QStringLiteral("é\\quoted\""));
 
     const GhosttyPaneAction leadingBom = parse(QStringLiteral(
         R"(activate_key_table:\xef\xbb\xbfedit)"));
-    QCOMPARE(leadingBom.keyTable.name,
+    QCOMPARE(std::get<PaneAction::ActivateKeyTable>(leadingBom).name,
              QString(QChar(0xfeff)) + QStringLiteral("edit"));
 
     const GhosttyPaneAction activateOnce =
         parse(QStringLiteral("activate_key_table_once:"));
-    QCOMPARE(activateOnce.kind, GhosttyPaneActionKind::KeyTable);
-    QCOMPARE(activateOnce.keyTable.kind,
-             TerminalKeyTableRequest::Kind::ActivateOnce);
-    QVERIFY(activateOnce.keyTable.name.isEmpty());
+    QVERIFY(std::get<PaneAction::ActivateKeyTableOnce>(
+                activateOnce).name.isEmpty());
 
     const GhosttyPaneAction deactivate =
         parse(QStringLiteral("deactivate_key_table"));
-    QCOMPARE(deactivate.kind, GhosttyPaneActionKind::KeyTable);
-    QCOMPARE(deactivate.keyTable.kind,
-             TerminalKeyTableRequest::Kind::Deactivate);
+    QVERIFY(std::holds_alternative<PaneAction::DeactivateKeyTable>(
+        deactivate));
 
     const GhosttyPaneAction deactivateAll =
         parse(QStringLiteral("deactivate_all_key_tables"));
-    QCOMPARE(deactivateAll.kind, GhosttyPaneActionKind::KeyTable);
-    QCOMPARE(deactivateAll.keyTable.kind,
-             TerminalKeyTableRequest::Kind::DeactivateAll);
+    QVERIFY(std::holds_alternative<PaneAction::DeactivateAllKeyTables>(
+        deactivateAll));
 
     const QStringList valid{
         QStringLiteral("activate_key_table:copy:mode"),

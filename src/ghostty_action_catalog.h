@@ -4,11 +4,14 @@
 #include "terminal_types.h"
 #include "workspace_action.h"
 
+#include <QByteArray>
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
 #include <QStringView>
+#include <QVector>
 
+#include <cmath>
 #include <expected>
 #include <optional>
 #include <variant>
@@ -43,81 +46,207 @@ struct GhosttySerializedActionView {
 };
 
 // Pane-local actions have state-dependent execution that cannot be represented
-// by WorkspaceActionRequest. Keep their parsed values typed so TerminalPane
-// never has to reinterpret Ghostty's serialized numeric or enum parameters.
-enum class GhosttyPaneActionKind {
-    ScrollViewport,
-    ScrollPageUp,
-    ScrollPageDown,
-    ScrollPageFractional,
-    FontSize,
-    KeyTable,
-    SelectAll,
-    AdjustSelection,
-    StartSearch,
-    EndSearch,
-    SearchSelection,
-    Search,
-    NavigateSearch,
-    Csi,
-    Esc,
-    Text,
-    Reset,
-    ToggleReadOnly,
-    ToggleMouseReporting,
-    CopyToClipboardMixed,
-    CopyToClipboardPlain,
-    PasteFromClipboard,
-    PasteFromSelection,
-    CopyUrlToClipboard,
-    CopyTitleToClipboard,
-    EndKeySequence,
-    CloseWindow,
+// by WorkspaceActionRequest. Each alternative owns exactly its valid payload;
+// adding an action therefore requires the parser and executor to handle a new
+// type instead of synchronizing a tag with unrelated optional fields.
+namespace GhosttyPaneActions {
+
+[[nodiscard]] inline bool equivalentFloat(float lhs, float rhs) noexcept
+{
+    return lhs == rhs || (std::isnan(lhs) && std::isnan(rhs));
+}
+
+struct ScrollToTop {
+    bool operator==(const ScrollToTop &) const = default;
+};
+struct ScrollToBottom {
+    bool operator==(const ScrollToBottom &) const = default;
+};
+struct ScrollToSelection {
+    bool operator==(const ScrollToSelection &) const = default;
+};
+struct ScrollToRow {
+    quint64 row = 0;
+    bool operator==(const ScrollToRow &) const = default;
+};
+struct ScrollPageUp {
+    bool operator==(const ScrollPageUp &) const = default;
+};
+struct ScrollPageDown {
+    bool operator==(const ScrollPageDown &) const = default;
+};
+struct ScrollPageFractional {
+    float fraction = 0.0F;
+    bool operator==(const ScrollPageFractional &) const = default;
+};
+struct ScrollPageLines {
+    qint16 lines = 0;
+    bool operator==(const ScrollPageLines &) const = default;
 };
 
-struct TerminalFontSizeRequest {
-    enum class Kind : quint8 {
-        Increase,
-        Decrease,
-        Reset,
-        Set,
-    };
-
-    Kind kind = Kind::Reset;
+struct IncreaseFontSize {
     float points = 0.0F;
-
-    bool operator==(const TerminalFontSizeRequest &) const = default;
+    bool operator==(const IncreaseFontSize &other) const noexcept
+    {
+        return equivalentFloat(points, other.points);
+    }
+};
+struct DecreaseFontSize {
+    float points = 0.0F;
+    bool operator==(const DecreaseFontSize &other) const noexcept
+    {
+        return equivalentFloat(points, other.points);
+    }
+};
+struct SetFontSize {
+    float points = 0.0F;
+    bool operator==(const SetFontSize &other) const noexcept
+    {
+        return equivalentFloat(points, other.points);
+    }
+};
+struct ResetFontSize {
+    bool operator==(const ResetFontSize &) const = default;
 };
 
-struct TerminalKeyTableRequest {
-    enum class Kind : quint8 {
-        Activate,
-        ActivateOnce,
-        Deactivate,
-        DeactivateAll,
-    };
-
-    Kind kind = Kind::Deactivate;
+struct ActivateKeyTable {
     QString name;
-
-    bool operator==(const TerminalKeyTableRequest &) const = default;
+    bool operator==(const ActivateKeyTable &) const = default;
+};
+struct ActivateKeyTableOnce {
+    QString name;
+    bool operator==(const ActivateKeyTableOnce &) const = default;
+};
+struct DeactivateKeyTable {
+    bool operator==(const DeactivateKeyTable &) const = default;
+};
+struct DeactivateAllKeyTables {
+    bool operator==(const DeactivateAllKeyTables &) const = default;
 };
 
-struct GhosttyPaneAction {
-    GhosttyPaneActionKind kind = GhosttyPaneActionKind::ScrollViewport;
-    TerminalViewportRequest viewport;
-    float pageFraction = 0.0F;
-    TerminalFontSizeRequest fontSize;
-    TerminalKeyTableRequest keyTable;
-    TerminalSelectionAdjustment selectionAdjustment =
+struct SelectAll {
+    bool operator==(const SelectAll &) const = default;
+};
+struct AdjustSelection {
+    TerminalSelectionAdjustment adjustment =
         TerminalSelectionAdjustment::Left;
-    TerminalSearchDirection searchDirection = TerminalSearchDirection::Next;
-    // Raw parameter spelling after the first colon. In particular, Text is
-    // deliberately not decoded here: Binding.Action.parse accepts invalid
-    // Zig string escapes and Ghostty only reports those when performing the
-    // action. CSI and ESC likewise preserve every subsequent colon verbatim.
-    QString payload;
+    bool operator==(const AdjustSelection &) const = default;
 };
+
+struct StartSearch {
+    bool operator==(const StartSearch &) const = default;
+};
+struct EndSearch {
+    bool operator==(const EndSearch &) const = default;
+};
+struct SearchSelection {
+    bool operator==(const SearchSelection &) const = default;
+};
+struct Search {
+    QByteArray serializedNeedle;
+    bool operator==(const Search &) const = default;
+};
+struct NavigateSearch {
+    TerminalSearchDirection direction = TerminalSearchDirection::Next;
+    bool operator==(const NavigateSearch &) const = default;
+};
+
+// Binding.Action.parse preserves these byte-string parameters until
+// execution. Text deliberately retains invalid Zig string escapes because
+// Ghostty reports them only while performing the action. CSI and ESC likewise
+// preserve every colon after the first one.
+struct SendCsi {
+    QByteArray serializedBytes;
+    bool operator==(const SendCsi &) const = default;
+};
+struct SendEscape {
+    QByteArray serializedBytes;
+    bool operator==(const SendEscape &) const = default;
+};
+struct SendText {
+    QByteArray serializedBytes;
+    bool operator==(const SendText &) const = default;
+};
+
+struct ResetTerminal {
+    bool operator==(const ResetTerminal &) const = default;
+};
+struct ToggleReadOnly {
+    bool operator==(const ToggleReadOnly &) const = default;
+};
+struct ToggleMouseReporting {
+    bool operator==(const ToggleMouseReporting &) const = default;
+};
+
+enum class CopyFormat : quint8 {
+    Mixed,
+    Plain,
+};
+struct CopyToClipboard {
+    CopyFormat format = CopyFormat::Mixed;
+    bool operator==(const CopyToClipboard &) const = default;
+};
+
+enum class PasteSource : quint8 {
+    Clipboard,
+    Selection,
+};
+struct Paste {
+    PasteSource source = PasteSource::Clipboard;
+    bool operator==(const Paste &) const = default;
+};
+
+struct CopyUrlToClipboard {
+    bool operator==(const CopyUrlToClipboard &) const = default;
+};
+struct CopyTitleToClipboard {
+    bool operator==(const CopyTitleToClipboard &) const = default;
+};
+struct EndKeySequence {
+    bool operator==(const EndKeySequence &) const = default;
+};
+struct CloseWindow {
+    bool operator==(const CloseWindow &) const = default;
+};
+
+} // namespace GhosttyPaneActions
+
+using GhosttyPaneAction = std::variant<
+    GhosttyPaneActions::ScrollToTop,
+    GhosttyPaneActions::ScrollToBottom,
+    GhosttyPaneActions::ScrollToSelection,
+    GhosttyPaneActions::ScrollToRow,
+    GhosttyPaneActions::ScrollPageUp,
+    GhosttyPaneActions::ScrollPageDown,
+    GhosttyPaneActions::ScrollPageFractional,
+    GhosttyPaneActions::ScrollPageLines,
+    GhosttyPaneActions::IncreaseFontSize,
+    GhosttyPaneActions::DecreaseFontSize,
+    GhosttyPaneActions::SetFontSize,
+    GhosttyPaneActions::ResetFontSize,
+    GhosttyPaneActions::ActivateKeyTable,
+    GhosttyPaneActions::ActivateKeyTableOnce,
+    GhosttyPaneActions::DeactivateKeyTable,
+    GhosttyPaneActions::DeactivateAllKeyTables,
+    GhosttyPaneActions::SelectAll,
+    GhosttyPaneActions::AdjustSelection,
+    GhosttyPaneActions::StartSearch,
+    GhosttyPaneActions::EndSearch,
+    GhosttyPaneActions::SearchSelection,
+    GhosttyPaneActions::Search,
+    GhosttyPaneActions::NavigateSearch,
+    GhosttyPaneActions::SendCsi,
+    GhosttyPaneActions::SendEscape,
+    GhosttyPaneActions::SendText,
+    GhosttyPaneActions::ResetTerminal,
+    GhosttyPaneActions::ToggleReadOnly,
+    GhosttyPaneActions::ToggleMouseReporting,
+    GhosttyPaneActions::CopyToClipboard,
+    GhosttyPaneActions::Paste,
+    GhosttyPaneActions::CopyUrlToClipboard,
+    GhosttyPaneActions::CopyTitleToClipboard,
+    GhosttyPaneActions::EndKeySequence,
+    GhosttyPaneActions::CloseWindow>;
 
 using GhosttyDirectSurfaceActionParseResult =
     std::expected<GhosttyPaneAction, GhosttyActionTranslationError>;
@@ -126,6 +255,37 @@ using GhosttyConfiguredAction = std::variant<
     ApplicationAction,
     GhosttyPaneAction,
     WorkspaceActionRequest>;
+
+// One positional entry is retained for every serialized chain member,
+// including unsupported and malformed actions. Scope is an upstream property
+// independent of frontend support; action is present only when this frontend
+// can execute the exact spelling.
+struct GhosttyCompiledAction {
+    QString serialized;
+    GhosttyActionScope scope = GhosttyActionScope::Surface;
+    std::optional<GhosttyConfiguredAction> action;
+
+    bool operator==(const GhosttyCompiledAction &) const = default;
+
+    template <typename Action>
+    [[nodiscard]] const Action *getIf() const noexcept
+    {
+        return action.has_value()
+            ? std::get_if<Action>(&*action)
+            : nullptr;
+    }
+};
+
+struct GhosttyCompiledActionChain {
+    QVector<GhosttyCompiledAction> entries;
+    GhosttyActionInputEffect inputEffect =
+        GhosttyActionInputEffect::None;
+    bool applicationOnly = true;
+
+    bool operator==(const GhosttyCompiledActionChain &) const = default;
+
+    [[nodiscard]] QStringList serializedActions() const;
+};
 
 struct GhosttyActionTranslation {
     std::optional<WorkspaceActionRequest> request;
@@ -208,6 +368,12 @@ public:
     [[nodiscard]] static GhosttyActionInputEffect inputEffect(
         const GhosttyConfiguredAction &action) noexcept;
 
+    // Compile a complete owning action chain once at keybinding-load time.
+    // Positional entries preserve unsupported scopes and the aggregate stores
+    // Ghostty's closing-before-ignore input precedence.
+    [[nodiscard]] static GhosttyCompiledActionChain compileActionChain(
+        const QStringList &actions);
+
     // Combine one serialized chain with Ghostty's closing-before-ignore
     // precedence. Unsupported entries have no input effect.
     [[nodiscard]] static GhosttyActionInputEffect combinedInputEffect(
@@ -223,4 +389,5 @@ public:
 Q_DECLARE_METATYPE(GhosttyActionTranslationError)
 Q_DECLARE_METATYPE(GhosttyActionScope)
 Q_DECLARE_METATYPE(GhosttyActionInputEffect)
-Q_DECLARE_METATYPE(GhosttyPaneActionKind)
+Q_DECLARE_METATYPE(GhosttyConfiguredAction)
+Q_DECLARE_METATYPE(GhosttyCompiledActionChain)

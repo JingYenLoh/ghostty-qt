@@ -21,6 +21,7 @@ namespace {
 
 using Error = GhosttyActionTranslationError;
 using OptionalView = std::optional<QStringView>;
+namespace PaneAction = GhosttyPaneActions;
 
 locale_t cNumericLocale()
 {
@@ -373,41 +374,6 @@ constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
     {QLatin1StringView("redo"), std::nullopt},
 }};
 
-enum class DirectSurfaceParameter : quint8 {
-    Void,
-    CopyFormat,
-};
-
-struct DirectSurfaceActionSpec {
-    QLatin1StringView name;
-    GhosttyPaneActionKind kind;
-    DirectSurfaceParameter parameter;
-};
-
-constexpr std::array<DirectSurfaceActionSpec, 7> kDirectSurfaceActions{{
-    {QLatin1StringView("copy_to_clipboard"),
-     GhosttyPaneActionKind::CopyToClipboardMixed,
-     DirectSurfaceParameter::CopyFormat},
-    {QLatin1StringView("paste_from_clipboard"),
-     GhosttyPaneActionKind::PasteFromClipboard,
-     DirectSurfaceParameter::Void},
-    {QLatin1StringView("paste_from_selection"),
-     GhosttyPaneActionKind::PasteFromSelection,
-     DirectSurfaceParameter::Void},
-    {QLatin1StringView("copy_url_to_clipboard"),
-     GhosttyPaneActionKind::CopyUrlToClipboard,
-     DirectSurfaceParameter::Void},
-    {QLatin1StringView("copy_title_to_clipboard"),
-     GhosttyPaneActionKind::CopyTitleToClipboard,
-     DirectSurfaceParameter::Void},
-    {QLatin1StringView("end_key_sequence"),
-     GhosttyPaneActionKind::EndKeySequence,
-     DirectSurfaceParameter::Void},
-    {QLatin1StringView("close_window"),
-     GhosttyPaneActionKind::CloseWindow,
-     DirectSurfaceParameter::Void},
-}};
-
 template <typename Spec, std::size_t Size>
 const Spec *findActionSpec(QStringView name,
                            const std::array<Spec, Size> &specs)
@@ -425,6 +391,13 @@ bool containsActionName(QStringView name,
         names, [name](QLatin1StringView candidate) {
             return name == candidate;
         });
+}
+
+GhosttyActionScope scopeForActionName(QStringView name)
+{
+    return findActionSpec(name, kApplicationActions) != nullptr
+        ? GhosttyActionScope::Application
+        : GhosttyActionScope::Surface;
 }
 
 } // namespace
@@ -676,31 +649,17 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
         return std::unexpected(Error::InvalidFormat);
     }
 
-    const DirectSurfaceActionSpec *const spec =
-        findActionSpec(parsed.name, kDirectSurfaceActions);
-    if (spec == nullptr) {
-        return std::unexpected(Error::UnsupportedAction);
-    }
-
-    switch (spec->parameter) {
-    case DirectSurfaceParameter::Void: {
-        if (parsed.parameter.has_value()) {
-            return std::unexpected(Error::InvalidFormat);
-        }
-        GhosttyPaneAction action;
-        action.kind = spec->kind;
-        return action;
-    }
-    case DirectSurfaceParameter::CopyFormat: {
-        GhosttyPaneAction action;
+    if (parsed.name == QLatin1StringView("copy_to_clipboard")) {
         if (!parsed.parameter.has_value()
             || *parsed.parameter == QLatin1StringView("mixed")) {
-            action.kind = GhosttyPaneActionKind::CopyToClipboardMixed;
-            return action;
+            return GhosttyPaneAction{PaneAction::CopyToClipboard{
+                .format = PaneAction::CopyFormat::Mixed,
+            }};
         }
         if (*parsed.parameter == QLatin1StringView("plain")) {
-            action.kind = GhosttyPaneActionKind::CopyToClipboardPlain;
-            return action;
+            return GhosttyPaneAction{PaneAction::CopyToClipboard{
+                .format = PaneAction::CopyFormat::Plain,
+            }};
         }
         if (*parsed.parameter == QLatin1StringView("vt")
             || *parsed.parameter == QLatin1StringView("html")) {
@@ -708,8 +667,32 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
         }
         return std::unexpected(Error::InvalidFormat);
     }
+
+    std::optional<GhosttyPaneAction> action;
+    if (parsed.name == QLatin1StringView("paste_from_clipboard")) {
+        action = PaneAction::Paste{
+            .source = PaneAction::PasteSource::Clipboard,
+        };
+    } else if (parsed.name == QLatin1StringView("paste_from_selection")) {
+        action = PaneAction::Paste{
+            .source = PaneAction::PasteSource::Selection,
+        };
+    } else if (parsed.name == QLatin1StringView("copy_url_to_clipboard")) {
+        action = PaneAction::CopyUrlToClipboard{};
+    } else if (parsed.name
+               == QLatin1StringView("copy_title_to_clipboard")) {
+        action = PaneAction::CopyTitleToClipboard{};
+    } else if (parsed.name == QLatin1StringView("end_key_sequence")) {
+        action = PaneAction::EndKeySequence{};
+    } else if (parsed.name == QLatin1StringView("close_window")) {
+        action = PaneAction::CloseWindow{};
+    } else {
+        return std::unexpected(Error::UnsupportedAction);
     }
-    std::unreachable();
+    if (parsed.parameter.has_value()) {
+        return std::unexpected(Error::InvalidFormat);
+    }
+    return std::move(*action);
 }
 
 std::optional<ApplicationAction> parseApplicationActionView(
@@ -734,44 +717,32 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         return std::move(*direct);
     }
 
-    const auto viewportAction = [](TerminalViewportRequest::Kind kind) {
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::ScrollViewport;
-        action.viewport.kind = kind;
-        return action;
-    };
-
     if (name == QLatin1StringView("scroll_to_top")
         || name == QLatin1StringView("scroll_to_bottom")
         || name == QLatin1StringView("scroll_to_selection")) {
         if (parameter.has_value()) return std::nullopt;
         if (name == QLatin1StringView("scroll_to_top")) {
-            return viewportAction(TerminalViewportRequest::Kind::Top);
+            return GhosttyPaneAction{PaneAction::ScrollToTop{}};
         }
         if (name == QLatin1StringView("scroll_to_bottom")) {
-            return viewportAction(TerminalViewportRequest::Kind::Bottom);
+            return GhosttyPaneAction{PaneAction::ScrollToBottom{}};
         }
-        return viewportAction(TerminalViewportRequest::Kind::Selection);
+        return GhosttyPaneAction{PaneAction::ScrollToSelection{}};
     }
 
     if (name == QLatin1StringView("scroll_to_row")) {
         if (!parameter.has_value()) return std::nullopt;
         const std::optional<quint64> row = parseUnsignedInteger(*parameter);
         if (!row.has_value()) return std::nullopt;
-        GhosttyPaneAction action =
-            viewportAction(TerminalViewportRequest::Kind::Row);
-        action.viewport.row = *row;
-        return action;
+        return GhosttyPaneAction{PaneAction::ScrollToRow{.row = *row}};
     }
 
     if (name == QLatin1StringView("scroll_page_up")
         || name == QLatin1StringView("scroll_page_down")) {
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = name == QLatin1StringView("scroll_page_up")
-            ? GhosttyPaneActionKind::ScrollPageUp
-            : GhosttyPaneActionKind::ScrollPageDown;
-        return action;
+        return name == QLatin1StringView("scroll_page_up")
+            ? GhosttyPaneAction{PaneAction::ScrollPageUp{}}
+            : GhosttyPaneAction{PaneAction::ScrollPageDown{}};
     }
 
     if (name == QLatin1StringView("scroll_page_fractional")) {
@@ -782,10 +753,8 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         if (!fraction.has_value() || !fitsSignedPointer(*fraction)) {
             return std::nullopt;
         }
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::ScrollPageFractional;
-        action.pageFraction = *fraction;
-        return action;
+        return GhosttyPaneAction{
+            PaneAction::ScrollPageFractional{.fraction = *fraction}};
     }
 
     if (name == QLatin1StringView("scroll_page_lines")) {
@@ -796,10 +765,9 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
             || *lines > std::numeric_limits<qint16>::max()) {
             return std::nullopt;
         }
-        GhosttyPaneAction action =
-            viewportAction(TerminalViewportRequest::Kind::Delta);
-        action.viewport.delta = *lines;
-        return action;
+        return GhosttyPaneAction{PaneAction::ScrollPageLines{
+            .lines = static_cast<qint16>(*lines),
+        }};
     }
 
     if (name == QLatin1StringView("increase_font_size")
@@ -812,25 +780,21 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         const std::optional<float> points = parseFloat32(*parameter);
         if (!points.has_value()) return std::nullopt;
 
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::FontSize;
         if (name == QLatin1StringView("increase_font_size")) {
-            action.fontSize.kind = TerminalFontSizeRequest::Kind::Increase;
-        } else if (name == QLatin1StringView("decrease_font_size")) {
-            action.fontSize.kind = TerminalFontSizeRequest::Kind::Decrease;
-        } else {
-            action.fontSize.kind = TerminalFontSizeRequest::Kind::Set;
+            return GhosttyPaneAction{
+                PaneAction::IncreaseFontSize{.points = *points}};
         }
-        action.fontSize.points = *points;
-        return action;
+        if (name == QLatin1StringView("decrease_font_size")) {
+            return GhosttyPaneAction{
+                PaneAction::DecreaseFontSize{.points = *points}};
+        }
+        return GhosttyPaneAction{
+            PaneAction::SetFontSize{.points = *points}};
     }
 
     if (name == QLatin1StringView("reset_font_size")) {
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::FontSize;
-        action.fontSize.kind = TerminalFontSizeRequest::Kind::Reset;
-        return action;
+        return GhosttyPaneAction{PaneAction::ResetFontSize{}};
     }
 
     if (name == QLatin1StringView("activate_key_table")
@@ -843,14 +807,14 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         const std::optional<QString> tableName =
             decodeActionUtf8String(*parameter);
         if (!tableName.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::KeyTable;
-        action.keyTable.kind =
-            name == QLatin1StringView("activate_key_table")
-            ? TerminalKeyTableRequest::Kind::Activate
-            : TerminalKeyTableRequest::Kind::ActivateOnce;
-        action.keyTable.name = *tableName;
-        return action;
+        if (name == QLatin1StringView("activate_key_table")) {
+            return GhosttyPaneAction{PaneAction::ActivateKeyTable{
+                .name = *tableName,
+            }};
+        }
+        return GhosttyPaneAction{PaneAction::ActivateKeyTableOnce{
+            .name = *tableName,
+        }};
     }
 
     if (name == QLatin1StringView("deactivate_key_table")
@@ -858,20 +822,14 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         // Both deactivation fields are void, so even an empty parameter is
         // invalid rather than an alternate spelling of the action.
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::KeyTable;
-        action.keyTable.kind =
-            name == QLatin1StringView("deactivate_key_table")
-            ? TerminalKeyTableRequest::Kind::Deactivate
-            : TerminalKeyTableRequest::Kind::DeactivateAll;
-        return action;
+        return name == QLatin1StringView("deactivate_key_table")
+            ? GhosttyPaneAction{PaneAction::DeactivateKeyTable{}}
+            : GhosttyPaneAction{PaneAction::DeactivateAllKeyTables{}};
     }
 
     if (name == QLatin1StringView("select_all")) {
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::SelectAll;
-        return action;
+        return GhosttyPaneAction{PaneAction::SelectAll{}};
     }
 
     if (name == QLatin1StringView("start_search")
@@ -880,39 +838,35 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         // These are void Binding.Action fields, so even an explicitly empty
         // parameter is invalid.
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
         if (name == QLatin1StringView("start_search")) {
-            action.kind = GhosttyPaneActionKind::StartSearch;
-        } else if (name == QLatin1StringView("end_search")) {
-            action.kind = GhosttyPaneActionKind::EndSearch;
-        } else {
-            action.kind = GhosttyPaneActionKind::SearchSelection;
+            return GhosttyPaneAction{PaneAction::StartSearch{}};
         }
-        return action;
+        return name == QLatin1StringView("end_search")
+            ? GhosttyPaneAction{PaneAction::EndSearch{}}
+            : GhosttyPaneAction{PaneAction::SearchSelection{}};
     }
 
     if (name == QLatin1StringView("search")) {
         // Search is a []const u8 field. Its colon is required, its payload may
         // be empty, and only the first colon separates the action name.
         if (!parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::Search;
-        action.payload = parameter->toString();
-        return action;
+        return GhosttyPaneAction{PaneAction::Search{
+            .serializedNeedle = parameter->toUtf8(),
+        }};
     }
 
     if (name == QLatin1StringView("navigate_search")) {
         if (!parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::NavigateSearch;
+        TerminalSearchDirection direction;
         if (*parameter == QLatin1StringView("previous")) {
-            action.searchDirection = TerminalSearchDirection::Previous;
+            direction = TerminalSearchDirection::Previous;
         } else if (*parameter == QLatin1StringView("next")) {
-            action.searchDirection = TerminalSearchDirection::Next;
+            direction = TerminalSearchDirection::Next;
         } else {
             return std::nullopt;
         }
-        return action;
+        return GhosttyPaneAction{
+            PaneAction::NavigateSearch{.direction = direction}};
     }
 
     if (name == QLatin1StringView("csi")
@@ -922,43 +876,39 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         // required but the byte string after it may be empty. Split only at
         // the first colon; later colons are part of the payload.
         if (!parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
         if (name == QLatin1StringView("csi")) {
-            action.kind = GhosttyPaneActionKind::Csi;
-        } else if (name == QLatin1StringView("esc")) {
-            action.kind = GhosttyPaneActionKind::Esc;
-        } else {
-            action.kind = GhosttyPaneActionKind::Text;
+            return GhosttyPaneAction{PaneAction::SendCsi{
+                .serializedBytes = parameter->toUtf8(),
+            }};
         }
-        action.payload = parameter->toString();
-        return action;
+        return name == QLatin1StringView("esc")
+            ? GhosttyPaneAction{PaneAction::SendEscape{
+                  .serializedBytes = parameter->toUtf8(),
+              }}
+            : GhosttyPaneAction{PaneAction::SendText{
+                  .serializedBytes = parameter->toUtf8(),
+              }};
     }
 
     if (name == QLatin1StringView("reset")) {
         // Reset is a void Binding.Action field, therefore even `reset:` is
         // invalid rather than an empty-parameter spelling of reset.
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::Reset;
-        return action;
+        return GhosttyPaneAction{PaneAction::ResetTerminal{}};
     }
 
     if (name == QLatin1StringView("toggle_readonly")) {
         // Read-only is a per-surface void action. An explicit colon, even
         // with an empty value, is not an alternate spelling.
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::ToggleReadOnly;
-        return action;
+        return GhosttyPaneAction{PaneAction::ToggleReadOnly{}};
     }
 
     if (name == QLatin1StringView("toggle_mouse_reporting")) {
         // Like the configuration it mutates, this is a per-surface void
         // action. It never changes the terminal's requested DEC mouse mode.
         if (parameter.has_value()) return std::nullopt;
-        GhosttyPaneAction action;
-        action.kind = GhosttyPaneActionKind::ToggleMouseReporting;
-        return action;
+        return GhosttyPaneAction{PaneAction::ToggleMouseReporting{}};
     }
 
     if (name != QLatin1StringView("adjust_selection")) {
@@ -966,33 +916,32 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
     }
     if (!parameter.has_value()) return std::nullopt;
 
-    GhosttyPaneAction action;
-    action.kind = GhosttyPaneActionKind::AdjustSelection;
+    TerminalSelectionAdjustment adjustment;
     if (*parameter == QLatin1StringView("left")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::Left;
+        adjustment = TerminalSelectionAdjustment::Left;
     } else if (*parameter == QLatin1StringView("right")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::Right;
+        adjustment = TerminalSelectionAdjustment::Right;
     } else if (*parameter == QLatin1StringView("up")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::Up;
+        adjustment = TerminalSelectionAdjustment::Up;
     } else if (*parameter == QLatin1StringView("down")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::Down;
+        adjustment = TerminalSelectionAdjustment::Down;
     } else if (*parameter == QLatin1StringView("page_up")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::PageUp;
+        adjustment = TerminalSelectionAdjustment::PageUp;
     } else if (*parameter == QLatin1StringView("page_down")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::PageDown;
+        adjustment = TerminalSelectionAdjustment::PageDown;
     } else if (*parameter == QLatin1StringView("home")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::Home;
+        adjustment = TerminalSelectionAdjustment::Home;
     } else if (*parameter == QLatin1StringView("end")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::End;
+        adjustment = TerminalSelectionAdjustment::End;
     } else if (*parameter == QLatin1StringView("beginning_of_line")) {
-        action.selectionAdjustment =
-            TerminalSelectionAdjustment::BeginningOfLine;
+        adjustment = TerminalSelectionAdjustment::BeginningOfLine;
     } else if (*parameter == QLatin1StringView("end_of_line")) {
-        action.selectionAdjustment = TerminalSelectionAdjustment::EndOfLine;
+        adjustment = TerminalSelectionAdjustment::EndOfLine;
     } else {
         return std::nullopt;
     }
-    return action;
+    return GhosttyPaneAction{
+        PaneAction::AdjustSelection{.adjustment = adjustment}};
 }
 
 std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
@@ -1071,10 +1020,8 @@ GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
 GhosttyActionScope GhosttyActionCatalog::scope(
     QStringView serializedAction)
 {
-    return findActionSpec(parseSerializedAction(serializedAction).name,
-                          kApplicationActions) != nullptr
-        ? GhosttyActionScope::Application
-        : GhosttyActionScope::Surface;
+    return scopeForActionName(
+        parseSerializedAction(serializedAction).name);
 }
 
 GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
@@ -1086,7 +1033,7 @@ GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
             : GhosttyActionInputEffect::None;
     }
     if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {
-        return pane->kind == GhosttyPaneActionKind::CloseWindow
+        return std::holds_alternative<PaneAction::CloseWindow>(*pane)
             ? GhosttyActionInputEffect::ClosingAction
             : GhosttyActionInputEffect::None;
     }
@@ -1097,33 +1044,71 @@ GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
         : GhosttyActionInputEffect::None;
 }
 
+QStringList GhosttyCompiledActionChain::serializedActions() const
+{
+    QStringList result;
+    result.reserve(entries.size());
+    for (const GhosttyCompiledAction &entry : entries) {
+        result.append(entry.serialized);
+    }
+    return result;
+}
+
+GhosttyCompiledActionChain GhosttyActionCatalog::compileActionChain(
+    const QStringList &actions)
+{
+    GhosttyCompiledActionChain result;
+    result.entries.reserve(actions.size());
+
+    bool ignored = false;
+    bool closing = false;
+    for (const QString &serialized : actions) {
+        const GhosttySerializedActionView parsed =
+            parseSerializedAction(serialized);
+        const GhosttyActionScope actionScope =
+            scopeForActionName(parsed.name);
+        std::optional<GhosttyConfiguredAction> action =
+            parseConfiguredActionView(parsed, {});
+        result.applicationOnly &=
+            actionScope == GhosttyActionScope::Application;
+
+        if (action.has_value()) {
+            switch (inputEffect(*action)) {
+            case GhosttyActionInputEffect::None:
+                break;
+            case GhosttyActionInputEffect::Ignore:
+                ignored = true;
+                break;
+            case GhosttyActionInputEffect::ClosingAction:
+                closing = true;
+                break;
+            }
+        }
+        result.entries.append(GhosttyCompiledAction{
+            .serialized = serialized,
+            .scope = actionScope,
+            .action = std::move(action),
+        });
+    }
+
+    result.inputEffect = closing
+        ? GhosttyActionInputEffect::ClosingAction
+        : ignored ? GhosttyActionInputEffect::Ignore
+                  : GhosttyActionInputEffect::None;
+    return result;
+}
+
 GhosttyActionInputEffect GhosttyActionCatalog::combinedInputEffect(
     const QStringList &actions)
 {
-    bool ignored = false;
-    for (const QString &serialized : actions) {
-        const std::optional<GhosttyConfiguredAction> action =
-            parseConfiguredAction(serialized);
-        if (!action.has_value()) continue;
-        switch (inputEffect(*action)) {
-        case GhosttyActionInputEffect::None:
-            break;
-        case GhosttyActionInputEffect::Ignore:
-            ignored = true;
-            break;
-        case GhosttyActionInputEffect::ClosingAction:
-            return GhosttyActionInputEffect::ClosingAction;
-        }
-    }
-    return ignored ? GhosttyActionInputEffect::Ignore
-                   : GhosttyActionInputEffect::None;
+    return compileActionChain(actions).inputEffect;
 }
 
 bool GhosttyActionCatalog::shouldCoalesceBroadClose(
     const GhosttyConfiguredAction &action) noexcept
 {
     if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {
-        return pane->kind == GhosttyPaneActionKind::CloseWindow;
+        return std::holds_alternative<PaneAction::CloseWindow>(*pane);
     }
     const auto *workspace = std::get_if<WorkspaceActionRequest>(&action);
     return workspace != nullptr

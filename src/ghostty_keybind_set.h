@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ghostty_action_catalog.h"
 #include "ghostty_keybind_config.h"
 
 #include <QHash>
@@ -51,10 +52,9 @@ struct GhosttyKeybindLoadReport {
 };
 
 struct GhosttyKeybindMatch {
-    // Chained actions retain config order. The action strings use Ghostty's
-    // canonical Action.parse representation and are intentionally not
-    // translated into workspace actions at this layer.
-    QStringList actions;
+    // The owning snapshot remains valid if an action synchronously reloads
+    // configuration and replaces the matcher's trie.
+    GhosttyCompiledActionChain actionChain;
     bool consumed = true;
     bool all = false;
     bool global = false;
@@ -95,6 +95,8 @@ struct GhosttyKeybindStep {
     GhosttyKeybindStepKind kind = GhosttyKeybindStepKind::Unmatched;
     GhosttyKeybindMatch match;
     QVector<GhosttyKeybindEvent> queuedEvents;
+    // True only when this step popped the matched top one-shot table.
+    bool activeTablesChanged = false;
 
     bool operator==(const GhosttyKeybindStep &) const = default;
 };
@@ -195,7 +197,7 @@ private:
         Binding trigger;
         EntryKind kind = EntryKind::Leaf;
         quint32 child = 0;
-        QStringList actions;
+        GhosttyCompiledActionChain actionChain;
         bool consumed = true;
         bool all = false;
         bool global = false;

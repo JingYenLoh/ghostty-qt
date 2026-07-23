@@ -574,11 +574,6 @@ bool isModifierKey(int key)
         || key == Qt::Key_Meta;
 }
 
-bool isIgnoreAction(QStringView action)
-{
-    return action == QLatin1StringView("ignore");
-}
-
 } // namespace
 
 int GhosttyKeybindLoadReport::count(
@@ -603,7 +598,7 @@ QStringList GhosttyKeybindSet::serializedActions() const
             if (entry.kind == EntryKind::Leader) {
                 self(self, entry.child);
             } else {
-                result.append(entry.actions);
+                result.append(entry.actionChain.serializedActions());
             }
         }
     };
@@ -887,7 +882,9 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
                     Entry leaf;
                     leaf.trigger = trigger;
                     leaf.kind = EntryKind::Leaf;
-                    leaf.actions = definition.actions;
+                    leaf.actionChain =
+                        GhosttyActionCatalog::compileActionChain(
+                            definition.actions);
                     leaf.consumed = definition.flags.consumed;
                     leaf.all = definition.flags.all;
                     leaf.global = definition.flags.global;
@@ -1101,7 +1098,14 @@ bool GhosttyKeybindSet::activeCatchAllIgnores() const
 {
     const auto ignores = [](const Entry &entry) {
         return entry.kind == EntryKind::Leaf
-            && std::ranges::any_of(entry.actions, isIgnoreAction);
+            && std::ranges::any_of(
+                entry.actionChain.entries,
+                [](const GhosttyCompiledAction &compiled) {
+                    const auto *application =
+                        compiled.getIf<ApplicationAction>();
+                    return application != nullptr
+                        && *application == ApplicationAction::Ignore;
+                });
     };
 
     for (const ActiveTable &table : activeTables_ | std::views::reverse) {
@@ -1136,7 +1140,7 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
         return std::nullopt;
     }
     return GhosttyKeybindMatch{
-        .actions = found.entry->actions,
+        .actionChain = found.entry->actionChain,
         .consumed = found.entry->consumed,
         .all = found.entry->all,
         .global = found.entry->global,
@@ -1181,9 +1185,10 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
         return result;
     }
 
-    if (!continuing && matchedTable >= 0
+    const bool activeTablesChanged = !continuing && matchedTable >= 0
         && matchedTable == activeTables_.size() - 1
-        && activeTables_.at(matchedTable).oneShot) {
+        && activeTables_.at(matchedTable).oneShot;
+    if (activeTablesChanged) {
         activeTables_.removeLast();
     }
 
@@ -1197,13 +1202,14 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
             .kind = GhosttyKeybindStepKind::Leader,
             .match = {},
             .queuedEvents = queuedEvents_,
+            .activeTablesChanged = activeTablesChanged,
         };
     }
 
     GhosttyKeybindStep result{
         .kind = GhosttyKeybindStepKind::Binding,
         .match = {
-            .actions = found.entry->actions,
+            .actionChain = found.entry->actionChain,
             .consumed = found.entry->consumed,
             .all = found.entry->all,
             .global = found.entry->global,
@@ -1211,6 +1217,7 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
             .physical = found.physical,
         },
         .queuedEvents = queuedEvents_,
+        .activeTablesChanged = activeTablesChanged,
     };
     resetSequence();
     return result;

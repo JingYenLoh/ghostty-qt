@@ -51,6 +51,11 @@
 
 namespace {
 
+template <typename... Visitor>
+struct Overloaded : Visitor... {
+    using Visitor::operator()...;
+};
+
 constexpr qreal kResizeOverlayWidth = 120.0;
 constexpr qreal kResizeOverlayHeight = 40.0;
 constexpr auto kMinimumResizeOverlayDuration = std::chrono::milliseconds(250);
@@ -2448,9 +2453,8 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
     };
     const TerminalKeyInput currentInput = terminalKeyInput(event);
-    const QStringList previousKeyTables = keybinds_.activeTableNames();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
-    if (previousKeyTables != keybinds_.activeTableNames()) {
+    if (step.activeTablesChanged) {
         Q_EMIT activeKeyTablesChanged();
         if (guard == nullptr) {
             return KeyHandling::ConsumePressAndRelease;
@@ -2493,7 +2497,7 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // are considered performed even when no target changes state.
     if (step.match.all || step.match.global) {
         const GhosttyActionInputEffect effect =
-            GhosttyActionCatalog::combinedInputEffect(step.match.actions);
+            step.match.actionChain.inputEffect;
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
@@ -2507,39 +2511,28 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         // Emit last: a close action may synchronously destroy the originating
         // workspace, and therefore this pane, through an approval observer.
         // All pane state needed for the event has already been finalized.
-        Q_EMIT broadActionsRequested(step.match.actions);
+        Q_EMIT broadActionsRequested(step.match.actionChain);
         return handling;
     }
 
     bool performed = false;
-    bool ignored = false;
-    bool hasClosingAction = false;
-    for (const QString &action : step.match.actions) {
-        const ConfiguredActionOutcome outcome =
-            performConfiguredAction(action);
+    for (const GhosttyCompiledAction &entry :
+         step.match.actionChain.entries) {
+        if (!entry.action.has_value()) continue;
+        performed = performConfiguredAction(*entry.action) || performed;
         if (guard == nullptr) {
             // Known lifecycle effects are deferred and therefore complete the
             // chain. For an unexpected destructive embedding callback, stop
             // without touching the deleted pane again.
             return KeyHandling::ConsumePressAndRelease;
         }
-        performed = outcome.performed || performed;
-        switch (outcome.effect) {
-        case GhosttyActionInputEffect::None:
-            break;
-        case GhosttyActionInputEffect::Ignore:
-            ignored = true;
-            break;
-        case GhosttyActionInputEffect::ClosingAction:
-            hasClosingAction = true;
-            break;
-        }
     }
     // Ghostty executes the complete chain, then treats surface/tab/window
     // closure as terminal for this event. Lifecycle owners defer pane-sourced
     // window close and quit commitment until this callback returns. `quit` is
     // deliberately not a closing action in the pinned implementation.
-    if (performed && hasClosingAction) {
+    if (performed && step.match.actionChain.inputEffect
+            == GhosttyActionInputEffect::ClosingAction) {
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
@@ -2551,7 +2544,8 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // binding. A performable binding with no effective action acts as though
     // it did not exist; every other match follows the binding's consume flag,
     // independently of whether an action happened to change state.
-    if (performed && ignored) {
+    if (performed && step.match.actionChain.inputEffect
+            == GhosttyActionInputEffect::Ignore) {
         if (activeSequenceToken_ != 0) {
             controller_->resolveSequence(activeSequenceToken_,
                                          TerminalSequenceResolution::Drop);
@@ -2617,183 +2611,254 @@ int TerminalPane::viewportPageRows() const
 
 bool TerminalPane::executeConfiguredAction(QStringView action)
 {
-    return performConfiguredAction(action).performed;
+    const std::optional<GhosttyConfiguredAction> parsed =
+        GhosttyActionCatalog::parseConfiguredAction(action);
+    return parsed.has_value() && performConfiguredAction(*parsed);
 }
 
-TerminalPane::ConfiguredActionOutcome
-TerminalPane::performConfiguredAction(QStringView serializedAction)
+bool TerminalPane::executeConfiguredAction(
+    const GhosttyConfiguredAction &action)
 {
-    std::optional<GhosttyConfiguredAction> parsed =
-        GhosttyActionCatalog::parseConfiguredAction(serializedAction);
-    if (!parsed.has_value()) {
-        return {false, GhosttyActionInputEffect::None};
-    }
+    return performConfiguredAction(action);
+}
 
-    GhosttyConfiguredAction action = std::move(*parsed);
-    const GhosttyActionInputEffect effect =
-        GhosttyActionCatalog::inputEffect(action);
-    const auto outcome = [effect](bool performed) {
-        return ConfiguredActionOutcome{performed, effect};
+bool TerminalPane::performConfiguredAction(
+    const GhosttyConfiguredAction &action)
+{
+    return std::visit(
+        Overloaded{
+            [this](ApplicationAction applicationAction) {
+                Q_EMIT applicationActionRequested(applicationAction);
+                return true;
+            },
+            [this](const GhosttyPaneAction &paneAction) {
+                return performPaneAction(paneAction);
+            },
+            [this](const WorkspaceActionRequest &request) {
+                return performWorkspaceAction(request);
+            },
+        },
+        action);
+}
+
+bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
+{
+    namespace PaneAction = GhosttyPaneActions;
+
+    const auto scroll = [this](TerminalViewportRequest::Kind kind,
+                               qint64 delta = 0,
+                               quint64 row = 0) {
+        controller_->scrollViewport({.kind = kind,
+                                     .delta = delta,
+                                     .row = row});
+        return true;
+    };
+    const auto keyTableChanged = [this](bool changed) {
+        if (changed) Q_EMIT activeKeyTablesChanged();
+        return changed;
     };
 
-    if (const auto *application = std::get_if<ApplicationAction>(&action)) {
-        const ApplicationAction value = *application;
-        const ConfiguredActionOutcome result = outcome(true);
-        Q_EMIT applicationActionRequested(value);
-        return result;
-    }
+    return std::visit(
+        Overloaded{
+            [&scroll](const PaneAction::ScrollToTop &) {
+                return scroll(TerminalViewportRequest::Kind::Top);
+            },
+            [&scroll](const PaneAction::ScrollToBottom &) {
+                return scroll(TerminalViewportRequest::Kind::Bottom);
+            },
+            [this, &scroll](const PaneAction::ScrollToSelection &) {
+                return controller_->selectionExpected()
+                    && scroll(TerminalViewportRequest::Kind::Selection);
+            },
+            [&scroll](const PaneAction::ScrollToRow &value) {
+                return scroll(TerminalViewportRequest::Kind::Row,
+                              0,
+                              value.row);
+            },
+            [this, &scroll](const PaneAction::ScrollPageUp &) {
+                return scroll(TerminalViewportRequest::Kind::Delta,
+                              -static_cast<qint64>(viewportPageRows()));
+            },
+            [this, &scroll](const PaneAction::ScrollPageDown &) {
+                return scroll(TerminalViewportRequest::Kind::Delta,
+                              viewportPageRows());
+            },
+            [this, &scroll](const PaneAction::ScrollPageFractional &value) {
+                const std::optional<qint64> delta = fractionalPageDelta(
+                    value.fraction, viewportPageRows());
+                return delta.has_value()
+                    && scroll(TerminalViewportRequest::Kind::Delta, *delta);
+            },
+            [&scroll](const PaneAction::ScrollPageLines &value) {
+                return scroll(TerminalViewportRequest::Kind::Delta,
+                              value.lines);
+            },
+            [this](const PaneAction::IncreaseFontSize &value) {
+                const float current = static_cast<float>(fontPointSize());
+                const float delta = clampFontActionValue(value.points, 0.0F);
+                manuallyZoomed_ = true;
+                setFontPointSize(
+                    std::fmin(current + delta, kMaximumActionFontSize));
+                return true;
+            },
+            [this](const PaneAction::DecreaseFontSize &value) {
+                const float current = static_cast<float>(fontPointSize());
+                const float delta = clampFontActionValue(value.points, 0.0F);
+                manuallyZoomed_ = true;
+                setFontPointSize(
+                    std::fmax(kMinimumActionFontSize, current - delta));
+                return true;
+            },
+            [this](const PaneAction::SetFontSize &value) {
+                manuallyZoomed_ = true;
+                setFontPointSize(clampFontActionValue(
+                    value.points, kMinimumActionFontSize));
+                return true;
+            },
+            [this](const PaneAction::ResetFontSize &) {
+                manuallyZoomed_ = false;
+                setFontPointSize(defaultFontPointSize_);
+                return true;
+            },
+            [this, &keyTableChanged](
+                const PaneAction::ActivateKeyTable &value) {
+                return keyTableChanged(keybinds_.activateTable(value.name));
+            },
+            [this, &keyTableChanged](
+                const PaneAction::ActivateKeyTableOnce &value) {
+                return keyTableChanged(
+                    keybinds_.activateTable(value.name, true));
+            },
+            [this, &keyTableChanged](
+                const PaneAction::DeactivateKeyTable &) {
+                return keyTableChanged(keybinds_.deactivateTable());
+            },
+            [this, &keyTableChanged](
+                const PaneAction::DeactivateAllKeyTables &) {
+                return keyTableChanged(keybinds_.deactivateAllTables());
+            },
+            [this](const PaneAction::SelectAll &) {
+                controller_->selectAll();
+                return true;
+            },
+            [this](const PaneAction::AdjustSelection &value) {
+                if (!controller_->selectionExpected()) return false;
+                controller_->adjustSelection(value.adjustment);
+                return true;
+            },
+            [this](const PaneAction::StartSearch &) {
+                startSearchUi();
+                return true;
+            },
+            [this](const PaneAction::EndSearch &) {
+                const bool performed = searchEngineActive_
+                    || controller_->searchExpected();
+                // Always clean up stale UI even when the backend had no
+                // active search and the action reports not performed.
+                endSearchUi();
+                return performed;
+            },
+            [this](const PaneAction::SearchSelection &) {
+                if (!controller_->selectionExpected()) return false;
+                controller_->requestSearchSelection();
+                return true;
+            },
+            [this](const PaneAction::Search &value) {
+                const bool hadSearch = searchEngineActive_
+                    || controller_->searchExpected();
+                controller_->searchSerialized(value.serializedNeedle);
+                return !value.serializedNeedle.isEmpty() || hadSearch;
+            },
+            [this](const PaneAction::NavigateSearch &value) {
+                if (!controller_->searchExpected()) return false;
+                controller_->navigateSearch(value.direction);
+                return true;
+            },
+            [this](const PaneAction::SendCsi &value) {
+                controller_->sendCsi(value.serializedBytes);
+                return true;
+            },
+            [this](const PaneAction::SendEscape &value) {
+                controller_->sendEscape(value.serializedBytes);
+                return true;
+            },
+            [this](const PaneAction::SendText &value) {
+                // Ghostty validates Zig escapes only while performing this
+                // action, so malformed text remains consumed without PTY IO.
+                controller_->sendRawText(value.serializedBytes);
+                return true;
+            },
+            [this](const PaneAction::ResetTerminal &) {
+                controller_->resetTerminal();
+                return true;
+            },
+            [this](const PaneAction::ToggleReadOnly &) {
+                controller_->setReadOnly(!controller_->readOnly());
+                return true;
+            },
+            [this](const PaneAction::ToggleMouseReporting &) {
+                controller_->setMouseReportingEnabled(
+                    !controller_->mouseReportingEnabled());
+                return true;
+            },
+            [this](const PaneAction::CopyToClipboard &) {
+                if (!controller_->selectionExpected()) return false;
+                // Mixed/plain remain distinct typed values even though the
+                // public VT API currently exposes plain text for both.
+                copySelection();
+                return true;
+            },
+            [this](const PaneAction::Paste &value) {
+                const TerminalClipboardSource source =
+                    value.source == PaneAction::PasteSource::Clipboard
+                    ? TerminalClipboardSource::Standard
+                    : TerminalClipboardSource::Primary;
+                const std::optional<QString> text = readTerminalClipboard(
+                    QGuiApplication::clipboard(), source);
+                if (!text.has_value()) return false;
+                if (!text->isEmpty()) pasteText(*text);
+                return true;
+            },
+            [this](const PaneAction::CopyUrlToClipboard &) {
+                QClipboard *const clipboard = QGuiApplication::clipboard();
+                const std::optional<QByteArray> uri = hoveredUrlForCopy();
+                if (clipboard == nullptr || !uri.has_value()) return false;
+                auto *mimeData = new QMimeData;
+                mimeData->setData(QStringLiteral("text/plain"), *uri);
+                clipboard->setMimeData(mimeData);
+                return true;
+            },
+            [this](const PaneAction::CopyTitleToClipboard &) {
+                const std::optional<QString> title = effectiveSurfaceTitle();
+                QClipboard *const clipboard = QGuiApplication::clipboard();
+                if (!title || title->isEmpty() || clipboard == nullptr) {
+                    return false;
+                }
+                writeTerminalClipboard(
+                    clipboard, *title,
+                    TerminalClipboardDestination::Standard);
+                return true;
+            },
+            [this](const PaneAction::EndKeySequence &) {
+                keybinds_.resetSequence();
+                if (activeSequenceToken_ != 0) {
+                    controller_->resolveSequence(
+                        activeSequenceToken_,
+                        TerminalSequenceResolution::Flush);
+                    activeSequenceToken_ = 0;
+                }
+                return true;
+            },
+            [this](const PaneAction::CloseWindow &) {
+                Q_EMIT requestCloseWindow();
+                return true;
+            },
+        },
+        action);
+}
 
-    if (const auto *paneAction = std::get_if<GhosttyPaneAction>(&action)) {
-        switch (paneAction->kind) {
-        case GhosttyPaneActionKind::ScrollViewport:
-            if (paneAction->viewport.kind
-                    == TerminalViewportRequest::Kind::Selection
-                && !controller_->selectionExpected()) {
-                return outcome(false);
-            }
-            controller_->scrollViewport(paneAction->viewport);
-            return outcome(true);
-        case GhosttyPaneActionKind::ScrollPageUp:
-        case GhosttyPaneActionKind::ScrollPageDown: {
-            TerminalViewportRequest request;
-            request.kind = TerminalViewportRequest::Kind::Delta;
-            const qint64 rows = viewportPageRows();
-            request.delta = paneAction->kind
-                    == GhosttyPaneActionKind::ScrollPageUp
-                ? -rows : rows;
-            controller_->scrollViewport(request);
-            return outcome(true);
-        }
-        case GhosttyPaneActionKind::ScrollPageFractional: {
-            const std::optional<qint64> delta = fractionalPageDelta(
-                paneAction->pageFraction, viewportPageRows());
-            if (!delta.has_value()) return outcome(false);
-            TerminalViewportRequest request;
-            request.kind = TerminalViewportRequest::Kind::Delta;
-            request.delta = *delta;
-            controller_->scrollViewport(request);
-            return outcome(true);
-        }
-        case GhosttyPaneActionKind::FontSize:
-            applyFontSizeRequest(paneAction->fontSize);
-            return outcome(true);
-        case GhosttyPaneActionKind::KeyTable:
-            return outcome(applyKeyTableRequest(paneAction->keyTable));
-        case GhosttyPaneActionKind::SelectAll:
-            controller_->selectAll();
-            return outcome(true);
-        case GhosttyPaneActionKind::AdjustSelection:
-            if (!controller_->selectionExpected()) return outcome(false);
-            controller_->adjustSelection(paneAction->selectionAdjustment);
-            return outcome(true);
-        case GhosttyPaneActionKind::StartSearch:
-            startSearchUi();
-            return outcome(true);
-        case GhosttyPaneActionKind::EndSearch: {
-            const bool performed = searchEngineActive_
-                || controller_->searchExpected();
-            // Always clean up stale UI even when the backend had no active
-            // search and the action therefore reports not performed.
-            endSearchUi();
-            return outcome(performed);
-        }
-        case GhosttyPaneActionKind::SearchSelection:
-            if (!controller_->selectionExpected()) return outcome(false);
-            controller_->requestSearchSelection();
-            return outcome(true);
-        case GhosttyPaneActionKind::Search: {
-            // Binding.Action.format serializes arbitrary bytes with Zig
-            // escapes. Preserve the payload until the worker decodes it.
-            const bool hadSearch = searchEngineActive_
-                || controller_->searchExpected();
-            controller_->searchSerialized(paneAction->payload.toUtf8());
-            return outcome(!paneAction->payload.isEmpty() || hadSearch);
-        }
-        case GhosttyPaneActionKind::NavigateSearch:
-            if (!controller_->searchExpected()) return outcome(false);
-            controller_->navigateSearch(paneAction->searchDirection);
-            return outcome(true);
-        case GhosttyPaneActionKind::Csi:
-            controller_->sendCsi(paneAction->payload.toUtf8());
-            return outcome(true);
-        case GhosttyPaneActionKind::Esc:
-            controller_->sendEscape(paneAction->payload.toUtf8());
-            return outcome(true);
-        case GhosttyPaneActionKind::Text:
-            // Ghostty validates Zig string escapes only when performing the
-            // action. Keep the serialized bytes intact until the worker so a
-            // malformed binding is still consumed without writing to the PTY.
-            controller_->sendRawText(paneAction->payload.toUtf8());
-            return outcome(true);
-        case GhosttyPaneActionKind::Reset:
-            controller_->resetTerminal();
-            return outcome(true);
-        case GhosttyPaneActionKind::ToggleReadOnly:
-            controller_->setReadOnly(!controller_->readOnly());
-            return outcome(true);
-        case GhosttyPaneActionKind::ToggleMouseReporting:
-            controller_->setMouseReportingEnabled(
-                !controller_->mouseReportingEnabled());
-            return outcome(true);
-        case GhosttyPaneActionKind::CopyToClipboardMixed:
-        case GhosttyPaneActionKind::CopyToClipboardPlain:
-            if (!controller_->selectionExpected()) return outcome(false);
-            // The catalog keeps the mixed/plain identity even though both
-            // currently use libghostty-vt's public plain-text copy path.
-            copySelection();
-            return outcome(true);
-        case GhosttyPaneActionKind::PasteFromClipboard:
-        case GhosttyPaneActionKind::PasteFromSelection: {
-            const TerminalClipboardSource source = paneAction->kind
-                    == GhosttyPaneActionKind::PasteFromClipboard
-                ? TerminalClipboardSource::Standard
-                : TerminalClipboardSource::Primary;
-            const std::optional<QString> text = readTerminalClipboard(
-                QGuiApplication::clipboard(), source);
-            if (!text.has_value()) return outcome(false);
-            if (!text->isEmpty()) pasteText(*text);
-            return outcome(true);
-        }
-        case GhosttyPaneActionKind::CopyUrlToClipboard: {
-            QClipboard *const clipboard = QGuiApplication::clipboard();
-            const std::optional<QByteArray> uri = hoveredUrlForCopy();
-            if (clipboard == nullptr || !uri.has_value()) {
-                return outcome(false);
-            }
-            auto *mimeData = new QMimeData;
-            mimeData->setData(QStringLiteral("text/plain"), *uri);
-            clipboard->setMimeData(mimeData);
-            return outcome(true);
-        }
-        case GhosttyPaneActionKind::CopyTitleToClipboard: {
-            const std::optional<QString> title = effectiveSurfaceTitle();
-            QClipboard *const clipboard = QGuiApplication::clipboard();
-            if (!title || title->isEmpty() || clipboard == nullptr) {
-                return outcome(false);
-            }
-            writeTerminalClipboard(
-                clipboard, *title, TerminalClipboardDestination::Standard);
-            return outcome(true);
-        }
-        case GhosttyPaneActionKind::EndKeySequence:
-            keybinds_.resetSequence();
-            if (activeSequenceToken_ != 0) {
-                controller_->resolveSequence(
-                    activeSequenceToken_,
-                    TerminalSequenceResolution::Flush);
-                activeSequenceToken_ = 0;
-            }
-            return outcome(true);
-        case GhosttyPaneActionKind::CloseWindow: {
-            const ConfiguredActionOutcome result = outcome(true);
-            Q_EMIT requestCloseWindow();
-            return result;
-        }
-        }
-    }
-
-    WorkspaceActionRequest request =
-        std::move(std::get<WorkspaceActionRequest>(action));
+bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
+{
     if (request.action == WorkspaceAction::SplitAuto) {
         const qreal devicePixelRatio = window() != nullptr
             ? window()->devicePixelRatio()
@@ -2808,34 +2873,34 @@ TerminalPane::performConfiguredAction(QStringView serializedAction)
     }
     const auto workspaceActionHandler = workspaceActionHandler_;
     if (workspaceActionHandler != nullptr) {
-        return outcome((*workspaceActionHandler)(request));
+        return (*workspaceActionHandler)(request);
     }
     switch (request.action) {
     case WorkspaceAction::NewTab:
         Q_EMIT requestNewTab();
-        return outcome(true);
+        return true;
     case WorkspaceAction::CloseTab:
         Q_EMIT requestCloseTab(request.context.closeTabMode);
-        return outcome(true);
+        return true;
     case WorkspaceAction::ClosePane:
         Q_EMIT requestClose();
-        return outcome(true);
+        return true;
     case WorkspaceAction::SplitLeft:
     case WorkspaceAction::SplitRight:
     case WorkspaceAction::SplitUp:
     case WorkspaceAction::SplitDown:
     case WorkspaceAction::SplitAuto:
         Q_EMIT requestSplit(request.action);
-        return outcome(true);
+        return true;
     case WorkspaceAction::NavigatePane:
         Q_EMIT requestNavigate(static_cast<int>(request.context.value));
-        return outcome(true);
+        return true;
     case WorkspaceAction::ChangeTabRelative:
         Q_EMIT requestTabChange(static_cast<int>(request.context.value));
-        return outcome(true);
+        return true;
     case WorkspaceAction::SetSurfaceTitle:
         setSurfaceTitle(std::move(request.payload));
-        return outcome(true);
+        return true;
     case WorkspaceAction::ActivateTab:
     case WorkspaceAction::ActivatePane:
     case WorkspaceAction::NavigatePaneRelative:
@@ -2850,9 +2915,9 @@ TerminalPane::performConfiguredAction(QStringView serializedAction)
     case WorkspaceAction::ToggleSplitZoom:
     case WorkspaceAction::ToggleFullscreen:
     case WorkspaceAction::ToggleMaximize:
-        return outcome(false);
+        return false;
     }
-    return outcome(false);
+    return false;
 }
 
 void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
@@ -3732,74 +3797,18 @@ void TerminalPane::setFontPointSize(qreal points)
 
 void TerminalPane::zoomIn()
 {
-    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Increase, 1.0F});
+    (void) performPaneAction(GhosttyPaneAction{
+        GhosttyPaneActions::IncreaseFontSize{.points = 1.0F}});
 }
 
 void TerminalPane::zoomOut()
 {
-    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Decrease, 1.0F});
+    (void) performPaneAction(GhosttyPaneAction{
+        GhosttyPaneActions::DecreaseFontSize{.points = 1.0F}});
 }
 
 void TerminalPane::resetZoom()
 {
-    applyFontSizeRequest({TerminalFontSizeRequest::Kind::Reset, 0.0F});
-}
-
-void TerminalPane::applyFontSizeRequest(
-    const TerminalFontSizeRequest &request)
-{
-    if (request.kind == TerminalFontSizeRequest::Kind::Reset) {
-        manuallyZoomed_ = false;
-        setFontPointSize(defaultFontPointSize_);
-        return;
-    }
-
-    const float current = static_cast<float>(fontPointSize());
-    float points = current;
-    switch (request.kind) {
-    case TerminalFontSizeRequest::Kind::Increase: {
-        const float delta = clampFontActionValue(request.points, 0.0F);
-        points = std::fmin(current + delta, kMaximumActionFontSize);
-        break;
-    }
-    case TerminalFontSizeRequest::Kind::Decrease: {
-        const float delta = clampFontActionValue(request.points, 0.0F);
-        points = std::fmax(kMinimumActionFontSize, current - delta);
-        break;
-    }
-    case TerminalFontSizeRequest::Kind::Set:
-        points = clampFontActionValue(request.points,
-                                      kMinimumActionFontSize);
-        break;
-    case TerminalFontSizeRequest::Kind::Reset:
-        Q_UNREACHABLE();
-    }
-
-    manuallyZoomed_ = true;
-    setFontPointSize(points);
-}
-
-bool TerminalPane::applyKeyTableRequest(
-    const TerminalKeyTableRequest &request)
-{
-    bool changed = false;
-    switch (request.kind) {
-    case TerminalKeyTableRequest::Kind::Activate:
-        changed = keybinds_.activateTable(request.name);
-        break;
-    case TerminalKeyTableRequest::Kind::ActivateOnce:
-        changed = keybinds_.activateTable(request.name, true);
-        break;
-    case TerminalKeyTableRequest::Kind::Deactivate:
-        changed = keybinds_.deactivateTable();
-        break;
-    case TerminalKeyTableRequest::Kind::DeactivateAll:
-        changed = keybinds_.deactivateAllTables();
-        break;
-    }
-
-    if (changed) {
-        Q_EMIT activeKeyTablesChanged();
-    }
-    return changed;
+    (void) performPaneAction(
+        GhosttyPaneAction{GhosttyPaneActions::ResetFontSize{}});
 }

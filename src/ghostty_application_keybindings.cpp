@@ -112,7 +112,10 @@ void GhosttyApplicationKeybindings::registerWorkspace(
 
     workspaces_.append(workspace);
     connect(workspace, &TerminalWorkspace::broadActionsRequested,
-            this, &GhosttyApplicationKeybindings::dispatchBroadActions);
+            this,
+            [this](const GhosttyCompiledActionChain &actions) {
+                dispatchCompiledBroadActions(actions);
+            });
     connect(workspace, &QObject::destroyed, this, [this] {
         workspaces_.removeIf([](const auto &candidate) {
             return candidate.isNull();
@@ -149,13 +152,13 @@ GhosttyApplicationKeybindings::workspaceSnapshot() const
 }
 
 bool GhosttyApplicationKeybindings::executeApplicationActions(
-    const QStringList &actions)
+    const GhosttyCompiledActionChain &actions)
 {
     bool performed = false;
-    for (const QString &action : actions) {
-        if (const std::optional<ApplicationAction> parsed =
-                GhosttyActionCatalog::parseApplicationAction(action)) {
-            Q_EMIT applicationActionRequested(*parsed);
+    for (const GhosttyCompiledAction &entry : actions.entries) {
+        const auto *application = entry.getIf<ApplicationAction>();
+        if (application != nullptr) {
+            Q_EMIT applicationActionRequested(*application);
             performed = true;
         }
     }
@@ -165,17 +168,25 @@ bool GhosttyApplicationKeybindings::executeApplicationActions(
 void GhosttyApplicationKeybindings::dispatchBroadActions(
     const QStringList &actions)
 {
+    dispatchCompiledBroadActions(
+        GhosttyActionCatalog::compileActionChain(actions));
+}
+
+void GhosttyApplicationKeybindings::dispatchCompiledBroadActions(
+    const GhosttyCompiledActionChain &actions)
+{
     // Ghostty dispatches chains action-major: each surface receives action N
     // before any surface receives action N+1. App actions run only once.
-    for (const QString &action : actions) {
-        if (GhosttyActionCatalog::scope(action)
-            == GhosttyActionScope::Application) {
-            if (const std::optional<ApplicationAction> parsed =
-                    GhosttyActionCatalog::parseApplicationAction(action)) {
-                Q_EMIT applicationActionRequested(*parsed);
+    for (const GhosttyCompiledAction &entry : actions.entries) {
+        if (entry.scope == GhosttyActionScope::Application) {
+            const auto *application = entry.getIf<ApplicationAction>();
+            if (application != nullptr) {
+                Q_EMIT applicationActionRequested(*application);
             }
             continue;
         }
+
+        if (!entry.action.has_value()) continue;
 
         const QVector<QPointer<TerminalWorkspace>> workspaces =
             workspaceSnapshot();
@@ -184,10 +195,7 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
         // broad close of surfaces, tabs, or windows therefore converges on the
         // same confirmed workspace shutdown, without overwriting its single
         // pending-close dialog state during fanout.
-        const std::optional<GhosttyConfiguredAction> parsed =
-            GhosttyActionCatalog::parseConfiguredAction(action);
-        if (parsed.has_value()
-            && GhosttyActionCatalog::shouldCoalesceBroadClose(*parsed)) {
+        if (GhosttyActionCatalog::shouldCoalesceBroadClose(*entry.action)) {
             for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
                 if (workspace != nullptr) workspace->requestWindowClose();
             }
@@ -196,7 +204,8 @@ void GhosttyApplicationKeybindings::dispatchBroadActions(
 
         for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
             if (workspace != nullptr) {
-                (void) workspace->executeSurfaceActionOnAllPanes(action);
+                (void) workspace->executeSurfaceActionOnAllPanes(
+                    *entry.action);
             }
         }
     }
@@ -231,28 +240,22 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
     }
 
     if (match->global) {
-        dispatchBroadActions(match->actions);
-        if (GhosttyActionCatalog::combinedInputEffect(match->actions)
+        dispatchCompiledBroadActions(match->actionChain);
+        if (match->actionChain.inputEffect
             != GhosttyActionInputEffect::Ignore) {
             consumedKeys_.insert(keyEventIdentity(keyEvent));
         }
         return true;
     }
 
-    const bool applicationOnly = std::ranges::all_of(
-        match->actions,
-        [](const QString &action) {
-            return GhosttyActionCatalog::scope(action)
-                == GhosttyActionScope::Application;
-        });
-    if (!applicationOnly) {
+    if (!match->actionChain.applicationOnly) {
         return QObject::eventFilter(watched, event);
     }
 
     // App.keyEvent consumes a root app binding before surface/table lookup,
     // independently of its unconsumed/performable flags.
-    (void) executeApplicationActions(match->actions);
-    if (GhosttyActionCatalog::combinedInputEffect(match->actions)
+    (void) executeApplicationActions(match->actionChain);
+    if (match->actionChain.inputEffect
         != GhosttyActionInputEffect::Ignore) {
         consumedKeys_.insert(keyEventIdentity(keyEvent));
     }

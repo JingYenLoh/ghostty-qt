@@ -3892,10 +3892,11 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
     // CSI action exactly once before any pane receives the following reset.
     GhosttyApplicationKeybindings applicationBindings(options, false);
     applicationBindings.registerWorkspace(&workspace);
-    applicationBindings.dispatchBroadActions({
+    const QStringList rawBroadActions{
         QStringLiteral("csi:9:detail"),
         QStringLiteral("reset"),
-    });
+    };
+    applicationBindings.dispatchBroadActions(rawBroadActions);
     QCOMPARE(controlFanoutOrder.size(), 2 * panes.size());
     for (qsizetype index = 0; index < panes.size(); ++index) {
         QVERIFY(controlFanoutOrder.at(index).startsWith(
@@ -3907,6 +3908,46 @@ void TerminalWorkspaceTest::broadViewportAndSelectionActionsReachEveryPane()
                      ->constFirst().constFirst().toByteArray(),
                  QByteArrayLiteral("9:detail"));
         QCOMPARE(resetSpies.at(static_cast<std::size_t>(index))->count(), 1);
+    }
+
+    // The runtime path carries the compiled, owning chain emitted by a pane.
+    // Reusing the same instance must preserve both its decoded payload and its
+    // action-major ordering without reparsing or consuming cached values.
+    const GhosttyCompiledActionChain typedBroadActions =
+        GhosttyActionCatalog::compileActionChain(rawBroadActions);
+    controlFanoutOrder.clear();
+    for (qsizetype index = 0; index < panes.size(); ++index) {
+        csiSpies.at(static_cast<std::size_t>(index))->clear();
+        resetSpies.at(static_cast<std::size_t>(index))->clear();
+    }
+
+    configuredSource->broadActionsRequested(typedBroadActions);
+    configuredSource->broadActionsRequested(typedBroadActions);
+
+    constexpr qsizetype passCount = 2;
+    constexpr qsizetype actionsPerPass = 2;
+    QCOMPARE(controlFanoutOrder.size(),
+             passCount * actionsPerPass * panes.size());
+    for (qsizetype pass = 0; pass < passCount; ++pass) {
+        const qsizetype passOffset =
+            pass * actionsPerPass * panes.size();
+        for (qsizetype index = 0; index < panes.size(); ++index) {
+            QVERIFY(controlFanoutOrder.at(passOffset + index).startsWith(
+                QLatin1StringView("csi:")));
+            QVERIFY(controlFanoutOrder.at(
+                passOffset + panes.size() + index).startsWith(
+                    QLatin1StringView("reset:")));
+        }
+    }
+    for (qsizetype index = 0; index < panes.size(); ++index) {
+        const auto &csiSpy =
+            csiSpies.at(static_cast<std::size_t>(index));
+        QCOMPARE(csiSpy->count(), 2);
+        for (const QList<QVariant> &arguments : *csiSpy) {
+            QCOMPARE(arguments.constFirst().toByteArray(),
+                     QByteArrayLiteral("9:detail"));
+        }
+        QCOMPARE(resetSpies.at(static_cast<std::size_t>(index))->count(), 2);
     }
 }
 

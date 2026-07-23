@@ -45,7 +45,10 @@ protected:
 
 private:
     QVector<QPointer<TerminalWorkspace>> workspaceSnapshot() const;
-    bool executeApplicationActions(const QStringList &actions);
+    bool executeApplicationActions(
+        const GhosttyCompiledActionChain &actions);
+    void dispatchCompiledBroadActions(
+        const GhosttyCompiledActionChain &actions);
 
     GhosttyKeybindSet rootBindings_;
     QVector<QPointer<TerminalWorkspace>> workspaces_;
