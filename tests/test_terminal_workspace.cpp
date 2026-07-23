@@ -5,6 +5,7 @@
 #include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
+#include "terminal_typography.h"
 #include "terminal_workspace.h"
 
 #include <QClipboard>
@@ -112,6 +113,59 @@ LaunchOptions baseOptions()
     options.workingDirectory = QDir::tempPath();
     options.confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     return options;
+}
+
+TerminalTypography testTypography(QString prefix, double pointSize)
+{
+    TerminalTypography typography;
+    typography.pointSize = pointSize;
+    typography.face(TerminalFontRole::Regular) = {
+        .families = {
+            prefix + QStringLiteral(" Regular"),
+            prefix + QStringLiteral(" Regular Fallback"),
+        },
+        .style = TerminalFontStyles::Named{
+            prefix + QStringLiteral(" Book"),
+        },
+    };
+    typography.face(TerminalFontRole::Bold) = {
+        .families = {
+            prefix + QStringLiteral(" Bold"),
+            prefix + QStringLiteral(" Bold Fallback"),
+        },
+        .style = TerminalFontStyles::Named{
+            prefix + QStringLiteral(" Heavy"),
+        },
+    };
+    typography.face(TerminalFontRole::Italic) = {
+        .families = {
+            prefix + QStringLiteral(" Italic"),
+        },
+        .style = TerminalFontStyles::Disabled{},
+    };
+    typography.face(TerminalFontRole::BoldItalic) = {
+        .families = {
+            prefix + QStringLiteral(" Bold Italic"),
+        },
+        .style = TerminalFontStyles::Automatic{},
+    };
+    for (std::size_t index = 0;
+         index < terminalEnumIndex(TerminalMetric::Count); ++index) {
+        const TerminalMetric metric =
+            static_cast<TerminalMetric>(index);
+        if (index % 2 == 0) {
+            typography.metricModifiers[metric] =
+                TerminalMetricModifiers::Absolute{
+                    static_cast<qint32>(index) - 4,
+                };
+        } else {
+            typography.metricModifiers[metric] =
+                TerminalMetricModifiers::Percentage{
+                    1.0 + static_cast<double>(index) / 20.0,
+                };
+        }
+    }
+    return typography;
 }
 
 void sendCtrlKPressAndRelease(TerminalPane *pane)
@@ -299,6 +353,8 @@ class TerminalWorkspaceTest : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
+    void typographyReloadReachesLiveAndFuturePanes();
+    void inheritedTypographyChangesOnlyPointSize();
     void initializationSurvivesReentrantConfigurationObservers();
     void tabPublicationMayDestroyWorkspace();
     void deferredInitialSessionCancelsAndScopesToFirstPane();
@@ -427,6 +483,101 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
     QVERIFY(thirdController->sessionStarted());
 }
 
+void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.typography = testTypography(QStringLiteral("Initial"), 11.0);
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(options));
+    workspace.splitRight();
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 2);
+
+    LaunchOptions reloaded = options;
+    reloaded.typography =
+        testTypography(QStringLiteral("Reloaded"), 17.0);
+    workspace.applyLaunchOptions(reloaded);
+    QVERIFY(workspace.effectiveLaunchOptions().typography
+            == reloaded.typography);
+
+    const auto verifyTypography =
+        [&reloaded](const TerminalPane *pane) {
+            QVERIFY(pane != nullptr);
+            const LaunchOptions inherited =
+                pane->splitLaunchOptions(reloaded);
+            QVERIFY(inherited.typography == reloaded.typography);
+            QCOMPARE(pane->fontPointSize(),
+                     reloaded.typography.pointSize);
+        };
+    for (const TerminalPane *pane :
+         workspace.findChildren<TerminalPane *>()) {
+        verifyTypography(pane);
+    }
+
+    workspace.newTab();
+    const CurrentTabProbe tab = currentTabProbe(workspace);
+    QVERIFY(tab.pane != nullptr);
+    verifyTypography(tab.pane);
+
+    const CurrentTabProbe split = splitRightProbe(workspace);
+    QVERIFY(split.pane != nullptr);
+    verifyTypography(split.pane);
+
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 4);
+    for (const TerminalPane *pane :
+         workspace.findChildren<TerminalPane *>()) {
+        verifyTypography(pane);
+    }
+}
+
+void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions sourceOptions = baseOptions();
+    sourceOptions.program = {QStringLiteral("/bin/true")};
+    sourceOptions.hold = true;
+    sourceOptions.confirmCloseMode = ConfirmCloseMode::Never;
+    sourceOptions.typography =
+        testTypography(QStringLiteral("Source"), 12.0);
+    TerminalWorkspace::setDefaultLaunchOptions(sourceOptions);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(sourceOptions));
+    const CurrentTabProbe source = currentTabProbe(workspace);
+    QVERIFY(source.pane != nullptr);
+    source.pane->zoomIn();
+    QCOMPARE(source.pane->fontPointSize(), 13.0);
+
+    LaunchOptions applicationOptions = sourceOptions;
+    applicationOptions.typography =
+        testTypography(QStringLiteral("Application"), 21.0);
+    TerminalTypography expected = applicationOptions.typography;
+    expected.pointSize = source.pane->fontPointSize();
+
+    const LaunchOptions tabOptions =
+        source.pane->tabLaunchOptions(applicationOptions);
+    QVERIFY(tabOptions.typography == expected);
+
+    const std::optional<LaunchOptions> windowOptions =
+        workspace.newWindowLaunchOptions(
+            applicationOptions, source.paneId);
+    QVERIFY(windowOptions.has_value());
+    QVERIFY(windowOptions->typography == expected);
+
+    const LaunchOptions splitOptions =
+        source.pane->splitLaunchOptions(applicationOptions);
+    TerminalTypography expectedSplit = sourceOptions.typography;
+    expectedSplit.pointSize = source.pane->fontPointSize();
+    QVERIFY(splitOptions.typography == expectedSplit);
+}
+
 void TerminalWorkspaceTest::
 initializationSurvivesReentrantConfigurationObservers()
 {
@@ -440,7 +591,7 @@ initializationSurvivesReentrantConfigurationObservers()
     const GhosttyKeybindProgram initialProgram =
         GhosttyKeybindProgram::compile(initial.keybindSource).program;
     LaunchOptions requested = initial;
-    requested.fontSize = 10.0;
+    requested.typography.pointSize = 10.0;
     requested.windowShowTabBar = WindowShowTabBar::Always;
 
     {
@@ -458,7 +609,7 @@ initializationSurvivesReentrantConfigurationObservers()
     TerminalWorkspace workspace;
     workspace.setSize(QSizeF(640.0, 360.0));
     LaunchOptions newer = initial;
-    newer.fontSize = 20.0;
+    newer.typography.pointSize = 20.0;
     newer.windowShowTabBar = WindowShowTabBar::Never;
     newer.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+j=ignore"),
@@ -483,13 +634,12 @@ initializationSurvivesReentrantConfigurationObservers()
     const CurrentTabProbe pane = currentTabProbe(workspace);
     QVERIFY(pane.pane != nullptr);
     QVERIFY(pane.pane->keybindProgram().isSameGeneration(newerProgram));
-    QCOMPARE(pane.pane->fontPointSize(), newer.fontSize);
+    QCOMPARE(pane.pane->fontPointSize(), newer.typography.pointSize);
     TerminalController *const controller =
         pane.pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
     QVERIFY(controller->launchGeometry().has_value());
-    const TerminalCellMetrics metrics = terminalCellMetrics(
-        newer.fontFamily, newer.fontSize);
+    const TerminalCellMetrics metrics = terminalCellMetrics(newer.typography);
     QCOMPARE(
         *controller->launchGeometry(),
         terminalSessionGeometryForViewport(
@@ -803,10 +953,10 @@ void TerminalWorkspaceTest::newerSameProgramWorkspaceUpdateWinsReentry()
     QVERIFY(workspace.tabBarVisible());
 
     LaunchOptions outer = options;
-    outer.fontSize = 14.0;
+    outer.typography.pointSize = 14.0;
     outer.windowShowTabBar = WindowShowTabBar::Never;
     LaunchOptions newer = options;
-    newer.fontSize = 19.0;
+    newer.typography.pointSize = 19.0;
     newer.windowShowTabBar = WindowShowTabBar::Always;
 
     bool nested = false;
@@ -827,7 +977,7 @@ void TerminalWorkspaceTest::newerSameProgramWorkspaceUpdateWinsReentry()
     QCOMPARE(panes.size(), 2);
     for (const TerminalPane *pane : panes) {
         QVERIFY(pane->keybindProgram().isSameGeneration(program));
-        QCOMPARE(pane->fontPointSize(), newer.fontSize);
+        QCOMPARE(pane->fontPointSize(), newer.typography.pointSize);
     }
 }
 
@@ -2461,7 +2611,7 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     LaunchOptions initial = baseOptions();
     initial.program = {QStringLiteral("/bin/true")};
     initial.hold = true;
-    initial.fontSize = 10.0;
+    initial.typography.pointSize = 10.0;
     initial.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+a=ignore"),
     });
@@ -2494,7 +2644,7 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     workspace.setSearchOverlayComponent(&overlay);
 
     LaunchOptions pendingOptions = initial;
-    pendingOptions.fontSize = 18.0;
+    pendingOptions.typography.pointSize = 18.0;
     pendingOptions.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+b=ignore"),
     });
@@ -2533,12 +2683,13 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     QCOMPARE(workspace.tabCount(), 2);
     QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
-        QCOMPARE(pane->fontPointSize(), pendingOptions.fontSize);
+        QCOMPARE(pane->fontPointSize(),
+                 pendingOptions.typography.pointSize);
         QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
         pane->setObjectName(QStringLiteral("existing-pane"));
     }
 
-    pendingOptions.fontSize = 22.0;
+    pendingOptions.typography.pointSize = 22.0;
     pendingOptions.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+c=ignore"),
     });
@@ -2550,7 +2701,8 @@ void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
     QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
     QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
     for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
-        QCOMPARE(pane->fontPointSize(), pendingOptions.fontSize);
+        QCOMPARE(pane->fontPointSize(),
+                 pendingOptions.typography.pointSize);
         QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
     }
 }
@@ -7066,7 +7218,7 @@ void TerminalWorkspaceTest::splitWorkingDirectoryPolicyReloadsForFutureNestedSpl
         sourceUrl.toString(QUrl::FullyEncoded),
     };
     options.hold = true;
-    options.fontSize = 12.0;
+    options.typography.pointSize = 12.0;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -7226,7 +7378,7 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
         sourceUrl.toString(QUrl::FullyEncoded),
     };
     options.hold = true;
-    options.fontSize = 12.0;
+    options.typography.pointSize = 12.0;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -7278,7 +7430,7 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     reloadedOptions.inheritWorkingDirectory = false;
     reloadedOptions.tabInheritWorkingDirectory = true;
     reloadedOptions.windowInheritFontSize = true;
-    reloadedOptions.fontSize = 10.0;
+    reloadedOptions.typography.pointSize = 10.0;
     workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourcePane->fontPointSize(), 13.0);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
@@ -7337,7 +7489,7 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     reloadedOptions.workingDirectory = disabledFallback;
     reloadedOptions.tabInheritWorkingDirectory = false;
     reloadedOptions.windowInheritFontSize = false;
-    reloadedOptions.fontSize = 9.0;
+    reloadedOptions.typography.pointSize = 9.0;
     workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(sourcePane->currentDirectory(), sourceDirectory);
     QCOMPARE(splitPane->currentDirectory(), childReportedDirectory);
@@ -7359,7 +7511,7 @@ void TerminalWorkspaceTest::newTabInheritanceUsesStableSourceAndReloadedPolicies
     reloadedOptions.workingDirectory = reloadedFallback;
     reloadedOptions.tabInheritWorkingDirectory = true;
     reloadedOptions.windowInheritFontSize = true;
-    reloadedOptions.fontSize = 8.0;
+    reloadedOptions.typography.pointSize = 8.0;
     workspace.applyLaunchOptions(reloadedOptions);
     QCOMPARE(disabledChild->fontPointSize(), 8.0);
     workspace.setCurrentIndex(0);

@@ -16,6 +16,7 @@
 #include <optional>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -54,6 +55,7 @@ private Q_SLOTS:
     void parsesEveryValueWithExactSemantics();
     void normalizesBoundaryValues();
     void parsesEveryEnumSpelling();
+    void parsesEveryTypographyAlternative();
     void parsesStructuredBindingSets();
     void rejectsMalformedEnvelope();
     void rejectsInvalidValues_data();
@@ -69,10 +71,95 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
 
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
-    QCOMPARE(values.fontFamilies,
+    const TerminalTypography &typography = values.typography;
+    QCOMPARE(typography.face(TerminalFontRole::Regular).families,
              QStringList({QStringLiteral("Mono One"),
                           QStringLiteral("Emoji")}));
-    QCOMPARE(values.fontSize, 13.5);
+    QCOMPARE(typography.face(TerminalFontRole::Bold).families,
+             QStringList({QStringLiteral("Mono Bold"),
+                          QStringLiteral("Bold Fallback")}));
+    QCOMPARE(typography.face(TerminalFontRole::Italic).families,
+             QStringList({QStringLiteral("Mono Italic")}));
+    QVERIFY(
+        typography.face(TerminalFontRole::BoldItalic).families.isEmpty());
+    QCOMPARE(typography.pointSize, 13.5);
+
+    QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
+        typography.face(TerminalFontRole::Regular).style));
+    QVERIFY(std::holds_alternative<TerminalFontStyles::Disabled>(
+        typography.face(TerminalFontRole::Bold).style));
+    const auto *italicStyle = std::get_if<TerminalFontStyles::Named>(
+        &typography.face(TerminalFontRole::Italic).style);
+    QVERIFY(italicStyle != nullptr);
+    QCOMPARE(italicStyle->name, QStringLiteral("Book Italic"));
+    const auto *boldItalicStyle = std::get_if<TerminalFontStyles::Named>(
+        &typography.face(TerminalFontRole::BoldItalic).style);
+    QVERIFY(boldItalicStyle != nullptr);
+    QCOMPARE(boldItalicStyle->name, QStringLiteral("Extra Bold Italic"));
+
+    const auto absoluteModifier =
+        [&typography](TerminalMetric metric) {
+            const auto &value = typography.metricModifiers[metric];
+            return value
+                ? std::get_if<TerminalMetricModifiers::Absolute>(&*value)
+                : nullptr;
+        };
+    const auto percentageModifier =
+        [&typography](TerminalMetric metric) {
+            const auto &value = typography.metricModifiers[metric];
+            return value
+                ? std::get_if<TerminalMetricModifiers::Percentage>(&*value)
+                : nullptr;
+        };
+    QVERIFY(absoluteModifier(TerminalMetric::CellWidth) != nullptr);
+    QCOMPARE(absoluteModifier(TerminalMetric::CellWidth)->pixels, qint32{2});
+    QVERIFY(absoluteModifier(TerminalMetric::CellHeight) != nullptr);
+    QCOMPARE(absoluteModifier(TerminalMetric::CellHeight)->pixels, qint32{-3});
+    QVERIFY(percentageModifier(TerminalMetric::FontBaseline) != nullptr);
+    QCOMPARE(percentageModifier(TerminalMetric::FontBaseline)->multiplier,
+             1.25);
+    QVERIFY(percentageModifier(TerminalMetric::UnderlinePosition) != nullptr);
+    QCOMPARE(
+        percentageModifier(TerminalMetric::UnderlinePosition)->multiplier,
+        0.8);
+    QVERIFY(!typography
+                 .metricModifiers[TerminalMetric::UnderlineThickness]
+                 .has_value());
+    QVERIFY(
+        absoluteModifier(TerminalMetric::StrikethroughPosition) != nullptr);
+    QCOMPARE(
+        absoluteModifier(TerminalMetric::StrikethroughPosition)->pixels,
+        qint32{4});
+    QVERIFY(
+        absoluteModifier(TerminalMetric::StrikethroughThickness) != nullptr);
+    QCOMPARE(
+        absoluteModifier(TerminalMetric::StrikethroughThickness)->pixels,
+        qint32{-2});
+    QVERIFY(percentageModifier(TerminalMetric::OverlinePosition) != nullptr);
+    QCOMPARE(percentageModifier(TerminalMetric::OverlinePosition)->multiplier,
+             1.5);
+    QVERIFY(!typography
+                 .metricModifiers[TerminalMetric::OverlineThickness]
+                 .has_value());
+    QVERIFY(percentageModifier(TerminalMetric::CursorThickness) != nullptr);
+    QCOMPARE(percentageModifier(TerminalMetric::CursorThickness)->multiplier,
+             0.5);
+    QVERIFY(absoluteModifier(TerminalMetric::CursorHeight) != nullptr);
+    QCOMPARE(absoluteModifier(TerminalMetric::CursorHeight)->pixels,
+             qint32{6});
+    const std::vector expectedModifierOrder{
+        TerminalMetric::CursorHeight,
+        TerminalMetric::CellWidth,
+        TerminalMetric::OverlinePosition,
+        TerminalMetric::StrikethroughPosition,
+        TerminalMetric::CellHeight,
+        TerminalMetric::CursorThickness,
+        TerminalMetric::FontBaseline,
+        TerminalMetric::StrikethroughThickness,
+        TerminalMetric::UnderlinePosition,
+    };
+    QVERIFY(typography.metricModifiers.applicationOrder
+            == expectedModifierOrder);
 
     const GhosttyAppearanceConfig &appearance = values.appearance;
     QCOMPARE(appearance.foreground, QColor(QStringLiteral("#112233")));
@@ -395,6 +482,90 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         });
 }
 
+void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
+{
+    const auto faces =
+        std::to_array<std::pair<QLatin1StringView, TerminalFontRole>>({
+            {QLatin1StringView("font-style"), TerminalFontRole::Regular},
+            {QLatin1StringView("font-style-bold"), TerminalFontRole::Bold},
+            {QLatin1StringView("font-style-italic"), TerminalFontRole::Italic},
+            {QLatin1StringView("font-style-bold-italic"),
+             TerminalFontRole::BoldItalic},
+        });
+
+    for (const auto &[field, role] : faces) {
+        auto parsed = parseGhosttyConfigExportJson(json(withValue(
+            object(), field.toString(), automaticFontStyle())));
+        QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+        QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
+            parsed->values.typography.face(role).style));
+
+        parsed = parseGhosttyConfigExportJson(json(withValue(
+            object(), field.toString(), disabledFontStyle())));
+        QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+        QVERIFY(std::holds_alternative<TerminalFontStyles::Disabled>(
+            parsed->values.typography.face(role).style));
+
+        parsed = parseGhosttyConfigExportJson(json(withValue(
+            object(),
+            field.toString(),
+            namedFontStyle(QStringLiteral("Named Style")))));
+        QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+        const auto *named = std::get_if<TerminalFontStyles::Named>(
+            &parsed->values.typography.face(role).style);
+        QVERIFY(named != nullptr);
+        QCOMPARE(named->name, QStringLiteral("Named Style"));
+    }
+
+    const auto parseCellWidth = [](const QJsonValue &value) {
+        QJsonObject root = withValue(
+            object(), QStringLiteral("adjust-cell-width"), value);
+        if (value.isNull()) {
+            QJsonArray order = metricModifierOrder();
+            for (qsizetype index = 0; index < order.size(); ++index) {
+                if (order.at(index).toString()
+                    == QStringLiteral("adjust-cell-width")) {
+                    order.removeAt(index);
+                    break;
+                }
+            }
+            root = withValue(std::move(root),
+                             QStringLiteral("metric-modifier-order"),
+                             order);
+        }
+        return parseGhosttyConfigExportJson(json(root));
+    };
+    auto parsed = parseCellWidth(QJsonValue::Null);
+    QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+    QVERIFY(!parsed->values.typography
+                 .metricModifiers[TerminalMetric::CellWidth]
+                 .has_value());
+
+    for (const int pixels : {-17, 23}) {
+        parsed = parseCellWidth(absoluteMetricModifier(pixels));
+        QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+        const auto &modifier = parsed->values.typography
+                                   .metricModifiers[TerminalMetric::CellWidth];
+        QVERIFY(modifier.has_value());
+        const auto *absolute =
+            std::get_if<TerminalMetricModifiers::Absolute>(&*modifier);
+        QVERIFY(absolute != nullptr);
+        QCOMPARE(absolute->pixels, qint32{pixels});
+    }
+
+    for (const double multiplier : {0.75, 1.25}) {
+        parsed = parseCellWidth(percentageMetricModifier(multiplier));
+        QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+        const auto &modifier = parsed->values.typography
+                                   .metricModifiers[TerminalMetric::CellWidth];
+        QVERIFY(modifier.has_value());
+        const auto *percentage =
+            std::get_if<TerminalMetricModifiers::Percentage>(&*modifier);
+        QVERIFY(percentage != nullptr);
+        QCOMPARE(percentage->multiplier, multiplier);
+    }
+}
+
 void GhosttyConfigExportTest::parsesStructuredBindingSets()
 {
     QJsonObject exportObject = object();
@@ -486,6 +657,16 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-field")
         << withoutValue(object(), QStringLiteral("font-size"))
         << QStringLiteral("values is missing field 'font-size'");
+    QTest::newRow("missing-font-style")
+        << withoutValue(object(), QStringLiteral("font-style-bold"))
+        << QStringLiteral("values is missing field 'font-style-bold'");
+    QTest::newRow("missing-metric-modifier")
+        << withoutValue(object(), QStringLiteral("adjust-cursor-height"))
+        << QStringLiteral("values is missing field 'adjust-cursor-height'");
+    QTest::newRow("missing-metric-modifier-order")
+        << withoutValue(object(), QStringLiteral("metric-modifier-order"))
+        << QStringLiteral(
+               "values is missing field 'metric-modifier-order'");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})
@@ -507,6 +688,214 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("font-size-type")
         << withValue(object(), QStringLiteral("font-size"), true)
         << QStringLiteral("values.font-size must be a finite number");
+    QTest::newRow("font-size-nonfinite")
+        << withValue(object(),
+                     QStringLiteral("font-size"),
+                     std::numeric_limits<double>::infinity())
+        << QStringLiteral("values.font-size must be a finite number");
+    QTest::newRow("font-family-type")
+        << withValue(object(), QStringLiteral("font-family-bold"), true)
+        << QStringLiteral("values.font-family-bold must be an array");
+    QTest::newRow("font-family-empty-entry")
+        << withValue(object(),
+                     QStringLiteral("font-family-bold"),
+                     QJsonArray{QString{}})
+        << QStringLiteral(
+               "values.font-family-bold[0] must be a non-empty string");
+    QTest::newRow("font-style-type")
+        << withValue(object(), QStringLiteral("font-style"), true)
+        << QStringLiteral("values.font-style must be an object");
+    QTest::newRow("font-style-missing-kind")
+        << withValue(object(), QStringLiteral("font-style"), QJsonObject{})
+        << QStringLiteral("values.font-style is missing field 'kind'");
+    QTest::newRow("font-style-kind-type")
+        << withValue(
+               object(),
+               QStringLiteral("font-style"),
+               QJsonObject{{QStringLiteral("kind"), true}})
+        << QStringLiteral("values.font-style.kind must be a string");
+    QTest::newRow("font-style-unknown-kind")
+        << withValue(
+               object(),
+               QStringLiteral("font-style"),
+               QJsonObject{{QStringLiteral("kind"),
+                            QStringLiteral("synthesized")}})
+        << QStringLiteral(
+               "values.font-style.kind has unsupported value 'synthesized'");
+    QTest::newRow("font-style-unexpected-name")
+        << withValue(
+               object(),
+               QStringLiteral("font-style"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("automatic")},
+                   {QStringLiteral("name"), QStringLiteral("Regular")},
+               })
+        << QStringLiteral("values.font-style has unexpected field 'name'");
+    QTest::newRow("font-style-named-missing-name")
+        << withValue(
+               object(),
+               QStringLiteral("font-style"),
+               QJsonObject{{QStringLiteral("kind"),
+                            QStringLiteral("named")}})
+        << QStringLiteral("values.font-style is missing field 'name'");
+    QTest::newRow("font-style-name-type")
+        << withValue(
+               object(),
+               QStringLiteral("font-style"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("named")},
+                   {QStringLiteral("name"), 7},
+               })
+        << QStringLiteral("values.font-style.name must be a string");
+    QTest::newRow("font-style-empty-name")
+        << withValue(object(),
+                     QStringLiteral("font-style"),
+                     namedFontStyle(QString{}))
+        << QStringLiteral(
+               "values.font-style.name must be a non-empty string");
+    QTest::newRow("metric-modifier-type")
+        << withValue(object(), QStringLiteral("adjust-cell-width"), true)
+        << QStringLiteral("values.adjust-cell-width must be an object");
+    QTest::newRow("metric-modifier-missing-value")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{{QStringLiteral("kind"),
+                            QStringLiteral("absolute")}})
+        << QStringLiteral(
+               "values.adjust-cell-width is missing field 'value'");
+    QTest::newRow("metric-modifier-extra-field")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("absolute")},
+                   {QStringLiteral("value"), 1},
+                   {QStringLiteral("pixels"), 1},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width has unexpected field 'pixels'");
+    QTest::newRow("metric-modifier-kind-type")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), true},
+                   {QStringLiteral("value"), 1},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.kind must be a string");
+    QTest::newRow("metric-modifier-unknown-kind")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("relative")},
+                   {QStringLiteral("value"), 1},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.kind has unsupported value");
+    QTest::newRow("absolute-modifier-type")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("absolute")},
+                   {QStringLiteral("value"), true},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.value must be a signed integer");
+    QTest::newRow("absolute-modifier-fraction")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("absolute")},
+                   {QStringLiteral("value"), 1.5},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.value must be a signed integer");
+    QTest::newRow("absolute-modifier-range")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("absolute")},
+                   {QStringLiteral("value"), 2147483648.0},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.value must be a signed integer in range");
+    QTest::newRow("percentage-modifier-type")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("percentage")},
+                   {QStringLiteral("value"), true},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.value must be a finite number");
+    QTest::newRow("percentage-modifier-negative-multiplier")
+        << withValue(object(),
+                     QStringLiteral("adjust-cell-width"),
+                     percentageMetricModifier(-0.01))
+        << QStringLiteral(
+               "values.adjust-cell-width.value is outside its supported range");
+    QTest::newRow("percentage-modifier-nonfinite")
+        << withValue(
+               object(),
+               QStringLiteral("adjust-cell-width"),
+               QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("percentage")},
+                   {QStringLiteral("value"),
+                    std::numeric_limits<double>::infinity()},
+               })
+        << QStringLiteral(
+               "values.adjust-cell-width.value must be a finite number");
+    QTest::newRow("metric-modifier-order-type")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     true)
+        << QStringLiteral("values.metric-modifier-order must be an array");
+    QTest::newRow("metric-modifier-order-entry-type")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     QJsonArray{true})
+        << QStringLiteral(
+               "values.metric-modifier-order[0] must be a string");
+    QTest::newRow("metric-modifier-order-unsupported")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     QJsonArray{QStringLiteral("adjust-box-thickness")})
+        << QStringLiteral(
+               "values.metric-modifier-order[0] has unsupported value");
+
+    QJsonArray duplicateModifierOrder = metricModifierOrder();
+    duplicateModifierOrder.append(QStringLiteral("adjust-cell-width"));
+    QTest::newRow("metric-modifier-order-duplicate")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     duplicateModifierOrder)
+        << QStringLiteral(
+               "values.metric-modifier-order contains duplicate modifier");
+
+    QJsonArray unsetModifierOrder = metricModifierOrder();
+    unsetModifierOrder.append(QStringLiteral("adjust-underline-thickness"));
+    QTest::newRow("metric-modifier-order-unset")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     unsetModifierOrder)
+        << QStringLiteral(
+               "refers to unset modifier 'adjust-underline-thickness'");
+
+    QJsonArray incompleteModifierOrder = metricModifierOrder();
+    incompleteModifierOrder.removeFirst();
+    QTest::newRow("metric-modifier-order-incomplete")
+        << withValue(object(),
+                     QStringLiteral("metric-modifier-order"),
+                     incompleteModifierOrder)
+        << QStringLiteral(
+               "does not include active modifier 'adjust-cursor-height'");
     QTest::newRow("split-opacity-range")
         << withValue(object(), QStringLiteral("unfocused-split-opacity"), 0.1)
         << QStringLiteral("values.unfocused-split-opacity is outside");

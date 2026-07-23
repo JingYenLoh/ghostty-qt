@@ -233,6 +233,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/Metrics.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminfo/ghostty.zig"
         COMMENT "Building pinned Ghostty configuration parser"
@@ -571,6 +572,7 @@ qt_add_executable(ghostty-qt
     src/terminal_pane.cpp
     src/terminal_pane.h
     src/terminal_session_options.h
+    src/terminal_typography.h
     src/terminal_types.h
     src/terminal_workspace.cpp
     src/terminal_workspace.h

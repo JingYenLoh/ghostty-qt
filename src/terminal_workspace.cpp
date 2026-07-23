@@ -525,10 +525,10 @@ bool TerminalWorkspace::initialize(
     if (guard == nullptr) return true;
 
     const LaunchOptions initialOptions = effectiveOptions_;
-    const TerminalCellMetrics metrics = terminalCellMetrics(
-        initialOptions.fontFamily, initialOptions.fontSize);
     const qreal devicePixelRatio =
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        initialOptions.typography, devicePixelRatio);
     const PaneHandle initialPane = createNewTab(
         {}, terminalSessionGeometryForViewport(
                 width(), height(), metrics.cellWidth, metrics.cellHeight,

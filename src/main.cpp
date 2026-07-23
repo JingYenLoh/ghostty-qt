@@ -697,7 +697,7 @@ bool installInitialWindowStateTestHook(QQuickWindow *window,
             const QWindow::Visibility expected = expectedStates.at(
                 static_cast<std::size_t>(*stage));
             const TerminalCellMetrics metrics = terminalCellMetrics(
-                options.fontFamily, options.fontSize);
+                options.typography, window->devicePixelRatio());
             const QSize configuredSize(
                 qCeil(metrics.cellWidth
                       * static_cast<qreal>(options.windowWidth)
@@ -786,7 +786,7 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                 return panes.size() == 1 ? panes.constFirst() : nullptr;
             }();
             const TerminalCellMetrics metrics = terminalCellMetrics(
-                options.fontFamily, options.fontSize);
+                options.typography, window->devicePixelRatio());
             const qreal chromeWidth =
                 window->property("terminalChromeWidth").toDouble();
             const qreal chromeHeight =
@@ -1231,6 +1231,8 @@ int main(int argc, char *argv[])
                                              GHOSTTY_QT_CONFIG_HELPER_NAME));
     GhosttyConfigService configService(makeGhosttyConfigProcessLoader({
         .helperPath = configHelperPath,
+        .configurationArguments =
+            ghosttyConfigCliFontArguments(options),
     }));
     if (!configService.hasSnapshot()) {
         qWarning().noquote()

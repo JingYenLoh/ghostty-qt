@@ -72,6 +72,55 @@ inline QJsonObject keybindings()
     };
 }
 
+inline QJsonObject automaticFontStyle()
+{
+    return {{QStringLiteral("kind"), QStringLiteral("automatic")}};
+}
+
+inline QJsonObject disabledFontStyle()
+{
+    return {{QStringLiteral("kind"), QStringLiteral("disabled")}};
+}
+
+inline QJsonObject namedFontStyle(const QString &name)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("named")},
+        {QStringLiteral("name"), name},
+    };
+}
+
+inline QJsonObject absoluteMetricModifier(int pixels)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("absolute")},
+        {QStringLiteral("value"), pixels},
+    };
+}
+
+inline QJsonObject percentageMetricModifier(double multiplier)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("percentage")},
+        {QStringLiteral("value"), multiplier},
+    };
+}
+
+inline QJsonArray metricModifierOrder()
+{
+    return {
+        QStringLiteral("adjust-cursor-height"),
+        QStringLiteral("adjust-cell-width"),
+        QStringLiteral("adjust-overline-position"),
+        QStringLiteral("adjust-strikethrough-position"),
+        QStringLiteral("adjust-cell-height"),
+        QStringLiteral("adjust-cursor-thickness"),
+        QStringLiteral("adjust-font-baseline"),
+        QStringLiteral("adjust-strikethrough-thickness"),
+        QStringLiteral("adjust-underline-position"),
+    };
+}
+
 inline QJsonObject values()
 {
     QJsonArray palette;
@@ -84,7 +133,37 @@ inline QJsonObject values()
         {QStringLiteral("working-directory"), QStringLiteral("/work/ghostty")},
         {QStringLiteral("font-family"),
          QJsonArray{QStringLiteral("Mono One"), QStringLiteral("Emoji")}},
+        {QStringLiteral("font-family-bold"),
+         QJsonArray{QStringLiteral("Mono Bold"),
+                    QStringLiteral("Bold Fallback")}},
+        {QStringLiteral("font-family-italic"),
+         QJsonArray{QStringLiteral("Mono Italic")}},
+        {QStringLiteral("font-family-bold-italic"), QJsonArray{}},
         {QStringLiteral("font-size"), 13.5},
+        {QStringLiteral("font-style"), automaticFontStyle()},
+        {QStringLiteral("font-style-bold"), disabledFontStyle()},
+        {QStringLiteral("font-style-italic"),
+         namedFontStyle(QStringLiteral("Book Italic"))},
+        {QStringLiteral("font-style-bold-italic"),
+         namedFontStyle(QStringLiteral("Extra Bold Italic"))},
+        {QStringLiteral("adjust-cell-width"), absoluteMetricModifier(2)},
+        {QStringLiteral("adjust-cell-height"), absoluteMetricModifier(-3)},
+        {QStringLiteral("adjust-font-baseline"),
+         percentageMetricModifier(1.25)},
+        {QStringLiteral("adjust-underline-position"),
+         percentageMetricModifier(0.8)},
+        {QStringLiteral("adjust-underline-thickness"), QJsonValue::Null},
+        {QStringLiteral("adjust-strikethrough-position"),
+         absoluteMetricModifier(4)},
+        {QStringLiteral("adjust-strikethrough-thickness"),
+         absoluteMetricModifier(-2)},
+        {QStringLiteral("adjust-overline-position"),
+         percentageMetricModifier(1.5)},
+        {QStringLiteral("adjust-overline-thickness"), QJsonValue::Null},
+        {QStringLiteral("adjust-cursor-thickness"),
+         percentageMetricModifier(0.5)},
+        {QStringLiteral("adjust-cursor-height"), absoluteMetricModifier(6)},
+        {QStringLiteral("metric-modifier-order"), metricModifierOrder()},
         {QStringLiteral("foreground"), QStringLiteral("#112233")},
         {QStringLiteral("background"), QStringLiteral("#445566")},
         {QStringLiteral("unfocused-split-opacity"), 0.7},

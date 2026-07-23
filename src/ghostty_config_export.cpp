@@ -15,6 +15,7 @@
 #include <ranges>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -33,7 +34,26 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("working-directory"),
     QLatin1StringView("font-family"),
+    QLatin1StringView("font-family-bold"),
+    QLatin1StringView("font-family-italic"),
+    QLatin1StringView("font-family-bold-italic"),
     QLatin1StringView("font-size"),
+    QLatin1StringView("font-style"),
+    QLatin1StringView("font-style-bold"),
+    QLatin1StringView("font-style-italic"),
+    QLatin1StringView("font-style-bold-italic"),
+    QLatin1StringView("adjust-cell-width"),
+    QLatin1StringView("adjust-cell-height"),
+    QLatin1StringView("adjust-font-baseline"),
+    QLatin1StringView("adjust-underline-position"),
+    QLatin1StringView("adjust-underline-thickness"),
+    QLatin1StringView("adjust-strikethrough-position"),
+    QLatin1StringView("adjust-strikethrough-thickness"),
+    QLatin1StringView("adjust-overline-position"),
+    QLatin1StringView("adjust-overline-thickness"),
+    QLatin1StringView("adjust-cursor-thickness"),
+    QLatin1StringView("adjust-cursor-height"),
+    QLatin1StringView("metric-modifier-order"),
     QLatin1StringView("foreground"),
     QLatin1StringView("background"),
     QLatin1StringView("unfocused-split-opacity"),
@@ -111,6 +131,55 @@ constexpr auto UnicodeTriggerFields = std::to_array<QLatin1StringView>({
 constexpr auto CatchAllTriggerFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("kind"), QLatin1StringView("mods"),
 });
+constexpr auto FontStyleFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"),
+});
+constexpr auto NamedFontStyleFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"), QLatin1StringView("name"),
+});
+constexpr auto MetricModifierFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"), QLatin1StringView("value"),
+});
+
+constexpr auto FontFamilyFields =
+    std::to_array<std::pair<QLatin1StringView, TerminalFontRole>>({
+        {QLatin1StringView("font-family"), TerminalFontRole::Regular},
+        {QLatin1StringView("font-family-bold"), TerminalFontRole::Bold},
+        {QLatin1StringView("font-family-italic"), TerminalFontRole::Italic},
+        {QLatin1StringView("font-family-bold-italic"),
+         TerminalFontRole::BoldItalic},
+    });
+constexpr auto FontStyleValueFields =
+    std::to_array<std::pair<QLatin1StringView, TerminalFontRole>>({
+        {QLatin1StringView("font-style"), TerminalFontRole::Regular},
+        {QLatin1StringView("font-style-bold"), TerminalFontRole::Bold},
+        {QLatin1StringView("font-style-italic"), TerminalFontRole::Italic},
+        {QLatin1StringView("font-style-bold-italic"),
+         TerminalFontRole::BoldItalic},
+    });
+constexpr auto MetricModifierValueFields =
+    std::to_array<std::pair<QLatin1StringView, TerminalMetric>>({
+        {QLatin1StringView("adjust-cell-width"), TerminalMetric::CellWidth},
+        {QLatin1StringView("adjust-cell-height"), TerminalMetric::CellHeight},
+        {QLatin1StringView("adjust-font-baseline"),
+         TerminalMetric::FontBaseline},
+        {QLatin1StringView("adjust-underline-position"),
+         TerminalMetric::UnderlinePosition},
+        {QLatin1StringView("adjust-underline-thickness"),
+         TerminalMetric::UnderlineThickness},
+        {QLatin1StringView("adjust-strikethrough-position"),
+         TerminalMetric::StrikethroughPosition},
+        {QLatin1StringView("adjust-strikethrough-thickness"),
+         TerminalMetric::StrikethroughThickness},
+        {QLatin1StringView("adjust-overline-position"),
+         TerminalMetric::OverlinePosition},
+        {QLatin1StringView("adjust-overline-thickness"),
+         TerminalMetric::OverlineThickness},
+        {QLatin1StringView("adjust-cursor-thickness"),
+         TerminalMetric::CursorThickness},
+        {QLatin1StringView("adjust-cursor-height"),
+         TerminalMetric::CursorHeight},
+    });
 
 QString childContext(const QString &parent, QLatin1StringView child)
 {
@@ -229,6 +298,25 @@ ParseResult<Integer> readUnsignedInteger(const QJsonValue &value,
     return static_cast<Integer>(number);
 }
 
+template<std::signed_integral Integer>
+ParseResult<Integer> readSignedInteger(const QJsonValue &value,
+                                       const QString &context)
+{
+    if (!value.isDouble()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be a signed integer").arg(context));
+    }
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || std::trunc(number) != number
+        || number < static_cast<double>(std::numeric_limits<Integer>::min())
+        || number > static_cast<double>(std::numeric_limits<Integer>::max())) {
+        return std::unexpected(
+            QStringLiteral("%1 must be a signed integer in range")
+                .arg(context));
+    }
+    return static_cast<Integer>(number);
+}
+
 ParseResult<quint64> readDecimalUint64(const QJsonValue &value,
                                        const QString &context)
 {
@@ -296,6 +384,22 @@ ParseResult<QStringList> readStringList(const QJsonValue &value,
             QStringLiteral("%1[%2]").arg(context).arg(index));
         if (!entry) return std::unexpected(std::move(entry.error()));
         result.append(std::move(*entry));
+    }
+    return result;
+}
+
+ParseResult<QStringList> readNonEmptyStringList(const QJsonValue &value,
+                                                const QString &context)
+{
+    auto result = readStringList(value, context);
+    if (!result) return std::unexpected(std::move(result.error()));
+    for (qsizetype index = 0; index < result->size(); ++index) {
+        if (result->at(index).isEmpty()) {
+            return std::unexpected(
+                QStringLiteral("%1[%2] must be a non-empty string")
+                    .arg(context)
+                    .arg(index));
+        }
     }
     return result;
 }
@@ -424,6 +528,141 @@ ParseResult<std::array<QColor, 256>> readPalette(
     return result;
 }
 
+ParseResult<TerminalFontStyle> readFontStyle(const QJsonValue &value,
+                                             const QString &context)
+{
+    if (!value.isObject()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be an object").arg(context));
+    }
+
+    const QJsonObject unvalidated = value.toObject();
+    constexpr QLatin1StringView Kind("kind");
+    if (!unvalidated.contains(Kind)) {
+        return std::unexpected(
+            QStringLiteral("%1 is missing field 'kind'").arg(context));
+    }
+    auto kind = readString(unvalidated.value(Kind),
+                           childContext(context, Kind));
+    if (!kind) return std::unexpected(std::move(kind.error()));
+
+    Fields fields;
+    if (*kind == QLatin1StringView("automatic")
+        || *kind == QLatin1StringView("disabled")) {
+        fields = FontStyleFields;
+    } else if (*kind == QLatin1StringView("named")) {
+        fields = NamedFontStyleFields;
+    } else {
+        return std::unexpected(
+            QStringLiteral("%1.kind has unsupported value '%2'")
+                .arg(context, *kind));
+    }
+
+    auto object = readExactObject(value, context, fields);
+    if (!object) return std::unexpected(std::move(object.error()));
+    if (*kind == QLatin1StringView("automatic")) {
+        return TerminalFontStyles::Automatic{};
+    }
+    if (*kind == QLatin1StringView("disabled")) {
+        return TerminalFontStyles::Disabled{};
+    }
+
+    constexpr QLatin1StringView Name("name");
+    auto name = readNonEmptyString(object->value(Name),
+                                   childContext(context, Name));
+    if (!name) return std::unexpected(std::move(name.error()));
+    return TerminalFontStyles::Named{.name = std::move(*name)};
+}
+
+ParseResult<TerminalMetricModifierSet::Value> readMetricModifier(
+    const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return TerminalMetricModifierSet::Value{};
+
+    auto object = readExactObject(value, context, MetricModifierFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    constexpr QLatin1StringView Kind("kind");
+    constexpr QLatin1StringView Value("value");
+    auto kind = readString(object->value(Kind), childContext(context, Kind));
+    if (!kind) return std::unexpected(std::move(kind.error()));
+
+    if (*kind == QLatin1StringView("absolute")) {
+        auto pixels = readSignedInteger<qint32>(
+            object->value(Value), childContext(context, Value));
+        if (!pixels) return std::unexpected(std::move(pixels.error()));
+        return TerminalMetricModifier{
+            TerminalMetricModifiers::Absolute{.pixels = *pixels}};
+    }
+    if (*kind == QLatin1StringView("percentage")) {
+        auto multiplier = readFiniteDouble(
+            object->value(Value), childContext(context, Value), 0.0);
+        if (!multiplier) {
+            return std::unexpected(std::move(multiplier.error()));
+        }
+        return TerminalMetricModifier{
+            TerminalMetricModifiers::Percentage{
+                .multiplier = *multiplier}};
+    }
+    return std::unexpected(
+        QStringLiteral("%1.kind has unsupported value '%2'")
+            .arg(context, *kind));
+}
+
+ParseResult<std::vector<TerminalMetric>> readMetricModifierOrder(
+    const QJsonValue &value,
+    const QString &context,
+    const TerminalMetricModifierSet &modifiers)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    std::vector<TerminalMetric> result;
+    result.reserve(static_cast<std::size_t>(array->size()));
+    std::array<bool, terminalEnumIndex(TerminalMetric::Count)> seen{};
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto name = readString(array->at(index), entryContext);
+        if (!name) return std::unexpected(std::move(name.error()));
+
+        const auto descriptor = std::ranges::find_if(
+            MetricModifierValueFields,
+            [&name](const auto &candidate) {
+                return *name == candidate.first;
+            });
+        if (descriptor == MetricModifierValueFields.cend()) {
+            return std::unexpected(
+                QStringLiteral("%1 has unsupported value '%2'")
+                    .arg(entryContext, *name));
+        }
+
+        const TerminalMetric metric = descriptor->second;
+        bool &alreadySeen = seen[terminalEnumIndex(metric)];
+        if (alreadySeen) {
+            return std::unexpected(
+                QStringLiteral("%1 contains duplicate modifier '%2'")
+                    .arg(context, *name));
+        }
+        if (!modifiers[metric]) {
+            return std::unexpected(
+                QStringLiteral("%1 refers to unset modifier '%2'")
+                    .arg(entryContext, *name));
+        }
+        alreadySeen = true;
+        result.push_back(metric);
+    }
+
+    for (const auto &[name, metric] : MetricModifierValueFields) {
+        if (modifiers[metric] && !seen[terminalEnumIndex(metric)]) {
+            return std::unexpected(
+                QStringLiteral("%1 does not include active modifier '%2'")
+                    .arg(context, name));
+        }
+    }
+    return result;
+}
+
 ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 {
     constexpr QLatin1StringView Context("values");
@@ -465,9 +704,38 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             result.workingDirectoryPath = std::move(*parsed);
         }
     }
-    if (auto parsed = assign(QLatin1StringView("font-family"),
-                             result.fontFamilies, readStringList);
-        !parsed) return std::unexpected(std::move(parsed.error()));
+    for (const auto &[name, role] : FontFamilyFields) {
+        if (auto parsed = assign(name,
+                                 result.typography.face(role).families,
+                                 readNonEmptyStringList);
+            !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
+    }
+    for (const auto &[name, role] : FontStyleValueFields) {
+        if (auto parsed = assign(name,
+                                 result.typography.face(role).style,
+                                 readFontStyle);
+            !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
+    }
+    for (const auto &[name, metric] : MetricModifierValueFields) {
+        if (auto parsed = assign(name,
+                                 result.typography.metricModifiers[metric],
+                                 readMetricModifier);
+            !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
+    }
+    {
+        constexpr QLatin1StringView name("metric-modifier-order");
+        auto parsed = readMetricModifierOrder(
+            fieldValue(name), context(name), result.typography.metricModifiers);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.typography.metricModifiers.applicationOrder =
+            std::move(*parsed);
+    }
     if (auto parsed = assign(QLatin1StringView("config-file"),
                              result.configFiles, readConfigFiles);
         !parsed) return std::unexpected(std::move(parsed.error()));
@@ -480,7 +748,7 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return readUnsignedInteger<quint32>(entry, entryContext);
     };
     if (auto parsed = assign(QLatin1StringView("font-size"),
-                             result.fontSize, readDouble);
+                             result.typography.pointSize, readDouble);
         !parsed) return std::unexpected(std::move(parsed.error()));
 
     for (const auto [name, destination] :

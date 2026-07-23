@@ -311,7 +311,8 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         QDeadlineTimer overallDeadline(
             std::max(1, options.overallTimeoutMilliseconds));
         int operationTimeout = std::max(1, options.timeoutMilliseconds);
-        const auto run = [&](const QStringList &arguments) {
+        const auto run = [&](QStringList arguments,
+                             bool includeConfigurationArguments = false) {
             const qint64 remaining = overallDeadline.remainingTime();
             if (remaining <= 0) {
                 operationTimeout = 0;
@@ -324,6 +325,9 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
             }
             operationTimeout = static_cast<int>(std::min<qint64>(
                 remaining, std::max(1, options.timeoutMilliseconds)));
+            if (includeConfigurationArguments) {
+                arguments.append(options.configurationArguments);
+            }
             return runHelper(options, arguments, *xdgConfigHome,
                              operationTimeout);
         };
@@ -346,7 +350,7 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
 
         auto config = requireSuccess(
             QStringLiteral("config query"),
-            run({QStringLiteral("+show-config-json")}));
+            run({QStringLiteral("+show-config-json")}, true));
         if (!config) return std::unexpected(std::move(config.error()));
 
         auto postValidation = requireSuccess(
@@ -358,7 +362,7 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
 
         auto verifiedConfig = requireSuccess(
             QStringLiteral("config consistency query"),
-            run({QStringLiteral("+show-config-json")}));
+            run({QStringLiteral("+show-config-json")}, true));
         if (!verifiedConfig) {
             return std::unexpected(std::move(verifiedConfig.error()));
         }

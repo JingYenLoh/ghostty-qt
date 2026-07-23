@@ -164,6 +164,71 @@ LaunchOptions baseOptions(const QString &directory)
     return options;
 }
 
+TerminalTypography typographyWithPointSize(
+    TerminalTypography typography, double pointSize)
+{
+    typography.pointSize = pointSize;
+    return typography;
+}
+
+TerminalTypography sampleTypography(double pointSize)
+{
+    TerminalTypography typography;
+    typography.pointSize = pointSize;
+    typography.face(TerminalFontRole::Regular) = {
+        .families = {
+            QStringLiteral("Monospace"),
+            QStringLiteral("DejaVu Sans Mono"),
+        },
+        .style = TerminalFontStyles::Named{QStringLiteral("Regular")},
+    };
+    typography.face(TerminalFontRole::Bold) = {
+        .families = {
+            QStringLiteral("DejaVu Sans Mono"),
+            QStringLiteral("Monospace"),
+        },
+        .style = TerminalFontStyles::Named{QStringLiteral("Bold")},
+    };
+    typography.face(TerminalFontRole::Italic) = {
+        .families = {
+            QStringLiteral("Liberation Mono"),
+            QStringLiteral("Monospace"),
+        },
+        .style = TerminalFontStyles::Disabled{},
+    };
+    typography.face(TerminalFontRole::BoldItalic) = {
+        .families = {
+            QStringLiteral("Noto Sans Mono"),
+            QStringLiteral("Monospace"),
+        },
+        .style = TerminalFontStyles::Automatic{},
+    };
+
+    typography.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Percentage{1.05};
+    typography.metricModifiers[TerminalMetric::CellHeight] =
+        TerminalMetricModifiers::Percentage{1.10};
+    typography.metricModifiers[TerminalMetric::FontBaseline] =
+        TerminalMetricModifiers::Absolute{-1};
+    typography.metricModifiers[TerminalMetric::UnderlinePosition] =
+        TerminalMetricModifiers::Absolute{1};
+    typography.metricModifiers[TerminalMetric::UnderlineThickness] =
+        TerminalMetricModifiers::Absolute{1};
+    typography.metricModifiers[TerminalMetric::StrikethroughPosition] =
+        TerminalMetricModifiers::Percentage{0.95};
+    typography.metricModifiers[TerminalMetric::StrikethroughThickness] =
+        TerminalMetricModifiers::Absolute{1};
+    typography.metricModifiers[TerminalMetric::OverlinePosition] =
+        TerminalMetricModifiers::Absolute{-1};
+    typography.metricModifiers[TerminalMetric::OverlineThickness] =
+        TerminalMetricModifiers::Absolute{1};
+    typography.metricModifiers[TerminalMetric::CursorThickness] =
+        TerminalMetricModifiers::Percentage{1.25};
+    typography.metricModifiers[TerminalMetric::CursorHeight] =
+        TerminalMetricModifiers::Percentage{0.90};
+    return typography;
+}
+
 TerminalPane *onlyPane(TerminalWorkspace *workspace)
 {
     if (workspace == nullptr) return nullptr;
@@ -412,7 +477,7 @@ void ApplicationControllerTest::defersNonWindowedSessionUntilExposedGeometry()
     QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
     QVERIFY(controller->findChild<QThread *>() != nullptr);
     const TerminalCellMetrics metrics = terminalCellMetrics(
-        options.fontFamily, options.fontSize);
+        options.typography, created->window->devicePixelRatio());
     const std::optional<TerminalSessionGeometry> expected =
         terminalSessionGeometryForViewport(
             created->workspace->width(), created->workspace->height(),
@@ -566,7 +631,7 @@ void ApplicationControllerTest::configuresInitialWindowGeometryBeforePresentatio
     LaunchOptions options = baseOptions(QDir::currentPath());
     options.windowWidth = columns;
     options.windowHeight = rows;
-    options.fontSize = fontSize;
+    options.typography = sampleTypography(fontSize);
     ApplicationController controller(options, harness.factory(), false);
 
     const auto created = controller.createInitialWindow();
@@ -574,7 +639,7 @@ void ApplicationControllerTest::configuresInitialWindowGeometryBeforePresentatio
     QCOMPARE(harness.presentations.size(), 1);
 
     const TerminalCellMetrics metrics = terminalCellMetrics(
-        options.fontFamily, options.fontSize);
+        options.typography, created->window->devicePixelRatio());
     QSize expectedMinimum = gridWindowSize(
         metrics, 10, 4, harness.chromeWidth, harness.chromeHeight);
     const QSize available = created->window->screen() != nullptr
@@ -635,7 +700,8 @@ void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
     const auto initial = controller.createInitialWindow();
     QVERIFY(initial.has_value());
     const QSize initialSize = gridWindowSize(
-        terminalCellMetrics(options.fontFamily, options.fontSize),
+        terminalCellMetrics(
+            options.typography, initial->window->devicePixelRatio()),
         options.windowWidth, options.windowHeight, 0.0, 0.0);
     QCOMPARE(initial->window->size(), initialSize);
     TerminalPane *const initialPane = onlyPane(initial->workspace);
@@ -651,7 +717,9 @@ void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 2, 1000);
     const QSize reloadedSize = gridWindowSize(
-        terminalCellMetrics(reloaded.fontFamily, reloaded.fontSize),
+        terminalCellMetrics(
+            reloaded.typography,
+            controller.windows().constLast().window->devicePixelRatio()),
         reloaded.windowWidth, reloaded.windowHeight, 0.0, 0.0);
     QCOMPARE(controller.windows().constLast().window->size(), reloadedSize);
 
@@ -662,10 +730,13 @@ void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 3, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 3, 1000);
     const QSize inheritedFontSize = gridWindowSize(
-        terminalCellMetrics(reloaded.fontFamily, 18.0),
+        terminalCellMetrics(
+            typographyWithPointSize(reloaded.typography, 18.0),
+            controller.windows().constLast().window->devicePixelRatio()),
         reloaded.windowWidth, reloaded.windowHeight, 0.0, 0.0);
     const ApplicationWindow inherited = controller.windows().constLast();
-    QCOMPARE(inherited.workspace->effectiveLaunchOptions().fontSize, 18.0);
+    QVERIFY(inherited.workspace->effectiveLaunchOptions().typography
+            == typographyWithPointSize(reloaded.typography, 18.0));
     QCOMPARE(inherited.window->size(), inheritedFontSize);
 
     const QVector<ApplicationWindow> live = controller.windows();
@@ -691,7 +762,10 @@ void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
     QCOMPARE(
         controller.windows().constFirst().window->size(),
         gridWindowSize(
-            terminalCellMetrics(activated.fontFamily, activated.fontSize),
+            terminalCellMetrics(
+                activated.typography,
+                controller.windows().constFirst().window
+                    ->devicePixelRatio()),
             activated.windowWidth, activated.windowHeight, 0.0, 0.0));
 }
 
@@ -911,12 +985,12 @@ void ApplicationControllerTest::windowCreationCatchesUpReloadFromFactory()
 {
     WindowFactoryHarness harness;
     LaunchOptions initial = baseOptions(QDir::currentPath());
-    initial.fontSize = 11.0;
+    initial.typography = sampleTypography(11.0);
     initial.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+i=ignore"),
     });
     LaunchOptions reloaded = initial;
-    reloaded.fontSize = 18.0;
+    reloaded.typography = sampleTypography(18.0);
     reloaded.linkUrl = false;
     reloaded.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+r=new_tab"),
@@ -948,7 +1022,7 @@ void ApplicationControllerTest::windowCreationCatchesUpReloadFromFactory()
     TerminalPane *const pane = onlyPane(created->workspace);
     QVERIFY(pane != nullptr);
     QVERIFY(pane->keybindProgram().isSameGeneration(currentProgram));
-    QCOMPARE(pane->fontPointSize(), reloaded.fontSize);
+    QCOMPARE(pane->fontPointSize(), reloaded.typography.pointSize);
 }
 
 void ApplicationControllerTest::initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data()
@@ -1011,7 +1085,7 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
 
     WindowFactoryHarness harness;
     LaunchOptions options = baseOptions(firstDirectory);
-    options.fontSize = 13.0;
+    options.typography = sampleTypography(13.0);
     ApplicationController controller(options, harness.factory(), false);
 
     const auto initial = controller.createInitialWindow();
@@ -1028,7 +1102,7 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
     // proving that a naked PaneId is not a process-wide identity.
     LaunchOptions fallback = options;
     fallback.workingDirectory = secondDirectory;
-    fallback.fontSize = 11.0;
+    fallback.typography = sampleTypography(11.0);
     fallback.windowInheritWorkingDirectory = false;
     fallback.windowInheritFontSize = false;
     controller.applyLaunchOptions(fallback);
@@ -1041,7 +1115,8 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
     QCOMPARE(activePaneId(secondWorkspace), PaneId(1));
     QCOMPARE(secondWorkspace->effectiveLaunchOptions().workingDirectory,
              secondDirectory);
-    QCOMPARE(secondWorkspace->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(secondWorkspace->effectiveLaunchOptions().typography
+            == fallback.typography);
     QVERIFY(secondWorkspace->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!secondWorkspace->effectiveLaunchOptions().hold);
 
@@ -1061,7 +1136,8 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
         controller.windows().constLast().workspace;
     QCOMPARE(inheritedFirst->effectiveLaunchOptions().workingDirectory,
              firstDirectory);
-    QCOMPARE(inheritedFirst->effectiveLaunchOptions().fontSize, 18.0);
+    QVERIFY(inheritedFirst->effectiveLaunchOptions().typography
+            == typographyWithPointSize(inheriting.typography, 18.0));
     QVERIFY(inheritedFirst->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!inheritedFirst->effectiveLaunchOptions().hold);
 
@@ -1072,7 +1148,8 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
         controller.windows().constLast().workspace;
     QCOMPARE(inheritedSecond->effectiveLaunchOptions().workingDirectory,
              secondDirectory);
-    QCOMPARE(inheritedSecond->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(inheritedSecond->effectiveLaunchOptions().typography
+            == inheriting.typography);
 
     // Delivery validates the composite source again. If its whole window has
     // disappeared, the most recently active live pane supplies inheritance.
@@ -1087,7 +1164,8 @@ void ApplicationControllerTest::preservesCompositeSourceAndWindowInheritancePoli
         controller.windows().constLast().workspace;
     QCOMPARE(staleSourceFallback->effectiveLaunchOptions().workingDirectory,
              secondDirectory);
-    QCOMPARE(staleSourceFallback->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(staleSourceFallback->effectiveLaunchOptions().typography
+            == inheriting.typography);
 }
 
 void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroWindows()
@@ -1118,12 +1196,13 @@ void ApplicationControllerTest::residentProcessReloadsRecreatesAndQuitsWithZeroW
     QCOMPARE(reload.count(), 1);
 
     LaunchOptions reloaded = options;
-    reloaded.fontSize = 17.0;
+    reloaded.typography = sampleTypography(17.0);
     controller.applyLaunchOptions(reloaded);
     QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
     const ApplicationWindow replacement = controller.windows().constFirst();
-    QCOMPARE(replacement.workspace->effectiveLaunchOptions().fontSize, 17.0);
+    QVERIFY(replacement.workspace->effectiveLaunchOptions().typography
+            == reloaded.typography);
     QVERIFY(replacement.workspace->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!replacement.workspace->effectiveLaunchOptions().hold);
 
@@ -1577,7 +1656,7 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSessionOptions()
 
     LaunchOptions reloaded = options;
     reloaded.initialWindow = true;
-    reloaded.fontSize = 19.0;
+    reloaded.typography = sampleTypography(19.0);
     reloaded.program = {
         QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral("exit 0"),
@@ -1599,7 +1678,8 @@ void ApplicationControllerTest::suppressedStartupPreservesFirstSessionOptions()
     QTRY_COMPARE_WITH_TIMEOUT(
         firstController->launchProgram(), reloaded.program, 2000);
     QVERIFY(firstController->launchHold());
-    QCOMPARE(first->effectiveLaunchOptions().fontSize, 19.0);
+    QVERIFY(first->effectiveLaunchOptions().typography
+            == reloaded.typography);
     QCOMPARE(presentationWindowStates(firstWindow.window->windowStates()),
              Qt::WindowStates(Qt::WindowFullScreen));
     QCOMPARE(firstWindow.window->property(
@@ -1934,7 +2014,7 @@ void ApplicationControllerTest::ordinaryInheritanceDoesNotWaitForFirstSession()
     };
 
     LaunchOptions options = baseOptions(sourceDirectory);
-    options.fontSize = 13.0;
+    options.typography = sampleTypography(13.0);
     options.maximize = true;
     ApplicationController controller(options, std::move(factory), false);
     const auto deferred = controller.createInitialWindow();
@@ -1948,7 +2028,7 @@ void ApplicationControllerTest::ordinaryInheritanceDoesNotWaitForFirstSession()
 
     LaunchOptions reloaded = options;
     reloaded.workingDirectory = configuredDirectory;
-    reloaded.fontSize = 11.0;
+    reloaded.typography = sampleTypography(11.0);
     reloaded.maximize = false;
     controller.applyLaunchOptions(reloaded);
     QVERIFY(sourcePane->executeConfiguredAction(
@@ -1960,7 +2040,8 @@ void ApplicationControllerTest::ordinaryInheritanceDoesNotWaitForFirstSession()
     const ApplicationWindow inherited = controller.windows().constLast();
     QCOMPARE(inherited.workspace->effectiveLaunchOptions().workingDirectory,
              sourceDirectory);
-    QCOMPARE(inherited.workspace->effectiveLaunchOptions().fontSize, 18.0);
+    QVERIFY(inherited.workspace->effectiveLaunchOptions().typography
+            == typographyWithPointSize(reloaded.typography, 18.0));
     QVERIFY(inherited.workspace->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!inherited.workspace->effectiveLaunchOptions().hold);
 
@@ -2076,7 +2157,7 @@ void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
 
     WindowFactoryHarness harness;
     LaunchOptions initialOptions = baseOptions(focusedDirectory);
-    initialOptions.fontSize = 13.0;
+    initialOptions.typography = sampleTypography(13.0);
     ApplicationController controller(
         initialOptions, harness.factory(), false);
     const auto initial = controller.createInitialWindow();
@@ -2088,7 +2169,7 @@ void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
 
     LaunchOptions currentOptions = initialOptions;
     currentOptions.workingDirectory = configuredDirectory;
-    currentOptions.fontSize = 11.0;
+    currentOptions.typography = sampleTypography(11.0);
     controller.applyLaunchOptions(currentOptions);
 
     // Registration alone is not focus. With no pane ever focused, source-less
@@ -2117,7 +2198,8 @@ void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
         controller.windows().constLast().workspace;
     QCOMPARE(inherited->effectiveLaunchOptions().workingDirectory,
              focusedDirectory);
-    QCOMPARE(inherited->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(inherited->effectiveLaunchOptions().typography
+            == currentOptions.typography);
     QVERIFY(inherited->effectiveLaunchOptions().program.isEmpty());
     QVERIFY(!inherited->effectiveLaunchOptions().hold);
 
@@ -2156,7 +2238,8 @@ void ApplicationControllerTest::sourceLessActivationMatchesUpstreamInheritance()
         controller.windows().constLast().workspace;
     QCOMPARE(configured->effectiveLaunchOptions().workingDirectory,
              configuredDirectory);
-    QCOMPARE(configured->effectiveLaunchOptions().fontSize, 11.0);
+    QVERIFY(configured->effectiveLaunchOptions().typography
+            == currentOptions.typography);
 }
 
 void ApplicationControllerTest::sourceLessActivationCancelsQuitAndReportsFailure()

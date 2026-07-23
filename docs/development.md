@@ -114,7 +114,9 @@ split/tab/window directory inheritance policies, new-window/tab font-size policy
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
 palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
-selection colors, cursor
+four ordered regular/bold/italic/bold-italic family lists and their tagged
+automatic/disabled/named styles, the f32 font size, eleven nullable tagged
+absolute-pixel/percentage metric modifiers, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
@@ -123,8 +125,14 @@ the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, transaction consistency, and default-aware
-keybinding diagnostics; launch-option tests verify CLI precedence and the
-typed snapshot's worker-boundary projection; adapter tests verify that
+keybinding diagnostics; launch-option and process-loader tests verify that
+explicit font CLI arguments enter both structured queries before Ghostty
+finalization, preserving f32 and styled-role defaults while the public
+`+validate-config` action retains its exact action-specific grammar.
+Terminal-cell-metric and
+pane tests verify four-role selection, physical-pixel/DPR projection,
+decoration and cursor geometry, live reload, and manual zoom. Adapter tests
+verify that
 config-default changes preserve OSC/DECSCUSR terminal overrides; and
 `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
@@ -134,6 +142,11 @@ split/tab/zoom/window/scene lifecycle, divider recoloring, unset restoration,
 handle lifecycle, and logical-to-physical scaling at 1× and 2×.
 This division keeps parser, terminal state, and renderer responsibilities
 independently testable.
+
+The configuration exporter and its C API overlay are compiled from the
+project-local revision shadow. They do not modify or create commits in the
+official pinned Ghostty submodule; a change that truly requires an upstream
+public API remains documented in `REQUIRES_UPSTREAM.md`.
 
 The additional Zig outputs and global package/artifact cache live under:
 
@@ -165,12 +178,14 @@ The five focused config tests have distinct boundaries:
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
-  of process execution, including exact fields and types, the full unsigned
-  scrollback range, nullable values, and malformed keybinding trees.
+  of process execution, including exact typography role lists, tagged style and
+  metric alternatives, fields and types, the full unsigned scrollback range,
+  nullable values, and malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
-  surface-inheritance booleans, Ghostty's effective
+  surface-inheritance booleans, exact font CLI forwarding and role
+  finalization, Ghostty's effective
   `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned

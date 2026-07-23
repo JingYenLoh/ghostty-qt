@@ -1,10 +1,10 @@
 #pragma once
 
 #include "terminal_session_options.h"
+#include "terminal_typography.h"
 
 #include <QColor>
 #include <QString>
-#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -148,8 +148,7 @@ struct GhosttyConfigValues {
     // nullopt is Ghostty's semantic `inherit`; a value is an already-finalized
     // concrete path whose lexical spelling must be preserved.
     std::optional<QString> workingDirectoryPath;
-    QStringList fontFamilies;
-    double fontSize = 0.0;
+    TerminalTypography typography;
 
     GhosttyAppearanceConfig appearance;
     SplitAppearance splitAppearance;

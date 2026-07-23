@@ -3,6 +3,7 @@
 #include "ghostty_config_values.h"
 #include "ghostty_config_snapshot.h"
 #include "terminal_session_options.h"
+#include "terminal_typography.h"
 
 #include <QByteArrayView>
 #include <QString>
@@ -21,10 +22,11 @@ struct LaunchOptions {
     // Distinguishes the process default from an explicit Qt command-line
     // override, which takes precedence over Ghostty's shared config.
     bool workingDirectoryExplicit = false;
-    QString fontFamily;
-    double fontSize = 12.0;
+    TerminalTypography typography;
     // These bits distinguish parser defaults from an explicit command-line
-    // override. Ghostty configuration must not replace explicit CLI fonts.
+    // override. The process helper receives those overrides before recursive
+    // config files and finalization, then returns one authoritative typography
+    // snapshot; the bits remain launch/forwarding metadata.
     bool fontFamilyExplicit = false;
     bool fontSizeExplicit = false;
     TerminalAppearance appearance;
@@ -126,8 +128,8 @@ TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
 TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
     const LaunchOptions &options);
 
-// Project one complete, validated Ghostty snapshot onto a launch request while
-// preserving explicit command-line precedence. A byte-valued Ghostty
+// Project one complete, validated, CLI-aware Ghostty snapshot onto a launch
+// request. A byte-valued Ghostty
 // scrollback-limit is marked as Bytes and passed unchanged to the pinned
 // libghostty max_scrollback field:
 // despite that C field's legacy "lines" wording, the pinned implementation
@@ -148,6 +150,13 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
 // QCoreApplication::arguments().
 [[nodiscard]] std::expected<LaunchOptions, QString> parseLaunchOptions(
     const QStringList &arguments);
+
+// Project the frontend's explicit font overrides back into Ghostty CLI
+// spelling. The config helper receives these after its action so pinned
+// Ghostty performs repeatable-family replacement and styled-face inheritance
+// before exporting the finalized typography.
+[[nodiscard]] QStringList ghosttyConfigCliFontArguments(
+    const LaunchOptions &options);
 
 // Pure startup policy used before creating QML or terminal runtime objects.
 [[nodiscard]] bool shouldUseSingleInstance(

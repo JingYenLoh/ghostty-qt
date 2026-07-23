@@ -6,7 +6,9 @@
 #include <QFileInfo>
 #include <QLocale>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <variant>
 
@@ -185,12 +187,17 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             result.workingDirectory = *config.workingDirectoryPath;
         }
     }
-    if (!base.fontFamilyExplicit && !config.fontFamilies.isEmpty()) {
-        result.fontFamily = config.fontFamilies.constFirst();
-    }
-    if (!base.fontSizeExplicit && std::isfinite(config.fontSize) &&
-        config.fontSize > 0.0) {
-        result.fontSize = config.fontSize;
+    result.typography = config.typography;
+    // Pinned Ghostty's generic f32 parser accepts zero and negative values,
+    // but they do not form a usable font face. Preserve the previous
+    // frontend contract by retaining the launch/default size for those
+    // values while still applying every other finalized typography field.
+    // Valid explicit font CLI arguments are already part of this snapshot:
+    // Ghostty applies recursive includes after CLI parsing, so overlaying the
+    // original frontend values here would corrupt that pinned precedence.
+    if (!std::isfinite(config.typography.pointSize)
+        || config.typography.pointSize <= 0.0) {
+        result.typography.pointSize = base.typography.pointSize;
     }
 
     result.appearance = toTerminalAppearance(config.appearance);
@@ -353,20 +360,34 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
     }
 
     if (parser.isSet(fontFamilyOption)) {
-        parsed.fontFamily = parser.value(fontFamilyOption);
+        QStringList &families =
+            parsed.typography.face(TerminalFontRole::Regular).families;
+        for (const QString &family : parser.values(fontFamilyOption)) {
+            if (family.isEmpty()) {
+                families.clear();
+            } else {
+                families.append(family);
+            }
+        }
         parsed.fontFamilyExplicit = true;
     }
 
     if (parser.isSet(fontSizeOption)) {
         const QString value = parser.value(fontSizeOption);
         bool ok = false;
-        const double fontSize = QLocale::c().toDouble(value, &ok);
-        if (!ok || !std::isfinite(fontSize) || fontSize <= 0.0) {
+        const double parsedFontSize = QLocale::c().toDouble(value, &ok);
+        const float ghosttyFontSize = static_cast<float>(parsedFontSize);
+        if (!ok || !std::isfinite(parsedFontSize) || parsedFontSize <= 0.0
+            || !std::isfinite(ghosttyFontSize)
+            || ghosttyFontSize <= 0.0F) {
             return std::unexpected(
                 QStringLiteral("Invalid font size '%1': expected a finite number greater than 0.")
                     .arg(value));
         }
-        parsed.fontSize = fontSize;
+        // Ghostty's configuration field is f32. Store that exact value so
+        // applying the helper snapshot cannot subtly change an explicit CLI
+        // override through a double-versus-float rounding difference.
+        parsed.typography.pointSize = static_cast<double>(ghosttyFontSize);
         parsed.fontSizeExplicit = true;
     }
 
@@ -427,4 +448,34 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
     }
 
     return parsed;
+}
+
+QStringList ghosttyConfigCliFontArguments(const LaunchOptions &options)
+{
+    QStringList result;
+    const QStringList &families =
+        options.typography.face(TerminalFontRole::Regular).families;
+    result.reserve(
+        (options.fontFamilyExplicit
+             ? std::max<qsizetype>(1, families.size()) : 0)
+        + static_cast<qsizetype>(options.fontSizeExplicit));
+
+    if (options.fontFamilyExplicit) {
+        if (families.isEmpty()) {
+            result.append(QStringLiteral("--font-family="));
+        } else {
+            for (const QString &family : families) {
+                result.append(QStringLiteral("--font-family=") + family);
+            }
+        }
+    }
+    if (options.fontSizeExplicit) {
+        result.append(
+            QStringLiteral("--font-size=")
+            + QString::number(
+                options.typography.pointSize, 'g',
+                std::numeric_limits<float>::max_digits10));
+    }
+
+    return result;
 }

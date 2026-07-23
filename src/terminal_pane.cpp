@@ -46,6 +46,7 @@
 #endif
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <utility>
 
@@ -86,6 +87,22 @@ float clampFontActionValue(float value, float minimum)
     // Zig's @min/@max select the numeric operand when the other is NaN.
     // std::fmin/std::fmax provide the same behavior; std::clamp does not.
     return std::fmax(minimum, std::fmin(value, kMaximumActionFontSize));
+}
+
+bool terminalGridMetricsChanged(
+    const TerminalCellMetrics &left, const TerminalCellMetrics &right)
+{
+    return left.cellWidth != right.cellWidth
+        || left.cellHeight != right.cellHeight;
+}
+
+TerminalFontRole terminalFontRole(bool bold, bool italic) noexcept
+{
+    if (bold) {
+        return italic
+            ? TerminalFontRole::BoldItalic : TerminalFontRole::Bold;
+    }
+    return italic ? TerminalFontRole::Italic : TerminalFontRole::Regular;
 }
 
 QString linkPreviewDisplaySource(const QByteArray &uri)
@@ -129,6 +146,69 @@ void appendRect(QVector<ColoredRect> &rects, const QRectF &rect, const QColor &c
 {
     if (!rect.isEmpty() && color.isValid() && color.alpha() > 0) {
         rects.append({rect, color});
+    }
+}
+
+[[nodiscard]] qreal normalizedDevicePixelRatio(qreal value) noexcept
+{
+    return std::isfinite(value) && value > 0.0 ? value : 1.0;
+}
+
+[[nodiscard]] qint64 physicalPixels(qreal logicalPixels,
+                                    qreal devicePixelRatio) noexcept
+{
+    if (!std::isfinite(logicalPixels) || logicalPixels <= 0.0) {
+        return 0;
+    }
+
+    const qreal physical =
+        logicalPixels * normalizedDevicePixelRatio(devicePixelRatio);
+    if (physical >= static_cast<qreal>(std::numeric_limits<qint64>::max())) {
+        return std::numeric_limits<qint64>::max();
+    }
+    return std::max<qint64>(0, qRound64(physical));
+}
+
+[[nodiscard]] qreal logicalPixels(double physicalPixels,
+                                  qreal devicePixelRatio) noexcept
+{
+    return physicalPixels / normalizedDevicePixelRatio(devicePixelRatio);
+}
+
+[[nodiscard]] QRectF paddedSpriteCanvas(const QRectF &spriteRect,
+                                        qreal devicePixelRatio)
+{
+    const qint64 physicalWidth =
+        physicalPixels(spriteRect.width(), devicePixelRatio);
+    const qint64 physicalHeight =
+        physicalPixels(spriteRect.height(), devicePixelRatio);
+    const qreal horizontalPadding = logicalPixels(
+        static_cast<double>(physicalWidth / 4), devicePixelRatio);
+    const qreal verticalPadding = logicalPixels(
+        static_cast<double>(physicalHeight / 4), devicePixelRatio);
+    return spriteRect.adjusted(
+        -horizontalPadding, -verticalPadding,
+        horizontalPadding, verticalPadding);
+}
+
+[[nodiscard]] QRectF clippedToCanvas(const QRectF &rect,
+                                     const QRectF &canvas)
+{
+    return rect.intersected(canvas);
+}
+
+void appendClippedRect(QVector<ColoredRect> &rects, const QRectF &rect,
+                       const QRectF &canvas, const QColor &color,
+                       QVector<QRectF> *geometry = nullptr)
+{
+    const QRectF clipped = clippedToCanvas(rect, canvas);
+    if (clipped.isEmpty()) {
+        return;
+    }
+
+    appendRect(rects, clipped, color);
+    if (geometry != nullptr) {
+        geometry->append(clipped);
     }
 }
 
@@ -203,61 +283,204 @@ void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
 }
 
 void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
-                     qreal baseline, TerminalUnderlineStyle style,
-                     const QColor &color)
+                     qreal position, qreal thickness,
+                     TerminalUnderlineStyle style, const QColor &color,
+                     qreal devicePixelRatio,
+                     QVector<QRectF> *geometry = nullptr)
 {
     if (style == TerminalUnderlineStyle::None) {
         return;
     }
 
-    const qreal left = cellRect.left();
-    const qreal right = cellRect.right();
-    const qreal width = cellRect.width();
-    const qreal bottom = cellRect.bottom();
-    const qreal lineY = std::clamp(
-        cellRect.top() + baseline + 1.0, cellRect.top(), bottom - 1.0);
-    const auto appendSegments = [&](qreal segmentWidth, qreal gap) {
-        for (qreal x = left; x < right; x += segmentWidth + gap) {
-            appendRect(rects,
-                       QRectF(x, lineY, std::min(segmentWidth, right - x), 1.0),
-                       color);
-        }
+    const qreal dpr = normalizedDevicePixelRatio(devicePixelRatio);
+    const qint64 physicalWidth = physicalPixels(cellRect.width(), dpr);
+    const qint64 physicalHeight = physicalPixels(cellRect.height(), dpr);
+    const qint64 physicalPosition = physicalPixels(position, dpr);
+    const qint64 physicalThickness = physicalPixels(thickness, dpr);
+    if (physicalWidth <= 0 || physicalHeight <= 0
+        || physicalThickness <= 0) {
+        return;
+    }
+
+    const qint64 physicalPadding = physicalHeight / 4;
+    const qint64 physicalCanvasBottom = std::min(
+        static_cast<qint64>(std::numeric_limits<quint32>::max()),
+        physicalHeight + physicalPadding);
+    const QRectF canvas = paddedSpriteCanvas(cellRect, dpr);
+    const auto saturatingSubtract =
+        [](qint64 left, qint64 right) {
+            return left > right ? left - right : qint64{0};
+        };
+    const auto localRect =
+        [&](double x, double y, double width, double height) {
+            return QRectF(
+                cellRect.left() + logicalPixels(x, dpr),
+                cellRect.top() + logicalPixels(y, dpr),
+                logicalPixels(width, dpr),
+                logicalPixels(height, dpr));
+        };
+    const auto appendLine = [&](const QRectF &rect) {
+        appendClippedRect(rects, rect, canvas, color, geometry);
     };
+    const qint64 singlePosition = std::min(
+        physicalPosition,
+        saturatingSubtract(physicalCanvasBottom, physicalThickness));
 
     switch (style) {
     case TerminalUnderlineStyle::None:
         break;
     case TerminalUnderlineStyle::Single:
-        appendRect(rects, QRectF(left, lineY, width, 1.0), color);
+        appendLine(localRect(
+            0.0, static_cast<double>(singlePosition),
+            static_cast<double>(physicalWidth),
+            static_cast<double>(physicalThickness)));
         break;
     case TerminalUnderlineStyle::Double: {
-        const qreal firstY = std::max(cellRect.top(), lineY - 1.0);
-        const qreal secondY = std::min(bottom - 1.0, lineY + 1.0);
-        appendRect(rects, QRectF(left, firstY, width, 1.0), color);
-        appendRect(rects, QRectF(left, secondY, width, 1.0), color);
+        const qint64 twiceThickness =
+            std::min(
+                std::numeric_limits<qint64>::max(),
+                physicalThickness
+                    > std::numeric_limits<qint64>::max() / 2
+                    ? std::numeric_limits<qint64>::max()
+                    : physicalThickness * 2);
+        const qint64 middle = std::min(
+            physicalPosition,
+            saturatingSubtract(physicalCanvasBottom, twiceThickness));
+        const qint64 first =
+            saturatingSubtract(middle, physicalThickness);
+        const qint64 second = middle
+                > std::numeric_limits<qint64>::max() - physicalThickness
+            ? std::numeric_limits<qint64>::max()
+            : middle + physicalThickness;
+        appendLine(localRect(
+            0.0, static_cast<double>(first),
+            static_cast<double>(physicalWidth),
+            static_cast<double>(physicalThickness)));
+        appendLine(localRect(
+            0.0, static_cast<double>(second),
+            static_cast<double>(physicalWidth),
+            static_cast<double>(physicalThickness)));
         break;
     }
     case TerminalUnderlineStyle::Curly: {
-        // A compact two-pixel wave stays legible at small terminal sizes and
-        // joins cleanly across adjacent cells.
-        constexpr qreal segment = 2.0;
-        int phase = 0;
-        for (qreal x = left; x < right; x += segment, ++phase) {
-            const qreal offset = (phase % 4 == 1 || phase % 4 == 2) ? 1.0 : 0.0;
-            appendRect(rects,
-                       QRectF(x, std::min(bottom - 1.0, lineY + offset),
-                              std::min(segment, right - x), 1.0),
-                       color);
+        const double width = static_cast<double>(physicalWidth);
+        const double lineThickness =
+            static_cast<double>(physicalThickness);
+        const double amplitude = width / std::numbers::pi;
+        const double top = std::min(
+            static_cast<double>(physicalPosition),
+            static_cast<double>(physicalCanvasBottom)
+                - amplitude - lineThickness);
+        const double bottom = top + amplitude;
+        const double center = width / 2.0;
+        constexpr double curvature = 0.4;
+        const auto cubic = [](double start, double control1,
+                              double control2, double end, double t) {
+            const double inverse = 1.0 - t;
+            return inverse * inverse * inverse * start
+                + 3.0 * inverse * inverse * t * control1
+                + 3.0 * inverse * t * t * control2
+                + t * t * t * end;
+        };
+        const auto firstHalfY =
+            [&](double x) {
+                const double target = x / center;
+                double t = target;
+                for (int iteration = 0; iteration < 6; ++iteration) {
+                    const double inverse = 1.0 - t;
+                    const double candidate = cubic(
+                        0.0, curvature, 1.0 - curvature, 1.0, t);
+                    const double derivative =
+                        3.0 * inverse * inverse * curvature
+                        + 6.0 * inverse * t * (1.0 - 2.0 * curvature)
+                        + 3.0 * t * t * curvature;
+                    t = std::clamp(
+                        t - (candidate - target) / derivative,
+                        0.0, 1.0);
+                }
+                return cubic(bottom, bottom, top, top, t);
+            };
+
+        // The pinned sprite is one cubic cycle per cell. Sampling at physical
+        // pixel centers keeps that wavelength independent of line thickness,
+        // and disjoint one-pixel columns apply opacity only once.
+        for (qint64 x = 0; x < physicalWidth; ++x) {
+            const double centerX = static_cast<double>(x) + 0.5;
+            const double firstHalfX = std::min(
+                centerX, width - centerX);
+            const double centerY = firstHalfY(firstHalfX);
+            appendLine(localRect(
+                static_cast<double>(x),
+                centerY - lineThickness / 2.0,
+                1.0, lineThickness));
         }
         break;
     }
-    case TerminalUnderlineStyle::Dotted:
-        appendSegments(1.0, 2.0);
+    case TerminalUnderlineStyle::Dotted: {
+        const double width = static_cast<double>(physicalWidth);
+        const double lineThickness =
+            static_cast<double>(physicalThickness);
+        const double radius = std::numbers::sqrt2 / 2.0 * lineThickness;
+        const double centerY = std::min(
+            static_cast<double>(physicalPosition)
+                + 0.5 * lineThickness,
+            static_cast<double>(physicalCanvasBottom)
+                - std::ceil(radius));
+        const qint64 dotCount = static_cast<qint64>(std::max(
+            std::min({
+                std::ceil(width / (4.0 * radius)),
+                std::floor(width / (3.0 * radius)),
+                std::floor(width / (2.0 * radius + 1.0)),
+            }),
+            1.0));
+        const double stride = width / static_cast<double>(dotCount);
+        for (qint64 dot = 0; dot < dotCount; ++dot) {
+            const double centerX =
+                (static_cast<double>(dot) + 0.5) * stride;
+            const qint64 firstY = std::max<qint64>(
+                -physicalPadding,
+                static_cast<qint64>(
+                    std::floor(centerY - radius)));
+            const qint64 pastLastY = std::min<qint64>(
+                physicalCanvasBottom,
+                static_cast<qint64>(
+                    std::ceil(centerY + radius)));
+            for (qint64 y = firstY; y < pastLastY; ++y) {
+                const double distanceY =
+                    static_cast<double>(y) + 0.5 - centerY;
+                const double remaining =
+                    radius * radius - distanceY * distanceY;
+                if (remaining < 0.0) {
+                    continue;
+                }
+                const double halfWidth = std::sqrt(remaining);
+                const qint64 firstX = static_cast<qint64>(
+                    std::ceil(centerX - halfWidth - 0.5));
+                const qint64 lastX = static_cast<qint64>(
+                    std::floor(centerX + halfWidth - 0.5));
+                if (lastX >= firstX) {
+                    appendLine(localRect(
+                        static_cast<double>(firstX),
+                        static_cast<double>(y),
+                        static_cast<double>(lastX - firstX + 1),
+                        1.0));
+                }
+            }
+        }
         break;
-    case TerminalUnderlineStyle::Dashed:
-        appendSegments(std::max<qreal>(2.0, std::min<qreal>(4.0, width / 3.0)),
-                       2.0);
+    }
+    case TerminalUnderlineStyle::Dashed: {
+        const qint64 dashWidth = physicalWidth / 3 + 1;
+        const qint64 dashCount = physicalWidth / dashWidth + 1;
+        for (qint64 index = 0; index < dashCount; index += 2) {
+            appendLine(localRect(
+                static_cast<double>(index * dashWidth),
+                static_cast<double>(singlePosition),
+                static_cast<double>(dashWidth),
+                static_cast<double>(physicalThickness)));
+        }
         break;
+    }
     }
 }
 
@@ -385,16 +608,16 @@ void clearNodeChildren(QSGNode *parent)
 struct TerminalTextRenderState {
     QQuickWindow *window = nullptr;
     QRectF viewport;
-    QFont font;
+    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
+    qreal cellWidth = 1.0;
+    qreal cellHeight = 1.0;
+    qreal baseline = 1.0;
     TerminalAppearance appearance;
     QColor foreground;
     QColor background;
     QVector<QColor> palette;
     QBitArray searchCandidateCells;
     QBitArray searchSelectedCells;
-    qreal cellWidth = 0.0;
-    qreal cellHeight = 0.0;
-    qreal baseline = 0.0;
     qreal devicePixelRatio = 1.0;
     int graphicsApi = -1;
     int frameColumns = 0;
@@ -476,7 +699,10 @@ public:
 #endif
     }
 
-    void resetTextRows(int rowCount, const QFont &baseFont)
+    void resetTextRows(
+        int rowCount,
+        const std::array<QFont,
+                         terminalEnumIndex(TerminalFontRole::Count)> &newFonts)
     {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
@@ -496,11 +722,7 @@ public:
             rowContainers.append(container);
         }
 
-        fonts.fill(baseFont);
-        fonts[1].setBold(true);
-        fonts[2].setItalic(true);
-        fonts[3].setBold(true);
-        fonts[3].setItalic(true);
+        fonts = newFonts;
     }
 
     QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
@@ -535,7 +757,7 @@ public:
     QVector<QSGNode *> rowContainers;
     QVector<QSGTextNode *> rowTextNodes;
     QVector<quint64> builtRowEpochs;
-    std::array<QFont, 4> fonts;
+    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
     std::optional<TerminalTextRenderState> textState;
     BlockCursorTextState blockCursorTextState;
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -562,7 +784,15 @@ void publishInitialGeometryProbe(
 }
 
 void publishRenderProbe(const TerminalPane *pane,
-                        const TerminalSceneNode &root)
+                        const TerminalSceneNode &root,
+                        const TerminalCellMetrics &metrics,
+                        const std::array<quint64,
+                            terminalEnumIndex(TerminalFontRole::Count)>
+                            &fontRoleCellCounts,
+                        const QVector<QRectF> &underlineRects,
+                        const QVector<QRectF> &strikethroughRects,
+                        const QVector<QRectF> &overlineRects,
+                        const QVector<QRectF> &cursorRects)
 {
     QMutexLocker locker(&renderProbeMutex);
     TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
@@ -576,6 +806,13 @@ void publishRenderProbe(const TerminalPane *pane,
         root.unfocusedSplitOverlay->color();
     snapshot.rowNodeSerials = root.rowNodeSerials;
     snapshot.rowBuildCounts = root.rowBuildCounts;
+    snapshot.metrics = metrics;
+    snapshot.renderFonts = root.fonts;
+    snapshot.fontRoleCellCounts = fontRoleCellCounts;
+    snapshot.underlineRects = underlineRects;
+    snapshot.strikethroughRects = strikethroughRects;
+    snapshot.overlineRects = overlineRects;
+    snapshot.cursorRects = cursorRects;
 }
 #endif
 
@@ -706,7 +943,7 @@ TerminalPane::TerminalPane(
                     ? std::move(*keybindProgram)
                     : GhosttyKeybindProgram::compile(
                           options.keybindSource).program)
-    , defaultFontPointSize_(options.fontSize)
+    , defaultFontPointSize_(options.typography.pointSize)
     , resizeOverlayStartupSuppressionEnds_(
           std::chrono::steady_clock::now()
           + kResizeOverlayStartupSuppression)
@@ -722,6 +959,9 @@ TerminalPane::TerminalPane(
     setAcceptHoverEvents(true);
     setFlag(QQuickItem::ItemAcceptsInputMethod, true);
     setFocusPolicy(Qt::StrongFocus);
+    metrics_ = terminalCellMetrics(
+        options.typography,
+        window() != nullptr ? window()->devicePixelRatio() : 1.0);
     itemWindowConnection_ = connect(
         this, &QQuickItem::windowChanged,
         this, &TerminalPane::watchWindow);
@@ -730,12 +970,6 @@ TerminalPane::TerminalPane(
         return QDesktopServices::openUrl(url);
     };
 
-    const TerminalCellMetrics metrics = terminalCellMetrics(
-        options.fontFamily, options.fontSize);
-    font_ = metrics.font;
-    cellWidth_ = metrics.cellWidth;
-    cellHeight_ = metrics.cellHeight;
-    baseline_ = metrics.baseline;
     frame_.foreground = options.appearance.foregroundColor;
     frame_.background = options.appearance.backgroundColor;
     frame_.palette = options.appearance.palette;
@@ -947,6 +1181,7 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
         switch (event->type()) {
         case QEvent::DevicePixelRatioChange:
             deferredSessionStartCandidate_.reset();
+            (void) updateMetrics();
             updateTerminalSize();
             scheduleDeferredSessionStart();
             update();
@@ -987,6 +1222,7 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         windowScreenConnection_ = connect(
             quickWindow, &QWindow::screenChanged,
             this, [this](QScreen *) {
+                (void) updateMetrics();
                 updateTerminalSize();
                 deferredSessionStartCandidate_.reset();
                 scheduleDeferredSessionStart();
@@ -1016,7 +1252,13 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         }
         // Geometry may have settled before a previously detached pane entered
         // this scene, so refresh even when its logical size did not change.
+        (void) updateMetrics();
         updateTerminalSize();
+    } else {
+        // Detaching restores the logical one-to-one fallback used for an
+        // off-scene pane. The next attachment will rebuild at that screen's
+        // physical scale before publishing PTY geometry.
+        (void) updateMetrics();
     }
     scheduleDeferredSessionStart();
     update();
@@ -1195,7 +1437,7 @@ QString TerminalPane::currentDirectory() const
 qreal TerminalPane::fontPointSize() const
 {
     QMutexLocker locker(&renderMutex_);
-    return font_.pointSizeF();
+    return metrics_.font(TerminalFontRole::Regular).pointSizeF();
 }
 
 QStringList TerminalPane::activeKeyTables() const
@@ -1240,8 +1482,9 @@ LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
     }
     {
         QMutexLocker locker(&renderMutex_);
-        result.fontFamily = font_.family();
-        result.fontSize = font_.pointSizeF();
+        result.typography = options_.typography;
+        result.typography.pointSize =
+            metrics_.font(TerminalFontRole::Regular).pointSizeF();
     }
     return withoutInitialCommand(std::move(result));
 }
@@ -1256,7 +1499,8 @@ LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
     }
     if (base.windowInheritFontSize) {
         QMutexLocker locker(&renderMutex_);
-        result.fontSize = font_.pointSizeF();
+        result.typography.pointSize =
+            metrics_.font(TerminalFontRole::Regular).pointSizeF();
     }
     return withoutInitialCommand(std::move(result));
 }
@@ -1272,7 +1516,8 @@ LaunchOptions TerminalPane::windowLaunchOptions(
     }
     if (base.windowInheritFontSize) {
         QMutexLocker locker(&renderMutex_);
-        result.fontSize = font_.pointSizeF();
+        result.typography.pointSize =
+            metrics_.font(TerminalFontRole::Regular).pointSizeF();
     }
     return withoutInitialCommand(std::move(result));
 }
@@ -1302,8 +1547,7 @@ void TerminalPane::applyRuntimeOptions(
     };
 
     LaunchOptions updated = options_;
-    updated.fontFamily = options.fontFamily;
-    updated.fontSize = options.fontSize;
+    updated.typography = options.typography;
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
@@ -1337,25 +1581,31 @@ void TerminalPane::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions updatedRuntime =
         toTerminalSessionRuntimeOptions(updated);
 
-    const QString family = resolveTerminalFontFamily(updated.fontFamily);
-    bool metricsChanged = false;
+    TerminalCellMetrics previousMetrics;
+    {
+        QMutexLocker locker(&renderMutex_);
+        previousMetrics = metrics_;
+    }
+    const qreal previousPointSize =
+        previousMetrics.font(TerminalFontRole::Regular).pointSizeF();
+    defaultFontPointSize_ = updated.typography.pointSize;
+    const qreal reloadedFontSize = manuallyZoomed_
+        ? previousPointSize
+        : static_cast<qreal>(
+            clampFontActionValue(
+                static_cast<float>(updated.typography.pointSize),
+                kMinimumActionFontSize));
+    const bool metricsChanged = updateMetrics(
+        updated.typography, reloadedFontSize);
+    bool terminalGeometryChanged = false;
     bool pointSizeChanged = false;
     {
         QMutexLocker locker(&renderMutex_);
-        if (font_.family() != family) {
-            font_.setFamily(family);
-            metricsChanged = true;
-        }
-        defaultFontPointSize_ = updated.fontSize;
-        const qreal reloadedFontSize = static_cast<qreal>(
-            clampFontActionValue(static_cast<float>(updated.fontSize),
-                                 kMinimumActionFontSize));
-        if (!manuallyZoomed_
-            && !qFuzzyCompare(font_.pointSizeF(), reloadedFontSize)) {
-            font_.setPointSizeF(reloadedFontSize);
-            metricsChanged = true;
-            pointSizeChanged = true;
-        }
+        terminalGeometryChanged =
+            terminalGridMetricsChanged(previousMetrics, metrics_);
+        pointSizeChanged = !qFuzzyCompare(
+            previousPointSize,
+            metrics_.font(TerminalFontRole::Regular).pointSizeF());
         if (!hasFrame_) {
             frame_.foreground = updated.appearance.foregroundColor;
             frame_.background = updated.appearance.backgroundColor;
@@ -1435,9 +1685,7 @@ void TerminalPane::applyRuntimeOptions(
         if (!stillCurrentUpdate()) return;
     }
 
-    if (metricsChanged) {
-        updateMetrics();
-        if (!stillCurrentUpdate()) return;
+    if (terminalGeometryChanged) {
         updateTerminalSize();
         if (!stillCurrentUpdate()) return;
     }
@@ -1634,7 +1882,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QVector<quint64> textRowEpochs;
     TerminalAppearance appearance;
     SplitAppearance splitAppearance;
-    QFont baseFont;
+    TerminalCellMetrics metrics;
     QString preedit;
     QString status;
     QString linkPreview;
@@ -1642,9 +1890,6 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QSet<int> hoveredHyperlinkCells;
     QBitArray searchCandidateCellMask;
     QBitArray searchSelectedCellMask;
-    qreal cellWidth = 0.0;
-    qreal cellHeight = 0.0;
-    qreal baseline = 0.0;
     bool hasFrame = false;
     {
         QMutexLocker locker(&renderMutex_);
@@ -1652,7 +1897,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         textRowEpochs = textRowEpochs_;
         appearance = appearance_;
         splitAppearance = splitAppearance_;
-        baseFont = font_;
+        metrics = metrics_;
         preedit = preedit_;
         status = statusMessage_;
         linkPreview = linkPreviewText_;
@@ -1667,11 +1912,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             searchCandidateCellMask = searchCandidateCellMask_;
             searchSelectedCellMask = searchSelectedCellMask_;
         }
-        cellWidth = cellWidth_;
-        cellHeight = cellHeight_;
-        baseline = baseline_;
         hasFrame = hasFrame_;
     }
+    const QFont &baseFont = metrics.font(TerminalFontRole::Regular);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
+    const qreal baseline = metrics.baseline;
     const bool candidateMaskMatchesFrame =
         searchCandidateCellMask.size() == frame.cells.size();
     const bool selectedMaskMatchesFrame =
@@ -1680,6 +1926,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     const QRectF viewport = boundingRect();
     const QSGRendererInterface *rendererInterface = window() != nullptr
         ? window()->rendererInterface() : nullptr;
+    const qreal devicePixelRatio = window() != nullptr
+        ? window()->devicePixelRatio() : 1.0;
+    const qreal underlinePosition = std::min(
+        metrics.underlinePosition, metrics.underlineMaximumPosition);
+    const qreal overlinePosition = std::max(
+        metrics.overlinePosition, metrics.overlineMinimumPosition);
     const bool softwareRenderer = rendererInterface == nullptr
         || rendererInterface->graphicsApi() == QSGRendererInterface::Software;
     const QColor background = hasFrame ? frame.background : QColor(QStringLiteral("#1e222a"));
@@ -1692,6 +1944,22 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QVector<ColoredRect> scrollbarDecorations;
     QVector<ColoredRect> overlayBackgrounds;
     QVector<ColoredRect> overlayDecorations;
+    QVector<QRectF> *underlineProbe = nullptr;
+    QVector<QRectF> *strikethroughProbe = nullptr;
+    QVector<QRectF> *overlineProbe = nullptr;
+    QVector<QRectF> *cursorProbe = nullptr;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
+        fontRoleCellCounts{};
+    QVector<QRectF> underlineRects;
+    QVector<QRectF> strikethroughRects;
+    QVector<QRectF> overlineRects;
+    QVector<QRectF> cursorRects;
+    underlineProbe = &underlineRects;
+    strikethroughProbe = &strikethroughRects;
+    overlineProbe = &overlineRects;
+    cursorProbe = &cursorRects;
+#endif
     // Keep base, cell, and cursor fills in explicit scene-graph layers so
     // their painter order is identical across Qt render backends.
     appendRect(baseBackgrounds, viewport, background);
@@ -1751,18 +2019,17 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         TerminalTextRenderState textState;
         textState.window = window();
         textState.viewport = viewport;
-        textState.font = baseFont;
+        textState.fonts = metrics.fonts;
+        textState.cellWidth = metrics.cellWidth;
+        textState.cellHeight = metrics.cellHeight;
+        textState.baseline = metrics.baseline;
         textState.appearance = appearance;
         textState.foreground = frame.foreground;
         textState.background = frame.background;
         textState.palette = frame.palette;
         textState.searchCandidateCells = searchCandidateCellMask;
         textState.searchSelectedCells = searchSelectedCellMask;
-        textState.cellWidth = cellWidth;
-        textState.cellHeight = cellHeight;
-        textState.baseline = baseline;
-        textState.devicePixelRatio = window() != nullptr
-            ? window()->devicePixelRatio() : 1.0;
+        textState.devicePixelRatio = devicePixelRatio;
         textState.graphicsApi = rendererInterface != nullptr
             ? static_cast<int>(rendererInterface->graphicsApi()) : -1;
         textState.frameColumns = frame.columns;
@@ -1774,7 +2041,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             || *root->textState != textState
             || root->rowTextNodes.size() != visibleRows;
         if (rebuildAllText) {
-            root->resetTextRows(visibleRows, baseFont);
+            root->resetTextRows(visibleRows, metrics.fonts);
             root->textState = textState;
         }
 
@@ -1900,13 +2167,19 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     foreground = blockCursorTextColor;
                 }
 
-                if (rowText != nullptr && !cell.invisible
-                    && !cell.text.isEmpty() && !cell.spacer) {
-                    const size_t fontIndex = (cell.bold ? 1U : 0U)
-                        | (cell.italic ? 2U : 0U);
-                    appendTextLayout(rowText, cell.text,
-                                     root->fonts[fontIndex], foreground,
-                                     QPointF(left, top), baseline, drawWidth);
+                if (!cell.invisible && !cell.text.isEmpty()
+                    && !cell.spacer) {
+                    const std::size_t fontIndex = terminalEnumIndex(
+                        terminalFontRole(cell.bold, cell.italic));
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                    ++fontRoleCellCounts[fontIndex];
+#endif
+                    if (rowText != nullptr) {
+                        appendTextLayout(
+                            rowText, cell.text, root->fonts[fontIndex],
+                            foreground, QPointF(left, top), baseline,
+                            drawWidth);
+                    }
                 }
 
                 if (cell.invisible) {
@@ -1936,16 +2209,29 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 }
                 appendUnderline(decorationsBeforeText,
                                 QRectF(left, top, drawWidth, cellHeight),
-                                baseline, underlineStyle, underlineColor);
+                                metrics.underlinePosition,
+                                metrics.underlineThickness,
+                                underlineStyle, underlineColor,
+                                devicePixelRatio,
+                                underlineProbe);
+                const QRectF decorationCanvas = paddedSpriteCanvas(
+                    QRectF(left, top, drawWidth, cellHeight),
+                    devicePixelRatio);
                 if (cell.strikeThrough) {
-                    appendRect(decorationsAfterText,
-                               QRectF(left, top + cellHeight * 0.52, drawWidth, 1.0),
-                               foreground);
+                    const QRectF rect(
+                        left, top + metrics.strikethroughPosition,
+                        drawWidth, metrics.strikethroughThickness);
+                    appendClippedRect(
+                        decorationsAfterText, rect, decorationCanvas,
+                        foreground, strikethroughProbe);
                 }
                 if (cell.overline) {
-                    appendRect(decorationsBeforeText,
-                               QRectF(left, top + 1.0, drawWidth, 1.0),
-                               foreground);
+                    const QRectF rect(
+                        left, top + overlinePosition,
+                        drawWidth, metrics.overlineThickness);
+                    appendClippedRect(
+                        decorationsBeforeText, rect, decorationCanvas,
+                        foreground, overlineProbe);
                 }
             }
             if (rebuildRowText) {
@@ -1959,7 +2245,16 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
             const qreal cursorWidth = cellWidth
                 * static_cast<qreal>(std::max(1, frame.cursorColumnSpan));
-            const QRectF cursorRect(left, top, cursorWidth, cellHeight);
+            const qreal cursorTop = top + metrics.cursorTop;
+            const QRectF cursorRect(
+                left, cursorTop, cursorWidth, metrics.cursorHeight);
+            const QRectF cursorCanvas =
+                paddedSpriteCanvas(cursorRect, devicePixelRatio);
+            const QRectF underlineCursorCell(
+                left, top, cursorWidth, cellHeight);
+            const QRectF underlineCursorCanvas =
+                paddedSpriteCanvas(
+                    underlineCursorCell, devicePixelRatio);
             QColor cursorColor = frame.cursorColor;
             if (!frame.cursorColorExplicit) {
                 cursorColor = resolveRelativeColor(
@@ -1969,39 +2264,83 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             }
             cursorColor = withOpacity(
                 cursorColor, focused ? appearance.cursorOpacity : 1.0);
+            const auto appendCursorRect =
+                [&](QVector<ColoredRect> &rects, const QRectF &rect,
+                    const QRectF &canvas) {
+                    appendClippedRect(
+                        rects, rect, canvas, cursorColor, cursorProbe);
+                };
             switch (cursorStyle) {
             case 0:
-                appendRect(cursorDecorations,
-                           QRectF(left, top, std::max(1.0, cellWidth * 0.14), cellHeight),
-                           cursorColor);
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(left + metrics.cursorBarLeft, cursorTop,
+                           metrics.cursorThickness,
+                           metrics.cursorHeight),
+                    cursorCanvas);
                 break;
             case 2:
-                appendRect(cursorDecorations,
-                           QRectF(left, top + cellHeight - 2.0, cursorWidth, 2.0),
-                           cursorColor);
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(left,
+                           top + underlinePosition,
+                           cursorWidth, metrics.cursorThickness),
+                    underlineCursorCanvas);
                 break;
             case 3: {
-                constexpr qreal thickness = 1.0;
-                appendRect(cursorDecorations,
-                           QRectF(left, top, cursorWidth, thickness), cursorColor);
-                appendRect(cursorDecorations,
-                           QRectF(left, top + cellHeight - thickness,
-                                  cursorWidth, thickness), cursorColor);
-                appendRect(cursorDecorations,
-                           QRectF(left, top + thickness, thickness,
-                                  std::max(0.0, cellHeight - 2.0 * thickness)),
-                           cursorColor);
-                appendRect(cursorDecorations,
-                           QRectF(left + cursorWidth - thickness, top + thickness,
-                                  thickness,
-                                  std::max(0.0, cellHeight - 2.0 * thickness)),
-                           cursorColor);
+                const qreal thickness = metrics.cursorThickness;
+                const qreal innerWidth = std::max(
+                    qreal{0.0}, cursorWidth - 2.0 * thickness);
+                const qreal innerHeight = std::max(
+                    qreal{0.0},
+                    metrics.cursorHeight - 2.0 * thickness);
+                if (innerWidth <= 0.0 || innerHeight <= 0.0) {
+                    appendCursorRect(
+                        cursorDecorations, cursorRect, cursorCanvas);
+                    break;
+                }
+
+                const QRectF inner(
+                    left + thickness, cursorTop + thickness,
+                    innerWidth, innerHeight);
+                // These four rectangles form an exact, non-overlapping
+                // partition of outer minus inner. In particular, fractional
+                // cursor opacity is applied once at the corners.
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(
+                        cursorRect.left(), cursorRect.top(),
+                        cursorRect.width(),
+                        inner.top() - cursorRect.top()),
+                    cursorCanvas);
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(
+                        cursorRect.left(), inner.bottom(),
+                        cursorRect.width(),
+                        cursorRect.bottom() - inner.bottom()),
+                    cursorCanvas);
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(
+                        cursorRect.left(), inner.top(),
+                        inner.left() - cursorRect.left(),
+                        inner.height()),
+                    cursorCanvas);
+                appendCursorRect(
+                    cursorDecorations,
+                    QRectF(
+                        inner.right(), inner.top(),
+                        cursorRect.right() - inner.right(),
+                        inner.height()),
+                    cursorCanvas);
                 break;
             }
             default:
                 // Appended after cell backgrounds so a wide block cursor is
                 // not overwritten by the spacer cell's background.
-                appendRect(cursorBackgrounds, cursorRect, cursorColor);
+                appendCursorRect(
+                    cursorBackgrounds, cursorRect, cursorCanvas);
                 break;
             }
         }
@@ -2032,14 +2371,20 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             appendTextLayout(ensureOverlayText(), preedit, baseFont,
                              QColor(QStringLiteral("#eceff4")), QPointF(left, top),
                              baseline, preeditWidth);
-            appendRect(overlayDecorations,
-                       QRectF(left, top + baseline + 1.0, preeditWidth, 1.0),
-                       QColor(QStringLiteral("#eceff4")));
+            appendUnderline(
+                overlayDecorations,
+                QRectF(left, top, preeditWidth, cellHeight),
+                metrics.underlinePosition,
+                metrics.underlineThickness,
+                TerminalUnderlineStyle::Single,
+                QColor(QStringLiteral("#eceff4")),
+                devicePixelRatio,
+                underlineProbe);
         }
 
         if (!status.isEmpty()) {
-            const QFontMetricsF metrics(baseFont);
-            const qreal statusHeight = metrics.height() + 12.0;
+            const QFontMetricsF fontMetrics(baseFont);
+            const qreal statusHeight = fontMetrics.height() + 12.0;
             const qreal statusTop = height() - statusHeight;
             appendRect(overlayBackgrounds,
                        QRectF(0.0, statusTop, width(), statusHeight),
@@ -2047,7 +2392,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             appendTextLayout(ensureOverlayText(), status, baseFont,
                              QColor(QStringLiteral("#e5c07b")),
                              QPointF(8.0, statusTop),
-                             statusHeight - 6.0 - metrics.descent(),
+                             statusHeight - 6.0 - fontMetrics.descent(),
                              std::max<qreal>(1.0, width() - 16.0));
         }
 
@@ -2081,14 +2426,14 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                               linkPreviewRect.height()),
                        previewOutline);
 
-            const QFontMetricsF metrics(baseFont);
+            const QFontMetricsF fontMetrics(baseFont);
             appendTextLayout(
                 ensureOverlayText(), linkPreview, baseFont, previewForeground,
                 QPointF(linkPreviewRect.left()
                             + kLinkPreviewHorizontalPadding,
                         linkPreviewRect.top()
                             + kLinkPreviewVerticalPadding),
-                std::ceil(metrics.ascent()),
+                std::ceil(fontMetrics.ascent()),
                 std::max<qreal>(
                     1.0, linkPreviewRect.width()
                         - 2.0 * kLinkPreviewHorizontalPadding));
@@ -2142,7 +2487,9 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
     root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    publishRenderProbe(this, *root);
+    publishRenderProbe(
+        this, *root, metrics, fontRoleCellCounts, underlineRects,
+        strikethroughRects, overlineRects, cursorRects);
 #endif
     return root;
 }
@@ -2162,13 +2509,26 @@ void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGe
     }
 }
 
-void TerminalPane::updateMetrics()
+bool TerminalPane::updateMetrics()
 {
+    return updateMetrics(options_.typography, fontPointSize());
+}
+
+bool TerminalPane::updateMetrics(
+    const TerminalTypography &typography, qreal pointSize)
+{
+    TerminalTypography effective = typography;
+    effective.pointSize = pointSize;
+    const TerminalCellMetrics next = terminalCellMetrics(
+        effective,
+        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+
     QMutexLocker locker(&renderMutex_);
-    const TerminalCellMetrics metrics = terminalCellMetrics(font_);
-    cellWidth_ = metrics.cellWidth;
-    cellHeight_ = metrics.cellHeight;
-    baseline_ = metrics.baseline;
+    if (metrics_ == next) {
+        return false;
+    }
+    metrics_ = next;
+    return true;
 }
 
 void TerminalPane::markTextRowsChangedLocked(const TerminalUpdate &update)
@@ -2223,8 +2583,8 @@ void TerminalPane::updateTerminalSize()
     qreal cellHeight = 0.0;
     {
         QMutexLocker locker(&renderMutex_);
-        cellWidth = cellWidth_;
-        cellHeight = cellHeight_;
+        cellWidth = metrics_.cellWidth;
+        cellHeight = metrics_.cellHeight;
     }
     if (width() < cellWidth || height() < cellHeight) {
         clearHyperlinkHover();
@@ -2348,8 +2708,8 @@ TerminalPane::currentSessionGeometry(
     qreal cellHeight = 0.0;
     {
         QMutexLocker locker(&renderMutex_);
-        cellWidth = cellWidth_;
-        cellHeight = cellHeight_;
+        cellWidth = metrics_.cellWidth;
+        cellHeight = metrics_.cellHeight;
     }
     const QSizeF viewport = viewportSize.value_or(size());
     if (viewport.width() <= 0.0 || viewport.height() <= 0.0
@@ -3147,9 +3507,12 @@ QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
     }
     if (query == Qt::ImCursorRectangle) {
         QMutexLocker locker(&renderMutex_);
-        return QRectF(static_cast<qreal>(frame_.cursorColumn) * cellWidth_,
-                      static_cast<qreal>(frame_.cursorRow) * cellHeight_,
-                      cellWidth_ * static_cast<qreal>(frame_.cursorColumnSpan), cellHeight_);
+        return QRectF(
+            static_cast<qreal>(frame_.cursorColumn) * metrics_.cellWidth,
+            static_cast<qreal>(frame_.cursorRow) * metrics_.cellHeight,
+            metrics_.cellWidth
+                * static_cast<qreal>(frame_.cursorColumnSpan),
+            metrics_.cellHeight);
     }
     return QQuickItem::inputMethodQuery(query);
 }
@@ -3452,8 +3815,10 @@ std::optional<QPoint> TerminalPane::hoverCellAt(
         || position.x() < 0.0 || position.y() < 0.0) {
         return std::nullopt;
     }
-    const int column = static_cast<int>(std::floor(position.x() / cellWidth_));
-    const int row = static_cast<int>(std::floor(position.y() / cellHeight_));
+    const int column = static_cast<int>(
+        std::floor(position.x() / metrics_.cellWidth));
+    const int row = static_cast<int>(
+        std::floor(position.y() / metrics_.cellHeight));
     if (column < 0 || column >= frame_.columns
         || row < 0 || row >= frame_.rows) {
         return std::nullopt;
@@ -3608,7 +3973,7 @@ void TerminalPane::refreshLinkPreview()
         QFont font;
         {
             QMutexLocker locker(&renderMutex_);
-            font = font_;
+            font = metrics_.font(TerminalFontRole::Regular);
         }
         const QFontMetricsF metrics(font);
         const qreal maximumTextWidth = std::max<qreal>(
@@ -3915,9 +4280,11 @@ QPoint TerminalPane::cellAt(const QPointF &position) const
     const int columns = hasFrame_ ? frame_.columns : 80;
     const int rows = hasFrame_ ? frame_.rows : 24;
     return QPoint(
-        std::clamp(static_cast<int>(std::floor(position.x() / cellWidth_)), 0,
+        std::clamp(static_cast<int>(
+                       std::floor(position.x() / metrics_.cellWidth)), 0,
                    std::max(0, columns - 1)),
-        std::clamp(static_cast<int>(std::floor(position.y() / cellHeight_)), 0,
+        std::clamp(static_cast<int>(
+                       std::floor(position.y() / metrics_.cellHeight)), 0,
                    std::max(0, rows - 1)));
 }
 
@@ -3977,15 +4344,24 @@ void TerminalPane::cancelPaste(quint64 requestId)
 void TerminalPane::setFontPointSize(qreal points)
 {
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
+    TerminalCellMetrics previous;
     {
         QMutexLocker locker(&renderMutex_);
-        if (qFuzzyCompare(font_.pointSizeF(), points)) {
-            return;
-        }
-        font_.setPointSizeF(points);
+        previous = metrics_;
     }
-    updateMetrics();
-    updateTerminalSize();
+    if (qFuzzyCompare(
+            previous.font(TerminalFontRole::Regular).pointSizeF(), points)
+        || !updateMetrics(options_.typography, points)) {
+        return;
+    }
+    TerminalCellMetrics current;
+    {
+        QMutexLocker locker(&renderMutex_);
+        current = metrics_;
+    }
+    if (terminalGridMetricsChanged(previous, current)) {
+        updateTerminalSize();
+    }
     refreshLinkPreview();
     reconcileReleasedLinkPreview(previewWasPointerCaptured);
     update();
