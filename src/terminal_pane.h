@@ -6,6 +6,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "terminal_action_result.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
@@ -230,7 +231,9 @@ private:
         std::optional<TerminalActionExecutionResult> earlyResult;
     };
 
-    void updateMetrics();
+    [[nodiscard]] bool updateMetrics();
+    [[nodiscard]] bool updateMetrics(
+        const TerminalTypography &typography, qreal pointSize);
     void updateTerminalSize();
     void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
     void scheduleResizeOverlay();
@@ -337,11 +340,8 @@ private:
     RevisionCounter runtimeOptionsRevision_;
     TerminalController *controller_ = nullptr;
     std::optional<QString> surfaceTitleOverride_;
-    QFont font_;
-    qreal cellWidth_ = 8.0;
-    qreal cellHeight_ = 16.0;
-    qreal baseline_ = 13.0;
-    qreal defaultFontPointSize_ = 12.0;
+    TerminalCellMetrics metrics_;
+    double defaultFontPointSize_ = 12.0;
     mutable QMutex renderMutex_;
     TerminalFrame frame_;
     // Persistent generations preserve the union of row changes when Qt

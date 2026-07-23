@@ -6,17 +6,48 @@
 #include <string_view>
 #include <system_error>
 
-inline constexpr std::array<std::string_view, 8>
-    GhosttyQtDelegatedCliActions{
-        "+edit-config",
-        "+explain-config",
-        "+help",
-        "+list-actions",
-        "+list-colors",
-        "+list-keybinds",
-        "+show-config",
-        "+validate-config",
-    };
+enum class GhosttyCliFrontendSupport {
+    Delegated,
+    Unsupported,
+};
+
+struct GhosttyCliActionCatalogEntry final {
+    std::string_view argument;
+    GhosttyCliFrontendSupport frontendSupport;
+
+    [[nodiscard]] constexpr bool isDelegated() const noexcept
+    {
+        return frontendSupport == GhosttyCliFrontendSupport::Delegated;
+    }
+
+    bool operator==(const GhosttyCliActionCatalogEntry &) const = default;
+};
+
+// Keep this catalog in the same order as the Action enum in the pinned
+// Ghostty source. Recognition and frontend support are intentionally separate:
+// an action can be valid Ghostty syntax without being handled by ghostty-qt.
+inline constexpr auto GhosttyPinnedCliActions =
+    std::to_array<GhosttyCliActionCatalogEntry>({
+        {"+version", GhosttyCliFrontendSupport::Unsupported},
+        {"+help", GhosttyCliFrontendSupport::Delegated},
+        {"+list-fonts", GhosttyCliFrontendSupport::Unsupported},
+        {"+list-keybinds", GhosttyCliFrontendSupport::Delegated},
+        {"+list-themes", GhosttyCliFrontendSupport::Unsupported},
+        {"+list-colors", GhosttyCliFrontendSupport::Delegated},
+        {"+list-actions", GhosttyCliFrontendSupport::Delegated},
+        {"+ssh", GhosttyCliFrontendSupport::Delegated},
+        {"+ssh-cache", GhosttyCliFrontendSupport::Delegated},
+        {"+edit-config", GhosttyCliFrontendSupport::Delegated},
+        {"+show-config", GhosttyCliFrontendSupport::Delegated},
+        {"+explain-config", GhosttyCliFrontendSupport::Delegated},
+        {"+validate-config", GhosttyCliFrontendSupport::Delegated},
+        {"+show-face", GhosttyCliFrontendSupport::Unsupported},
+        {"+crash-report", GhosttyCliFrontendSupport::Unsupported},
+        {"+boo", GhosttyCliFrontendSupport::Unsupported},
+        {"+new-window", GhosttyCliFrontendSupport::Unsupported},
+        {"+toggle-quick-terminal",
+         GhosttyCliFrontendSupport::Unsupported},
+    });
 
 enum class GhosttyCliActionDisposition {
     None,

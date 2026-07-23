@@ -454,7 +454,9 @@ null-parent path.
    cells. Cell values retain foreground provenance and bold, faint, inverse,
    invisible, underline, strike-through, overline, and text-blink attributes so
    frontend-only appearance rules do not have to be flattened at the worker
-   boundary.
+   boundary. The GUI selects one of four cached regular, bold, italic, and
+   bold-italic Qt faces from those attributes; the worker never owns a font or
+   platform font-database handle.
 
 The application-facing adapter header contains only Qt and project value
 types; the Ghostty C header and every Ghostty handle remain in its private
@@ -729,8 +731,9 @@ directory takes precedence; when false, or when the source has no
 terminal-owned directory, the workspace `working-directory` is retained.
 `window-inherit-font-size` independently copies only the source's actual point
 size, including manual zoom, or retains configured `font-size` when false. The
-font family always comes from the newest configuration. The tab child starts
-unadjusted, so a later font-size reload replaces its inherited visible size.
+four family lists, styles, and metric modifiers always come from the newest
+configuration. The tab child starts unadjusted, so a later font-size reload
+replaces its inherited visible size.
 `window-new-tab-position` is resolved independently against the workspace
 selection immediately before creation. `current` inserts after that selected
 tab, or appends when no tab is selected; `end` always appends, and either mode
@@ -852,26 +855,52 @@ still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
 The current typed compatibility slice covers launch and window geometry,
-working-directory and inheritance policy, application lifetime, font and
+working-directory and inheritance policy, application lifetime, typography and
 terminal appearance, scrollback, selection/clipboard/mouse/link behavior,
 resize-overlay presentation, included config files, and the finalized
 keybinding sets. The README and machine-checked parity ledger describe the
 individual keys. One strict schema-v1 document carries the whole slice,
 including nullable values such as `quit-after-last-window-closed-delay`; there
-is no separate defaults merge or partially populated snapshot. Canonical enum
-tags, optional include markers, working-directory inheritance, and nullable
-color alternatives are decoded only at this boundary. The fixed-size palette
+is no version fallback, separate defaults merge, or partially populated
+snapshot. Canonical enum tags, optional include markers, working-directory
+inheritance, and nullable color alternatives are decoded only at this
+boundary. The four font styles remain tagged `automatic`, `disabled`, or
+`named` values, and each optional metric modifier remains either null or a
+tagged `absolute` pixel/`percentage` multiplier value. The fixed-size palette
 cannot carry fewer or more than 256 colors. Appearance then crosses worker
 threads as a value-only `TerminalAppearance`: terminal foreground/background,
 all 256 palette defaults, selection and candidate/selected search colors,
 cursor color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed
 colors and Ghostty's cell-foreground and cell-background aliases remain
-distinct until the renderer has the target cell. Only the first configured
-font family is rendered. Explicit working-directory, font, and scrollback CLI
-options retain precedence.
+distinct until the renderer has the target cell.
 
-Live reload updates font and appearance on existing panes without overriding a
-pane's manual font zoom. Directory and font inheritance booleans plus tab
+Typography remains entirely on the GUI/render side as a value-only
+`TerminalTypography`. It carries one ordered family list and one style
+alternative for each of the regular, bold, italic, and bold-italic roles, the
+f32-derived point size, and eleven optional metric modifiers. The regular face
+defines the grid. Qt's context font merging consumes each ordered family list;
+disabled or unresolved styled roles fall back to the regular face, while
+Ghostty's pinned runtime treats a disabled regular style as automatic. This
+maps the configured lists without claiming Ghostty's embedded production
+fallback stack: that resolver is not part of public `libghostty-vt`, so final
+fallback selection remains Qt-owned and `font-family` remains partial. The
+style-family, style, size, and exposed metric controls are otherwise complete.
+Ghostty's private generated-box sprite and icon/Nerd Font classification paths
+also keep `adjust-box-thickness` and `adjust-icon-height` planned.
+
+The helper receives explicit `--font-family` and `--font-size` arguments before
+Ghostty finalizes configuration, rather than overlaying them afterward. This
+preserves Ghostty's f32 size and its cloning of an explicit regular family into
+otherwise absent styled roles. Explicit working-directory and scrollback CLI
+options retain their existing precedence. The exporter and C API overlay are
+compiled from a revision shadow in the project cache; the pinned official
+Ghostty submodule remains unmodified.
+
+Live reload replaces the complete typography and appearance values on existing
+panes without overriding a pane's manual font zoom. A manually zoomed pane
+keeps only its local point size while adopting new family, style, and metric
+values; resetting the size uses the newest configured default and resumes size
+reloads. Directory and font inheritance booleans plus tab
 insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
 child as manually zoomed. Tab-strip visibility is workspace-owned presentation
@@ -884,6 +913,21 @@ paired window dimensions are likewise future-window creation policy. Their
 cell-to-pixel conversion uses each new window's resolved font size, including
 source-pane inheritance, and runs before workspace initialization constructs
 its first pane. Existing roots retain both their size and minimum hint on reload.
+
+Each pane derives terminal metrics by projecting the regular Qt face to integer
+physical pixels at its current device-pixel ratio, applying Ghostty's absolute
+signed-pixel or parsed percentage-multiplier alternative, clamping the metrics
+that must remain drawable, and converting the result back to logical
+coordinates. The pinned sparse modifier map determines application order, so
+cell-height-dependent baseline and decoration recentering occurs at that step
+rather than through a frontend-imposed fixed sequence. Cursor height retains
+the unadjusted cell-height basis, is vertically centered, clamps only to one
+physical pixel, and may exceed the cell; cursor thickness starts from one
+physical pixel and feeds bar, underline, and hollow strokes. Underline and
+strike positions are unsigned and saturate at zero, while overline position is
+signed and remains representable when negative. A screen or DPR change
+rebuilds these metrics before publishing geometry or repainting.
+
 During one-shot workspace initialization, the authoritative logical workspace
 viewport, resolved terminal cell metrics, and selected window's device-pixel
 ratio are converted to a complete `TerminalSessionGeometry`. The same
@@ -1369,10 +1413,12 @@ the main executable and resolves the library from a relative private
 `${CMAKE_INSTALL_LIBDIR}/ghostty-qt` directory; disabling the option omits this
 configuration path entirely.
 
-The main executable and helper share one constexpr catalog containing the
-eight public configuration/inspection/validation actions. At the first line of
-process startup, before argument transcoding or any Qt object, the frontend
-classifies raw `argv`. The frontend's documented `--` command delimiter stops
+The main executable and helper share one constexpr catalog containing every
+pinned action spelling and a separate frontend-support decision. This preserves
+Ghostty's distinction between a known-but-unsupported action, an invalid
+spelling, and a second action without maintaining multiple policy lists. At the
+first line of process startup, before argument transcoding or any Qt object,
+the frontend classifies raw `argv`. The frontend's documented `--` command delimiter stops
 detection before its terminal payload. An exact earlier `-e` also suppresses
 delegation to match pinned Ghostty's detector ordering, although `-e` itself
 remains unsupported by the frontend launch parser. Standalone frontend
@@ -1394,6 +1440,15 @@ shell-style 127 or 126 without entering Qt. A configuration-disabled build
 retains classification so a supported action gets an immediate feature-boundary
 diagnostic instead of becoming a terminal program. Normal GUI launches perform
 no helper-path lookup.
+
+The pinned `+ssh` action then spawns and waits for the selected SSH child rather
+than replacing the helper. Ghostty owns its wrapper-option boundary, exact
+child arguments and streams, TERM/SendEnv options, destination resolution,
+built-in terminfo upload and fallback, standard XDG-state cache, and
+`128 + signal` child-status mapping. The companion `+ssh-cache` action owns the
+same cache's list/query/add/remove/prune/clear grammar and on-disk behavior.
+Both are explicit pre-Qt CLI actions; automatic shell-function injection
+remains a separate shell-integration parity item.
 
 The pinned `+edit-config` implementation then performs its own intentional
 second replacement. It loads standard configuration first, creating the
@@ -1452,11 +1507,14 @@ and FreeBSD behavior are not part of this frontend's parity target.
 source and rejects revision-file, schema, ordering, or inventory drift. This
 keeps an upstream snapshot update from silently adding untracked parity work.
 The contract remains conservative: only the typed configuration slice,
-including the four search colors, `link-url`, and `link-previews`, is marked
-partial or supported. Search actions remain partial because the public library
-artifact cannot expose Ghostty's `xev`-dependent search thread, while custom
-`link` rules and other upstream keys stay explicitly planned. In particular,
-the pinned Ghostty `RepeatableLink.parseCLI` still returns
+including the four-role typography and exposed physical metric controls, four
+search colors, `link-url`, and `link-previews`, is marked partial or supported.
+The regular family key alone stays partial because final fallback resolution is
+Qt-owned; the three styled-family keys, four style keys, font size, and eleven
+exposed metric keys are supported. Search actions remain partial because the
+public library artifact cannot expose Ghostty's `xev`-dependent search thread,
+while custom `link` rules and other upstream keys stay explicitly planned. In
+particular, the pinned Ghostty `RepeatableLink.parseCLI` still returns
 `error.NotImplemented`, so this frontend does not invent a parallel syntax for
 user-defined expressions and actions.
 
@@ -1465,8 +1523,14 @@ user-defined expressions and actions.
 The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
-  typed config and appearance overlays, CLI font precedence, scrollback units,
-  and close modes.
+  typed config, typography, and appearance overlays, exact f32 CLI font
+  precedence passed into helper finalization, scrollback units, and close
+  modes.
+- `terminal-cell-metrics` verifies four-role face selection and regular-face
+  grid ownership, absolute and percentage modifiers, physical-pixel
+  rounding/clamping, pinned sparse-map order, cell-height recentering,
+  independent centered cursor geometry including over-cell height, and DPR
+  projection.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -1560,26 +1624,32 @@ The default CTest suite has focused layers for each ownership boundary:
   optional-include watches, atomic replacement, debounce, queued snapshot
   transport, and retention of the last good value.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
-  frontend projection, including exact shapes, semantic enums, typed nullable
-  fields and include entries, canonical colors, the fixed 256-color palette,
-  the full unsigned scrollback range, and binding trees.
+  frontend projection, including exact shapes, four role-family lists, tagged
+  automatic/disabled/named font styles, nullable tagged absolute/percentage
+  metric modifiers, semantic enums, typed nullable fields and include entries,
+  canonical colors, the fixed 256-color palette, the full unsigned scrollback
+  range, and binding trees.
 - `ghostty-config-process-loader` verifies the four-process
   validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
-  plus exact nullable/capped application-lifetime duration export and nullable
-  X11 divider-color canonicalization.
+  plus exact trailing font CLI arguments and role finalization,
+  nullable/capped application-lifetime duration export, and nullable X11
+  divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
 - `ghostty-cli-delegation` verifies the shared raw-argument classifier; same-PID
   process replacement; byte-exact argv, stdin, stdout, and stderr; environment,
   working-directory, and exit-status preservation; missing/unexecutable-helper
-  and config-disabled failures; all eight real pinned actions; action-option
-  order; pre-Qt operation; direct-helper equivalence; and the `+edit-config`
-  editor exec, preferred-file creation, path escaping, and environment
-  precedence.
+  and config-disabled failures; every delegated real pinned action;
+  action-option order; pre-Qt operation; direct-helper equivalence; the
+  `+edit-config` editor exec, preferred-file creation, path escaping, and
+  environment precedence; plus SSH child argv/streams/status, terminfo fallback
+  and cache suppression, and isolated SSH-cache lifecycle and file-mode repair.
 - `terminal-pane-render` renders frames offscreen, verifies the initial
-  placeholder is replaced plus selection/cursor/text appearance, and exercises
+  placeholder is replaced plus four-role font selection, physical-pixel cell,
+  decoration, and cursor metrics at multiple DPRs, selection/cursor/text
+  appearance, and exercises
   sequence consume/replay, performability, viewport/selection action routing,
   release suppression, reload cancellation, correlated worker-action chain
   suspension/cancellation, and tracked OSC 8 hover, copy, and

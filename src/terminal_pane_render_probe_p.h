@@ -2,6 +2,7 @@
 
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 
+#include "terminal_cell_metrics.h"
 #include "terminal_session_options.h"
 
 #include <QColor>
@@ -9,6 +10,7 @@
 #include <QtGlobal>
 #include <QVector>
 
+#include <array>
 #include <optional>
 
 class TerminalPane;
@@ -25,6 +27,16 @@ struct TerminalPaneRenderProbeSnapshot {
     QVector<quint64> rowNodeSerials;
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
+    TerminalCellMetrics metrics;
+    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
+        renderFonts;
+    std::array<quint64,
+               terminalEnumIndex(TerminalFontRole::Count)>
+        fontRoleCellCounts{};
+    QVector<QRectF> underlineRects;
+    QVector<QRectF> strikethroughRects;
+    QVector<QRectF> overlineRects;
+    QVector<QRectF> cursorRects;
 };
 
 [[nodiscard]] TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(

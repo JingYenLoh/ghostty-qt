@@ -15,6 +15,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <array>
 #include <expected>
 #include <limits>
 #include <ranges>
@@ -101,6 +102,43 @@ QByteArray invocationLog(const QString &path)
     return log.readAll();
 }
 
+struct HelperResult {
+    QProcess::ExitStatus exitStatus = QProcess::CrashExit;
+    int exitCode = -1;
+    QByteArray standardOutput;
+    QByteArray standardError;
+
+    bool operator==(const HelperResult &) const = default;
+};
+
+std::expected<HelperResult, QString> runRealHelper(
+    const QString &helperPath,
+    const ConfigFixture &fixture,
+    const QStringList &arguments)
+{
+    QProcess process;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"), fixture.xdgHome);
+    process.setProcessEnvironment(environment);
+    process.setProgram(helperPath);
+    process.setArguments(arguments);
+    process.start(QIODevice::ReadOnly);
+    if (!process.waitForStarted(10'000)) {
+        return std::unexpected(QStringLiteral("structured helper did not start"));
+    }
+    if (!process.waitForFinished(10'000)) {
+        process.kill();
+        process.waitForFinished(1'000);
+        return std::unexpected(QStringLiteral("structured helper timed out"));
+    }
+    return HelperResult{
+        .exitStatus = process.exitStatus(),
+        .exitCode = process.exitCode(),
+        .standardOutput = process.readAllStandardOutput(),
+        .standardError = process.readAllStandardError(),
+    };
+}
+
 QJsonObject withFontSize(QJsonObject exportObject, double size)
 {
     QJsonObject configValues =
@@ -141,30 +179,21 @@ GhosttyConfigProcessLoaderOptions fakeOptions(
 }
 
 std::expected<GhosttyConfigExport, QString> queryRealConfigExport(
-    const QString &helperPath, const ConfigFixture &fixture)
+    const QString &helperPath,
+    const ConfigFixture &fixture,
+    QStringList configurationArguments = {})
 {
-    QProcess process;
-    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-    environment.insert(QStringLiteral("XDG_CONFIG_HOME"), fixture.xdgHome);
-    process.setProcessEnvironment(environment);
-    process.setProgram(helperPath);
-    process.setArguments({QStringLiteral("+show-config-json")});
-    process.start(QIODevice::ReadOnly);
-    if (!process.waitForStarted(10'000)) {
-        return std::unexpected(QStringLiteral("structured helper did not start"));
-    }
-    if (!process.waitForFinished(10'000)) {
-        process.kill();
-        process.waitForFinished(1'000);
-        return std::unexpected(QStringLiteral("structured helper timed out"));
-    }
-    if (process.exitStatus() != QProcess::NormalExit
-        || process.exitCode() != 0) {
+    configurationArguments.prepend(QStringLiteral("+show-config-json"));
+    auto process = runRealHelper(
+        helperPath, fixture, configurationArguments);
+    if (!process) return std::unexpected(std::move(process.error()));
+    if (process->exitStatus != QProcess::NormalExit
+        || process->exitCode != 0) {
         return std::unexpected(
             QStringLiteral("structured helper failed: %1")
-                .arg(QString::fromUtf8(process.readAllStandardError()).trimmed()));
+                .arg(QString::fromUtf8(process->standardError).trimmed()));
     }
-    return parseGhosttyConfigExportJson(process.readAllStandardOutput());
+    return parseGhosttyConfigExportJson(process->standardOutput);
 }
 
 GhosttyConfigProcessLoaderOptions realOptions(const QString &helperPath)
@@ -184,6 +213,7 @@ class GhosttyConfigProcessLoaderTest : public QObject {
 private Q_SLOTS:
     void derivesXdgHomeFromEitherCandidateOrder();
     void invokesStableFourProcessTransaction();
+    void forwardsConfigurationArgumentsToEveryConfigQuery();
     void publishesTypedSnapshotAndSourcePaths();
     void diagnosesOnlyNonDefaultUnsupportedActions();
     void rejectsQueryFailuresAndMalformedData();
@@ -192,6 +222,8 @@ private Q_SLOTS:
     void preservesSuccessfulHelperWarnings();
     void reportsValidationFailureDeterministically();
     void reportsTimeoutCrashAndStartFailureDeterministically();
+    void realHelperAppliesConfigurationArgumentPrecedence();
+    void realHelperRejectsInvalidConfigurationArgumentsDeterministically();
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
@@ -243,8 +275,38 @@ void GhosttyConfigProcessLoaderTest::invokesStableFourProcessTransaction()
                                "+show-config-json\n"
                                "+validate-config\n"
                                "+show-config-json\n"));
-    QCOMPARE(result->values.fontSize, 13.5);
+    QCOMPARE(result->values.typography.pointSize, 13.5);
     QCOMPARE(result->keybindings.root.size(), 1);
+}
+
+void GhosttyConfigProcessLoaderTest::
+    forwardsConfigurationArgumentsToEveryConfigQuery()
+{
+    ConfigFixture fixture;
+    const QString logPath =
+        QDir(fixture.temporary.path()).filePath(QStringLiteral("invocations"));
+    auto options = fakeOptions(fixture);
+    options.environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
+                               logPath);
+    options.configurationArguments = {
+        QStringLiteral("--font-family="),
+        QStringLiteral("--font-family=等号=👻"),
+        QStringLiteral("--font-size=17.25"),
+    };
+
+    const GhosttyConfigLoadResult result =
+        makeGhosttyConfigProcessLoader(options)(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+
+    const QByteArray suffix =
+        QByteArrayLiteral(" --font-family= --font-family=")
+        + QStringLiteral("等号=👻").toUtf8()
+        + QByteArrayLiteral(" --font-size=17.25\n");
+    QCOMPARE(invocationLog(logPath),
+             QByteArrayLiteral("+validate-config\n")
+                 + QByteArrayLiteral("+show-config-json") + suffix
+                 + QByteArrayLiteral("+validate-config\n")
+                 + QByteArrayLiteral("+show-config-json") + suffix);
 }
 
 void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
@@ -464,6 +526,199 @@ void GhosttyConfigProcessLoaderTest::reportsTimeoutCrashAndStartFailureDetermini
     QVERIFY(!result);
     QCOMPARE(result.error(), QStringLiteral(
         "Ghostty config helper could not be started during validation"));
+}
+
+void GhosttyConfigProcessLoaderTest::
+    realHelperAppliesConfigurationArgumentPrecedence()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "font-family = File Regular One\n"
+            "font-family = File Regular Two\n"
+            "font-family-bold = File Bold\n"
+            "font-family-italic = File Italic\n"
+            "font-family-bold-italic = File Bold Italic\n"
+            "font-style = File Regular Style\n"
+            "font-style-bold = File Bold Style\n"
+            "font-style-italic = File Italic Style\n"
+            "font-style-bold-italic = default\n"
+            "font-size = 11\n"
+            "adjust-cell-width = 1\n"
+            "adjust-cell-height = 25%\n"
+            "adjust-font-baseline = -3\n"
+            "adjust-underline-position = -20%\n"
+            "adjust-underline-thickness = 5\n"
+            "adjust-strikethrough-position = 60%\n"
+            "adjust-strikethrough-thickness = -7\n"
+            "adjust-overline-position = 80%\n"
+            "adjust-overline-thickness = 9\n"
+            "adjust-cursor-thickness = 100%\n"
+            "adjust-cursor-height = -11\n"
+            // These unsupported renderer metrics must still participate in
+            // the pinned AutoHashMap because they can change the exported
+            // iteration order of the eleven supported entries.
+            "adjust-box-thickness = 12\n"
+            "adjust-icon-height = 13\n"));
+    const QStringList arguments{
+        QStringLiteral("--font-family="),
+        QStringLiteral("--font-family=CLI=主👻"),
+        QStringLiteral("--font-family=CLI Secondary"),
+        QStringLiteral("--font-family-bold="),
+        QStringLiteral("--font-family-bold=CLI Bold"),
+        QStringLiteral("--font-style=default"),
+        QStringLiteral("--font-style-bold=false"),
+        QStringLiteral("--font-size=17.25"),
+    };
+
+    auto direct = queryRealConfigExport(helperPath, fixture, arguments);
+    QVERIFY2(direct.has_value(), qPrintable(errorMessage(direct)));
+
+    auto options = realOptions(helperPath);
+    options.configurationArguments = arguments;
+    const GhosttyConfigLoadResult loaded =
+        makeGhosttyConfigProcessLoader(std::move(options))(
+            fixture.candidates());
+    QVERIFY2(loaded.has_value(), qPrintable(errorMessage(loaded)));
+
+    const TerminalTypography &typography = loaded->values.typography;
+    QCOMPARE(typography.face(TerminalFontRole::Regular).families,
+             QStringList({QStringLiteral("CLI=主👻"),
+                          QStringLiteral("CLI Secondary")}));
+    QCOMPARE(typography.face(TerminalFontRole::Bold).families,
+             QStringList({QStringLiteral("CLI Bold")}));
+    QCOMPARE(typography.face(TerminalFontRole::Italic).families,
+             QStringList({QStringLiteral("File Italic")}));
+    QCOMPARE(typography.face(TerminalFontRole::BoldItalic).families,
+             QStringList({QStringLiteral("File Bold Italic")}));
+    QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
+        typography.face(TerminalFontRole::Regular).style));
+    QVERIFY(std::holds_alternative<TerminalFontStyles::Disabled>(
+        typography.face(TerminalFontRole::Bold).style));
+    QCOMPARE(
+        std::get<TerminalFontStyles::Named>(
+            typography.face(TerminalFontRole::Italic).style)
+            .name,
+        QStringLiteral("File Italic Style"));
+    QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
+        typography.face(TerminalFontRole::BoldItalic).style));
+    QCOMPARE(typography.pointSize, 17.25);
+
+    const auto expectedModifiers = std::to_array<
+        std::pair<TerminalMetric, TerminalMetricModifier>>({
+        {TerminalMetric::CellWidth,
+         TerminalMetricModifiers::Absolute{.pixels = 1}},
+        {TerminalMetric::CellHeight,
+         TerminalMetricModifiers::Percentage{.multiplier = 1.25}},
+        {TerminalMetric::FontBaseline,
+         TerminalMetricModifiers::Absolute{.pixels = -3}},
+        {TerminalMetric::UnderlinePosition,
+         TerminalMetricModifiers::Percentage{.multiplier = 0.8}},
+        {TerminalMetric::UnderlineThickness,
+         TerminalMetricModifiers::Absolute{.pixels = 5}},
+        {TerminalMetric::StrikethroughPosition,
+         TerminalMetricModifiers::Percentage{.multiplier = 1.6}},
+        {TerminalMetric::StrikethroughThickness,
+         TerminalMetricModifiers::Absolute{.pixels = -7}},
+        {TerminalMetric::OverlinePosition,
+         TerminalMetricModifiers::Percentage{.multiplier = 1.8}},
+        {TerminalMetric::OverlineThickness,
+         TerminalMetricModifiers::Absolute{.pixels = 9}},
+        {TerminalMetric::CursorThickness,
+         TerminalMetricModifiers::Percentage{.multiplier = 2.0}},
+        {TerminalMetric::CursorHeight,
+         TerminalMetricModifiers::Absolute{.pixels = -11}},
+    });
+    for (const auto &[metric, expected] : expectedModifiers) {
+        const auto &actual = typography.metricModifiers[metric];
+        QVERIFY(actual.has_value());
+        QVERIFY(*actual == expected);
+    }
+    const std::vector<TerminalMetric> expectedModifierOrder{
+        TerminalMetric::StrikethroughThickness,
+        TerminalMetric::CellWidth,
+        TerminalMetric::CursorThickness,
+        TerminalMetric::UnderlineThickness,
+        TerminalMetric::CellHeight,
+        TerminalMetric::StrikethroughPosition,
+        TerminalMetric::UnderlinePosition,
+        TerminalMetric::FontBaseline,
+        TerminalMetric::CursorHeight,
+        TerminalMetric::OverlinePosition,
+        TerminalMetric::OverlineThickness,
+    };
+    QVERIFY(typography.metricModifiers.applicationOrder
+            == expectedModifierOrder);
+    QVERIFY(typography == direct->values.typography);
+
+    auto validation = runRealHelper(
+        helperPath, fixture, {QStringLiteral("+validate-config")});
+    QVERIFY2(validation.has_value(), qPrintable(errorMessage(validation)));
+    QCOMPARE(validation->exitStatus, QProcess::NormalExit);
+    QCOMPARE(validation->exitCode, 0);
+    QVERIFY(validation->standardError.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::
+    realHelperRejectsInvalidConfigurationArgumentsDeterministically()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto options = realOptions(helperPath);
+    options.configurationArguments = {
+        QStringLiteral("--font-size=not-a-number"),
+    };
+    const auto load = makeGhosttyConfigProcessLoader(options);
+    const GhosttyConfigLoadResult first = load(fixture.candidates());
+    const GhosttyConfigLoadResult second = load(fixture.candidates());
+    QVERIFY(!first);
+    QVERIFY(!second);
+    QCOMPARE(first.error(), second.error());
+    QVERIFY(first.error().startsWith(QStringLiteral(
+        "Ghostty config helper failed during config query with exit code 1")));
+    QVERIFY(first.error().contains(QStringLiteral("font-size")));
+
+    const QStringList invalidPrivateArguments{
+        QStringLiteral("+show-config-json"),
+        QStringLiteral("--font-size=not-a-number"),
+    };
+    auto privateFirst = runRealHelper(
+        helperPath, fixture, invalidPrivateArguments);
+    auto privateSecond = runRealHelper(
+        helperPath, fixture, invalidPrivateArguments);
+    QVERIFY2(privateFirst.has_value(), qPrintable(errorMessage(privateFirst)));
+    QVERIFY2(privateSecond.has_value(), qPrintable(errorMessage(privateSecond)));
+    QCOMPARE(privateFirst->exitStatus, QProcess::NormalExit);
+    QCOMPARE(privateFirst->exitCode, 1);
+    QVERIFY(*privateFirst == *privateSecond);
+    QVERIFY(privateFirst->standardOutput.isEmpty());
+    QVERIFY(privateFirst->standardError.contains(
+        QByteArrayLiteral("font-size")));
+
+    auto multiple = runRealHelper(
+        helperPath, fixture,
+        {QStringLiteral("+show-config-json"),
+         QStringLiteral("+validate-config")});
+    QVERIFY2(multiple.has_value(), qPrintable(errorMessage(multiple)));
+    QCOMPARE(multiple->exitStatus, QProcess::NormalExit);
+    QCOMPARE(multiple->exitCode, 64);
+    QVERIFY(multiple->standardOutput.isEmpty());
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
@@ -695,17 +950,44 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()
     const QString included = fixture.filePath(QStringLiteral("included.ghostty"));
     const QString missing = fixture.filePath(QStringLiteral("missing.ghostty"));
     ConfigFixture::writeFile(fixture.legacyPath, {});
-    ConfigFixture::writeFile(included, QByteArrayLiteral("font-size = 19\n"));
+    ConfigFixture::writeFile(
+        included,
+        QByteArrayLiteral(
+            "font-family = Included Regular\n"
+            "font-size = 19\n"));
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QStringLiteral("config-file = %1\nconfig-file = ?%2\n")
+        QStringLiteral(
+            "font-family = File Regular\n"
+            "font-size = 16\n"
+            "config-file = %1\n"
+            "config-file = ?%2\n")
             .arg(included, missing)
             .toUtf8());
 
+    auto options = realOptions(helperPath);
+    options.configurationArguments = {
+        QStringLiteral("--font-family=CLI Regular"),
+        QStringLiteral("--font-size=17.25"),
+    };
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
-        realOptions(helperPath))(fixture.candidates());
+        std::move(options))(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QCOMPARE(result->values.fontSize, 19.0);
+    const QStringList finalizedFamilies{
+        QStringLiteral("CLI Regular"),
+        QStringLiteral("Included Regular"),
+    };
+    for (const TerminalFontRole role : {
+             TerminalFontRole::Regular,
+             TerminalFontRole::Bold,
+             TerminalFontRole::Italic,
+             TerminalFontRole::BoldItalic,
+         }) {
+        QCOMPARE(result->values.typography.face(role).families,
+                 finalizedFamilies);
+    }
+    // Pinned recursive files load after CLI arguments.
+    QCOMPARE(result->values.typography.pointSize, 19.0);
     QCOMPARE(result->values.configFiles.size(), 2);
     QCOMPARE(result->values.configFiles.at(0).path, included);
     QVERIFY(!result->values.configFiles.at(0).optional);

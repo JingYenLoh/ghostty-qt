@@ -4,9 +4,11 @@
 
 #include <QDir>
 #include <QFile>
+#include <QLocale>
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <array>
 #include <limits>
 
@@ -28,16 +30,57 @@ std::array<QColor, 256> testPalette()
     return palette;
 }
 
+TerminalTypography completeTypography()
+{
+    TerminalTypography typography;
+    typography.face(TerminalFontRole::Regular) = {
+        .families = {
+            QStringLiteral("Config Primary"),
+            QStringLiteral("Config Fallback"),
+        },
+        .style = TerminalFontStyles::Named{QStringLiteral("Book")},
+    };
+    typography.face(TerminalFontRole::Bold) = {
+        .families = {
+            QStringLiteral("Config Bold"),
+            QStringLiteral("Config Bold Fallback"),
+        },
+        .style = TerminalFontStyles::Disabled{},
+    };
+    typography.face(TerminalFontRole::Italic) = {
+        .families = {
+            QStringLiteral("Config Italic"),
+        },
+        .style = TerminalFontStyles::Automatic{},
+    };
+    typography.face(TerminalFontRole::BoldItalic) = {
+        .families = {
+            QStringLiteral("Config Bold Italic"),
+        },
+        .style =
+            TerminalFontStyles::Named{QStringLiteral("Extra Black Italic")},
+    };
+    typography.pointSize = 14.5;
+    typography.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Percentage{1.125};
+    typography.metricModifiers[TerminalMetric::FontBaseline] =
+        TerminalMetricModifiers::Absolute{-2};
+    typography.metricModifiers[TerminalMetric::CursorHeight] =
+        TerminalMetricModifiers::Percentage{0.75};
+    return typography;
+}
+
+const QStringList &regularFamilies(const LaunchOptions &options)
+{
+    return options.typography.face(TerminalFontRole::Regular).families;
+}
+
 GhosttyConfigSnapshot completeSnapshot()
 {
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
     values.workingDirectoryPath = QStringLiteral("/work/ghostty");
-    values.fontFamilies = {
-        QStringLiteral("Config Primary"),
-        QStringLiteral("Config Fallback"),
-    };
-    values.fontSize = 14.5;
+    values.typography = completeTypography();
 
     values.appearance = {
         .foreground = QColor(QStringLiteral("#112233")),
@@ -140,11 +183,13 @@ private Q_SLOTS:
     void rejectsFileAsWorkingDirectory();
     void rejectsInvalidFontSize_data();
     void rejectsInvalidFontSize();
+    void normalizesFontSizeToGhosttyPrecision();
+    void buildsGhosttyFontCliArguments();
     void rejectsInvalidScrollbackLines_data();
     void rejectsInvalidScrollbackLines();
     void rejectsUnknownOption();
     void rejectsMissingApplicationName();
-    void overlaysGhosttySnapshotAndPreservesCliFonts();
+    void appliesFinalizedGhosttyTypography();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -174,8 +219,18 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.workingDirectory, QDir::currentPath());
     QVERIFY(options.inheritWorkingDirectory);
     QVERIFY(!options.workingDirectoryExplicit);
-    QVERIFY(options.fontFamily.isEmpty());
-    QCOMPARE(options.fontSize, 12.0);
+    QVERIFY(regularFamilies(options).isEmpty());
+    QCOMPARE(options.typography.pointSize, 12.0);
+    for (const TerminalFontFace &face : options.typography.faces) {
+        QVERIFY(face.families.isEmpty());
+        QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
+            face.style));
+    }
+    QVERIFY(std::ranges::all_of(
+        options.typography.metricModifiers.values,
+        [](const TerminalMetricModifierSet::Value &modifier) {
+            return !modifier.has_value();
+        }));
     QVERIFY(!options.fontFamilyExplicit);
     QVERIFY(!options.fontSizeExplicit);
     QCOMPARE(options.appearance.foregroundColor,
@@ -338,8 +393,10 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.workingDirectory, QDir::cleanPath(directory.path()));
     QVERIFY(!options.inheritWorkingDirectory);
     QVERIFY(options.workingDirectoryExplicit);
-    QCOMPARE(options.fontFamily, QStringLiteral("Iosevka Term"));
-    QCOMPARE(options.fontSize, 15.5);
+    QCOMPARE(regularFamilies(options),
+             QStringList{QStringLiteral("Iosevka Term")});
+    QCOMPARE(regularFamilies(options).size(), qsizetype(1));
+    QCOMPARE(options.typography.pointSize, 15.5);
     QVERIFY(options.fontFamilyExplicit);
     QVERIFY(options.fontSizeExplicit);
     QCOMPARE(options.scrollbackLimit.value, quint64(250'000));
@@ -422,6 +479,8 @@ void LaunchOptionsTest::rejectsInvalidFontSize_data()
     QTest::newRow("negative") << QStringLiteral("-2");
     QTest::newRow("not-a-number") << QStringLiteral("large");
     QTest::newRow("infinity") << QStringLiteral("inf");
+    QTest::newRow("overflows-f32") << QStringLiteral("3.5e38");
+    QTest::newRow("underflows-f32") << QStringLiteral("1e-1000");
 }
 
 void LaunchOptionsTest::rejectsInvalidFontSize()
@@ -433,6 +492,93 @@ void LaunchOptionsTest::rejectsInvalidFontSize()
          value});
     QVERIFY(!result.has_value());
     QVERIFY(result.error().contains(QStringLiteral("Invalid font size")));
+}
+
+void LaunchOptionsTest::normalizesFontSizeToGhosttyPrecision()
+{
+    const QLocale previousLocale;
+    struct RestoreLocale {
+        QLocale locale;
+        ~RestoreLocale() { QLocale::setDefault(locale); }
+    } restore{previousLocale};
+    QLocale::setDefault(QLocale(QLocale::German, QLocale::Germany));
+
+    const auto result = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-size=13.123456789"),
+    });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+
+    const double expected =
+        static_cast<double>(static_cast<float>(13.123456789));
+    QCOMPARE(result->typography.pointSize, expected);
+    QCOMPARE(
+        ghosttyConfigCliFontArguments(*result),
+        QStringList{QStringLiteral("--font-size=13.123457")});
+}
+
+void LaunchOptionsTest::buildsGhosttyFontCliArguments()
+{
+    QCOMPARE(ghosttyConfigCliFontArguments({}), QStringList{});
+
+    const QString unicodeFamily =
+        QString::fromUtf8("家族 = --font \"with spaces\" \xE2\x98\x83");
+    const auto family = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-family"),
+        unicodeFamily,
+    });
+    QVERIFY2(family.has_value(), qPrintable(errorMessage(family)));
+    QCOMPARE(regularFamilies(*family), QStringList{unicodeFamily});
+    QCOMPARE(regularFamilies(*family).size(), qsizetype(1));
+    QCOMPARE(ghosttyConfigCliFontArguments(*family),
+             QStringList{QStringLiteral("--font-family=") + unicodeFamily});
+
+    const auto repeatedFamilies = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-family=Before Reset"),
+        QStringLiteral("--font-family="),
+        QStringLiteral("--font-family=Primary"),
+        QStringLiteral("--font-family=Fallback"),
+    });
+    QVERIFY2(repeatedFamilies.has_value(),
+             qPrintable(errorMessage(repeatedFamilies)));
+    QCOMPARE(regularFamilies(*repeatedFamilies),
+             QStringList({QStringLiteral("Primary"),
+                          QStringLiteral("Fallback")}));
+    QCOMPARE(
+        ghosttyConfigCliFontArguments(*repeatedFamilies),
+        QStringList({QStringLiteral("--font-family=Primary"),
+                     QStringLiteral("--font-family=Fallback")}));
+
+    const auto emptyFamily = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--font-family="),
+    });
+    QVERIFY2(emptyFamily.has_value(), qPrintable(errorMessage(emptyFamily)));
+    QVERIFY(regularFamilies(*emptyFamily).isEmpty());
+    QCOMPARE(ghosttyConfigCliFontArguments(*emptyFamily),
+             QStringList{QStringLiteral("--font-family=")});
+
+    LaunchOptions defensive;
+    defensive.fontFamilyExplicit = true;
+    defensive.typography.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("First"),
+        QStringLiteral("Second"),
+    };
+    defensive.fontSizeExplicit = true;
+    defensive.typography.pointSize = 15.5;
+    QCOMPARE(ghosttyConfigCliFontArguments(defensive),
+             QStringList({
+                 QStringLiteral("--font-family=First"),
+                 QStringLiteral("--font-family=Second"),
+                 QStringLiteral("--font-size=15.5"),
+             }));
+
+    defensive.typography.face(TerminalFontRole::Regular).families.clear();
+    defensive.fontSizeExplicit = false;
+    QCOMPARE(ghosttyConfigCliFontArguments(defensive),
+             QStringList{QStringLiteral("--font-family=")});
 }
 
 void LaunchOptionsTest::rejectsInvalidScrollbackLines_data()
@@ -473,11 +619,20 @@ void LaunchOptionsTest::rejectsMissingApplicationName()
              QStringLiteral("The argument list must include the application name."));
 }
 
-void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
+void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
 {
     LaunchOptions base;
-    base.fontFamily = QStringLiteral("CLI Family");
-    base.fontSize = 17.0;
+    base.typography.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("CLI Family"),
+    };
+    base.typography.face(TerminalFontRole::Bold).families = {
+        QStringLiteral("Stale Launch Bold"),
+    };
+    base.typography.face(TerminalFontRole::Italic).style =
+        TerminalFontStyles::Disabled{};
+    base.typography.pointSize = 17.0;
+    base.typography.metricModifiers[TerminalMetric::CellHeight] =
+        TerminalMetricModifiers::Absolute{99};
     base.fontFamilyExplicit = true;
     base.fontSizeExplicit = true;
     base.scrollbackLimit = {.value = 25'000,
@@ -487,8 +642,11 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     const GhosttyConfigSnapshot snapshot = completeSnapshot();
 
     const LaunchOptions cliResult = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(cliResult.fontFamily, QStringLiteral("CLI Family"));
-    QCOMPARE(cliResult.fontSize, 17.0);
+    // The process helper has already applied explicit CLI arguments,
+    // recursive includes, and styled-family finalization. The broad snapshot
+    // projection must trust that complete value instead of rebuilding a
+    // hybrid from the original frontend flags.
+    QVERIFY(cliResult.typography == completeTypography());
     QCOMPARE(cliResult.appearance.foregroundColor,
              QColor(QStringLiteral("#112233")));
     QCOMPARE(cliResult.appearance.backgroundColor,
@@ -551,14 +709,21 @@ void LaunchOptionsTest::overlaysGhosttySnapshotAndPreservesCliFonts()
     QVERIFY(cliResult.keybindSource.structured() != nullptr);
     QCOMPARE(*cliResult.keybindSource.structured(), snapshot.keybindings);
 
-    base.fontFamilyExplicit = false;
-    base.fontSizeExplicit = false;
     base.scrollbackLimitExplicit = false;
     const LaunchOptions configResult = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(configResult.fontFamily, QStringLiteral("Config Primary"));
-    QCOMPARE(configResult.fontSize, 14.5);
+    QVERIFY(configResult.typography == completeTypography());
     QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
+
+    for (const double unusableSize : {0.0, -2.0}) {
+        GhosttyConfigSnapshot unusable = snapshot;
+        unusable.values.typography.pointSize = unusableSize;
+        const LaunchOptions result =
+            applyGhosttyConfigSnapshot(base, unusable);
+        TerminalTypography expected = completeTypography();
+        expected.pointSize = base.typography.pointSize;
+        QVERIFY(result.typography == expected);
+    }
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()
@@ -988,8 +1153,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
                 QVariant::fromValue(runtime)) == runtime);
 
     LaunchOptions frontendOnlyChanged = options;
-    frontendOnlyChanged.fontFamily = QStringLiteral("Frontend Font");
-    frontendOnlyChanged.fontSize = 19.0;
+    frontendOnlyChanged.typography.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("Frontend Font"),
+    };
+    frontendOnlyChanged.typography.pointSize = 19.0;
     frontendOnlyChanged.fontFamilyExplicit = true;
     frontendOnlyChanged.fontSizeExplicit = true;
     frontendOnlyChanged.confirmCloseMode = ConfirmCloseMode::Always;
@@ -1080,7 +1247,7 @@ void LaunchOptionsTest::removesOnlyTheInitialCommand()
 {
     LaunchOptions options;
     options.workingDirectory = QStringLiteral("/configured");
-    options.fontSize = 17.0;
+    options.typography.pointSize = 17.0;
     options.maximize = true;
     options.program = {
         QStringLiteral("command"), QStringLiteral("argument"),

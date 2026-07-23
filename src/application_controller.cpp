@@ -87,7 +87,7 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
                                             const LaunchOptions &options)
 {
     const TerminalCellMetrics metrics =
-        terminalCellMetrics(options.fontFamily, options.fontSize);
+        terminalCellMetrics(options.typography, window.devicePixelRatio());
     const qreal chromeWidth =
         nonNegativeWindowProperty(window, "terminalChromeWidth");
     const qreal chromeHeight =

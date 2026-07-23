@@ -88,11 +88,13 @@ the host-language comparison and remaining engineering risks.
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
-  by the pinned Ghostty code, watched-file reload, and a deliberately small set
-  of applied appearance/session keys.
+  by the pinned Ghostty code, watched-file reload, and a typed applied slice
+  that includes four-role font selection, font size, and physical-pixel cell,
+  decoration, and cursor metric modifiers.
 - Transparent pre-Qt delegation of the pinned `+edit-config`,
   `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-  `+list-keybinds`, `+show-config`, and `+validate-config` implementations.
+  `+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
+  `+validate-config` implementations.
   These retain the caller's terminal, streams, process relationship,
   environment, working directory, and exact action exit status without
   requiring a working Wayland or Qt platform plugin.
@@ -248,7 +250,10 @@ Syntax, file precedence, `config-file` includes, canonical values, nullable
 lifetime values, raw `gtk-single-instance`, `initial-window`, and finalized
 bindings therefore come from the exact pinned Ghostty implementation. Qt strictly
 decodes owned typed values and does not parse or merge the human-oriented
-`+show-config` output.
+`+show-config` output. Font styles and metric modifiers remain tagged values in
+this strict schema-v1 boundary rather than being flattened into ambiguous
+strings or numbers. The project-owned exporter is applied in the build's
+revision shadow; the official Ghostty submodule is not modified.
 
 The current compatibility slice applies these keys:
 
@@ -272,8 +277,13 @@ The current compatibility slice applies these keys:
 | `resize-overlay` | Supports Ghostty's `always`, `never`, and default `after-first` modes. A pane-local, input-transparent 120-by-40 logical-pixel overlay reports authoritative terminal grid changes as `columns x rows`. Synchronous resize bursts coalesce to the newest grid, another accepted grid change restarts the timer, and raw pixel or DPR changes that preserve the grid do not show it. `after-first` suppresses each pane's initial grid and further layout settling during Ghostty's initial 250 ms delay; deferred maximized/fullscreen startup records its compositor geometry before the worker starts and therefore produces no spurious overlay even in `always` mode. Reload applies live. |
 | `resize-overlay-position` | Supports `center`, `top-left`, `top-center`, `top-right`, `bottom-left`, `bottom-center`, and `bottom-right`, relative to the owning pane rather than its window or split tree. Position reload moves a visible overlay immediately. |
 | `resize-overlay-duration` | Uses Ghostty's exact finalized whole-millisecond duration and the GTK 250 ms minimum; the default is 750 ms. Reload updates future displays and restarts a currently visible overlay from the new duration. |
-| `font-family` | Uses the first configured family. Explicit `--font-family` wins; the remaining Ghostty fallback list is not yet used. |
-| `font-size` | Sets new panes and reloads existing panes unless they were manually zoomed. New tabs may initially inherit their source's actual size as described above. Explicit `--font-size` wins. |
+| `font-family` | Preserves the configured order as a Qt fallback list for the regular face. Explicit `--font-family` is passed into Ghostty's parser before finalization, so it also participates correctly in role defaults. Qt cannot reproduce Ghostty's embedded production fallback stack and resolver through public `libghostty-vt`, so the final platform fallback remains intentionally partial. |
+| `font-family-bold`, `font-family-italic`, `font-family-bold-italic` | Supply independent ordered family lists for bold, italic, and bold-italic cells. The GUI owns all four resolved faces; a disabled or unavailable styled face safely uses the regular face. Reload replaces the complete role set. |
+| `font-style`, `font-style-bold`, `font-style-italic`, `font-style-bold-italic` | Preserve Ghostty's `default`, `false`, and named-style alternatives. `default` selects the corresponding automatic Qt role; pinned runtime semantics treat regular `font-style=false` as automatic, while `false` on a styled role uses the regular face. A named value requests that style and falls back safely when unavailable. |
+| `font-size` | Preserves Ghostty's f32 value and exact CLI precedence, drives initial window and PTY geometry, and reloads unadjusted panes. New tabs may initially inherit their source's actual size as described above. A manually zoomed pane retains its local point size while still adopting family, style, and metric changes; `reset_font_size` restores the newest configured size and resumes following reloads. |
+| `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline` | Apply Ghostty's signed absolute-pixel or percentage alternatives after projecting regular-face metrics to the pane's current physical-pixel DPR. The adjusted cell dimensions drive rendering, window sizing, and authoritative PTY rows/columns. Ghostty's pinned sparse-map application order is preserved, including cell-height-dependent recentering when that step runs. |
+| `adjust-underline-position`, `adjust-underline-thickness`, `adjust-strikethrough-position`, `adjust-strikethrough-thickness`, `adjust-overline-position`, `adjust-overline-thickness` | Apply in rounded physical pixels and drive the corresponding scene-graph decoration geometry, including every underline style. Underline and strike positions are unsigned and saturate at zero; overline position remains signed, and drawable thicknesses are bounded safely. |
+| `adjust-cursor-thickness`, `adjust-cursor-height` | Apply in rounded physical pixels to pane-local cursor geometry. Thickness starts from Ghostty's one-physical-pixel basis and controls bar, underline, and hollow strokes. Height controls bar, block, and hollow cursors; it is vertically centered, has only a one-pixel minimum, remains independent of adjusted cell height unless explicitly changed, and may intentionally exceed the cell. The underline cursor retains cell-height placement and ignores the height modifier, matching Ghostty's sprite path. |
 | `foreground`, `background` | Set terminal defaults for new panes and apply live to existing terminals. |
 | `unfocused-split-opacity` | Sets the retained content opacity of unfocused panes in a split, clamped to Ghostty's `0.15`–`1.0` range. The Qt renderer composites the complementary fill alpha and updates existing panes live. |
 | `unfocused-split-fill` | Sets the optional fixed RGB dimming fill. Unset resolves live to the configured `background`, independently of terminal OSC 11 overrides. Search suppresses dimming for its pane. |
@@ -349,7 +359,8 @@ actions:
 
 ```text
 +edit-config     +explain-config  +help          +list-actions
-+list-colors     +list-keybinds    +show-config   +validate-config
++list-colors     +list-keybinds    +show-config   +ssh
++ssh-cache       +validate-config
 ```
 
 They may use their pinned Ghostty action-specific flags and operands in the
@@ -373,6 +384,15 @@ whose application runtime is intentionally `none` rather than GTK. A
 development build configured with `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF` omits
 that helper and reports delegated actions as unavailable before attempting GUI
 startup.
+
+`+ssh` is the pinned Ghostty wrapper, including its own `--` argument boundary,
+TERM/SendEnv forwarding, optional built-in terminfo installation and fallback,
+standard XDG-state cache use, inherited child streams, and exit/signal-status
+mapping. `+ssh-cache` exposes the corresponding pinned list, query, add,
+remove, prune, and clear operations at
+`${XDG_STATE_HOME}/ghostty/ssh_cache`. These commands support explicit CLI
+invocation; automatic shell-function injection for an ordinary `ssh` command
+remains a separate shell-integration parity item.
 
 `+edit-config` is the pinned CLI action, distinct from the GUI `open_config`
 keybinding action. It loads the standard configuration (creating the preferred
@@ -626,6 +646,10 @@ close protection, staged relocation of terminfo and the private config helper,
 and a separate DESTDIR-staged desktop/service metadata install contract. The
 real QML close dialog is also exercised headlessly; workspace tab ordering,
 split layout, navigation, and zoom are covered through typed actions.
+Typography coverage includes schema-v1 tag validation, CLI-before-finalization
+precedence, four face roles, live reload with manual-zoom retention,
+physical-pixel metric projection at multiple DPRs, and rendered decoration and
+cursor geometry.
 Adapter/session tests cover absolute,
 relative, and selection-driven viewport movement plus select-all and endpoint
 adjustment. They also verify byte-exact CSI, ESC, and Zig-literal text writes,
@@ -701,8 +725,11 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   US-layout-oriented because public `QKeyEvent` data does not include the
   compositor keymap's unmodified layout level.
 - No Kitty graphics/inline images, color-emoji pipeline, or terminal-cell
-  ligature shaping. Per-cell text rendering prioritizes correctness of the MVP
-  architecture over advanced typography.
+  ligature shaping. Four configured font roles and ordered Qt fallback lists
+  are supported, but Ghostty's embedded production fallback stack, generated
+  box sprites, and icon/Nerd Font glyph classification are not exposed through
+  public `libghostty-vt`; `font-family` therefore remains partial and
+  `adjust-box-thickness`/`adjust-icon-height` remain planned.
 - Hyperlink interaction covers explicit OSC 8 destinations and the built-in
   default matcher controlled by `link-url`, including the configured preview
   policy. User-defined `link` expressions and arbitrary link actions remain
@@ -727,8 +754,9 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   event can still race a terminal-driven selection change;
   worker-authoritative performability remains planned.
 - The first appearance slice covers the full palette, selection, cursor,
-  bold, faint, and split appearance settings documented above. Dynamic
-  light/dark theme switching, font fallback lists, palette
+  bold, faint, split appearance, and the documented typography settings.
+  Dynamic light/dark theme switching, Ghostty's embedded fallback resolver,
+  palette
   generation/harmonization, and the rest of Ghostty's appearance model remain
   planned. Ghostty applies palette generation later in `termio.DerivedConfig`,
   using the explicit-entry mask together with foreground, background, and the

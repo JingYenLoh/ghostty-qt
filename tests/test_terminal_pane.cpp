@@ -38,6 +38,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <utility>
 
@@ -95,6 +96,63 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
         && std::abs(left.blue() - right.blue()) <= tolerance;
+}
+
+qreal rectangleArea(const QRectF &rect)
+{
+    return rect.width() * rect.height();
+}
+
+qreal totalRectangleArea(const QVector<QRectF> &rects)
+{
+    qreal total = 0.0;
+    for (const QRectF &rect : rects) {
+        total += rectangleArea(rect);
+    }
+    return total;
+}
+
+bool rectanglesArePairwiseDisjoint(const QVector<QRectF> &rects)
+{
+    for (qsizetype left = 0; left < rects.size(); ++left) {
+        for (qsizetype right = left + 1; right < rects.size(); ++right) {
+            if (rectangleArea(
+                    rects.at(left).intersected(rects.at(right))) > 0.0) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool rectanglesFitInside(const QVector<QRectF> &rects, const QRectF &bounds)
+{
+    return std::ranges::all_of(rects, [&bounds](const QRectF &rect) {
+        return !rect.isEmpty() && bounds.contains(rect);
+    });
+}
+
+QRectF expectedSpriteCanvas(const QRectF &sprite, qreal devicePixelRatio)
+{
+    const qreal dpr = std::isfinite(devicePixelRatio)
+            && devicePixelRatio > 0.0
+        ? devicePixelRatio : 1.0;
+    const qint64 physicalWidth = qRound64(sprite.width() * dpr);
+    const qint64 physicalHeight = qRound64(sprite.height() * dpr);
+    const qreal horizontalPadding =
+        static_cast<qreal>(physicalWidth / 4) / dpr;
+    const qreal verticalPadding =
+        static_cast<qreal>(physicalHeight / 4) / dpr;
+    return sprite.adjusted(
+        -horizontalPadding, -verticalPadding,
+        horizontalPadding, verticalPadding);
+}
+
+void useSystemFixedFont(LaunchOptions &options)
+{
+    options.typography.face(TerminalFontRole::Regular).families = {
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family(),
+    };
 }
 
 QColor sourceOver(const QColor &underlying, const QColor &fill, double alpha)
@@ -242,6 +300,7 @@ private Q_SLOTS:
     void resizeOverlayCoalescesAndRestarts();
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
+    void reloadsTypographyNonCumulatively();
     void executesTypedFontSizeActions();
     void workspaceActionHandlerRetainsMutableState();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
@@ -256,6 +315,8 @@ private Q_SLOTS:
     void retainsTextWhileDimmingUnfocusedSplits();
     void rebuildsMainTextRowsAfterWindowChange();
     void rendersConfiguredCellCursorAndDecorationAppearance();
+    void rendersResolvedTypographyAndPhysicalGeometry();
+    void clipsDecorationAndCursorSprites();
     void routesEmergencyTabShortcuts();
     void compiledProgramAvailabilityControlsEmergencyShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
@@ -384,8 +445,8 @@ void TerminalPaneTest::resizeOverlayCoalescesAndRestarts()
     pane.setSize(QSizeF(500.0, 300.0));
     QCoreApplication::processEvents();
     QVERIFY(!pane.resizeOverlayVisible());
-    const TerminalCellMetrics metrics = terminalCellMetrics(
-        options.fontFamily, options.fontSize);
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
     const auto initialGeometry = terminalSessionGeometryForViewport(
         pane.width(), pane.height(), metrics.cellWidth, metrics.cellHeight,
         1.0);
@@ -580,8 +641,7 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     options.workingDirectory = QDir::currentPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.fontFamily = QFontDatabase::systemFont(
-        QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
     options.appearance.searchForeground = TerminalColorValue::fromColor(
@@ -593,14 +653,10 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     options.appearance.cursorTextColor = TerminalColorValue::fromColor(
         QColor(QStringLiteral("#00ffff")));
 
-    QFont testFont(options.fontFamily);
-    testFont.setPointSizeF(options.fontSize);
-    testFont.setFixedPitch(true);
-    testFont.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(testFont);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     constexpr int columns = 4;
     constexpr int rows = 4;
@@ -839,14 +895,24 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(reloadedAppearance.rootSerial, paletteChanged.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(paletteChanged, reloadedAppearance));
 
-    LaunchOptions fontChanged = appearanceChanged;
-    fontChanged.fontSize += 1.0;
+    LaunchOptions styleChanged = appearanceChanged;
+    styleChanged.typography.face(TerminalFontRole::Bold).style =
+        TerminalFontStyles::Disabled{};
+    pane->applyRuntimeOptions(styleChanged);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot reloadedStyle =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(reloadedStyle.rootSerial, reloadedAppearance.rootSerial);
+    QVERIFY(allVisibleRowsRebuilt(reloadedAppearance, reloadedStyle));
+
+    LaunchOptions fontChanged = styleChanged;
+    fontChanged.typography.pointSize += 1.0;
     pane->applyRuntimeOptions(fontChanged);
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot reloadedFont =
         terminalPaneRenderProbe(pane);
-    QCOMPARE(reloadedFont.rootSerial, reloadedAppearance.rootSerial);
-    QVERIFY(allVisibleRowsRebuilt(reloadedAppearance, reloadedFont));
+    QCOMPARE(reloadedFont.rootSerial, reloadedStyle.rootSerial);
+    QVERIFY(allVisibleRowsRebuilt(reloadedStyle, reloadedFont));
 
     pane->setWidth(std::max(1.0, pane->width() - cellWidth));
     QVERIFY(!window.grabWindow().isNull());
@@ -1102,19 +1168,14 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     options.workingDirectory = QDir::currentPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.fontFamily = QFontDatabase::systemFont(
-        QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
 
-    QFont testFont(options.fontFamily);
-    testFont.setPointSizeF(options.fontSize);
-    testFont.setFixedPitch(true);
-    testFont.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(testFont);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     constexpr int columns = 2;
     constexpr int rows = 3;
@@ -1183,11 +1244,22 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     QEvent devicePixelRatioChange(QEvent::DevicePixelRatioChange);
     QCoreApplication::sendEvent(&secondWindow, &devicePixelRatioChange);
     QCOMPARE(resizeRequested.count(), 1);
+    const TerminalCellMetrics secondWindowMetrics = terminalCellMetrics(
+        options.typography, secondWindow.devicePixelRatio());
+    QCOMPARE(
+        resizeRequested.constLast().at(2).toInt(),
+        qRound(secondWindowMetrics.cellWidth
+               * secondWindow.devicePixelRatio()));
+    QCOMPARE(
+        resizeRequested.constLast().at(3).toInt(),
+        qRound(secondWindowMetrics.cellHeight
+               * secondWindow.devicePixelRatio()));
     pane->update();
     const QImage rebuiltImage = secondWindow.grabWindow();
     QVERIFY(!rebuiltImage.isNull());
     const TerminalPaneRenderProbeSnapshot secondRoot =
         terminalPaneRenderProbe(pane);
+    QVERIFY(secondRoot.metrics == secondWindowMetrics);
     QVERIFY(secondRoot.rootSerial != firstRoot.rootSerial);
     QCOMPARE(secondRoot.rowBuildCounts.size(), rows);
     for (int row = 0; row < rows; ++row) {
@@ -1402,7 +1474,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.fontSize = 12.0;
+    options.typography.pointSize = 12.0;
 
     TerminalPane pane(options);
     auto *controller = pane.findChild<TerminalController *>();
@@ -1410,8 +1482,10 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QSignalSpy runtimeOptions(
         controller, &TerminalController::runtimeOptionsRequested);
     LaunchOptions reloaded = options;
-    reloaded.fontSize = 14.0;
-    reloaded.fontFamily = QStringLiteral("Monospace");
+    reloaded.typography.pointSize = 14.0;
+    reloaded.typography.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("Monospace"),
+    };
     reloaded.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
     reloaded.scrollbackLimit = {
         .value = 321,
@@ -1432,8 +1506,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
     const LaunchOptions splitOptions = pane.splitLaunchOptions(reloaded);
-    QCOMPARE(splitOptions.fontFamily, QStringLiteral("Monospace"));
-    QCOMPARE(splitOptions.fontSize, 14.0);
+    QVERIFY(splitOptions.typography == reloaded.typography);
+    QCOMPARE(splitOptions.typography.pointSize, 14.0);
     QCOMPARE(splitOptions.workingDirectory, QDir::tempPath());
     QVERIFY(splitOptions.program.isEmpty());
     QVERIFY(!splitOptions.hold);
@@ -1457,8 +1531,10 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions fallback = pane.splitLaunchOptions(splitBase);
     QCOMPARE(fallback.workingDirectory, QDir::currentPath());
     QVERIFY(fallback.inheritWorkingDirectory);
-    QCOMPARE(fallback.fontFamily, QStringLiteral("Monospace"));
-    QCOMPARE(fallback.fontSize, 14.0);
+    QCOMPARE(
+        fallback.typography.face(TerminalFontRole::Regular).families,
+        QStringList({QStringLiteral("Monospace")}));
+    QCOMPARE(fallback.typography.pointSize, 14.0);
 
     splitBase.splitInheritWorkingDirectory = true;
     const LaunchOptions directoryInherited =
@@ -1468,23 +1544,27 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
 
     pane.zoomIn();
     QCOMPARE(pane.fontPointSize(), 15.0);
-    reloaded.fontSize = 10.0;
+    reloaded.typography.pointSize = 10.0;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 15.0);
     const LaunchOptions inherited = pane.splitLaunchOptions(reloaded);
-    QCOMPARE(inherited.fontSize, 15.0);
+    QCOMPARE(inherited.typography.pointSize, 15.0);
 
     LaunchOptions tabBase = reloaded;
     tabBase.workingDirectory = QDir::currentPath();
     tabBase.inheritWorkingDirectory = true;
-    tabBase.fontFamily = QStringLiteral("Configured Family");
+    tabBase.typography.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("Configured Family"),
+    };
     tabBase.tabInheritWorkingDirectory = false;
     tabBase.windowInheritFontSize = false;
     const LaunchOptions tabFallback = pane.tabLaunchOptions(tabBase);
     QCOMPARE(tabFallback.workingDirectory, QDir::currentPath());
     QVERIFY(tabFallback.inheritWorkingDirectory);
-    QCOMPARE(tabFallback.fontFamily, QStringLiteral("Configured Family"));
-    QCOMPARE(tabFallback.fontSize, 10.0);
+    QCOMPARE(
+        tabFallback.typography.face(TerminalFontRole::Regular).families,
+        QStringList({QStringLiteral("Configured Family")}));
+    QCOMPARE(tabFallback.typography.pointSize, 10.0);
     QVERIFY(tabFallback.program.isEmpty());
     QVERIFY(!tabFallback.hold);
 
@@ -1493,8 +1573,10 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     const LaunchOptions tabInherited = pane.tabLaunchOptions(tabBase);
     QCOMPARE(tabInherited.workingDirectory, QDir::tempPath());
     QVERIFY(!tabInherited.inheritWorkingDirectory);
-    QCOMPARE(tabInherited.fontFamily, QStringLiteral("Configured Family"));
-    QCOMPARE(tabInherited.fontSize, 15.0);
+    QCOMPARE(
+        tabInherited.typography.face(TerminalFontRole::Regular).families,
+        QStringList({QStringLiteral("Configured Family")}));
+    QCOMPARE(tabInherited.typography.pointSize, 15.0);
 
     // A split inherits the effective size as its initial config/reset target,
     // but starts unadjusted so the next live reload replaces that target.
@@ -1507,7 +1589,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(child.fontPointSize(), 15.0);
 
     LaunchOptions nextReload = reloaded;
-    nextReload.fontSize = 9.0;
+    nextReload.typography.pointSize = 9.0;
     pane.applyRuntimeOptions(nextReload);
     child.applyRuntimeOptions(nextReload);
     QCOMPARE(pane.fontPointSize(), 15.0);
@@ -1515,11 +1597,136 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
 
     pane.resetZoom();
     QCOMPARE(pane.fontPointSize(), 9.0);
-    nextReload.fontSize = 11.0;
+    nextReload.typography.pointSize = 11.0;
     pane.applyRuntimeOptions(nextReload);
     child.applyRuntimeOptions(nextReload);
     QCOMPARE(pane.fontPointSize(), 11.0);
     QCOMPARE(child.fontPointSize(), 11.0);
+}
+
+void TerminalPaneTest::reloadsTypographyNonCumulatively()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.typography.pointSize = 12.0;
+
+    QQuickWindow window;
+    window.resize(800, 400);
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy resized(controller, &TerminalController::resizeRequested);
+    QSignalSpy fontSizeChanged(pane, &TerminalPane::fontPointSizeChanged);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QVERIFY(!window.grabWindow().isNull());
+    resized.clear();
+
+    LaunchOptions first = options;
+    first.typography.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Absolute{.pixels = 1};
+    pane->applyRuntimeOptions(first);
+    QCOMPARE(resized.count(), 1);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            first.typography, window.devicePixelRatio()));
+
+    // Replacing +1 with +2 derives from the regular face again; it must not
+    // accumulate into +3 across live reloads.
+    resized.clear();
+    LaunchOptions second = first;
+    second.typography.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Absolute{.pixels = 2};
+    pane->applyRuntimeOptions(second);
+    QCOMPARE(resized.count(), 1);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            second.typography, window.devicePixelRatio()));
+
+    // Non-grid metrics rebuild rendering but do not publish redundant PTY
+    // geometry.
+    resized.clear();
+    LaunchOptions baselineOnly = second;
+    baselineOnly.typography.metricModifiers[TerminalMetric::FontBaseline] =
+        TerminalMetricModifiers::Absolute{.pixels = 3};
+    pane->applyRuntimeOptions(baselineOnly);
+    QCOMPARE(resized.count(), 0);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            baselineOnly.typography, window.devicePixelRatio()));
+
+    pane->zoomIn();
+    QCOMPARE(pane->fontPointSize(), 13.0);
+    fontSizeChanged.clear();
+    resized.clear();
+
+    // A zoomed pane retains only its current point size. Every configured
+    // face, style, and modifier is replaced by the newest snapshot.
+    LaunchOptions reloaded = baselineOnly;
+    reloaded.typography.pointSize = 20.0;
+    reloaded.typography.face(TerminalFontRole::Bold).style =
+        TerminalFontStyles::Disabled{};
+    reloaded.typography.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Absolute{.pixels = 4};
+    reloaded.typography.metricModifiers[TerminalMetric::UnderlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 2};
+    pane->applyRuntimeOptions(reloaded);
+    QCOMPARE(pane->fontPointSize(), 13.0);
+    QCOMPARE(fontSizeChanged.count(), 0);
+    QCOMPARE(resized.count(), 1);
+    TerminalTypography zoomedTypography = reloaded.typography;
+    zoomedTypography.pointSize = 13.0;
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            zoomedTypography, window.devicePixelRatio()));
+    const LaunchOptions split = pane->splitLaunchOptions(reloaded);
+    QVERIFY(split.typography == zoomedTypography);
+
+    resized.clear();
+    pane->resetZoom();
+    QCOMPARE(pane->fontPointSize(), 20.0);
+    QCOMPARE(fontSizeChanged.count(), 1);
+    QCOMPARE(resized.count(), 1);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            reloaded.typography, window.devicePixelRatio()));
+
+    // A source-level modifier that produces the same finalized metrics is a
+    // render/geometry no-op.
+    resized.clear();
+    LaunchOptions equivalent = reloaded;
+    equivalent.typography.metricModifiers[
+        TerminalMetric::OverlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 0};
+    pane->applyRuntimeOptions(equivalent);
+    QCOMPARE(resized.count(), 0);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(
+        terminalPaneRenderProbe(pane).metrics
+        == terminalCellMetrics(
+            equivalent.typography, window.devicePixelRatio()));
+
+    window.close();
+    delete pane;
 }
 
 void TerminalPaneTest::executesTypedFontSizeActions()
@@ -1528,7 +1735,7 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     options.workingDirectory = QDir::tempPath();
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
-    options.fontSize = 12.0;
+    options.typography.pointSize = 12.0;
 
     TerminalPane pane(options);
     pane.setSize(QSizeF(20.0, 20.0));
@@ -1544,13 +1751,13 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     QCOMPARE(pane.fontPointSize(), 12.0);
     QCOMPARE(changed.count(), 0);
     LaunchOptions reloaded = options;
-    reloaded.fontSize = 10.0;
+    reloaded.typography.pointSize = 10.0;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 12.0);
 
     QVERIFY(pane.executeConfiguredAction(QStringLiteral("reset_font_size")));
     QCOMPARE(pane.fontPointSize(), 10.0);
-    reloaded.fontSize = 11.0;
+    reloaded.typography.pointSize = 11.0;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 11.0);
 
@@ -1586,7 +1793,7 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     QCOMPARE(pane.fontPointSize(), 1.0);
 
     LaunchOptions oversized = options;
-    oversized.fontSize = 300.0;
+    oversized.typography.pointSize = 300.0;
     TerminalPane oversizedPane(oversized);
     QVERIFY(oversizedPane.executeConfiguredAction(
         QStringLiteral("decrease_font_size:300")));
@@ -1603,7 +1810,7 @@ void TerminalPaneTest::executesTypedFontSizeActions()
     // as reset_font_size's target, matching Surface.updateConfig.
     TerminalPane reloadBounds(options);
     LaunchOptions oversizedReload = options;
-    oversizedReload.fontSize = 300.0;
+    oversizedReload.typography.pointSize = 300.0;
     reloadBounds.applyRuntimeOptions(oversizedReload);
     QCOMPARE(reloadBounds.fontPointSize(), 255.0);
     reloadBounds.resetZoom();
@@ -2334,7 +2541,7 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
         QStringLiteral("sleep 5"),
     };
     options.hold = true;
-    options.fontFamily = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
     options.appearance.palette.fill(Qt::black, 256);
@@ -2356,14 +2563,10 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
         QColor(QStringLiteral("#00ffff")));
     options.appearance.cursorOpacity = 0.5;
 
-    QFont testFont(options.fontFamily);
-    testFont.setPointSizeF(options.fontSize);
-    testFont.setFixedPitch(true);
-    testFont.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(testFont);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     constexpr int columns = 12;
     // Leave enough room for a possible process-status overlay at the bottom;
@@ -2571,9 +2774,8 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
     QCOMPARE(decorationPixels[0], 0);
     QVERIFY(decorationPixels[1] > 0);
     QVERIFY(decorationPixels[2] > decorationPixels[1]);
-    QVERIFY(decorationRows[3].size() >= 2);
+    QVERIFY(decorationPixels[3] > 0);
     QVERIFY(decorationPixels[4] > 0);
-    QVERIFY(decorationPixels[4] < decorationPixels[1]);
     QVERIFY(decorationPixels[5] > decorationPixels[4]);
     QVERIFY(decorationPixels[5] < decorationPixels[1]);
 
@@ -2654,6 +2856,633 @@ void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
             && pixel.green() <= 10
             && pixel.blue() >= 120 && pixel.blue() <= 140;
     }));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 5"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    auto &modifiers = options.typography.metricModifiers;
+    modifiers[TerminalMetric::FontBaseline] =
+        TerminalMetricModifiers::Absolute{.pixels = 2};
+    modifiers[TerminalMetric::UnderlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 1};
+    modifiers[TerminalMetric::UnderlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 1};
+    modifiers[TerminalMetric::StrikethroughPosition] =
+        TerminalMetricModifiers::Absolute{.pixels = -1};
+    modifiers[TerminalMetric::StrikethroughThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 2};
+    modifiers[TerminalMetric::OverlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = -2};
+    modifiers[TerminalMetric::OverlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 1};
+    modifiers[TerminalMetric::CursorThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 2};
+    modifiers[TerminalMetric::CursorHeight] =
+        TerminalMetricModifiers::Absolute{.pixels = -4};
+
+    QQuickWindow window;
+    const qreal dpr = window.devicePixelRatio();
+    const TerminalCellMetrics expected =
+        terminalCellMetrics(options.typography, dpr);
+    constexpr int columns = 4;
+    constexpr int rows = 2;
+    window.setColor(Qt::black);
+    window.resize(
+        qCeil(expected.cellWidth * columns),
+        qCeil(expected.cellHeight * rows));
+    auto *pane = new TerminalPane(
+        options, window.contentItem(), std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+
+    TerminalUpdate update;
+    update.columns = columns;
+    update.rows = rows;
+    update.fullFrame = true;
+    update.foreground = Qt::white;
+    update.background = Qt::black;
+    update.cursorColor = Qt::magenta;
+    update.cursorColorExplicit = true;
+    update.cursorChanged = true;
+    update.cursorVisible = true;
+    update.cursorBlinking = false;
+    update.cursorColumn = 3;
+    update.cursorRow = 0;
+    update.cursorStyle = 1;
+    update.cursorColumnSpan = 1;
+    update.contentRevision = 1;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.foreground = Qt::white;
+            cell.background = Qt::black;
+            cell.underlineColor = Qt::white;
+        }
+        update.dirtyRows.append(std::move(rowUpdate));
+    }
+    const std::array<std::pair<bool, bool>, 4> roles{{
+        {false, false},
+        {true, false},
+        {false, true},
+        {true, true},
+    }};
+    for (std::size_t index = 0; index < roles.size(); ++index) {
+        TerminalCell &cell =
+            update.dirtyRows[0].cells[static_cast<qsizetype>(index)];
+        cell.text = QStringLiteral("M");
+        cell.bold = roles[index].first;
+        cell.italic = roles[index].second;
+    }
+    TerminalCell &decorated = update.dirtyRows[0].cells[0];
+    decorated.underlineStyle = TerminalUnderlineStyle::Single;
+    decorated.strikeThrough = true;
+    decorated.overline = true;
+
+    controller->terminalUpdated(update);
+    QVERIFY(!window.grabWindow().isNull());
+
+    const qreal underlinePosition = std::min(
+        expected.underlinePosition, expected.underlineMaximumPosition);
+    const qreal overlinePosition = std::max(
+        expected.overlinePosition, expected.overlineMinimumPosition);
+    const qreal cursorTop = expected.cursorTop;
+    const qreal cursorLeft =
+        static_cast<qreal>(update.cursorColumn) * expected.cellWidth;
+
+    const TerminalPaneRenderProbeSnapshot block =
+        terminalPaneRenderProbe(pane);
+    QVERIFY(block.metrics == expected);
+    QVERIFY(block.renderFonts == expected.fonts);
+    QVERIFY(
+        block.fontRoleCellCounts
+        == (std::array<quint64, 4>{1, 1, 1, 1}));
+    QVERIFY(!block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Regular)].bold());
+    QVERIFY(!block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Regular)].italic());
+    QVERIFY(block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Bold)].bold());
+    QVERIFY(!block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Bold)].italic());
+    QVERIFY(!block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Italic)].bold());
+    QVERIFY(block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::Italic)].italic());
+    QVERIFY(block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::BoldItalic)].bold());
+    QVERIFY(block.renderFonts[
+        terminalEnumIndex(TerminalFontRole::BoldItalic)].italic());
+    QCOMPARE(block.underlineRects.size(), 1);
+    QCOMPARE(
+        block.underlineRects.constFirst(),
+        QRectF(0.0, underlinePosition, expected.cellWidth,
+               expected.underlineThickness));
+    QCOMPARE(block.strikethroughRects.size(), 1);
+    QCOMPARE(
+        block.strikethroughRects.constFirst(),
+        QRectF(0.0, expected.strikethroughPosition,
+               expected.cellWidth, expected.strikethroughThickness));
+    QCOMPARE(block.overlineRects.size(), 1);
+    QCOMPARE(
+        block.overlineRects.constFirst(),
+        QRectF(0.0, overlinePosition, expected.cellWidth,
+               expected.overlineThickness));
+    QCOMPARE(block.cursorRects,
+             QVector<QRectF>({
+                 QRectF(cursorLeft, cursorTop, expected.cellWidth,
+                        expected.cursorHeight),
+             }));
+
+    const auto renderCursor = [&](int style) -> QVector<QRectF> {
+        TerminalUpdate cursor;
+        cursor.columns = columns;
+        cursor.rows = rows;
+        cursor.cursorChanged = true;
+        cursor.cursorVisible = true;
+        cursor.cursorBlinking = false;
+        cursor.cursorColumn = update.cursorColumn;
+        cursor.cursorRow = update.cursorRow;
+        cursor.cursorStyle = style;
+        cursor.cursorColumnSpan = 1;
+        cursor.contentRevision = ++update.contentRevision;
+        controller->terminalUpdated(cursor);
+        if (window.grabWindow().isNull()) {
+            return {};
+        }
+        return terminalPaneRenderProbe(pane).cursorRects;
+    };
+
+    QCOMPARE(
+        renderCursor(0),
+        QVector<QRectF>({
+            QRectF(cursorLeft + expected.cursorBarLeft, cursorTop,
+                   expected.cursorThickness, expected.cursorHeight),
+        }));
+    QCOMPARE(
+        renderCursor(2),
+        QVector<QRectF>({
+            QRectF(cursorLeft, underlinePosition, expected.cellWidth,
+                   expected.cursorThickness),
+        }));
+
+    const qreal bottomOffset = std::max(
+        qreal{0.0}, expected.cursorHeight - expected.cursorThickness);
+    const qreal rightOffset = std::max(
+        qreal{0.0}, expected.cellWidth - expected.cursorThickness);
+    const qreal innerTopOffset = std::min(
+        expected.cursorThickness, expected.cursorHeight);
+    const qreal innerHeight = std::max(
+        qreal{0.0},
+        expected.cursorHeight - 2.0 * expected.cursorThickness);
+    const qreal horizontalThickness = std::min(
+        expected.cursorThickness, expected.cursorHeight);
+    const qreal verticalThickness = std::min(
+        expected.cursorThickness, expected.cellWidth);
+    const QVector<QRectF> hollowCursor = renderCursor(3);
+    QCOMPARE(
+        hollowCursor,
+        QVector<QRectF>({
+            QRectF(cursorLeft, cursorTop, expected.cellWidth,
+                   horizontalThickness),
+            QRectF(cursorLeft, cursorTop + bottomOffset,
+                   expected.cellWidth, horizontalThickness),
+            QRectF(cursorLeft, cursorTop + innerTopOffset,
+                   verticalThickness, innerHeight),
+            QRectF(cursorLeft + rightOffset,
+                   cursorTop + innerTopOffset,
+                   verticalThickness, innerHeight),
+        }));
+    const QRectF outerCursor(
+        cursorLeft, cursorTop, expected.cellWidth, expected.cursorHeight);
+    const qreal hollowInnerWidth = std::max(
+        qreal{0.0},
+        expected.cellWidth - 2.0 * expected.cursorThickness);
+    const qreal hollowInnerHeight = std::max(
+        qreal{0.0},
+        expected.cursorHeight - 2.0 * expected.cursorThickness);
+    QVERIFY(rectanglesArePairwiseDisjoint(hollowCursor));
+    QVERIFY(rectanglesFitInside(hollowCursor, outerCursor));
+    QVERIFY(qFuzzyCompare(
+        totalRectangleArea(hollowCursor) + 1.0,
+        rectangleArea(outerCursor)
+            - hollowInnerWidth * hollowInnerHeight + 1.0));
+
+    QInputMethodEvent preedit(
+        QStringLiteral("composition"),
+        QList<QInputMethodEvent::Attribute>{});
+    QCoreApplication::sendEvent(pane, &preedit);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot withPreedit =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(withPreedit.underlineRects.size(), 2);
+    const QRectF preeditUnderline = withPreedit.underlineRects.constLast();
+    QCOMPARE(preeditUnderline.left(), cursorLeft);
+    QCOMPARE(preeditUnderline.top(), underlinePosition);
+    QCOMPARE(preeditUnderline.height(), expected.underlineThickness);
+
+    LaunchOptions oversizedCursor = options;
+    oversizedCursor.typography.metricModifiers[
+        TerminalMetric::CursorThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    pane->applyRuntimeOptions(oversizedCursor);
+    const TerminalCellMetrics oversizedMetrics = terminalCellMetrics(
+        oversizedCursor.typography, window.devicePixelRatio());
+    const QVector<QRectF> oversizedHollow = renderCursor(3);
+    const QRectF oversizedOuterCursor(
+        static_cast<qreal>(update.cursorColumn)
+            * oversizedMetrics.cellWidth,
+        oversizedMetrics.cursorTop,
+        oversizedMetrics.cellWidth, oversizedMetrics.cursorHeight);
+    QCOMPARE(
+        oversizedHollow,
+        QVector<QRectF>({oversizedOuterCursor}));
+    QVERIFY(rectanglesArePairwiseDisjoint(oversizedHollow));
+    QVERIFY(rectanglesFitInside(
+        oversizedHollow, oversizedOuterCursor));
+    QCOMPARE(
+        totalRectangleArea(oversizedHollow),
+        rectangleArea(oversizedOuterCursor));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::clipsDecorationAndCursorSprites()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.hold = true;
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    const qreal dpr = window.devicePixelRatio();
+    const TerminalCellMetrics initial =
+        terminalCellMetrics(options.typography, dpr);
+    window.setColor(Qt::black);
+    window.resize(
+        qCeil(initial.cellWidth * 2.0),
+        qCeil(initial.cellHeight * 2.0));
+    auto *pane = new TerminalPane(
+        options, window.contentItem(), std::nullopt,
+        TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+
+    quint64 contentRevision = 0;
+    const auto render =
+        [&](const LaunchOptions &runtime,
+            TerminalUnderlineStyle underlineStyle,
+            bool strikethrough = false,
+            bool overline = false,
+            int cursorStyle = -1) {
+            pane->applyRuntimeOptions(runtime);
+
+            TerminalUpdate update;
+            update.columns = 1;
+            update.rows = 1;
+            update.fullFrame = true;
+            update.foreground = Qt::white;
+            update.background = Qt::black;
+            update.cursorColor = Qt::magenta;
+            update.cursorColorExplicit = true;
+            update.cursorChanged = true;
+            update.cursorVisible = cursorStyle >= 0;
+            update.cursorBlinking = false;
+            update.cursorColumn = 0;
+            update.cursorRow = 0;
+            update.cursorStyle = std::max(cursorStyle, 0);
+            update.cursorColumnSpan = 1;
+            update.contentRevision = ++contentRevision;
+
+            TerminalRowUpdate row;
+            row.row = 0;
+            row.cells.resize(1);
+            row.cells[0].foreground = Qt::white;
+            row.cells[0].background = Qt::black;
+            row.cells[0].underlineStyle = underlineStyle;
+            row.cells[0].underlineUsesForeground = true;
+            row.cells[0].strikeThrough = strikethrough;
+            row.cells[0].overline = overline;
+            update.dirtyRows.append(std::move(row));
+
+            controller->terminalUpdated(update);
+            if (window.grabWindow().isNull()) {
+                return TerminalPaneRenderProbeSnapshot{};
+            }
+            return terminalPaneRenderProbe(pane);
+        };
+    const auto physical = [dpr](qreal logical) {
+        return qRound64(logical * dpr);
+    };
+    const auto approximatelySame = [](qreal left, qreal right) {
+        return std::abs(left - right) < 1e-6;
+    };
+
+    // Every underline style owns its bound. A large configured position must
+    // not be pre-clamped with the single-line rule before the style-specific
+    // sprite function sees it.
+    LaunchOptions positioned = options;
+    positioned.typography.metricModifiers[
+        TerminalMetric::UnderlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    positioned.typography.metricModifiers[
+        TerminalMetric::UnderlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 1};
+    const TerminalCellMetrics positionedMetrics =
+        terminalCellMetrics(positioned.typography, dpr);
+    const qint64 width = physical(positionedMetrics.cellWidth);
+    const qint64 height = physical(positionedMetrics.cellHeight);
+    const qint64 padding = height / 4;
+    const qint64 canvasBottom = height + padding;
+    const qint64 position =
+        physical(positionedMetrics.underlinePosition);
+    const qint64 thickness =
+        physical(positionedMetrics.underlineThickness);
+    const QRectF cell(
+        0.0, 0.0,
+        positionedMetrics.cellWidth,
+        positionedMetrics.cellHeight);
+    const QRectF cellCanvas = expectedSpriteCanvas(cell, dpr);
+    const qint64 singleY = std::min(
+        position, std::max<qint64>(0, canvasBottom - thickness));
+
+    const TerminalPaneRenderProbeSnapshot single = render(
+        positioned, TerminalUnderlineStyle::Single);
+    QCOMPARE(single.underlineRects.size(), 1);
+    QVERIFY(rectanglesFitInside(single.underlineRects, cellCanvas));
+    QVERIFY(approximatelySame(
+        single.underlineRects.constFirst().top(),
+        static_cast<qreal>(singleY) / dpr));
+
+    const TerminalPaneRenderProbeSnapshot dashed = render(
+        positioned, TerminalUnderlineStyle::Dashed);
+    QVERIFY(!dashed.underlineRects.isEmpty());
+    QVERIFY(rectanglesFitInside(dashed.underlineRects, cellCanvas));
+    QVector<QRectF> expectedDashes;
+    const qint64 dashWidth = width / 3 + 1;
+    const qint64 dashCount = width / dashWidth + 1;
+    for (qint64 index = 0; index < dashCount; index += 2) {
+        const QRectF dash(
+            static_cast<qreal>(index * dashWidth) / dpr,
+            static_cast<qreal>(singleY) / dpr,
+            static_cast<qreal>(dashWidth) / dpr,
+            static_cast<qreal>(thickness) / dpr);
+        const QRectF clipped = dash.intersected(cellCanvas);
+        if (!clipped.isEmpty()) {
+            expectedDashes.append(clipped);
+        }
+    }
+    QCOMPARE(dashed.underlineRects, expectedDashes);
+
+    const qint64 doubleMiddle = std::min(
+        position,
+        std::max<qint64>(0, canvasBottom - 2 * thickness));
+    const qint64 doubleFirst =
+        std::max<qint64>(0, doubleMiddle - thickness);
+    const qint64 doubleSecond = doubleMiddle + thickness;
+    const TerminalPaneRenderProbeSnapshot doubleUnderline = render(
+        positioned, TerminalUnderlineStyle::Double);
+    QCOMPARE(doubleUnderline.underlineRects.size(), 2);
+    QVERIFY(rectanglesFitInside(
+        doubleUnderline.underlineRects, cellCanvas));
+    QVERIFY(approximatelySame(
+        doubleUnderline.underlineRects.at(0).top(),
+        static_cast<qreal>(doubleFirst) / dpr));
+    QVERIFY(approximatelySame(
+        doubleUnderline.underlineRects.at(1).top(),
+        static_cast<qreal>(doubleSecond) / dpr));
+
+    const double radius =
+        std::numbers::sqrt2 / 2.0 * static_cast<double>(thickness);
+    const double dottedCenter = std::min(
+        static_cast<double>(position)
+            + 0.5 * static_cast<double>(thickness),
+        static_cast<double>(canvasBottom) - std::ceil(radius));
+    const qreal dottedTop = std::max(
+        cellCanvas.top(),
+        static_cast<qreal>(dottedCenter - radius) / dpr);
+    const TerminalPaneRenderProbeSnapshot dotted = render(
+        positioned, TerminalUnderlineStyle::Dotted);
+    QVERIFY(!dotted.underlineRects.isEmpty());
+    QVERIFY(rectanglesFitInside(dotted.underlineRects, cellCanvas));
+    QVERIFY(rectanglesArePairwiseDisjoint(dotted.underlineRects));
+    for (const QRectF &rect : dotted.underlineRects) {
+        QVERIFY(approximatelySame(rect.height(), 1.0 / dpr));
+    }
+    const auto firstDotted = std::ranges::min_element(
+        dotted.underlineRects, {}, &QRectF::top);
+    const auto lastDotted = std::ranges::max_element(
+        dotted.underlineRects, {}, &QRectF::bottom);
+    QVERIFY(firstDotted != dotted.underlineRects.cend());
+    QVERIFY(lastDotted != dotted.underlineRects.cend());
+    QVERIFY(firstDotted->top() >= dottedTop - 1e-6);
+    QVERIFY(firstDotted->top() <= dottedTop + 1.0 / dpr + 1e-6);
+    QVERIFY(lastDotted->bottom()
+            <= std::min(
+                cellCanvas.bottom(),
+                static_cast<qreal>(dottedCenter + radius) / dpr)
+                + 1.0 / dpr + 1e-6);
+
+    const double amplitude =
+        static_cast<double>(width) / std::numbers::pi;
+    const double curlyTopPhysical = std::min(
+        static_cast<double>(position),
+        static_cast<double>(canvasBottom)
+            - amplitude - static_cast<double>(thickness));
+    const qreal curlyTop = std::max(
+        cellCanvas.top(),
+        static_cast<qreal>(
+            curlyTopPhysical
+            - static_cast<double>(thickness) / 2.0) / dpr);
+    const TerminalPaneRenderProbeSnapshot curly = render(
+        positioned, TerminalUnderlineStyle::Curly);
+    QVERIFY(!curly.underlineRects.isEmpty());
+    QVERIFY(rectanglesFitInside(curly.underlineRects, cellCanvas));
+    QVERIFY(rectanglesArePairwiseDisjoint(curly.underlineRects));
+    QCOMPARE(curly.underlineRects.size(), width);
+    for (const QRectF &rect : curly.underlineRects) {
+        QVERIFY(approximatelySame(rect.width(), 1.0 / dpr));
+    }
+    const auto firstCurly = std::ranges::min_element(
+        curly.underlineRects, {}, &QRectF::top);
+    QVERIFY(firstCurly != curly.underlineRects.cend());
+    QVERIFY(firstCurly->top() >= curlyTop - 1e-6);
+    QVERIFY(firstCurly->top() <= curlyTop + 1.0 / dpr + 1e-6);
+
+    LaunchOptions thickerCurve = positioned;
+    thickerCurve.typography.metricModifiers[
+        TerminalMetric::UnderlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 3};
+    const TerminalPaneRenderProbeSnapshot thickCurly = render(
+        thickerCurve, TerminalUnderlineStyle::Curly);
+    QCOMPARE(thickCurly.underlineRects.size(), width);
+    for (qsizetype column = 0;
+         column < curly.underlineRects.size(); ++column) {
+        QCOMPARE(
+            thickCurly.underlineRects.at(column).left(),
+            curly.underlineRects.at(column).left());
+        QCOMPARE(
+            thickCurly.underlineRects.at(column).width(),
+            curly.underlineRects.at(column).width());
+    }
+
+    // Very large thicknesses exercise Canvas.rect's implicit clipping in
+    // upstream Ghostty. The Qt geometry path must produce the same bounded
+    // result instead of painting through arbitrary neighboring rows.
+    LaunchOptions extreme = positioned;
+    extreme.typography.metricModifiers[
+        TerminalMetric::UnderlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    extreme.typography.metricModifiers[
+        TerminalMetric::StrikethroughPosition] =
+        TerminalMetricModifiers::Absolute{.pixels = -10'000};
+    extreme.typography.metricModifiers[
+        TerminalMetric::StrikethroughThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    extreme.typography.metricModifiers[
+        TerminalMetric::OverlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = -10'000};
+    extreme.typography.metricModifiers[
+        TerminalMetric::OverlineThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    const TerminalCellMetrics extremeMetrics =
+        terminalCellMetrics(extreme.typography, dpr);
+    const QRectF extremeCell(
+        0.0, 0.0,
+        extremeMetrics.cellWidth, extremeMetrics.cellHeight);
+    const QRectF extremeCanvas =
+        expectedSpriteCanvas(extremeCell, dpr);
+    for (const TerminalUnderlineStyle style : {
+             TerminalUnderlineStyle::Double,
+             TerminalUnderlineStyle::Dotted,
+             TerminalUnderlineStyle::Curly,
+             TerminalUnderlineStyle::Dashed,
+        }) {
+        const TerminalPaneRenderProbeSnapshot snapshot =
+            render(extreme, style, true, true);
+        // Ghostty's curly cap subtracts the full stroke width. At absurdly
+        // large widths the entire stroked path can therefore sit above the
+        // canvas; the other raster styles retain a visible clipped portion.
+        if (style != TerminalUnderlineStyle::Curly) {
+            QVERIFY(!snapshot.underlineRects.isEmpty());
+        }
+        QVERIFY(rectanglesFitInside(
+            snapshot.underlineRects, extremeCanvas));
+        QCOMPARE(snapshot.strikethroughRects.size(), 1);
+        QVERIFY(rectanglesFitInside(
+            snapshot.strikethroughRects, extremeCanvas));
+        QCOMPARE(snapshot.overlineRects.size(), 1);
+        QVERIFY(rectanglesFitInside(
+            snapshot.overlineRects, extremeCanvas));
+    }
+
+    // A huge positive position starts entirely below the padded canvas and
+    // therefore emits no geometry even when its thickness is also huge.
+    LaunchOptions farBelow = extreme;
+    farBelow.typography.metricModifiers[
+        TerminalMetric::StrikethroughPosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 20'000};
+    farBelow.typography.metricModifiers[
+        TerminalMetric::OverlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 20'000};
+    const TerminalPaneRenderProbeSnapshot below = render(
+        farBelow, TerminalUnderlineStyle::None, true, true);
+    QVERIFY(below.strikethroughRects.isEmpty());
+    QVERIFY(below.overlineRects.isEmpty());
+
+    LaunchOptions thickCursor = options;
+    thickCursor.typography.metricModifiers[
+        TerminalMetric::UnderlinePosition] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    thickCursor.typography.metricModifiers[
+        TerminalMetric::CursorThickness] =
+        TerminalMetricModifiers::Absolute{.pixels = 10'000};
+    thickCursor.typography.metricModifiers[
+        TerminalMetric::CursorHeight] =
+        TerminalMetricModifiers::Absolute{.pixels = 7};
+    const TerminalCellMetrics cursorMetrics =
+        terminalCellMetrics(thickCursor.typography, dpr);
+    const QRectF cursorOuter(
+        0.0, cursorMetrics.cursorTop,
+        cursorMetrics.cellWidth, cursorMetrics.cursorHeight);
+    const QRectF cursorCanvas =
+        expectedSpriteCanvas(cursorOuter, dpr);
+    const QRectF cursorCell(
+        0.0, 0.0,
+        cursorMetrics.cellWidth, cursorMetrics.cellHeight);
+    const QRectF underlineCursorCanvas =
+        expectedSpriteCanvas(cursorCell, dpr);
+
+    const TerminalPaneRenderProbeSnapshot bar = render(
+        thickCursor, TerminalUnderlineStyle::None,
+        false, false, 0);
+    QCOMPARE(bar.cursorRects.size(), 1);
+    QVERIFY(rectanglesFitInside(bar.cursorRects, cursorCanvas));
+    QCOMPARE(
+        bar.cursorRects.constFirst(),
+        QRectF(
+            cursorMetrics.cursorBarLeft, cursorMetrics.cursorTop,
+            cursorMetrics.cursorThickness,
+            cursorMetrics.cursorHeight)
+            .intersected(cursorCanvas));
+
+    const qreal cursorUnderlineY = std::min(
+        cursorMetrics.underlinePosition,
+        cursorMetrics.underlineMaximumPosition);
+    const TerminalPaneRenderProbeSnapshot underlineCursor = render(
+        thickCursor, TerminalUnderlineStyle::None,
+        false, false, 2);
+    QCOMPARE(underlineCursor.cursorRects.size(), 1);
+    QVERIFY(rectanglesFitInside(
+        underlineCursor.cursorRects, underlineCursorCanvas));
+    QCOMPARE(
+        underlineCursor.cursorRects.constFirst(),
+        QRectF(
+            0.0, cursorUnderlineY,
+            cursorMetrics.cellWidth,
+            cursorMetrics.cursorThickness)
+            .intersected(underlineCursorCanvas));
+
+    const TerminalPaneRenderProbeSnapshot hollow = render(
+        thickCursor, TerminalUnderlineStyle::None,
+        false, false, 3);
+    QCOMPARE(hollow.cursorRects, QVector<QRectF>({cursorOuter}));
+    QVERIFY(rectanglesArePairwiseDisjoint(hollow.cursorRects));
+    QVERIFY(rectanglesFitInside(hollow.cursorRects, cursorCanvas));
+    QCOMPARE(
+        totalRectangleArea(hollow.cursorRects),
+        rectangleArea(cursorOuter));
 
     window.close();
     delete pane;
@@ -4321,22 +5150,17 @@ void TerminalPaneTest::interactsWithOsc8Hyperlinks()
     };
     QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.appearance.foregroundColor = Qt::white;
     options.appearance.backgroundColor = Qt::black;
     options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     QQuickWindow window;
     window.setColor(Qt::black);
@@ -4688,20 +5512,15 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
     QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
     options.linkUrl = false;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     QQuickWindow window;
     window.resize(qCeil(cellWidth * 30.0), qCeil(cellHeight * 4.0));
@@ -4858,17 +5677,12 @@ void TerminalPaneTest::previewsLinksAccordingToPolicyAndBoundsDisplay()
     options.hold = true;
     options.linkUrl = true;
     options.linkPreviews = LinkPreviewMode::Always;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     TerminalPane pane(options);
     pane.setSize(QSizeF(cellWidth * 120.0, cellHeight * 5.0));
@@ -5119,20 +5933,15 @@ void TerminalPaneTest::keepsOsc8InteractionStableAcrossUnrelatedOutput()
         QStringLiteral("/bin/sh"), QStringLiteral("-c"), script,
     };
     options.hold = true;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
     options.keybindSource = GhosttyKeybindSource::text({
         QStringLiteral("ctrl+y=copy_url_to_clipboard"),
     });
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     QQuickWindow window;
     window.resize(qCeil(cellWidth * 12.0), qCeil(cellHeight * 4.0));
@@ -5247,17 +6056,12 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     };
     QVERIFY(!options.program.constFirst().isEmpty());
     options.hold = true;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
 
     TerminalPane pane(options);
     pane.setSize(QSizeF(cellWidth * 12.0, cellHeight * 3.0));
@@ -5366,17 +6170,12 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     };
     options.hold = true;
     options.mouseReporting = false;
-    options.fontFamily =
-        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    useSystemFixedFont(options);
 
-    QFont font(options.fontFamily);
-    font.setPointSizeF(options.fontSize);
-    font.setFixedPitch(true);
-    font.setStyleHint(QFont::Monospace);
-    const QFontMetricsF metrics(font);
-    const qreal cellWidth = std::max(
-        1.0, std::ceil(metrics.horizontalAdvance(QLatin1Char('M'))));
-    const qreal cellHeight = std::max(1.0, std::ceil(metrics.height()));
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography);
+    const qreal cellWidth = metrics.cellWidth;
+    const qreal cellHeight = metrics.cellHeight;
     const QPointF linkPosition(cellWidth * 0.5, cellHeight * 0.5);
 
     TerminalPane pane(options);
@@ -6301,7 +7100,7 @@ void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
                 press(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
             });
     LaunchOptions replacementOptions = options;
-    replacementOptions.fontSize = 17.0;
+    replacementOptions.typography.pointSize = 17.0;
     replacementOptions.keybindSource =
         GhosttyKeybindSource::structured(replacementConfig);
     pane.applyRuntimeOptions(replacementOptions, replacementProgram);

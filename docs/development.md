@@ -85,8 +85,11 @@ human-oriented `+show-config` output.
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-keybinds`, `+show-config`, and `+validate-config`. A shared allowlist
-guards both binaries.
+`+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
+`+validate-config`. One shared catalog records every pinned action spelling
+and its explicit frontend support decision, so known-but-unsupported actions
+remain distinguishable from invalid spellings without maintaining parallel
+allowlists.
 The frontend classifies raw arguments and uses Linux `execv` before QString
 conversion or Qt initialization; it does not reuse the buffered, timeout-bound
 `QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
@@ -94,6 +97,15 @@ state, environment, PID, process/signal relationship, and exit status remain
 caller-owned. The helper's embedded application runtime is `none`, so
 runtime-specific config finalization can differ from GTK even though the action
 implementation is the exact pinned code.
+
+`+ssh` remains Ghostty's wrapper: the helper spawns and waits for the selected
+SSH child, prepends the pinned TERM/SendEnv options, optionally installs the
+built-in terminfo payload, and maps a child signal to `128 + signal`.
+`+ssh-cache` operates on Ghostty's standard
+`${XDG_STATE_HOME}/ghostty/ssh_cache`; tests must isolate `XDG_STATE_HOME`,
+`HOME`, and `TMPDIR` beneath repository-local `./tmp`. Explicit action support
+does not imply the separately tracked shell-script injection that wraps an
+ordinary `ssh` command automatically.
 
 `+edit-config` continues through the pinned helper into `/bin/sh -c` using the
 first non-empty `VISUAL` or `EDITOR` value and a shell-escaped standard config
@@ -106,7 +118,9 @@ split/tab/window directory inheritance policies, new-window/tab font-size policy
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
 palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
-selection colors, cursor
+four ordered regular/bold/italic/bold-italic family lists and their tagged
+automatic/disabled/named styles, the f32 font size, eleven nullable tagged
+absolute-pixel/percentage metric modifiers, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
@@ -115,8 +129,14 @@ the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, transaction consistency, and default-aware
-keybinding diagnostics; launch-option tests verify CLI precedence and the
-typed snapshot's worker-boundary projection; adapter tests verify that
+keybinding diagnostics; launch-option and process-loader tests verify that
+explicit font CLI arguments enter both structured queries before Ghostty
+finalization, preserving f32 and styled-role defaults while the public
+`+validate-config` action retains its exact action-specific grammar.
+Terminal-cell-metric and
+pane tests verify four-role selection, physical-pixel/DPR projection,
+decoration and cursor geometry, live reload, and manual zoom. Adapter tests
+verify that
 config-default changes preserve OSC/DECSCUSR terminal overrides; and
 `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
@@ -126,6 +146,11 @@ split/tab/zoom/window/scene lifecycle, divider recoloring, unset restoration,
 handle lifecycle, and logical-to-physical scaling at 1× and 2×.
 This division keeps parser, terminal state, and renderer responsibilities
 independently testable.
+
+The configuration exporter and its C API overlay are compiled from the
+project-local revision shadow. They do not modify or create commits in the
+official pinned Ghostty submodule; a change that truly requires an upstream
+public API remains documented in `REQUIRES_UPSTREAM.md`.
 
 The additional Zig outputs and global package/artifact cache live under:
 
@@ -157,22 +182,25 @@ The five focused config tests have distinct boundaries:
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
-  of process execution, including exact fields and types, the full unsigned
-  scrollback range, nullable values, and malformed keybinding trees.
+  of process execution, including exact typography role lists, tagged style and
+  metric alternatives, fields and types, the full unsigned scrollback range,
+  nullable values, and malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
-  surface-inheritance booleans, Ghostty's effective
+  surface-inheritance booleans, exact font CLI forwarding and role
+  finalization, Ghostty's effective
   `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a
-  byte-framed fake helper, all eight real action implementations, invalid and
-  reordered action options, the pinned editor exec and selection contract,
-  missing/unexecutable-helper failure, the config-off boundary, and
-  moved-prefix main-to-helper discovery. Every fixture lives under the
-  repository-local `./tmp` or build tree.
+  byte-framed fake helper, every delegated real action, invalid and reordered
+  action options, the pinned editor exec and selection contract, deterministic
+  SSH argument/stream/exit/signal and terminfo/cache phases, isolated SSH-cache
+  lifecycle and mode repair, missing/unexecutable-helper failure, the
+  config-off boundary, and moved-prefix main-to-helper discovery. Every fixture
+  lives under the repository-local `./tmp` or build tree.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.

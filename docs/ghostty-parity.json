@@ -257,6 +257,58 @@
         "x11-instance-name"
       ],
       "overrides": {
+        "adjust-box-thickness": {
+          "status": "planned",
+          "note": "Exact behavior depends on Ghostty's private generated-box sprite and font-classification pipeline, which is not exposed through public libghostty-vt."
+        },
+        "adjust-cell-height": {
+          "status": "supported",
+          "note": "Absolute and percentage modifiers apply to the regular-face cell height in rounded physical pixels at the pane's current DPR. The pinned sparse-map application order is preserved, including its dependent baseline and decoration recentering, while cursor height keeps its independent basis."
+        },
+        "adjust-cell-width": {
+          "status": "supported",
+          "note": "Absolute and percentage modifiers apply to the regular-face cell advance in rounded physical pixels at the pane's current DPR and drive both rendering geometry and PTY columns."
+        },
+        "adjust-cursor-height": {
+          "status": "supported",
+          "note": "The modifier applies in rounded physical pixels to the unadjusted cell-height basis, clamps only to a one-pixel minimum, and vertically centers the result; a configured full cursor may intentionally exceed the cell."
+        },
+        "adjust-cursor-thickness": {
+          "status": "supported",
+          "note": "The modifier applies to Ghostty's one-physical-pixel cursor-stroke basis and controls bar, underline, and hollow cursor strokes."
+        },
+        "adjust-font-baseline": {
+          "status": "supported",
+          "note": "The signed baseline modifier applies in rounded physical pixels in Ghostty's pinned sparse-map order and updates glyph placement live."
+        },
+        "adjust-icon-height": {
+          "status": "planned",
+          "note": "Exact behavior depends on Ghostty's private icon and Nerd Font glyph-classification pipeline, which is not exposed through public libghostty-vt."
+        },
+        "adjust-overline-position": {
+          "status": "supported",
+          "note": "The signed position modifier applies in rounded physical pixels in Ghostty's pinned sparse-map order; negative positions remain representable for Ghostty-compatible placement."
+        },
+        "adjust-overline-thickness": {
+          "status": "supported",
+          "note": "The modifier applies in rounded physical pixels to the regular-face line thickness and drives rendered overline geometry."
+        },
+        "adjust-strikethrough-position": {
+          "status": "supported",
+          "note": "The unsigned position modifier applies in rounded physical pixels in Ghostty's pinned sparse-map order, saturates at zero, and drives rendered strike-through geometry."
+        },
+        "adjust-strikethrough-thickness": {
+          "status": "supported",
+          "note": "The modifier applies in rounded physical pixels to the regular-face line thickness and drives rendered strike-through geometry."
+        },
+        "adjust-underline-position": {
+          "status": "supported",
+          "note": "The unsigned position modifier applies in rounded physical pixels in Ghostty's pinned sparse-map order, saturates at zero, and drives single, double, curly, dotted, and dashed underline placement."
+        },
+        "adjust-underline-thickness": {
+          "status": "supported",
+          "note": "The modifier applies in rounded physical pixels to the regular-face underline thickness and drives every rendered underline style."
+        },
         "auto-update": {
           "status": "not_applicable",
           "scope": "macos"
@@ -330,11 +382,39 @@
     },
     "font-family": {
       "status": "partial",
-      "note": "Pinned config parsing, CLI precedence, and live reload are implemented, but Qt currently renders only the first family in Ghostty's fallback list."
+      "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."
+    },
+    "font-family-bold": {
+      "status": "supported",
+      "note": "The finalized ordered family list selects the bold rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+    },
+    "font-family-bold-italic": {
+      "status": "supported",
+      "note": "The finalized ordered family list selects the bold-italic rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+    },
+    "font-family-italic": {
+      "status": "supported",
+      "note": "The finalized ordered family list selects the italic rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
     },
     "font-size": {
-      "status": "partial",
-      "note": "Pinned config parsing, CLI precedence, and live reload are implemented; manually adjusted panes retain their local size, while reset_font_size restores the newest live default and resumes following reloads."
+      "status": "supported",
+      "note": "The pinned f32 value, exact CLI precedence, initial geometry, inheritance, and live reload are implemented. Manually adjusted panes retain their local size while adopting other typography changes; reset_font_size restores the newest live default and resumes following reloads."
+    },
+    "font-style": {
+      "status": "supported",
+      "note": "Ghostty's automatic, disabled, and named style alternatives are preserved in the typed wire and applied to the regular rendering role; pinned runtime semantics normalize disabled regular style to automatic."
+    },
+    "font-style-bold": {
+      "status": "supported",
+      "note": "Ghostty's automatic, disabled, and named style alternatives select the bold role; disabled or unavailable styled faces fall back to the regular role."
+    },
+    "font-style-bold-italic": {
+      "status": "supported",
+      "note": "Ghostty's automatic, disabled, and named style alternatives select the bold-italic role; disabled or unavailable styled faces fall back to the regular role."
+    },
+    "font-style-italic": {
+      "status": "supported",
+      "note": "Ghostty's automatic, disabled, and named style alternatives select the italic role; disabled or unavailable styled faces fall back to the regular role."
     },
     "foreground": {
       "status": "supported",
@@ -1154,6 +1234,14 @@
         "show-config": {
           "status": "supported",
           "note": "Delegates the pinned implementation through ghostty-qt's app-runtime=none helper; GTK-runtime-specific finalization is intentionally outside this embedded helper contract."
+        },
+        "ssh": {
+          "status": "supported",
+          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. This supports explicit +ssh invocation; automatic shell-function injection remains separately tracked by shell-integration and shell-integration-features."
+        },
+        "ssh-cache": {
+          "status": "supported",
+          "note": "Delegates the pinned +ssh-cache manager through the relocatable embedded-runtime helper before Qt starts. Ghostty owns the standard XDG-state path, list, exact and bare-host query, add/update, remove, prune, and clear grammar, validation, 0600 repair, atomic on-disk updates, streams, and exit status. Tests use an isolated repository-local state directory; no Qt cache namespace or frontend reimplementation is introduced."
         },
         "toggle-quick-terminal": {
           "scope": "wayland"

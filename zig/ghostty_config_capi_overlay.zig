@@ -7,11 +7,37 @@
 
 const std = @import("std");
 const inputpkg = @import("../input.zig");
+const Metrics = @import("../font/Metrics.zig");
 const state = &@import("../global.zig").state;
 const String = @import("../main_c.zig").String;
 
 const Config = @import("Config.zig");
 const Binding = inputpkg.Binding;
+
+const MetricConfigDescriptor = struct {
+    name: []const u8,
+    key: Metrics.Key,
+    exported: bool = true,
+};
+
+// Keep the pinned SharedGridSet.Key.init insertion sequence in one place.
+// Unsupported sprite/icon metrics still enter the map because they can change
+// its capacity and therefore the observable order of supported modifiers.
+const metric_config_descriptors = [_]MetricConfigDescriptor{
+    .{ .name = "adjust-cell-width", .key = .cell_width },
+    .{ .name = "adjust-cell-height", .key = .cell_height },
+    .{ .name = "adjust-font-baseline", .key = .cell_baseline },
+    .{ .name = "adjust-underline-position", .key = .underline_position },
+    .{ .name = "adjust-underline-thickness", .key = .underline_thickness },
+    .{ .name = "adjust-strikethrough-position", .key = .strikethrough_position },
+    .{ .name = "adjust-strikethrough-thickness", .key = .strikethrough_thickness },
+    .{ .name = "adjust-overline-position", .key = .overline_position },
+    .{ .name = "adjust-overline-thickness", .key = .overline_thickness },
+    .{ .name = "adjust-cursor-thickness", .key = .cursor_thickness },
+    .{ .name = "adjust-cursor-height", .key = .cursor_height },
+    .{ .name = "adjust-box-thickness", .key = .box_thickness, .exported = false },
+    .{ .name = "adjust-icon-height", .key = .icon_height, .exported = false },
+};
 
 comptime {
     _ = @import("CApi_upstream.zig");
@@ -67,12 +93,37 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
 
     try json.objectField("working-directory");
     try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
-    try json.objectField("font-family");
-    try json.beginArray();
-    for (config.@"font-family".list.items) |family| try json.write(family);
-    try json.endArray();
+    inline for (.{
+        .{ "font-family", &config.@"font-family" },
+        .{ "font-family-bold", &config.@"font-family-bold" },
+        .{ "font-family-italic", &config.@"font-family-italic" },
+        .{ "font-family-bold-italic", &config.@"font-family-bold-italic" },
+    }) |entry| {
+        try json.objectField(entry[0]);
+        try writeStringList(json, entry[1]);
+    }
     try json.objectField("font-size");
     try json.write(config.@"font-size");
+    inline for (.{
+        .{ "font-style", config.@"font-style" },
+        .{ "font-style-bold", config.@"font-style-bold" },
+        .{ "font-style-italic", config.@"font-style-italic" },
+        .{ "font-style-bold-italic", config.@"font-style-bold-italic" },
+    }) |entry| {
+        try json.objectField(entry[0]);
+        try writeFontStyle(json, entry[1]);
+    }
+    inline for (metric_config_descriptors) |descriptor| {
+        if (descriptor.exported) {
+            try json.objectField(descriptor.name);
+            try writeOptionalMetricModifier(
+                json,
+                @field(config, descriptor.name),
+            );
+        }
+    }
+    try json.objectField("metric-modifier-order");
+    try writeMetricModifierOrder(json, config);
     try json.objectField("foreground");
     try writeRgb(json, config.foreground);
     try json.objectField("background");
@@ -218,6 +269,72 @@ fn writeWorkingDirectory(json: *std.json.Stringify, value: Config.WorkingDirecto
         .home, .inherit => try json.write(@tagName(value)),
         .path => |path| try json.write(path),
     }
+}
+
+fn writeStringList(json: *std.json.Stringify, value: *const Config.RepeatableString) !void {
+    try json.beginArray();
+    for (value.list.items) |entry| try json.write(entry);
+    try json.endArray();
+}
+
+fn writeFontStyle(json: *std.json.Stringify, style: Config.FontStyle) !void {
+    try json.beginObject();
+    try json.objectField("kind");
+    switch (style) {
+        .default => try json.write("automatic"),
+        .false => try json.write("disabled"),
+        .name => |name| {
+            try json.write("named");
+            try json.objectField("name");
+            try json.write(name);
+        },
+    }
+    try json.endObject();
+}
+
+fn writeOptionalMetricModifier(json: *std.json.Stringify, modifier: anytype) !void {
+    const value = modifier orelse {
+        try json.write(null);
+        return;
+    };
+
+    try json.beginObject();
+    try json.objectField("kind");
+    switch (value) {
+        .absolute => |pixels| {
+            try json.write("absolute");
+            try json.objectField("value");
+            try json.write(pixels);
+        },
+        .percent => |multiplier| {
+            try json.write("percentage");
+            try json.objectField("value");
+            try json.write(multiplier);
+        },
+    }
+    try json.endObject();
+}
+
+fn writeMetricModifierOrder(json: *std.json.Stringify, config: *const Config) !void {
+    var modifiers: Metrics.ModifierSet = .{};
+    defer modifiers.deinit(state.alloc);
+    inline for (metric_config_descriptors) |descriptor| {
+        if (@field(config, descriptor.name)) |modifier| {
+            try modifiers.put(state.alloc, descriptor.key, modifier);
+        }
+    }
+
+    try json.beginArray();
+    var iterator = modifiers.iterator();
+    while (iterator.next()) |entry| {
+        inline for (metric_config_descriptors) |descriptor| {
+            if (descriptor.exported and descriptor.key == entry.key_ptr.*) {
+                try json.write(descriptor.name);
+                break;
+            }
+        }
+    }
+    try json.endArray();
 }
 
 fn writeRgb(json: *std.json.Stringify, color: anytype) !void {
