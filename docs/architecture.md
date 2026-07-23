@@ -450,8 +450,8 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    block-cursor changes keep their targeted row rebuilds, while search
    decoration changes retain their full text-state invalidation.
 7. Color-batched transient geometry continues to draw cell backgrounds,
-   selections, search results, cursor shapes, text decorations, overlays, and
-   the scrollbar in the same global painter order. Each nonempty cell in a
+   selections, search results, cursor shapes, text decorations, and
+   scene-graph overlays in the same global painter order. Each nonempty cell in a
    rebuilt row is shaped with `QTextLayout` and placed at an explicit grid
    coordinate. This avoids fallback-font and wide-cell advances shifting later
    cells. Cell values retain foreground provenance and bold, faint, inverse,
@@ -704,12 +704,22 @@ shows progressive selected/total status, and maps Enter, Shift+Enter, and
 Escape to next, previous, and end. It is anchored at the top-right and is not
 draggable yet.
 
-Search, read-only, and resize overlays use the same guarded factory lifecycle.
+Search, read-only, resize, and scrollbar overlays use the same guarded factory
+lifecycle.
 Replacing or destroying a factory removes all objects it created before a new
 factory is attached, and each newly created pane receives the current factories.
 The workspace traverses a stable pane snapshot while running QML creation and
 destruction callbacks so those callbacks cannot invalidate the split tree being
 visited.
+
+The scrollbar consumes the worker's value-only total, offset, and viewport
+length after the pane has transactionally accepted them. C++ converts those
+`quint64` values to the normalized Qt control state and converts user movement
+back to a saturated absolute row, so QML never has to represent a potentially
+64-bit row index. `system` uses the current Qt Quick Controls style and appears
+only when the active screen has history; `never` hides it. The control is a
+per-pane overlay, so live policy reload, split zoom, and track or thumb
+interaction do not alter the pane rectangle, terminal grid, or PTY size.
 
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
@@ -1079,8 +1089,9 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
-compatibility field, and the lossless resize-overlay mode, position, and
-whole-millisecond duration plus Ghostty's finalized binding sets after
+compatibility field, the exact scrollbar policy, and the lossless
+resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
+finalized binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,

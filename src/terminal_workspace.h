@@ -64,6 +64,8 @@ class TerminalWorkspace : public QQuickItem {
                READ resizeOverlayComponent
                WRITE setResizeOverlayComponent
                NOTIFY resizeOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *scrollbarComponent READ scrollbarComponent WRITE
+                   setScrollbarComponent NOTIFY scrollbarComponentChanged)
 
 public:
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
@@ -148,6 +150,11 @@ public:
         return resizeOverlay_.component.data();
     }
     void setResizeOverlayComponent(QQmlComponent *component);
+    QQmlComponent *scrollbarComponent() const
+    {
+        return scrollbar_.component.data();
+    }
+    void setScrollbarComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
@@ -199,6 +206,7 @@ Q_SIGNALS:
     void searchOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
     void resizeOverlayComponentChanged();
+    void scrollbarComponentChanged();
 
 protected:
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
@@ -431,4 +439,5 @@ private:
     PaneOverlaySlot searchOverlay_;
     PaneOverlaySlot readOnlyOverlay_;
     PaneOverlaySlot resizeOverlay_;
+    PaneOverlaySlot scrollbar_;
 };

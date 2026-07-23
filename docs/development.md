@@ -194,9 +194,9 @@ absolute-pixel/percentage metric modifiers, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
-`link-previews` policy, the raw false/true/detect `gtk-single-instance` mode as
-an unused schema-v1 compatibility field, the boolean `initial-window` startup
-decision, and the exact
+`link-previews` policy, the exact `system`/`never` scrollbar policy, the raw
+false/true/detect `gtk-single-instance` mode as an unused schema-v1
+compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, transaction consistency, and default-aware

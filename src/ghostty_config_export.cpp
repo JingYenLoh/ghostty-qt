@@ -86,6 +86,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("bold-color"),
     QLatin1StringView("faint-opacity"),
     QLatin1StringView("scrollback-limit"),
+    QLatin1StringView("scrollbar"),
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
     QLatin1StringView("clipboard-paste-protection"),
@@ -879,6 +880,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("true"), LinkPreviewMode::Always},
             {QLatin1StringView("osc8"), LinkPreviewMode::Osc8},
         });
+    constexpr auto ScrollbarPolicies =
+        std::to_array<std::pair<QLatin1StringView, ScrollbarPolicy>>({
+            {QLatin1StringView("system"), ScrollbarPolicy::System},
+            {QLatin1StringView("never"), ScrollbarPolicy::Never},
+        });
     constexpr auto ResizeOverlayModes =
         std::to_array<std::pair<QLatin1StringView, ResizeOverlayMode>>({
             {QLatin1StringView("always"), ResizeOverlayMode::Always},
@@ -954,6 +960,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                  result.linkPreviews,
                                  LinkPreviewModes);
         !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("scrollbar"),
+                                 result.scrollbar, ScrollbarPolicies);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("resize-overlay"),
                                  result.resizeOverlay.mode,
                                  ResizeOverlayModes);

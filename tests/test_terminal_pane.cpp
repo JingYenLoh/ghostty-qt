@@ -155,6 +155,41 @@ void useSystemFixedFont(LaunchOptions &options)
     };
 }
 
+TerminalUpdate fullFrameWithScrollbar(quint64 total, quint64 offset,
+                                      quint64 length, quint64 revision = 1)
+{
+    TerminalUpdate update;
+    update.columns = 2;
+    update.rows = 2;
+    update.fullFrame = true;
+    update.scrollbarChanged = true;
+    update.scrollTotal = total;
+    update.scrollOffset = offset;
+    update.scrollLength = length;
+    update.contentRevision = revision;
+    for (int row = 0; row < update.rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(update.columns);
+        update.dirtyRows.append(std::move(rowUpdate));
+    }
+    return update;
+}
+
+TerminalUpdate scrollbarMetadata(quint64 total, quint64 offset, quint64 length,
+                                 quint64 revision)
+{
+    TerminalUpdate update;
+    update.columns = 2;
+    update.rows = 2;
+    update.scrollbarChanged = true;
+    update.scrollTotal = total;
+    update.scrollOffset = offset;
+    update.scrollLength = length;
+    update.contentRevision = revision;
+    return update;
+}
+
 QColor sourceOver(const QColor &underlying, const QColor &fill, double alpha)
 {
     const auto channel = [alpha](int under, int over) {
@@ -295,6 +330,9 @@ class TerminalPaneTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void presentsScrollbarFromRetainedMetadata();
+    void movesScrollbarWithClampedAbsoluteRows();
+    void reloadsScrollbarPolicyAndHandlesHugeCounts();
     void resizeOverlayPositions_data();
     void resizeOverlayPositions();
     void resizeOverlayCoalescesAndRestarts();
@@ -367,6 +405,200 @@ private Q_SLOTS:
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
+
+void TerminalPaneTest::presentsScrollbarFromRetainedMetadata()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy changed(&pane, &TerminalPane::scrollbarChanged);
+
+    QVERIFY(!pane.scrollbarVisible());
+    QCOMPARE(pane.scrollbarPosition(), 0.0);
+    QCOMPARE(pane.scrollbarSize(), 1.0);
+
+    controller->terminalUpdated(fullFrameWithScrollbar(100, 20, 25));
+    QVERIFY(pane.scrollbarVisible());
+    QVERIFY(std::abs(pane.scrollbarPosition() - 0.2) < 1e-12);
+    QVERIFY(std::abs(pane.scrollbarSize() - 0.25) < 1e-12);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(pane.property("scrollbarVisible").toBool(), true);
+    QCOMPARE(pane.property("scrollbarPosition").toReal(),
+             pane.scrollbarPosition());
+    QCOMPARE(pane.property("scrollbarSize").toReal(), pane.scrollbarSize());
+
+    // Repeated authoritative metadata does not create a QML feedback cycle.
+    controller->terminalUpdated(scrollbarMetadata(100, 20, 25, 2));
+    QCOMPARE(changed.count(), 1);
+
+    // A malformed offset is saturated to the last valid viewport position.
+    controller->terminalUpdated(scrollbarMetadata(100, 500, 25, 3));
+    QVERIFY(pane.scrollbarVisible());
+    QVERIFY(std::abs(pane.scrollbarPosition() - 0.75) < 1e-12);
+    QCOMPARE(changed.count(), 2);
+
+    // No history, a zero viewport, and a viewport longer than the total are
+    // all non-presentable states. Alternate-screen metadata naturally takes
+    // the first path because its total and visible length are equal.
+    controller->terminalUpdated(scrollbarMetadata(25, 0, 25, 4));
+    QVERIFY(!pane.scrollbarVisible());
+    QCOMPARE(pane.scrollbarPosition(), 0.0);
+    QCOMPARE(pane.scrollbarSize(), 1.0);
+    QCOMPARE(changed.count(), 3);
+    controller->terminalUpdated(scrollbarMetadata(25, 0, 0, 5));
+    controller->terminalUpdated(scrollbarMetadata(25, 0, 26, 6));
+    QVERIFY(!pane.scrollbarVisible());
+    QCOMPARE(changed.count(), 3);
+}
+
+void TerminalPaneTest::movesScrollbarWithClampedAbsoluteRows()
+{
+    qRegisterMetaType<TerminalViewportRequest>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy requests(controller, &TerminalController::scrollRequested);
+    controller->terminalUpdated(fullFrameWithScrollbar(100, 20, 20));
+
+    const auto requestAt = [&requests](int index) {
+        return qvariant_cast<TerminalViewportRequest>(
+            requests.at(index).constFirst());
+    };
+
+    pane.scrollbarMoveTo(0.2);
+    pane.scrollbarMoveTo(0.204);
+    QCOMPARE(requests.count(), 0);
+
+    pane.scrollbarMoveTo(0.5);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(requestAt(0).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(0).row, quint64{50});
+    pane.scrollbarMoveTo(0.5);
+    QCOMPARE(requests.count(), 1);
+
+    // Returning to the authoritative row before the worker acknowledges the
+    // first request must supersede it instead of letting the stale row win.
+    pane.scrollbarMoveTo(0.2);
+    QCOMPARE(requests.count(), 2);
+    QCOMPARE(requestAt(1).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(1).row, quint64{20});
+    pane.scrollbarMoveTo(0.2);
+    QCOMPARE(requests.count(), 2);
+
+    pane.scrollbarMoveTo(0.51);
+    QCOMPARE(requests.count(), 3);
+    QCOMPARE(requestAt(2).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(2).row, quint64{51});
+    pane.scrollbarMoveTo(-std::numeric_limits<qreal>::infinity());
+    QCOMPARE(requests.count(), 4);
+    QCOMPARE(requestAt(3).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(3).row, quint64{0});
+    pane.scrollbarMoveTo(std::numeric_limits<qreal>::infinity());
+    QCOMPARE(requests.count(), 5);
+    QCOMPARE(requestAt(4).kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(requestAt(4).row, quint64{80});
+    pane.scrollbarMoveTo(std::numeric_limits<qreal>::quiet_NaN());
+    QCOMPARE(requests.count(), 5);
+
+    // Once the worker publishes the requested viewport, a bound ScrollBar
+    // writing the same normalized position back is a no-op.
+    controller->terminalUpdated(scrollbarMetadata(100, 80, 20, 2));
+    pane.scrollbarMoveTo(1.0);
+    QCOMPARE(requests.count(), 5);
+}
+
+void TerminalPaneTest::reloadsScrollbarPolicyAndHandlesHugeCounts()
+{
+    qRegisterMetaType<TerminalViewportRequest>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    pane.setSize(QSizeF(640.0, 480.0));
+    TerminalPane *const identity = &pane;
+    const QSizeF geometry = pane.size();
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy requests(controller, &TerminalController::scrollRequested);
+    controller->terminalUpdated(fullFrameWithScrollbar(200, 100, 50));
+    QVERIFY(pane.scrollbarVisible());
+
+    LaunchOptions hidden = options;
+    hidden.scrollbar = ScrollbarPolicy::Never;
+    pane.applyRuntimeOptions(hidden);
+    QCOMPARE(&pane, identity);
+    QCOMPARE(pane.size(), geometry);
+    QVERIFY(!pane.scrollbarVisible());
+    QCOMPARE(pane.scrollbarPosition(), 0.0);
+    QCOMPARE(pane.scrollbarSize(), 1.0);
+    pane.scrollbarMoveTo(0.25);
+    QCOMPARE(requests.count(), 0);
+
+    // Metadata continues to update while the frontend control is disabled,
+    // then becomes authoritative as soon as policy is re-enabled.
+    controller->terminalUpdated(scrollbarMetadata(400, 120, 100, 2));
+    QVERIFY(!pane.scrollbarVisible());
+    pane.applyRuntimeOptions(options);
+    QVERIFY(pane.scrollbarVisible());
+    QVERIFY(std::abs(pane.scrollbarPosition() - 0.3) < 1e-12);
+    QVERIFY(std::abs(pane.scrollbarSize() - 0.25) < 1e-12);
+    QCOMPARE(&pane, identity);
+    QCOMPARE(pane.size(), geometry);
+
+    constexpr quint64 maximum = std::numeric_limits<quint64>::max();
+    constexpr quint64 length = maximum / 4;
+    constexpr quint64 maximumOffset = maximum - length;
+    controller->terminalUpdated(scrollbarMetadata(maximum, maximum, length, 3));
+    QVERIFY(pane.scrollbarVisible());
+    QVERIFY(std::isfinite(pane.scrollbarPosition()));
+    QVERIFY(std::isfinite(pane.scrollbarSize()));
+    QVERIFY(pane.scrollbarPosition() >= 0.0);
+    QVERIFY(pane.scrollbarPosition() <= 1.0);
+    QVERIFY(pane.scrollbarSize() > 0.0);
+    QVERIFY(pane.scrollbarSize() < 1.0);
+    const qreal expectedPosition =
+        static_cast<qreal>(static_cast<long double>(maximumOffset)
+                           / static_cast<long double>(maximum));
+    const qreal expectedSize = static_cast<qreal>(
+        static_cast<long double>(length) / static_cast<long double>(maximum));
+    QCOMPARE(pane.scrollbarPosition(), expectedPosition);
+    QCOMPARE(pane.scrollbarSize(), expectedSize);
+
+    // The malformed current offset is clamped to the bottom, so its bound
+    // value is a no-op. A different normalized position converts in C++
+    // without overflowing or passing a quint64 through QML.
+    pane.scrollbarMoveTo(1.0);
+    QCOMPARE(requests.count(), 0);
+    pane.scrollbarMoveTo(0.25);
+    QCOMPARE(requests.count(), 1);
+    const TerminalViewportRequest request =
+        qvariant_cast<TerminalViewportRequest>(
+            requests.constFirst().constFirst());
+    QCOMPARE(request.kind, TerminalViewportRequest::Kind::Row);
+    QCOMPARE(request.row, quint64{1} << 62);
+
+    controller->terminalUpdated(scrollbarMetadata(maximum, 0, 0, 4));
+    QVERIFY(!pane.scrollbarVisible());
+    pane.scrollbarMoveTo(0.5);
+    QCOMPARE(requests.count(), 1);
+}
 
 void TerminalPaneTest::resizeOverlayPositions_data()
 {

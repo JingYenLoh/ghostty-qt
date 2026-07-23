@@ -201,6 +201,7 @@ inline QJsonObject values()
         {QStringLiteral("faint-opacity"), 0.375},
         {QStringLiteral("scrollback-limit"),
          QStringLiteral("18446744073709551615")},
+        {QStringLiteral("scrollbar"), QStringLiteral("never")},
         {QStringLiteral("confirm-close-surface"), QStringLiteral("always")},
         {QStringLiteral("clipboard-trim-trailing-spaces"), false},
         {QStringLiteral("clipboard-paste-protection"), false},

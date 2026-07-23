@@ -33,6 +33,10 @@ struct LaunchOptions {
     TerminalAppearance appearance;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
+    // Qt presents Ghostty's viewport state as an overlay control. The policy
+    // affects only that frontend affordance; scrolling remains available when
+    // the control is hidden.
+    ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
     TerminalClipboardPasteOptions clipboardPaste;

@@ -608,6 +608,7 @@ qt_add_qml_module(ghostty-qt
         qml/ReadOnlyOverlay.qml
         qml/ResizeOverlay.qml
         qml/SearchOverlay.qml
+        qml/TerminalScrollBar.qml
 )
 
 target_link_libraries(ghostty-qt PRIVATE

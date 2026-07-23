@@ -904,6 +904,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
         fixture.preferredPath,
         QByteArrayLiteral(
             "gtk-single-instance = false\n"
+            "scrollbar = never\n"
             "initial-window = false\n"
             "resize-overlay = always\n"
             "resize-overlay-position = bottom-right\n"
@@ -923,6 +924,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QCOMPARE(result->values.resizeOverlay.duration.count(),
              std::chrono::milliseconds::rep{1'250});
     QCOMPARE(result->values.singleInstanceMode, SingleInstanceMode::Disabled);
+    QCOMPARE(result->values.scrollbar, ScrollbarPolicy::Never);
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
@@ -940,6 +942,7 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(!result->values.quitAfterLastWindowClosedDelay.has_value());
+    QCOMPARE(result->values.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!result->defaultKeybindings.root.isEmpty());
 }
 

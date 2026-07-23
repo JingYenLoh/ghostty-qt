@@ -25,6 +25,11 @@ enum class LinkPreviewMode {
     Osc8,
 };
 
+enum class ScrollbarPolicy {
+    System,
+    Never,
+};
+
 enum class MiddleClickAction {
     PrimaryPaste,
     Ignore,
@@ -175,6 +180,7 @@ struct GhosttyConfigValues {
     ResizeOverlayOptions resizeOverlay;
 
     quint64 scrollbackLimitBytes = 0;
+    ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard{
         .trimTrailingSpaces = false,

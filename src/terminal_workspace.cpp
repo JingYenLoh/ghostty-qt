@@ -34,6 +34,7 @@ constexpr qreal splitDividerZ = 1.0;
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
+constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
 {
@@ -397,6 +398,13 @@ void TerminalWorkspace::setResizeOverlayComponent(QQmlComponent *component)
         &TerminalWorkspace::resizeOverlayComponentChanged);
 }
 
+void TerminalWorkspace::setScrollbarComponent(QQmlComponent *component)
+{
+    setPaneOverlayComponent(scrollbar_, component, kScrollbarProperty,
+                            "terminal scrollbar",
+                            &TerminalWorkspace::scrollbarComponentChanged);
+}
+
 void TerminalWorkspace::setPaneOverlayComponent(
     PaneOverlaySlot &slot,
     QQmlComponent *component,
@@ -477,9 +485,13 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
         || guard == nullptr) {
         return false;
     }
-    return attachPaneOverlay(resizeOverlay_.component, paneGuard,
-                             kResizeOverlayProperty,
-                             "terminal resize overlay")
+    if (!attachPaneOverlay(resizeOverlay_.component, paneGuard,
+                           kResizeOverlayProperty, "terminal resize overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    return attachPaneOverlay(scrollbar_.component, paneGuard,
+                             kScrollbarProperty, "terminal scrollbar")
         && guard != nullptr;
 }
 

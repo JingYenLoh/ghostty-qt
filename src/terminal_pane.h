@@ -69,6 +69,11 @@ class TerminalPane final : public QQuickItem {
                NOTIFY resizeOverlayTextChanged)
     Q_PROPERTY(QRectF resizeOverlayRect READ resizeOverlayRect
                NOTIFY resizeOverlayRectChanged)
+    Q_PROPERTY(
+        bool scrollbarVisible READ scrollbarVisible NOTIFY scrollbarChanged)
+    Q_PROPERTY(
+        qreal scrollbarPosition READ scrollbarPosition NOTIFY scrollbarChanged)
+    Q_PROPERTY(qreal scrollbarSize READ scrollbarSize NOTIFY scrollbarChanged)
 
 public:
     explicit TerminalPane(
@@ -105,6 +110,9 @@ public:
     bool resizeOverlayVisible() const { return resizeOverlayVisible_; }
     QString resizeOverlayText() const { return resizeOverlayText_; }
     QRectF resizeOverlayRect() const;
+    bool scrollbarVisible() const { return scrollbarVisible_; }
+    qreal scrollbarPosition() const { return scrollbarPosition_; }
+    qreal scrollbarSize() const { return scrollbarSize_; }
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
@@ -143,6 +151,7 @@ public:
     Q_INVOKABLE void setSearchUiText(const QString &text);
     Q_INVOKABLE void endSearchUi();
     Q_INVOKABLE void navigateSearch(int direction);
+    Q_INVOKABLE void scrollbarMoveTo(qreal position);
     // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
     // implementation as a focused local binding.
     bool executeConfiguredAction(QStringView action);
@@ -164,6 +173,7 @@ Q_SIGNALS:
     void resizeOverlayVisibleChanged();
     void resizeOverlayTextChanged();
     void resizeOverlayRectChanged();
+    void scrollbarChanged();
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();
@@ -337,6 +347,7 @@ private:
         const TerminalSearchUpdate &searchUpdate);
     void clearPendingSearchUpdateLocked();
     void clearSearchDecorationsLocked();
+    void updateScrollbarState();
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -375,6 +386,10 @@ private:
     bool resizeOverlayUpdateScheduled_ = false;
     quint64 resizeOverlayUpdateGeneration_ = 0;
     bool resizeOverlayShuttingDown_ = false;
+    bool scrollbarVisible_ = false;
+    qreal scrollbarPosition_ = 0.0;
+    qreal scrollbarSize_ = 1.0;
+    std::optional<quint64> pendingScrollbarRow_;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;

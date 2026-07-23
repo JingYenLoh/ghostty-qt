@@ -191,6 +191,7 @@ private Q_SLOTS:
     void rejectsUnknownOption();
     void rejectsMissingApplicationName();
     void appliesFinalizedGhosttyTypography();
+    void mapsScrollbarPolicy();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -265,6 +266,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
+    QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
     QVERIFY(options.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(options.selectionClipboard.copyOnSelect,
@@ -751,6 +753,24 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
         TerminalTypography expected = completeTypography();
         expected.pointSize = base.typography.pointSize;
         QVERIFY(result.typography == expected);
+    }
+}
+
+void LaunchOptionsTest::mapsScrollbarPolicy()
+{
+    for (const ScrollbarPolicy configured : {
+             ScrollbarPolicy::System,
+             ScrollbarPolicy::Never,
+         }) {
+        LaunchOptions base;
+        base.scrollbar = configured == ScrollbarPolicy::System
+            ? ScrollbarPolicy::Never
+            : ScrollbarPolicy::System;
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.scrollbar = configured;
+
+        QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).scrollbar,
+                 configured);
     }
 }
 

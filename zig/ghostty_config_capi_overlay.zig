@@ -191,6 +191,8 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.objectField("scrollback-limit");
     var scrollback_buf: [32]u8 = undefined;
     try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
+    try json.objectField("scrollbar");
+    try json.write(@tagName(config.scrollbar));
     try json.objectField("confirm-close-surface");
     try json.write(@tagName(config.@"confirm-close-surface"));
     try json.objectField("clipboard-trim-trailing-spaces");

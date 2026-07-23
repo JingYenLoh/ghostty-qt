@@ -69,6 +69,14 @@ constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
 constexpr qreal kLinkPreviewVerticalPadding = 4.0;
 
+qreal scrollbarFraction(quint64 numerator, quint64 denominator)
+{
+    if (denominator == 0) return 0.0;
+    const long double fraction = static_cast<long double>(numerator)
+        / static_cast<long double>(denominator);
+    return std::clamp(static_cast<qreal>(fraction), qreal{0.0}, qreal{1.0});
+}
+
 float unfocusedSplitOverlayOpacity(double paneOpacity)
 {
     if (!std::isfinite(paneOpacity)) {
@@ -1006,6 +1014,7 @@ TerminalPane::TerminalPane(
     controller_->setMouseReportingEnabled(options.mouseReporting);
     connect(controller_, &TerminalController::terminalUpdated, this,
             [this](const TerminalUpdate &terminalUpdate) {
+                const QPointer<TerminalPane> guard(this);
                 bool applied = false;
                 {
                     QMutexLocker locker(&renderMutex_);
@@ -1049,6 +1058,12 @@ TerminalPane::TerminalPane(
                     }
                 }
                 if (applied) {
+                    if (terminalUpdate.fullFrame
+                        || terminalUpdate.scrollbarChanged) {
+                        pendingScrollbarRow_.reset();
+                    }
+                    updateScrollbarState();
+                    if (guard == nullptr) return;
                     if (hyperlinkQueryRejected_ && options_.linkUrl
                         && (terminalUpdate.fullFrame
                             || terminalUpdate.scrollbarChanged
@@ -1413,6 +1428,100 @@ QRectF TerminalPane::resizeOverlayRect() const
     return {position, QSizeF(kResizeOverlayWidth, kResizeOverlayHeight)};
 }
 
+void TerminalPane::updateScrollbarState()
+{
+    quint64 total = 0;
+    quint64 offset = 0;
+    quint64 length = 0;
+    bool hasFrame = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        total = frame_.scrollTotal;
+        offset = frame_.scrollOffset;
+        length = frame_.scrollLength;
+        hasFrame = hasFrame_;
+    }
+
+    const bool visible = options_.scrollbar == ScrollbarPolicy::System
+        && hasFrame && length > 0 && length < total;
+    qreal position = 0.0;
+    qreal size = 1.0;
+    if (visible) {
+        const quint64 maximumOffset = total - length;
+        position = scrollbarFraction(std::min(offset, maximumOffset), total);
+        size = scrollbarFraction(length, total);
+    } else {
+        pendingScrollbarRow_.reset();
+    }
+
+    if (scrollbarVisible_ == visible && scrollbarPosition_ == position
+        && scrollbarSize_ == size) {
+        return;
+    }
+    scrollbarVisible_ = visible;
+    scrollbarPosition_ = position;
+    scrollbarSize_ = size;
+    Q_EMIT scrollbarChanged();
+}
+
+void TerminalPane::scrollbarMoveTo(qreal position)
+{
+    if (!scrollbarVisible_ || std::isnan(position)) return;
+
+    quint64 total = 0;
+    quint64 offset = 0;
+    quint64 length = 0;
+    bool hasFrame = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        total = frame_.scrollTotal;
+        offset = frame_.scrollOffset;
+        length = frame_.scrollLength;
+        hasFrame = hasFrame_;
+    }
+    if (options_.scrollbar != ScrollbarPolicy::System || !hasFrame
+        || length == 0 || length >= total) {
+        return;
+    }
+
+    const quint64 maximumOffset = total - length;
+    const qreal maximumPosition = scrollbarFraction(maximumOffset, total);
+    qreal boundedPosition = 0.0;
+    if (position >= maximumPosition) {
+        boundedPosition = maximumPosition;
+    } else if (position > 0.0) {
+        boundedPosition = position;
+    }
+
+    const long double scaled = static_cast<long double>(boundedPosition)
+        * static_cast<long double>(total);
+    quint64 target = 0;
+    if (scaled >= static_cast<long double>(maximumOffset)) {
+        target = maximumOffset;
+    } else if (scaled > 0.0L) {
+        target = static_cast<quint64>(std::floor(scaled + 0.5L));
+        target = std::min(target, maximumOffset);
+    }
+
+    const quint64 current = std::min(offset, maximumOffset);
+    // A bound control writes the authoritative value back while synchronizing.
+    // Compare that normalized value before relying on a floating-point round
+    // trip that cannot exactly encode every row. A different pending request
+    // is the exception: dragging back to the authoritative row must supersede
+    // the request that has not been acknowledged yet.
+    if (boundedPosition == scrollbarPosition_
+        && pendingScrollbarRow_.value_or(current) == current) {
+        return;
+    }
+
+    if (target == pendingScrollbarRow_.value_or(current)) return;
+    pendingScrollbarRow_ = target;
+    controller_->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = target,
+    });
+}
+
 std::optional<QString> TerminalPane::effectiveSurfaceTitle() const
 {
     if (surfaceTitleOverride_.has_value()) {
@@ -1560,6 +1669,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
+    updated.scrollbar = options.scrollbar;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
@@ -1660,6 +1770,9 @@ void TerminalPane::applyRuntimeOptions(
     if (!stillCurrentUpdate()) return;
 
     controller_->setMouseReportingEnabled(options_.mouseReporting);
+    if (!stillCurrentUpdate()) return;
+
+    updateScrollbarState();
     if (!stillCurrentUpdate()) return;
 
     if (previousResizeOverlay.position != options_.resizeOverlay.position) {
@@ -1991,7 +2104,6 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QVector<ColoredRect> decorationsBeforeText;
     QVector<ColoredRect> decorationsAfterText;
     QVector<ColoredRect> cursorDecorations;
-    QVector<ColoredRect> scrollbarDecorations;
     QVector<ColoredRect> overlayBackgrounds;
     QVector<ColoredRect> overlayDecorations;
     QVector<QRectF> *underlineProbe = nullptr;
@@ -2395,21 +2507,6 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             }
         }
 
-        if (frame.scrollTotal > frame.scrollLength && frame.scrollTotal > 0) {
-            constexpr qreal barWidth = 3.0;
-            const qreal trackHeight = height();
-            const qreal barHeight = std::max(18.0,
-                trackHeight * static_cast<qreal>(frame.scrollLength)
-                    / static_cast<qreal>(frame.scrollTotal));
-            const quint64 movable = frame.scrollTotal - frame.scrollLength;
-            const qreal barTop = movable == 0 ? 0.0
-                : (trackHeight - barHeight) * static_cast<qreal>(frame.scrollOffset)
-                    / static_cast<qreal>(movable);
-            appendRect(scrollbarDecorations,
-                       QRectF(width() - barWidth, barTop, barWidth, barHeight),
-                       QColor(216, 222, 233, 100));
-        }
-
         if (!preedit.isEmpty()) {
             const qreal left = static_cast<qreal>(frame.cursorColumn) * cellWidth;
             const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
@@ -2506,9 +2603,6 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(cursorDecorations, softwareRenderer)) {
-        root->afterMain->appendChildNode(node);
-    }
-    if (QSGNode *node = createRectNode(scrollbarDecorations, softwareRenderer)) {
         root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(overlayBackgrounds, softwareRenderer)) {

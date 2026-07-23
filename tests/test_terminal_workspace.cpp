@@ -438,6 +438,7 @@ private Q_SLOTS:
     void overlayComponentsShareOneLifecycle();
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
+    void scrollbarOverlayIsPaneLocalAndReloadable();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
@@ -2533,19 +2534,28 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
     };
     const std::array cases{
         OverlayCase{
-            "search", &TerminalWorkspace::setSearchOverlayComponent,
+            "search",
+            &TerminalWorkspace::setSearchOverlayComponent,
             &TerminalWorkspace::searchOverlayComponent,
             &TerminalWorkspace::searchOverlayComponentChanged,
         },
         OverlayCase{
-            "readOnly", &TerminalWorkspace::setReadOnlyOverlayComponent,
+            "readOnly",
+            &TerminalWorkspace::setReadOnlyOverlayComponent,
             &TerminalWorkspace::readOnlyOverlayComponent,
             &TerminalWorkspace::readOnlyOverlayComponentChanged,
         },
         OverlayCase{
-            "resize", &TerminalWorkspace::setResizeOverlayComponent,
+            "resize",
+            &TerminalWorkspace::setResizeOverlayComponent,
             &TerminalWorkspace::resizeOverlayComponent,
             &TerminalWorkspace::resizeOverlayComponentChanged,
+        },
+        OverlayCase{
+            "scrollbar",
+            &TerminalWorkspace::setScrollbarComponent,
+            &TerminalWorkspace::scrollbarComponent,
+            &TerminalWorkspace::scrollbarComponentChanged,
         },
     };
 
@@ -2897,6 +2907,200 @@ void TerminalWorkspaceTest::resizeOverlayIsPaneLocalAndScalesWithDpr()
     QVERIFY(secondPane->findChild<QQuickItem *>(
                 QStringLiteral("terminalResizeOverlay"),
                 Qt::FindDirectChildrenOnly)
+            == nullptr);
+    workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::scrollbarOverlayIsPaneLocalAndReloadable()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.scrollbar = ScrollbarPolicy::System;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/TerminalScrollBar.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    workspace->setScrollbarComponent(&overlayComponent);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *const firstScrollbar = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly);
+    QVERIFY(firstScrollbar != nullptr);
+    QCOMPARE(firstScrollbar->parentItem(), firstPane);
+    QVERIFY(!firstScrollbar->isVisible());
+
+    quint64 revision = 1;
+    const auto publishScrollbar = [&revision](TerminalPane *pane, quint64 total,
+                                              quint64 offset, quint64 length) {
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        if (controller == nullptr) return false;
+
+        TerminalUpdate update;
+        update.columns = 2;
+        update.rows = 2;
+        update.fullFrame = true;
+        update.scrollTotal = total;
+        update.scrollOffset = offset;
+        update.scrollLength = length;
+        update.contentRevision = revision++;
+        for (int row = 0; row < update.rows; ++row) {
+            TerminalRowUpdate rowUpdate;
+            rowUpdate.row = row;
+            rowUpdate.cells.resize(update.columns);
+            update.dirtyRows.append(std::move(rowUpdate));
+        }
+        controller->terminalUpdated(update);
+        return true;
+    };
+
+    QVERIFY(publishScrollbar(firstPane, 100, 20, 25));
+    QTRY_VERIFY_WITH_TIMEOUT(firstScrollbar->isVisible(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(firstScrollbar->property("size").toReal(), 0.25,
+                              1000);
+    QTRY_COMPARE_WITH_TIMEOUT(firstScrollbar->property("position").toReal(),
+                              0.2, 1000);
+
+    TerminalController *const firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QSignalSpy viewportRequests(firstController,
+                                &TerminalController::scrollRequested);
+
+    // Exercise the real Qt control rather than only its C++ projection. A
+    // track click and a thumb drag must both enter the existing absolute-row
+    // viewport path.
+    const QPoint trackPoint =
+        firstScrollbar
+            ->mapToScene(QPointF(firstScrollbar->width() / 2.0,
+                                 firstScrollbar->height() * 0.85))
+            .toPoint();
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, trackPoint);
+    QTRY_VERIFY_WITH_TIMEOUT(!viewportRequests.isEmpty(), 1000);
+    const auto requestAt = [&viewportRequests](int index) {
+        return qvariant_cast<TerminalViewportRequest>(
+            viewportRequests.at(index).constFirst());
+    };
+    QCOMPARE(requestAt(0).kind, TerminalViewportRequest::Kind::Row);
+    QVERIFY(requestAt(0).row > quint64{20});
+    QVERIFY(requestAt(0).row <= quint64{75});
+
+    QVERIFY(publishScrollbar(firstPane, 100, requestAt(0).row, 25));
+    const int clickRequestCount = viewportRequests.count();
+    QTRY_COMPARE_WITH_TIMEOUT(firstScrollbar->property("position").toReal(),
+                              static_cast<qreal>(requestAt(0).row) / 100.0,
+                              1000);
+    QCOMPARE(viewportRequests.count(), clickRequestCount);
+
+    // Qt owns the platform-specific pointer gesture. Drive the same position
+    // transition deterministically to verify that the QML binding forwards
+    // non-pointer/accessibility movement while rejecting passive worker
+    // updates.
+    const qreal dragPosition =
+        firstScrollbar->property("position").toReal() > 0.35 ? 0.1 : 0.65;
+    QVERIFY(firstScrollbar->setProperty("position", dragPosition));
+    QTRY_VERIFY_WITH_TIMEOUT(viewportRequests.count() > clickRequestCount,
+                             1000);
+    QCOMPARE(requestAt(viewportRequests.count() - 1).kind,
+             TerminalViewportRequest::Kind::Row);
+
+    QSignalSpy runtimeOptions(firstController,
+                              &TerminalController::runtimeOptionsRequested);
+
+    const QRectF originalGeometry(firstPane->position(), firstPane->size());
+    LaunchOptions hidden = options;
+    hidden.scrollbar = ScrollbarPolicy::Never;
+    workspace->applyLaunchOptions(hidden);
+    QCOMPARE(workspace->findChild<TerminalPane *>(), firstPane);
+    QCOMPARE(QRectF(firstPane->position(), firstPane->size()),
+             originalGeometry);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstScrollbar->isVisible(), 1000);
+    QCOMPARE(runtimeOptions.count(), 0);
+
+    workspace->applyLaunchOptions(options);
+    QCOMPARE(workspace->findChild<TerminalPane *>(), firstPane);
+    QCOMPARE(QRectF(firstPane->position(), firstPane->size()),
+             originalGeometry);
+    QTRY_VERIFY_WITH_TIMEOUT(firstScrollbar->isVisible(), 1000);
+    QCOMPARE(runtimeOptions.count(), 0);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 1000);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *const secondScrollbar = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly);
+    QVERIFY(secondScrollbar != nullptr);
+    QVERIFY(secondScrollbar != firstScrollbar);
+    QCOMPARE(secondScrollbar->parentItem(), secondPane);
+    QVERIFY(publishScrollbar(secondPane, 200, 50, 40));
+    QTRY_VERIFY_WITH_TIMEOUT(secondScrollbar->isVisible(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(secondScrollbar->property("size").toReal(), 0.2,
+                              1000);
+    QTRY_COMPARE_WITH_TIMEOUT(secondScrollbar->property("position").toReal(),
+                              0.25, 1000);
+
+    const PaneId secondId = workspace->tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QCOMPARE(
+        secondPane->findChild<QQuickItem *>(QStringLiteral("terminalScrollBar"),
+                                            Qt::FindDirectChildrenOnly),
+        secondScrollbar);
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {tabId, secondId, 0},
+    }));
+    QCOMPARE(
+        firstPane->findChild<QQuickItem *>(QStringLiteral("terminalScrollBar"),
+                                           Qt::FindDirectChildrenOnly),
+        firstScrollbar);
+    QCOMPARE(
+        secondPane->findChild<QQuickItem *>(QStringLiteral("terminalScrollBar"),
+                                            Qt::FindDirectChildrenOnly),
+        secondScrollbar);
+
+    // A viewport without history (including the alternate screen's ordinary
+    // metadata shape) hides only its own control.
+    QVERIFY(publishScrollbar(secondPane, 40, 0, 40));
+    QTRY_VERIFY_WITH_TIMEOUT(!secondScrollbar->isVisible(), 1000);
+    QVERIFY(firstScrollbar->isVisible());
+
+    workspace->setScrollbarComponent(nullptr);
+    QVERIFY(firstPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly)
+            == nullptr);
+    QVERIFY(secondPane->findChild<QQuickItem *>(
+                QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly)
             == nullptr);
     workspace.reset();
     window.close();

@@ -86,6 +86,11 @@ ApplicationWindow {
         ResizeOverlay {}
     }
 
+    Component {
+        id: terminalScrollBarFactory
+        TerminalScrollBar {}
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -191,6 +196,7 @@ ApplicationWindow {
             searchOverlayComponent: terminalSearchOverlayFactory
             readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
             resizeOverlayComponent: terminalResizeOverlayFactory
+            scrollbarComponent: terminalScrollBarFactory
         }
     }
 

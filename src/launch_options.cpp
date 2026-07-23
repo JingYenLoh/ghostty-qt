@@ -231,6 +231,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             .unit = ScrollbackLimitUnit::Bytes,
         };
     }
+    result.scrollbar = config.scrollbar;
     result.confirmCloseMode = config.confirmCloseMode;
     result.selectionClipboard = config.selectionClipboard;
     result.clipboardPaste = config.clipboardPaste;

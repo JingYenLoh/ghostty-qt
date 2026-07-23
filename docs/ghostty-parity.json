@@ -726,6 +726,11 @@
       "status": "partial",
       "note": "Ghostty's byte-valued config limit is preserved for pane creation, but libghostty-vt cannot resize the history allocation of an existing pane during live reload."
     },
+        "scrollbar": {
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact system/never enum applies live to a Qt-styled control overlaid independently on every pane. System appears only for an authoritative active-screen range with scrollback; never removes the affordance without disabling other viewport actions. C++ normalizes the worker's u64 total/offset/length and saturates user movement back to an absolute-row request, avoiding QML integer precision loss and feedback loops. Splits and zoom retain each control and session without reserving grid or PTY geometry."
+        },
         "wait-after-command": {
           "status": "partial",
           "note": "The --hold launch flag implements one subset of the behavior."

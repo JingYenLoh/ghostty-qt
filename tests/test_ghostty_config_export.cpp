@@ -238,6 +238,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
 
     QCOMPARE(values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
+    QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
     QCOMPARE(values.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!values.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(values.selectionClipboard.copyOnSelect,
@@ -452,6 +453,13 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         [](const GhosttyConfigValues &values) {
             return values.linkPreviews;
         });
+    verifyMappings(
+        QLatin1StringView("scrollbar"),
+        std::to_array<std::pair<QLatin1StringView, ScrollbarPolicy>>({
+            {QLatin1StringView("system"), ScrollbarPolicy::System},
+            {QLatin1StringView("never"), ScrollbarPolicy::Never},
+        }),
+        [](const GhosttyConfigValues &values) { return values.scrollbar; });
     verifyMappings(
         QLatin1StringView("resize-overlay"),
         std::to_array<std::pair<QLatin1StringView, ResizeOverlayMode>>({
@@ -679,6 +687,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withoutValue(object(), QStringLiteral("metric-modifier-order"))
         << QStringLiteral(
                "values is missing field 'metric-modifier-order'");
+    QTest::newRow("missing-scrollbar")
+        << withoutValue(object(), QStringLiteral("scrollbar"))
+        << QStringLiteral("values is missing field 'scrollbar'");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})
@@ -994,6 +1005,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("copy-on-select"),
              QStringLiteral("middle-click-action"),
              QStringLiteral("link-previews"),
+             QStringLiteral("scrollbar"),
              QStringLiteral("resize-overlay"),
              QStringLiteral("resize-overlay-position"),
              QStringLiteral("gtk-single-instance"),
