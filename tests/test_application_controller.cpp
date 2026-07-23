@@ -265,6 +265,7 @@ private Q_SLOTS:
     void deferredRequestsRemainOrderedAcrossStart();
     void ordinaryCloseUsesOnlyTheFinalWindowForLifetimePolicy();
     void successfulReplacementCancelsDelayedQuit();
+    void navigatesLiveWindowsInRegistrationOrder();
     void sourceLessActivationMatchesUpstreamInheritance();
     void sourceLessActivationCancelsQuitAndReportsFailure();
     void sourceLessActivationRequiresStartupDecision();
@@ -2058,6 +2059,155 @@ void ApplicationControllerTest::successfulReplacementCancelsDelayedQuit()
 
     QVERIFY(controller.dispatch(ApplicationAction::Quit));
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
+}
+
+void ApplicationControllerTest::navigatesLiveWindowsInRegistrationOrder()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(options, harness.factory(), false);
+    const auto firstCreated = controller.createInitialWindow();
+    QVERIFY(firstCreated.has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 3, 1000);
+
+    const QVector<ApplicationWindow> created = controller.windows();
+    QCOMPARE(created.size(), 3);
+    const ApplicationWindow first = created.at(0);
+    const ApplicationWindow second = created.at(1);
+    const ApplicationWindow third = created.at(2);
+    TerminalPane *const firstPane = onlyPane(first.workspace);
+    TerminalPane *const secondPane = onlyPane(second.workspace);
+    TerminalPane *const thirdPane = onlyPane(third.workspace);
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(secondPane != nullptr);
+    QVERIFY(thirdPane != nullptr);
+
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("goto_window:next")));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), second.window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        second.window->activeFocusItem(), secondPane, 1000);
+
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), third.window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        third.window->activeFocusItem(), thirdPane, 1000);
+
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        first.window->activeFocusItem(), firstPane, 1000);
+
+    QVERIFY(controller.dispatch(WindowNavigationAction::Previous));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), third.window, 1000);
+
+    // Presenting a minimized destination restores it without discarding a
+    // simultaneous maximized state.
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    second.window->setWindowStates(
+        Qt::WindowMinimized | Qt::WindowMaximized);
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), second.window, 1000);
+    QVERIFY(!second.window->windowStates().testFlag(Qt::WindowMinimized));
+    QVERIFY(second.window->windowStates().testFlag(Qt::WindowMaximized));
+    second.window->setWindowStates(Qt::WindowNoState);
+
+    // Reentrant navigation from destination focus must observe the newly
+    // active root and safely begin another complete traversal.
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    bool nestedNavigation = false;
+    const QMetaObject::Connection nestedConnection = connect(
+        second.workspace, &TerminalWorkspace::workspaceActivated,
+        &controller, [&] {
+            if (nestedNavigation) return;
+            nestedNavigation =
+                controller.dispatch(WindowNavigationAction::Next);
+        });
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_VERIFY_WITH_TIMEOUT(nestedNavigation, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), third.window, 1000);
+    disconnect(nestedConnection);
+
+    // Hidden roots remain registered but GTK does not present them.
+    second.window->hide();
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), third.window, 1000);
+    second.window->show();
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+
+    // A root whose workspace has committed close is also ineligible during
+    // the queued interval before its QML window is retired.
+    second.workspace->requestWindowClose();
+    QVERIFY(!second.workspace->canHostApplicationQuitConfirmation());
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), third.window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+
+    // Destination focus can schedule its own retirement. The controller must
+    // not retain an unguarded root/workspace pair after requestActivate() and
+    // focusActivePane() return.
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QPointer<QQuickWindow> reentrantTarget(third.window);
+    connect(
+        thirdPane, &TerminalPane::activated, &controller,
+        [reentrantTarget] {
+            if (reentrantTarget != nullptr) {
+                reentrantTarget->deleteLater();
+            }
+        },
+        Qt::SingleShotConnection);
+    QVERIFY(controller.dispatch(WindowNavigationAction::Next));
+    QTRY_VERIFY_WITH_TIMEOUT(reentrantTarget.isNull(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+
+    first.window->requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QVERIFY(!controller.dispatch(WindowNavigationAction::Next));
+    QVERIFY(!controller.dispatch(WindowNavigationAction::Previous));
+
+    // With no registered window active, GTK tests the first top-level before
+    // advancing. A sole visible inactive Ghostty window is therefore a valid
+    // destination rather than a no-peer failure.
+    QQuickWindow external;
+    external.show();
+    external.requestActivate();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), &external, 1000);
+    QVERIFY(controller.dispatch(WindowNavigationAction::Previous));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        QGuiApplication::focusWindow(), first.window, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        first.window->activeFocusItem(), firstPane, 1000);
+    external.close();
+
+    closeWorkspace(first.workspace);
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 0, 1000);
 }
 

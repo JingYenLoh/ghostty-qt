@@ -566,6 +566,7 @@ qt_add_executable(ghostty-qt
     src/terminal_types.h
     src/terminal_workspace.cpp
     src/terminal_workspace.h
+    src/window_navigation_action.h
     src/workspace_action.h
     src/workspace_ids.h
 )

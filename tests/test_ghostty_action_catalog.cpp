@@ -32,6 +32,7 @@ private Q_SLOTS:
     void rejectsMalformedFontSizePaneActions();
     void rejectsMalformedSearchPaneActions();
     void parsesApplicationActionsExactly();
+    void parsesWindowNavigationActionsExactly();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
 };
@@ -742,6 +743,61 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         QVERIFY(!GhosttyActionCatalog::parseApplicationAction(rejected));
         QVERIFY(!GhosttyActionCatalog::isImplemented(rejected));
     }
+}
+
+void GhosttyActionCatalogTest::parsesWindowNavigationActionsExactly()
+{
+    const struct {
+        const char *serialized;
+        WindowNavigationAction action;
+    } accepted[] = {
+        {"goto_window:previous", WindowNavigationAction::Previous},
+        {"goto_window:next", WindowNavigationAction::Next},
+    };
+    for (const auto &testCase : accepted) {
+        const QString serialized =
+            QString::fromLatin1(testCase.serialized);
+        QCOMPARE(
+            GhosttyActionCatalog::parseWindowNavigationAction(serialized),
+            std::optional{testCase.action});
+        const std::optional<GhosttyConfiguredAction> configured =
+            GhosttyActionCatalog::parseConfiguredAction(serialized);
+        QVERIFY(configured.has_value());
+        QCOMPARE(
+            std::get<WindowNavigationAction>(*configured),
+            testCase.action);
+        QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
+        QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                 GhosttyActionScope::Surface);
+        QVERIFY(!GhosttyActionCatalog::parseApplicationAction(serialized));
+    }
+
+    for (const QString &rejected : {
+             QStringLiteral("goto_window"),
+             QStringLiteral("goto_window:"),
+             QStringLiteral("goto_window:previous:extra"),
+             QStringLiteral("goto_window:next:extra"),
+             QStringLiteral("goto_window:left"),
+             QStringLiteral("goto_window:Previous"),
+             QStringLiteral("Goto_window:next"),
+         }) {
+        QVERIFY(
+            !GhosttyActionCatalog::parseWindowNavigationAction(rejected));
+        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(rejected));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(rejected));
+    }
+
+    const GhosttyCompiledActionChain compiled =
+        GhosttyActionCatalog::compileActionChain({
+            QStringLiteral("goto_window:next"),
+        });
+    QCOMPARE(compiled.entries.size(), 1);
+    QCOMPARE(compiled.entries.constFirst().scope,
+             GhosttyActionScope::Surface);
+    QVERIFY(!compiled.applicationOnly);
+    QCOMPARE(
+        *compiled.entries.constFirst().getIf<WindowNavigationAction>(),
+        WindowNavigationAction::Next);
 }
 
 void GhosttyActionCatalogTest::matchesPinnedIntegerParsing_data()

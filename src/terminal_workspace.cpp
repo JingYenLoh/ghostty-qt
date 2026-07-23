@@ -974,6 +974,20 @@ PaneId TerminalWorkspace::currentPaneId() const
     return tab != nullptr ? tab->activePaneId : PaneId{};
 }
 
+bool TerminalWorkspace::hasActivePane() const
+{
+    return paneForId(currentPaneId()) != nullptr;
+}
+
+bool TerminalWorkspace::focusActivePane()
+{
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> pane(paneForId(currentPaneId()));
+    if (pane == nullptr) return false;
+    pane->focusTerminal();
+    return guard != nullptr && pane != nullptr;
+}
+
 std::optional<LaunchOptions> TerminalWorkspace::newWindowLaunchOptions(
     const LaunchOptions &applicationOptions,
     PaneId sourcePaneId) const
@@ -1104,6 +1118,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     connect(pane, &TerminalPane::applicationActionRequested, this,
             [this, paneId](ApplicationAction action) {
                 Q_EMIT applicationActionRequested(action, paneId);
+            });
+    connect(pane, &TerminalPane::windowNavigationRequested, this,
+            [this, paneId, pane](WindowNavigationAction action) {
+                if (paneForId(paneId) != pane) return;
+                Q_EMIT windowNavigationRequested(action, paneId);
             });
     connect(pane, &TerminalPane::broadActionsRequested,
             this, &TerminalWorkspace::broadActionsRequested);

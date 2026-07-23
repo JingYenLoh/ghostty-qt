@@ -2,6 +2,7 @@
 
 #include "application_action.h"
 #include "terminal_types.h"
+#include "window_navigation_action.h"
 #include "workspace_action.h"
 
 #include <QByteArray>
@@ -253,6 +254,7 @@ using GhosttyDirectSurfaceActionParseResult =
 
 using GhosttyConfiguredAction = std::variant<
     ApplicationAction,
+    WindowNavigationAction,
     GhosttyPaneAction,
     WorkspaceActionRequest>;
 
@@ -354,6 +356,12 @@ public:
     // application actions that are not implemented yet.
     [[nodiscard]] static std::optional<ApplicationAction>
     parseApplicationAction(QStringView serializedAction);
+
+    // Parse the exact previous/next goto_window payload. The action remains
+    // surface-scoped even though execution is relayed to the application
+    // controller that owns the top-level window registry.
+    [[nodiscard]] static std::optional<WindowNavigationAction>
+    parseWindowNavigationAction(QStringView serializedAction);
 
     // Mirrors Binding.Action.scope() in the pinned Ghostty revision. This is
     // intentionally independent of WorkspaceAction: actions such as new_tab

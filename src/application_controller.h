@@ -5,6 +5,7 @@
 #include "desktop_activation.h"
 #include "launch_options.h"
 #include "revision_counter.h"
+#include "window_navigation_action.h"
 #include "workspace_ids.h"
 
 #include <QObject>
@@ -69,6 +70,10 @@ public:
         ApplicationAction action,
         TerminalWorkspace *sourceWorkspace = nullptr,
         PaneId sourcePaneId = {});
+    // goto_window remains a surface-scoped binding action, but top-level
+    // traversal belongs to the process owner. Dispatch stays synchronous so
+    // Wayland can associate requestActivate() with the originating key event.
+    [[nodiscard]] bool dispatch(WindowNavigationAction action);
     void applyLaunchOptions(const LaunchOptions &options);
 
     [[nodiscard]] TerminalWorkspace *activeWorkspace() const;

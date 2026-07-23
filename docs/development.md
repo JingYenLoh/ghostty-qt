@@ -43,6 +43,10 @@ split placement, stable per-tab title overrides and queued title prompts,
 typed originating-tab close modes with correlated frozen-target confirmation,
 reentrant-model guards, natural-exit pruning, focus preservation, actual
 all/global keybinding fanout, and overlapping shutdown grace periods,
+exact surface-scoped previous/next window traversal with wrapped
+registration-order selection, hidden/closing filtering, destination-pane
+focus, reentrant traversal and queued-retirement guards, and per-surface
+broad fanout,
 exact-source close-surface grammar, adjacent split focus, recursive collapse,
 stable correlated read-only/running pane confirmation, atomic resolution,
 final-tab escalation, irreversible typed-workspace quit gating,

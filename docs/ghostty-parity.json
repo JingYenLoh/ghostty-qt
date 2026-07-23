@@ -856,6 +856,10 @@
           "status": "supported",
           "note": "Selects a one-based tab index, rejects zero or values outside Ghostty's c_int frontend range at execution, and clamps higher representable indices to the final tab."
         },
+        "goto_window": {
+          "status": "supported",
+          "note": "Accepts exactly previous/next while retaining Ghostty's surface scope, then relays typed requests to the process-owned window registry. Traversal starts at the active registered root or otherwise tests the first registration, follows Qt registration order with one wrap, skips active, hidden, close-committed, invalid, and active-pane-less roots, restores minimized destinations, requests activation synchronously, and focuses the destination's active pane. Guarded activation and focus support reentrant traversal and callback-scheduled retirement without retaining stale registry objects; final activation remains compositor-mediated on Wayland. All/global invokes the traversal once per visited surface, matching pinned action-major fanout. Pinned GTK traverses its toolkit top-level list, whose ordering is not a portable contract; Qt deliberately uses stable creation/registration order."
+        },
         "increase_font_size": {
           "status": "supported",
           "note": "Parses the required payload with Ghostty's f32 grammar, clamps the delta to 0..255 (including pinned NaN/infinity behavior), computes min(current+delta, 255) in binary32, and marks each targeted pane manually adjusted even for an effective no-op."

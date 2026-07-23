@@ -705,6 +705,22 @@ std::optional<ApplicationAction> parseApplicationActionView(
     return spec != nullptr ? spec->implementedAction : std::nullopt;
 }
 
+std::optional<WindowNavigationAction> parseWindowNavigationActionView(
+    GhosttySerializedActionView parsed)
+{
+    if (parsed.name != QLatin1StringView("goto_window")
+        || !parsed.parameter.has_value()) {
+        return std::nullopt;
+    }
+    if (*parsed.parameter == QLatin1StringView("previous")) {
+        return WindowNavigationAction::Previous;
+    }
+    if (*parsed.parameter == QLatin1StringView("next")) {
+        return WindowNavigationAction::Next;
+    }
+    return std::nullopt;
+}
+
 std::optional<GhosttyPaneAction> parsePaneActionView(
     GhosttySerializedActionView parsed)
 {
@@ -960,6 +976,11 @@ std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
         return std::nullopt;
     }
 
+    if (std::optional<WindowNavigationAction> action =
+            parseWindowNavigationActionView(parsed)) {
+        return GhosttyConfiguredAction{*action};
+    }
+
     if (std::optional<GhosttyPaneAction> action =
             parsePaneActionView(parsed)) {
         return GhosttyConfiguredAction{std::move(*action)};
@@ -1017,6 +1038,14 @@ GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
         parseSerializedAction(serializedAction));
 }
 
+std::optional<WindowNavigationAction>
+GhosttyActionCatalog::parseWindowNavigationAction(
+    QStringView serializedAction)
+{
+    return parseWindowNavigationActionView(
+        parseSerializedAction(serializedAction));
+}
+
 GhosttyActionScope GhosttyActionCatalog::scope(
     QStringView serializedAction)
 {
@@ -1031,6 +1060,9 @@ GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
         return *application == ApplicationAction::Ignore
             ? GhosttyActionInputEffect::Ignore
             : GhosttyActionInputEffect::None;
+    }
+    if (std::holds_alternative<WindowNavigationAction>(action)) {
+        return GhosttyActionInputEffect::None;
     }
     if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {
         return std::holds_alternative<PaneAction::CloseWindow>(*pane)

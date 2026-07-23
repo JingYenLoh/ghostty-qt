@@ -5,6 +5,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "tab_list_model.h"
+#include "window_navigation_action.h"
 #include "workspace_action.h"
 
 #include <QHash>
@@ -104,6 +105,8 @@ public:
         const LaunchOptions &applicationOptions,
         PaneId sourcePaneId = {}) const;
     [[nodiscard]] WorkspaceCloseAssessment closeAssessment() const;
+    [[nodiscard]] bool hasActivePane() const;
+    bool focusActivePane();
     void requestApplicationQuitConfirmation(
         WorkspaceCloseAssessment applicationAssessment);
     void forceShutdownForApplicationQuit();
@@ -170,6 +173,8 @@ Q_SIGNALS:
     void titlePromptResolved(quint64 promptId);
     void applicationActionRequested(ApplicationAction action,
                                     PaneId sourcePaneId);
+    void windowNavigationRequested(WindowNavigationAction action,
+                                   PaneId sourcePaneId);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();

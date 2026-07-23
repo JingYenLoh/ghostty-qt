@@ -78,7 +78,9 @@ the host-language comparison and remaining engineering risks.
   without activation. Standard activation-token and desktop-startup-ID data
   follow the originating request into that window without leaking to its
   shell. Installed desktop/service metadata supports cold and warm activation,
-  and Debug and Release builds use separate identities.
+  and Debug and Release builds use separate identities. The exact
+  `goto_window:previous` and `goto_window:next` actions cycle visible live
+  terminal windows and focus the destination's active pane.
 - OSC title and local-host-validated working-directory updates, used for tab
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.

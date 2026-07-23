@@ -2830,6 +2830,10 @@ bool TerminalPane::performConfiguredAction(
                 Q_EMIT applicationActionRequested(applicationAction);
                 return true;
             },
+            [this](WindowNavigationAction navigationAction) {
+                Q_EMIT windowNavigationRequested(navigationAction);
+                return true;
+            },
             [this](const GhosttyPaneAction &paneAction) {
                 return performPaneAction(paneAction);
             },

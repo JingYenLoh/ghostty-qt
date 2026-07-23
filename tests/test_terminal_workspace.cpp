@@ -345,6 +345,7 @@ private Q_SLOTS:
     void broadCloseTabModesUseFirstStableSource();
     void closeTabBatchShutdownGracePeriodsOverlap();
     void rootApplicationBindingPrecedesActiveTable();
+    void windowNavigationRetainsSurfaceScopeAndBroadFanout();
     void broadBindingsReachInactivePanesAndIgnoreLocalFlags();
     void broadPasteActionsReachEveryPane();
     void broadViewportAndSelectionActionsReachEveryPane();
@@ -3866,6 +3867,86 @@ void TerminalWorkspaceTest::rootApplicationBindingPrecedesActiveTable()
     exerciseIgnore(Qt::Key_I, QChar(0x09), 2);
     exerciseIgnore(Qt::Key_G, QChar(0x07), 3);
     exerciseIgnore(Qt::Key_A, QChar(0x01), 4);
+}
+
+void TerminalWorkspaceTest::
+    windowNavigationRetainsSurfaceScopeAndBroadFanout()
+{
+    qRegisterMetaType<WindowNavigationAction>();
+
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    GhosttyKeybindConfig config;
+    config.root = {GhosttyKeybindDefinition{
+        .sequence = {GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = 'n',
+            .modifiers = GhosttyKeybindCtrl,
+        }},
+        .actions = {QStringLiteral("goto_window:next")},
+        .flags = GhosttyKeybindFlags{.all = true},
+    }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    GhosttyApplicationKeybindings applicationBindings(options, false);
+    applicationBindings.registerWorkspace(&workspace);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    workspace.splitRight();
+    workspace.newTab();
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 3);
+    TerminalPane *const source = panes.constFirst();
+    QVERIFY(source != nullptr);
+
+    QSignalSpy navigation(
+        &workspace, &TerminalWorkspace::windowNavigationRequested);
+    QSignalSpy application(
+        &applicationBindings,
+        &GhosttyApplicationKeybindings::applicationActionRequested);
+    TerminalController *const terminal =
+        source->findChild<TerminalController *>();
+    QVERIFY(terminal != nullptr);
+    QSignalSpy forwarded(terminal, &TerminalController::keyRequested);
+
+    QVERIFY(source->executeConfiguredAction(
+        QStringLiteral("goto_window:previous")));
+    QCOMPARE(navigation.count(), 1);
+    QCOMPARE(
+        qvariant_cast<WindowNavigationAction>(
+            navigation.constFirst().at(0)),
+        WindowNavigationAction::Previous);
+    QVERIFY(
+        qvariant_cast<PaneId>(navigation.constFirst().at(1)).isValid());
+    navigation.clear();
+
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_N, Qt::ControlModifier,
+                    QString(QChar(0x0e)));
+    QCoreApplication::sendEvent(source, &press);
+    QKeyEvent release(
+        QEvent::KeyRelease, Qt::Key_N, Qt::ControlModifier);
+    QCoreApplication::sendEvent(source, &release);
+
+    QCOMPARE(navigation.count(), panes.size());
+    QSet<PaneId> sources;
+    for (const QList<QVariant> &arguments : navigation) {
+        QCOMPARE(
+            qvariant_cast<WindowNavigationAction>(arguments.at(0)),
+            WindowNavigationAction::Next);
+        const PaneId paneId =
+            qvariant_cast<PaneId>(arguments.at(1));
+        QVERIFY(paneId.isValid());
+        sources.insert(paneId);
+    }
+    QCOMPARE(sources.size(), panes.size());
+    QCOMPARE(application.count(), 0);
+    QCOMPARE(forwarded.count(), 0);
 }
 
 void TerminalWorkspaceTest::broadBindingsReachInactivePanesAndIgnoreLocalFlags()

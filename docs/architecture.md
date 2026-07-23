@@ -250,6 +250,24 @@ resolves the latest per-window options, and validates the still-hidden root.
 Pane-originated and source-less focused-window requests assign that source
 screen before sizing; an initial or zero-window request retains Qt's primary
 screen default.
+
+`goto_window` keeps Ghostty's less obvious surface scope: each matched surface
+emits a typed previous/next request, then `ApplicationController` traverses its
+live root registry because only the process owner can see every window. The
+currently active registered root is the starting node; when none is active,
+the first registration is tested first. Traversal follows registration order,
+wraps once, and skips the active root, hidden roots, close-committed
+workspaces, and workspaces without an active pane. A minimized destination is
+restored without discarding a simultaneous maximized/fullscreen state, then
+activation is requested synchronously so the Wayland backend can retain the
+originating input serial, and its active pane receives Qt focus. Guarded
+window/workspace pointers keep reentrant traversal and callback-scheduled
+retirement from retaining stale registry objects. The compositor still owns
+the final decision to grant activation. Because the action remains
+surface-scoped, `all:` and `global:` deliberately perform one traversal per
+visited surface, matching Ghostty's action-major fanout instead of collapsing
+to one process action.
+
 When both configured grid dimensions are nonzero, the controller uses the same
 Qt font construction and integral cell metrics as `TerminalPane`, adds the
 QML-declared persistent chrome, applies the 10-by-4 cell minimum, and clamps

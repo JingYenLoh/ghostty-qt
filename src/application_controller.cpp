@@ -573,6 +573,69 @@ bool ApplicationController::dispatch(ApplicationAction action,
     return false;
 }
 
+bool ApplicationController::dispatch(WindowNavigationAction action)
+{
+    if (windows_.empty()) return false;
+
+    std::optional<std::size_t> activeIndex;
+    for (std::size_t index = 0; index < windows_.size(); ++index) {
+        const WindowRecord &record = windows_[index];
+        if (record.window != nullptr && record.window->isActive()) {
+            activeIndex = index;
+            break;
+        }
+    }
+
+    // GTK starts at the active top-level when one exists, otherwise at the
+    // first top-level. It tests that starting node before advancing, then
+    // wraps once. Registration order is the stable Qt equivalent of that
+    // toolkit-owned list.
+    std::size_t index = activeIndex.value_or(0);
+    for (std::size_t visited = 0; visited < windows_.size(); ++visited) {
+        const QPointer<QQuickWindow> window = windows_[index].window;
+        const QPointer<TerminalWorkspace> workspace =
+            windows_[index].workspace;
+        if (isValidWindowPair(window.data(), workspace.data())
+            && window->isVisible()
+            && !window->isActive()
+            && workspace->canHostApplicationQuitConfirmation()
+            && workspace->hasActivePane()) {
+            const QPointer<ApplicationController> controllerGuard(this);
+            const auto destinationRemainsEligible = [&] {
+                return controllerGuard != nullptr
+                    && window != nullptr
+                    && workspace != nullptr
+                    && isValidWindowPair(window.data(), workspace.data())
+                    && controllerGuard->containsWorkspace(workspace.data())
+                    && window->isVisible()
+                    && workspace->canHostApplicationQuitConfirmation()
+                    && workspace->hasActivePane();
+            };
+
+            // gtk_window_present deiconifies before requesting focus. Preserve
+            // any simultaneous maximized/fullscreen state while doing the Qt
+            // equivalent for a minimized destination.
+            if (window->windowStates().testFlag(Qt::WindowMinimized)) {
+                window->setWindowStates(
+                    window->windowStates() & ~Qt::WindowMinimized);
+                if (!destinationRemainsEligible()) return true;
+            }
+
+            window->requestActivate();
+            if (!destinationRemainsEligible()) return true;
+            (void) workspace->focusActivePane();
+            return true;
+        }
+
+        if (action == WindowNavigationAction::Next) {
+            index = (index + 1) % windows_.size();
+        } else {
+            index = (index + windows_.size() - 1) % windows_.size();
+        }
+    }
+    return false;
+}
+
 void ApplicationController::dispatchRequestedAction(
     ApplicationAction action,
     TerminalWorkspace *sourceWorkspace,
@@ -800,6 +863,12 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
                 if (guarded != nullptr) {
                     dispatchRequestedAction(action, guarded, paneId);
                 }
+            });
+    connect(workspace, &TerminalWorkspace::windowNavigationRequested,
+            this, [this](WindowNavigationAction action, PaneId) {
+                // Keep activation in the originating event dispatch so Qt's
+                // Wayland backend still has the user-input serial.
+                (void) dispatch(action);
             });
     connect(workspace, &TerminalWorkspace::workspaceActivated,
             this, [this, guarded = QPointer(workspace)] {

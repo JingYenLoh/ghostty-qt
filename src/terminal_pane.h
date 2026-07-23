@@ -6,6 +6,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "terminal_types.h"
+#include "window_navigation_action.h"
 #include "workspace_action.h"
 
 #include <QByteArray>
@@ -167,6 +168,7 @@ Q_SIGNALS:
     void requestTabChange(int delta);
     void requestCloseWindow();
     void applicationActionRequested(ApplicationAction action);
+    void windowNavigationRequested(WindowNavigationAction action);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void unsafePasteRequested(quint64 requestId, const QString &text,
                               TerminalPane *pane);
