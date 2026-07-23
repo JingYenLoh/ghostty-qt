@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QPointer>
 #include <QQuickWindow>
 #include <QScreen>
@@ -238,6 +239,10 @@ private Q_SLOTS:
     void configuresInitialWindowGeometryBeforePresentation_data();
     void configuresInitialWindowGeometryBeforePresentation();
     void windowGeometryReloadAffectsOnlyFutureWindows();
+    void sharesOneKeybindProgramGenerationAcrossWindows();
+    void globalBindingWaitsForPaneReloadTransaction();
+    void rootReleaseWaitsForNestedReloadTransaction();
+    void windowCreationCatchesUpReloadFromFactory();
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data();
     void initialGeometryDestructionCannotLeaveHalfRegisteredWindow();
     void preservesCompositeSourceAndWindowInheritancePolicies();
@@ -265,6 +270,8 @@ private Q_SLOTS:
     void sourceLessActivationRequiresStartupDecision();
     void sourceLessActivationProjectsDesktopContext();
     void reentrantWindowCreationIsRejected();
+    void controllerMayBeDestroyedDuringWindowCreation_data();
+    void controllerMayBeDestroyedDuringWindowCreation();
     void showDestructionCannotLeaveHalfRegisteredWindow();
     void failedInitialPresentationPreservesFirstSession();
     void explicitQuitAggregatesEveryWindowIntoOneConfirmation();
@@ -686,6 +693,262 @@ void ApplicationControllerTest::windowGeometryReloadAffectsOnlyFutureWindows()
         gridWindowSize(
             terminalCellMetrics(activated.fontFamily, activated.fontSize),
             activated.windowWidth, activated.windowHeight, 0.0, 0.0));
+}
+
+void ApplicationControllerTest::
+sharesOneKeybindProgramGenerationAcrossWindows()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+k=ignore"),
+    });
+    ApplicationController controller(options, harness.factory(), false);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    initial->workspace->newTab();
+    QCOMPARE(initial->workspace->tabCount(), 2);
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+
+    const auto allWindowsShare = [&controller](
+                                     const GhosttyKeybindProgram &program) {
+        for (const ApplicationWindow &window : controller.windows()) {
+            if (window.workspace == nullptr
+                || !window.workspace->keybindProgram().isSameGeneration(
+                    program)) {
+                return false;
+            }
+            const QList<TerminalPane *> panes =
+                window.workspace->findChildren<TerminalPane *>();
+            if (panes.isEmpty()) return false;
+            if (!std::ranges::all_of(
+                    panes, [&program](const TerminalPane *pane) {
+                        return pane->keybindProgram().isSameGeneration(
+                            program);
+                    })) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const GhosttyKeybindProgram initialProgram =
+        controller.keybindProgram();
+    QVERIFY(allWindowsShare(initialProgram));
+
+    LaunchOptions reloaded = options;
+    reloaded.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+j=new_tab"),
+    });
+    controller.applyLaunchOptions(reloaded);
+
+    const GhosttyKeybindProgram reloadedProgram =
+        controller.keybindProgram();
+    QVERIFY(!reloadedProgram.isSameGeneration(initialProgram));
+    QVERIFY(allWindowsShare(reloadedProgram));
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 3, 1000);
+    QVERIFY(controller.keybindProgram().isSameGeneration(reloadedProgram));
+    QVERIFY(allWindowsShare(reloadedProgram));
+}
+
+void ApplicationControllerTest::globalBindingWaitsForPaneReloadTransaction()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.mouseReporting = false;
+    options.keybindSource =
+        GhosttyKeybindSource::structured(GhosttyKeybindConfig{});
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    const QVector<ApplicationWindow> windows = controller.windows();
+    QCOMPARE(windows.size(), 2);
+
+    TerminalPane *const firstPane = onlyPane(windows.at(0).workspace);
+    TerminalController *const firstTerminal =
+        onlyController(windows.at(0).workspace);
+    TerminalPane *const laterPane = onlyPane(windows.at(1).workspace);
+    TerminalController *const laterTerminal =
+        onlyController(windows.at(1).workspace);
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(firstTerminal != nullptr);
+    QVERIFY(laterPane != nullptr);
+    QVERIFY(laterTerminal != nullptr);
+    QVERIFY(!firstTerminal->mouseReportingEnabled());
+    QVERIFY(!laterTerminal->mouseReportingEnabled());
+    QSignalSpy laterForwarded(
+        laterTerminal, &TerminalController::keyRequested);
+
+    GhosttyKeybindConfig reloadedConfig;
+    reloadedConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Unicode,
+                    .unicodeCodepoint = 'g',
+                },
+            },
+            .actions = {QStringLiteral("toggle_mouse_reporting")},
+            .flags = GhosttyKeybindFlags{.global = true},
+        },
+    };
+    LaunchOptions reloaded = options;
+    reloaded.mouseReporting = true;
+    reloaded.selectionClipboard.trimTrailingSpaces = false;
+    reloaded.keybindSource =
+        GhosttyKeybindSource::structured(std::move(reloadedConfig));
+
+    bool injected = false;
+    connect(firstTerminal, &TerminalController::runtimeOptionsRequested,
+            firstPane, [&] {
+                if (injected) return;
+                injected = true;
+                // The second workspace has not entered its pane-local reload
+                // transaction yet. Only the process transaction can keep
+                // this B root match from running over its A pane state.
+                QKeyEvent press(
+                    QEvent::KeyPress, Qt::Key_G, Qt::NoModifier,
+                    QStringLiteral("g"));
+                QCoreApplication::sendEvent(laterPane, &press);
+                QKeyEvent release(
+                    QEvent::KeyRelease, Qt::Key_G, Qt::NoModifier);
+                QCoreApplication::sendEvent(laterPane, &release);
+            });
+
+    controller.applyLaunchOptions(reloaded);
+
+    QVERIFY(injected);
+    QVERIFY(firstPane->keybindProgram().isSameGeneration(
+        controller.keybindProgram()));
+    QVERIFY(laterPane->keybindProgram().isSameGeneration(
+        controller.keybindProgram()));
+    // Both configured true policies commit first; the deferred B binding then
+    // toggles both once. Immediate mixed-generation fanout would leave the
+    // later pane true when its reload subsequently overwrote the toggle.
+    QVERIFY(!firstTerminal->mouseReportingEnabled());
+    QVERIFY(!laterTerminal->mouseReportingEnabled());
+    QCOMPARE(laterForwarded.count(), 0);
+}
+
+void ApplicationControllerTest::rootReleaseWaitsForNestedReloadTransaction()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    GhosttyKeybindConfig config;
+    config.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Unicode,
+                    .unicodeCodepoint = 'k',
+                    .modifiers = GhosttyKeybindCtrl,
+                },
+            },
+            .actions = {QStringLiteral("toggle_readonly")},
+            .flags = GhosttyKeybindFlags{.global = true},
+        },
+    };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(config);
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    TerminalPane *const pane = onlyPane(initial->workspace);
+    TerminalController *const terminal = onlyController(initial->workspace);
+    QVERIFY(pane != nullptr);
+    QVERIFY(terminal != nullptr);
+    QSignalSpy forwarded(terminal, &TerminalController::keyRequested);
+
+    LaunchOptions reloaded = options;
+    reloaded.selectionClipboard.trimTrailingSpaces = false;
+    bool reloadedFromAction = false;
+    bool releaseInjected = false;
+    connect(terminal, &TerminalController::runtimeOptionsRequested,
+            pane, [&] {
+                if (releaseInjected) return;
+                releaseInjected = true;
+                QKeyEvent release(
+                    QEvent::KeyRelease, Qt::Key_K,
+                    Qt::ControlModifier);
+                QCoreApplication::sendEvent(pane, &release);
+            });
+    connect(terminal, &TerminalController::readOnlyChanged,
+            pane, [&](bool readOnly) {
+                if (!readOnly || reloadedFromAction) return;
+                reloadedFromAction = true;
+                controller.applyLaunchOptions(reloaded);
+            });
+
+    QKeyEvent press(
+        QEvent::KeyPress, Qt::Key_K, Qt::ControlModifier,
+        QString(QChar(0x0b)));
+    QCoreApplication::sendEvent(pane, &press);
+
+    QVERIFY(reloadedFromAction);
+    QVERIFY(releaseInjected);
+    QVERIFY(terminal->readOnly());
+    // The nested reload cannot drain the matching release before the outer
+    // root press records its consumed identity.
+    QCOMPARE(forwarded.count(), 0);
+
+    QKeyEvent laterRelease(
+        QEvent::KeyRelease, Qt::Key_K, Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &laterRelease);
+    // Draining the first release also removed the identity; no stale marker
+    // may swallow a later unmatched release.
+    QCOMPARE(forwarded.count(), 1);
+}
+
+void ApplicationControllerTest::windowCreationCatchesUpReloadFromFactory()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions initial = baseOptions(QDir::currentPath());
+    initial.fontSize = 11.0;
+    initial.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+i=ignore"),
+    });
+    LaunchOptions reloaded = initial;
+    reloaded.fontSize = 18.0;
+    reloaded.linkUrl = false;
+    reloaded.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+r=new_tab"),
+    });
+
+    ApplicationController *application = nullptr;
+    ApplicationController::WindowFactory baseFactory = harness.factory();
+    ApplicationController::WindowFactory factory =
+        [&, baseFactory = std::move(baseFactory)]() mutable
+        -> std::expected<ApplicationWindow, QString> {
+            application->applyLaunchOptions(reloaded);
+            return baseFactory();
+        };
+    ApplicationController controller(initial, std::move(factory), false);
+    application = &controller;
+    const GhosttyKeybindProgram initialProgram =
+        controller.keybindProgram();
+
+    const auto created = controller.createInitialWindow();
+    QVERIFY(created.has_value());
+    const GhosttyKeybindProgram currentProgram =
+        controller.keybindProgram();
+    QVERIFY(!currentProgram.isSameGeneration(initialProgram));
+    QVERIFY(created->workspace->keybindProgram().isSameGeneration(
+        currentProgram));
+    QVERIFY(created->workspace->effectiveLaunchOptions()
+            == withoutInitialCommand(reloaded));
+
+    TerminalPane *const pane = onlyPane(created->workspace);
+    QVERIFY(pane != nullptr);
+    QVERIFY(pane->keybindProgram().isSameGeneration(currentProgram));
+    QCOMPARE(pane->fontPointSize(), reloaded.fontSize);
 }
 
 void ApplicationControllerTest::initialGeometryDestructionCannotLeaveHalfRegisteredWindow_data()
@@ -2040,6 +2303,65 @@ void ApplicationControllerTest::reentrantWindowCreationIsRejected()
     QCOMPARE(failure.count(), 1);
     QCOMPARE(ownedController.windowCount(), 1);
     QVERIFY(!qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN"));
+}
+
+void ApplicationControllerTest::
+controllerMayBeDestroyedDuringWindowCreation_data()
+{
+    QTest::addColumn<QString>("stage");
+    QTest::newRow("factory") << QStringLiteral("factory");
+    QTest::newRow("workspace-initialization")
+        << QStringLiteral("initialization");
+    QTest::newRow("window-created-observer") << QStringLiteral("created");
+}
+
+void ApplicationControllerTest::
+controllerMayBeDestroyedDuringWindowCreation()
+{
+    QFETCH(QString, stage);
+    ApplicationController *controller = nullptr;
+    QPointer<ApplicationController> guardedController;
+    QPointer<QQuickWindow> guardedWindow;
+    QPointer<TerminalWorkspace> guardedWorkspace;
+    const auto destroyController = [&] {
+        delete std::exchange(controller, nullptr);
+    };
+
+    ApplicationController::WindowFactory factory = [&]
+        -> std::expected<ApplicationWindow, QString> {
+        guardedWindow = new QQuickWindow;
+        guardedWorkspace = new TerminalWorkspace(
+            guardedWindow->contentItem());
+        guardedWorkspace->setParentItem(guardedWindow->contentItem());
+        if (stage == QLatin1StringView("initialization")) {
+            connect(guardedWorkspace,
+                    &TerminalWorkspace::tabTitlesChanged,
+                    this, destroyController,
+                    Qt::SingleShotConnection);
+        }
+        const ApplicationWindow result{
+            guardedWindow.data(), guardedWorkspace.data()};
+        if (stage == QLatin1StringView("factory")) {
+            destroyController();
+        }
+        return result;
+    };
+
+    controller = new ApplicationController(
+        baseOptions(QDir::currentPath()), std::move(factory), false);
+    guardedController = controller;
+    if (stage == QLatin1StringView("created")) {
+        connect(controller, &ApplicationController::windowCreated,
+                this, destroyController,
+                Qt::SingleShotConnection);
+    }
+
+    const auto created = controller->createInitialWindow();
+
+    QVERIFY(guardedController.isNull());
+    QVERIFY(!created.has_value());
+    QVERIFY(guardedWindow.isNull());
+    QVERIFY(guardedWorkspace.isNull());
 }
 
 void ApplicationControllerTest::showDestructionCannotLeaveHalfRegisteredWindow()

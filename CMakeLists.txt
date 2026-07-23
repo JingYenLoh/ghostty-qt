@@ -540,8 +540,10 @@ qt_add_executable(ghostty-qt
     src/ghostty_global_shortcut_portal.h
     src/initial_session_coordinator.cpp
     src/initial_session_coordinator.h
+    src/key_event_snapshot.h
     src/launch_options.cpp
     src/launch_options.h
+    src/revision_counter.h
     src/session_worker.cpp
     src/session_worker.h
     src/single_instance_activation.cpp

@@ -101,9 +101,12 @@ bool TabListModel::insert(int index, TabListEntry entry)
     if (index < 0 || index > entries_.size()) {
         return false;
     }
+    const QPointer<TabListModel> guard(this);
     beginInsertRows(QModelIndex(), index, index);
+    if (guard == nullptr) return false;
     entries_.insert(index, std::move(entry));
     endInsertRows();
+    if (guard == nullptr) return true;
     Q_EMIT countChanged();
     return true;
 }
@@ -169,8 +172,10 @@ bool TabListModel::move(TabId id, int destination)
     const int destinationChild = source < destination
         ? destination + 1
         : destination;
-    if (!beginMoveRows(QModelIndex(), source, source,
-                       QModelIndex(), destinationChild)) {
+    const QPointer<TabListModel> guard(this);
+    const bool started = beginMoveRows(
+        QModelIndex(), source, source, QModelIndex(), destinationChild);
+    if (guard == nullptr || !started) {
         return false;
     }
     entries_.move(source, destination);

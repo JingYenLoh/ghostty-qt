@@ -2,6 +2,7 @@
 
 #include "application_action.h"
 #include "ghostty_keybind_set.h"
+#include "key_event_snapshot.h"
 #include "launch_options.h"
 
 #include <QObject>
@@ -9,8 +10,11 @@
 #include <QSet>
 #include <QVector>
 
+#include <deque>
 #include <memory>
+#include <variant>
 
+class ApplicationController;
 class GhosttyGlobalShortcutPortal;
 class TerminalWorkspace;
 
@@ -29,7 +33,12 @@ public:
     ~GhosttyApplicationKeybindings() override;
 
     void registerWorkspace(TerminalWorkspace *workspace);
-    void applyLaunchOptions(const LaunchOptions &options);
+    [[nodiscard]] GhosttyKeybindProgram applyLaunchOptions(
+        const LaunchOptions &options);
+    [[nodiscard]] GhosttyKeybindProgram keybindProgram() const noexcept
+    {
+        return rootState_.program();
+    }
 
     // Shared by focused all:/global: matches and XDG portal activations.
     void dispatchBroadActions(const QStringList &actions);
@@ -44,14 +53,32 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    friend class ApplicationController;
+
+    struct DeferredKeyEvent {
+        QPointer<QObject> target;
+        KeyEventSnapshot event;
+    };
+    using DeferredInput = std::variant<
+        DeferredKeyEvent, GhosttyCompiledActionChain>;
+
+    void beginConfigurationUpdate() noexcept;
+    void endConfigurationUpdate();
+    void dispatchOrDeferBroadActions(
+        GhosttyCompiledActionChain actions);
+    void drainDeferredInputs();
     QVector<QPointer<TerminalWorkspace>> workspaceSnapshot() const;
     bool executeApplicationActions(
         const GhosttyCompiledActionChain &actions);
     void dispatchCompiledBroadActions(
         const GhosttyCompiledActionChain &actions);
 
-    GhosttyKeybindSet rootBindings_;
+    GhosttyKeybindState rootState_;
     QVector<QPointer<TerminalWorkspace>> workspaces_;
     QSet<quint64> consumedKeys_;
+    std::deque<DeferredInput> deferredInputs_;
+    int configurationUpdateDepth_ = 0;
+    int keyEventDispatchDepth_ = 0;
+    bool drainingDeferredInputs_ = false;
     std::unique_ptr<GhosttyGlobalShortcutPortal> portal_;
 };

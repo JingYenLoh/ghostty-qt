@@ -18,6 +18,7 @@
 
 class QThread;
 class SessionWorker;
+class TerminalPane;
 
 class TerminalController final : public QObject {
     Q_OBJECT
@@ -96,15 +97,6 @@ public:
     void setMouseReportingEnabled(bool enabled);
     void setReadOnly(bool readOnly);
     void sendKey(const TerminalKeyInput &input);
-    // Sequence leaders cross to SessionWorker immediately for mode-sensitive
-    // VT encoding, but their bytes remain staged until the UI resolves the
-    // sequence. The first overload allocates a non-zero monotonic token; the
-    // second appends another leader to that same sequence.
-    [[nodiscard]] quint64 stageSequenceKey(const TerminalKeyInput &input);
-    void stageSequenceKey(quint64 token, const TerminalKeyInput &input);
-    void resolveSequence(
-        quint64 token, TerminalSequenceResolution resolution,
-        const std::optional<TerminalKeyInput> &current = std::nullopt);
     void sendInputMethod(const TerminalInputMethodInput &input);
     // Ghostty terminal-control actions are byte-oriented. Keeping their
     // payloads as QByteArray preserves embedded NUL and queues each complete
@@ -220,6 +212,8 @@ Q_SIGNALS:
     void shutdownRequested();
 
 private:
+    friend class TerminalPane;
+
     using WorkerRequest = std::function<void(SessionWorker &)>;
     enum class SessionStartState : quint8 {
         Idle,
@@ -241,6 +235,18 @@ private:
         const InitialSessionCoordinator::Payload &payload);
     void cancelInitialSessionRequest();
     void notePotentialActivity();
+    // Sequence leaders cross to SessionWorker immediately for mode-sensitive
+    // VT encoding, but their bytes remain staged until their owning pane
+    // resolves them. Keeping this protocol private prevents another caller
+    // from superseding a pane's token without also updating its traversal.
+    [[nodiscard]] quint64 beginSequence();
+    // False means a synchronous staging observer resolved or superseded the
+    // token (or destroyed this controller); the pane must not retain it.
+    [[nodiscard]] bool stageSequenceKey(
+        quint64 token, const TerminalKeyInput &input);
+    void resolveSequence(
+        quint64 token, TerminalSequenceResolution resolution,
+        const std::optional<TerminalKeyInput> &current = std::nullopt);
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
     quint64 nextSearchSelectionRequestId();

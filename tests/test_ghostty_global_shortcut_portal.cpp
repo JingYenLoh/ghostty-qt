@@ -205,6 +205,7 @@ public:
     int requestCloseCount = 0;
     int sessionCloseCount = 0;
     bool deferNextCreate = false;
+    bool failNextCreate = false;
     QString currentSession;
     QVector<CapturedShortcut> lastShortcuts;
 
@@ -231,6 +232,9 @@ private:
         if (deferNextCreate) {
             deferNextCreate = false;
             m_deferredCreate = DeferredCreate{requestPath, currentSession};
+        } else if (failNextCreate) {
+            failNextCreate = false;
+            sendResponse(requestPath, {}, 2);
         } else {
             sendResponse(requestPath,
                          {{QStringLiteral("session_handle"),
@@ -272,13 +276,14 @@ private:
             QVariant::fromValue(QDBusObjectPath(requestPath))));
     }
 
-    void sendResponse(const QString &path, const QVariantMap &results)
+    void sendResponse(const QString &path, const QVariantMap &results,
+                      uint response = 0)
     {
         QDBusMessage signal = QDBusMessage::createSignal(
             path,
             QStringLiteral("org.freedesktop.portal.Request"),
             QStringLiteral("Response"));
-        signal << uint(0) << results;
+        signal << response << results;
         m_connection.send(signal);
     }
 
@@ -301,6 +306,7 @@ private Q_SLOTS:
     void collisionResolutionIsStableAndPrefersPhysical();
     void registryOrderingIsStable();
     void disconnectedPortalRetainsPureRegistryState();
+    void reentrantRegistryObserverKeepsNewestConfig();
     void portalRoundTripIsRaceSafeAndRejectsStaleResponses();
 };
 
@@ -546,6 +552,51 @@ void GhosttyGlobalShortcutPortalTest::disconnectedPortalRetainsPureRegistryState
 }
 
 void GhosttyGlobalShortcutPortalTest::
+reentrantRegistryObserverKeepsNewestConfig()
+{
+    const QDBusConnection disconnected(
+        QStringLiteral("ghostty-qt-test-reentrant-no-connection"));
+    QVERIFY(!disconnected.isConnected());
+
+    GhosttyGlobalShortcutPortal portal(disconnected);
+    QSignalSpy registrySpy(&portal,
+                           &GhosttyGlobalShortcutPortal::registryChanged);
+    QSignalSpy warningSpy(&portal,
+                          &GhosttyGlobalShortcutPortal::warningOccurred);
+
+    GhosttyKeybindConfig first;
+    first.root = {
+        definition(unicode('a', GhosttyKeybindCtrl),
+                   QStringLiteral("new_tab")),
+    };
+    GhosttyKeybindConfig newer;
+    newer.root = {
+        definition(unicode('b', GhosttyKeybindCtrl),
+                   QStringLiteral("close_tab")),
+    };
+
+    bool nested = false;
+    connect(&portal, &GhosttyGlobalShortcutPortal::registryChanged,
+            &portal, [&] {
+                if (nested) return;
+                nested = true;
+                portal.setKeybindConfig(newer);
+            });
+
+    portal.setKeybindConfig(first);
+
+    QVERIFY(nested);
+    QCOMPARE(portal.generation(), quint64(2));
+    QCOMPARE(registrySpy.count(), 2);
+    QCOMPARE(warningSpy.count(), 1);
+    QCOMPARE(portal.registry().registrations.size(), 1);
+    QCOMPARE(portal.registry().registrations.constFirst().id,
+             QStringLiteral("CTRL+b"));
+    QCOMPARE(portal.registry().registrations.constFirst().action,
+             QStringLiteral("close_tab"));
+}
+
+void GhosttyGlobalShortcutPortalTest::
 portalRoundTripIsRaceSafeAndRejectsStaleResponses()
 {
     if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon")).isEmpty()) {
@@ -640,21 +691,103 @@ portalRoundTripIsRaceSafeAndRejectsStaleResponses()
                  QStringLiteral("quit"));
         QVERIFY(warningSpy.isEmpty());
 
-        // Portal or backend shutdown must invalidate the live state instead
-        // of leaving a dead session reported as active.
+        // An active-state observer may immediately re-register after an
+        // unsolicited close. The stale close callback must neither warn for
+        // nor tear down that newer generation.
+        GhosttyKeybindConfig activeChangedReplacement;
+        activeChangedReplacement.root = {
+            definition(unicode('d', GhosttyKeybindCtrl),
+                       QStringLiteral("new_window")),
+        };
+        bool replacedFromActiveChanged = false;
+        const QMetaObject::Connection activeChangedConnection = connect(
+            &portal, &GhosttyGlobalShortcutPortal::activeChanged,
+            &portal, [&](bool active) {
+                if (active || replacedFromActiveChanged) return;
+                replacedFromActiveChanged = true;
+                portal.setKeybindConfig(activeChangedReplacement);
+            });
         fake.closeSession(currentSession);
-        QTRY_VERIFY_WITH_TIMEOUT(!portal.isActive(), 3000);
-        QVERIFY(portal.sessionHandle().isEmpty());
-        QCOMPARE(warningSpy.size(), 1);
-        QVERIFY(warningSpy.front().front().toString().contains(
-            QStringLiteral("session was closed")));
-
-        // Re-registration still works after an unsolicited close, and the
-        // destructor below remains responsible for closing the new session.
-        portal.setKeybindConfig(current);
+        QTRY_VERIFY_WITH_TIMEOUT(replacedFromActiveChanged, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(portal.isActive(), 3000);
+        QObject::disconnect(activeChangedConnection);
         QCOMPARE(fake.createCount, 4);
         QCOMPARE(fake.bindCount, 3);
+        QCOMPARE(portal.registry().registrations.constFirst().id,
+                 QStringLiteral("CTRL+d"));
+        QVERIFY(warningSpy.isEmpty());
+
+        // A failed async request warns synchronously. A warning observer may
+        // install a replacement, which the failed request must not close.
+        GhosttyKeybindConfig failed;
+        failed.root = {
+            definition(unicode('e', GhosttyKeybindCtrl),
+                       QStringLiteral("close_window")),
+        };
+        GhosttyKeybindConfig warningReplacement;
+        warningReplacement.root = {
+            definition(unicode('f', GhosttyKeybindCtrl),
+                       QStringLiteral("new_tab")),
+        };
+        bool replacedFromWarning = false;
+        const QMetaObject::Connection warningConnection = connect(
+            &portal, &GhosttyGlobalShortcutPortal::warningOccurred,
+            &portal, [&](const QString &message) {
+                if (replacedFromWarning
+                    || !message.contains(
+                        QStringLiteral("failed with response code"))) {
+                    return;
+                }
+                replacedFromWarning = true;
+                portal.setKeybindConfig(warningReplacement);
+            });
+        fake.failNextCreate = true;
+        portal.setKeybindConfig(failed);
+        QTRY_VERIFY_WITH_TIMEOUT(replacedFromWarning, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(portal.isActive(), 3000);
+        QObject::disconnect(warningConnection);
+        QCOMPARE(fake.createCount, 6);
+        QCOMPARE(fake.bindCount, 4);
+        QCOMPARE(portal.registry().registrations.constFirst().id,
+                 QStringLiteral("CTRL+f"));
+        QCOMPARE(warningSpy.size(), 1);
+
+        // Without a reentrant replacement, backend shutdown invalidates the
+        // live state and reports the close normally.
+        const QString recoveredSession = portal.sessionHandle();
+        fake.closeSession(recoveredSession);
+        QTRY_VERIFY_WITH_TIMEOUT(!portal.isActive(), 3000);
+        QVERIFY(portal.sessionHandle().isEmpty());
+        QCOMPARE(warningSpy.size(), 2);
+        QVERIFY(warningSpy.back().front().toString().contains(
+            QStringLiteral("session was closed")));
+
+        // Re-registration still works after an unsolicited close.
+        portal.setKeybindConfig(warningReplacement);
+        QTRY_VERIFY_WITH_TIMEOUT(portal.isActive(), 3000);
+        QCOMPARE(fake.createCount, 7);
+        QCOMPARE(fake.bindCount, 5);
+
+        // Signal delivery must own the mapped action. An earlier receiver can
+        // clear the registry without invalidating the exact value observed by
+        // receivers later in the same direct emission.
+        bool clearedFromActivation = false;
+        QString actionAfterClear;
+        connect(&portal, &GhosttyGlobalShortcutPortal::shortcutActivated,
+                &portal, [&](const QString &) {
+                    if (clearedFromActivation) return;
+                    clearedFromActivation = true;
+                    portal.clear();
+                });
+        connect(&portal, &GhosttyGlobalShortcutPortal::shortcutActivated,
+                &portal, [&](const QString &action) {
+                    actionAfterClear = action;
+                });
+        fake.activate(portal.sessionHandle(), QStringLiteral("CTRL+f"));
+        QTRY_VERIFY_WITH_TIMEOUT(!actionAfterClear.isNull(), 3000);
+        QVERIFY(clearedFromActivation);
+        QCOMPARE(actionAfterClear, QStringLiteral("new_tab"));
+        QVERIFY(!portal.isActive());
 
         QTRY_VERIFY_WITH_TIMEOUT(fake.sessionCloseCount >= 1, 3000);
         QTRY_VERIFY_WITH_TIMEOUT(fake.requestCloseCount >= 1, 3000);

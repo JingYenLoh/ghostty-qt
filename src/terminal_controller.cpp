@@ -552,7 +552,7 @@ void TerminalController::sendKey(const TerminalKeyInput &input)
     Q_EMIT keyRequested(input);
 }
 
-quint64 TerminalController::stageSequenceKey(const TerminalKeyInput &input)
+quint64 TerminalController::beginSequence()
 {
     // Zero is reserved for "no active sequence". Unsigned wraparound retains
     // monotonic modular ordering for the worker's stale-token guard.
@@ -560,21 +560,23 @@ quint64 TerminalController::stageSequenceKey(const TerminalKeyInput &input)
         ++nextSequenceToken_;
     } while (nextSequenceToken_ == 0);
 
-    activeSequenceToken_ = nextSequenceToken_;
-    stagedSequencePotentialActivity_ = keyMayStartProcess(input);
-    Q_EMIT sequenceKeyStagingRequested(activeSequenceToken_, input);
-    return activeSequenceToken_;
+    const quint64 token = nextSequenceToken_;
+    activeSequenceToken_ = token;
+    stagedSequencePotentialActivity_ = false;
+    return token;
 }
 
-void TerminalController::stageSequenceKey(quint64 token,
+bool TerminalController::stageSequenceKey(quint64 token,
                                           const TerminalKeyInput &input)
 {
     if (token == 0 || token != activeSequenceToken_) {
-        return;
+        return false;
     }
     stagedSequencePotentialActivity_ =
         stagedSequencePotentialActivity_ || keyMayStartProcess(input);
+    const QPointer<TerminalController> guard(this);
     Q_EMIT sequenceKeyStagingRequested(token, input);
+    return guard != nullptr && guard->activeSequenceToken_ == token;
 }
 
 void TerminalController::resolveSequence(
@@ -596,8 +598,11 @@ void TerminalController::resolveSequence(
 
     activeSequenceToken_ = 0;
     stagedSequencePotentialActivity_ = false;
+    const QPointer<TerminalController> guard(this);
     Q_EMIT sequenceResolutionRequested(
         token, resolution, current.has_value(), current.value_or(TerminalKeyInput{}));
+    if (guard == nullptr) return;
+
     if (!readOnly_ && potentialActivity) {
         notePotentialActivity();
     }

@@ -36,7 +36,8 @@ ctest --preset dev -j8 --output-on-failure
 The suite includes focused contracts for the libghostty adapter, workspace
 identity/action foundation, Ghostty action catalog, dirty-update transport,
 typed config/appearance overlays, watched reload, structured keybinding trie
-matching, named tables, all-surface dispatch, portal registration, and replay,
+matching, shared immutable keybinding generations, independent pane state,
+named tables, all-surface dispatch, portal registration, and replay,
 one-shot host-window effects during broad fanout, directional/default-auto
 split placement, stable per-tab title overrides and queued title prompts,
 typed originating-tab close modes with correlated frozen-target confirmation,
@@ -178,7 +179,18 @@ catch-all fallback, table precedence/one-shot activation, direct stack-change
 reporting without active-table list snapshots, action chains, and exact local
 `unconsumed`/`performable` behavior. It also checks compile-on-load
 owning chains, exact positional spellings, cached scope/effect/application-only
-metadata, inert unsupported entries, and match lifetime across trie reloads.
+metadata, inert unsupported entries, and match lifetime across program
+replacement. Shared-program coverage verifies one immutable program generation
+can back independent noncopyable matcher states, that sequence and table state
+remain surface-local, and that an old program remains usable after another
+matcher changes generation. It also distinguishes the unavailable fallback
+sentinel from an available empty Ghostty binding set, verifies that reinstalling
+the same program generation preserves mutable state, and verifies that a
+different generation resets it.
+The same executable includes a pathological 32,768-key sequence to ensure
+binding counting and serialization remain iterative rather than consuming one
+C++ stack frame per configured key.
+
 Session and pane tests cover payload-specific typed execution without
 keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
 reload cancellation, full/fractional/line/absolute viewport movement,
@@ -194,8 +206,30 @@ opening, range mutation invalidation, release-only tracked activation, exact
 the pointer remains on the link, occupied-guard release back to physical hit
 testing, left/right overlay relocation, and bounded/escaped destination
 presentation.
+
 Workspace tests cover application-action precedence, inactive-surface fanout,
 typed all/global chain reuse without per-pane parsing,
+application -> workspace -> pane shared-program distribution, current and
+future panes sharing one program while retaining independent matcher state,
+same-generation preservation, different-generation sequence/table cleanup,
+and direct pane/workspace fallback compilation. Reentrant update coverage
+installs newer options from synchronous window-factory, workspace, pane, and
+sequence-staging callbacks and verifies that the older outer transaction
+stops. Initialization observers may supersede configuration or destroy their
+workspace without stale geometry or lifetime access, while owning matched
+action-chain snapshots remain valid across replacement. Source destruction
+safely stops guarded dispatch. Available-empty coverage verifies that an empty
+Ghostty program remains distinct from the unavailable legacy-fallback state.
+These contracts remove per-pane trie/action recompilation: keybinding
+compilation and immutable trie/action storage scale with configuration
+generations, while runtime-option propagation remains proportional to the
+number of open panes. Cross-window tests inject a complete global key event
+while a later workspace still has the old generation and verify FIFO replay
+only after process-wide fanout. Nested-reload coverage also verifies that a
+root release waits for its outer press bookkeeping. Pane-publication tests
+reload from QML overlay completion during both new-tab and split construction,
+and destruction tests cover model insertion, tab-title publication, and
+tab-bar visibility callbacks. Workspace tests also cover
 owner-delayed lifecycle publication, final-surface and final-tab action-chain
 completion, synchronous host destruction after local/all/global key events,
 direct all-pane fanout unwinding under both normal close and unexpected

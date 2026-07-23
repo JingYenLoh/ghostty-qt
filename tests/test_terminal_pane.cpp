@@ -129,6 +129,54 @@ bool spyContainsBool(const QSignalSpy &spy, bool value)
     });
 }
 
+GhosttyKeybindTrigger generationTestKey(
+    quint32 codepoint, quint8 modifiers = 0)
+{
+    return {
+        .kind = GhosttyKeybindKeyKind::Unicode,
+        .unicodeCodepoint = codepoint,
+        .modifiers = modifiers,
+    };
+}
+
+GhosttyKeybindDefinition generationTestBinding(
+    QVector<GhosttyKeybindTrigger> sequence, QString action)
+{
+    return {
+        .sequence = std::move(sequence),
+        .actions = {std::move(action)},
+    };
+}
+
+GhosttyKeybindConfig generationTestConfig()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding(
+            {generationTestKey('o', GhosttyKeybindCtrl)},
+            QStringLiteral("activate_key_table_once:once")),
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('x'), generationTestKey('y')},
+                    QStringLiteral("new_tab")),
+            },
+        },
+        GhosttyKeybindTable{
+            .name = QStringLiteral("once"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('x'), generationTestKey('y')},
+                    QStringLiteral("new_tab")),
+            },
+        },
+    };
+    return config;
+}
+
 QBitArray cellMask(int columns, int rows,
                    std::initializer_list<QPoint> cells)
 {
@@ -191,6 +239,7 @@ private Q_SLOTS:
     void rebuildsMainTextRowsAfterWindowChange();
     void rendersConfiguredCellCursorAndDecorationAppearance();
     void routesEmergencyTabShortcuts();
+    void compiledProgramAvailabilityControlsEmergencyShortcuts();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesBroadConfiguredActionEffects();
     void routesTypedCloseTabModes();
@@ -205,6 +254,20 @@ private Q_SLOTS:
     void letsShiftBypassMouseCaptureForHyperlinks();
     void resetPreservesSurfaceTitleAndClearsWorkingDirectory();
     void routesStructuredSequencesAndCancelsThemOnReload();
+    void preservesStateWithinAKeybindProgramGeneration();
+    void newerSameProgramRuntimeUpdateWinsReentry();
+    void keyTableResetNotifiesBeforeLaterReentry();
+    void runtimeOptionsObserverMayDestroyPane();
+    void reloadsSafelyFromSequenceStagingNotification();
+    void sequenceStagingObserverMayDestroyPane();
+    void sequenceResolutionObserverMayDestroyPane();
+    void reloadsSafelyFromOneShotLeaderTableNotification();
+    void oneShotTableObserverCanContinueSequence();
+    void reloadResolutionObserverUsesReplacementProgram();
+    void oneShotLeafObserverCanStartSequence();
+    void actionObserverCanStartIndependentSequence();
+    void deferredUnconsumedKeysPreserveDispatchOrder();
+    void deferredReleaseWaitsForConsumedPress();
     void replaysInvalidStructuredSequenceThroughPty();
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
@@ -2602,6 +2665,65 @@ void TerminalPaneTest::routesEmergencyTabShortcuts()
     QCOMPARE(tabChange.constLast().constFirst().toInt(), -1);
 }
 
+void TerminalPaneTest::compiledProgramAvailabilityControlsEmergencyShortcuts()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    const GhosttyKeybindProgram availableEmpty =
+        GhosttyKeybindProgram::compile(
+            GhosttyKeybindSource::structured({})).program;
+    const GhosttyKeybindProgram unavailable =
+        GhosttyKeybindProgram::compile(GhosttyKeybindSource{}).program;
+    QVERIFY(availableEmpty.isAvailable());
+    QVERIFY(availableEmpty.isEmpty());
+    QVERIFY(!unavailable.isAvailable());
+    QVERIFY(unavailable.isEmpty());
+
+    // The injected compiled generation is authoritative even when the launch
+    // snapshot says the opposite. An available-but-empty program represents
+    // an explicit empty Ghostty set, so emergency shortcuts stay disabled.
+    TerminalPane configured(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, availableEmpty);
+    QVERIFY(configured.keybindProgram().isSameGeneration(availableEmpty));
+    QSignalSpy configuredNewTab(&configured, &TerminalPane::requestNewTab);
+    auto *configuredController =
+        configured.findChild<TerminalController *>();
+    QVERIFY(configuredController != nullptr);
+    QSignalSpy configuredForwarded(
+        configuredController, &TerminalController::keyRequested);
+
+    QKeyEvent configuredShortcut(
+        QEvent::KeyPress, Qt::Key_T,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QCoreApplication::sendEvent(&configured, &configuredShortcut);
+    QCOMPARE(configuredNewTab.count(), 0);
+    QCOMPARE(configuredForwarded.count(), 1);
+
+    LaunchOptions misleadingOptions = options;
+    misleadingOptions.keybindSource =
+        GhosttyKeybindSource::structured({});
+    TerminalPane fallback(
+        misleadingOptions, nullptr, std::nullopt,
+        TerminalSessionStartMode::Immediate, {}, unavailable);
+    QVERIFY(fallback.keybindProgram().isSameGeneration(unavailable));
+    QSignalSpy fallbackNewTab(&fallback, &TerminalPane::requestNewTab);
+    auto *fallbackController = fallback.findChild<TerminalController *>();
+    QVERIFY(fallbackController != nullptr);
+    QSignalSpy fallbackForwarded(
+        fallbackController, &TerminalController::keyRequested);
+
+    QKeyEvent fallbackShortcut(
+        QEvent::KeyPress, Qt::Key_T,
+        Qt::ControlModifier | Qt::ShiftModifier, QStringLiteral("T"));
+    QCoreApplication::sendEvent(&fallback, &fallbackShortcut);
+    QCOMPARE(fallbackNewTab.count(), 1);
+    QCOMPARE(fallbackForwarded.count(), 0);
+}
+
 void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()
 {
     LaunchOptions options;
@@ -4803,6 +4925,805 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     const int beforeFormerLeaf = forwarded.count();
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(forwarded.count(), beforeFormerLeaf + 1);
+}
+
+void TerminalPaneTest::preservesStateWithinAKeybindProgramGeneration()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram generation =
+        GhosttyKeybindProgram::compile(config).program;
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, generation);
+    QVERIFY(pane.keybindProgram().isSameGeneration(generation));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    const auto lastResolution = [&resolved] {
+        return qvariant_cast<TerminalSequenceResolution>(
+            resolved.constLast().at(1));
+    };
+
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 1);
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(resolved.count(), 0);
+
+    // Runtime policy may change without changing the compiled generation.
+    // The pane-local table stack and staged traversal must survive it.
+    LaunchOptions updated = options;
+    updated.linkPreviews = LinkPreviewMode::Never;
+    pane.applyRuntimeOptions(updated, generation);
+    QVERIFY(pane.keybindProgram().isSameGeneration(generation));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(tableChanges.count(), 1);
+    QCOMPARE(resolved.count(), 0);
+
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(lastResolution(), TerminalSequenceResolution::Drop);
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(staged.count(), 2);
+    const quint64 stagedToken = staged.constLast().at(0).toULongLong();
+    const int resolutionsBeforeReplacement = resolved.count();
+
+    // Recompiling equal input deliberately creates a new generation. Its
+    // identity change clears surface-local state and drops worker staging
+    // exactly once; structural equality must not preserve stale traversal.
+    const GhosttyKeybindProgram equalReplacement =
+        GhosttyKeybindProgram::compile(config).program;
+    QVERIFY(!generation.isSameGeneration(equalReplacement));
+    QCOMPARE(generation.serializedActions(),
+             equalReplacement.serializedActions());
+    pane.applyRuntimeOptions(updated, equalReplacement);
+    QVERIFY(pane.keybindProgram().isSameGeneration(equalReplacement));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 2);
+    QCOMPARE(resolved.count(), resolutionsBeforeReplacement + 1);
+    QCOMPARE(resolved.constLast().at(0).toULongLong(), stagedToken);
+    QCOMPARE(lastResolution(), TerminalSequenceResolution::Drop);
+
+    pane.applyRuntimeOptions(updated, equalReplacement);
+    QCOMPARE(tableChanges.count(), 2);
+    QCOMPARE(resolved.count(), resolutionsBeforeReplacement + 1);
+
+    const int forwardedBeforeFormerContinuation = forwarded.count();
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(forwarded.count(), forwardedBeforeFormerContinuation + 1);
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolved.count(), resolutionsBeforeReplacement + 1);
+}
+
+void TerminalPaneTest::newerSameProgramRuntimeUpdateWinsReentry()
+{
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(GhosttyKeybindConfig{}).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured({});
+    options.resizeOverlay.position = ResizeOverlayPosition::Center;
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    pane.setSize(QSizeF(500.0, 300.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy runtimeOptions(
+        controller, &TerminalController::runtimeOptionsRequested);
+
+    LaunchOptions outer = options;
+    outer.resizeOverlay.position = ResizeOverlayPosition::TopLeft;
+    outer.selectionClipboard.trimTrailingSpaces = false;
+    LaunchOptions newer = options;
+    newer.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
+    newer.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+
+    bool nested = false;
+    connect(&pane, &TerminalPane::resizeOverlayRectChanged,
+            &pane, [&] {
+                if (nested) return;
+                nested = true;
+                pane.applyRuntimeOptions(newer, program);
+            });
+
+    pane.applyRuntimeOptions(outer, program);
+
+    QVERIFY(nested);
+    QVERIFY(pane.keybindProgram().isSameGeneration(program));
+    QCOMPARE(pane.resizeOverlayRect().topLeft(), QPointF(380.0, 260.0));
+    QCOMPARE(runtimeOptions.count(), 2);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeOptions.constLast().constFirst()),
+             toTerminalSessionRuntimeOptions(newer));
+}
+
+void TerminalPaneTest::keyTableResetNotifiesBeforeLaterReentry()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram initialProgram =
+        GhosttyKeybindProgram::compile(config).program;
+    const GhosttyKeybindProgram outerProgram =
+        GhosttyKeybindProgram::compile(config).program;
+    const GhosttyKeybindProgram newerProgram =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, initialProgram);
+    QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QCOMPARE(tableChanges.count(), 1);
+
+    LaunchOptions outer = options;
+    outer.resizeOverlay.position = ResizeOverlayPosition::TopLeft;
+    LaunchOptions newer = options;
+    newer.resizeOverlay.position = ResizeOverlayPosition::BottomRight;
+    bool nested = false;
+    connect(&pane, &TerminalPane::resizeOverlayRectChanged,
+            &pane, [&] {
+                if (nested) return;
+                nested = true;
+                pane.applyRuntimeOptions(newer, newerProgram);
+            });
+
+    pane.applyRuntimeOptions(outer, outerProgram);
+
+    QVERIFY(nested);
+    QCOMPARE(tableChanges.count(), 2);
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QVERIFY(pane.keybindProgram().isSameGeneration(newerProgram));
+}
+
+void TerminalPaneTest::runtimeOptionsObserverMayDestroyPane()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(options.keybindSource).program;
+
+    auto *pane = new TerminalPane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    const QPointer<TerminalPane> guardedPane(pane);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    connect(controller, &TerminalController::runtimeOptionsRequested,
+            this, [pane] { delete pane; });
+
+    LaunchOptions updated = options;
+    updated.selectionClipboard.trimTrailingSpaces = false;
+    pane->applyRuntimeOptions(updated, program);
+
+    QVERIFY(guardedPane.isNull());
+}
+
+void TerminalPaneTest::reloadsSafelyFromSequenceStagingNotification()
+{
+    qRegisterMetaType<TerminalSequenceResolution>();
+
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram initialGeneration =
+        GhosttyKeybindProgram::compile(config).program;
+    const GhosttyKeybindProgram replacementGeneration =
+        GhosttyKeybindProgram::compile(config).program;
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, initialGeneration);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table_once:once")));
+    QCOMPARE(tableChanges.count(), 1);
+    bool reloaded = false;
+    connect(controller, &TerminalController::sequenceKeyStagingRequested,
+            &pane, [&] {
+                if (reloaded) return;
+                reloaded = true;
+                pane.applyRuntimeOptions(options, replacementGeneration);
+            });
+
+    QKeyEvent leader(
+        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &leader);
+
+    QVERIFY(reloaded);
+    QVERIFY(pane.keybindProgram().isSameGeneration(replacementGeneration));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 2);
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constFirst().at(1)),
+             TerminalSequenceResolution::Drop);
+
+    const int forwardedBeforeFormerContinuation = forwarded.count();
+    QKeyEvent continuation(
+        QEvent::KeyPress, Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCoreApplication::sendEvent(&pane, &continuation);
+    QCOMPARE(forwarded.count(), forwardedBeforeFormerContinuation + 1);
+    QCOMPARE(resolved.count(), 1);
+}
+
+void TerminalPaneTest::sequenceStagingObserverMayDestroyPane()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    auto *pane = new TerminalPane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Deferred,
+        {}, program);
+    const QPointer<TerminalPane> guardedPane(pane);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    connect(controller, &TerminalController::sequenceKeyStagingRequested,
+            this, [pane] { delete pane; });
+
+    QKeyEvent leader(
+        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &leader);
+
+    QVERIFY(guardedPane.isNull());
+}
+
+void TerminalPaneTest::sequenceResolutionObserverMayDestroyPane()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    auto *pane = new TerminalPane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Deferred,
+        {}, program);
+    const QPointer<TerminalPane> guardedPane(pane);
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+
+    QKeyEvent leader(
+        QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCoreApplication::sendEvent(pane, &leader);
+    connect(controller, &TerminalController::sequenceResolutionRequested,
+            this, [pane] { delete pane; });
+
+    QKeyEvent invalid(
+        QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
+    QCoreApplication::sendEvent(pane, &invalid);
+
+    QVERIFY(guardedPane.isNull());
+}
+
+void TerminalPaneTest::reloadsSafelyFromOneShotLeaderTableNotification()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram initialGeneration =
+        GhosttyKeybindProgram::compile(config).program;
+    const GhosttyKeybindProgram replacementGeneration =
+        GhosttyKeybindProgram::compile(config).program;
+    QVERIFY(!initialGeneration.isSameGeneration(replacementGeneration));
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, initialGeneration);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy tableChanges(&pane, &TerminalPane::activeKeyTablesChanged);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
+    QCOMPARE(tableChanges.count(), 1);
+
+    bool reloadedFromObserver = false;
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        if (reloadedFromObserver || !pane.activeKeyTables().isEmpty()) return;
+        reloadedFromObserver = true;
+        pane.applyRuntimeOptions(options, replacementGeneration);
+    });
+
+    // The leader reaches worker staging before the table notification. A
+    // synchronous reload then drops that exact token and cannot leave either
+    // side of the sequence protocol orphaned.
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QVERIFY(reloadedFromObserver);
+    QVERIFY(pane.keybindProgram().isSameGeneration(replacementGeneration));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(tableChanges.count(), 2);
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constFirst().at(1)),
+             TerminalSequenceResolution::Drop);
+
+    const int forwardedBeforeFormerContinuation = forwarded.count();
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(forwarded.count(), forwardedBeforeFormerContinuation + 1);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(newTab.count(), 0);
+
+    // The replacement generation remains usable immediately, with a fresh
+    // token and independent traversal rather than the stale staged prefix.
+    press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(staged.count(), 2);
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolved.count(), 2);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constLast().at(1)),
+             TerminalSequenceResolution::Drop);
+}
+
+void TerminalPaneTest::oneShotTableObserverCanContinueSequence()
+{
+    const GhosttyKeybindConfig config = generationTestConfig();
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
+
+    QStringList events;
+    connect(controller, &TerminalController::sequenceKeyStagingRequested,
+            &pane, [&events] { events.append(QStringLiteral("stage")); });
+    connect(controller, &TerminalController::sequenceResolutionRequested,
+            &pane, [&events] { events.append(QStringLiteral("resolve")); });
+    bool continuationInjected = false;
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        if (continuationInjected || !pane.activeKeyTables().isEmpty()) return;
+        continuationInjected = true;
+        events.append(QStringLiteral("table"));
+        press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    });
+
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+
+    QVERIFY(continuationInjected);
+    QCOMPARE(events, QStringList({QStringLiteral("stage"),
+                                  QStringLiteral("table"),
+                                  QStringLiteral("resolve")}));
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
+    QCOMPARE(newTab.count(), 1);
+
+    const int forwardedBeforeOrdinaryKey = forwarded.count();
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+    QCOMPARE(forwarded.count(), forwardedBeforeOrdinaryKey + 1);
+    QCOMPARE(resolved.count(), 1);
+}
+
+void TerminalPaneTest::reloadResolutionObserverUsesReplacementProgram()
+{
+    const GhosttyKeybindConfig initialConfig = generationTestConfig();
+    GhosttyKeybindConfig replacementConfig;
+    replacementConfig.root = {
+        GhosttyKeybindDefinition{
+            .sequence = {generationTestKey('q'), generationTestKey('r')},
+            .actions = {QStringLiteral("new_tab")},
+        },
+        GhosttyKeybindDefinition{
+            .sequence = {generationTestKey('s')},
+            .actions = {QStringLiteral("reset_font_size")},
+        },
+    };
+    const GhosttyKeybindProgram initialProgram =
+        GhosttyKeybindProgram::compile(initialConfig).program;
+    const GhosttyKeybindProgram replacementProgram =
+        GhosttyKeybindProgram::compile(replacementConfig).program;
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(initialConfig);
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, initialProgram);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("set_font_size:20")));
+    QCOMPARE(pane.fontPointSize(), 20.0);
+    QVERIFY(pane.executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(staged.count(), 1);
+    const quint64 initialToken = staged.constFirst().at(0).toULongLong();
+
+    bool replacementLeaderInjected = false;
+    connect(controller, &TerminalController::sequenceResolutionRequested,
+            &pane, [&] {
+                if (replacementLeaderInjected) return;
+                replacementLeaderInjected = true;
+                press(Qt::Key_S, Qt::NoModifier, QStringLiteral("s"));
+                press(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
+            });
+    LaunchOptions replacementOptions = options;
+    replacementOptions.fontSize = 17.0;
+    replacementOptions.keybindSource =
+        GhosttyKeybindSource::structured(replacementConfig);
+    pane.applyRuntimeOptions(replacementOptions, replacementProgram);
+
+    QVERIFY(replacementLeaderInjected);
+    QVERIFY(pane.keybindProgram().isSameGeneration(replacementProgram));
+    QVERIFY(pane.activeKeyTables().isEmpty());
+    QCOMPARE(pane.fontPointSize(), 17.0);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0).toULongLong(), initialToken);
+    QCOMPARE(staged.count(), 2);
+    const quint64 replacementToken = staged.constLast().at(0).toULongLong();
+    QVERIFY(replacementToken != initialToken);
+
+    press(Qt::Key_R, Qt::NoModifier, QStringLiteral("r"));
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolved.count(), 2);
+    QCOMPARE(resolved.constLast().at(0).toULongLong(), replacementToken);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constLast().at(1)),
+             TerminalSequenceResolution::Drop);
+}
+
+void TerminalPaneTest::oneShotLeafObserverCanStartSequence()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding(
+            {generationTestKey('o', GhosttyKeybindCtrl)},
+            QStringLiteral("activate_key_table_once:once")),
+        generationTestBinding(
+            {generationTestKey('q'), generationTestKey('r')},
+            QStringLiteral("new_tab")),
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("once"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('x')}, QStringLiteral("new_tab")),
+            },
+        },
+    };
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    press(Qt::Key_O, Qt::ControlModifier, QString(QChar(0x0f)));
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("once")}));
+
+    bool nestedLeaderStarted = false;
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        if (nestedLeaderStarted || !pane.activeKeyTables().isEmpty()) return;
+        nestedLeaderStarted = true;
+        press(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
+    });
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+
+    QVERIFY(nestedLeaderStarted);
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(staged.count(), 1);
+    QCOMPARE(resolved.count(), 0);
+
+    press(Qt::Key_R, Qt::NoModifier, QStringLiteral("r"));
+    QCOMPARE(newTab.count(), 2);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0), staged.constFirst().at(0));
+}
+
+void TerminalPaneTest::actionObserverCanStartIndependentSequence()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding(
+            {generationTestKey('x'), generationTestKey('y')},
+            QStringLiteral("activate_key_table:edit")),
+        generationTestBinding(
+            {generationTestKey('q'), generationTestKey('r')},
+            QStringLiteral("new_tab")),
+    };
+    config.root.front().flags.consumed = false;
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('z')}, QStringLiteral("ignore")),
+            },
+        },
+    };
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy staged(controller,
+                      &TerminalController::sequenceKeyStagingRequested);
+    QSignalSpy resolved(controller,
+                        &TerminalController::sequenceResolutionRequested);
+    QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
+
+    const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
+                               QString text) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    press(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+    QCOMPARE(staged.count(), 1);
+    const quint64 outerToken = staged.constFirst().at(0).toULongLong();
+
+    bool nestedLeaderStarted = false;
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        if (nestedLeaderStarted) return;
+        nestedLeaderStarted = true;
+        press(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
+    });
+    press(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+
+    QVERIFY(nestedLeaderStarted);
+    QCOMPARE(pane.activeKeyTables(), QStringList({QStringLiteral("edit")}));
+    QCOMPARE(staged.count(), 2);
+    const quint64 nestedToken = staged.constLast().at(0).toULongLong();
+    QVERIFY(nestedToken != outerToken);
+    QCOMPARE(resolved.count(), 1);
+    QCOMPARE(resolved.constFirst().at(0).toULongLong(), outerToken);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 resolved.constFirst().at(1)),
+             TerminalSequenceResolution::FlushAndSendCurrent);
+
+    press(Qt::Key_R, Qt::NoModifier, QStringLiteral("r"));
+    QCOMPARE(newTab.count(), 1);
+    QCOMPARE(resolved.count(), 2);
+    QCOMPARE(resolved.constLast().at(0).toULongLong(), nestedToken);
+}
+
+void TerminalPaneTest::deferredUnconsumedKeysPreserveDispatchOrder()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding(
+            {generationTestKey('a')},
+            QStringLiteral("activate_key_table:edit")),
+    };
+    config.root.front().flags.consumed = false;
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('z')}, QStringLiteral("ignore")),
+            },
+        },
+    };
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        QKeyEvent press(
+            QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier,
+            QStringLiteral("q"));
+        QCoreApplication::sendEvent(&pane, &press);
+        QKeyEvent release(
+            QEvent::KeyRelease, Qt::Key_Q, Qt::NoModifier,
+            QStringLiteral("q"));
+        QCoreApplication::sendEvent(&pane, &release);
+    }, Qt::SingleShotConnection);
+
+    QKeyEvent outer(
+        QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+        QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &outer);
+
+    QCOMPARE(forwarded.count(), 3);
+    QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(0).constFirst()).text,
+             QStringLiteral("a"));
+    QVERIFY(qvariant_cast<TerminalKeyInput>(
+        forwarded.at(0).constFirst()).pressed);
+    QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(1).constFirst()).text,
+             QStringLiteral("q"));
+    QVERIFY(qvariant_cast<TerminalKeyInput>(
+        forwarded.at(1).constFirst()).pressed);
+    QCOMPARE(qvariant_cast<TerminalKeyInput>(forwarded.at(2).constFirst()).text,
+             QStringLiteral("q"));
+    QVERIFY(!qvariant_cast<TerminalKeyInput>(
+        forwarded.at(2).constFirst()).pressed);
+}
+
+void TerminalPaneTest::deferredReleaseWaitsForConsumedPress()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        generationTestBinding(
+            {generationTestKey('a')},
+            QStringLiteral("activate_key_table:edit")),
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings = {
+                generationTestBinding(
+                    {generationTestKey('z')}, QStringLiteral("ignore")),
+            },
+        },
+    };
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(config).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.keybindSource = GhosttyKeybindSource::structured(config);
+    TerminalPane pane(
+        options, nullptr, std::nullopt, TerminalSessionStartMode::Immediate,
+        {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    connect(&pane, &TerminalPane::activeKeyTablesChanged, &pane, [&] {
+        QKeyEvent release(
+            QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier,
+            QStringLiteral("a"));
+        QCoreApplication::sendEvent(&pane, &release);
+    }, Qt::SingleShotConnection);
+
+    QKeyEvent outer(
+        QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+        QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &outer);
+
+    QVERIFY(forwarded.isEmpty());
 }
 
 void TerminalPaneTest::routesNamedKeyTablesAndClearsThemOnReload()

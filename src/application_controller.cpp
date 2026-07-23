@@ -240,11 +240,10 @@ ApplicationController::createInitialWindow(
             QStringLiteral("The initial application window was already handled"));
     }
 
-    auto created = createWindow(effectiveOptions_, activation);
-    if (created.has_value()) {
-        startupWindowHandled_ = true;
-    }
-    return created;
+    // createWindow marks the startup decision as soon as its workspace is
+    // initialized, including presentation failures. Keeping that transition
+    // in one place also lets a creation callback destroy this controller.
+    return createWindow(effectiveOptions_, activation);
 }
 
 bool ApplicationController::startWithoutInitialWindow()
@@ -268,15 +267,17 @@ bool ApplicationController::activateNoCommand(
         && source->window() != nullptr
         ? source->window()->screen()
         : nullptr;
+    const QPointer<ApplicationController> guard(this);
     auto created = createWindow(
         activationWindowOptions(), activation, preferredScreen);
+    if (guard == nullptr) return false;
     if (created.has_value()) return true;
     Q_EMIT windowCreationFailed(created.error());
     return false;
 }
 
 std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
-    const LaunchOptions &options,
+    LaunchOptions options,
     const DesktopActivationContext &activation,
     QScreen *preferredScreen)
 {
@@ -291,23 +292,54 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral("The application is already quitting"));
     }
+    // Keep the request's options and immutable matcher paired. A live reload
+    // during window construction is caught up after registration, before the
+    // window is presented.
+    const GhosttyKeybindProgram requestedKeybindProgram =
+        keybindings_->keybindProgram();
+    const RevisionCounter::Value requestedOptionsRevision =
+        launchOptionsRevision_.current();
+
+    const QPointer<ApplicationController> controllerGuard(this);
     windowCreationInProgress_ = true;
     const auto creationGuard = qScopeGuard(
-        [this] { windowCreationInProgress_ = false; });
+        [controllerGuard] {
+            if (controllerGuard != nullptr) {
+                controllerGuard->windowCreationInProgress_ = false;
+            }
+        });
 
-    std::expected<ApplicationWindow, QString> created = windowFactory_();
-    if (!created.has_value()) return created;
-    QPointer<QQuickWindow> guardedWindow(created->window);
-    QPointer<TerminalWorkspace> guardedWorkspace(created->workspace);
+    // Keep the callable alive independently of this object while it runs. A
+    // custom factory is allowed to synchronously delete its controller.
+    WindowFactory invocationFactory = std::move(windowFactory_);
+    const auto factoryGuard = qScopeGuard(
+        [controllerGuard, &invocationFactory] {
+            if (controllerGuard != nullptr) {
+                controllerGuard->windowFactory_ =
+                    std::move(invocationFactory);
+            }
+        });
+
+    std::expected<ApplicationWindow, QString> created = invocationFactory();
+    QPointer<QQuickWindow> guardedWindow(
+        created.has_value() ? created->window : nullptr);
+    QPointer<TerminalWorkspace> guardedWorkspace(
+        created.has_value() ? created->workspace : nullptr);
     const auto pairIsValid = [&] {
-        return isValidWindowPair(
+        return controllerGuard != nullptr && isValidWindowPair(
             guardedWindow.data(), guardedWorkspace.data());
     };
     const auto discardCreated = [&] {
         if (guardedWindow != nullptr) delete guardedWindow.data();
         if (guardedWorkspace != nullptr) delete guardedWorkspace.data();
-        *created = {};
+        if (created.has_value()) *created = {};
     };
+    if (controllerGuard == nullptr) {
+        discardCreated();
+        return std::unexpected(QStringLiteral(
+            "The application controller was destroyed by its window factory"));
+    }
+    if (!created.has_value()) return created;
     if (created->window == nullptr || created->workspace == nullptr) {
         discardCreated();
         return std::unexpected(
@@ -365,12 +397,13 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         : TerminalSessionStartMode::Immediate;
     const bool initialized = guardedWorkspace->initialize(
         withoutInitialCommand(options), initialSessionStartMode,
-        initialSessionCoordinator_);
+        initialSessionCoordinator_, requestedKeybindProgram);
     // The initial-window request and first successful session initialization
     // are independent one-shot decisions. Reaching workspace initialization
     // handles startup even if presentation later destroys the GUI pair.
-    if (initialized && !startupWindowHandled_) {
-        startupWindowHandled_ = true;
+    if (controllerGuard != nullptr && initialized
+        && !controllerGuard->startupWindowHandled_) {
+        controllerGuard->startupWindowHandled_ = true;
     }
     if (!pairIsValid()) {
         discardCreated();
@@ -396,6 +429,20 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return std::unexpected(
             QStringLiteral(
                 "The application window became invalid during registration"));
+    }
+
+    if (requestedOptionsRevision != launchOptionsRevision_.current()) {
+        const GhosttyKeybindProgram currentProgram =
+            keybindings_->keybindProgram();
+        guardedWorkspace->applyLaunchOptions(
+            withoutInitialCommand(effectiveOptions_), currentProgram);
+        if (!pairIsValid()) {
+            discardCreated();
+            return std::unexpected(
+                QStringLiteral(
+                    "The application window became invalid while applying "
+                    "updated configuration"));
+        }
     }
 
     // Fullscreen takes precedence at presentation time; the QML root retains
@@ -509,10 +556,11 @@ bool ApplicationController::dispatch(ApplicationAction action,
                     && screenSource->window() != nullptr
                     ? screenSource->window()->screen()
                     : nullptr;
+                const QPointer<ApplicationController> guard(this);
                 auto created = createWindow(
                     nextWindowOptions(guardedSource, sourcePaneId), {},
                     preferredScreen);
-                if (!created.has_value()) {
+                if (guard != nullptr && !created.has_value()) {
                     Q_EMIT windowCreationFailed(created.error());
                 }
             });
@@ -606,19 +654,54 @@ LaunchOptions ApplicationController::activationWindowOptions() const
 
 void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
 {
+    const RevisionCounter::Value revision = launchOptionsRevision_.advance();
+    const QPointer<ApplicationController> guard(this);
+    const QPointer<GhosttyApplicationKeybindings> keybindingsGuard(
+        keybindings_.get());
+    keybindings_->beginConfigurationUpdate();
+    const auto keybindingUpdateGuard = qScopeGuard([keybindingsGuard] {
+        if (keybindingsGuard != nullptr) {
+            keybindingsGuard->endConfigurationUpdate();
+        }
+    });
+    const auto stillCurrentRevision = [&guard, revision] {
+        return guard != nullptr
+            && guard->launchOptionsRevision_.isCurrent(revision);
+    };
+
     (void) initialSessionCoordinator_->updatePayload({
         .program = options.program,
         .hold = options.hold,
     });
+    if (!stillCurrentRevision()) return;
+
     effectiveOptions_ = options;
     const LaunchOptions ordinaryOptions =
         withoutInitialCommand(effectiveOptions_);
-    TerminalWorkspace::setDefaultLaunchOptions(ordinaryOptions);
     lifetime_.applyLaunchOptions(effectiveOptions_);
-    keybindings_->applyLaunchOptions(effectiveOptions_);
+    if (!stillCurrentRevision()) return;
+
+    const GhosttyKeybindProgram keybindProgram =
+        keybindings_->applyLaunchOptions(effectiveOptions_);
+    if (!stillCurrentRevision()
+        || !keybindings_->keybindProgram().isSameGeneration(
+            keybindProgram)) {
+        return;
+    }
+
+    TerminalWorkspace::setDefaultLaunchOptions(ordinaryOptions);
+    const auto stillCurrentUpdate =
+        [guard, revision, keybindProgram] {
+        return guard != nullptr
+            && guard->launchOptionsRevision_.isCurrent(revision)
+            && guard->keybindProgram().isSameGeneration(
+                    keybindProgram);
+    };
     for (const QPointer<TerminalWorkspace> &workspace : workspaceSnapshot()) {
         if (workspace != nullptr) {
-            workspace->applyLaunchOptions(ordinaryOptions);
+            workspace->applyLaunchOptions(
+                ordinaryOptions, keybindProgram);
+            if (!stillCurrentUpdate()) return;
         }
     }
 }
@@ -671,6 +754,11 @@ QVector<ApplicationWindow> ApplicationController::windows() const
         }
     }
     return result;
+}
+
+GhosttyKeybindProgram ApplicationController::keybindProgram() const
+{
+    return keybindings_->keybindProgram();
 }
 
 bool ApplicationController::containsWorkspace(

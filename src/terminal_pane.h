@@ -2,7 +2,9 @@
 
 #include "application_action.h"
 #include "ghostty_keybind_set.h"
+#include "key_event_snapshot.h"
 #include "launch_options.h"
+#include "revision_counter.h"
 #include "terminal_types.h"
 #include "workspace_action.h"
 
@@ -22,6 +24,7 @@
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -37,6 +40,7 @@ class QSGNode;
 class QTimer;
 class QWheelEvent;
 class QQuickWindow;
+class GhosttyApplicationKeybindings;
 class InitialSessionCoordinator;
 class TerminalController;
 
@@ -69,7 +73,8 @@ public:
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate,
         std::shared_ptr<InitialSessionCoordinator>
-            initialSessionCoordinator = {});
+            initialSessionCoordinator = {},
+        std::optional<GhosttyKeybindProgram> keybindProgram = std::nullopt);
     ~TerminalPane() override;
 
     QString title() const;
@@ -99,6 +104,12 @@ public:
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
     void applyRuntimeOptions(const LaunchOptions &options);
+    void applyRuntimeOptions(const LaunchOptions &options,
+                             GhosttyKeybindProgram keybindProgram);
+    [[nodiscard]] const GhosttyKeybindProgram &keybindProgram() const noexcept
+    {
+        return keybinds_.program();
+    }
     // The workspace owns split topology; the pane owns actual focus and
     // search visibility, which complete Ghostty's dimming predicate.
     void setSplit(bool split);
@@ -181,6 +192,8 @@ protected:
     void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    friend class GhosttyApplicationKeybindings;
+
     enum class KeyHandling {
         PassThrough,
         ConsumePress,
@@ -205,10 +218,26 @@ private:
     void markTextRowsChangedLocked(const TerminalUpdate &update);
     void syncCursorBlink(bool resetPhase);
     void setFontPointSize(qreal points);
+    void beginKeyEventDeferral() noexcept;
+    void endKeyEventDeferral();
+    void beginKeyEventDispatch() noexcept;
+    void endKeyEventDispatch();
+    [[nodiscard]] bool deferKeyEventIfNeeded(const QKeyEvent &event);
+    void deferKeyEvent(const QKeyEvent &event);
+    void drainDeferredKeyEvents();
     KeyHandling handleShortcut(
         QKeyEvent *event, const QPointer<TerminalPane> &guard);
     KeyHandling handleConfiguredShortcut(
         QKeyEvent *event, const QPointer<TerminalPane> &guard);
+    [[nodiscard]] bool resolveActiveSequence(
+        TerminalSequenceResolution resolution,
+        std::optional<TerminalKeyInput> current = std::nullopt);
+    [[nodiscard]] bool resolveSequenceToken(
+        quint64 token, TerminalSequenceResolution resolution,
+        std::optional<TerminalKeyInput> current = std::nullopt);
+    [[nodiscard]] bool resolveExecutingSequence(
+        TerminalSequenceResolution resolution,
+        std::optional<TerminalKeyInput> current = std::nullopt);
     [[nodiscard]] bool performConfiguredAction(
         const GhosttyConfiguredAction &action);
     [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
@@ -263,7 +292,8 @@ private:
     // under renderMutex_ while live configuration updates options_.
     TerminalAppearance appearance_;
     SplitAppearance splitAppearance_;
-    GhosttyKeybindSet keybinds_;
+    GhosttyKeybindState keybinds_;
+    RevisionCounter runtimeOptionsRevision_;
     TerminalController *controller_ = nullptr;
     std::optional<QString> surfaceTitleOverride_;
     QFont font_;
@@ -313,7 +343,12 @@ private:
     quint64 deferredSessionPresentedFrame_ = 0;
     quint64 deferredSessionCandidateFrame_ = 0;
     QSet<quint64> consumedKeys_;
+    std::deque<KeyEventSnapshot> deferredKeyEvents_;
+    int keyEventDeferralDepth_ = 0;
+    int keyEventDispatchDepth_ = 0;
+    bool drainingDeferredKeyEvents_ = false;
     quint64 activeSequenceToken_ = 0;
+    QVector<quint64> executingSequenceTokens_;
     bool hoverInside_ = false;
     QPointF hoverPosition_;
     QPoint hoverCell_{-1, -1};

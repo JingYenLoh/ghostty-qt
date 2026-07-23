@@ -66,13 +66,18 @@ qreal splitExtent(const QRectF &geometry, Qt::Orientation orientation)
 
 struct TerminalWorkspace::PaneHandle {
     PaneId id;
-    TerminalPane *pane = nullptr;
+    QPointer<TerminalPane> pane;
+
+    [[nodiscard]] bool isValid() const noexcept
+    {
+        return id.isValid() && pane != nullptr;
+    }
 };
 
 struct TerminalWorkspace::Node {
     explicit Node(PaneHandle handle)
         : paneId(handle.id)
-        , pane(handle.pane)
+        , pane(handle.pane.data())
     {
     }
 
@@ -127,45 +132,63 @@ struct TerminalWorkspace::Node {
 
 namespace {
 
-void clearPaneOverlay(TerminalPane *pane, const char *property)
+void clearPaneOverlay(QPointer<TerminalPane> pane, const char *property)
 {
-    QObject *const overlay = pane->property(property).value<QObject *>();
+    if (pane == nullptr) return;
+    const QPointer<QObject> overlay(
+        pane->property(property).value<QObject *>());
     pane->setProperty(property, {});
-    delete overlay;
+    delete overlay.data();
 }
 
-void attachPaneOverlay(QQmlComponent *component,
-                       TerminalPane *pane,
-                       const char *property,
-                       const char *description)
+[[nodiscard]] bool attachPaneOverlay(QPointer<QQmlComponent> component,
+                                     QPointer<TerminalPane> pane,
+                                     const char *property,
+                                     const char *description)
 {
     if (pane == nullptr || component == nullptr
         || pane->property(property).value<QObject *>() != nullptr) {
-        return;
+        return pane != nullptr;
     }
 
     QObject *const overlay = component->createWithInitialProperties({
         {QStringLiteral("terminalPane"),
          QVariant::fromValue(static_cast<QObject *>(pane))},
     });
+    if (pane == nullptr) {
+        delete overlay;
+        return false;
+    }
     if (overlay == nullptr) {
-        qWarning().noquote()
-            << "Could not create" << description << ':'
-            << component->errorString();
-        return;
+        if (component != nullptr) {
+            qWarning().noquote()
+                << "Could not create" << description << ':'
+                << component->errorString();
+        }
+        return true;
     }
 
-    auto *const overlayItem = qobject_cast<QQuickItem *>(overlay);
+    const QPointer<QObject> overlayGuard(overlay);
+    auto *overlayItem = qobject_cast<QQuickItem *>(overlay);
     if (overlayItem == nullptr) {
         qWarning().noquote()
             << description << "component did not create a QQuickItem";
         delete overlay;
-        return;
+        return pane != nullptr;
     }
 
-    overlay->setParent(pane);
-    overlayItem->setParentItem(pane);
-    pane->setProperty(property, QVariant::fromValue(overlay));
+    overlay->setParent(pane.data());
+    if (pane == nullptr || overlayGuard == nullptr) {
+        return pane != nullptr;
+    }
+    overlayItem = qobject_cast<QQuickItem *>(overlayGuard.data());
+    if (overlayItem == nullptr) return true;
+    overlayItem->setParentItem(pane.data());
+    if (pane == nullptr || overlayGuard == nullptr) {
+        return pane != nullptr;
+    }
+    pane->setProperty(property, QVariant::fromValue(overlayGuard.data()));
+    return pane != nullptr;
 }
 
 } // namespace
@@ -384,6 +407,12 @@ void TerminalWorkspace::setPaneOverlayComponent(
     if (slot.component == component) {
         return;
     }
+    const RevisionCounter::Value revision = slot.revision.advance();
+    const QPointer<QQmlComponent> requestedComponent(component);
+    const QPointer<TerminalWorkspace> guard(this);
+    const auto stillCurrent = [guard, &slot, revision] {
+        return guard != nullptr && slot.revision.isCurrent(revision);
+    };
 
     QObject::disconnect(slot.destructionConnection);
     slot.destructionConnection = {};
@@ -391,53 +420,78 @@ void TerminalWorkspace::setPaneOverlayComponent(
     // Component creation and destruction can execute QML callbacks. Traverse
     // a stable pane snapshot so a callback cannot invalidate the split tree
     // underneath this lifecycle update.
-    const std::vector<PaneHandle> panes = allPanes();
-    for (const PaneHandle &handle : panes) {
-        clearPaneOverlay(handle.pane, paneProperty);
+    const QVector<QPointer<TerminalPane>> panes = paneSnapshot();
+    for (const QPointer<TerminalPane> &pane : panes) {
+        clearPaneOverlay(pane, paneProperty);
+        if (!stillCurrent()) return;
     }
 
-    slot.component = component;
-    if (component != nullptr) {
+    slot.component = requestedComponent;
+    if (requestedComponent != nullptr) {
         PaneOverlaySlot *const guardedSlot = &slot;
         slot.destructionConnection = connect(
-            component, &QObject::destroyed, this,
+            requestedComponent, &QObject::destroyed, this,
             [this, guardedSlot, paneProperty, changedSignal] {
+                const QPointer<TerminalWorkspace> destructionGuard(this);
+                const RevisionCounter::Value destructionRevision =
+                    guardedSlot->revision.advance();
                 guardedSlot->component.clear();
                 guardedSlot->destructionConnection = {};
-                for (const PaneHandle &handle : allPanes()) {
-                    clearPaneOverlay(handle.pane, paneProperty);
+                for (const QPointer<TerminalPane> &pane : paneSnapshot()) {
+                    clearPaneOverlay(pane, paneProperty);
+                    if (destructionGuard == nullptr
+                        || !guardedSlot->revision.isCurrent(
+                            destructionRevision)) {
+                        return;
+                    }
                 }
                 (this->*changedSignal)();
             });
 
-        for (const PaneHandle &handle : panes) {
-            attachPaneOverlay(component, handle.pane, paneProperty,
-                              description);
+        for (const QPointer<TerminalPane> &pane : panes) {
+            if (pane == nullptr) continue;
+            if (!attachPaneOverlay(requestedComponent, pane, paneProperty,
+                                   description)
+                || !stillCurrent()) {
+                return;
+            }
         }
     }
 
     (this->*changedSignal)();
 }
 
-void TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
+bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
 {
-    attachPaneOverlay(searchOverlay_.component.data(), pane,
-                      kSearchOverlayProperty,
-                      "terminal search overlay");
-    attachPaneOverlay(readOnlyOverlay_.component.data(), pane,
-                      kReadOnlyOverlayProperty,
-                      "terminal read-only overlay");
-    attachPaneOverlay(resizeOverlay_.component.data(), pane,
-                      kResizeOverlayProperty,
-                      "terminal resize overlay");
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> paneGuard(pane);
+    if (!attachPaneOverlay(searchOverlay_.component, paneGuard,
+                           kSearchOverlayProperty,
+                           "terminal search overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    if (!attachPaneOverlay(readOnlyOverlay_.component, paneGuard,
+                           kReadOnlyOverlayProperty,
+                           "terminal read-only overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    return attachPaneOverlay(resizeOverlay_.component, paneGuard,
+                             kResizeOverlayProperty,
+                             "terminal resize overlay")
+        && guard != nullptr;
 }
 
-std::vector<TerminalWorkspace::PaneHandle> TerminalWorkspace::allPanes() const
+QVector<QPointer<TerminalPane>> TerminalWorkspace::paneSnapshot() const
 {
-    std::vector<PaneHandle> panes;
+    QVector<QPointer<TerminalPane>> panes;
     forEachPane([&panes](const PaneHandle &handle) {
-        panes.push_back(handle);
+        if (handle.pane != nullptr) panes.append(handle.pane);
     });
+    for (const QPointer<TerminalPane> &pane : pendingPanes_) {
+        if (pane != nullptr && !panes.contains(pane)) panes.append(pane);
+    }
     return panes;
 }
 
@@ -451,12 +505,28 @@ bool TerminalWorkspace::initialize(
     TerminalSessionStartMode initialSessionStartMode,
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
 {
+    return initialize(
+        options, initialSessionStartMode,
+        std::move(initialSessionCoordinator),
+        GhosttyKeybindProgram::compile(options.keybindSource).program);
+}
+
+bool TerminalWorkspace::initialize(
+    const LaunchOptions &options,
+    TerminalSessionStartMode initialSessionStartMode,
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
+    GhosttyKeybindProgram keybindProgram)
+{
     if (initialized_) return false;
     initialized_ = true;
     initialSessionCoordinator_ = std::move(initialSessionCoordinator);
-    applyLaunchOptions(options);
+    const QPointer<TerminalWorkspace> guard(this);
+    applyLaunchOptions(options, std::move(keybindProgram));
+    if (guard == nullptr) return true;
+
+    const LaunchOptions initialOptions = effectiveOptions_;
     const TerminalCellMetrics metrics = terminalCellMetrics(
-        options.fontFamily, options.fontSize);
+        initialOptions.fontFamily, initialOptions.fontSize);
     const qreal devicePixelRatio =
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
     const PaneHandle initialPane = createNewTab(
@@ -464,6 +534,8 @@ bool TerminalWorkspace::initialize(
                 width(), height(), metrics.cellWidth, metrics.cellHeight,
                 devicePixelRatio),
         initialSessionStartMode);
+    if (guard == nullptr) return true;
+    if (!initialPane.isValid()) return false;
     if (initialSessionStartMode == TerminalSessionStartMode::Deferred) {
         deferredInitialPane_ = initialPane.pane;
         deferredInitialPaneId_ = initialPane.id;
@@ -521,20 +593,40 @@ bool TerminalWorkspace::armInitialSessionStart()
 
 void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options)
 {
+    applyLaunchOptions(
+        options,
+        GhosttyKeybindProgram::compile(options.keybindSource).program);
+}
+
+void TerminalWorkspace::applyLaunchOptions(
+    const LaunchOptions &options,
+    GhosttyKeybindProgram keybindProgram)
+{
+    const RevisionCounter::Value revision = launchOptionsRevision_.advance();
+    const QPointer<TerminalWorkspace> guard(this);
     const bool wasTabBarVisible = tabBarVisible();
+    keybindProgram_ = std::move(keybindProgram);
+    const GhosttyKeybindProgram appliedProgram = keybindProgram_;
     effectiveOptions_ = options;
+    const LaunchOptions appliedOptions = effectiveOptions_;
+    const auto stillCurrentUpdate =
+        [guard, revision, appliedProgram] {
+        return guard != nullptr
+            && guard->launchOptionsRevision_.isCurrent(revision)
+            && guard->keybindProgram().isSameGeneration(appliedProgram);
+    };
     if (tabBarVisible() != wasTabBarVisible) {
         Q_EMIT tabBarVisibleChanged();
+        if (!stillCurrentUpdate()) return;
     }
     for (SplitDividerItem *divider : std::as_const(splitDividers_)) {
         divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
     }
-    for (const std::unique_ptr<Tab> &tab : tabs_) {
-        std::vector<PaneHandle> panes;
-        tab->root->collectPanes(panes);
-        for (const PaneHandle &handle : panes) {
-            handle.pane->applyRuntimeOptions(effectiveOptions_);
-        }
+    const QVector<QPointer<TerminalPane>> panes = paneSnapshot();
+    for (const QPointer<TerminalPane> &pane : panes) {
+        if (pane == nullptr) continue;
+        pane->applyRuntimeOptions(appliedOptions, appliedProgram);
+        if (!stillCurrentUpdate()) return;
     }
     reevaluatePendingClose();
 }
@@ -666,8 +758,7 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             if (tab == nullptr) return false;
             sourcePaneId = tab->activePaneId;
         }
-        createNewTab(sourcePaneId);
-        return true;
+        return createNewTab(sourcePaneId).isValid();
     }
     case WorkspaceAction::ActivateTab:
         if (tabById(request.context.tabId) == nullptr) return false;
@@ -716,10 +807,9 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             || direction == WorkspaceAction::SplitRight;
         const bool placeNewPaneFirst = direction == WorkspaceAction::SplitLeft
             || direction == WorkspaceAction::SplitUp;
-        splitPane(request.context.paneId,
-                  horizontal ? Qt::Horizontal : Qt::Vertical,
-                  placeNewPaneFirst);
-        return true;
+        return splitPane(request.context.paneId,
+                         horizontal ? Qt::Horizontal : Qt::Vertical,
+                         placeNewPaneFirst);
     }
     case WorkspaceAction::NavigatePane:
         if (paneForId(request.context.paneId) == nullptr
@@ -905,9 +995,20 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     TerminalSessionStartMode startMode)
 {
     const PaneId paneId(nextPaneId_++);
-    auto *pane = new TerminalPane(
-        options, this, std::move(initialGeometry), startMode,
-        initialSessionCoordinator_);
+    auto detachedPane = std::make_unique<TerminalPane>(
+        options, nullptr, std::move(initialGeometry), startMode,
+        initialSessionCoordinator_, keybindProgram_);
+    TerminalPane *const pane = detachedPane.get();
+    const QPointer<TerminalWorkspace> workspaceGuard(this);
+    const QPointer<TerminalPane> paneGuard(pane);
+    pendingPanes_.append(paneGuard);
+    const auto removePending = qScopeGuard([workspaceGuard, paneGuard] {
+        if (workspaceGuard == nullptr) return;
+        workspaceGuard->pendingPanes_.removeIf(
+            [paneGuard](const QPointer<TerminalPane> &candidate) {
+                return candidate == paneGuard || candidate == nullptr;
+            });
+    });
     pane->setVisible(false);
     pane->setWorkspaceActionHandler(
         [this, paneId](WorkspaceActionRequest request) {
@@ -1015,8 +1116,31 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 }
                 beginUnsafePaste(requestId, text, paneId);
             });
-    attachPaneOverlays(pane);
-    return {paneId, pane};
+
+    // Parent and overlay publication can execute arbitrary QML. The pending
+    // registry makes this pane participate in any nested config reload before
+    // its stable ID is inserted into the tab tree.
+    detachedPane.release();
+    const auto validateOwnership =
+        [workspaceGuard, paneGuard](bool requireVisualParent) {
+            const bool valid = workspaceGuard != nullptr
+                && paneGuard != nullptr
+                && paneGuard->parent() == workspaceGuard
+                && (!requireVisualParent
+                    || paneGuard->parentItem() == workspaceGuard);
+            if (!valid && paneGuard != nullptr) delete paneGuard.data();
+            return valid;
+        };
+    pane->setParent(this);
+    if (!validateOwnership(false)) return {};
+    pane->setParentItem(this);
+    if (!validateOwnership(true)) return {};
+    if (!attachPaneOverlays(paneGuard)) {
+        (void) validateOwnership(true);
+        return {};
+    }
+    if (!validateOwnership(true)) return {};
+    return {paneId, paneGuard};
 }
 
 void TerminalWorkspace::newTab()
@@ -1029,6 +1153,15 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
     std::optional<TerminalSessionGeometry> initialGeometry,
     TerminalSessionStartMode startMode)
 {
+    if (topologyMutation_) return {};
+    const QPointer<TerminalWorkspace> guard(this);
+    const bool previousMutation = std::exchange(topologyMutation_, true);
+    const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+        if (guard != nullptr) {
+            guard->topologyMutation_ = previousMutation;
+        }
+    });
+
     const bool wasTabBarVisible = tabBarVisible();
     LaunchOptions options = effectiveOptions_;
     if (initialTabCreated_) {
@@ -1042,8 +1175,6 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
             options = withoutInitialCommand(std::move(options));
         }
     }
-    initialTabCreated_ = true;
-
     const int insertionIndex =
         options.windowNewTabPosition == WindowNewTabPosition::Current
             && currentIndex_ >= 0
@@ -1052,6 +1183,7 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
 
     const PaneHandle pane = createPane(
         options, std::move(initialGeometry), startMode);
+    if (guard == nullptr || !pane.isValid()) return {};
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);
     tab->root = std::make_unique<Node>(pane);
@@ -1059,15 +1191,20 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
     const TabId tabId = tab->id;
     const TabListEntry entry = tabListEntry(*tab);
     tabs_.insert(tabs_.begin() + insertionIndex, std::move(tab));
+    initialTabCreated_ = true;
 
     const bool modelInserted = tabModel_.insert(insertionIndex, entry);
+    if (guard == nullptr) return {};
     Q_ASSERT(modelInserted);
-    Q_UNUSED(modelInserted);
+    if (!modelInserted) return {};
     Q_EMIT tabTitlesChanged();
+    if (guard == nullptr) return {};
     if (tabBarVisible() != wasTabBarVisible) {
         Q_EMIT tabBarVisibleChanged();
+        if (guard == nullptr) return {};
     }
     activateTab(tabId);
+    if (guard == nullptr || pane.pane == nullptr) return {};
     return pane;
 }
 
@@ -1202,22 +1339,47 @@ void TerminalWorkspace::splitDown()
                     {TabId{}, currentPaneId(), 0}});
 }
 
-void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
+bool TerminalWorkspace::splitPane(PaneId paneId,
+                                  Qt::Orientation orientation,
                                   bool placeNewPaneFirst)
 {
+    if (topologyMutation_) return false;
     const TabId tabId = tabIdForPane(paneId);
     Tab *tab = tabById(tabId);
     if (tab == nullptr) {
-        return;
+        return false;
     }
     Node *node = findNode(tab->root.get(), paneId);
     if (node == nullptr || !node->isLeaf()) {
-        return;
+        return false;
     }
 
-    TerminalPane *oldPane = node->pane;
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> oldPane(node->pane);
+    if (oldPane == nullptr) return false;
+    const LaunchOptions newPaneOptions =
+        oldPane->splitLaunchOptions(effectiveOptions_);
+    const bool previousMutation = std::exchange(topologyMutation_, true);
+    const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+        if (guard != nullptr) {
+            guard->topologyMutation_ = previousMutation;
+        }
+    });
     const PaneHandle newPane = createPane(
-        oldPane->splitLaunchOptions(effectiveOptions_));
+        newPaneOptions);
+    if (guard == nullptr || oldPane == nullptr || !newPane.isValid()) {
+        return false;
+    }
+
+    // Pane construction can run QML and config callbacks. Resolve the target
+    // again by stable IDs instead of carrying tree pointers across that
+    // boundary.
+    tab = tabById(tabId);
+    node = tab != nullptr ? findNode(tab->root.get(), paneId) : nullptr;
+    if (node == nullptr || !node->isLeaf() || node->pane != oldPane) {
+        delete newPane.pane.data();
+        return false;
+    }
     // Ghostty resets split zoom whenever the tree structure is split.
     tab->zoomedPaneId = {};
     const PaneHandle oldHandle{node->paneId, oldPane};
@@ -1234,14 +1396,19 @@ void TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
         placeNewPaneFirst ? oldHandle : newPane);
     tab->activePaneId = newPane.id;
     updateSplitMembership(*tab);
+    if (guard == nullptr) return true;
     const bool targetIsCurrent = tabId == currentTabId();
     if (targetIsCurrent) {
         layoutCurrentTab();
+        if (guard == nullptr || newPane.pane == nullptr) return true;
         newPane.pane->focusTerminal();
+        if (guard == nullptr) return true;
     } else {
         updateTabVisibility(*tab, false);
+        if (guard == nullptr) return true;
     }
     refreshTab(tabId);
+    return true;
 }
 
 void TerminalWorkspace::activatePane(PaneId paneId,

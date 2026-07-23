@@ -1,8 +1,9 @@
 #pragma once
 
 #include "application_action.h"
-#include "ghostty_action_catalog.h"
+#include "ghostty_keybind_set.h"
 #include "launch_options.h"
+#include "revision_counter.h"
 #include "tab_list_model.h"
 #include "workspace_action.h"
 
@@ -74,8 +75,16 @@ public:
             TerminalSessionStartMode::Immediate,
         std::shared_ptr<InitialSessionCoordinator>
             initialSessionCoordinator = {});
+    bool initialize(
+        const LaunchOptions &options,
+        TerminalSessionStartMode initialSessionStartMode,
+        std::shared_ptr<InitialSessionCoordinator>
+            initialSessionCoordinator,
+        GhosttyKeybindProgram keybindProgram);
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
+    void applyLaunchOptions(const LaunchOptions &options,
+                            GhosttyKeybindProgram keybindProgram);
 
     QStringList tabTitles() const;
     QString currentTitle() const;
@@ -86,6 +95,10 @@ public:
     [[nodiscard]] const LaunchOptions &effectiveLaunchOptions() const
     {
         return effectiveOptions_;
+    }
+    [[nodiscard]] const GhosttyKeybindProgram &keybindProgram() const noexcept
+    {
+        return keybindProgram_;
     }
     [[nodiscard]] std::optional<LaunchOptions> newWindowLaunchOptions(
         const LaunchOptions &applicationOptions,
@@ -181,6 +194,7 @@ private:
     struct PaneOverlaySlot {
         QPointer<QQmlComponent> component;
         QMetaObject::Connection destructionConnection;
+        RevisionCounter revision;
     };
     struct SplitDividerDrag {
         qreal pointer = 0.0;
@@ -243,10 +257,10 @@ private:
         const char *paneProperty,
         const char *description,
         void (TerminalWorkspace::*changedSignal)());
-    void attachPaneOverlays(TerminalPane *pane);
+    [[nodiscard]] bool attachPaneOverlays(TerminalPane *pane);
     template<typename Visitor>
     void forEachPane(Visitor &&visitor) const;
-    [[nodiscard]] std::vector<PaneHandle> allPanes() const;
+    [[nodiscard]] QVector<QPointer<TerminalPane>> paneSnapshot() const;
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
         PaneId sourcePaneId = {},
@@ -278,8 +292,9 @@ private:
     const Tab *tabById(TabId id) const;
     TabId currentTabId() const;
     PaneId currentPaneId() const;
-    void splitPane(PaneId paneId, Qt::Orientation orientation,
-                   bool placeNewPaneFirst);
+    [[nodiscard]] bool splitPane(PaneId paneId,
+                                 Qt::Orientation orientation,
+                                 bool placeNewPaneFirst);
     void closePane(PaneId paneId, bool force = false);
     void closeTab(TabId tabId, CloseTabMode mode = CloseTabMode::This,
                   bool force = false);
@@ -346,9 +361,12 @@ private:
 
     static LaunchOptions defaultOptions_;
     LaunchOptions effectiveOptions_;
+    GhosttyKeybindProgram keybindProgram_;
+    RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     TabListModel tabModel_;
     std::vector<std::unique_ptr<Tab>> tabs_;
+    QVector<QPointer<TerminalPane>> pendingPanes_;
     int currentIndex_ = -1;
     quint64 nextTabId_ = 1;
     quint64 nextPaneId_ = 1;

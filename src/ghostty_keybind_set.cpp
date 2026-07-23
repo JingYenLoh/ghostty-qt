@@ -583,45 +583,113 @@ int GhosttyKeybindLoadReport::count(
         records, disposition, &GhosttyKeybindParseRecord::disposition));
 }
 
-QStringList GhosttyKeybindSet::serializedActions() const
+std::shared_ptr<const GhosttyKeybindProgram::Data>
+GhosttyKeybindProgram::emptyData()
 {
-    QStringList result;
-    if (nodes_.isEmpty()) {
-        return result;
-    }
+    static const auto data = std::make_shared<const Data>();
+    return data;
+}
 
-    const auto visit = [this, &result](auto &&self, quint32 node) -> void {
-        if (node >= static_cast<quint32>(nodes_.size())) {
-            return;
-        }
-        for (const Entry &entry : nodes_.at(static_cast<qsizetype>(node)).entries) {
+GhosttyKeybindProgram::GhosttyKeybindProgram()
+    : data_(emptyData())
+{
+}
+
+GhosttyKeybindProgram::GhosttyKeybindProgram(
+    std::shared_ptr<const Data> data)
+    : data_(data != nullptr ? std::move(data) : emptyData())
+{
+}
+
+qsizetype GhosttyKeybindProgram::size() const noexcept
+{
+    return data_->bindingCount;
+}
+
+bool GhosttyKeybindProgram::isAvailable() const noexcept
+{
+    return data_->available;
+}
+
+bool GhosttyKeybindProgram::isSameGeneration(
+    const GhosttyKeybindProgram &other) const noexcept
+{
+    return data_ == other.data_;
+}
+
+template<typename Visitor>
+void GhosttyKeybindProgram::forEachReachableLeaf(
+    const Data &data, Visitor &&visitor)
+{
+    struct Frame {
+        NodeId node;
+        qsizetype nextEntry = 0;
+    };
+
+    const auto visitRoot = [&data, &visitor](NodeId root) {
+        QVector<Frame> stack{{root, 0}};
+        while (!stack.isEmpty()) {
+            Frame &frame = stack.last();
+            if (frame.node.value
+                    >= static_cast<quint32>(data.nodes.size())) {
+                stack.removeLast();
+                continue;
+            }
+
+            const Node &node = data.nodes.at(
+                static_cast<qsizetype>(frame.node.value));
+            if (frame.nextEntry >= node.entries.size()) {
+                stack.removeLast();
+                continue;
+            }
+
+            const Entry &entry = node.entries.at(frame.nextEntry++);
             if (entry.kind == EntryKind::Leader) {
-                self(self, entry.child);
+                stack.append({entry.child, 0});
             } else {
-                result.append(entry.actionChain.serializedActions());
+                visitor(entry);
             }
         }
     };
-    visit(visit, 0);
-    QStringList tableNames = tableRoots_.keys();
+
+    visitRoot(NodeId{});
+    QStringList tableNames = data.tableRoots.keys();
     tableNames.sort();
     for (const QString &tableName : tableNames) {
-        visit(visit, tableRoots_.value(tableName));
+        visitRoot(data.tableRoots.value(tableName));
     }
+}
+
+QStringList GhosttyKeybindProgram::serializedActions() const
+{
+    QStringList result;
+    forEachReachableLeaf(*data_, [&result](const Entry &entry) {
+        result.append(entry.actionChain.serializedActions());
+    });
     return result;
 }
 
-void GhosttyKeybindSet::clear() noexcept
+GhosttyKeybindState::GhosttyKeybindState() = default;
+
+GhosttyKeybindState::GhosttyKeybindState(GhosttyKeybindProgram program)
+    : program_(std::move(program))
 {
-    nodes_.clear();
-    nodes_.append(Node{});
-    tableRoots_.clear();
-    activeTables_.clear();
-    bindingCount_ = 0;
-    resetSequence();
 }
 
-GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
+bool GhosttyKeybindState::replaceProgram(
+    GhosttyKeybindProgram program) noexcept
+{
+    if (program_.isSameGeneration(program)) {
+        return false;
+    }
+    program_ = std::move(program);
+    activeTables_.clear();
+    resetSequence();
+    return true;
+}
+
+GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
+    const QStringList &values)
 {
     GhosttyKeybindLoadReport report;
     report.records.reserve(values.size());
@@ -742,31 +810,39 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(const QStringList &values)
         report.records.append(record(input, Disposition::Installed));
     }
 
-    GhosttyKeybindSet candidate;
-    (void) candidate.load(config);
-    *this = std::move(candidate);
-    return report;
+    GhosttyKeybindCompilation result = compile(config);
+    result.report = std::move(report);
+    return result;
 }
 
-GhosttyKeybindLoadReport GhosttyKeybindSet::load(
+GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
     const GhosttyKeybindSource &source)
 {
-    return source.visit([this]<typename Source>(const Source &value) {
+    return source.visit([]<typename Source>(const Source &value) {
         if constexpr (std::same_as<Source, std::monostate>) {
-            clear();
-            return GhosttyKeybindLoadReport{};
+            // An unavailable source still represents a newly applied
+            // configuration generation. Keep the default program as a cheap
+            // sentinel for uninitialized state, but publish fresh storage for
+            // every explicit compilation so equal reloads remain observable.
+            auto data = std::make_shared<Data>();
+            return GhosttyKeybindCompilation{
+                .program = GhosttyKeybindProgram(std::move(data)),
+                .report = {},
+            };
         } else {
-            return load(value);
+            return GhosttyKeybindProgram::compile(value);
         }
     });
 }
 
-GhosttyKeybindLoadReport GhosttyKeybindSet::load(
+GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
     const GhosttyKeybindConfig &config)
 {
     GhosttyKeybindLoadReport report;
-    QVector<Node> newNodes{Node{}};
-    QHash<QString, quint32> newTableRoots;
+    auto data = std::make_shared<Data>();
+    data->available = true;
+    QVector<Node> &newNodes = data->nodes;
+    QHash<QString, NodeId> &newTableRoots = data->tableRoots;
 
     const auto sameTrigger = [](const Binding &left, const Binding &right) {
         if (left.keyKind != right.keyKind
@@ -787,7 +863,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
 
     const auto installDefinitions = [&newNodes, &report, &sameTrigger](
                                         const QVector<GhosttyKeybindDefinition> &definitions,
-                                        quint32 root,
+                                        NodeId root,
                                         const QString &labelPrefix) {
         for (qsizetype definitionIndex = 0;
              definitionIndex < definitions.size(); ++definitionIndex) {
@@ -863,12 +939,12 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
                 continue;
             }
 
-            quint32 node = root;
+            NodeId node = root;
             for (qsizetype index = 0; index < sequence.size(); ++index) {
                 const bool final = index + 1 == sequence.size();
                 const Binding &trigger = sequence.at(index);
                 QVector<Entry> &entries =
-                    newNodes[static_cast<qsizetype>(node)].entries;
+                    newNodes[static_cast<qsizetype>(node.value)].entries;
                 qsizetype entryIndex = -1;
                 for (qsizetype candidate = 0;
                      candidate < entries.size(); ++candidate) {
@@ -903,7 +979,8 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
                     continue;
                 }
 
-                const quint32 child = static_cast<quint32>(newNodes.size());
+                const NodeId child{
+                    static_cast<quint32>(newNodes.size())};
                 // Appending a node may reallocate newNodes, so never retain a
                 // reference to its parent's entries across this operation.
                 newNodes.append(Node{});
@@ -912,7 +989,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
                 leader.kind = EntryKind::Leader;
                 leader.child = child;
                 QVector<Entry> &parentEntries =
-                    newNodes[static_cast<qsizetype>(node)].entries;
+                    newNodes[static_cast<qsizetype>(node.value)].entries;
                 if (entryIndex < 0) {
                     parentEntries.append(std::move(leader));
                 } else {
@@ -924,7 +1001,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
         }
     };
 
-    installDefinitions(config.root, 0, QStringLiteral("root"));
+    installDefinitions(config.root, NodeId{}, QStringLiteral("root"));
     for (const GhosttyKeybindTable &table : config.tables) {
         if (table.name.isEmpty()) {
             report.records.append(record(
@@ -939,7 +1016,7 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
             continue;
         }
 
-        const quint32 tableRoot = static_cast<quint32>(newNodes.size());
+        const NodeId tableRoot{static_cast<quint32>(newNodes.size())};
         newNodes.append(Node{});
         newTableRoots.insert(table.name, tableRoot);
         installDefinitions(
@@ -947,32 +1024,16 @@ GhosttyKeybindLoadReport GhosttyKeybindSet::load(
             QStringLiteral("table '%1'").arg(table.name));
     }
 
-    qsizetype count = 0;
-    const auto countLeaves = [&newNodes, &count](auto &&self,
-                                                 quint32 node) -> void {
-        if (node >= static_cast<quint32>(newNodes.size())) {
-            return;
-        }
-        for (const Entry &entry :
-             newNodes.at(static_cast<qsizetype>(node)).entries) {
-            if (entry.kind == EntryKind::Leader) self(self, entry.child);
-            else ++count;
-        }
+    forEachReachableLeaf(*data, [&data](const Entry &) {
+        ++data->bindingCount;
+    });
+    return {
+        .program = GhosttyKeybindProgram(std::move(data)),
+        .report = std::move(report),
     };
-    countLeaves(countLeaves, 0);
-    for (quint32 tableRoot : newTableRoots) {
-        countLeaves(countLeaves, tableRoot);
-    }
-
-    nodes_ = std::move(newNodes);
-    tableRoots_ = std::move(newTableRoots);
-    activeTables_.clear();
-    bindingCount_ = count;
-    resetSequence();
-    return report;
 }
 
-GhosttyKeybindSet::PreparedEvent GhosttyKeybindSet::prepareEvent(
+GhosttyKeybindProgram::PreparedEvent GhosttyKeybindProgram::prepareEvent(
     const GhosttyKeybindEvent &event)
 {
     return {
@@ -982,7 +1043,8 @@ GhosttyKeybindSet::PreparedEvent GhosttyKeybindSet::prepareEvent(
     };
 }
 
-void GhosttyKeybindSet::prepareUnicodeCandidates(PreparedEvent &prepared)
+void GhosttyKeybindProgram::prepareUnicodeCandidates(
+    PreparedEvent &prepared)
 {
     if (prepared.unicodeCandidatesReady) {
         return;
@@ -1015,16 +1077,17 @@ void GhosttyKeybindSet::prepareUnicodeCandidates(PreparedEvent &prepared)
     }
 }
 
-GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
-    quint32 node,
+GhosttyKeybindProgram::Lookup GhosttyKeybindProgram::lookup(
+    NodeId node,
     PreparedEvent &prepared) const
 {
-    if (node >= static_cast<quint32>(nodes_.size())) {
+    if (node.value >= static_cast<quint32>(data_->nodes.size())) {
         return {};
     }
     const GhosttyKeybindEvent &event = prepared.source;
     const QVector<Entry> &entries =
-        nodes_.at(static_cast<qsizetype>(node)).entries;
+        data_->nodes.at(
+            static_cast<qsizetype>(node.value)).entries;
     const Qt::KeyboardModifiers normalized = prepared.modifiers;
 
     // Ghostty prioritizes physical identity at every trie level.
@@ -1078,14 +1141,16 @@ GhosttyKeybindSet::Lookup GhosttyKeybindSet::lookup(
     return {};
 }
 
-const GhosttyKeybindSet::Entry *GhosttyKeybindSet::bareCatchAll(
-    quint32 root) const
+const GhosttyKeybindProgram::Entry *GhosttyKeybindProgram::bareCatchAll(
+    NodeId root) const
 {
-    if (root >= static_cast<quint32>(nodes_.size())) {
+    if (root.value
+        >= static_cast<quint32>(data_->nodes.size())) {
         return nullptr;
     }
     for (const Entry &entry :
-         nodes_.at(static_cast<qsizetype>(root)).entries) {
+         data_->nodes.at(
+             static_cast<qsizetype>(root.value)).entries) {
         if (entry.trigger.keyKind == KeyKind::CatchAll
             && entry.trigger.modifiers == Qt::NoModifier) {
             return &entry;
@@ -1094,7 +1159,7 @@ const GhosttyKeybindSet::Entry *GhosttyKeybindSet::bareCatchAll(
     return nullptr;
 }
 
-bool GhosttyKeybindSet::activeCatchAllIgnores() const
+bool GhosttyKeybindState::activeCatchAllIgnores() const
 {
     const auto ignores = [](const Entry &entry) {
         return entry.kind == EntryKind::Leaf
@@ -1109,17 +1174,17 @@ bool GhosttyKeybindSet::activeCatchAllIgnores() const
     };
 
     for (const ActiveTable &table : activeTables_ | std::views::reverse) {
-        if (const Entry *entry = bareCatchAll(table.root)) {
+        if (const Entry *entry = program_.bareCatchAll(table.root)) {
             return ignores(*entry);
         }
     }
-    if (const Entry *entry = bareCatchAll(0)) {
+    if (const Entry *entry = program_.bareCatchAll(NodeId{})) {
         return ignores(*entry);
     }
     return false;
 }
 
-std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
+std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
     int qtKey,
     Qt::KeyboardModifiers modifiers,
     QStringView text) const
@@ -1131,11 +1196,11 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
     });
 }
 
-std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
+std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
     const GhosttyKeybindEvent &event) const
 {
-    PreparedEvent prepared = prepareEvent(event);
-    const Lookup found = lookup(0, prepared);
+    PreparedEvent prepared = GhosttyKeybindProgram::prepareEvent(event);
+    const Lookup found = program_.lookup(NodeId{}, prepared);
     if (found.entry == nullptr || found.entry->kind != EntryKind::Leaf) {
         return std::nullopt;
     }
@@ -1149,26 +1214,27 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindSet::match(
     };
 }
 
-GhosttyKeybindStep GhosttyKeybindSet::advance(
+GhosttyKeybindStep GhosttyKeybindState::advance(
     const GhosttyKeybindEvent &event)
 {
-    PreparedEvent prepared = prepareEvent(event);
+    PreparedEvent prepared = GhosttyKeybindProgram::prepareEvent(event);
     const bool continuing = activeNode_.has_value();
     Lookup found;
     qsizetype matchedTable = -1;
     if (continuing) {
-        found = lookup(*activeNode_, prepared);
+        found = program_.lookup(*activeNode_, prepared);
     } else {
         for (qsizetype index = activeTables_.size(); index > 0; --index) {
             const qsizetype candidate = index - 1;
-            found = lookup(activeTables_.at(candidate).root, prepared);
+            found = program_.lookup(
+                activeTables_.at(candidate).root, prepared);
             if (found.entry != nullptr) {
                 matchedTable = candidate;
                 break;
             }
         }
         if (found.entry == nullptr) {
-            found = lookup(0, prepared);
+            found = program_.lookup(NodeId{}, prepared);
         }
     }
     if (found.entry == nullptr) {
@@ -1223,26 +1289,26 @@ GhosttyKeybindStep GhosttyKeybindSet::advance(
     return result;
 }
 
-bool GhosttyKeybindSet::hasTable(QStringView name) const
+bool GhosttyKeybindState::hasTable(QStringView name) const
 {
-    return tableRoots_.contains(name.toString());
+    return program_.data_->tableRoots.contains(name.toString());
 }
 
-bool GhosttyKeybindSet::canActivateTable(QStringView name) const
+bool GhosttyKeybindState::canActivateTable(QStringView name) const
 {
-    const auto found = tableRoots_.constFind(name.toString());
-    if (found == tableRoots_.cend()
+    const auto found = program_.data_->tableRoots.constFind(name.toString());
+    if (found == program_.data_->tableRoots.cend()
         || activeTables_.size() >= MaximumActiveTables) {
         return false;
     }
     return activeTables_.isEmpty() || activeTables_.constLast().root != *found;
 }
 
-bool GhosttyKeybindSet::activateTable(QStringView name, bool oneShot)
+bool GhosttyKeybindState::activateTable(QStringView name, bool oneShot)
 {
     const QString tableName = name.toString();
-    const auto found = tableRoots_.constFind(tableName);
-    if (found == tableRoots_.cend()
+    const auto found = program_.data_->tableRoots.constFind(tableName);
+    if (found == program_.data_->tableRoots.cend()
         || activeTables_.size() >= MaximumActiveTables
         || (!activeTables_.isEmpty()
             && activeTables_.constLast().root == *found)) {
@@ -1256,7 +1322,7 @@ bool GhosttyKeybindSet::activateTable(QStringView name, bool oneShot)
     return true;
 }
 
-bool GhosttyKeybindSet::deactivateTable() noexcept
+bool GhosttyKeybindState::deactivateTable() noexcept
 {
     if (activeTables_.isEmpty()) {
         return false;
@@ -1265,7 +1331,7 @@ bool GhosttyKeybindSet::deactivateTable() noexcept
     return true;
 }
 
-bool GhosttyKeybindSet::deactivateAllTables() noexcept
+bool GhosttyKeybindState::deactivateAllTables() noexcept
 {
     if (activeTables_.isEmpty()) {
         return false;
@@ -1274,7 +1340,7 @@ bool GhosttyKeybindSet::deactivateAllTables() noexcept
     return true;
 }
 
-QStringList GhosttyKeybindSet::activeTableNames() const
+QStringList GhosttyKeybindState::activeTableNames() const
 {
     QStringList result;
     result.reserve(activeTables_.size());
@@ -1284,7 +1350,7 @@ QStringList GhosttyKeybindSet::activeTableNames() const
     return result;
 }
 
-void GhosttyKeybindSet::resetSequence() noexcept
+void GhosttyKeybindState::resetSequence() noexcept
 {
     activeNode_.reset();
     queuedEvents_.clear();

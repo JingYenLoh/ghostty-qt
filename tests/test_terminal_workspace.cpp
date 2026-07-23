@@ -1,6 +1,8 @@
 #include "ghostty_application_keybindings.h"
 #include "launch_options.h"
+#include "terminal_cell_metrics.h"
 #include "terminal_controller.h"
+#include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
@@ -297,7 +299,11 @@ class TerminalWorkspaceTest : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
+    void initializationSurvivesReentrantConfigurationObservers();
+    void tabPublicationMayDestroyWorkspace();
     void deferredInitialSessionCancelsAndScopesToFirstPane();
+    void keybindProgramStorageIsSharedWhilePaneStateIsLocal();
+    void newerSameProgramWorkspaceUpdateWinsReentry();
     void runningProgramPromptsThenResolvesOnceOnExit();
     void distinguishesWindowCloseFromApplicationQuit();
     void configuredCloseChainSurvivesSynchronousWorkspaceDestruction();
@@ -321,6 +327,7 @@ private Q_SLOTS:
     void readOnlyBlocksUiActivityLatchAndProtectsClose();
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
     void overlayComponentsShareOneLifecycle();
+    void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
@@ -418,6 +425,138 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
         third.pane->findChild<TerminalController *>();
     QVERIFY(thirdController != nullptr);
     QVERIFY(thirdController->sessionStarted());
+}
+
+void TerminalWorkspaceTest::
+initializationSurvivesReentrantConfigurationObservers()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions initial = baseOptions();
+    initial.program = {QStringLiteral("/bin/true")};
+    initial.hold = true;
+    initial.windowShowTabBar = WindowShowTabBar::Auto;
+    TerminalWorkspace::setDefaultLaunchOptions(initial);
+
+    const GhosttyKeybindProgram initialProgram =
+        GhosttyKeybindProgram::compile(initial.keybindSource).program;
+    LaunchOptions requested = initial;
+    requested.fontSize = 10.0;
+    requested.windowShowTabBar = WindowShowTabBar::Always;
+
+    {
+        auto *workspace = new TerminalWorkspace;
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged,
+                this, [workspace] { delete workspace; });
+
+        QVERIFY(workspace->initialize(
+            requested, TerminalSessionStartMode::Deferred, {},
+            initialProgram));
+        QVERIFY(guard.isNull());
+    }
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    LaunchOptions newer = initial;
+    newer.fontSize = 20.0;
+    newer.windowShowTabBar = WindowShowTabBar::Never;
+    newer.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+j=ignore"),
+    });
+    const GhosttyKeybindProgram newerProgram =
+        GhosttyKeybindProgram::compile(newer.keybindSource).program;
+
+    bool nested = false;
+    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged,
+            &workspace, [&] {
+                if (nested) return;
+                nested = true;
+                workspace.applyLaunchOptions(newer, newerProgram);
+            });
+
+    QVERIFY(workspace.initialize(
+        requested, TerminalSessionStartMode::Immediate, {}, initialProgram));
+    QVERIFY(nested);
+    QCOMPARE(workspace.effectiveLaunchOptions(), newer);
+    QVERIFY(workspace.keybindProgram().isSameGeneration(newerProgram));
+
+    const CurrentTabProbe pane = currentTabProbe(workspace);
+    QVERIFY(pane.pane != nullptr);
+    QVERIFY(pane.pane->keybindProgram().isSameGeneration(newerProgram));
+    QCOMPARE(pane.pane->fontPointSize(), newer.fontSize);
+    TerminalController *const controller =
+        pane.pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QVERIFY(controller->launchGeometry().has_value());
+    const TerminalCellMetrics metrics = terminalCellMetrics(
+        newer.fontFamily, newer.fontSize);
+    QCOMPARE(
+        *controller->launchGeometry(),
+        terminalSessionGeometryForViewport(
+            workspace.width(), workspace.height(),
+            metrics.cellWidth, metrics.cellHeight, 1.0));
+}
+
+void TerminalWorkspaceTest::tabPublicationMayDestroyWorkspace()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.windowShowTabBar = WindowShowTabBar::Auto;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const auto initializedWorkspace = [&options] {
+        auto *workspace = new TerminalWorkspace;
+        workspace->setSize(QSizeF(640.0, 360.0));
+        if (!workspace->initialize(options)) {
+            delete workspace;
+            return static_cast<TerminalWorkspace *>(nullptr);
+        }
+        return workspace;
+    };
+
+    {
+        auto *workspace = new TerminalWorkspace;
+        workspace->setSize(QSizeF(640.0, 360.0));
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted,
+                this, [workspace] { delete workspace; });
+        QVERIFY(workspace->initialize(
+            options, TerminalSessionStartMode::Deferred));
+        QVERIFY(guard.isNull());
+    }
+
+    {
+        TerminalWorkspace *workspace = initializedWorkspace();
+        QVERIFY(workspace != nullptr);
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace->tabModel(), &QAbstractItemModel::rowsInserted,
+                this, [workspace] { delete workspace; });
+        workspace->newTab();
+        QVERIFY(guard.isNull());
+    }
+
+    {
+        TerminalWorkspace *workspace = initializedWorkspace();
+        QVERIFY(workspace != nullptr);
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                this, [workspace] { delete workspace; });
+        workspace->newTab();
+        QVERIFY(guard.isNull());
+    }
+
+    {
+        TerminalWorkspace *workspace = initializedWorkspace();
+        QVERIFY(workspace != nullptr);
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace, &TerminalWorkspace::tabBarVisibleChanged,
+                this, [workspace] { delete workspace; });
+        workspace->newTab();
+        QVERIFY(guard.isNull());
+    }
 }
 
 void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
@@ -543,6 +682,153 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
     QVERIFY(thirdController != nullptr);
     QVERIFY(thirdController->sessionStarted());
     QVERIFY(!firstController->sessionStarted());
+}
+
+void TerminalWorkspaceTest::
+keybindProgramStorageIsSharedWhilePaneStateIsLocal()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    const auto unicode = [](quint32 codepoint, quint8 modifiers = 0) {
+        return GhosttyKeybindTrigger{
+            .kind = GhosttyKeybindKeyKind::Unicode,
+            .unicodeCodepoint = codepoint,
+            .modifiers = modifiers,
+        };
+    };
+    GhosttyKeybindConfig config;
+    config.tables = {GhosttyKeybindTable{
+        .name = QStringLiteral("modal"),
+        .bindings = {GhosttyKeybindDefinition{
+            .sequence = {unicode('r', GhosttyKeybindCtrl)},
+            .actions = {QStringLiteral("ignore")},
+        }},
+    }};
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(config));
+    const GhosttyKeybindProgram firstProgram =
+        GhosttyKeybindProgram::compile(options.keybindSource).program;
+    QVERIFY(firstProgram.isAvailable());
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(
+        options, TerminalSessionStartMode::Deferred, {}, firstProgram));
+    QVERIFY(workspace.keybindProgram().isSameGeneration(firstProgram));
+
+    const CurrentTabProbe initial = currentTabProbe(workspace);
+    QVERIFY(initial.pane != nullptr);
+    workspace.newTab();
+    const CurrentTabProbe laterTab = currentTabProbe(workspace);
+    const CurrentTabProbe laterSplit = splitRightProbe(workspace);
+    QVERIFY(laterTab.pane != nullptr);
+    QVERIFY(laterSplit.pane != nullptr);
+
+    const QList<TerminalPane *> firstGenerationPanes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(firstGenerationPanes.size(), 3);
+    for (TerminalPane *pane : firstGenerationPanes) {
+        QVERIFY(pane->keybindProgram().isSameGeneration(firstProgram));
+        QVERIFY(pane->keybindProgram().isSameGeneration(
+            workspace.keybindProgram()));
+    }
+
+    // The immutable program is shared, but named-table state belongs to the
+    // pane that activated it. The same trigger therefore resolves only on
+    // that pane.
+    QVERIFY(initial.pane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:modal")));
+    QCOMPARE(initial.pane->activeKeyTables(),
+             QStringList({QStringLiteral("modal")}));
+    QVERIFY(laterTab.pane->activeKeyTables().isEmpty());
+    QVERIFY(laterSplit.pane->activeKeyTables().isEmpty());
+
+    LaunchOptions reloadedOptions = options;
+    GhosttyKeybindConfig reloadedConfig;
+    reloadedConfig.root = {GhosttyKeybindDefinition{
+        .sequence = {unicode('z', GhosttyKeybindCtrl)},
+        .actions = {QStringLiteral("reset_font_size")},
+    }};
+    reloadedOptions.keybindSource =
+        GhosttyKeybindSource::structured(std::move(reloadedConfig));
+    const GhosttyKeybindProgram reloadedProgram =
+        GhosttyKeybindProgram::compile(reloadedOptions.keybindSource).program;
+    QVERIFY(!reloadedProgram.isSameGeneration(firstProgram));
+
+    workspace.applyLaunchOptions(reloadedOptions, reloadedProgram);
+    QVERIFY(workspace.keybindProgram().isSameGeneration(reloadedProgram));
+    QVERIFY(!workspace.keybindProgram().isSameGeneration(firstProgram));
+    for (TerminalPane *pane : firstGenerationPanes) {
+        QVERIFY(pane->keybindProgram().isSameGeneration(reloadedProgram));
+        QVERIFY(!pane->keybindProgram().isSameGeneration(firstProgram));
+    }
+    QVERIFY(initial.pane->activeKeyTables().isEmpty());
+
+    workspace.newTab();
+    const CurrentTabProbe reloadedTab = currentTabProbe(workspace);
+    const CurrentTabProbe reloadedSplit = splitRightProbe(workspace);
+    QVERIFY(reloadedTab.pane != nullptr);
+    QVERIFY(reloadedSplit.pane != nullptr);
+
+    const QList<TerminalPane *> reloadedPanes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(reloadedPanes.size(), 5);
+    for (TerminalPane *pane : reloadedPanes) {
+        QVERIFY(pane->keybindProgram().isSameGeneration(reloadedProgram));
+        QVERIFY(pane->keybindProgram().isSameGeneration(
+            workspace.keybindProgram()));
+        QVERIFY(!pane->keybindProgram().isSameGeneration(firstProgram));
+    }
+}
+
+void TerminalWorkspaceTest::newerSameProgramWorkspaceUpdateWinsReentry()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.windowShowTabBar = WindowShowTabBar::Auto;
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(options.keybindSource).program;
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(
+        options, TerminalSessionStartMode::Deferred, {}, program));
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.tabBarVisible());
+
+    LaunchOptions outer = options;
+    outer.fontSize = 14.0;
+    outer.windowShowTabBar = WindowShowTabBar::Never;
+    LaunchOptions newer = options;
+    newer.fontSize = 19.0;
+    newer.windowShowTabBar = WindowShowTabBar::Always;
+
+    bool nested = false;
+    connect(&workspace, &TerminalWorkspace::tabBarVisibleChanged,
+            &workspace, [&] {
+                if (nested) return;
+                nested = true;
+                workspace.applyLaunchOptions(newer, program);
+            });
+
+    workspace.applyLaunchOptions(outer, program);
+
+    QVERIFY(nested);
+    QCOMPARE(workspace.effectiveLaunchOptions(), newer);
+    QVERIFY(workspace.keybindProgram().isSameGeneration(program));
+    const QList<TerminalPane *> panes =
+        workspace.findChildren<TerminalPane *>();
+    QCOMPARE(panes.size(), 2);
+    for (const TerminalPane *pane : panes) {
+        QVERIFY(pane->keybindProgram().isSameGeneration(program));
+        QCOMPARE(pane->fontPointSize(), newer.fontSize);
+    }
 }
 
 void TerminalWorkspaceTest::runningProgramPromptsThenResolvesOnceOnExit()
@@ -2166,6 +2452,106 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
                         thirdName, Qt::FindDirectChildrenOnly)
                     == nullptr);
         }
+    }
+}
+
+void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions initial = baseOptions();
+    initial.program = {QStringLiteral("/bin/true")};
+    initial.hold = true;
+    initial.fontSize = 10.0;
+    initial.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+a=ignore"),
+    });
+    TerminalWorkspace::setDefaultLaunchOptions(initial);
+
+    QQmlEngine engine;
+    QQmlComponent overlay(&engine);
+    overlay.setData(
+        QByteArrayLiteral(
+            "import QtQuick\n"
+            "import GhosttyQt 1.0\n"
+            "Item {\n"
+            "    required property TerminalPane terminalPane\n"
+            "    Component.onCompleted: {\n"
+            "        if (terminalPane.objectName.length === 0)\n"
+            "            terminalPane.objectName = 'reload-during-overlay'\n"
+            "    }\n"
+            "}\n"),
+        QUrl(QStringLiteral("inmemory:/ReloadingOverlay.qml")));
+    QTRY_VERIFY_WITH_TIMEOUT(overlay.isReady() || overlay.isError(), 1000);
+    QVERIFY2(overlay.isReady(), qPrintable(overlay.errorString()));
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(initial));
+    TerminalPane *const initialPane =
+        workspace.findChild<TerminalPane *>();
+    QVERIFY(initialPane != nullptr);
+    initialPane->setObjectName(QStringLiteral("existing-pane"));
+    workspace.setSearchOverlayComponent(&overlay);
+
+    LaunchOptions pendingOptions = initial;
+    pendingOptions.fontSize = 18.0;
+    pendingOptions.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+b=ignore"),
+    });
+    GhosttyKeybindProgram pendingProgram =
+        GhosttyKeybindProgram::compile(
+            pendingOptions.keybindSource).program;
+    int reloadCount = 0;
+
+    connect(&workspace, &QQuickItem::childrenChanged,
+            &workspace, [&] {
+                for (TerminalPane *pane :
+                     workspace.findChildren<TerminalPane *>()) {
+                    if (pane->property("_ghosttyQtReloadHook").toBool()) {
+                        continue;
+                    }
+                    pane->setProperty("_ghosttyQtReloadHook", true);
+                    connect(pane, &QObject::objectNameChanged,
+                            &workspace,
+                            [&, paneGuard = QPointer(pane)](
+                                const QString &name) {
+                                if (paneGuard == nullptr
+                                    || name
+                                        != QStringLiteral(
+                                            "reload-during-overlay")) {
+                                    return;
+                                }
+                                ++reloadCount;
+                                workspace.applyLaunchOptions(
+                                    pendingOptions, pendingProgram);
+                            });
+                }
+            });
+
+    workspace.newTab();
+    QCOMPARE(reloadCount, 1);
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        QCOMPARE(pane->fontPointSize(), pendingOptions.fontSize);
+        QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
+        pane->setObjectName(QStringLiteral("existing-pane"));
+    }
+
+    pendingOptions.fontSize = 22.0;
+    pendingOptions.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("ctrl+c=ignore"),
+    });
+    pendingProgram = GhosttyKeybindProgram::compile(
+        pendingOptions.keybindSource).program;
+    workspace.splitRight();
+
+    QCOMPARE(reloadCount, 2);
+    QCOMPARE(workspace.findChildren<TerminalPane *>().size(), 3);
+    QVERIFY(workspace.keybindProgram().isSameGeneration(pendingProgram));
+    for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+        QCOMPARE(pane->fontPointSize(), pendingOptions.fontSize);
+        QVERIFY(pane->keybindProgram().isSameGeneration(pendingProgram));
     }
 }
 

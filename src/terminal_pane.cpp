@@ -696,11 +696,16 @@ TerminalPane::TerminalPane(
     QQuickItem *parent,
     std::optional<TerminalSessionGeometry> initialGeometry,
     TerminalSessionStartMode startMode,
-    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
+    std::optional<GhosttyKeybindProgram> keybindProgram)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
     , splitAppearance_(options.splitAppearance)
+    , keybinds_(keybindProgram.has_value()
+                    ? std::move(*keybindProgram)
+                    : GhosttyKeybindProgram::compile(
+                          options.keybindSource).program)
     , defaultFontPointSize_(options.fontSize)
     , resizeOverlayStartupSuppressionEnds_(
           std::chrono::steady_clock::now()
@@ -739,7 +744,6 @@ TerminalPane::TerminalPane(
         && options.appearance.cursorColor.color.isValid()
         ? options.appearance.cursorColor.color
         : options.appearance.foregroundColor;
-    (void) keybinds_.load(options.keybindSource);
     cursorTimer_ = new QTimer(this);
     cursorTimer_->setInterval(600);
     connect(cursorTimer_, &QTimer::timeout, this, [this] {
@@ -1275,6 +1279,28 @@ LaunchOptions TerminalPane::windowLaunchOptions(
 
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
+    applyRuntimeOptions(
+        options,
+        GhosttyKeybindProgram::compile(options.keybindSource).program);
+}
+
+void TerminalPane::applyRuntimeOptions(
+    const LaunchOptions &options,
+    GhosttyKeybindProgram keybindProgram)
+{
+    const RevisionCounter::Value revision = runtimeOptionsRevision_.advance();
+    const QPointer<TerminalPane> guard(this);
+    beginKeyEventDeferral();
+    const auto keyEventDeferralGuard = qScopeGuard([guard] {
+        if (guard != nullptr) guard->endKeyEventDeferral();
+    });
+    const auto stillCurrentUpdate =
+        [guard, revision, keybindProgram] {
+        return guard != nullptr
+            && guard->runtimeOptionsRevision_.isCurrent(revision)
+            && guard->keybindProgram().isSameGeneration(keybindProgram);
+    };
+
     LaunchOptions updated = options_;
     updated.fontFamily = options.fontFamily;
     updated.fontSize = options.fontSize;
@@ -1290,11 +1316,14 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
     updated.linkPreviews = options.linkPreviews;
     updated.resizeOverlay = options.resizeOverlay;
     updated.keybindSource = options.keybindSource;
-    // options_ is the configured snapshot; the controller owns the mutable
-    // pane-local policy. Reapplying an unchanged snapshot must still replace
-    // a runtime toggle.
-    controller_->setMouseReportingEnabled(updated.mouseReporting);
-    if (updated == options_) {
+
+    const bool keybindGenerationChanged =
+        !keybinds_.program().isSameGeneration(keybindProgram);
+    if (updated == options_ && !keybindGenerationChanged) {
+        // options_ is the configured snapshot; the controller owns this
+        // mutable pane-local policy. Reapplying an unchanged snapshot must
+        // still replace an action-originated toggle.
+        controller_->setMouseReportingEnabled(updated.mouseReporting);
         return;
     }
 
@@ -1341,8 +1370,42 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
+
+    quint64 previousSequenceToken = 0;
+    bool keyTablesChanged = false;
+    if (keybindGenerationChanged) {
+        previousSequenceToken = std::exchange(activeSequenceToken_, 0);
+        keyTablesChanged = keybinds_.hasActiveTables();
+        (void) keybinds_.replaceProgram(keybindProgram);
+    }
+
+    // The pane snapshot and matcher are now authoritative. Queue the worker
+    // policy before publishing any callback that may execute a new binding;
+    // the controller's worker relay is connected before external observers.
+    if (previousRuntime != updatedRuntime) {
+        controller_->applyRuntimeOptions(updatedRuntime);
+        if (guard == nullptr) return;
+    }
+    if (keyTablesChanged) {
+        Q_EMIT activeKeyTablesChanged();
+        if (guard == nullptr) return;
+    }
+    // Always release the old worker staging, even when an earlier observer
+    // installed a newer generation. A newly staged token safely supersedes
+    // this one and makes the old resolution a no-op.
+    if (previousSequenceToken != 0) {
+        guard->controller_->resolveSequence(
+            previousSequenceToken, TerminalSequenceResolution::Drop);
+        if (guard == nullptr) return;
+    }
+    if (!stillCurrentUpdate()) return;
+
+    controller_->setMouseReportingEnabled(options_.mouseReporting);
+    if (!stillCurrentUpdate()) return;
+
     if (previousResizeOverlay.position != options_.resizeOverlay.position) {
         Q_EMIT resizeOverlayRectChanged();
+        if (!stillCurrentUpdate()) return;
     }
     if (options_.resizeOverlay.mode == ResizeOverlayMode::Never) {
         cancelPendingResizeOverlay();
@@ -1352,47 +1415,42 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
                    != options_.resizeOverlay.duration) {
         restartResizeOverlayTimer();
     }
-    if (activeSequenceToken_ != 0) {
-        controller_->resolveSequence(activeSequenceToken_,
-                                     TerminalSequenceResolution::Drop);
-        activeSequenceToken_ = 0;
-    }
-    const QStringList previousKeyTables = keybinds_.activeTableNames();
-    GhosttyKeybindSet candidate;
-    (void) candidate.load(options_.keybindSource);
-    keybinds_ = std::move(candidate);
-    if (previousKeyTables != keybinds_.activeTableNames()) {
-        Q_EMIT activeKeyTablesChanged();
-    }
+    if (!stillCurrentUpdate()) return;
     if (linkUrlChanged && !options.linkUrl) {
         if (hyperlinkPressKind_ == TerminalLinkKind::Regex) {
             cancelHyperlinkPress();
+            if (!stillCurrentUpdate()) return;
         }
         if (pendingActivationKind_ == TerminalLinkKind::Regex) {
             cancelPendingHyperlinkActivation();
+            if (!stillCurrentUpdate()) return;
         }
     }
     if (linkUrlChanged) {
         clearHyperlinkHover();
-    }
-    if (previousRuntime != updatedRuntime) {
-        controller_->applyRuntimeOptions(updatedRuntime);
+        if (!stillCurrentUpdate()) return;
     }
     if (linkUrlChanged) {
         recomputeHyperlinkHover();
+        if (!stillCurrentUpdate()) return;
     }
 
     if (metricsChanged) {
         updateMetrics();
+        if (!stillCurrentUpdate()) return;
         updateTerminalSize();
+        if (!stillCurrentUpdate()) return;
     }
     if (linkPreviewModeChanged || metricsChanged) {
         refreshLinkPreview();
+        if (!stillCurrentUpdate()) return;
         reconcileReleasedLinkPreview(previewWasPointerCaptured);
+        if (!stillCurrentUpdate()) return;
     }
     update();
     if (pointSizeChanged) {
         Q_EMIT fontPointSizeChanged();
+        if (!stillCurrentUpdate()) return;
     }
 }
 
@@ -2308,9 +2366,77 @@ TerminalPane::currentSessionGeometry(
         devicePixelRatio);
 }
 
+void TerminalPane::beginKeyEventDeferral() noexcept
+{
+    ++keyEventDeferralDepth_;
+}
+
+void TerminalPane::endKeyEventDeferral()
+{
+    Q_ASSERT(keyEventDeferralDepth_ > 0);
+    --keyEventDeferralDepth_;
+    if (keyEventDeferralDepth_ == 0 && keyEventDispatchDepth_ == 0) {
+        drainDeferredKeyEvents();
+    }
+}
+
+void TerminalPane::beginKeyEventDispatch() noexcept
+{
+    ++keyEventDispatchDepth_;
+}
+
+void TerminalPane::endKeyEventDispatch()
+{
+    Q_ASSERT(keyEventDispatchDepth_ > 0);
+    --keyEventDispatchDepth_;
+    if (keyEventDispatchDepth_ == 0 && keyEventDeferralDepth_ == 0) {
+        drainDeferredKeyEvents();
+    }
+}
+
+bool TerminalPane::deferKeyEventIfNeeded(const QKeyEvent &event)
+{
+    if (keyEventDeferralDepth_ == 0) return false;
+    deferKeyEvent(event);
+    return true;
+}
+
+void TerminalPane::deferKeyEvent(const QKeyEvent &event)
+{
+    deferredKeyEvents_.push_back(KeyEventSnapshot::capture(event));
+}
+
+void TerminalPane::drainDeferredKeyEvents()
+{
+    if (keyEventDeferralDepth_ != 0 || keyEventDispatchDepth_ != 0
+        || drainingDeferredKeyEvents_) {
+        return;
+    }
+
+    const QPointer<TerminalPane> guard(this);
+    drainingDeferredKeyEvents_ = true;
+    while (guard != nullptr && guard->keyEventDeferralDepth_ == 0
+           && !guard->deferredKeyEvents_.empty()) {
+        KeyEventSnapshot input =
+            std::move(guard->deferredKeyEvents_.front());
+        guard->deferredKeyEvents_.pop_front();
+        QKeyEvent replay = input.replay();
+        QCoreApplication::sendEvent(guard, &replay);
+    }
+    if (guard != nullptr) guard->drainingDeferredKeyEvents_ = false;
+}
+
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    if (deferKeyEventIfNeeded(*event)) {
+        event->accept();
+        return;
+    }
     const QPointer<TerminalPane> guard(this);
+    beginKeyEventDispatch();
+    const auto dispatchGuard = qScopeGuard([guard] {
+        if (guard != nullptr) guard->endKeyEventDispatch();
+    });
     const KeyHandling handling = handleShortcut(event, guard);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
@@ -2323,6 +2449,10 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     // chord's non-modifier key refreshes link eligibility. This keeps
     // copy_url_to_clipboard synchronous within Ghostty action chains.
     updateHyperlinkModifiers(modifiersAfterKeyEvent(event, true));
+    if (guard == nullptr) {
+        event->accept();
+        return;
+    }
     if (handling != KeyHandling::PassThrough) {
         if (handling == KeyHandling::ConsumePressAndRelease) {
             consumedKeys_.insert(keyEventIdentity(event));
@@ -2337,7 +2467,20 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
 
 void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 {
+    if (deferKeyEventIfNeeded(*event)) {
+        event->accept();
+        return;
+    }
+    const QPointer<TerminalPane> guard(this);
+    beginKeyEventDispatch();
+    const auto dispatchGuard = qScopeGuard([guard] {
+        if (guard != nullptr) guard->endKeyEventDispatch();
+    });
     updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
+    if (guard == nullptr) {
+        event->accept();
+        return;
+    }
     if (consumedKeys_.remove(keyEventIdentity(event))) {
         event->accept();
         return;
@@ -2349,7 +2492,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
 TerminalPane::KeyHandling TerminalPane::handleShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard)
 {
-    if (options_.keybindSource.isAvailable()) {
+    if (keybinds_.program().isAvailable()) {
         return handleConfiguredShortcut(event, guard);
     }
 
@@ -2442,6 +2585,38 @@ TerminalPane::KeyHandling TerminalPane::handleShortcut(
     return KeyHandling::PassThrough;
 }
 
+bool TerminalPane::resolveActiveSequence(
+    TerminalSequenceResolution resolution,
+    std::optional<TerminalKeyInput> current)
+{
+    return resolveSequenceToken(
+        std::exchange(activeSequenceToken_, 0), resolution,
+        std::move(current));
+}
+
+bool TerminalPane::resolveSequenceToken(
+    quint64 token,
+    TerminalSequenceResolution resolution,
+    std::optional<TerminalKeyInput> current)
+{
+    if (token == 0) return false;
+
+    controller_->resolveSequence(token, resolution, current);
+    return true;
+}
+
+bool TerminalPane::resolveExecutingSequence(
+    TerminalSequenceResolution resolution,
+    std::optional<TerminalKeyInput> current)
+{
+    if (executingSequenceTokens_.isEmpty()) {
+        return resolveActiveSequence(resolution, std::move(current));
+    }
+    return resolveSequenceToken(
+        std::exchange(executingSequenceTokens_.last(), 0), resolution,
+        std::move(current));
+}
+
 TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     QKeyEvent *event, const QPointer<TerminalPane> &guard)
 {
@@ -2454,6 +2629,53 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     };
     const TerminalKeyInput currentInput = terminalKeyInput(event);
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
+
+    if (step.kind == GhosttyKeybindStepKind::Leader) {
+        const GhosttyKeybindProgram matchedProgram = keybinds_.program();
+        if (activeSequenceToken_ == 0) {
+            activeSequenceToken_ = controller_->beginSequence();
+        }
+        const quint64 token = activeSequenceToken_;
+        const bool tokenStillOwned =
+            controller_->stageSequenceKey(token, currentInput);
+        if (guard == nullptr) return KeyHandling::ConsumePress;
+
+        // A one-shot table is removed by advance(). Publish that transition
+        // only after the leader is staged, so a synchronous continuation can
+        // never resolve worker bytes that have not been delivered yet.
+        if (step.activeTablesChanged) {
+            Q_EMIT activeKeyTablesChanged();
+            if (guard == nullptr) return KeyHandling::ConsumePress;
+        }
+
+        const bool sameProgram =
+            guard->keybindProgram().isSameGeneration(matchedProgram);
+        if (!tokenStillOwned && sameProgram
+            && guard->activeSequenceToken_ == token) {
+            guard->activeSequenceToken_ = 0;
+            guard->keybinds_.resetSequence();
+        }
+        return KeyHandling::ConsumePress;
+    }
+
+    // A terminal step no longer owns the mutable traversal. Detach its token
+    // before callbacks so a reentrant leader receives a fresh token and the
+    // outer step can resolve only the staging that it actually matched.
+    const bool completesSequence =
+        step.kind == GhosttyKeybindStepKind::InvalidSequence
+        || step.kind == GhosttyKeybindStepKind::IgnoredSequence
+        || step.kind == GhosttyKeybindStepKind::Binding;
+    if (completesSequence) beginKeyEventDeferral();
+    const auto keyEventDeferralGuard = qScopeGuard(
+        [guard, completesSequence] {
+            if (completesSequence && guard != nullptr) {
+                guard->endKeyEventDeferral();
+            }
+        });
+    const quint64 matchedSequenceToken = completesSequence
+        ? std::exchange(activeSequenceToken_, 0)
+        : 0;
+
     if (step.activeTablesChanged) {
         Q_EMIT activeKeyTablesChanged();
         if (guard == nullptr) {
@@ -2465,28 +2687,18 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     case GhosttyKeybindStepKind::Unmatched:
         return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::Leader:
-        if (activeSequenceToken_ == 0) {
-            activeSequenceToken_ = controller_->stageSequenceKey(currentInput);
-        } else {
-            controller_->stageSequenceKey(activeSequenceToken_, currentInput);
-        }
-        return KeyHandling::ConsumePress;
+        Q_UNREACHABLE_RETURN(KeyHandling::PassThrough);
     case GhosttyKeybindStepKind::InvalidSequence:
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(
-                activeSequenceToken_,
+        if (resolveSequenceToken(
+                matchedSequenceToken,
                 TerminalSequenceResolution::FlushAndSendCurrent,
-                currentInput);
-            activeSequenceToken_ = 0;
+                currentInput)) {
             return KeyHandling::ConsumePress;
         }
         return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::IgnoredSequence:
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Drop);
-            activeSequenceToken_ = 0;
-        }
+        (void) resolveSequenceToken(
+            matchedSequenceToken, TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePress;
     case GhosttyKeybindStepKind::Binding:
         break;
@@ -2498,22 +2710,27 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     if (step.match.all || step.match.global) {
         const GhosttyActionInputEffect effect =
             step.match.actionChain.inputEffect;
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Drop);
-            activeSequenceToken_ = 0;
-        }
         // Closing takes priority over ignore so the corresponding release can
         // never reach a surface that the complete broad chain may destroy.
         const KeyHandling handling = effect == GhosttyActionInputEffect::Ignore
             ? KeyHandling::ConsumePress
             : KeyHandling::ConsumePressAndRelease;
+        (void) resolveSequenceToken(
+            matchedSequenceToken, TerminalSequenceResolution::Drop);
+        if (guard == nullptr) return handling;
         // Emit last: a close action may synchronously destroy the originating
         // workspace, and therefore this pane, through an approval observer.
         // All pane state needed for the event has already been finalized.
         Q_EMIT broadActionsRequested(step.match.actionChain);
         return handling;
     }
+
+    executingSequenceTokens_.append(matchedSequenceToken);
+    const auto sequenceExecutionGuard = qScopeGuard([guard] {
+        if (guard != nullptr && !guard->executingSequenceTokens_.isEmpty()) {
+            guard->executingSequenceTokens_.removeLast();
+        }
+    });
 
     bool performed = false;
     for (const GhosttyCompiledAction &entry :
@@ -2533,11 +2750,7 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // deliberately not a closing action in the pinned implementation.
     if (performed && step.match.actionChain.inputEffect
             == GhosttyActionInputEffect::ClosingAction) {
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Drop);
-            activeSequenceToken_ = 0;
-        }
+        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePressAndRelease;
     }
     // Ghostty's ignore action suppresses encoding even on an unconsumed
@@ -2546,38 +2759,24 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     // independently of whether an action happened to change state.
     if (performed && step.match.actionChain.inputEffect
             == GhosttyActionInputEffect::Ignore) {
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Drop);
-            activeSequenceToken_ = 0;
-        }
+        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePress;
     }
     if (step.match.performable && !performed) {
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(
-                activeSequenceToken_,
+        if (resolveExecutingSequence(
                 TerminalSequenceResolution::FlushAndSendCurrent,
-                currentInput);
-            activeSequenceToken_ = 0;
+                currentInput)) {
             return KeyHandling::ConsumePress;
         }
         return KeyHandling::PassThrough;
     }
     if (step.match.consumed) {
-        if (activeSequenceToken_ != 0) {
-            controller_->resolveSequence(activeSequenceToken_,
-                                         TerminalSequenceResolution::Drop);
-            activeSequenceToken_ = 0;
-        }
+        (void) resolveExecutingSequence(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePressAndRelease;
     }
-    if (activeSequenceToken_ != 0) {
-        controller_->resolveSequence(
-            activeSequenceToken_,
+    if (resolveExecutingSequence(
             TerminalSequenceResolution::FlushAndSendCurrent,
-            currentInput);
-        activeSequenceToken_ = 0;
+            currentInput)) {
         return KeyHandling::ConsumePress;
     }
     return KeyHandling::PassThrough;
@@ -2840,13 +3039,11 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const PaneAction::EndKeySequence &) {
-                keybinds_.resetSequence();
-                if (activeSequenceToken_ != 0) {
-                    controller_->resolveSequence(
-                        activeSequenceToken_,
-                        TerminalSequenceResolution::Flush);
-                    activeSequenceToken_ = 0;
+                if (executingSequenceTokens_.isEmpty()) {
+                    keybinds_.resetSequence();
                 }
+                (void) resolveExecutingSequence(
+                    TerminalSequenceResolution::Flush);
                 return true;
             },
             [this](const PaneAction::CloseWindow &) {
@@ -3448,8 +3645,8 @@ void TerminalPane::refreshLinkPreview()
     }
     linkPreviewPointerCaptured_ = pointerCaptured;
     if (changed) {
-        Q_EMIT linkPreviewChanged();
         update();
+        Q_EMIT linkPreviewChanged();
     }
 }
 
@@ -3496,11 +3693,11 @@ void TerminalPane::clearHyperlinkDecoration()
     }
     linkPreviewPointerCaptured_ = false;
     unsetCursor();
-    if (previewChanged) {
-        Q_EMIT linkPreviewChanged();
-    }
     if (hadHighlight || previewChanged) {
         update();
+    }
+    if (previewChanged) {
+        Q_EMIT linkPreviewChanged();
     }
 }
 

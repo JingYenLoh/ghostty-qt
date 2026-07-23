@@ -13,6 +13,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 // A flattened `keybind = ...` entry can be syntactically valid Ghostty
@@ -51,9 +52,119 @@ struct GhosttyKeybindLoadReport {
     [[nodiscard]] int count(GhosttyKeybindEntryDisposition disposition) const;
 };
 
+class GhosttyKeybindState;
+struct GhosttyKeybindCompilation;
+struct GhosttyKeybindEvent;
+
+// One immutable, cheaply copied keybinding generation. All application and
+// pane matchers may share the same storage while keeping traversal and named
+// table state local to their owning surface.
+class GhosttyKeybindProgram final {
+public:
+    GhosttyKeybindProgram();
+
+    [[nodiscard]] static GhosttyKeybindCompilation compile(
+        const QStringList &values);
+    [[nodiscard]] static GhosttyKeybindCompilation compile(
+        const GhosttyKeybindConfig &config);
+    [[nodiscard]] static GhosttyKeybindCompilation compile(
+        const GhosttyKeybindSource &source);
+
+    [[nodiscard]] qsizetype size() const noexcept;
+    [[nodiscard]] bool isEmpty() const noexcept { return size() == 0; }
+    [[nodiscard]] bool isAvailable() const noexcept;
+    [[nodiscard]] QStringList serializedActions() const;
+    // Every compile operation creates a distinct generation, even when its
+    // input is structurally equal to an earlier one.
+    [[nodiscard]] bool isSameGeneration(
+        const GhosttyKeybindProgram &other) const noexcept;
+
+private:
+    friend class GhosttyKeybindState;
+
+    struct NodeId {
+        quint32 value = 0;
+
+        bool operator==(const NodeId &) const = default;
+    };
+
+    enum class KeyKind {
+        Physical,
+        Unicode,
+        CatchAll,
+    };
+
+    struct Binding {
+        KeyKind keyKind = KeyKind::Unicode;
+        int qtKey = Qt::Key_unknown;
+        quint32 nativeScanCode = 0;
+        bool keypad = false;
+        QString foldedUnicode;
+        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+    };
+
+    enum class EntryKind {
+        Leader,
+        Leaf,
+    };
+
+    struct Entry {
+        Binding trigger;
+        EntryKind kind = EntryKind::Leaf;
+        NodeId child;
+        GhosttyCompiledActionChain actionChain;
+        bool consumed = true;
+        bool all = false;
+        bool global = false;
+        bool performable = false;
+    };
+
+    struct Node {
+        QVector<Entry> entries;
+    };
+
+    struct Lookup {
+        const Entry *entry = nullptr;
+        bool physical = false;
+    };
+
+    struct PreparedEvent {
+        const GhosttyKeybindEvent &source;
+        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+        std::array<QString, 2> foldedUnicodeCandidates;
+        std::size_t candidateCount = 0;
+        bool unicodeCandidatesReady = false;
+    };
+
+    struct Data {
+        QVector<Node> nodes{Node{}};
+        QHash<QString, NodeId> tableRoots;
+        qsizetype bindingCount = 0;
+        bool available = false;
+    };
+
+    template<typename Visitor>
+    static void forEachReachableLeaf(const Data &data, Visitor &&visitor);
+    explicit GhosttyKeybindProgram(std::shared_ptr<const Data> data);
+    [[nodiscard]] static std::shared_ptr<const Data> emptyData();
+    [[nodiscard]] static PreparedEvent prepareEvent(
+        const GhosttyKeybindEvent &event);
+    static void prepareUnicodeCandidates(PreparedEvent &event);
+    [[nodiscard]] Lookup lookup(NodeId node,
+                                PreparedEvent &event) const;
+    [[nodiscard]] const Entry *bareCatchAll(NodeId root) const;
+
+    std::shared_ptr<const Data> data_;
+};
+
+struct GhosttyKeybindCompilation {
+    GhosttyKeybindProgram program;
+    GhosttyKeybindLoadReport report;
+};
+
 struct GhosttyKeybindMatch {
     // The owning snapshot remains valid if an action synchronously reloads
-    // configuration and replaces the matcher's trie.
+    // configuration and replaces the matcher's program.
     GhosttyCompiledActionChain actionChain;
     bool consumed = true;
     bool all = false;
@@ -101,29 +212,22 @@ struct GhosttyKeybindStep {
     bool operator==(const GhosttyKeybindStep &) const = default;
 };
 
-// The compatibility set implements Ghostty's finalized binding tries and the
-// per-surface named-table stack. Frontend-wide delivery of `all` and `global`
-// matches is deliberately left to the caller.
-class GhosttyKeybindSet final {
+// Mutable matching state for one application root or terminal surface.
+// Frontend-wide delivery of `all` and `global` matches is deliberately left
+// to the caller. Copying is disabled so a surface cannot accidentally inherit
+// another surface's active sequence or table stack. Moving is also disabled:
+// an active traversal is correlated with a worker staging token owned by the
+// surrounding pane or application controller.
+class GhosttyKeybindState final {
 public:
     static constexpr qsizetype MaximumActiveTables = 8;
 
-    // Replaces the current set from explicit flattened-text injection. Later
-    // duplicate triggers replace earlier ones, matching Ghostty's config
-    // semantics.
-    [[nodiscard]] GhosttyKeybindLoadReport load(const QStringList &values);
-
-    // Production configuration uses the versioned structured projection of
-    // Ghostty's finalized binding tries. Named tables and non-local leaves are
-    // installed; matches expose the non-local flags to the frontend.
-    [[nodiscard]] GhosttyKeybindLoadReport load(
-        const GhosttyKeybindConfig &config);
-
-    // Loads the only source represented by the tagged frontend value. An
-    // unavailable source clears the set and leaves the caller on its fallback
-    // shortcut path.
-    [[nodiscard]] GhosttyKeybindLoadReport load(
-        const GhosttyKeybindSource &source);
+    GhosttyKeybindState();
+    explicit GhosttyKeybindState(GhosttyKeybindProgram program);
+    GhosttyKeybindState(const GhosttyKeybindState &) = delete;
+    GhosttyKeybindState &operator=(const GhosttyKeybindState &) = delete;
+    GhosttyKeybindState(GhosttyKeybindState &&) = delete;
+    GhosttyKeybindState &operator=(GhosttyKeybindState &&) = delete;
 
     // Stateless matching always checks the root set; use advance() for a
     // pane's active table stack and sequences. qtKey is QKeyEvent::key(),
@@ -167,78 +271,36 @@ public:
     }
     [[nodiscard]] QStringList activeTableNames() const;
 
-    [[nodiscard]] qsizetype size() const noexcept { return bindingCount_; }
-    [[nodiscard]] bool isEmpty() const noexcept { return bindingCount_ == 0; }
-    [[nodiscard]] QStringList serializedActions() const;
-    void clear() noexcept;
+    [[nodiscard]] qsizetype size() const noexcept { return program_.size(); }
+    [[nodiscard]] bool isEmpty() const noexcept { return program_.isEmpty(); }
+    [[nodiscard]] QStringList serializedActions() const
+    {
+        return program_.serializedActions();
+    }
+    [[nodiscard]] const GhosttyKeybindProgram &program() const noexcept
+    {
+        return program_;
+    }
+    [[nodiscard]] bool replaceProgram(
+        GhosttyKeybindProgram program) noexcept;
 
 private:
-    enum class KeyKind {
-        Physical,
-        Unicode,
-        CatchAll,
-    };
-
-    struct Binding {
-        KeyKind keyKind = KeyKind::Unicode;
-        int qtKey = Qt::Key_unknown;
-        quint32 nativeScanCode = 0;
-        bool keypad = false;
-        QString foldedUnicode;
-        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
-    };
-
-    enum class EntryKind {
-        Leader,
-        Leaf,
-    };
-
-    struct Entry {
-        Binding trigger;
-        EntryKind kind = EntryKind::Leaf;
-        quint32 child = 0;
-        GhosttyCompiledActionChain actionChain;
-        bool consumed = true;
-        bool all = false;
-        bool global = false;
-        bool performable = false;
-    };
-
-    struct Node {
-        QVector<Entry> entries;
-    };
-
-    struct Lookup {
-        const Entry *entry = nullptr;
-        bool physical = false;
-    };
-
-    struct PreparedEvent {
-        const GhosttyKeybindEvent &source;
-        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
-        std::array<QString, 2> foldedUnicodeCandidates;
-        std::size_t candidateCount = 0;
-        bool unicodeCandidatesReady = false;
-    };
+    using NodeId = GhosttyKeybindProgram::NodeId;
+    using Entry = GhosttyKeybindProgram::Entry;
+    using EntryKind = GhosttyKeybindProgram::EntryKind;
+    using Lookup = GhosttyKeybindProgram::Lookup;
+    using PreparedEvent = GhosttyKeybindProgram::PreparedEvent;
 
     struct ActiveTable {
         QString name;
-        quint32 root = 0;
+        NodeId root;
         bool oneShot = false;
     };
 
-    [[nodiscard]] static PreparedEvent prepareEvent(
-        const GhosttyKeybindEvent &event);
-    static void prepareUnicodeCandidates(PreparedEvent &event);
-    [[nodiscard]] Lookup lookup(quint32 node,
-                                PreparedEvent &event) const;
-    [[nodiscard]] const Entry *bareCatchAll(quint32 root) const;
     [[nodiscard]] bool activeCatchAllIgnores() const;
 
-    QVector<Node> nodes_{Node{}};
-    QHash<QString, quint32> tableRoots_;
+    GhosttyKeybindProgram program_;
     QVector<ActiveTable> activeTables_;
-    qsizetype bindingCount_ = 0;
-    std::optional<quint32> activeNode_;
+    std::optional<NodeId> activeNode_;
     QVector<GhosttyKeybindEvent> queuedEvents_;
 };

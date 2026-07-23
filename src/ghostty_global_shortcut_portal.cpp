@@ -7,6 +7,7 @@
 #include <QDBusPendingReply>
 #include <QDBusVariant>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include <QUuid>
 #include <QVariantMap>
@@ -15,6 +16,16 @@
 #include <utility>
 
 namespace {
+
+struct PortalOperation {
+    QPointer<GhosttyGlobalShortcutPortal> portal;
+    quint64 generation = 0;
+
+    [[nodiscard]] bool isCurrent() const noexcept
+    {
+        return portal != nullptr && portal->generation() == generation;
+    }
+};
 
 constexpr auto PortalService = "org.freedesktop.portal.Desktop";
 constexpr auto PortalPath = "/org/freedesktop/portal/desktop";
@@ -448,18 +459,24 @@ QString GhosttyGlobalShortcutPortal::sessionHandle() const
 void GhosttyGlobalShortcutPortal::setKeybindConfig(
     const GhosttyKeybindConfig &config)
 {
-    ++m_generation;
+    const PortalOperation operation{this, ++m_generation};
     closePortalState(true);
+    if (!operation.isCurrent()) return;
+
     m_registry = buildGhosttyGlobalShortcutRegistry(config);
     for (const GhosttyGlobalShortcutRegistration &registration
          : std::as_const(m_registry.registrations)) {
         m_actionsById.insert(registration.id, registration.action);
     }
+    const QVector<GhosttyGlobalShortcutDiagnostic> diagnostics =
+        m_registry.diagnostics;
     Q_EMIT registryChanged();
+    if (!operation.isCurrent()) return;
 
     for (const GhosttyGlobalShortcutDiagnostic &entry
-         : std::as_const(m_registry.diagnostics)) {
+         : diagnostics) {
         warn(entry.message);
+        if (!operation.isCurrent()) return;
     }
 
     if (m_registry.registrations.isEmpty()) {
@@ -475,17 +492,21 @@ void GhosttyGlobalShortcutPortal::setKeybindConfig(
 
 void GhosttyGlobalShortcutPortal::clear()
 {
-    ++m_generation;
+    const PortalOperation operation{this, ++m_generation};
     closePortalState(true);
+    if (!operation.isCurrent()) return;
+
     m_registry = {};
     Q_EMIT registryChanged();
 }
 
 void GhosttyGlobalShortcutPortal::beginCreateSession()
 {
+    const PortalOperation operation{this, m_generation};
     const QString requestToken = newPortalToken();
     const QString requestPath = subscribeToResponse(
         RequestKind::CreateSession, requestToken);
+    if (!operation.isCurrent()) return;
     if (requestPath.isEmpty()) {
         closePortalState(true);
         return;
@@ -506,9 +527,11 @@ void GhosttyGlobalShortcutPortal::beginCreateSession()
 
 void GhosttyGlobalShortcutPortal::beginBindShortcuts()
 {
+    const PortalOperation operation{this, m_generation};
     if (m_sessionHandle.isEmpty()) {
         warn(QStringLiteral(
             "Global shortcut registration stopped because no portal session exists"));
+        if (!operation.isCurrent()) return;
         closePortalState(true);
         return;
     }
@@ -516,6 +539,7 @@ void GhosttyGlobalShortcutPortal::beginBindShortcuts()
     const QString requestToken = newPortalToken();
     const QString requestPath = subscribeToResponse(
         RequestKind::BindShortcuts, requestToken);
+    if (!operation.isCurrent()) return;
     if (requestPath.isEmpty()) {
         closePortalState(true);
         return;
@@ -562,11 +586,12 @@ void GhosttyGlobalShortcutPortal::beginRequest(
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this, kind, requestGeneration, expectedPath](
                 QDBusPendingCallWatcher *finished) {
+        const PortalOperation operation{this, requestGeneration};
         const QDBusPendingReply<QDBusObjectPath> reply = *finished;
         finished->deleteLater();
 
         auto expected = m_pendingRequests.constFind(expectedPath);
-        if (requestGeneration != m_generation
+        if (!operation.isCurrent()
             || expected == m_pendingRequests.cend()
             || expected->generation != requestGeneration
             || expected->kind != kind) {
@@ -578,6 +603,7 @@ void GhosttyGlobalShortcutPortal::beginRequest(
             finishPendingRequest(request.canonicalPath);
             warn(QStringLiteral("XDG global shortcut portal call failed: %1")
                      .arg(reply.error().message()));
+            if (!operation.isCurrent()) return;
             closePortalState(true);
             return;
         }
@@ -595,6 +621,7 @@ void GhosttyGlobalShortcutPortal::beginRequest(
             warn(QStringLiteral(
                      "Could not subscribe to portal compatibility response path `%1`")
                      .arg(actualPath));
+            if (!operation.isCurrent()) return;
         }
     });
 }
@@ -683,8 +710,9 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     }
 
     const PendingRequest request = *found;
+    const PortalOperation operation{this, request.generation};
     finishPendingRequest(request.canonicalPath);
-    if (request.generation != m_generation) {
+    if (!operation.isCurrent()) {
         return;
     }
 
@@ -694,6 +722,7 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
             : QStringLiteral("failed with response code %1").arg(response);
         warn(QStringLiteral("XDG global shortcut portal request %1")
                  .arg(outcome));
+        if (!operation.isCurrent()) return;
         closePortalState(true);
         return;
     }
@@ -707,6 +736,7 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     if (handle.isEmpty() || !handle.startsWith(u'/')) {
         warn(QStringLiteral(
             "XDG global shortcut portal returned no valid session handle"));
+        if (!operation.isCurrent()) return;
         closePortalState(true);
         return;
     }
@@ -722,6 +752,7 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     if (!m_sessionClosedSubscribed) {
         warn(QStringLiteral(
             "Could not subscribe to XDG global shortcut session closure"));
+        if (!operation.isCurrent()) return;
         closePortalState(true);
         return;
     }
@@ -736,6 +767,7 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     if (!m_activationSubscribed) {
         warn(QStringLiteral(
             "Could not subscribe to XDG global shortcut activations"));
+        if (!operation.isCurrent()) return;
         closePortalState(true);
         return;
     }
@@ -760,7 +792,8 @@ void GhosttyGlobalShortcutPortal::onActivated(
     if (action == m_actionsById.cend()) {
         return;
     }
-    Q_EMIT shortcutActivated(*action);
+    const QString ownedAction = *action;
+    Q_EMIT shortcutActivated(ownedAction);
 }
 
 void GhosttyGlobalShortcutPortal::onSessionClosed(
@@ -771,6 +804,7 @@ void GhosttyGlobalShortcutPortal::onSessionClosed(
     if (!m_sessionClosedSubscribed || message.path() != m_sessionHandle) {
         return;
     }
+    const PortalOperation operation{this, m_generation};
 
     // The portal already destroyed the session. Disconnect this exact path
     // before clearing it so closePortalState does not send a redundant Close.
@@ -784,6 +818,7 @@ void GhosttyGlobalShortcutPortal::onSessionClosed(
     m_sessionClosedSubscribed = false;
     m_sessionHandle.clear();
     closePortalState(true);
+    if (!operation.isCurrent()) return;
     warn(QStringLiteral("XDG global shortcut portal session was closed"));
 }
 

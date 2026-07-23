@@ -51,6 +51,8 @@ GhosttyConfigService (UI thread)
      -> pinned ghostty-internal configuration/CLI implementation
 
 GhosttyApplicationKeybindings (UI thread, process lifetime)
+  -> compile one immutable keybinding program per configuration generation
+     -> ApplicationController -> TerminalWorkspace -> TerminalPane state
   -> root application-action pre-pass
   -> all/global action-major fanout -> registered TerminalWorkspace instances
   -> XDG Global Shortcuts portal (session D-Bus)
@@ -988,34 +990,102 @@ canonical action chains, and every binding flag. The C++ parser is strict and
 transactional: an unknown schema or malformed dump rejects the reload without
 replacing the last-good snapshot.
 
-Each `TerminalPane` builds node-indexed tries for the generation's root and
-named tables and owns its traversal and table-stack state. Sharing those
-immutable tries between panes is a later allocation optimization. Outside an
-active sequence, lookup walks the newest active table outward and then the
-root. A one-shot top table is popped as soon as it supplies a match, including
-a leader, catch-all, or performable binding. `GhosttyKeybindStep` reports that
-stack mutation directly, so `TerminalPane` can publish its property change
-without constructing and comparing before/after active-table name lists. This
-avoids two `QStringList` allocations on every keypress. Lookup prioritizes
-physical identity, then event Unicode, then the unshifted codepoint, then
-modifier-specific and bare catch-all entries at every depth. On
-Linux/Wayland, native XKB scan codes keep physical triggers and libghostty's
+The production configuration path compiles exactly one immutable
+`GhosttyKeybindProgram` for each process configuration generation.
+`GhosttyApplicationKeybindings` installs that program in its application-root
+matcher, then `ApplicationController` passes the same cheap owning handle to
+every `TerminalWorkspace`; each workspace retains it for later pane creation
+and passes it to every current `TerminalPane`. The program's shared const
+storage contains the node-indexed root and named-table tries, folded triggers,
+and compiled action chains, so panes do not repeat parsing or allocate a trie
+per surface.
+
+The application root and each pane wrap that common program in a separate
+`GhosttyKeybindState`. This mutable matcher is deliberately noncopyable and
+nonmovable: its active sequence, queued leader events, and named-table stack
+belong to exactly one input surface, and its traversal is correlated with a
+worker staging token owned by that surface. A workspace owns only the
+immutable program handle, not matcher state. Outside an active sequence,
+lookup walks the newest active table
+outward and then the root. A one-shot top table is popped as soon as it
+supplies a match, including a leader, catch-all, or performable binding.
+`GhosttyKeybindStep` reports that stack mutation directly, so `TerminalPane`
+can publish its property change without constructing and comparing
+before/after active-table name lists. This avoids two `QStringList`
+allocations on every keypress. Lookup prioritizes physical identity, then
+event Unicode, then the unshifted codepoint, then modifier-specific and bare
+catch-all entries at every depth. On Linux/Wayland, native XKB scan codes keep
+physical triggers and libghostty's
 physical-key encoding layout-independent, while distinguishing top-row/keypad
 and left/right modifier locations. Qt does not expose the compositor keymap's
 unmodified layout level through `QKeyEvent`, so the fallback unshifted
 codepoint remains US-layout-oriented for shifted punctuation. Reading Wayland
 keymap state directly is a later input-compatibility slice.
 
-Loading a trie generation compiles each canonical action chain once into an
-owning positional value. Every entry retains its exact serialized spelling,
-its upstream application/surface scope, and an optional executable action.
+Program availability is independent of its binding count. The default
+unavailable program means that no Ghostty binding source was supplied, so a
+pane uses the frontend's legacy fallback shortcuts. An available but empty
+program means Ghostty deliberately finalized an empty binding set; it therefore
+suppresses those fallback shortcuts even though it has no leaves. Collapsing
+the two states would silently restore bindings after `keybind = clear`.
+
+Program identity defines a keybinding generation. Installing the same
+program handle is a no-op and preserves a matcher's sequence and active-table
+stack. Installing any distinct program, even one rebuilt from equal source
+values, clears that mutable state; a pane also drops the corresponding staged
+session-side leader token before replacement. During live reload,
+`ApplicationController` takes an owning generation snapshot after the
+application matcher is updated and distributes it application -> workspace ->
+panes. Independent monotonic options-update revisions guard the complete
+controller, workspace, and pane transactions across synchronous callbacks;
+program identity remains responsible only for deciding whether matcher state
+must reset. If a callback installs a newer update, the older outer operation
+stops instead of overwriting or partially distributing it, even when both
+updates deliberately reuse one program. A new window carries its requested
+options and program as one pair, then catches up to any configuration that
+arrived during factory construction before presentation. Panes created later
+inherit the workspace's current handle.
+
+Configuration fanout is also one process input transaction. While the root
+matcher and workspaces move to a new generation,
+`GhosttyApplicationKeybindings` stores reentrant key events as owning value
+snapshots and stores portal/all/global activations as owning compiled action
+chains in the same FIFO. It drains that FIFO only after both configuration
+fanout and any outer root key event have finished, so a release cannot race the
+press's consumed-key bookkeeping and a broad action cannot observe a mixture
+of old and new panes. Each pane applies the same rule locally around its
+runtime snapshot and sequence state.
+
+New-tab and split construction keep a pane detached until its handlers are
+wired, then register it as pending before QObject, visual-parent, or QML
+overlay publication. Pending panes participate in reload snapshots even though
+they are not in the split tree yet. A topology transaction rejects nested
+structural actions during publication, and split insertion resolves the source
+again by stable IDs after callbacks. Guarded pane snapshots likewise make
+overlay creation and destruction safe when QML synchronously reloads config or
+destroys an owner.
+
+Direct `TerminalWorkspace` and
+`TerminalPane` construction or update APIs that are not supplied a process
+program intentionally compile one from their `LaunchOptions`; this keeps
+standalone embedding and focused tests self-contained without adding another
+production compilation path.
+
+Building a program compiles each canonical action chain once into an owning
+positional value. Every entry retains its exact serialized spelling, its
+upstream application/surface scope, and an optional executable action.
 Unsupported or malformed entries therefore remain inert in their original
 position instead of being dropped or accidentally reclassified. The chain
 also caches its combined input effect, with closing taking precedence over
 `ignore`, and whether every entry is application-scoped. A match copies this
-owning chain, so a synchronous configuration reload may replace the trie while
-the in-flight event safely finishes with the generation that matched it. The
-next event sees the newly compiled generation.
+owning chain rather than retaining a node pointer or view, so synchronous
+action callbacks may replace the program or reload configuration while the
+in-flight event safely retains the matched action-chain snapshot from that
+generation. Destruction of the source pane stops guarded dispatch without
+leaving a dangling chain. The next event sees the newly installed program.
+Reachable-leaf counting and diagnostic serialization share one iterative
+depth-first traversal, preserving deterministic root/table and entry order
+without putting user-controlled sequence depth on the C++ call stack.
 
 Sequence leader presses are encoded immediately on the session thread and held
 as bytes under a generation token. A consumed match drops them; an invalid,
@@ -1368,7 +1438,10 @@ The default CTest suite has focused layers for each ownership boundary:
   catch-all priority and recovery, local/broad flags, action chains, named-table
   precedence and one-shot state, independent pane state, and Linux defaults.
   It also verifies compile-on-load scope/effect metadata, inert unsupported
-  positional entries, and owning match snapshots that outlive trie reloads.
+  positional entries, unavailable versus available-empty programs, shared
+  immutable storage with noncopyable independent matcher state, same-generation
+  preservation, different-generation reset, and owning match snapshots that
+  outlive program replacement.
 - `ghostty-global-shortcut-portal` verifies XDG trigger conversion, registry
   eligibility and collisions, response-before-reply races, activation routing,
   reload cleanup, and stale callback rejection on a private D-Bus daemon.

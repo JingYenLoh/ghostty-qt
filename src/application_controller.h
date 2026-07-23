@@ -4,6 +4,7 @@
 #include "application_lifetime.h"
 #include "desktop_activation.h"
 #include "launch_options.h"
+#include "revision_counter.h"
 #include "workspace_ids.h"
 
 #include <QObject>
@@ -17,6 +18,7 @@
 #include <vector>
 
 class GhosttyApplicationKeybindings;
+class GhosttyKeybindProgram;
 class InitialSessionCoordinator;
 class QQmlEngine;
 class QQuickWindow;
@@ -72,6 +74,7 @@ public:
     [[nodiscard]] TerminalWorkspace *activeWorkspace() const;
     [[nodiscard]] int windowCount() const;
     [[nodiscard]] QVector<ApplicationWindow> windows() const;
+    [[nodiscard]] GhosttyKeybindProgram keybindProgram() const;
     [[nodiscard]] ApplicationLifetimeController *lifetimeController()
     {
         return &lifetime_;
@@ -100,7 +103,7 @@ private:
 
     static WindowFactory qmlWindowFactory(QQmlEngine &engine);
     [[nodiscard]] std::expected<ApplicationWindow, QString> createWindow(
-        const LaunchOptions &options,
+        LaunchOptions options,
         const DesktopActivationContext &activation = {},
         QScreen *preferredScreen = nullptr);
     [[nodiscard]] LaunchOptions nextWindowOptions(
@@ -131,6 +134,7 @@ private:
 
     WindowFactory windowFactory_;
     LaunchOptions effectiveOptions_;
+    RevisionCounter launchOptionsRevision_;
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator_;
     ApplicationLifetimeController lifetime_;
     std::unique_ptr<GhosttyApplicationKeybindings> keybindings_;
