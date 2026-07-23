@@ -115,6 +115,31 @@ ctest --preset dev --show-only
 ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-cli-delegation|ghostty-parity-manifest'
 ```
 
+## ghostty-qt frontend configuration
+
+Qt-owned application settings live in the independent strict UTF-8 file
+`$XDG_CONFIG_HOME/ghostty-qt/config`, falling back to
+`$HOME/.config/ghostty-qt/config` when `XDG_CONFIG_HOME` is unset or relative.
+The parser and `FrontendConfigService` are always built, including when
+`GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that option controls only the shared
+Ghostty parser/helper boundary.
+
+The frontend parser accepts the closed `single-instance` and `tabs-location`
+schema described in
+[Frontend configuration](frontend-configuration.md). It rejects malformed,
+unknown, or duplicate assignments transactionally. The service watches the
+file and nearest existing directory, debounces changes, reloads off the GUI
+thread, and retains the last-good snapshot after a failed reload. A missing
+file successfully restores typed defaults.
+
+The application retains the latest successful Ghostty and frontend snapshots
+independently. On either publication it rebuilds effective launch options from
+built-in defaults, the shared Ghostty snapshot, the disjoint frontend snapshot,
+and explicit CLI overrides. The `reload_config` action requests both services.
+The `frontend-config` test covers the strict parser and watched-service
+lifecycle; `application-tabs-location` covers live QML placement, and the
+single-instance integration cases isolate the frontend file explicitly.
+
 ## Ghostty configuration parser
 
 Configuration is enabled by default with
@@ -169,8 +194,9 @@ absolute-pixel/percentage metric modifiers, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
-`link-previews` policy, the raw false/true/detect `gtk-single-instance` mode,
-the boolean `initial-window` startup decision, and the exact
+`link-previews` policy, the raw false/true/detect `gtk-single-instance` mode as
+an unused schema-v1 compatibility field, the boolean `initial-window` startup
+decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, transaction consistency, and default-aware
@@ -353,12 +379,12 @@ destruction during presentation and creation observers. Private session-D-Bus
 integration also covers a false launcher that leaves a false-started primary
 at zero windows,
 followed by a true launcher that creates exactly one primary-owned surface.
-With configuration enabled, the same suite forces the exact service bootstrap
-flags over contradictory user configuration; the config-off build proves that
-activation does not depend on the parser helper. Both call the standard
-endpoint against a warm zero-window process and let the bus discover, start,
-activate, retire, and restart a cold service using only its starter-bus
-environment. Focused activation tests also verify exact D-Bus string filtering,
+With shared Ghostty configuration enabled, the same suite forces the exact
+service bootstrap flags over a contradictory frontend file; the config-off
+build proves that activation does not depend on the parser helper. Both call
+the standard endpoint against a warm zero-window process and let the bus
+discover, start, activate, retire, and restart a cold service using only its
+starter-bus environment. Focused activation tests also verify exact D-Bus string filtering,
 FIFO platform-data retention, pre-Qt launcher capture, scoped window-show
 projection, cached race-free worker snapshots, fallback-executable forwarding,
 cleanup, and removal from terminal child environments. The DESTDIR-staged

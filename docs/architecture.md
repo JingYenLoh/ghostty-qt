@@ -397,24 +397,27 @@ fire-and-forget normal activation.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
-The GUI process resolves detect from its real invocation and `TERM_PROGRAM`.
-Parsing records whether an invocation has unforwarded window/session payload,
-so the exact `--gtk-single-instance` and `--initial-window` coordination flags
-remain eligible while cwd, font, hold, scrollback, and program arguments stay
-independent. Explicit coordination values outrank configuration on initial
-load and reload. Role and name ownership stay fixed
-across live reload, matching GApplication construction-time policy. Reloading
-`initial-window` changes no current window; a fresh launcher samples its own
-new value. The primary activation handler itself remains unconditional, so a
-true launcher can create the first window in a primary that began false. An
-accepted activation creates synchronously from the primary's latest process
-options, and its pane participates in the same process-wide first-session
-lease. Only the first session that successfully initializes receives one-shot
-program and hold. The activation path overlays only an actually
-focused or still-valid last-focused pane cwd when configured, and keeps the
-configured font size. With no valid focus it keeps configured cwd rather than
-choosing an arbitrary live pane. That cwd/font asymmetry matches the pinned GTK
-null-parent path.
+The latter remains an unused schema-v1 compatibility field: process uniqueness
+belongs to the independent frontend `single-instance` setting. The GUI process
+resolves frontend `detect` from its real invocation and `TERM_PROGRAM`. Parsing
+records whether an invocation has unforwarded window/session payload, so the
+exact `--single-instance` and `--initial-window` coordination flags remain
+eligible while cwd, font, hold, scrollback, and program arguments stay
+independent. Explicit coordination values outrank both configuration domains on
+initial load and reload.
+
+Role and name ownership stay fixed across live reload, matching
+GApplication construction-time policy. A fresh launcher samples its own latest
+frontend setting. Reloading `initial-window` changes no current window. The
+primary activation handler itself remains unconditional, so a true launcher
+can create the first window in a primary that began false. An accepted
+activation creates synchronously from the primary's latest process options, and
+its pane participates in the same process-wide first-session lease. Only the
+first session that successfully initializes receives one-shot program and hold.
+The activation path overlays only an actually focused or still-valid
+last-focused pane cwd when configured, and keeps the configured font size. With
+no valid focus it keeps configured cwd rather than choosing an arbitrary live
+pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
 
 ## Output path
 
@@ -749,6 +752,12 @@ boundary. The surrounding Qt toolbar is a separate control surface and remains
 visible, so hiding the tab strip does not remove its new-tab, split, or close
 buttons.
 
+Frontend `tabs-location` is an independent Qt presentation policy. Its
+`top`/`bottom` value reparents the same retained toolbar and tab strip around
+the terminal content, rather than replacing either control or any pane. A
+frontend reload applies the placement to every existing workspace and becomes
+the default for future windows while preserving the outer window size.
+
 A split starts the default shell using the workspace's effective directory and
 policy: when
 `split-inherit-working-directory` is true, the explicit source pane's latest
@@ -801,6 +810,12 @@ pane remains visible with a status message.
 
 ## Configuration boundary
 
+Configuration is split into two typed domains. Portable terminal behavior,
+keybindings, and shared Linux behavior come from Ghostty's standard files.
+Qt-owned application behavior comes from the strict
+`$XDG_CONFIG_HOME/ghostty-qt/config` frontend file. If `XDG_CONFIG_HOME` is
+unset or relative, both domains fall back beneath `$HOME/.config`.
+
 Ghostty's application configuration API is not part of the stable
 `libghostty-vt` surface. The Qt executable therefore does not link or retain
 handles from that API. Instead, `ghostty-qt-config-helper` links the pinned
@@ -826,7 +841,7 @@ typed `GhosttyConfigSnapshot`; it never parses or merges Ghostty's
 human-oriented `+show-config` output. Configuration absence remains service
 state rather than a contradictory flag inside a snapshot. This keeps the
 unstable application API and all of its state outside the long-lived Qt
-process while avoiding a second configuration parser.
+process without reimplementing Ghostty's configuration grammar.
 
 `GhosttyConfigService` watches the legacy `ghostty/config`, preferred
 `ghostty/config.ghostty`, their nearest existing directories, existing include
@@ -845,6 +860,26 @@ once by the application controller to every live workspace, process
 keybindings, and the application lifetime policy, then retained for future
 windows. All process consumers continue receiving watched reloads after
 resident window retirement.
+
+`FrontendConfigService` independently parses exactly one strict UTF-8 scalar
+file. Its current complete schema is `single-instance=false|true|detect` and
+`tabs-location=top|bottom`; unknown keys, duplicate keys, malformed
+assignments, unsupported values, invalid UTF-8, and partial documents are
+errors. A missing file is a successful default generation. The service watches
+the file and its nearest existing directory, uses the same 75 ms debounce,
+loads watched generations on its own one-thread pool, suppresses stale
+generations, and retries failures while retaining its last-good snapshot.
+Deleting the file therefore restores the typed frontend defaults.
+
+The application retains the latest successful snapshot from each service and
+re-resolves launch options from the immutable process arguments whenever either
+one publishes. Precedence is built-in defaults, the finalized shared Ghostty
+snapshot, the disjoint frontend snapshot, then explicit CLI overrides. The
+`reload_config` application action requests both services. Their reloads remain
+independent, so failure in one domain cannot discard the other domain's
+last-good generation. The merged result still enters
+`ApplicationController::applyLaunchOptions` once per publication, updating all
+live workspaces and future windows without cumulative overlay state.
 
 The helper process necessarily has Ghostty action arguments, so the pinned
 parser classifies it as a probable CLI launch. An otherwise unset
@@ -1043,10 +1078,11 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 ## Keybinding compatibility boundary
 
 The config helper exposes a project-private JSON v1 envelope containing
-application lifetime, `initial-window`, raw single-instance values, and the
-lossless resize-overlay mode, position, and whole-millisecond duration plus
-Ghostty's finalized binding sets after defaults, includes, `clear`, overrides,
-chains, and `unbind` have been resolved by the pinned Zig implementation. It
+application lifetime, `initial-window`, the unused raw `gtk-single-instance`
+compatibility field, and the lossless resize-overlay mode, position, and
+whole-millisecond duration plus Ghostty's finalized binding sets after
+defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
+by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
 canonical action chains, and every binding flag. The C++ parser is strict and
 transactional: an unknown schema or malformed dump rejects the reload without
@@ -1656,6 +1692,11 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-config-service` verifies standard paths, typed file/directory and
   optional-include watches, atomic replacement, debounce, queued snapshot
   transport, and retention of the last good value.
+- `frontend-config` verifies the independent path fallback, strict UTF-8
+  grammar, complete closed key/value schema, transactional rejection, missing
+  file defaults, file/directory watches, debounce, non-blocking generation
+  handling, and last-good retention. `application-tabs-location` verifies the
+  real QML toolbar moves to the configured edge without a binding loop.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage

@@ -1,0 +1,452 @@
+#include "frontend_config.h"
+#include "frontend_config_service.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QPointer>
+#include <QProcessEnvironment>
+#include <QSaveFile>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QTimer>
+
+#include <atomic>
+#include <chrono>
+#include <thread>
+
+namespace {
+
+bool replaceFile(const QString &path, const QByteArray &contents)
+{
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)
+        || file.write(contents) != contents.size()) {
+        return false;
+    }
+    return file.commit();
+}
+
+FrontendConfigSnapshot snapshotWithMarker(int marker)
+{
+    FrontendConfigSnapshot snapshot;
+    snapshot.sourcePath = QString::number(marker);
+    snapshot.values.tabsLocation =
+        marker % 2 == 0 ? TabsLocation::Top : TabsLocation::Bottom;
+    return snapshot;
+}
+
+QString errorMessage(const FrontendConfigLoadResult &result)
+{
+    return result ? QString{} : result.error();
+}
+
+} // namespace
+
+class FrontendConfigTest : public QObject {
+    Q_OBJECT
+
+private Q_SLOTS:
+    void parsesDefaultsAndFullLineComments();
+    void parsesEveryValue_data();
+    void parsesEveryValue();
+    void acceptsWhitespaceCrLfAndBom();
+    void rejectsInvalidDocuments_data();
+    void rejectsInvalidDocuments();
+    void rejectsInvalidUtf8AndControlCharacters();
+    void reportsDuplicatePathAndLine();
+    void loadsMissingFileAsDefaults();
+    void loadsExistingFileWithCanonicalSourcePath();
+    void resolvesStandardConfigPath();
+    void watchesAbsentFileAndAtomicReplacements();
+    void debouncesAsynchronousReloads();
+    void asynchronousReloadDoesNotBlockEventLoop();
+    void synchronousReloadSupersedesOlderAsyncResult();
+    void publishesUnchangedSuccessfulReloads();
+    void retainsLastGoodSnapshotAfterFailure();
+    void changedSubscriberMayDeleteService();
+    void failedSubscriberMayDeleteService();
+};
+
+void FrontendConfigTest::parsesDefaultsAndFullLineComments()
+{
+    const auto parsed =
+        parseFrontendConfig(QByteArrayView("# frontend settings\n"
+                                           "   # another full-line comment\n"
+                                           "\n"),
+                            QStringLiteral("memory"));
+    QVERIFY2(parsed.has_value(),
+             qPrintable(parsed ? QString{} : parsed.error()));
+    QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Detect);
+    QCOMPARE(parsed->tabsLocation, TabsLocation::Top);
+}
+
+void FrontendConfigTest::parsesEveryValue_data()
+{
+    QTest::addColumn<QByteArray>("contents");
+    QTest::addColumn<SingleInstanceMode>("singleInstance");
+    QTest::addColumn<TabsLocation>("tabsLocation");
+
+    QTest::newRow("false-top")
+        << QByteArray("single-instance = false\ntabs-location = top\n")
+        << SingleInstanceMode::Disabled << TabsLocation::Top;
+    QTest::newRow("true-bottom")
+        << QByteArray("single-instance = true\ntabs-location = bottom\n")
+        << SingleInstanceMode::Enabled << TabsLocation::Bottom;
+    QTest::newRow("detect-bottom")
+        << QByteArray("single-instance = detect\ntabs-location = bottom\n")
+        << SingleInstanceMode::Detect << TabsLocation::Bottom;
+}
+
+void FrontendConfigTest::parsesEveryValue()
+{
+    QFETCH(QByteArray, contents);
+    QFETCH(SingleInstanceMode, singleInstance);
+    QFETCH(TabsLocation, tabsLocation);
+
+    const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
+    QVERIFY2(parsed.has_value(),
+             qPrintable(parsed ? QString{} : parsed.error()));
+    QCOMPARE(parsed->singleInstanceMode, singleInstance);
+    QCOMPARE(parsed->tabsLocation, tabsLocation);
+}
+
+void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
+{
+    const QByteArray contents = QByteArray::fromHex("efbbbf")
+        + QByteArray("\tsingle-instance\t=\ttrue\t\r\n"
+                     " tabs-location = bottom \r\n");
+    const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
+    QVERIFY2(parsed.has_value(),
+             qPrintable(parsed ? QString{} : parsed.error()));
+    QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Enabled);
+    QCOMPARE(parsed->tabsLocation, TabsLocation::Bottom);
+}
+
+void FrontendConfigTest::rejectsInvalidDocuments_data()
+{
+    QTest::addColumn<QByteArray>("contents");
+    QTest::addColumn<QString>("diagnostic");
+
+    QTest::newRow("unknown") << QByteArray("other = true\n")
+                             << QStringLiteral("unknown key 'other'");
+    QTest::newRow("missing-equals") << QByteArray("single-instance true\n")
+                                    << QStringLiteral("exactly one");
+    QTest::newRow("multiple-equals")
+        << QByteArray("single-instance = true = false\n")
+        << QStringLiteral("exactly one");
+    QTest::newRow("empty-key")
+        << QByteArray(" = true\n") << QStringLiteral("key must not be empty");
+    QTest::newRow("empty-value") << QByteArray("tabs-location = \n")
+                                 << QStringLiteral("must not be empty");
+    QTest::newRow("single-instance-case")
+        << QByteArray("single-instance = True\n")
+        << QStringLiteral("expected false, true, or detect");
+    QTest::newRow("tabs-location") << QByteArray("tabs-location = left\n")
+                                   << QStringLiteral("expected top or bottom");
+    QTest::newRow("inline-comment")
+        << QByteArray("tabs-location = top # not a full-line comment\n")
+        << QStringLiteral("expected top or bottom");
+}
+
+void FrontendConfigTest::rejectsInvalidDocuments()
+{
+    QFETCH(QByteArray, contents);
+    QFETCH(QString, diagnostic);
+    const auto parsed =
+        parseFrontendConfig(contents, QStringLiteral("settings.conf"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY2(parsed.error().contains(QStringLiteral("settings.conf:1:")),
+             qPrintable(parsed.error()));
+    QVERIFY2(parsed.error().contains(diagnostic), qPrintable(parsed.error()));
+}
+
+void FrontendConfigTest::rejectsInvalidUtf8AndControlCharacters()
+{
+    QByteArray invalidUtf8;
+    invalidUtf8.append(char(0xC3));
+    invalidUtf8.append(char(0x28));
+    auto parsed =
+        parseFrontendConfig(invalidUtf8, QStringLiteral("settings.conf"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY(parsed.error().contains(QStringLiteral("not valid UTF-8")));
+
+    QByteArray control("tabs-location = top");
+    control.append(char(0));
+    control.append('\n');
+    parsed = parseFrontendConfig(control, QStringLiteral("settings.conf"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY(parsed.error().contains(
+        QStringLiteral("settings.conf:1: invalid control character")));
+}
+
+void FrontendConfigTest::reportsDuplicatePathAndLine()
+{
+    const auto parsed =
+        parseFrontendConfig(QByteArrayView("single-instance = true\n"
+                                           "# separator\n"
+                                           "single-instance = false\n"),
+                            QStringLiteral("/tmp/ghostty-qt/config"));
+    QVERIFY(!parsed.has_value());
+    QVERIFY2(
+        parsed.error().contains(QStringLiteral("/tmp/ghostty-qt/config:3:")),
+        qPrintable(parsed.error()));
+    QVERIFY(parsed.error().contains(
+        QStringLiteral("duplicate key 'single-instance'")));
+}
+
+void FrontendConfigTest::loadsMissingFileAsDefaults()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("missing/config"));
+    const FrontendConfigLoadResult loaded = loadFrontendConfigFile(path);
+    QVERIFY2(loaded.has_value(), qPrintable(errorMessage(loaded)));
+    QCOMPARE(loaded->values, FrontendConfigValues{});
+    QVERIFY(loaded->sourcePath.isEmpty());
+}
+
+void FrontendConfigTest::loadsExistingFileWithCanonicalSourcePath()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString directory =
+        QDir(temporary.path()).filePath(QStringLiteral("ghostty-qt"));
+    QVERIFY(QDir().mkpath(directory));
+    const QString path =
+        QDir(directory).filePath(QStringLiteral("../ghostty-qt/config"));
+    QVERIFY(replaceFile(QDir::cleanPath(path),
+                        QByteArrayLiteral("tabs-location = bottom\n")));
+
+    const FrontendConfigLoadResult loaded = loadFrontendConfigFile(path);
+    QVERIFY2(loaded.has_value(), qPrintable(errorMessage(loaded)));
+    QCOMPARE(loaded->values.tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(loaded->sourcePath,
+             QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+}
+
+void FrontendConfigTest::resolvesStandardConfigPath()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QProcessEnvironment environment;
+    const QString home =
+        QDir(temporary.path()).filePath(QStringLiteral("home"));
+    const QString xdg = QDir(temporary.path()).filePath(QStringLiteral("xdg"));
+    environment.insert(QStringLiteral("HOME"), home);
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"), xdg);
+    QCOMPARE(FrontendConfigService::standardConfigPath(environment),
+             QDir(xdg).filePath(QStringLiteral("ghostty-qt/config")));
+
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"),
+                       QStringLiteral("relative"));
+    QCOMPARE(FrontendConfigService::standardConfigPath(environment),
+             QDir(home).filePath(QStringLiteral(".config/ghostty-qt/config")));
+
+    environment.remove(QStringLiteral("XDG_CONFIG_HOME"));
+    QCOMPARE(FrontendConfigService::standardConfigPath(environment),
+             QDir(home).filePath(QStringLiteral(".config/ghostty-qt/config")));
+}
+
+void FrontendConfigTest::watchesAbsentFileAndAtomicReplacements()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString directory =
+        QDir(temporary.path()).filePath(QStringLiteral("ghostty-qt"));
+    QVERIFY(QDir().mkpath(directory));
+    const QString path = QDir(directory).filePath(QStringLiteral("config"));
+
+    FrontendConfigService service(
+        path,
+        [](const QString &candidate) {
+            return loadFrontendConfigFile(candidate);
+        },
+        35);
+    QVERIFY(service.hasSnapshot());
+    QCOMPARE(service.snapshot().values.tabsLocation, TabsLocation::Top);
+    QVERIFY(service.watchedFiles().isEmpty());
+    QVERIFY(service.watchedDirectories().contains(directory));
+
+    QVERIFY(replaceFile(path, QByteArrayLiteral("tabs-location = bottom\n")));
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.tabsLocation,
+                              TabsLocation::Bottom, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(path), 1000);
+
+    QVERIFY(replaceFile(path, QByteArrayLiteral("tabs-location = top\n")));
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.tabsLocation,
+                              TabsLocation::Top, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(path), 1000);
+}
+
+void FrontendConfigTest::debouncesAsynchronousReloads()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    std::atomic<int> loads = 0;
+    FrontendConfigService service(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) { return snapshotWithMarker(++loads); }, 60);
+    QCOMPARE(loads.load(), 1);
+
+    service.requestReload();
+    service.requestReload();
+    service.requestReload();
+    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+    QTest::qWait(100);
+    QCOMPARE(loads.load(), 2);
+}
+
+void FrontendConfigTest::asynchronousReloadDoesNotBlockEventLoop()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    std::atomic<int> loads = 0;
+    FrontendConfigService service(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) {
+            const int load = ++loads;
+            if (load > 1) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            return snapshotWithMarker(load);
+        },
+        0);
+    QCOMPARE(loads.load(), 1);
+
+    bool timerFired = false;
+    QTimer::singleShot(100, &service, [&timerFired] { timerFired = true; });
+    service.requestReload();
+    QTRY_VERIFY_WITH_TIMEOUT(timerFired, 180);
+    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().sourcePath,
+                              QStringLiteral("2"), 1000);
+}
+
+void FrontendConfigTest::synchronousReloadSupersedesOlderAsyncResult()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    std::atomic<int> loads = 0;
+    FrontendConfigService service(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) {
+            const int load = ++loads;
+            if (load == 2) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            }
+            return snapshotWithMarker(load);
+        },
+        0);
+    QCOMPARE(loads.load(), 1);
+
+    service.requestReload();
+    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+    service.reloadNow();
+    QCOMPARE(loads.load(), 3);
+    QCOMPARE(service.snapshot().sourcePath, QStringLiteral("3"));
+
+    QTest::qWait(350);
+    QCOMPARE(service.snapshot().sourcePath, QStringLiteral("3"));
+}
+
+void FrontendConfigTest::publishesUnchangedSuccessfulReloads()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    int loads = 0;
+    FrontendConfigService service(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) {
+            ++loads;
+            return snapshotWithMarker(17);
+        },
+        0);
+    QCOMPARE(loads, 1);
+
+    QSignalSpy changed(&service, &FrontendConfigService::changed);
+    service.reloadNow();
+    QCOMPARE(loads, 2);
+    QCOMPARE(changed.count(), 1);
+    const QVariant published = changed.constFirst().constFirst();
+    QCOMPARE(published.metaType(),
+             QMetaType::fromType<FrontendConfigSnapshot>());
+    const auto *snapshot =
+        static_cast<const FrontendConfigSnapshot *>(published.constData());
+    QVERIFY(snapshot != nullptr);
+    QCOMPARE(*snapshot, service.snapshot());
+}
+
+void FrontendConfigTest::retainsLastGoodSnapshotAfterFailure()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    bool fail = false;
+    FrontendConfigService service(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&fail](const QString &) -> FrontendConfigLoadResult {
+            if (fail) {
+                return std::unexpected(
+                    QStringLiteral("invalid frontend config"));
+            }
+            return snapshotWithMarker(17);
+        },
+        0);
+    const FrontendConfigSnapshot lastGood = service.snapshot();
+
+    QSignalSpy changed(&service, &FrontendConfigService::changed);
+    QSignalSpy failed(&service, &FrontendConfigService::reloadFailed);
+    fail = true;
+    service.reloadNow();
+
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(failed.constFirst().constFirst().toString(),
+             QStringLiteral("invalid frontend config"));
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(service.snapshot(), lastGood);
+    QCOMPARE(service.lastError(), QStringLiteral("invalid frontend config"));
+}
+
+void FrontendConfigTest::changedSubscriberMayDeleteService()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    std::atomic<int> loads = 0;
+    QPointer<FrontendConfigService> service = new FrontendConfigService(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) { return snapshotWithMarker(++loads); }, 0);
+    QCOMPARE(loads.load(), 1);
+
+    QObject::connect(
+        service, &FrontendConfigService::changed, service,
+        [&service](const FrontendConfigSnapshot &) { delete service.data(); });
+    service->requestReload();
+    QTRY_VERIFY_WITH_TIMEOUT(service.isNull(), 2000);
+}
+
+void FrontendConfigTest::failedSubscriberMayDeleteService()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    std::atomic<int> loads = 0;
+    QPointer<FrontendConfigService> service = new FrontendConfigService(
+        QDir(temporary.path()).filePath(QStringLiteral("config")),
+        [&loads](const QString &) -> FrontendConfigLoadResult {
+            const int load = ++loads;
+            if (load == 1) return snapshotWithMarker(load);
+            return std::unexpected(QStringLiteral("delete-on-failure"));
+        },
+        0);
+    QCOMPARE(loads.load(), 1);
+
+    QObject::connect(service, &FrontendConfigService::reloadFailed, service,
+                     [&service](const QString &) { delete service.data(); });
+    service->requestReload();
+    QTRY_VERIFY_WITH_TIMEOUT(service.isNull(), 2000);
+}
+
+QTEST_GUILESS_MAIN(FrontendConfigTest)
+
+#include "test_frontend_config.moc"

@@ -204,6 +204,7 @@ private Q_SLOTS:
     void mapsStartupWindowState();
     void mapsApplicationLifetime();
     void mapsSingleInstancePolicy();
+    void mapsFrontendConfigurationPrecedence();
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void removesOnlyTheInitialCommand();
@@ -283,6 +284,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.windowNewTabPosition,
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
+    QCOMPARE(options.tabsLocation, TabsLocation::Top);
     QCOMPARE(options.windowDecoration, WindowDecorationMode::Auto);
     QCOMPARE(options.windowWidth, quint32(0));
     QCOMPARE(options.windowHeight, quint32(0));
@@ -310,7 +312,7 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
 {
     const auto service = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
-        QStringLiteral("--gtk-single-instance=true"),
+        QStringLiteral("--single-instance=true"),
         QStringLiteral("--initial-window=false"),
     });
     QVERIFY2(service.has_value(), qPrintable(errorMessage(service)));
@@ -325,14 +327,18 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
     GhosttyConfigSnapshot contradictory = completeSnapshot();
     contradictory.values.singleInstanceMode = SingleInstanceMode::Disabled;
     contradictory.values.initialWindow = true;
+    FrontendConfigSnapshot frontend;
+    frontend.values.singleInstanceMode = SingleInstanceMode::Disabled;
+    frontend.values.tabsLocation = TabsLocation::Bottom;
     const LaunchOptions configured =
-        applyGhosttyConfigSnapshot(*service, contradictory);
+        resolveLaunchOptions(*service, &contradictory, &frontend);
     QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Enabled);
+    QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
     QVERIFY(!configured.initialWindow);
 
     const auto detect = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
-        QStringLiteral("--gtk-single-instance=detect"),
+        QStringLiteral("--single-instance=detect"),
         QStringLiteral("--initial-window=T"),
     });
     QVERIFY2(detect.has_value(), qPrintable(errorMessage(detect)));
@@ -342,15 +348,34 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
 
     const auto disabled = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
-        QStringLiteral("--gtk-single-instance=false"),
+        QStringLiteral("--single-instance=false"),
         QStringLiteral("--initial-window=0"),
     });
     QVERIFY2(disabled.has_value(), qPrintable(errorMessage(disabled)));
     QVERIFY(!shouldUseSingleInstance(*disabled, QByteArrayView{}));
     QVERIFY(!disabled->initialWindow);
 
+    const auto legacyAlias = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--gtk-single-instance=false"),
+    });
+    QVERIFY2(legacyAlias.has_value(), qPrintable(errorMessage(legacyAlias)));
+    QCOMPARE(legacyAlias->singleInstanceMode, SingleInstanceMode::Disabled);
+    QVERIFY(legacyAlias->singleInstanceModeExplicit);
+
+    const auto conflictingAliases = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--single-instance=true"),
+        QStringLiteral("--gtk-single-instance=false"),
+    });
+    QVERIFY(!conflictingAliases.has_value());
+    QVERIFY(conflictingAliases.error().contains(
+        QStringLiteral("--single-instance")));
+    QVERIFY(conflictingAliases.error().contains(
+        QStringLiteral("--gtk-single-instance")));
+
     for (const QString &argument : {
-             QStringLiteral("--gtk-single-instance=yes"),
+             QStringLiteral("--single-instance=yes"),
              QStringLiteral("--initial-window=yes"),
          }) {
         const auto invalid = parseLaunchOptions(
@@ -361,7 +386,7 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
 
     const auto payload = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
-        QStringLiteral("--gtk-single-instance=true"),
+        QStringLiteral("--single-instance=true"),
         QStringLiteral("--font-size=14"),
     });
     QVERIFY2(payload.has_value(), qPrintable(errorMessage(payload)));
@@ -1022,10 +1047,10 @@ void LaunchOptionsTest::mapsApplicationLifetime()
 void LaunchOptionsTest::mapsSingleInstancePolicy()
 {
     LaunchOptions base;
-    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    FrontendConfigSnapshot snapshot;
 
     snapshot.values.singleInstanceMode = SingleInstanceMode::Enabled;
-    LaunchOptions options = applyGhosttyConfigSnapshot(base, snapshot);
+    LaunchOptions options = applyFrontendConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Enabled);
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView("ghostty")));
     // Forwarding command-line payloads is deliberately outside this first
@@ -1035,17 +1060,63 @@ void LaunchOptionsTest::mapsSingleInstancePolicy()
     options.hasUnforwardedLaunchPayload = false;
 
     snapshot.values.singleInstanceMode = SingleInstanceMode::Disabled;
-    options = applyGhosttyConfigSnapshot(base, snapshot);
+    options = applyFrontendConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Disabled);
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
 
     snapshot.values.singleInstanceMode = SingleInstanceMode::Detect;
-    options = applyGhosttyConfigSnapshot(base, snapshot);
+    options = applyFrontendConfigSnapshot(base, snapshot);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView{}));
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView("ghostty")));
     options.hasUnforwardedLaunchPayload = true;
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
+}
+
+void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
+{
+    const auto parsed = parseLaunchOptions({QStringLiteral("ghostty-qt")});
+    QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
+
+    const LaunchOptions builtIns =
+        resolveLaunchOptions(*parsed, nullptr, nullptr);
+    QCOMPARE(builtIns.tabsLocation, TabsLocation::Top);
+    QCOMPARE(builtIns.singleInstanceMode, SingleInstanceMode::Detect);
+
+    GhosttyConfigSnapshot shared = completeSnapshot();
+    shared.values.windowDecoration = WindowDecorationMode::None;
+    // This legacy shared value is intentionally ignored by the frontend
+    // resolution seam.
+    shared.values.singleInstanceMode = SingleInstanceMode::Enabled;
+    const LaunchOptions sharedOnly =
+        resolveLaunchOptions(*parsed, &shared, nullptr);
+    QCOMPARE(sharedOnly.windowDecoration, WindowDecorationMode::None);
+    QCOMPARE(sharedOnly.tabsLocation, TabsLocation::Top);
+    QCOMPARE(sharedOnly.singleInstanceMode, SingleInstanceMode::Detect);
+
+    FrontendConfigSnapshot frontend;
+    frontend.values.tabsLocation = TabsLocation::Bottom;
+    frontend.values.singleInstanceMode = SingleInstanceMode::Disabled;
+    const LaunchOptions configured =
+        resolveLaunchOptions(*parsed, &shared, &frontend);
+    QCOMPARE(configured.windowDecoration, WindowDecorationMode::None);
+    QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Disabled);
+
+    const auto explicitCli = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--single-instance=true"),
+    });
+    QVERIFY2(explicitCli.has_value(), qPrintable(errorMessage(explicitCli)));
+    const LaunchOptions overridden =
+        resolveLaunchOptions(*explicitCli, &shared, &frontend);
+    QCOMPARE(overridden.tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(overridden.singleInstanceMode, SingleInstanceMode::Enabled);
+    QVERIFY(overridden.singleInstanceModeExplicit);
+
+    frontend.values.tabsLocation = TabsLocation::Top;
+    QCOMPARE(applyFrontendConfigSnapshot(*parsed, frontend).tabsLocation,
+             TabsLocation::Top);
 }
 
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()

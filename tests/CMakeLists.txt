@@ -11,6 +11,20 @@ if(Git_FOUND AND GHOSTTY_QT_CLANG_FORMAT_EXECUTABLE)
     )
 endif()
 
+qt_add_executable(test-frontend-config
+    test_frontend_config.cpp
+)
+target_include_directories(test-frontend-config PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-frontend-config PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-frontend-config
+)
+add_test(NAME frontend-config COMMAND test-frontend-config)
+set_tests_properties(frontend-config PROPERTIES TIMEOUT 15)
+
 qt_add_executable(test-launch-options
     test_launch_options.cpp
     ghostty_config_export_fixture.h
@@ -26,6 +40,7 @@ target_link_libraries(test-launch-options PRIVATE
     Qt6::Gui
     Qt6::Test
     ghostty-qt-config-export
+    ghostty-qt-frontend-config
 )
 add_test(NAME launch-options COMMAND test-launch-options)
 
@@ -697,10 +712,14 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_resident_lifecycle_config_home
         "${CMAKE_CURRENT_BINARY_DIR}/application-resident-lifecycle-config")
     file(MAKE_DIRECTORY
-        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty")
+        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty"
+        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty-qt")
     file(WRITE
         "${_ghostty_qt_resident_lifecycle_config_home}/ghostty/config.ghostty"
-        "gtk-single-instance = false\nquit-after-last-window-closed = false\nconfirm-close-surface = false\n")
+        "quit-after-last-window-closed = false\nconfirm-close-surface = false\n")
+    file(WRITE
+        "${_ghostty_qt_resident_lifecycle_config_home}/ghostty-qt/config"
+        "single-instance = false\n")
     foreach(_ghostty_qt_lifetime_mode IN ITEMS resident explicit-quit)
         add_test(
             NAME application-lifetime-${_ghostty_qt_lifetime_mode}
@@ -815,10 +834,14 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_initial_window_state_config_home
         "${CMAKE_CURRENT_BINARY_DIR}/application-initial-window-state-config")
     file(MAKE_DIRECTORY
-        "${_ghostty_qt_initial_window_state_config_home}/ghostty")
+        "${_ghostty_qt_initial_window_state_config_home}/ghostty"
+        "${_ghostty_qt_initial_window_state_config_home}/ghostty-qt")
     file(WRITE
         "${_ghostty_qt_initial_window_state_config_home}/ghostty/config.ghostty"
-        "gtk-single-instance = false\nconfirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\nmaximize = true\nfullscreen = true\n")
+        "confirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\nmaximize = true\nfullscreen = true\n")
+    file(WRITE
+        "${_ghostty_qt_initial_window_state_config_home}/ghostty-qt/config"
+        "single-instance = false\n")
     set_tests_properties(application-initial-window-state PROPERTIES
         TIMEOUT 5
         ENVIRONMENT
@@ -834,10 +857,14 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_initial_window_size_config_home
         "${CMAKE_CURRENT_BINARY_DIR}/application-initial-window-size-config")
     file(MAKE_DIRECTORY
-        "${_ghostty_qt_initial_window_size_config_home}/ghostty")
+        "${_ghostty_qt_initial_window_size_config_home}/ghostty"
+        "${_ghostty_qt_initial_window_size_config_home}/ghostty-qt")
     file(WRITE
         "${_ghostty_qt_initial_window_size_config_home}/ghostty/config.ghostty"
-        "gtk-single-instance = false\nconfirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\n")
+        "confirm-close-surface = false\nwindow-width = 40\nwindow-height = 12\n")
+    file(WRITE
+        "${_ghostty_qt_initial_window_size_config_home}/ghostty-qt/config"
+        "single-instance = false\n")
     set_tests_properties(application-initial-window-size PROPERTIES
         TIMEOUT 5
         ENVIRONMENT
@@ -858,6 +885,25 @@ set_tests_properties(application-tab-bar-visibility PROPERTIES
     TIMEOUT 5
     ENVIRONMENT
         "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_tab_bar_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
+add_test(
+    NAME application-tabs-location
+    COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+)
+set(_ghostty_qt_tabs_location_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-tabs-location-config")
+file(MAKE_DIRECTORY
+    "${_ghostty_qt_tabs_location_config_home}/ghostty-qt")
+file(WRITE
+    "${_ghostty_qt_tabs_location_config_home}/ghostty-qt/config"
+    "tabs-location = bottom\nsingle-instance = false\n")
+set_tests_properties(application-tabs-location PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_TABS_LOCATION=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_tabs_location_config_home}"
     FAIL_REGULAR_EXPRESSION
         "Binding loop detected;QQmlApplicationEngine failed"
 )

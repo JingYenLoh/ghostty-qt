@@ -476,6 +476,7 @@ private Q_SLOTS:
     void broadTabTitlePromptsQueueEverySurfaceAndSurviveRemoval();
     void newTabPositionReloadsAndKeepsBroadOrder();
     void tabBarVisibilityTracksPolicyAndCount();
+    void tabsLocationReloadsAsPresentationPolicy();
     void splitDirectionsPlaceAndFocusNewPane_data();
     void splitDirectionsPlaceAndFocusNewPane();
     void automaticSplitUsesOriginatingPaneAspect();
@@ -7516,6 +7517,46 @@ void TerminalWorkspaceTest::tabBarVisibilityTracksPolicyAndCount()
     QVERIFY(workspace.tabBarVisible());
     QCOMPARE(visibilityChanged.count(), 7);
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
+}
+
+void TerminalWorkspaceTest::tabsLocationReloadsAsPresentationPolicy()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.tabsLocation = TabsLocation::Top;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    const int initialIndex = workspace.currentIndex();
+    QSignalSpy locationChanged(&workspace,
+                               &TerminalWorkspace::tabsLocationChanged);
+
+    QVERIFY(!workspace.tabBarAtBottom());
+    workspace.applyLaunchOptions(options);
+    QCOMPARE(locationChanged.count(), 0);
+
+    LaunchOptions reloaded = options;
+    reloaded.tabsLocation = TabsLocation::Bottom;
+    workspace.applyLaunchOptions(reloaded);
+    QVERIFY(workspace.tabBarAtBottom());
+    QCOMPARE(locationChanged.count(), 1);
+    QCOMPARE(workspace.findChild<TerminalPane *>(), pane);
+    QCOMPARE(workspace.tabCount(), 1);
+    QCOMPARE(workspace.currentIndex(), initialIndex);
+
+    workspace.applyLaunchOptions(reloaded);
+    QCOMPARE(locationChanged.count(), 1);
+
+    reloaded.tabsLocation = TabsLocation::Top;
+    workspace.applyLaunchOptions(reloaded);
+    QVERIFY(!workspace.tabBarAtBottom());
+    QCOMPARE(locationChanged.count(), 2);
+    QCOMPARE(workspace.findChild<TerminalPane *>(), pane);
 }
 
 void TerminalWorkspaceTest::splitNavigationWrapsInTreeAndSpatialOrder()

@@ -50,6 +50,8 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabTitlesChanged)
     Q_PROPERTY(bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
+    Q_PROPERTY(
+        bool tabBarAtBottom READ tabBarAtBottom NOTIFY tabsLocationChanged)
     Q_PROPERTY(QQmlComponent *searchOverlayComponent
                READ searchOverlayComponent
                WRITE setSearchOverlayComponent
@@ -94,6 +96,10 @@ public:
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
     bool tabBarVisible() const;
+    bool tabBarAtBottom() const
+    {
+        return effectiveOptions_.tabsLocation == TabsLocation::Bottom;
+    }
     [[nodiscard]] const LaunchOptions &effectiveLaunchOptions() const
     {
         return effectiveOptions_;
@@ -167,6 +173,7 @@ Q_SIGNALS:
     void tabTitlesChanged();
     void currentTitleChanged();
     void tabBarVisibleChanged();
+    void tabsLocationChanged();
     void currentIndexChanged();
     void closeConfirmationRequested(quint64 confirmationId,
                                     const QString &message);

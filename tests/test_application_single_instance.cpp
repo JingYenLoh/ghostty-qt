@@ -61,6 +61,16 @@ bool writeGhosttyConfig(const QString &configHome,
         && config.write(contents) == contents.size();
 }
 
+bool writeFrontendConfig(const QString &configHome, const QByteArray &contents)
+{
+    const QString frontendDirectory =
+        QDir(configHome).filePath(QStringLiteral("ghostty-qt"));
+    if (!QDir().mkpath(frontendDirectory)) return false;
+    QFile config(QDir(frontendDirectory).filePath(QStringLiteral("config")));
+    return config.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && config.write(contents) == contents.size();
+}
+
 QProcessEnvironment headlessApplicationEnvironment(const QString &configHome)
 {
     QProcessEnvironment environment =
@@ -137,12 +147,13 @@ bool writeActivationService(const QString &dataHome)
     QString executable = QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE);
     executable.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
     executable.replace(QStringLiteral("\""), QStringLiteral("\\\""));
-    const QByteArray contents = QStringLiteral(
-        "[D-BUS Service]\n"
-        "Name=%1\n"
-        "Exec=\"%2\" --gtk-single-instance=true --initial-window=false\n")
-                                    .arg(applicationId(), executable)
-                                    .toUtf8();
+    const QByteArray contents =
+        QStringLiteral(
+            "[D-BUS Service]\n"
+            "Name=%1\n"
+            "Exec=\"%2\" --single-instance=true --initial-window=false\n")
+            .arg(applicationId(), executable)
+            .toUtf8();
     QFile service(QDir(serviceDirectory).filePath(
         applicationId() + QStringLiteral(".service")));
     return service.open(QIODevice::WriteOnly | QIODevice::Truncate)
@@ -182,8 +193,9 @@ void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
         QStringLiteral("tmp/application-desktop-forwarding-XXXXXX")));
     QVERIFY(configHome.isValid());
     QVERIFY(writeGhosttyConfig(configHome.path(),
-        QByteArrayLiteral("gtk-single-instance = false\n"
-                          "initial-window = true\n")));
+                               QByteArrayLiteral("initial-window = true\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome.path(), QByteArrayLiteral("single-instance = false\n")));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
@@ -201,7 +213,7 @@ void ApplicationSingleInstanceTest::execFallbackForwardsLauncherPlatformData()
                        QStringLiteral("fallback-startup"));
     QProcess secondary;
     secondary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
-    secondary.setArguments({QStringLiteral("--gtk-single-instance=true")});
+    secondary.setArguments({QStringLiteral("--single-instance=true")});
     secondary.setProcessEnvironment(environment);
     secondary.start();
     QVERIFY(secondary.waitForStarted(3000));
@@ -238,10 +250,12 @@ void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActiva
     QTemporaryDir configHome(QDir::current().filePath(
         QStringLiteral("tmp/application-desktop-warm-XXXXXX")));
     QVERIFY(configHome.isValid());
-    QVERIFY(writeGhosttyConfig(configHome.path(),
-        QByteArrayLiteral("gtk-single-instance = false\n"
-                          "initial-window = true\n"
+    QVERIFY(writeGhosttyConfig(
+        configHome.path(),
+        QByteArrayLiteral("initial-window = true\n"
                           "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome.path(), QByteArrayLiteral("single-instance = false\n")));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
@@ -252,7 +266,7 @@ void ApplicationSingleInstanceTest::explicitZeroWindowHostSupportsStandardActiva
         QStringLiteral("1"));
     QProcess primary;
     primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
-    primary.setArguments({QStringLiteral("--gtk-single-instance=true"),
+    primary.setArguments({QStringLiteral("--single-instance=true"),
                           QStringLiteral("--initial-window=false")});
     primary.setProcessEnvironment(environment);
     primary.start();
@@ -297,10 +311,12 @@ void ApplicationSingleInstanceTest::dbusColdStartsZeroWindowHost()
     const QString dataHome = root.filePath(QStringLiteral("data"));
     const QString configHome = root.filePath(QStringLiteral("config"));
     QVERIFY(writeActivationService(dataHome));
-    QVERIFY(writeGhosttyConfig(configHome,
-        QByteArrayLiteral("gtk-single-instance = false\n"
-                          "initial-window = true\n"
+    QVERIFY(writeGhosttyConfig(
+        configHome,
+        QByteArrayLiteral("initial-window = true\n"
                           "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome, QByteArrayLiteral("single-instance = false\n")));
 
     QProcessEnvironment daemonEnvironment
         = headlessApplicationEnvironment(configHome);
@@ -337,11 +353,12 @@ void ApplicationSingleInstanceTest::residentPrimaryIsReactivatedByBareSecondLaun
             QStringLiteral("tmp/application-single-instance-XXXXXX")));
     QVERIFY(configHome.isValid());
     const QByteArray configContents =
-        "gtk-single-instance = true\n"
         "initial-window = true\n"
         "quit-after-last-window-closed = false\n"
         "confirm-close-surface = false\n";
     QVERIFY(writeGhosttyConfig(configHome.path(), configContents));
+    QVERIFY(writeFrontendConfig(configHome.path(),
+                                QByteArrayLiteral("single-instance = true\n")));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));
@@ -406,17 +423,19 @@ void ApplicationSingleInstanceTest::falseLauncherLeavesPrimaryAtZeroUntilTrueLau
     QVERIFY(writeGhosttyConfig(
         falseConfigHome.path(),
         QByteArrayLiteral(
-            "gtk-single-instance = true\n"
             "initial-window = false\n"
             "quit-after-last-window-closed = true\n"
             "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(falseConfigHome.path(),
+                                QByteArrayLiteral("single-instance = true\n")));
     QVERIFY(writeGhosttyConfig(
         trueConfigHome.path(),
         QByteArrayLiteral(
-            "gtk-single-instance = true\n"
             "initial-window = true\n"
             "quit-after-last-window-closed = false\n"
             "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(trueConfigHome.path(),
+                                QByteArrayLiteral("single-instance = true\n")));
 
     PrivateSessionBus bus;
     QVERIFY2(bus.start(), qPrintable(bus.errorString()));

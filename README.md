@@ -88,7 +88,9 @@ the host-language comparison and remaining engineering risks.
   titles and—when the corresponding tab/split inheritance policy permits
   it—as the starting directory of a new surface.
 - Standard Ghostty configuration-file discovery, exact parsing and validation
-  by the pinned Ghostty code, watched-file reload, and a typed applied slice
+  by the pinned Ghostty code, plus an independent strict
+  `$XDG_CONFIG_HOME/ghostty-qt/config` for Qt-owned application behavior. Both
+  domains support watched-file reload and resolve into one typed applied slice
   that includes four-role font selection, font size, and physical-pixel cell,
   decoration, and cursor metric modifiers.
 - Transparent pre-Qt delegation of the pinned `+edit-config`,
@@ -230,30 +232,52 @@ back to `/bin/sh`. To run a specific command, put it after `--`:
 on the command line applies to the initial pane only; later tabs, splits, and
 windows start the default shell.
 
-## Ghostty configuration
+## Configuration
 
-At startup the application loads the standard Linux Ghostty files, in upstream
-order:
+At startup the application loads two independent configuration domains. The
+standard Linux Ghostty files are loaded in upstream order:
 
 ```text
 $XDG_CONFIG_HOME/ghostty/config
 $XDG_CONFIG_HOME/ghostty/config.ghostty
 ```
 
-If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used. A private
+Qt-owned settings are loaded from:
+
+```text
+$XDG_CONFIG_HOME/ghostty-qt/config
+```
+
+If `XDG_CONFIG_HOME` is unset or relative, `$HOME/.config` is used for both
+domains. Effective options are rebuilt from built-in defaults, the finalized
+shared Ghostty snapshot, the disjoint Qt frontend snapshot, and finally
+explicit command-line overrides. See
+[Frontend configuration](docs/frontend-configuration.md) for its strict
+grammar, keys, precedence, and failure behavior.
+
+A private
 `ghostty-qt-config-helper` runs the pinned Ghostty `+validate-config` action
 around two project-private JSON-v1 exports. Each export contains the complete
 finalized value slice consumed by the frontend plus the current and
 platform-default binding tries; the two complete documents must byte-match
 before publication.
 Syntax, file precedence, `config-file` includes, canonical values, nullable
-lifetime values, raw `gtk-single-instance`, `initial-window`, and finalized
-bindings therefore come from the exact pinned Ghostty implementation. Qt strictly
-decodes owned typed values and does not parse or merge the human-oriented
-`+show-config` output. Font styles and metric modifiers remain tagged values in
-this strict schema-v1 boundary rather than being flattened into ambiguous
-strings or numbers. The project-owned exporter is applied in the build's
-revision shadow; the official Ghostty submodule is not modified.
+lifetime values, `initial-window`, and finalized bindings therefore come from
+the exact pinned Ghostty implementation. The private schema still carries raw
+`gtk-single-instance` for wire compatibility, but the Qt resolver deliberately
+does not consume it; use frontend `single-instance` instead. Qt strictly decodes
+owned typed values and does not parse or merge the human-oriented `+show-config`
+output. Font styles and metric modifiers remain tagged values in this strict
+schema-v1 boundary rather than being flattened into ambiguous strings or
+numbers. The project-owned exporter is applied in the build's revision shadow;
+the official Ghostty submodule is not modified.
+
+The Qt-owned file currently supports:
+
+| Key | Current behavior |
+| --- | --- |
+| `single-instance` | Accepts `false`, `true`, or `detect` and defaults to `detect`. Eligible no-payload launches atomically arbitrate the application-ID D-Bus name and expose `org.freedesktop.Application` at the ID-derived root path. `detect` uses the originating process's real invocation and `TERM_PROGRAM`. The installed direct-exec service cold-starts a forced true zero-window host, while the desktop fallback forces true. Explicit `--single-instance` bootstrap values win. Role and name ownership remain fixed for a running process; each fresh launcher samples the latest file. |
+| `tabs-location` | Accepts `top` or `bottom` and defaults to `top`. Reload reparents the stable Qt toolbar and tab strip above or below the terminal content in every existing window, without replacing panes or changing window size, and updates the default for future windows. |
 
 The current compatibility slice applies these keys:
 
@@ -272,7 +296,6 @@ The current compatibility slice applies these keys:
 | `maximize` | Defaults to `false`. `true` presents every subsequently created window maximized. Reload changes the default for future local, resident-replacement, and desktop-activated windows without changing any existing window state. |
 | `fullscreen` | Defaults to `false`. On Linux, `true` and every pinned non-native variant present subsequently created windows in Qt's native fullscreen mode. When `maximize` is also true, leaving fullscreen through either the application action or compositor restores the window to maximized. Reload affects only future windows. |
 | `initial-window` | Defaults to `true`. `false` completes startup without constructing a QML root or terminal surface, while process configuration, reload, application actions, global shortcuts, and single-instance ownership remain available. A false secondary still participates in atomic name arbitration but exits successfully without activating the owner; a later launcher whose own current value is true activates that same primary even if the primary started with false. The installed D-Bus service forces false only for its bootstrap process, then the queued standard activation unconditionally creates exactly one first window. Local/application `new_window` and every accepted process/desktop activation remain unconditional. Whichever session successfully initializes first receives the current one-shot program/hold. Construction or presentation failure before libghostty-vt initialization, terminal initialization failure, and closing a deferred root before start preserve them for the next session; a later child-launch failure does not. Reloading the primary's value does not itself create or close a window because the decision is sampled once per launching process. Explicit `--initial-window=true|false` startup values take precedence over configuration. |
-| `gtk-single-instance` | Preserves raw `false`, `true`, or `detect`; detect uses the originating process's real invocation and `TERM_PROGRAM`. Eligible no-payload launches atomically arbitrate the application-ID D-Bus name and expose `org.freedesktop.Application` at the ID-derived root path. A true launcher or standard desktop `Activate(a{sv})` call keeps a startup-time reply pending and succeeds only after the primary synchronously registers one complete window/workspace pair; a false launcher exits successfully without sending activation. The installed direct-exec service cold-starts a forced true/false zero-window host, while the desktop fallback forces only true. CLI bootstrap values outrank contradictory user configuration. The standard string `activation-token` and `desktop-startup-id` platform fields retain FIFO request identity, are projected only while the corresponding window is shown, and are then cleared; wrong types, embedded NULs, and unknown fields are discarded, and shell children never inherit the values. A direct primary captures the matching launcher environment before Qt starts and consumes it through the same presentation path. The created window uses the primary's latest config, optionally inherits an actually focused/last-focused cwd, retains configured font size, and uses configured cwd when no valid focus remains. Its pane shares the process-wide first-session lease: only the first successfully initialized session commits one-shot program/hold. Roots that fail before terminal initialization or close before a deferred start preserve it; a later child-launch failure does not. An unavailable bus starts locally; connected-bus failures fail closed, while bounded owner-handoff recovery follows a replacement primary. `Open`, `ActivateAction`, custom `class` namespaces, general option-bearing launches, and payload forwarding remain incomplete. The synchronous creation acknowledgement deliberately strengthens pinned Ghostty's fire-and-forget activation. |
 | `quit-after-last-window-closed` | Defaults to `true` on Linux. Qt's implicit last-window exit is disabled so only the final ordinary confirmed window closure enters this application-owned policy: `true` exits on the next event turn when no delay is set, while `false` retires every root and worker but keeps process configuration, actions, global shortcuts, and any enabled activation endpoint resident. Matching the pinned GTK control flow, an `initial-window=false` process that has never requested a surface is not treated as having closed its last window and remains resident even when this setting is true. After a first surface exists, the ordinary policy applies. An in-process, portal, or eligible true bare-secondary `new_window` request can create a fresh QML window, and reload updates both all live windows and the next replacement. A command supplied after `--` forces `true`, matching Ghostty's `-e` lifecycle. |
 | `quit-after-last-window-closed-delay` | Applies Ghostty's Linux delay after the final ordinary window close. The structured helper preserves null versus configured zero and performs Ghostty's exact whole-millisecond truncation and `c_uint` saturation. A successfully created replacement window cancels the single application timer; a failed factory attempt leaves it armed, identical reloads preserve its deadline, changed reloads reconcile it, and explicit `quit`—including with zero windows—bypasses it. Pinned Ghostty's config documentation says a never-windowed `initial-window=false` process should time out, but its GTK runtime exposes no startup timer hook; this frontend follows the executable pinned GTK behavior and starts the delay only after a real final surface closes. |
 | `resize-overlay` | Supports Ghostty's `always`, `never`, and default `after-first` modes. A pane-local, input-transparent 120-by-40 logical-pixel overlay reports authoritative terminal grid changes as `columns x rows`. Synchronous resize bursts coalesce to the newest grid, another accepted grid change restarts the timer, and raw pixel or DPR changes that preserve the grid do not show it. `after-first` suppresses each pane's initial grid and further layout settling during Ghostty's initial 250 ms delay; deferred maximized/fullscreen startup records its compositor geometry before the worker starts and therefore produces no spurious overlay even in `always` mode. Reload applies live. |
@@ -353,6 +376,8 @@ trigger and one action; focused in-app dispatch still handles action chains.
 | `--font-size POINTS` | Set the initial point size; the default is 12. |
 | `--scrollback-lines LINES` | Estimate capacity for 0 to 10,000,000 rows; the default is 10,000. The legacy value is converted to libghostty's byte cap. |
 | `--hold` | Keep the initial pane after its child exits. |
+| `--single-instance MODE` | Override the Qt-owned `single-instance` setting with `false`, `true`, or `detect`. |
+| `--initial-window BOOLEAN` | Override whether this launch requests an initial window. |
 | `-- program arguments...` | Run a command instead of the default shell. |
 
 The default configuration-enabled build also accepts these exact Ghostty CLI
@@ -583,8 +608,8 @@ ${CMAKE_INSTALL_DATADIR}/dbus-1/services/io.github.JingYenLoh.ghostty_qt.service
 A Debug install appends `.Debug` to both filenames and to the process identity,
 so it cannot activate a Release process. The desktop entry advertises
 `DBusActivatable=true`; its compatibility `Exec` starts normally with
-`--gtk-single-instance=true`. The D-Bus service instead starts a resident host
-with `--gtk-single-instance=true --initial-window=false`, allowing the queued
+`--single-instance=true`. The D-Bus service instead starts a resident host
+with `--single-instance=true --initial-window=false`, allowing the queued
 standard activation to create exactly one window rather than a bootstrap
 window plus an activated window. Executable paths are finalized from the
 actual `cmake --install --prefix` value for relative GNUInstallDirs; absolute

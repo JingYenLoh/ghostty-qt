@@ -224,9 +224,6 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     if (!base.initialWindowExplicit) {
         result.initialWindow = config.initialWindow;
     }
-    if (!base.singleInstanceModeExplicit) {
-        result.singleInstanceMode = config.singleInstanceMode;
-    }
 
     if (!base.scrollbackLimitExplicit) {
         result.scrollbackLimit = {
@@ -248,6 +245,32 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     // exits with its final window and never inherits a lingering delay.
     enforceExplicitCommandLifetime(base, result);
 
+    return result;
+}
+
+LaunchOptions
+applyFrontendConfigSnapshot(const LaunchOptions &base,
+                            const FrontendConfigSnapshot &snapshot)
+{
+    LaunchOptions result = base;
+    result.tabsLocation = snapshot.values.tabsLocation;
+    if (!base.singleInstanceModeExplicit) {
+        result.singleInstanceMode = snapshot.values.singleInstanceMode;
+    }
+    return result;
+}
+
+LaunchOptions
+resolveLaunchOptions(const LaunchOptions &base,
+                     const GhosttyConfigSnapshot *ghosttySnapshot,
+                     const FrontendConfigSnapshot *frontendSnapshot)
+{
+    LaunchOptions result = ghosttySnapshot != nullptr
+        ? applyGhosttyConfigSnapshot(base, *ghosttySnapshot)
+        : base;
+    if (frontendSnapshot != nullptr) {
+        result = applyFrontendConfigSnapshot(result, *frontendSnapshot);
+    }
     return result;
 }
 
@@ -317,9 +340,14 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         QStringLiteral("hold"),
         QStringLiteral("Keep the terminal open after the child process exits."));
     const QCommandLineOption singleInstanceOption(
-        QStringLiteral("gtk-single-instance"),
+        QStringLiteral("single-instance"),
         QStringLiteral("Use false, true, or detect process uniqueness."),
         QStringLiteral("mode"));
+    QCommandLineOption legacySingleInstanceOption(
+        QStringLiteral("gtk-single-instance"),
+        QStringLiteral("Deprecated alias for --single-instance."),
+        QStringLiteral("mode"));
+    legacySingleInstanceOption.setFlags(QCommandLineOption::HiddenFromHelp);
     const QCommandLineOption initialWindowOption(
         QStringLiteral("initial-window"),
         QStringLiteral("Request an initial window (true or false)."),
@@ -333,7 +361,8 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
 
     parser.addOptions({workingDirectoryOption, fontFamilyOption, fontSizeOption,
                        scrollbackLinesOption, holdOption, singleInstanceOption,
-                       initialWindowOption, helpOption, versionOption});
+                       legacySingleInstanceOption, initialWindowOption,
+                       helpOption, versionOption});
     parser.addPositionalArgument(
         QStringLiteral("program"),
         QStringLiteral("Program and arguments to execute after --."),
@@ -418,8 +447,18 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         || parsed.scrollbackLimitExplicit || parsed.hold
         || !parsed.program.isEmpty();
 
-    if (parser.isSet(singleInstanceOption)) {
-        const QString mode = parser.value(singleInstanceOption);
+    const bool singleInstanceSet = parser.isSet(singleInstanceOption);
+    const bool legacySingleInstanceSet =
+        parser.isSet(legacySingleInstanceOption);
+    if (singleInstanceSet && legacySingleInstanceSet) {
+        return std::unexpected(
+            QStringLiteral("--single-instance and its deprecated alias "
+                           "--gtk-single-instance cannot be used together."));
+    }
+    if (singleInstanceSet || legacySingleInstanceSet) {
+        const QString mode =
+            parser.value(singleInstanceSet ? singleInstanceOption
+                                           : legacySingleInstanceOption);
         if (mode == QStringLiteral("true")) {
             parsed.singleInstanceMode = SingleInstanceMode::Enabled;
         } else if (mode == QStringLiteral("false")) {
@@ -427,9 +466,9 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         } else if (mode == QStringLiteral("detect")) {
             parsed.singleInstanceMode = SingleInstanceMode::Detect;
         } else {
-            return std::unexpected(QStringLiteral(
-                "Invalid gtk-single-instance value '%1': expected "
-                "false, true, or detect.")
+            return std::unexpected(
+                QStringLiteral("Invalid single-instance value '%1': expected "
+                               "false, true, or detect.")
                     .arg(mode));
         }
         parsed.singleInstanceModeExplicit = true;

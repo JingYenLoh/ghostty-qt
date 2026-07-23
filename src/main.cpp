@@ -1,5 +1,6 @@
 #include "application_controller.h"
 #include "desktop_activation.h"
+#include "frontend_config_service.h"
 #include "ghostty_cli_delegation.h"
 #include "ghostty_config_edit.h"
 #include "ghostty_config_service.h"
@@ -18,6 +19,7 @@
 #include <QGuiApplication>
 #include <QPointer>
 #include <QQmlApplicationEngine>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
 #include <QTextStream>
@@ -49,7 +51,7 @@ void printHelp()
               "(default: 10000).\n"
               "      --hold                    Keep the pane after the command "
               "exits.\n"
-              "      --gtk-single-instance MODE  Use false, true, or detect "
+              "      --single-instance MODE      Use false, true, or detect "
               "uniqueness.\n"
               "      --initial-window BOOLEAN    Request an initial window.\n";
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -1209,6 +1211,117 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
     return true;
 }
 
+bool installTabsLocationTestHook(QQuickWindow *window,
+                                 TerminalWorkspace *workspace)
+{
+    auto *const toolbar =
+        window->findChild<QQuickItem *>(QStringLiteral("windowToolbar"));
+    auto *const topSlot =
+        window->findChild<QQuickItem *>(QStringLiteral("topToolbarSlot"));
+    auto *const bottomSlot =
+        window->findChild<QQuickItem *>(QStringLiteral("bottomToolbarSlot"));
+    if (toolbar == nullptr || topSlot == nullptr || bottomSlot == nullptr) {
+        qCritical()
+            << "Tabs-location test hook could not find the QML toolbar slots";
+        return false;
+    }
+
+    const auto exercise = [window, workspace, toolbar, topSlot, bottomSlot] {
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        if (pane == nullptr) {
+            qCritical()
+                << "Tabs-location test hook could not find the terminal pane";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        const QSize windowSize = window->size();
+        const qreal chromeHeight =
+            window->property("terminalChromeHeight").toReal();
+        const auto locationSignals = std::make_shared<int>(0);
+        QObject::connect(workspace, &TerminalWorkspace::tabsLocationChanged,
+                         workspace, [locationSignals] { ++*locationSignals; });
+
+        const auto verify = [window, workspace, toolbar, topSlot, bottomSlot,
+                             pane, locationSignals, windowSize, chromeHeight](
+                                bool expectedBottom, int expectedSignals,
+                                const char *stage) {
+            QQuickItem *const expectedParent =
+                expectedBottom ? bottomSlot : topSlot;
+            const bool valid =
+                workspace->tabBarAtBottom() == expectedBottom
+                && topSlot->isVisible() != expectedBottom
+                && bottomSlot->isVisible() == expectedBottom
+                && toolbar->parentItem() == expectedParent
+                && workspace->findChild<TerminalPane *>() == pane
+                && *locationSignals == expectedSignals
+                && window->size() == windowSize
+                && qFuzzyCompare(
+                    window->property("terminalChromeHeight").toReal(),
+                    chromeHeight);
+            if (valid) return true;
+
+            qCritical().nospace()
+                << "Tabs-location test hook mismatch at " << stage
+                << ": bottom=" << workspace->tabBarAtBottom()
+                << ", top-visible=" << topSlot->isVisible()
+                << ", bottom-visible=" << bottomSlot->isVisible()
+                << ", stable-parent="
+                << (toolbar->parentItem() == expectedParent)
+                << ", signals=" << *locationSignals;
+            QCoreApplication::exit(1);
+            return false;
+        };
+
+        auto *const timer = new QTimer(workspace);
+        timer->setSingleShot(true);
+        const auto stage = std::make_shared<int>(0);
+        QObject::connect(timer, &QTimer::timeout, workspace,
+                         [workspace, verify, timer, stage] {
+                             LaunchOptions options =
+                                 workspace->effectiveLaunchOptions();
+                             switch (*stage) {
+                             case 0:
+                                 if (!verify(true, 0, "configured bottom"))
+                                     return;
+                                 options.tabsLocation = TabsLocation::Top;
+                                 workspace->applyLaunchOptions(options);
+                                 break;
+                             case 1:
+                                 if (!verify(false, 1, "live top")) return;
+                                 workspace->applyLaunchOptions(options);
+                                 break;
+                             case 2:
+                                 if (!verify(false, 1, "repeated top")) return;
+                                 options.tabsLocation = TabsLocation::Bottom;
+                                 workspace->applyLaunchOptions(options);
+                                 break;
+                             case 3:
+                                 if (!verify(true, 2, "restored bottom"))
+                                     return;
+                                 QCoreApplication::quit();
+                                 return;
+                             default: Q_UNREACHABLE();
+                             }
+                             ++*stage;
+                             timer->start(0);
+                         });
+        timer->start(0);
+    };
+
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -1311,6 +1424,23 @@ int main(int argc, char *argv[])
         return 2;
     }
 
+    FrontendConfigService frontendConfigService;
+    std::optional<FrontendConfigSnapshot> currentFrontendSnapshot;
+    if (!frontendConfigService.hasSnapshot()) {
+        qWarning().noquote()
+            << "ghostty-qt frontend configuration is unavailable; using built-in and command-line defaults:"
+            << frontendConfigService.lastError();
+    } else {
+        currentFrontendSnapshot = frontendConfigService.snapshot();
+    }
+    QObject::connect(
+        &frontendConfigService, &FrontendConfigService::reloadFailed,
+        &application, [](const QString &message) {
+            qWarning().noquote()
+                << "ghostty-qt frontend configuration reload failed; keeping the last valid configuration:"
+                << message;
+        });
+
 #if GHOSTTY_QT_CONFIG_ENABLED
     const QString configHelperPath = QDir(QCoreApplication::applicationDirPath())
                                          .filePath(QStringLiteral(
@@ -1334,15 +1464,24 @@ int main(int argc, char *argv[])
                              << "Ghostty configuration reload failed; keeping the last valid configuration:"
                              << message;
                      });
-#endif
-
-    LaunchOptions effectiveApplicationOptions = options;
-#if GHOSTTY_QT_CONFIG_ENABLED
+    std::optional<GhosttyConfigSnapshot> currentGhosttySnapshot;
     if (configService.hasSnapshot()) {
-        effectiveApplicationOptions = applyGhosttyConfigSnapshot(
-            options, configService.snapshot());
+        currentGhosttySnapshot = configService.snapshot();
     }
 #endif
+
+    const auto resolveCurrentOptions = [&] {
+#if GHOSTTY_QT_CONFIG_ENABLED
+        const GhosttyConfigSnapshot *const ghosttySnapshot =
+            currentGhosttySnapshot ? &*currentGhosttySnapshot : nullptr;
+#else
+        const GhosttyConfigSnapshot *const ghosttySnapshot = nullptr;
+#endif
+        const FrontendConfigSnapshot *const frontendSnapshot =
+            currentFrontendSnapshot ? &*currentFrontendSnapshot : nullptr;
+        return resolveLaunchOptions(options, ghosttySnapshot, frontendSnapshot);
+    };
+    LaunchOptions effectiveApplicationOptions = resolveCurrentOptions();
 
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
     if (shouldUseSingleInstance(
@@ -1402,20 +1541,36 @@ int main(int argc, char *argv[])
         });
 
 #if GHOSTTY_QT_CONFIG_ENABLED
-    QObject::connect(
-        &configService, &GhosttyConfigService::changed,
-        &applicationController,
-        [&applicationController, options](
-            const GhosttyConfigSnapshot &snapshot) {
-            applicationController.applyLaunchOptions(
-                applyGhosttyConfigSnapshot(options, snapshot));
-        });
+    const auto applyCurrentOptions = [&] {
+        applicationController.applyLaunchOptions(resolveCurrentOptions());
+    };
+    QObject::connect(&configService, &GhosttyConfigService::changed,
+                     &applicationController,
+                     [&currentGhosttySnapshot, &applyCurrentOptions](
+                         const GhosttyConfigSnapshot &snapshot) {
+                         currentGhosttySnapshot = snapshot;
+                         applyCurrentOptions();
+                     });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
     QObject::connect(
         &applicationController, &ApplicationController::configReloadRequested,
         &configService, &GhosttyConfigService::requestReload);
+#else
+    const auto applyCurrentOptions = [&] {
+        applicationController.applyLaunchOptions(resolveCurrentOptions());
+    };
 #endif
+    QObject::connect(&frontendConfigService, &FrontendConfigService::changed,
+                     &applicationController,
+                     [&currentFrontendSnapshot, &applyCurrentOptions](
+                         const FrontendConfigSnapshot &snapshot) {
+                         currentFrontendSnapshot = snapshot;
+                         applyCurrentOptions();
+                     });
+    QObject::connect(
+        &applicationController, &ApplicationController::configReloadRequested,
+        &frontendConfigService, &FrontendConfigService::requestReload);
 
     std::optional<ApplicationWindow> initialWindow;
     if (effectiveApplicationOptions.initialWindow) {
@@ -1541,6 +1696,12 @@ int main(int argc, char *argv[])
             "GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY") == 1) {
         if (!initialWindow
             || !installTabBarVisibilityTestHook(applicationWindow, workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TABS_LOCATION") == 1) {
+        if (!initialWindow
+            || !installTabsLocationTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }

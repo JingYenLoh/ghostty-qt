@@ -627,6 +627,7 @@ void TerminalWorkspace::applyLaunchOptions(
     const RevisionCounter::Value revision = launchOptionsRevision_.advance();
     const QPointer<TerminalWorkspace> guard(this);
     const bool wasTabBarVisible = tabBarVisible();
+    const bool wasTabBarAtBottom = tabBarAtBottom();
     const WindowDecorationMode previousWindowDecoration = windowDecoration();
     keybindProgram_ = std::move(keybindProgram);
     const GhosttyKeybindProgram appliedProgram = keybindProgram_;
@@ -640,6 +641,10 @@ void TerminalWorkspace::applyLaunchOptions(
     };
     if (windowDecoration() != previousWindowDecoration) {
         Q_EMIT windowDecorationChanged();
+        if (!stillCurrentUpdate()) return;
+    }
+    if (tabBarAtBottom() != wasTabBarAtBottom) {
+        Q_EMIT tabsLocationChanged();
         if (!stillCurrentUpdate()) return;
     }
     if (tabBarVisible() != wasTabBarVisible) {

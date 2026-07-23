@@ -18,7 +18,7 @@
       "format": "ghostty",
       "policy": "Portable and Linux Ghostty keys retain upstream names and semantics."
     },
-    "toolkit_mapping_policy": "Meaningful GTK frontend behavior maps to Qt; GTK presentation and debugging internals are not applicable.",
+    "toolkit_mapping_policy": "GTK-prefixed settings remain GTK-only; meaningful Qt equivalents use independently designed ghostty-qt frontend settings.",
     "excluded_platforms": [
       "freebsd",
       "ios",
@@ -560,43 +560,63 @@
     },
         "gtk-custom-css": {
           "status": "not_applicable",
-          "scope": "gtk_only"
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-horizontal-tab-scroll": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-opengl-debug": {
           "status": "not_applicable",
-          "scope": "gtk_only"
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-quick-terminal-layer": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-quick-terminal-namespace": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-single-instance": {
-          "status": "partial",
-          "note": "The private structured schema preserves Ghostty's raw false/true/detect mode, and the originating Qt process resolves detect from its real invocation and TERM_PROGRAM. Eligible source-less Linux launches and desktop shells share the standard org.freedesktop.Application endpoint at the application-ID-derived path with distinct Debug/Release identities. One process owns the non-replaceable name; startup-time Activate(a{sv}) calls retain delayed empty replies until one complete primary-owned window/workspace pair survives synchronous creation, while a false secondary exits successfully without contact. Installed desktop and direct D-Bus service metadata provide ordinary fallback, cold zero-window bootstrap, warm activation, teardown, and restart; exact bootstrap CLI values outrank contradictory configuration. A resident zero-window owner can be revived, an unavailable bus falls back locally, connected-bus failures fail closed, and bounded owner-identity recovery follows a replacement primary. Exact string-valued activation-token and desktop-startup-id fields retain FIFO request identity and are projected only for the target window's show; matching launcher environment is captured before Qt starts, cleared after one presentation, and stripped from terminal children. Wrong types, embedded NULs, and unknown platform fields are ignored. The new window uses the primary's latest config, inherits only a valid focused/last-focused cwd, retains configured cwd when no valid focus remains, retains configured font size, and shares the process-wide first-session lease: only the first successfully initialized session commits one-shot program/hold. Roots that fail before terminal initialization or close before a deferred start preserve it; later child-launch failure does not. Open/ActivateAction return NotSupported. The synchronous creation acknowledgement deliberately strengthens pinned Ghostty's fire-and-forget activation. Custom class namespaces, general option-bearing launches, and payload forwarding remain incomplete.",
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "The upstream GTK key is not consumed. The private schema-v1 export retains its raw value only as an unused compatibility field; ghostty-qt owns equivalent process arbitration through single-instance in $XDG_CONFIG_HOME/ghostty-qt/config and --single-instance."
         },
         "gtk-tabs-location": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "The upstream GTK key is not consumed. ghostty-qt provides its independently designed tabs-location=top|bottom frontend setting, which moves the retained Qt toolbar and tab strip live."
         },
         "gtk-titlebar": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-titlebar-hide-when-maximized": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-titlebar-style": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-toolbar-style": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "gtk-wide-tabs": {
-          "scope": "qt_mapping"
+          "status": "not_applicable",
+          "scope": "gtk_only",
+          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
         "language": {
           "scope": "qt_mapping"
@@ -1239,7 +1259,7 @@
         },
         "new-window": {
           "scope": "linux",
-          "note": "Ghostty's payload-capable +new-window/org.gtk.Actions protocol remains planned; ordinary bare-secondary and standard desktop source-less activation are tracked separately under gtk-single-instance and the new_window application action."
+          "note": "Ghostty's payload-capable +new-window/org.gtk.Actions protocol remains planned; ordinary bare-secondary and standard desktop source-less activation are tracked separately under the Qt-owned frontend single-instance setting and the new_window application action."
         },
         "show-config": {
           "status": "supported",

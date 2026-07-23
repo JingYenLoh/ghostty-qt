@@ -95,9 +95,30 @@ ApplicationWindow {
         workspace.requestWindowClose()
     }
 
-    header: ToolBar {
+    header: Item {
+        id: topToolbarSlot
+        objectName: "topToolbarSlot"
+        implicitHeight: windowHeader.implicitHeight
+        visible: !workspace.tabBarAtBottom
+    }
+
+    footer: Item {
+        id: bottomToolbarSlot
+        objectName: "bottomToolbarSlot"
+        implicitHeight: windowHeader.implicitHeight
+        visible: workspace.tabBarAtBottom
+    }
+
+    ToolBar {
         id: windowHeader
         objectName: "windowToolbar"
+        parent: workspace.tabBarAtBottom
+                ? bottomToolbarSlot
+                : topToolbarSlot
+        anchors.fill: parent
+        position: workspace.tabBarAtBottom
+                  ? ToolBar.Footer
+                  : ToolBar.Header
 
         RowLayout {
             anchors.fill: parent

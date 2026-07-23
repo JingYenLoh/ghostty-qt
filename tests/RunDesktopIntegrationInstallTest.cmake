@@ -51,9 +51,9 @@ file(READ "${service}" service_contents)
 string(REPLACE "\\" "\\\\" escaped_executable "${final_executable}")
 string(REPLACE "\"" "\\\"" escaped_executable "${escaped_executable}")
 set(desktop_exec
-    "Exec=\"${escaped_executable}\" --gtk-single-instance=true")
+    "Exec=\"${escaped_executable}\" --single-instance=true")
 set(service_exec
-    "Exec=\"${escaped_executable}\" --gtk-single-instance=true --initial-window=false")
+    "Exec=\"${escaped_executable}\" --single-instance=true --initial-window=false")
 string(FIND "${desktop_contents}" "${desktop_exec}\n"
     desktop_exec_position)
 string(FIND "${service_contents}" "Name=${APPLICATION_ID}\n"

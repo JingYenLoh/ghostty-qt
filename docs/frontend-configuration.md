@@ -1,0 +1,120 @@
+# Frontend configuration
+
+ghostty-qt has a small configuration domain for behavior owned by the Qt
+frontend. It is intentionally separate from the shared Ghostty configuration:
+
+```text
+$XDG_CONFIG_HOME/ghostty-qt/config
+```
+
+If `XDG_CONFIG_HOME` is unset or is not an absolute path, the file is
+`$HOME/.config/ghostty-qt/config`.
+
+The standard Ghostty files remain the source for portable terminal settings,
+keybindings, and Linux settings shared with upstream Ghostty:
+
+```text
+$XDG_CONFIG_HOME/ghostty/config
+$XDG_CONFIG_HOME/ghostty/config.ghostty
+```
+
+Do not place ghostty-qt frontend keys in either Ghostty file. The pinned
+Ghostty parser correctly reports them as unknown. Conversely, GTK-prefixed
+settings in a Ghostty file do not configure their Qt-owned equivalents.
+
+## Precedence
+
+Effective launch options are rebuilt from immutable process arguments whenever
+either configuration domain reloads:
+
+1. built-in defaults;
+2. the finalized shared Ghostty configuration;
+3. the ghostty-qt frontend configuration for its disjoint, Qt-owned keys;
+4. explicit ghostty-qt command-line overrides.
+
+The two files do not provide competing spellings for the same setting. In
+particular, frontend `single-instance` owns Qt process arbitration;
+Ghostty's `gtk-single-instance` does not participate. An explicit
+`--single-instance=false|true|detect` command-line value has the highest
+precedence.
+
+## Grammar
+
+The frontend file is a strict UTF-8 scalar format. A UTF-8 byte-order mark is
+accepted at the beginning. Each non-empty line must contain exactly one
+assignment:
+
+```text
+key = value
+```
+
+Leading and trailing whitespace around the line, key, and value is ignored.
+Unix and CRLF line endings are accepted. A comment begins with `#` only when
+`#` is the first non-whitespace character on its line.
+
+The following are errors:
+
+- invalid UTF-8 or control characters other than a tab;
+- an assignment with zero or more than one `=`;
+- an empty key or value;
+- an unknown or duplicate key;
+- an unsupported value.
+
+Keys and values are case-sensitive. Quoting and inline comments are not part of
+the grammar. A malformed document is rejected as a whole; successfully parsed
+keys are never applied partially. Assignment diagnostics identify the file and
+line; encoding and I/O diagnostics identify the file.
+
+For example:
+
+```text
+# Qt application policy
+single-instance = detect
+tabs-location = bottom
+```
+
+## Keys
+
+| Key | Values | Default | Behavior |
+| --- | --- | --- | --- |
+| `single-instance` | `false`, `true`, `detect` | `detect` | Controls whether an eligible source-less launch participates in the process-wide `org.freedesktop.Application` endpoint. `detect` enables arbitration unless the launching environment advertises `TERM_PROGRAM`. The decision for an already-running process is fixed at startup; a fresh launcher reads the latest file. |
+| `tabs-location` | `top`, `bottom` | `top` | Places the stable Qt toolbar and tab strip above or below the terminal content. A successful reload moves existing windows and becomes the default for future windows without recreating panes or changing window size. |
+
+## Reload and failure behavior
+
+The frontend service loads synchronously before single-instance arbitration and
+before the first window is created. It watches both the file and its nearest
+existing parent directory, so creating, deleting, or atomically replacing the
+file is detected. File-system bursts are debounced for 75 milliseconds and
+watched reloads run on a dedicated worker.
+
+The `reload_config` application action requests both the shared Ghostty reload
+and the frontend reload. Each domain publishes independently, and the
+application resolves the latest successful snapshot from each one.
+`open_config` continues to open the shared Ghostty file; edit the frontend file
+at the path above directly.
+
+A missing frontend file is a successful load of built-in frontend defaults.
+Deleting an existing file therefore restores those defaults. Syntax and I/O
+failures retain the last successful frontend snapshot and are retried
+periodically; at initial startup, where no last-good snapshot exists, built-in
+and explicit command-line values remain active.
+
+The pinned private JSON schema-v1 export still carries
+`gtk-single-instance` as an unused compatibility field. Keeping that exact wire
+field avoids an unrelated schema migration, but the Qt launch-option resolver
+deliberately ignores it.
+
+## Command-line migration
+
+Use the Qt-owned option for desktop and direct launches:
+
+```sh
+ghostty-qt --single-instance=true
+ghostty-qt --single-instance=true --initial-window=false
+```
+
+`--gtk-single-instance` remains a hidden deprecated command-line alias for
+migration. It cannot be combined with `--single-instance`, and it does not make
+the Ghostty `gtk-single-instance` configuration key authoritative for the Qt
+frontend.

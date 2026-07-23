@@ -1,7 +1,8 @@
 #pragma once
 
-#include "ghostty_config_values.h"
+#include "frontend_config.h"
 #include "ghostty_config_snapshot.h"
+#include "ghostty_config_values.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
@@ -61,6 +62,8 @@ struct LaunchOptions {
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
+    // Qt-owned placement for the stable window toolbar and tab strip.
+    TabsLocation tabsLocation = TabsLocation::Top;
     // Ghostty's normalized top-level decoration preference. The Qt host maps
     // None exactly to a frameless window; ordinary decorated Qt windows retain
     // the Auto, Client, or Server preference even where QPA cannot distinguish
@@ -143,6 +146,17 @@ TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
 // column-aware capacity estimate in scrollbackLimitInBytes().
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot);
+// Apply the independent Qt frontend generation after shared Ghostty settings.
+// Explicit frontend CLI values stored in base remain authoritative.
+LaunchOptions
+applyFrontendConfigSnapshot(const LaunchOptions &base,
+                            const FrontendConfigSnapshot &snapshot);
+// Resolve both independently reloadable configuration domains from the
+// immutable process command line. Null snapshots retain built-in/CLI values.
+LaunchOptions
+resolveLaunchOptions(const LaunchOptions &base,
+                     const GhosttyConfigSnapshot *ghosttySnapshot,
+                     const FrontendConfigSnapshot *frontendSnapshot);
 
 // A live child and an active process are deliberately separate. For an
 // interactive shell, the shell remains live at its prompt while only a

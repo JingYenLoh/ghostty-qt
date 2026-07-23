@@ -3,7 +3,7 @@ Version=1.0
 Type=Application
 Name=Ghostty Qt
 Comment=A Wayland terminal emulator powered by libghostty
-Exec="__GHOSTTY_QT_INSTALL_EXECUTABLE__" --gtk-single-instance=true
+Exec="__GHOSTTY_QT_INSTALL_EXECUTABLE__" --single-instance=true
 Categories=System;TerminalEmulator;
 Keywords=terminal;tty;pty;
 StartupNotify=true
