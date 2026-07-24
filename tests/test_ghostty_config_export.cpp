@@ -239,6 +239,11 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
+    QVERIFY(values.bellFeatures.system);
+    QVERIFY(values.bellFeatures.audio);
+    QVERIFY(!values.bellFeatures.attention);
+    QVERIFY(!values.bellFeatures.title);
+    QVERIFY(values.bellFeatures.border);
     QCOMPARE(values.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!values.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(values.selectionClipboard.copyOnSelect,
@@ -690,6 +695,42 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
+    QTest::newRow("missing-bell-features")
+        << withoutValue(object(), QStringLiteral("bell-features"))
+        << QStringLiteral("values is missing field 'bell-features'");
+    QTest::newRow("bell-features-type")
+        << withValue(object(), QStringLiteral("bell-features"), true)
+        << QStringLiteral("values.bell-features must be an object");
+    QTest::newRow("bell-features-missing-flag")
+        << withValue(object(), QStringLiteral("bell-features"),
+                     QJsonObject{
+                         {QStringLiteral("audio"), false},
+                         {QStringLiteral("attention"), true},
+                         {QStringLiteral("title"), true},
+                         {QStringLiteral("border"), false},
+                     })
+        << QStringLiteral("values.bell-features is missing field 'system'");
+    QTest::newRow("bell-features-extra-flag")
+        << withValue(object(), QStringLiteral("bell-features"),
+                     QJsonObject{
+                         {QStringLiteral("system"), false},
+                         {QStringLiteral("audio"), false},
+                         {QStringLiteral("attention"), true},
+                         {QStringLiteral("title"), true},
+                         {QStringLiteral("border"), false},
+                         {QStringLiteral("future"), true},
+                     })
+        << QStringLiteral("values.bell-features has unexpected field 'future'");
+    QTest::newRow("bell-features-flag-type")
+        << withValue(object(), QStringLiteral("bell-features"),
+                     QJsonObject{
+                         {QStringLiteral("system"), false},
+                         {QStringLiteral("audio"), QStringLiteral("false")},
+                         {QStringLiteral("attention"), true},
+                         {QStringLiteral("title"), true},
+                         {QStringLiteral("border"), false},
+                     })
+        << QStringLiteral("values.bell-features.audio must be a boolean");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

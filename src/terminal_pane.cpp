@@ -77,6 +77,12 @@ qreal scrollbarFraction(quint64 numerator, quint64 denominator)
     return std::clamp(static_cast<qreal>(fraction), qreal{0.0}, qreal{1.0});
 }
 
+bool isModifierOnlyKey(int key)
+{
+    return key == Qt::Key_Control || key == Qt::Key_Shift || key == Qt::Key_Alt
+        || key == Qt::Key_AltGr || key == Qt::Key_Meta;
+}
+
 float unfocusedSplitOverlayOpacity(double paneOpacity)
 {
     if (!std::isfinite(paneOpacity)) {
@@ -1113,6 +1119,12 @@ TerminalPane::TerminalPane(
                     Q_EMIT titleChanged();
                 }
             });
+    connect(controller_, &TerminalController::bell, this, [this] {
+        const QPointer<TerminalPane> guard(this);
+        setBellRinging(true);
+        if (guard == nullptr) return;
+        Q_EMIT bellRang(this);
+    });
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
     connect(controller_, &TerminalController::terminalMouseTrackingChanged,
@@ -1547,6 +1559,13 @@ void TerminalPane::setSurfaceTitleOverride(std::optional<QString> title)
     Q_EMIT titleChanged();
 }
 
+void TerminalPane::setBellRinging(bool ringing)
+{
+    if (bellRinging_ == ringing) return;
+    bellRinging_ = ringing;
+    Q_EMIT bellChanged();
+}
+
 QString TerminalPane::currentDirectory() const
 {
     return controller_->currentDirectory();
@@ -1670,6 +1689,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
     updated.scrollbar = options.scrollbar;
+    updated.bellFeatures = options.bellFeatures;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
@@ -1694,6 +1714,7 @@ void TerminalPane::applyRuntimeOptions(
     const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
     const bool linkPreviewModeChanged =
         options_.linkPreviews != updated.linkPreviews;
+    const BellFeatures previousBellFeatures = options_.bellFeatures;
     const ResizeOverlayOptions previousResizeOverlay = options_.resizeOverlay;
     const TerminalSessionRuntimeOptions previousRuntime =
         toTerminalSessionRuntimeOptions(options_);
@@ -1774,6 +1795,11 @@ void TerminalPane::applyRuntimeOptions(
 
     updateScrollbarState();
     if (!stillCurrentUpdate()) return;
+
+    if (bellRinging_ && previousBellFeatures != options_.bellFeatures) {
+        Q_EMIT bellChanged();
+        if (!stillCurrentUpdate()) return;
+    }
 
     if (previousResizeOverlay.position != options_.resizeOverlay.position) {
         Q_EMIT resizeOverlayRectChanged();
@@ -2949,6 +2975,17 @@ void TerminalPane::drainDeferredKeyEvents()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    // The original interaction clears the alert before it may be deferred.
+    // Replaying that old press must not clear a newer BEL received meanwhile.
+    if (replayingDeferredKeyEvent_ != event
+        && !isModifierOnlyKey(event->key())) {
+        const QPointer<TerminalPane> guard(this);
+        setBellRinging(false);
+        if (guard == nullptr) {
+            event->accept();
+            return;
+        }
+    }
     if (deferKeyEventIfNeeded(*event)) {
         event->accept();
         return;
@@ -3998,6 +4035,12 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
         .preeditTransition = hadPreedit || !nextPreedit.isNull(),
     };
     if (!input.commitText.isEmpty() || input.preeditTransition) {
+        const QPointer<TerminalPane> bellGuard(this);
+        setBellRinging(false);
+        if (bellGuard == nullptr) {
+            event->accept();
+            return;
+        }
         if (keyEventDeferralDepth_ != 0
             || drainingDeferredKeyEvents_) {
             deferredInputs_.emplace_back(input);
@@ -4033,6 +4076,12 @@ QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
 
 void TerminalPane::mousePressEvent(QMouseEvent *event)
 {
+    const QPointer<TerminalPane> bellGuard(this);
+    setBellRinging(false);
+    if (bellGuard == nullptr) {
+        event->accept();
+        return;
+    }
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
@@ -4804,7 +4853,11 @@ QPoint TerminalPane::cellAt(const QPointF &position) const
 
 void TerminalPane::focusInEvent(QFocusEvent *event)
 {
+    const QPointer<TerminalPane> guard(this);
     QQuickItem::focusInEvent(event);
+    if (guard == nullptr) return;
+    setBellRinging(false);
+    if (guard == nullptr) return;
     syncCursorBlink(true);
     controller_->setFocused(true);
     Q_EMIT activated(this);

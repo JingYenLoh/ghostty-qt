@@ -333,6 +333,7 @@ private Q_SLOTS:
     void presentsScrollbarFromRetainedMetadata();
     void movesScrollbarWithClampedAbsoluteRows();
     void reloadsScrollbarPolicyAndHandlesHugeCounts();
+    void latchesClearsAndReloadsBellFeedback();
     void resizeOverlayPositions_data();
     void resizeOverlayPositions();
     void resizeOverlayCoalescesAndRestarts();
@@ -598,6 +599,195 @@ void TerminalPaneTest::reloadsScrollbarPolicyAndHandlesHugeCounts()
     QVERIFY(!pane.scrollbarVisible());
     pane.scrollbarMoveTo(0.5);
     QCOMPARE(requests.count(), 1);
+}
+
+void TerminalPaneTest::latchesClearsAndReloadsBellFeedback()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.bellFeatures = {
+        .system = false,
+        .audio = false,
+        .attention = true,
+        .title = true,
+        .border = false,
+    };
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    const QString baseTitle = QStringLiteral("  base 👻  ");
+    const QString surfaceTitle = QStringLiteral("  surface 🌐  ");
+    pane.setSurfaceTitle(baseTitle);
+    pane.setSurfaceTitleOverride(std::optional<QString>{surfaceTitle});
+    QCOMPARE(pane.title(), surfaceTitle);
+    QCOMPARE(pane.effectiveSurfaceTitle(),
+             std::optional<QString>{surfaceTitle});
+
+    QSignalSpy changed(&pane, &TerminalPane::bellChanged);
+    QSignalSpy titleChanged(&pane, &TerminalPane::titleChanged);
+    QSignalSpy runtimeOptions(controller,
+                              &TerminalController::runtimeOptionsRequested);
+    int ringCount = 0;
+    QPointer<TerminalPane> ringingPane;
+    connect(&pane, &TerminalPane::bellRang, &pane, [&](TerminalPane *source) {
+        ++ringCount;
+        ringingPane = source;
+    });
+
+    const auto verifyRawTitle = [&] {
+        QCOMPARE(pane.title(), surfaceTitle);
+        QCOMPARE(pane.effectiveSurfaceTitle(),
+                 std::optional<QString>{surfaceTitle});
+        QCOMPARE(pane.surfaceTitleOverride(),
+                 std::optional<QString>{surfaceTitle});
+        QCOMPARE(titleChanged.count(), 0);
+    };
+    const auto verifyLastRing = [&] {
+        QVERIFY(ringCount > 0);
+        QCOMPARE(ringingPane.data(), &pane);
+    };
+
+    // Every BEL publishes its per-event effects. Only the first transition
+    // changes the retained pane state.
+    Q_EMIT controller->bell();
+    QVERIFY(pane.bellRinging());
+    QVERIFY(pane.bellTitleVisible());
+    QVERIFY(!pane.bellBorderVisible());
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(ringCount, 1);
+    verifyLastRing();
+    verifyRawTitle();
+
+    Q_EMIT controller->bell();
+    QVERIFY(pane.bellRinging());
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(ringCount, 2);
+    verifyLastRing();
+    verifyRawTitle();
+
+    // Presentation flags reload around the existing latch. They neither
+    // mutate the raw title layers nor project frontend-only state to the
+    // terminal worker.
+    LaunchOptions borderOnly = options;
+    borderOnly.bellFeatures.attention = false;
+    borderOnly.bellFeatures.title = false;
+    borderOnly.bellFeatures.border = true;
+    pane.applyRuntimeOptions(borderOnly);
+    QVERIFY(pane.bellRinging());
+    QVERIFY(!pane.bellTitleVisible());
+    QVERIFY(pane.bellBorderVisible());
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(runtimeOptions.count(), 0);
+    verifyRawTitle();
+
+    Q_EMIT controller->bell();
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(ringCount, 3);
+    verifyLastRing();
+
+    // Reapplying an identical generation is inert.
+    pane.applyRuntimeOptions(borderOnly);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(runtimeOptions.count(), 0);
+
+    LaunchOptions bothVisible = borderOnly;
+    bothVisible.bellFeatures.attention = true;
+    bothVisible.bellFeatures.title = true;
+    pane.applyRuntimeOptions(bothVisible);
+    QVERIFY(pane.bellRinging());
+    QVERIFY(pane.bellTitleVisible());
+    QVERIFY(pane.bellBorderVisible());
+    QCOMPARE(changed.count(), 3);
+    QCOMPARE(runtimeOptions.count(), 0);
+    verifyRawTitle();
+
+    // Modifier presses alone do not acknowledge the alert.
+    for (const int key : {
+             Qt::Key_Control,
+             Qt::Key_Shift,
+             Qt::Key_Alt,
+             Qt::Key_AltGr,
+             Qt::Key_Meta,
+         }) {
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+        QCoreApplication::sendEvent(&pane, &press);
+        QVERIFY(pane.bellRinging());
+        QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+        QCoreApplication::sendEvent(&pane, &release);
+        QVERIFY(pane.bellRinging());
+    }
+    QCOMPARE(changed.count(), 3);
+
+    QKeyEvent ordinaryPress(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                            QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &ordinaryPress);
+    QVERIFY(!pane.bellRinging());
+    QVERIFY(!pane.bellTitleVisible());
+    QVERIFY(!pane.bellBorderVisible());
+    QCOMPARE(changed.count(), 4);
+    QKeyEvent ordinaryRelease(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &ordinaryRelease);
+    QCOMPARE(changed.count(), 4);
+    verifyRawTitle();
+
+    // A pointer press clears before focus handling, so this remains valid for
+    // an already-focused pane where no focus transition would help.
+    Q_EMIT controller->bell();
+    QCOMPARE(changed.count(), 5);
+    QCOMPARE(ringCount, 4);
+    const QPointF pointer(4.0, 4.0);
+    QMouseEvent mousePress(QEvent::MouseButtonPress, pointer, pointer, pointer,
+                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &mousePress);
+    QVERIFY(!pane.bellRinging());
+    QCOMPARE(changed.count(), 6);
+    QMouseEvent mouseRelease(QEvent::MouseButtonRelease, pointer, pointer,
+                             pointer, Qt::LeftButton, Qt::NoButton,
+                             Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &mouseRelease);
+    QCOMPARE(changed.count(), 6);
+
+    // A null IME callback is not interaction, while either committed text or
+    // a real preedit transition acknowledges the bell.
+    Q_EMIT controller->bell();
+    QCOMPARE(changed.count(), 7);
+    QCOMPARE(ringCount, 5);
+    QInputMethodEvent emptyInput;
+    QCoreApplication::sendEvent(&pane, &emptyInput);
+    QVERIFY(pane.bellRinging());
+    QCOMPARE(changed.count(), 7);
+
+    QInputMethodEvent committedInput;
+    committedInput.setCommitString(QStringLiteral("é"));
+    QCoreApplication::sendEvent(&pane, &committedInput);
+    QVERIFY(!pane.bellRinging());
+    QCOMPARE(changed.count(), 8);
+
+    Q_EMIT controller->bell();
+    QCOMPARE(changed.count(), 9);
+    QCOMPARE(ringCount, 6);
+    QInputMethodEvent preeditInput(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &preeditInput);
+    QVERIFY(!pane.bellRinging());
+    QCOMPARE(changed.count(), 10);
+
+    // Focus loss is inert; the next focus gain clears the retained alert.
+    QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusOut);
+    Q_EMIT controller->bell();
+    QVERIFY(pane.bellRinging());
+    QCOMPARE(changed.count(), 11);
+    QCOMPARE(ringCount, 7);
+    QFocusEvent focusIn(QEvent::FocusIn, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusIn);
+    QVERIFY(!pane.bellRinging());
+    QCOMPARE(changed.count(), 12);
+    verifyRawTitle();
 }
 
 void TerminalPaneTest::resizeOverlayPositions_data()

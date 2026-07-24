@@ -193,6 +193,19 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
     try json.objectField("scrollbar");
     try json.write(@tagName(config.scrollbar));
+    try json.objectField("bell-features");
+    try json.beginObject();
+    inline for (.{
+        "system",
+        "audio",
+        "attention",
+        "title",
+        "border",
+    }) |feature| {
+        try json.objectField(feature);
+        try json.write(@field(config.@"bell-features", feature));
+    }
+    try json.endObject();
     try json.objectField("confirm-close-surface");
     try json.write(@tagName(config.@"confirm-close-surface"));
     try json.objectField("clipboard-trim-trailing-spaces");

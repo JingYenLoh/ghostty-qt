@@ -121,6 +121,19 @@ inline QJsonArray metricModifierOrder()
     };
 }
 
+inline QJsonObject bellFeatures(bool system = false, bool audio = false,
+                                bool attention = true, bool title = true,
+                                bool border = false)
+{
+    return {
+        {QStringLiteral("system"), system},
+        {QStringLiteral("audio"), audio},
+        {QStringLiteral("attention"), attention},
+        {QStringLiteral("title"), title},
+        {QStringLiteral("border"), border},
+    };
+}
+
 inline QJsonObject values()
 {
     QJsonArray palette;
@@ -202,6 +215,8 @@ inline QJsonObject values()
         {QStringLiteral("scrollback-limit"),
          QStringLiteral("18446744073709551615")},
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
+        {QStringLiteral("bell-features"),
+         bellFeatures(true, true, false, false, true)},
         {QStringLiteral("confirm-close-surface"), QStringLiteral("always")},
         {QStringLiteral("clipboard-trim-trailing-spaces"), false},
         {QStringLiteral("clipboard-paste-protection"), false},

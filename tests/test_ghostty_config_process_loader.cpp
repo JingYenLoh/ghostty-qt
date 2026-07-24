@@ -227,6 +227,7 @@ private Q_SLOTS:
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
+    void realHelperExportsBellFeatures();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
     void realHelperCanonicalizesTerminalControlActionPayloads();
@@ -944,6 +945,39 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QVERIFY(!result->values.quitAfterLastWindowClosedDelay.has_value());
     QCOMPARE(result->values.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!result->defaultKeybindings.root.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "bell-features = system,audio,no-attention,no-title,border\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.bellFeatures.system);
+    QVERIFY(result->values.bellFeatures.audio);
+    QVERIFY(!result->values.bellFeatures.attention);
+    QVERIFY(!result->values.bellFeatures.title);
+    QVERIFY(result->values.bellFeatures.border);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.bellFeatures.system);
+    QVERIFY(!result->values.bellFeatures.audio);
+    QVERIFY(result->values.bellFeatures.attention);
+    QVERIFY(result->values.bellFeatures.title);
+    QVERIFY(!result->values.bellFeatures.border);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

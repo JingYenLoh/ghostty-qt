@@ -192,6 +192,7 @@ private Q_SLOTS:
     void rejectsMissingApplicationName();
     void appliesFinalizedGhosttyTypography();
     void mapsScrollbarPolicy();
+    void mapsBellFeatures();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -267,6 +268,11 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
     QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
+    QVERIFY(!options.bellFeatures.system);
+    QVERIFY(!options.bellFeatures.audio);
+    QVERIFY(options.bellFeatures.attention);
+    QVERIFY(options.bellFeatures.title);
+    QVERIFY(!options.bellFeatures.border);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
     QVERIFY(options.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(options.selectionClipboard.copyOnSelect,
@@ -772,6 +778,29 @@ void LaunchOptionsTest::mapsScrollbarPolicy()
         QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).scrollbar,
                  configured);
     }
+}
+
+void LaunchOptionsTest::mapsBellFeatures()
+{
+    LaunchOptions base;
+    base.bellFeatures = {
+        .system = false,
+        .audio = false,
+        .attention = true,
+        .title = true,
+        .border = false,
+    };
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.bellFeatures = {
+        .system = true,
+        .audio = true,
+        .attention = false,
+        .title = false,
+        .border = true,
+    };
+
+    QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).bellFeatures,
+             snapshot.values.bellFeatures);
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()

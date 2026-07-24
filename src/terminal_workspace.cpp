@@ -35,6 +35,7 @@ constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
 constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
+constexpr auto kBellBorderProperty = "_ghosttyQtBellBorder";
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
 {
@@ -200,6 +201,7 @@ struct TerminalWorkspace::Tab {
     PaneId activePaneId;
     PaneId zoomedPaneId;
     QString titleOverride;
+    bool attention = false;
 };
 
 template<typename Visitor>
@@ -405,6 +407,13 @@ void TerminalWorkspace::setScrollbarComponent(QQmlComponent *component)
                             &TerminalWorkspace::scrollbarComponentChanged);
 }
 
+void TerminalWorkspace::setBellBorderComponent(QQmlComponent *component)
+{
+    setPaneOverlayComponent(bellBorder_, component, kBellBorderProperty,
+                            "terminal bell border",
+                            &TerminalWorkspace::bellBorderComponentChanged);
+}
+
 void TerminalWorkspace::setPaneOverlayComponent(
     PaneOverlaySlot &slot,
     QQmlComponent *component,
@@ -490,8 +499,13 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
         || guard == nullptr) {
         return false;
     }
-    return attachPaneOverlay(scrollbar_.component, paneGuard,
-                             kScrollbarProperty, "terminal scrollbar")
+    if (!attachPaneOverlay(scrollbar_.component, paneGuard, kScrollbarProperty,
+                           "terminal scrollbar")
+        || guard == nullptr) {
+        return false;
+    }
+    return attachPaneOverlay(bellBorder_.component, paneGuard,
+                             kBellBorderProperty, "terminal bell border")
         && guard != nullptr;
 }
 
@@ -701,11 +715,9 @@ QStringList TerminalWorkspace::tabTitles() const
 
 QString TerminalWorkspace::currentTitle() const
 {
-    const TabListEntry *entry = tabModel_.entryAt(currentIndex_);
-    if (entry == nullptr) {
-        return {};
-    }
-    return entry->titleOverride.isEmpty() ? entry->title : entry->titleOverride;
+    return tabModel_
+        .data(tabModel_.index(currentIndex_, 0), TabListModel::TitleRole)
+        .toString();
 }
 
 bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
@@ -1123,6 +1135,35 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             });
     connect(pane, &TerminalPane::titleChanged, this,
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
+    connect(pane, &TerminalPane::bellChanged, this, [this, paneId] {
+        const TabId tabId = tabIdForPane(paneId);
+        const Tab *const tab = tabById(tabId);
+        if (tab != nullptr && tab->activePaneId == paneId) {
+            refreshTab(tabId);
+        }
+    });
+    connect(pane, &TerminalPane::bellRang, this,
+            [this, paneId, pane](TerminalPane *) {
+                if (paneForId(paneId) != pane) return;
+                const TabId tabId = tabIdForPane(paneId);
+                Tab *const tab = tabById(tabId);
+                if (tab == nullptr) return;
+
+                const QPointer<TerminalWorkspace> guard(this);
+                if (tabIndexForId(tabId) != currentIndex_ && !tab->attention) {
+                    tab->attention = true;
+                    refreshTab(tabId);
+                    if (guard == nullptr) return;
+                }
+
+                if (paneForId(paneId) != pane) return;
+                QQuickWindow *const host = window();
+                if (!effectiveOptions_.bellFeatures.attention || host == nullptr
+                    || host->isActive()) {
+                    return;
+                }
+                Q_EMIT windowAttentionRequested();
+            });
     connect(pane, &TerminalPane::currentDirectoryChanged, this,
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::sessionEnded, this,
@@ -1304,9 +1345,18 @@ void TerminalWorkspace::setCurrentIndex(int index)
 
 void TerminalWorkspace::activateTab(TabId id)
 {
-    const int index = tabIndexForId(id);
+    int index = tabIndexForId(id);
     if (index < 0) {
         return;
+    }
+    Tab *const targetTab = tabs_[static_cast<size_t>(index)].get();
+    if (targetTab->attention) {
+        targetTab->attention = false;
+        const QPointer<TerminalWorkspace> attentionGuard(this);
+        tabModel_.replace(id, tabListEntry(*targetTab));
+        if (attentionGuard == nullptr) return;
+        index = tabIndexForId(id);
+        if (index < 0) return;
     }
     if (currentIndex_ == index) {
         if (TerminalPane *pane = paneForId(currentPaneId()); pane != nullptr) {
@@ -2557,6 +2607,8 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     entry.id = tab.id;
     entry.activePaneId = tab.activePaneId;
     entry.zoomed = tab.zoomedPaneId.isValid();
+    entry.bell = activePane != nullptr && activePane->bellTitleVisible();
+    entry.attention = tab.attention;
     entry.title = activePane != nullptr
         ? activePane->title()
         : QStringLiteral("Terminal");

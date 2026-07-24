@@ -74,6 +74,8 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(
         qreal scrollbarPosition READ scrollbarPosition NOTIFY scrollbarChanged)
     Q_PROPERTY(qreal scrollbarSize READ scrollbarSize NOTIFY scrollbarChanged)
+    Q_PROPERTY(bool bellRinging READ bellRinging NOTIFY bellChanged)
+    Q_PROPERTY(bool bellBorderVisible READ bellBorderVisible NOTIFY bellChanged)
 
 public:
     explicit TerminalPane(
@@ -113,6 +115,15 @@ public:
     bool scrollbarVisible() const { return scrollbarVisible_; }
     qreal scrollbarPosition() const { return scrollbarPosition_; }
     qreal scrollbarSize() const { return scrollbarSize_; }
+    bool bellRinging() const { return bellRinging_; }
+    bool bellTitleVisible() const
+    {
+        return bellRinging_ && options_.bellFeatures.title;
+    }
+    bool bellBorderVisible() const
+    {
+        return bellRinging_ && options_.bellFeatures.border;
+    }
     LaunchOptions splitLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions tabLaunchOptions(const LaunchOptions &base) const;
     LaunchOptions windowLaunchOptions(const LaunchOptions &base) const;
@@ -174,6 +185,8 @@ Q_SIGNALS:
     void resizeOverlayTextChanged();
     void resizeOverlayRectChanged();
     void scrollbarChanged();
+    void bellChanged();
+    void bellRang(TerminalPane *pane);
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();
@@ -348,6 +361,7 @@ private:
     void clearPendingSearchUpdateLocked();
     void clearSearchDecorationsLocked();
     void updateScrollbarState();
+    void setBellRinging(bool ringing);
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -390,6 +404,7 @@ private:
     qreal scrollbarPosition_ = 0.0;
     qreal scrollbarSize_ = 1.0;
     std::optional<quint64> pendingScrollbarRow_;
+    bool bellRinging_ = false;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;

@@ -439,6 +439,7 @@ private Q_SLOTS:
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void scrollbarOverlayIsPaneLocalAndReloadable();
+    void bellBorderOverlayIsPaneLocalAndInputTransparent();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
     void performableTabChangeRequiresDifferentTarget();
@@ -471,6 +472,8 @@ private Q_SLOTS:
     void indexedLastAndMovedTabsPreserveStableIds();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
     void tabTitleOverridesFollowStableSourcesAndReset();
+    void bellFeedbackRoutesAcrossPaneTabWindowAndReload();
+    void bellAttentionPublicationMayDestroyWorkspace();
     void surfaceTitlePromptsPreserveStableTargetsAndLayers();
     void broadSurfaceTitlePromptsShareFifoAndPruneRemovedPanes();
     void tabTitlePromptsPreserveStableTargetsAndReset();
@@ -2557,6 +2560,12 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
             &TerminalWorkspace::scrollbarComponent,
             &TerminalWorkspace::scrollbarComponentChanged,
         },
+        OverlayCase{
+            "bellBorder",
+            &TerminalWorkspace::setBellBorderComponent,
+            &TerminalWorkspace::bellBorderComponent,
+            &TerminalWorkspace::bellBorderComponentChanged,
+        },
     };
 
     const auto makeComponent = [&engine](const QString &objectName) {
@@ -3102,6 +3111,94 @@ void TerminalWorkspaceTest::scrollbarOverlayIsPaneLocalAndReloadable()
     QVERIFY(secondPane->findChild<QQuickItem *>(
                 QStringLiteral("terminalScrollBar"), Qt::FindDirectChildrenOnly)
             == nullptr);
+    workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::bellBorderOverlayIsPaneLocalAndInputTransparent()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.bellFeatures.attention = false;
+    options.bellFeatures.title = false;
+    options.bellFeatures.border = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/BellBorderOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    TerminalController *const firstController =
+        firstPane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    const QRectF firstGeometry(firstPane->position(), firstPane->size());
+
+    // Attach the real QML component after the pane is latched. Initial QML
+    // bindings settle without starting a transition, which keeps this
+    // lifecycle test independent of Qt's global animation clock.
+    Q_EMIT firstController->bell();
+    QVERIFY(firstPane->bellRinging());
+    QVERIFY(firstPane->bellBorderVisible());
+    workspace->setBellBorderComponent(&overlayComponent);
+    auto *const firstBorder = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalBellBorder"), Qt::FindDirectChildrenOnly);
+    QVERIFY(firstBorder != nullptr);
+    QCOMPARE(firstBorder->parentItem(), firstPane);
+    QVERIFY(!firstBorder->isEnabled());
+    QVERIFY(firstBorder->isVisible());
+    QCOMPARE(firstBorder->opacity(), qreal{1.0});
+    QCOMPARE(firstBorder->position(), QPointF{});
+    QCOMPARE(firstBorder->size(), firstPane->size());
+    QCOMPARE(QRectF(firstPane->position(), firstPane->size()), firstGeometry);
+
+    const TabId tabId = workspace->tabModel()->idAt(0);
+    const PaneId firstId = workspace->tabModel()->entryAt(0)->activePaneId;
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::SplitRight,
+        {tabId, firstId, 0},
+    }));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 1000);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *const secondBorder = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalBellBorder"), Qt::FindDirectChildrenOnly);
+    QVERIFY(secondBorder != nullptr);
+    QVERIFY(secondBorder != firstBorder);
+    QCOMPARE(secondBorder->parentItem(), secondPane);
+    QVERIFY(!secondBorder->isEnabled());
+    QVERIFY(!secondBorder->isVisible());
+    QVERIFY(firstPane->bellRinging());
+    QVERIFY(!secondPane->bellRinging());
+    QVERIFY(firstBorder->isVisible());
+
+    workspace->setBellBorderComponent(nullptr);
+    QVERIFY(
+        firstPane->findChild<QQuickItem *>(QStringLiteral("terminalBellBorder"),
+                                           Qt::FindDirectChildrenOnly)
+        == nullptr);
+    QVERIFY(
+        secondPane->findChild<QQuickItem *>(
+            QStringLiteral("terminalBellBorder"), Qt::FindDirectChildrenOnly)
+        == nullptr);
     workspace.reset();
     window.close();
 }
@@ -6878,6 +6975,255 @@ void TerminalWorkspaceTest::tabTitleOverridesFollowStableSourcesAndReset()
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
              selectedBeforeBroad);
     QCOMPARE(workspace.currentTitle(), entry(secondTabId)->title);
+}
+
+void TerminalWorkspaceTest::bellFeedbackRoutesAcrossPaneTabWindowAndReload()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.bellFeatures = {
+        .system = false,
+        .audio = false,
+        .attention = true,
+        .title = true,
+        .border = false,
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QVERIFY(workspace->initialize(options));
+    window.show();
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 1000);
+
+    const CurrentTabProbe first = currentTabProbe(*workspace);
+    const CurrentTabProbe active = splitRightProbe(*workspace);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(active.pane != nullptr);
+    QCOMPARE(first.tabId, active.tabId);
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    TerminalController *const activeController =
+        active.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(activeController != nullptr);
+
+    const auto tabIndex = [&workspace](TabId id) {
+        return workspace->tabModel()->indexOf(id);
+    };
+    const auto entry = [&workspace, &tabIndex](TabId id) {
+        return workspace->tabModel()->entryAt(tabIndex(id));
+    };
+    const auto tabRole = [&workspace, &tabIndex](TabId id, int role) {
+        const int index = tabIndex(id);
+        return workspace->tabModel()->data(
+            workspace->tabModel()->index(index, 0), role);
+    };
+
+    const QString surfaceTitle = QStringLiteral("raw surface title");
+    const QString tabTitle = QStringLiteral("raw tab override");
+    active.pane->setSurfaceTitle(surfaceTitle);
+    QVERIFY(active.pane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:raw tab override")));
+    QVERIFY(workspace->dispatchAction({
+        WorkspaceAction::ToggleSplitZoom,
+        {active.tabId, active.paneId, 0},
+    }));
+    QCOMPARE(tabRole(active.tabId, TabListModel::TitleRole).toString(),
+             QStringLiteral("🔍 raw tab override"));
+    QCOMPARE(entry(active.tabId)->title, surfaceTitle);
+    QCOMPARE(entry(active.tabId)->titleOverride, tabTitle);
+
+    QSignalSpy windowAttention(workspace.get(),
+                               &TerminalWorkspace::windowAttentionRequested);
+
+    // BEL decorates the computed title without entering either raw title
+    // layer. Its prefix remains outside the existing zoom decoration.
+    Q_EMIT activeController->bell();
+    QVERIFY(active.pane->bellRinging());
+    QVERIFY(active.pane->bellTitleVisible());
+    QVERIFY(!active.pane->bellBorderVisible());
+    QCOMPARE(tabRole(active.tabId, TabListModel::TitleRole).toString(),
+             QStringLiteral("🔔 🔍 raw tab override"));
+    QCOMPARE(workspace->currentTitle(),
+             QStringLiteral("🔔 🔍 raw tab override"));
+    QCOMPARE(entry(active.tabId)->title, surfaceTitle);
+    QCOMPARE(entry(active.tabId)->titleOverride, tabTitle);
+    QVERIFY(!tabRole(active.tabId, TabListModel::AttentionRole).toBool());
+    QCOMPARE(windowAttention.count(), 0);
+
+    // A selected tab never requests tab attention for a different split, and
+    // only its active pane contributes the title decoration.
+    Q_EMIT firstController->bell();
+    QVERIFY(first.pane->bellRinging());
+    QVERIFY(!tabRole(first.tabId, TabListModel::AttentionRole).toBool());
+    QCOMPARE(tabRole(first.tabId, TabListModel::TitleRole).toString(),
+             QStringLiteral("🔔 🔍 raw tab override"));
+    QCOMPARE(windowAttention.count(), 0);
+
+    workspace->newTab();
+    QCOMPARE(workspace->tabCount(), 2);
+    const TabId secondTabId =
+        workspace->tabModel()->idAt(workspace->currentIndex());
+    QVERIFY(secondTabId != first.tabId);
+    const int oldTabIndex = tabIndex(first.tabId);
+    QVERIFY(oldTabIndex >= 0);
+
+    // Repeated BEL is still an event even though the pane latch was already
+    // set. An inactive tab records attention independently from that latch.
+    Q_EMIT activeController->bell();
+    QVERIFY(tabRole(first.tabId, TabListModel::AttentionRole).toBool());
+    QCOMPARE(windowAttention.count(), 0);
+
+    workspace->setCurrentIndex(oldTabIndex);
+    QVERIFY(!tabRole(first.tabId, TabListModel::AttentionRole).toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!active.pane->bellRinging(), 1000);
+    QVERIFY(first.pane->bellRinging());
+
+    // Host-window attention is per BEL, not per pane-latch transition.
+    QQuickWindow secondWindow;
+    secondWindow.resize(window.size());
+    secondWindow.show();
+    secondWindow.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isActive(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isActive(), 1000);
+
+    Q_EMIT activeController->bell();
+    Q_EMIT activeController->bell();
+    QCOMPARE(windowAttention.count(), 2);
+    QVERIFY(active.pane->bellRinging());
+
+    // Live reload changes only presentation and future event policy. Both
+    // pane latches and the raw title layers survive it.
+    LaunchOptions borderOnly = options;
+    borderOnly.bellFeatures.attention = false;
+    borderOnly.bellFeatures.title = false;
+    borderOnly.bellFeatures.border = true;
+    workspace->applyLaunchOptions(borderOnly);
+    QVERIFY(active.pane->bellRinging());
+    QVERIFY(first.pane->bellRinging());
+    QVERIFY(!active.pane->bellTitleVisible());
+    QVERIFY(active.pane->bellBorderVisible());
+    QVERIFY(first.pane->bellBorderVisible());
+    QCOMPARE(tabRole(first.tabId, TabListModel::TitleRole).toString(),
+             QStringLiteral("🔍 raw tab override"));
+    QCOMPARE(entry(first.tabId)->title, surfaceTitle);
+    QCOMPARE(entry(first.tabId)->titleOverride, tabTitle);
+
+    Q_EMIT activeController->bell();
+    QCOMPARE(windowAttention.count(), 2);
+
+    LaunchOptions titleOnly = borderOnly;
+    titleOnly.bellFeatures.attention = true;
+    titleOnly.bellFeatures.title = true;
+    titleOnly.bellFeatures.border = false;
+    workspace->applyLaunchOptions(titleOnly);
+    QVERIFY(active.pane->bellRinging());
+    QVERIFY(first.pane->bellRinging());
+    QVERIFY(active.pane->bellTitleVisible());
+    QVERIFY(!active.pane->bellBorderVisible());
+    QVERIFY(!first.pane->bellBorderVisible());
+    QCOMPARE(tabRole(first.tabId, TabListModel::TitleRole).toString(),
+             QStringLiteral("🔔 🔍 raw tab override"));
+    QCOMPARE(entry(first.tabId)->title, surfaceTitle);
+    QCOMPARE(entry(first.tabId)->titleOverride, tabTitle);
+
+    Q_EMIT activeController->bell();
+    Q_EMIT activeController->bell();
+    QCOMPARE(windowAttention.count(), 4);
+    QVERIFY(!tabRole(first.tabId, TabListModel::AttentionRole).toBool());
+}
+
+void TerminalWorkspaceTest::bellAttentionPublicationMayDestroyWorkspace()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.bellFeatures.attention = true;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const auto initializedWorkspace = [&options] {
+        auto *workspace = new TerminalWorkspace;
+        workspace->setSize(QSizeF(640.0, 360.0));
+        if (!workspace->initialize(options,
+                                   TerminalSessionStartMode::Deferred)) {
+            delete workspace;
+            return static_cast<TerminalWorkspace *>(nullptr);
+        }
+        return workspace;
+    };
+
+    // Publishing AttentionRole from a BEL may synchronously destroy the
+    // workspace through a model observer.
+    {
+        TerminalWorkspace *workspace = initializedWorkspace();
+        QVERIFY(workspace != nullptr);
+        const CurrentTabProbe first = currentTabProbe(*workspace);
+        QVERIFY(first.pane != nullptr);
+        TerminalController *const controller =
+            first.pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        workspace->newTab();
+
+        bool observedAttention = false;
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace->tabModel(), &QAbstractItemModel::dataChanged, this,
+                [workspace, &observedAttention](const QModelIndex &,
+                                                const QModelIndex &,
+                                                const QList<int> &roles) {
+                    if (!roles.contains(TabListModel::AttentionRole)) return;
+                    observedAttention = true;
+                    delete workspace;
+                });
+        Q_EMIT controller->bell();
+        QVERIFY(observedAttention);
+        QVERIFY(guard.isNull());
+    }
+
+    // Clearing that role while selecting the tab has the same destructive
+    // publication boundary.
+    {
+        TerminalWorkspace *workspace = initializedWorkspace();
+        QVERIFY(workspace != nullptr);
+        const CurrentTabProbe first = currentTabProbe(*workspace);
+        QVERIFY(first.pane != nullptr);
+        TerminalController *const controller =
+            first.pane->findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        workspace->newTab();
+        Q_EMIT controller->bell();
+        const int firstIndex = workspace->tabModel()->indexOf(first.tabId);
+        QVERIFY(firstIndex >= 0);
+        QVERIFY(workspace->tabModel()
+                    ->data(workspace->tabModel()->index(firstIndex, 0),
+                           TabListModel::AttentionRole)
+                    .toBool());
+
+        bool observedAttention = false;
+        const QPointer<TerminalWorkspace> guard(workspace);
+        connect(workspace->tabModel(), &QAbstractItemModel::dataChanged, this,
+                [workspace, &observedAttention](const QModelIndex &,
+                                                const QModelIndex &,
+                                                const QList<int> &roles) {
+                    if (!roles.contains(TabListModel::AttentionRole)) return;
+                    observedAttention = true;
+                    delete workspace;
+                });
+        workspace->setCurrentIndex(firstIndex);
+        QVERIFY(observedAttention);
+        QVERIFY(guard.isNull());
+    }
 }
 
 void TerminalWorkspaceTest::surfaceTitlePromptsPreserveStableTargetsAndLayers()

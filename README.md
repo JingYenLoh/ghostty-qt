@@ -73,6 +73,13 @@ the host-language comparison and remaining engineering risks.
   identity. Both prompt actions share one modal Qt dialog and stable FIFO
   scheduler. Surface-scoped fullscreen and maximize actions target the
   containing Qt window, with broad bindings coalesced once per window.
+- Pane-local BEL feedback with Ghostty's default title and attention features.
+  A ringing active surface prefixes its tab and window title with `🔔`; an
+  inactive tab is emphasized, and an inactive Qt window requests native
+  desktop attention. The optional `border` feature adds an input-transparent
+  per-pane overlay. Focus, terminal keyboard/IME interaction, or a mouse press
+  clears that pane's latch without changing its raw terminal, surface, or tab
+  title.
 - Process-owned multiwindow lifetime and aggregate quit, including resident
   zero-window operation. Eligible bare secondary launches and desktop shells
   share the standard `org.freedesktop.Application` session-D-Bus endpoint; an
@@ -322,6 +329,7 @@ The current compatibility slice applies these keys:
 | `theme` | A static theme's appearance values can flow through the canonical fields above when the pinned parser resolves them. Dynamic light/dark theme switching is not implemented. |
 | `scrollback-limit` | Preserves Ghostty's byte-valued limit for new panes. Explicit `--scrollback-lines` wins. An existing libghostty terminal cannot resize its history allocation during reload. |
 | `scrollbar` | Supports `system` and `never`. `system` presents a Qt-styled, per-pane overlay only when the active screen has scrollback; dragging or clicking its track sends an absolute-row request through the existing worker-owned viewport path. `never` removes the affordance without disabling wheel or keybinding scrolling. Reload applies live, and the overlay neither reserves terminal space nor changes PTY geometry. |
+| `bell-features` | The finalized `attention`, `title`, and `border` flags apply live. Every BEL latches its source pane; `title` prefixes only the active surface's displayed tab/window title, `border` fades a three-pixel accent border over that pane without taking input or changing terminal geometry, and `attention` uses Qt's native window-attention request only while the host is inactive. Inactive tabs retain an independent attention marker until selected. A pane latch clears on focus, non-modifier keyboard/IME interaction, or any terminal mouse press. The raw surface and tab titles remain unchanged. `system` and `audio` are parsed as part of the exact feature set but do not play sound yet; `bell-audio-path` and `bell-audio-volume` remain future multimedia work. |
 | `confirm-close-surface` | Supports `false`, `true`, and `always`, including live policy updates. `true` detects separate foreground jobs and latches submitted commands; shell builtins still need semantic prompt integration for exact detection. `always` confirms any live child. |
 | `clipboard-trim-trailing-spaces`, `copy-on-select`, `selection-clear-on-copy` | Apply live to selection copying. Linux `copy-on-select` accepts Ghostty's `false`, `true` (primary selection), and `clipboard` (primary and standard clipboard) modes, with standard-clipboard fallback when primary selection is unavailable. Explicit copy can clear only after formatting; automatic copy never clears. |
 | `clipboard-paste-protection`, `clipboard-paste-bracketed-safe` | Default to `true` and apply live. The session worker uses Ghostty's current bracketed-paste mode, exact safety check, and encoder. Unsafe text is retained under a correlated request ID; cancellation is inert, while confirmation rechecks current terminal mode before encoding and returns to the active screen before writing. |

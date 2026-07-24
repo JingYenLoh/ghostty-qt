@@ -126,7 +126,9 @@ bool TabListModel::replace(TabId id, TabListEntry entry)
 
     QList<int> roles;
     if (previous.title != entries_[row].title
-        || previous.titleOverride != entries_[row].titleOverride) {
+        || previous.titleOverride != entries_[row].titleOverride
+        || previous.zoomed != entries_[row].zoomed
+        || previous.bell != entries_[row].bell) {
         roles.append(TitleRole);
     }
     if (previous.titleOverride != entries_[row].titleOverride) {
@@ -200,5 +202,13 @@ bool TabListModel::removeAt(int row)
 
 QString TabListModel::displayTitle(const TabListEntry &entry)
 {
-    return entry.titleOverride.isEmpty() ? entry.title : entry.titleOverride;
+    QString title =
+        entry.titleOverride.isEmpty() ? entry.title : entry.titleOverride;
+    if (entry.zoomed) {
+        title.prepend(QStringLiteral("🔍 "));
+    }
+    if (entry.bell) {
+        title.prepend(QStringLiteral("🔔 "));
+    }
+    return title;
 }

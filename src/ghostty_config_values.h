@@ -30,6 +30,16 @@ enum class ScrollbarPolicy {
     Never,
 };
 
+struct BellFeatures {
+    bool system = false;
+    bool audio = false;
+    bool attention = true;
+    bool title = true;
+    bool border = false;
+
+    bool operator==(const BellFeatures &) const = default;
+};
+
 enum class MiddleClickAction {
     PrimaryPaste,
     Ignore,
@@ -181,6 +191,7 @@ struct GhosttyConfigValues {
 
     quint64 scrollbackLimitBytes = 0;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
+    BellFeatures bellFeatures;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard{
         .trimTrailingSpaces = false,

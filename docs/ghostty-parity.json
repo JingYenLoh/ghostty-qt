@@ -324,6 +324,21 @@
     "background-blur": {
       "scope": "wayland"
     },
+    "bell-audio-path": {
+      "status": "planned",
+      "scope": "qt_mapping",
+      "note": "The pinned parser owns this path, but ghostty-qt does not yet export it or construct a Qt multimedia playback pipeline. Custom audio remains a later platform slice."
+    },
+    "bell-audio-volume": {
+      "status": "planned",
+      "scope": "qt_mapping",
+      "note": "The pinned parser owns the clamped custom-bell volume, but ghostty-qt does not yet export or apply it because custom audio playback is not implemented."
+    },
+    "bell-features": {
+      "status": "partial",
+      "scope": "qt_mapping",
+      "note": "The strict schema transports Ghostty's complete finalized system/audio/attention/title/border set. Every BEL latches its source pane and still publishes an every-event notification; focus, non-modifier key or IME interaction, and any terminal mouse press clear that pane. Title prefixes only the active surface's displayed raw-derived tab/window title, border uses a three-pixel half-opacity input-transparent per-pane overlay, and attention requests QWindow's native indefinite alert only for an inactive host. Inactive tabs retain a separate stable attention marker until selected, including bells from non-active splits. Title and border reload live without clearing the latch or changing pane/grid/PTY identity. System and audio are parsed but intentionally produce no sound, so the key remains partial pending system/custom playback."
+    },
     "bold-color": {
       "status": "supported",
       "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."

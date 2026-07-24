@@ -508,6 +508,22 @@ target_link_libraries(test-workspace-foundation PRIVATE
 add_test(NAME workspace-foundation COMMAND test-workspace-foundation)
 set_tests_properties(workspace-foundation PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-tab-list-model
+    test_tab_list_model.cpp
+    ../src/tab_list_model.cpp
+    ../src/tab_list_model.h
+    ../src/workspace_ids.h
+)
+target_include_directories(test-tab-list-model PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-tab-list-model PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+add_test(NAME tab-list-model COMMAND test-tab-list-model)
+set_tests_properties(tab-list-model PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-ghostty-action-catalog
     test_ghostty_action_catalog.cpp
     ../src/workspace_action.h

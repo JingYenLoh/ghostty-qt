@@ -146,6 +146,28 @@ field takes focus with the caret at the end and does not select all. OK applies
 the exact entered text through `set_tab_title`, including surrounding spaces;
 blank therefore clears the override, while Cancel performs no mutation.
 
+BEL presentation is a separate, pane-local latch above those raw title layers.
+The worker publishes every Ghostty bell through `TerminalController`; the pane
+sets its latch on the first event but continues publishing an every-event
+notification so repeated BELs can renew host-window attention. Gaining
+terminal focus, a non-modifier key press, an IME commit/preedit transition, or
+any terminal mouse press clears only that pane. Key releases and
+modifier-only presses do not clear it. The active pane's latched state drives
+the optional `🔔` display prefix before either its terminal-derived title or
+the tab override, without mutating the controller base title, surface
+override, or tab override consumed by title actions. A bell in another split
+therefore retains that split's independent border state without replacing the
+active surface's title.
+
+Tab attention is intentionally distinct from the pane latch, matching
+Ghostty's GTK page behavior. A BEL from any pane of an inactive tab marks that
+stable `TabId` as needing attention; selecting the tab clears the marker, then
+ordinary focus transfer clears the selected active pane's latch. A BEL never
+marks the already selected tab, even if its host window is inactive. The
+`attention` bell feature instead gates a native `QWindow::alert(0)` request for
+an inactive host window; Qt ignores the call for an active window and ends an
+indefinite alert when that window becomes active.
+
 A successful `goto_split` first resolves its destination, then applies focus
 and zoom as one workspace transition. The canonical
 `split-preserve-zoom = navigation` policy transfers an existing zoom to that
@@ -164,13 +186,15 @@ vector rows or raw pane pointers across deferred operations. A
 `QAbstractListModel` publishes tab identity, effective title, raw title
 override, active pane, working directory, running state, zoom, attention,
 progress, and read-only roles to QML. The current tab strip consumes that
-model. Updating or clearing an override notifies both title roles when their
-values change. The read-only role follows each tab's active pane; the pane also
-exposes the state directly for its visible status badge. Several other roles
-remain foundations for later parity work rather than user-visible features
-today. The workspace owns all structural model mutation: C++ consumers receive
-a const typed view and QML receives an abstract model facade, so synchronous
-observers cannot desynchronize model rows from the pane topology.
+model. Updating or clearing an override, or changing the active surface's
+title-bell presentation, notifies the title role without changing either raw
+title field. The attention role drives the inactive-tab emphasis described
+above. The read-only role follows each tab's active pane; the pane also exposes
+the state directly for its visible status badge. Progress remains a foundation
+for later parity work rather than a user-visible feature today. The workspace
+owns all structural model mutation: C++ consumers receive a const typed view
+and QML receives an abstract model facade, so synchronous observers cannot
+desynchronize model rows from the pane topology.
 
 Workspace commands pass through a typed `WorkspaceActionDispatcher` with an
 explicit tab/pane context. Keyboard, pane, and QML entry points can therefore
@@ -704,8 +728,8 @@ shows progressive selected/total status, and maps Enter, Shift+Enter, and
 Escape to next, previous, and end. It is anchored at the top-right and is not
 draggable yet.
 
-Search, read-only, resize, and scrollbar overlays use the same guarded factory
-lifecycle.
+Search, read-only, resize, scrollbar, and bell-border overlays use the same
+guarded factory lifecycle.
 Replacing or destroying a factory removes all objects it created before a new
 factory is attached, and each newly created pane receives the current factories.
 The workspace traverses a stable pane snapshot while running QML creation and
@@ -720,6 +744,15 @@ back to a saturated absolute row, so QML never has to represent a potentially
 only when the active screen has history; `never` hides it. The control is a
 per-pane overlay, so live policy reload, split zoom, and track or thumb
 interaction do not alter the pane rectangle, terminal grid, or PTY size.
+
+The bell border is likewise a disabled, input-transparent pane overlay rather
+than layout decoration. It uses Ghostty GTK's three-pixel half-opacity green
+border and 500 ms crossfade. Its opacity derives from the pane latch and the
+live `border` feature, so changing configuration can reveal or hide an
+already-latched bell without replacing the overlay, pane, renderer, PTY, or
+terminal grid. The same derived-state rule controls the title prefix. Reload
+does not erase the underlying latch; the next focus, keyboard/IME interaction,
+or mouse press still clears it normally.
 
 Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
@@ -1089,9 +1122,9 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
-compatibility field, the exact scrollbar policy, and the lossless
-resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
-finalized binding sets after
+compatibility field, the exact scrollbar policy, all five finalized
+`bell-features` booleans, and the lossless resize-overlay mode, position, and
+whole-millisecond duration plus Ghostty's finalized binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
@@ -1588,24 +1621,28 @@ source and rejects revision-file, schema, ordering, or inventory drift. This
 keeps an upstream snapshot update from silently adding untracked parity work.
 The contract remains conservative: only the typed configuration slice,
 including the four-role typography and exposed physical metric controls, four
-search colors, `link-url`, and `link-previews`, is marked partial or supported.
+search colors, `link-url`, `link-previews`, and the visual/attention subset of
+`bell-features`, is marked partial or supported.
 The regular family key alone stays partial because final fallback resolution is
 Qt-owned; the three styled-family keys, four style keys, font size, and eleven
 exposed metric keys are supported. Search actions remain partial because the
 public library artifact cannot expose Ghostty's `xev`-dependent search thread,
-while custom `link` rules and other upstream keys stay explicitly planned. In
-particular, the pinned Ghostty `RepeatableLink.parseCLI` still returns
-`error.NotImplemented`, so this frontend does not invent a parallel syntax for
-user-defined expressions and actions.
+while custom `link` rules and other upstream keys stay explicitly planned.
+`bell-features` remains partial because `system` and `audio` are transported
+but intentionally inert; custom playback through `bell-audio-path` and
+`bell-audio-volume` remains a later multimedia/platform slice. In particular,
+the pinned Ghostty `RepeatableLink.parseCLI` still returns
+`error.NotImplemented`, so this frontend does not invent a parallel syntax
+for user-defined expressions and actions.
 
 ## Test boundaries
 
 The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
-  typed config, typography, and appearance overlays, exact f32 CLI font
-  precedence passed into helper finalization, scrollback units, and close
-  modes.
+  typed config, typography, appearance overlays and bell features, exact f32
+  CLI font precedence passed into helper finalization, scrollback units, and
+  close modes.
 - `terminal-cell-metrics` verifies four-role face selection and regular-face
   grid ownership, absolute and percentage modifiers, physical-pixel
   rounding/clamping, pinned sparse-map order, cell-height recentering,
@@ -1655,10 +1692,14 @@ The default CTest suite has focused layers for each ownership boundary:
 - `terminal-workspace` verifies that active programs request confirmation,
   idle shells follow `true` versus `always`, pending quit resolves on process
   exit, approval is emitted once, and workspace navigation/layout actions
-  preserve stable tab and pane identity. Read-only coverage verifies local and
-  broad per-pane state, the active-pane model role and non-hit-testing badge,
-  plus forced pane/tab/workspace confirmation for idle and exited children even
-  when configured confirmation is disabled. PTY-backed new-tab coverage
+  preserve stable tab and pane identity. Bell coverage verifies per-pane
+  latching and interaction clearing, repeated-event attention, independent
+  inactive-tab markers, raw-title preservation, split/tab/zoom lifecycle,
+  live title/border policy, inactive-window gating, and the disabled real QML
+  border overlay. Read-only coverage verifies local and broad per-pane state,
+  the active-pane model role and non-hit-testing badge, plus forced
+  pane/tab/workspace confirmation for idle and exited children even when
+  configured confirmation is disabled. PTY-backed new-tab coverage
   verifies explicit binding sources, empty-context active leaves, broad-fanout
   source stability, local OSC 7/reset fallback, manual font zoom, and
   future-creation policy reloads. Workspace/QML coverage also verifies exact

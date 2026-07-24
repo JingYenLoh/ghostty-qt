@@ -87,6 +87,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("faint-opacity"),
     QLatin1StringView("scrollback-limit"),
     QLatin1StringView("scrollbar"),
+    QLatin1StringView("bell-features"),
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
     QLatin1StringView("clipboard-paste-protection"),
@@ -141,6 +142,13 @@ constexpr auto NamedFontStyleFields = std::to_array<QLatin1StringView>({
 });
 constexpr auto MetricModifierFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("kind"), QLatin1StringView("value"),
+});
+constexpr auto BellFeatureFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("system"),
+    QLatin1StringView("audio"),
+    QLatin1StringView("attention"),
+    QLatin1StringView("title"),
+    QLatin1StringView("border"),
 });
 
 constexpr auto FontFamilyFields =
@@ -237,6 +245,29 @@ ParseResult<bool> readBoolean(const QJsonValue &value,
             QStringLiteral("%1 must be a boolean").arg(context));
     }
     return value.toBool();
+}
+
+ParseResult<BellFeatures> readBellFeatures(const QJsonValue &value,
+                                           const QString &context)
+{
+    auto object = readExactObject(value, context, BellFeatureFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    BellFeatures result;
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, bool *>>({
+             {QLatin1StringView("system"), &result.system},
+             {QLatin1StringView("audio"), &result.audio},
+             {QLatin1StringView("attention"), &result.attention},
+             {QLatin1StringView("title"), &result.title},
+             {QLatin1StringView("border"), &result.border},
+         })) {
+        auto parsed =
+            readBoolean(object->value(name), childContext(context, name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        *destination = *parsed;
+    }
+    return result;
 }
 
 ParseResult<QString> readString(const QJsonValue &value,
@@ -741,6 +772,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed = assign(QLatin1StringView("config-file"),
                              result.configFiles, readConfigFiles);
         !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("bell-features"),
+                             result.bellFeatures, readBellFeatures);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
     const auto readDouble = [](const QJsonValue &entry,
                                const QString &entryContext) {
         return readFiniteDouble(entry, entryContext);

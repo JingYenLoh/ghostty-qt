@@ -104,6 +104,8 @@ activation platform-data handoff and shell-child scrubbing, reentrant
 window/workspace creation teardown,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
+per-pane BEL latching, title/border derivation, inactive-tab and native-window
+attention, interaction clearing, and live bell-feature reload,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 raw pre-Qt CLI process replacement, PTY, renderer, application-lifecycle,
@@ -194,8 +196,9 @@ absolute-pixel/percentage metric modifiers, selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
-`link-previews` policy, the exact `system`/`never` scrollbar policy, the raw
-false/true/detect `gtk-single-instance` mode as an unused schema-v1
+`link-previews` policy, the exact `system`/`never` scrollbar policy, the five
+finalized `bell-features` booleans, the raw false/true/detect
+`gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
@@ -391,6 +394,20 @@ cleanup, and removal from terminal child environments. The DESTDIR-staged
 desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, and config-helper presence.
+BEL coverage keeps the worker event and GUI presentation boundaries separate:
+pane cases verify transition-only latch notification versus every-event bell
+publication, active title and border derivation, live feature changes without
+state loss, and clearing on focus, non-modifier key/IME interaction, or any
+mouse press. Workspace cases verify that only the active surface decorates the
+raw effective title, inactive split latches remain independent, inactive tabs
+publish and clear their stable attention role, and repeated eligible bells
+request native host attention only while the window is inactive. Real QML
+coverage checks the full-pane, non-hit-testing border overlay without changing
+pane, terminal-grid, or PTY geometry. Config export, process-loader, and launch
+option cases cover the strict five-boolean feature object and defaults. The
+`system` and `audio` bits are deliberately retained but have no playback
+effect; `bell-audio-path` and `bell-audio-volume` remain outside the schema
+until the multimedia/platform implementation exists.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

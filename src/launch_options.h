@@ -37,6 +37,9 @@ struct LaunchOptions {
     // affects only that frontend affordance; scrolling remains available when
     // the control is hidden.
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
+    // BEL presentation is frontend-owned. The worker publishes the event,
+    // while panes, tabs, and host windows apply these finalized features.
+    BellFeatures bellFeatures;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
     TerminalClipboardPasteOptions clipboardPaste;

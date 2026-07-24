@@ -91,6 +91,11 @@ ApplicationWindow {
         TerminalScrollBar {}
     }
 
+    Component {
+        id: terminalBellBorderFactory
+        BellBorderOverlay {}
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -142,8 +147,9 @@ ApplicationWindow {
                     TabButton {
                         required property int index
                         required property string title
-                        required property bool zoomed
-                        text: (zoomed ? "🔍 " : "") + title
+                        required property bool attention
+                        text: title
+                        font.bold: attention
                         width: Math.min(Math.max(130, implicitWidth), 240)
                         focusPolicy: Qt.NoFocus
                         onClicked: workspace.setCurrentIndex(index)
@@ -197,6 +203,8 @@ ApplicationWindow {
             readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
             resizeOverlayComponent: terminalResizeOverlayFactory
             scrollbarComponent: terminalScrollBarFactory
+            bellBorderComponent: terminalBellBorderFactory
+            onWindowAttentionRequested: window.alert(0)
         }
     }
 

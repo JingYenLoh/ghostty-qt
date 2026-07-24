@@ -16,6 +16,9 @@ struct TabListEntry {
     QString currentDirectory;
     bool running = false;
     bool zoomed = false;
+    // The active surface's title bell is presentation-only; `title` and
+    // `titleOverride` remain raw application-visible values.
+    bool bell = false;
     bool attention = false;
     int progress = -1;
     bool readOnly = false;
