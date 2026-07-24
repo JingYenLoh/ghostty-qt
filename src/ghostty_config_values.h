@@ -148,6 +148,15 @@ struct GhosttyConfigFile {
     bool operator==(const GhosttyConfigFile &) const = default;
 };
 
+// A path finalized by Ghostty relative to its declaring config source. The
+// provenance bit controls whether an inaccessible optional resource is quiet.
+struct GhosttyConfigPath {
+    QString path;
+    bool optional = false;
+
+    bool operator==(const GhosttyConfigPath &) const = default;
+};
+
 // Ghostty dims an unfocused pane by compositing this fill over the terminal.
 // A missing fill resolves to the configured terminal background in the
 // frontend; opacity describes the terminal content that remains visible.
@@ -192,6 +201,8 @@ struct GhosttyConfigValues {
     quint64 scrollbackLimitBytes = 0;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
     BellFeatures bellFeatures;
+    std::optional<GhosttyConfigPath> bellAudioPath;
+    double bellAudioVolume = 0.5;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard{
         .trimTrailingSpaces = false,

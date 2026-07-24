@@ -70,7 +70,16 @@ if(Git_FOUND AND EXISTS "${GHOSTTY_SOURCE_DIR}/.git")
     endif()
 endif()
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Qml Quick QuickControls2)
+find_package(Qt6 6.8 REQUIRED COMPONENTS
+    Core
+    DBus
+    Gui
+    Multimedia
+    Qml
+    Quick
+    QuickControls2
+    Widgets
+)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -524,6 +533,25 @@ target_compile_options(ghostty-qt-config-export PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-terminal-bell STATIC
+    src/terminal_bell.cpp
+    src/terminal_bell.h
+)
+target_include_directories(ghostty-qt-terminal-bell PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-terminal-bell
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+    PRIVATE
+        Qt6::Multimedia
+        Qt6::Widgets
+)
+target_compile_options(ghostty-qt-terminal-bell PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
@@ -619,6 +647,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
+    Qt6::Widgets
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
     ghostty-qt-cli-delegation
@@ -627,6 +656,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-frontend-config
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
 )

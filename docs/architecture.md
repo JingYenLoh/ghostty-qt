@@ -10,6 +10,7 @@ the Qt application and Ghostty's terminal engine small enough to evolve.
 | --- | --- | --- |
 | Window and chrome | Qt Quick, QML, Quick Controls 2 | Window, tab strip, toolbar, and confirmation dialogs. |
 | Terminal item and workspace | C++23, Qt Quick | Scene-graph rendering, input events, focus, tabs, and a recursive split tree. |
+| Audible bell | Qt Widgets platform integration and Qt Multimedia | Best-effort Wayland system bells plus reusable per-pane custom audio playback. |
 | Session orchestration | Qt Core/Gui on a dedicated `QThread` per started pane | PTY I/O, child lifecycle, immutable frame snapshots, and queued UI communication. |
 | Ghostty adapter | C++23 value-type boundary | Contains the `libghostty-vt` C API and translates terminal, render, input, selection, search-snapshot, and deferred-effect operations. |
 | Terminal engine | Zig-built static `libghostty-vt` through its C API | VT parsing, terminal state, render-state iteration, selection, and key/mouse/paste encoding. |
@@ -167,6 +168,27 @@ marks the already selected tab, even if its host window is inactive. The
 `attention` bell feature instead gates a native `QWindow::alert(0)` request for
 an inactive host window; Qt ignores the call for an active window and ends an
 indefinite alert when that window becomes active.
+
+Audible effects consume the same every-event publication rather than the
+transition-only latch. `system` calls the public `QApplication::beep()` route;
+on Wayland the result is deliberately best-effort because Qt and the compositor
+must expose a platform bell. `audio` requires a finalized
+`bell-audio-path`. Each pane owns one `TerminalBellPlayer`, which lazily owns
+one `QMediaPlayer` and `QAudioOutput`; separate panes can overlap, while a
+repeated BEL in one pane stops and restarts that pane's cached source. The
+required/optional bit participates in source identity, and volume is clamped
+only at playback. An inaccessible required path warns once per unchanged
+identity but is retried on every BEL; optional failures remain quiet. An
+asynchronously invalid medium clears the ready cache so a later BEL rebuilds
+it.
+
+The pane snapshots the complete bell options once per event. It then publishes
+the latch and workspace notification before invoking a temporary shared player
+lease, without touching the pane afterward. Destructive synchronous title,
+tab, attention, or workspace observers therefore cannot leave playback using a
+destroyed pane. Live feature, path, provenance, and volume changes affect the
+next BEL only; they neither clear the latch nor interrupt an already-playing
+source.
 
 A successful `goto_split` first resolves its destination, then applies focus
 and zoom as one workspace transition. The canonical
@@ -1123,8 +1145,10 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the exact scrollbar policy, all five finalized
-`bell-features` booleans, and the lossless resize-overlay mode, position, and
-whole-millisecond duration plus Ghostty's finalized binding sets after
+`bell-features` booleans, the nullable finalized custom-audio path with
+required/optional provenance, the raw finite bell volume, and the lossless
+resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
+finalized binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
@@ -1621,17 +1645,18 @@ source and rejects revision-file, schema, ordering, or inventory drift. This
 keeps an upstream snapshot update from silently adding untracked parity work.
 The contract remains conservative: only the typed configuration slice,
 including the four-role typography and exposed physical metric controls, four
-search colors, `link-url`, `link-previews`, and the visual/attention subset of
-`bell-features`, is marked partial or supported.
+search colors, `link-url`, `link-previews`, and all five `bell-features`, is
+marked partial or supported.
 The regular family key alone stays partial because final fallback resolution is
 Qt-owned; the three styled-family keys, four style keys, font size, and eleven
 exposed metric keys are supported. Search actions remain partial because the
 public library artifact cannot expose Ghostty's `xev`-dependent search thread,
 while custom `link` rules and other upstream keys stay explicitly planned.
-`bell-features` remains partial because `system` and `audio` are transported
-but intentionally inert; custom playback through `bell-audio-path` and
-`bell-audio-volume` remains a later multimedia/platform slice. In particular,
-the pinned Ghostty `RepeatableLink.parseCLI` still returns
+All bell features and both audio settings are supported through the public Qt
+platform and multimedia APIs; an actual system bell remains dependent on the
+Wayland platform/compositor, as Ghostty's system feature is itself conditional
+on platform availability. In particular, the pinned Ghostty
+`RepeatableLink.parseCLI` still returns
 `error.NotImplemented`, so this frontend does not invent a parallel syntax
 for user-defined expressions and actions.
 
@@ -1643,6 +1668,9 @@ The default CTest suite has focused layers for each ownership boundary:
   typed config, typography, appearance overlays and bell features, exact f32
   CLI font precedence passed into helper finalization, scrollback units, and
   close modes.
+- `terminal-bell` uses an audio-device-free backend to verify independent
+  feature dispatch, playback-time volume clamping, source caching and retry,
+  invalid-media recovery, device replacement, and per-pane isolation.
 - `terminal-cell-metrics` verifies four-role face selection and regular-face
   grid ownership, absolute and percentage modifiers, physical-pixel
   rounding/clamping, pinned sparse-map order, cell-height recentering,

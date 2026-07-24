@@ -324,6 +324,42 @@ private:
     QByteArray previous_;
 };
 
+struct PaneBellDeviceState {
+    int systemBells = 0;
+    QList<GhosttyConfigPath> sources;
+    QList<double> volumes;
+    int restarts = 0;
+};
+
+class FakePaneBellDevice final : public TerminalBellDevice {
+public:
+    explicit FakePaneBellDevice(PaneBellDeviceState &state)
+        : state_(state)
+    {}
+
+    void ringSystemBell() override { ++state_.systemBells; }
+
+    bool setAudioSource(const GhosttyConfigPath &source) override
+    {
+        state_.sources.append(source);
+        return true;
+    }
+
+    void setAudioVolume(double volume) override
+    {
+        state_.volumes.append(volume);
+    }
+
+    bool restartAudio() override
+    {
+        ++state_.restarts;
+        return true;
+    }
+
+private:
+    PaneBellDeviceState &state_;
+};
+
 } // namespace
 
 class TerminalPaneTest : public QObject {
@@ -334,6 +370,8 @@ private Q_SLOTS:
     void movesScrollbarWithClampedAbsoluteRows();
     void reloadsScrollbarPolicyAndHandlesHugeCounts();
     void latchesClearsAndReloadsBellFeedback();
+    void routesAudibleBellEffectsForEveryEventAndReload();
+    void audibleBellLeaseSurvivesDestructiveObserver();
     void resizeOverlayPositions_data();
     void resizeOverlayPositions();
     void resizeOverlayCoalescesAndRestarts();
@@ -788,6 +826,137 @@ void TerminalPaneTest::latchesClearsAndReloadsBellFeedback()
     QVERIFY(!pane.bellRinging());
     QCOMPARE(changed.count(), 12);
     verifyRawTitle();
+}
+
+void TerminalPaneTest::routesAudibleBellEffectsForEveryEventAndReload()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.bellFeatures = {
+        .system = false,
+        .audio = false,
+        .attention = false,
+        .title = false,
+        .border = false,
+    };
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    PaneBellDeviceState state;
+    pane.setBellPlaybackDevice(std::make_unique<FakePaneBellDevice>(state));
+    QSignalSpy runtimeOptions(controller,
+                              &TerminalController::runtimeOptionsRequested);
+
+    Q_EMIT controller->bell();
+    QVERIFY(pane.bellRinging());
+    QCOMPARE(state.systemBells, 0);
+    QVERIFY(state.sources.isEmpty());
+
+    LaunchOptions system = options;
+    system.bellFeatures.system = true;
+    pane.applyRuntimeOptions(system);
+    Q_EMIT controller->bell();
+    Q_EMIT controller->bell();
+    QCOMPARE(state.systemBells, 2);
+    QVERIFY(state.sources.isEmpty());
+
+    const GhosttyConfigPath required{
+        .path = QStringLiteral("/tmp/ghostty-qt-required-bell.ogg"),
+        .optional = false,
+    };
+    LaunchOptions audio = system;
+    audio.bellFeatures.system = false;
+    audio.bellFeatures.audio = true;
+    audio.bellAudioPath = required;
+    audio.bellAudioVolume = -2.0;
+    pane.applyRuntimeOptions(audio);
+    Q_EMIT controller->bell();
+    Q_EMIT controller->bell();
+    QCOMPARE(state.systemBells, 2);
+    QCOMPARE(state.sources.size(), 1);
+    QVERIFY(state.sources.constFirst() == required);
+    QCOMPARE(state.volumes, QList<double>({0.0, 0.0}));
+    QCOMPARE(state.restarts, 2);
+
+    // Required/optional provenance is part of the cached source identity.
+    // Volume and path reloads affect only future bells and stay GUI-local.
+    const GhosttyConfigPath optional{
+        .path = required.path,
+        .optional = true,
+    };
+    LaunchOptions reloaded = audio;
+    reloaded.bellAudioPath = optional;
+    reloaded.bellAudioVolume = 4.0;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(state.sources.size(), 1);
+    QCOMPARE(state.restarts, 2);
+    Q_EMIT controller->bell();
+    QCOMPARE(state.sources.size(), 2);
+    QVERIFY(state.sources.constLast() == optional);
+    QCOMPARE(state.volumes.constLast(), 1.0);
+    QCOMPARE(state.restarts, 3);
+
+    LaunchOptions missing = reloaded;
+    missing.bellAudioPath.reset();
+    pane.applyRuntimeOptions(missing);
+    Q_EMIT controller->bell();
+    QCOMPARE(state.sources.size(), 2);
+    QCOMPARE(state.restarts, 3);
+
+    LaunchOptions both = missing;
+    both.bellFeatures.system = true;
+    both.bellAudioPath = optional;
+    both.bellAudioVolume = 0.75;
+    pane.applyRuntimeOptions(both);
+    Q_EMIT controller->bell();
+    QCOMPARE(state.systemBells, 3);
+    // The cached optional source survives a temporarily absent path.
+    QCOMPARE(state.sources.size(), 2);
+    QCOMPARE(state.volumes.constLast(), 0.75);
+    QCOMPARE(state.restarts, 4);
+    QCOMPARE(runtimeOptions.count(), 0);
+}
+
+void TerminalPaneTest::audibleBellLeaseSurvivesDestructiveObserver()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.bellFeatures = {
+        .system = true,
+        .audio = true,
+        .attention = false,
+        .title = false,
+        .border = false,
+    };
+    options.bellAudioPath = GhosttyConfigPath{
+        .path = QStringLiteral("/tmp/destructive-observer-bell.oga"),
+        .optional = true,
+    };
+    options.bellAudioVolume = 0.4;
+
+    auto *pane = new TerminalPane(options, nullptr, std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    QPointer<TerminalPane> paneGuard(pane);
+    QPointer<TerminalController> controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    PaneBellDeviceState state;
+    pane->setBellPlaybackDevice(std::make_unique<FakePaneBellDevice>(state));
+    connect(pane, &TerminalPane::bellRang, pane,
+            [pane](TerminalPane *) { delete pane; });
+
+    Q_EMIT controller->bell();
+    QVERIFY(paneGuard == nullptr);
+    QVERIFY(controller == nullptr);
+    QCOMPARE(state.systemBells, 1);
+    QCOMPARE(state.sources.size(), 1);
+    QCOMPARE(state.volumes, QList<double>{0.4});
+    QCOMPARE(state.restarts, 1);
 }
 
 void TerminalPaneTest::resizeOverlayPositions_data()

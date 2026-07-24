@@ -1,6 +1,7 @@
 #include "ghostty_config_export.h"
 
 #include <QColor>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -88,6 +89,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("scrollback-limit"),
     QLatin1StringView("scrollbar"),
     QLatin1StringView("bell-features"),
+    QLatin1StringView("bell-audio-path"),
+    QLatin1StringView("bell-audio-volume"),
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
     QLatin1StringView("clipboard-paste-protection"),
@@ -149,6 +152,10 @@ constexpr auto BellFeatureFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("attention"),
     QLatin1StringView("title"),
     QLatin1StringView("border"),
+});
+constexpr auto ConfigPathFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("path"),
+    QLatin1StringView("optional"),
 });
 
 constexpr auto FontFamilyFields =
@@ -289,6 +296,33 @@ ParseResult<QString> readNonEmptyString(const QJsonValue &value,
             QStringLiteral("%1 must be a non-empty string").arg(context));
     }
     return result;
+}
+
+ParseResult<std::optional<GhosttyConfigPath>>
+readOptionalConfigPath(const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::nullopt;
+
+    auto object = readExactObject(value, context, ConfigPathFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+    auto path =
+        readNonEmptyString(object->value(QLatin1StringView("path")),
+                           childContext(context, QLatin1StringView("path")));
+    if (!path) return std::unexpected(std::move(path.error()));
+    if (!QDir::isAbsolutePath(*path)) {
+        return std::unexpected(
+            QStringLiteral("%1.path must be a finalized absolute path")
+                .arg(context));
+    }
+    auto optional =
+        readBoolean(object->value(QLatin1StringView("optional")),
+                    childContext(context, QLatin1StringView("optional")));
+    if (!optional) return std::unexpected(std::move(optional.error()));
+
+    return GhosttyConfigPath{
+        .path = std::move(*path),
+        .optional = *optional,
+    };
 }
 
 ParseResult<double> readFiniteDouble(const QJsonValue &value,
@@ -776,6 +810,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                              result.bellFeatures, readBellFeatures);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("bell-audio-path"),
+                             result.bellAudioPath, readOptionalConfigPath);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
     const auto readDouble = [](const QJsonValue &entry,
                                const QString &entryContext) {
         return readFiniteDouble(entry, entryContext);
@@ -787,6 +825,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed = assign(QLatin1StringView("font-size"),
                              result.typography.pointSize, readDouble);
         !parsed) return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("bell-audio-volume"),
+                             result.bellAudioVolume, readDouble);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
 
     for (const auto [name, destination] :
          std::to_array<std::pair<QLatin1StringView, QColor *>>({

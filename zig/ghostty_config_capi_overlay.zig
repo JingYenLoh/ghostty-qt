@@ -206,6 +206,10 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
         try json.write(@field(config.@"bell-features", feature));
     }
     try json.endObject();
+    try json.objectField("bell-audio-path");
+    try writeOptionalConfigPath(json, config.@"bell-audio-path");
+    try json.objectField("bell-audio-volume");
+    try json.write(config.@"bell-audio-volume");
     try json.objectField("confirm-close-surface");
     try json.write(@tagName(config.@"confirm-close-surface"));
     try json.objectField("clipboard-trim-trailing-spaces");
@@ -383,6 +387,23 @@ fn writeOptionalBoldColor(json: *std.json.Stringify, color: ?Config.BoldColor) !
         .color => |rgb| try writeRgb(json, rgb),
         .bright => try json.write("bright"),
     } else try json.write(null);
+}
+
+fn writeOptionalConfigPath(json: *std.json.Stringify, path: ?Config.Path) !void {
+    const value = path orelse {
+        try json.write(null);
+        return;
+    };
+    const encoded, const optional = switch (value) {
+        .optional => |optional| .{ optional, true },
+        .required => |required| .{ required, false },
+    };
+    try json.beginObject();
+    try json.objectField("path");
+    try json.write(encoded);
+    try json.objectField("optional");
+    try json.write(optional);
+    try json.endObject();
 }
 
 fn writeConfigFiles(json: *std.json.Stringify, paths: *const Config.RepeatablePath) !void {

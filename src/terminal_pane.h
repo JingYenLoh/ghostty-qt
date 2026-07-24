@@ -6,6 +6,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "terminal_action_result.h"
+#include "terminal_bell.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
@@ -148,6 +149,9 @@ public:
     // Dependency injection keeps external URL launches out of automated
     // tests while production defaults to QDesktopServices::openUrl.
     void setUrlOpener(std::function<bool(const QUrl &)> opener);
+    // Each pane owns an independent player so simultaneous split/tab bells do
+    // not interrupt one another. Injection keeps audio devices out of tests.
+    void setBellPlaybackDevice(std::unique_ptr<TerminalBellDevice> device);
 
     void focusTerminal();
     void setSurfaceTitle(QString title);
@@ -404,6 +408,8 @@ private:
     qreal scrollbarPosition_ = 0.0;
     qreal scrollbarSize_ = 1.0;
     std::optional<quint64> pendingScrollbarRow_;
+    std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
+        std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;

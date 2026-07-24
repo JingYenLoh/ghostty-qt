@@ -244,6 +244,10 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.bellFeatures.attention);
     QVERIFY(!values.bellFeatures.title);
     QVERIFY(values.bellFeatures.border);
+    QVERIFY(values.bellAudioPath.has_value());
+    QCOMPARE(values.bellAudioPath->path, QStringLiteral("/work/bell.oga"));
+    QVERIFY(!values.bellAudioPath->optional);
+    QCOMPARE(values.bellAudioVolume, 0.625);
     QCOMPARE(values.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!values.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(values.selectionClipboard.copyOnSelect,
@@ -297,6 +301,9 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
         std::move(inverseNullability),
         QStringLiteral("quit-after-last-window-closed-delay"),
         0);
+    inverseNullability =
+        withValue(std::move(inverseNullability),
+                  QStringLiteral("bell-audio-path"), QJsonValue::Null);
 
     const auto inverse = parseGhosttyConfigExportJson(json(inverseNullability));
     QVERIFY2(inverse.has_value(), qPrintable(errorMessage(inverse)));
@@ -318,6 +325,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!inverse->values.appearance.boldColor.has_value());
     QCOMPARE(inverse->values.quitAfterLastWindowClosedDelay,
              std::optional(std::chrono::milliseconds::zero()));
+    QVERIFY(!inverse->values.bellAudioPath.has_value());
 }
 
 void GhosttyConfigExportTest::normalizesBoundaryValues()
@@ -330,6 +338,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
                           QStringLiteral("cursor-opacity"), -2.0);
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("resize-overlay-duration"), 0);
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("bell-audio-volume"), -2.0);
 
     const auto low = parseGhosttyConfigExportJson(json(lowValues));
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
@@ -337,11 +347,17 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.appearance.cursorOpacity, 0.0);
     QCOMPARE(low->values.resizeOverlay.duration,
              std::chrono::milliseconds{250});
+    QCOMPARE(low->values.bellAudioVolume, -2.0);
 
-    const auto high = parseGhosttyConfigExportJson(json(withValue(
-        object(), QStringLiteral("cursor-opacity"), 2.0)));
+    QJsonObject highValues = object();
+    highValues =
+        withValue(std::move(highValues), QStringLiteral("cursor-opacity"), 2.0);
+    highValues = withValue(std::move(highValues),
+                           QStringLiteral("bell-audio-volume"), 2.0);
+    const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
+    QCOMPARE(high->values.bellAudioVolume, 2.0);
 }
 
 void GhosttyConfigExportTest::parsesEveryEnumSpelling()
@@ -698,6 +714,12 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-bell-features")
         << withoutValue(object(), QStringLiteral("bell-features"))
         << QStringLiteral("values is missing field 'bell-features'");
+    QTest::newRow("missing-bell-audio-path")
+        << withoutValue(object(), QStringLiteral("bell-audio-path"))
+        << QStringLiteral("values is missing field 'bell-audio-path'");
+    QTest::newRow("missing-bell-audio-volume")
+        << withoutValue(object(), QStringLiteral("bell-audio-volume"))
+        << QStringLiteral("values is missing field 'bell-audio-volume'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -731,6 +753,54 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                          {QStringLiteral("border"), false},
                      })
         << QStringLiteral("values.bell-features.audio must be a boolean");
+    QTest::newRow("bell-audio-path-type")
+        << withValue(object(), QStringLiteral("bell-audio-path"),
+                     QStringLiteral("/work/bell.oga"))
+        << QStringLiteral("values.bell-audio-path must be an object");
+    QTest::newRow("bell-audio-path-missing-path")
+        << withValue(object(), QStringLiteral("bell-audio-path"),
+                     QJsonObject{{QStringLiteral("optional"), false}})
+        << QStringLiteral("values.bell-audio-path is missing field 'path'");
+    QTest::newRow("bell-audio-path-missing-optional")
+        << withValue(object(), QStringLiteral("bell-audio-path"),
+                     QJsonObject{{QStringLiteral("path"),
+                                  QStringLiteral("/work/bell.oga")}})
+        << QStringLiteral("values.bell-audio-path is missing field 'optional'");
+    QTest::newRow("bell-audio-path-extra-field")
+        << withValue(
+               object(), QStringLiteral("bell-audio-path"),
+               QJsonObject{
+                   {QStringLiteral("path"), QStringLiteral("/work/bell.oga")},
+                   {QStringLiteral("optional"), false},
+                   {QStringLiteral("future"), true},
+               })
+        << QStringLiteral(
+               "values.bell-audio-path has unexpected field 'future'");
+    QTest::newRow("bell-audio-path-empty")
+        << withValue(object(), QStringLiteral("bell-audio-path"),
+                     finalizedConfigPath(QString{}))
+        << QStringLiteral(
+               "values.bell-audio-path.path must be a non-empty string");
+    QTest::newRow("bell-audio-path-relative")
+        << withValue(object(), QStringLiteral("bell-audio-path"),
+                     finalizedConfigPath(QStringLiteral("sounds/bell.oga")))
+        << QStringLiteral(
+               "values.bell-audio-path.path must be a finalized absolute path");
+    QTest::newRow("bell-audio-path-optional-type")
+        << withValue(
+               object(), QStringLiteral("bell-audio-path"),
+               QJsonObject{
+                   {QStringLiteral("path"), QStringLiteral("/work/bell.oga")},
+                   {QStringLiteral("optional"), QStringLiteral("false")},
+               })
+        << QStringLiteral("values.bell-audio-path.optional must be a boolean");
+    QTest::newRow("bell-audio-volume-type")
+        << withValue(object(), QStringLiteral("bell-audio-volume"), true)
+        << QStringLiteral("values.bell-audio-volume must be a finite number");
+    QTest::newRow("bell-audio-volume-nonfinite")
+        << withValue(object(), QStringLiteral("bell-audio-volume"),
+                     std::numeric_limits<double>::infinity())
+        << QStringLiteral("values.bell-audio-volume must be a finite number");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

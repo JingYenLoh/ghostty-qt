@@ -960,7 +960,9 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral(
-            "bell-features = system,audio,no-attention,no-title,border\n"));
+            "bell-features = system,audio,no-attention,no-title,border\n"
+            "bell-audio-path = ?sounds/bell.oga\n"
+            "bell-audio-volume = 0.625\n"));
 
     auto result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
@@ -969,6 +971,23 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
     QVERIFY(!result->values.bellFeatures.attention);
     QVERIFY(!result->values.bellFeatures.title);
     QVERIFY(result->values.bellFeatures.border);
+    QVERIFY(result->values.bellAudioPath.has_value());
+    QCOMPARE(result->values.bellAudioPath->path,
+             fixture.filePath(QStringLiteral("sounds/bell.oga")));
+    QVERIFY(result->values.bellAudioPath->optional);
+    QCOMPARE(result->values.bellAudioVolume, 0.625);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("bell-audio-path = required-bell.oga\n"
+                          "bell-audio-volume = -0.25\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.bellAudioPath.has_value());
+    QCOMPARE(result->values.bellAudioPath->path,
+             fixture.filePath(QStringLiteral("required-bell.oga")));
+    QVERIFY(!result->values.bellAudioPath->optional);
+    QCOMPARE(result->values.bellAudioVolume, -0.25);
 
     ConfigFixture::writeFile(fixture.preferredPath, {});
     result = queryRealConfigExport(helperPath, fixture);
@@ -978,6 +997,8 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
     QVERIFY(result->values.bellFeatures.attention);
     QVERIFY(result->values.bellFeatures.title);
     QVERIFY(!result->values.bellFeatures.border);
+    QVERIFY(!result->values.bellAudioPath.has_value());
+    QCOMPARE(result->values.bellAudioVolume, 0.5);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

@@ -1120,10 +1120,17 @@ TerminalPane::TerminalPane(
                 }
             });
     connect(controller_, &TerminalController::bell, this, [this] {
+        const std::shared_ptr<TerminalBellPlayer> bellPlayer = bellPlayer_;
+        const BellFeatures features = options_.bellFeatures;
+        const std::optional<GhosttyConfigPath> audioPath =
+            options_.bellAudioPath;
+        const double audioVolume = options_.bellAudioVolume;
         const QPointer<TerminalPane> guard(this);
         setBellRinging(true);
-        if (guard == nullptr) return;
-        Q_EMIT bellRang(this);
+        if (guard != nullptr) {
+            Q_EMIT guard->bellRang(guard.data());
+        }
+        bellPlayer->ring(features, audioPath, audioVolume);
     });
     connect(controller_, &TerminalController::currentDirectoryChanged,
             this, &TerminalPane::currentDirectoryChanged);
@@ -1690,6 +1697,8 @@ void TerminalPane::applyRuntimeOptions(
     updated.appearance = options.appearance;
     updated.scrollbar = options.scrollbar;
     updated.bellFeatures = options.bellFeatures;
+    updated.bellAudioPath = options.bellAudioPath;
+    updated.bellAudioVolume = options.bellAudioVolume;
     updated.selectionClipboard = options.selectionClipboard;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
@@ -1871,6 +1880,12 @@ void TerminalPane::setWorkspaceActionHandler(
 void TerminalPane::setUrlOpener(std::function<bool(const QUrl &)> opener)
 {
     urlOpener_ = std::move(opener);
+}
+
+void TerminalPane::setBellPlaybackDevice(
+    std::unique_ptr<TerminalBellDevice> device)
+{
+    bellPlayer_->setDevice(std::move(device));
 }
 
 void TerminalPane::beginShutdown()

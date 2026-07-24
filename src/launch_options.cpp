@@ -233,6 +233,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     }
     result.scrollbar = config.scrollbar;
     result.bellFeatures = config.bellFeatures;
+    result.bellAudioPath = config.bellAudioPath;
+    result.bellAudioVolume = config.bellAudioVolume;
     result.confirmCloseMode = config.confirmCloseMode;
     result.selectionClipboard = config.selectionClipboard;
     result.clipboardPaste = config.clipboardPaste;

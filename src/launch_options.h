@@ -40,6 +40,10 @@ struct LaunchOptions {
     // BEL presentation is frontend-owned. The worker publishes the event,
     // while panes, tabs, and host windows apply these finalized features.
     BellFeatures bellFeatures;
+    // Custom bell audio consumes Ghostty's finalized absolute path. The
+    // optional bit preserves whether playback failures should be quiet.
+    std::optional<GhosttyConfigPath> bellAudioPath;
+    double bellAudioVolume = 0.5;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
     TerminalClipboardPasteOptions clipboardPaste;

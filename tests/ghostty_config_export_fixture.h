@@ -134,6 +134,15 @@ inline QJsonObject bellFeatures(bool system = false, bool audio = false,
     };
 }
 
+inline QJsonObject finalizedConfigPath(const QString &path,
+                                       bool optional = false)
+{
+    return {
+        {QStringLiteral("path"), path},
+        {QStringLiteral("optional"), optional},
+    };
+}
+
 inline QJsonObject values()
 {
     QJsonArray palette;
@@ -217,6 +226,9 @@ inline QJsonObject values()
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
         {QStringLiteral("bell-features"),
          bellFeatures(true, true, false, false, true)},
+        {QStringLiteral("bell-audio-path"),
+         finalizedConfigPath(QStringLiteral("/work/bell.oga"))},
+        {QStringLiteral("bell-audio-volume"), 0.625},
         {QStringLiteral("confirm-close-surface"), QStringLiteral("always")},
         {QStringLiteral("clipboard-trim-trailing-spaces"), false},
         {QStringLiteral("clipboard-paste-protection"), false},

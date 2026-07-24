@@ -105,7 +105,8 @@ window/workspace creation teardown,
 replaceable per-surface base titles with explicit-empty and OSC-cache coverage,
 stable per-surface prompt overrides and a mixed title-prompt FIFO,
 per-pane BEL latching, title/border derivation, inactive-tab and native-window
-attention, interaction clearing, and live bell-feature reload,
+attention, system/custom audio dispatch, interaction clearing, and live
+bell-feature/path/volume reload,
 terminal appearance and OSC 8/default-regex interaction rendering, the pinned
 Oniguruma matcher boundary, and the config-helper process protocol, as well as
 raw pre-Qt CLI process replacement, PTY, renderer, application-lifecycle,
@@ -197,7 +198,9 @@ color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the exact `system`/`never` scrollbar policy, the five
-finalized `bell-features` booleans, the raw false/true/detect
+finalized `bell-features` booleans, nullable finalized bell-audio path and its
+required/optional provenance, raw finite bell-audio volume, the raw
+false/true/detect
 `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
@@ -404,10 +407,15 @@ publish and clear their stable attention role, and repeated eligible bells
 request native host attention only while the window is inactive. Real QML
 coverage checks the full-pane, non-hit-testing border overlay without changing
 pane, terminal-grid, or PTY geometry. Config export, process-loader, and launch
-option cases cover the strict five-boolean feature object and defaults. The
-`system` and `audio` bits are deliberately retained but have no playback
-effect; `bell-audio-path` and `bell-audio-volume` remain outside the schema
-until the multimedia/platform implementation exists.
+option cases cover the strict five-boolean feature object, nullable finalized
+path with required/optional provenance, raw finite volume, and defaults.
+Device-injected tests require no audio hardware while proving every-event
+system/audio dispatch, path-cache reuse and replacement, playback-time volume
+clamping, missing-source retry, invalid-media recovery, independent per-pane
+players, live next-BEL reload, and safe completion after a destructive bell
+observer. Automated tests do not claim that an offscreen environment emitted
+sound; real Wayland system-bell and media-backend playback remain manual smoke
+boundaries.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

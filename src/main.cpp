@@ -14,9 +14,9 @@
 #include "ghostty_config_process_loader.h"
 #endif
 
+#include <QApplication>
 #include <QDebug>
 #include <QDir>
-#include <QGuiApplication>
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -1405,7 +1405,7 @@ int main(int argc, char *argv[])
     DesktopActivationContext startupActivation =
         DesktopActivationContext::takeFromEnvironment();
 
-    QGuiApplication application(argc, argv);
+    QApplication application(argc, argv);
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
     application.setQuitOnLastWindowClosed(false);

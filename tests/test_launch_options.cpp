@@ -133,6 +133,11 @@ GhosttyConfigSnapshot completeSnapshot()
     };
 
     values.scrollbackLimitBytes = 50'000'000;
+    values.bellAudioPath = GhosttyConfigPath{
+        .path = QStringLiteral("/work/bell.oga"),
+        .optional = true,
+    };
+    values.bellAudioVolume = 0.625;
     values.confirmCloseMode = ConfirmCloseMode::Always;
     values.selectionClipboard = {
         .trimTrailingSpaces = false,
@@ -193,6 +198,7 @@ private Q_SLOTS:
     void appliesFinalizedGhosttyTypography();
     void mapsScrollbarPolicy();
     void mapsBellFeatures();
+    void mapsBellAudio();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -273,6 +279,8 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.bellFeatures.attention);
     QVERIFY(options.bellFeatures.title);
     QVERIFY(!options.bellFeatures.border);
+    QVERIFY(!options.bellAudioPath.has_value());
+    QCOMPARE(options.bellAudioVolume, 0.5);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
     QVERIFY(options.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(options.selectionClipboard.copyOnSelect,
@@ -801,6 +809,33 @@ void LaunchOptionsTest::mapsBellFeatures()
 
     QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).bellFeatures,
              snapshot.values.bellFeatures);
+}
+
+void LaunchOptionsTest::mapsBellAudio()
+{
+    LaunchOptions base;
+    base.bellAudioPath = GhosttyConfigPath{
+        .path = QStringLiteral("/base/bell.wav"),
+        .optional = false,
+    };
+    base.bellAudioVolume = 0.25;
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.bellAudioPath = GhosttyConfigPath{
+        .path = QStringLiteral("/config/bell.oga"),
+        .optional = true,
+    };
+    snapshot.values.bellAudioVolume = 1.75;
+
+    const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(configured.bellAudioPath, snapshot.values.bellAudioPath);
+    QCOMPARE(configured.bellAudioVolume, 1.75);
+
+    snapshot.values.bellAudioPath.reset();
+    snapshot.values.bellAudioVolume = 0.5;
+    const LaunchOptions defaults =
+        applyGhosttyConfigSnapshot(configured, snapshot);
+    QVERIFY(!defaults.bellAudioPath.has_value());
+    QCOMPARE(defaults.bellAudioVolume, 0.5);
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()
