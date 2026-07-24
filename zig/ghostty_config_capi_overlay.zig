@@ -228,6 +228,13 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.write(@tagName(config.@"middle-click-action"));
     try json.objectField("mouse-reporting");
     try json.write(config.@"mouse-reporting");
+    try json.objectField("mouse-scroll-multiplier");
+    try json.beginObject();
+    try json.objectField("precision");
+    try json.write(config.@"mouse-scroll-multiplier".precision);
+    try json.objectField("discrete");
+    try json.write(config.@"mouse-scroll-multiplier".discrete);
+    try json.endObject();
     try json.objectField("link-url");
     try json.write(config.@"link-url");
     try json.objectField("link-previews");

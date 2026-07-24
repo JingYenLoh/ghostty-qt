@@ -97,6 +97,9 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::writeTerminalFile);
     relayWorkerRequest(&TerminalController::clearSelectionRequested,
                        &SessionWorker::clearSelection);
+    relayWorkerRequest(
+        &TerminalController::clearSelectionIfMouseTrackingRequested,
+        &SessionWorker::clearSelectionIfMouseTracking);
     relayWorkerRequest(&TerminalController::beginSelectionRequested,
                        &SessionWorker::beginSelection);
     relayWorkerRequest(&TerminalController::updateSelectionRequested,
@@ -784,6 +787,11 @@ void TerminalController::failPendingTerminalActions()
 void TerminalController::clearSelection()
 {
     Q_EMIT clearSelectionRequested();
+}
+
+void TerminalController::clearSelectionIfMouseTracking()
+{
+    Q_EMIT clearSelectionIfMouseTrackingRequested();
 }
 
 void TerminalController::beginSelection(int column, int row, int clickCount,

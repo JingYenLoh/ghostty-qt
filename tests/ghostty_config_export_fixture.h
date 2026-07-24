@@ -143,6 +143,15 @@ inline QJsonObject finalizedConfigPath(const QString &path,
     };
 }
 
+inline QJsonObject mouseScrollMultiplier(double precision = 1.0,
+                                         double discrete = 3.0)
+{
+    return {
+        {QStringLiteral("precision"), precision},
+        {QStringLiteral("discrete"), discrete},
+    };
+}
+
 inline QJsonObject values()
 {
     QJsonArray palette;
@@ -238,6 +247,8 @@ inline QJsonObject values()
         {QStringLiteral("selection-clear-on-copy"), true},
         {QStringLiteral("middle-click-action"), QStringLiteral("ignore")},
         {QStringLiteral("mouse-reporting"), false},
+        {QStringLiteral("mouse-scroll-multiplier"),
+         mouseScrollMultiplier(0.75, 4.5)},
         {QStringLiteral("link-url"), false},
         {QStringLiteral("link-previews"), QStringLiteral("osc8")},
         {QStringLiteral("config-file"),

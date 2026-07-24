@@ -68,6 +68,17 @@ constexpr float kMaximumActionFontSize = 255.0F;
 constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
 constexpr qreal kLinkPreviewVerticalPadding = 4.0;
+constexpr double kMinimumMouseScrollMultiplier = 0.01;
+constexpr double kMaximumMouseScrollMultiplier = 10'000.0;
+constexpr qint64 kMaximumMouseScrollRowsPerEvent = 10'000;
+
+[[nodiscard]] double normalizedMouseScrollMultiplier(double value,
+                                                     double fallback) noexcept
+{
+    if (!std::isfinite(value)) return fallback;
+    return std::clamp(value, kMinimumMouseScrollMultiplier,
+                      kMaximumMouseScrollMultiplier);
+}
 
 qreal scrollbarFraction(quint64 numerator, quint64 denominator)
 {
@@ -1704,6 +1715,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
     updated.mouseReporting = options.mouseReporting;
+    updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.resizeOverlay = options.resizeOverlay;
@@ -4297,28 +4309,99 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 
 void TerminalPane::wheelEvent(QWheelEvent *event)
 {
-    const int steps = event->angleDelta().y() / 120;
-    if (steps == 0) {
+    qreal logicalCellHeight = 0.0;
+    {
+        QMutexLocker locker(&renderMutex_);
+        logicalCellHeight = metrics_.cellHeight;
+    }
+    const qreal devicePixelRatio = normalizedDevicePixelRatio(
+        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const double physicalCellHeight = static_cast<double>(
+        physicalPixels(logicalCellHeight, devicePixelRatio));
+    if (!std::isfinite(physicalCellHeight) || physicalCellHeight <= 0.0) {
         event->ignore();
         return;
     }
+
+    double physicalOffset = 0.0;
+    const QPoint pixelDelta = event->pixelDelta();
+    if (!pixelDelta.isNull()) {
+        if (pixelDelta.y() == 0) {
+            event->ignore();
+            return;
+        }
+        const double multiplier = normalizedMouseScrollMultiplier(
+            options_.mouseScrollMultiplier.precision, 1.0);
+        physicalOffset =
+            static_cast<double>(pixelDelta.y()) * devicePixelRatio * multiplier;
+    } else {
+        const double ticks =
+            static_cast<double>(event->angleDelta().y()) / 120.0;
+        if (ticks == 0.0) {
+            event->ignore();
+            return;
+        }
+        const double multiplier = normalizedMouseScrollMultiplier(
+            options_.mouseScrollMultiplier.discrete, 3.0);
+        physicalOffset = ticks * physicalCellHeight * multiplier;
+    }
+
+    if (!std::isfinite(physicalOffset) || physicalOffset == 0.0) {
+        pendingWheelVerticalPixels_ = 0.0;
+        event->ignore();
+        return;
+    }
+    const double accumulated = pendingWheelVerticalPixels_ + physicalOffset;
+    if (!std::isfinite(accumulated)) {
+        pendingWheelVerticalPixels_ = 0.0;
+        event->ignore();
+        return;
+    }
+
+    const long double rowAmount = static_cast<long double>(accumulated)
+        / static_cast<long double>(physicalCellHeight);
+    if (std::abs(rowAmount) < 1.0L) {
+        pendingWheelVerticalPixels_ = accumulated;
+        if (controller_->mouseTracking()) {
+            controller_->clearSelectionIfMouseTracking();
+        }
+        event->accept();
+        return;
+    }
+
+    const long double truncatedRows = std::trunc(rowAmount);
+    const long double maximumRows =
+        static_cast<long double>(kMaximumMouseScrollRowsPerEvent);
+    const qint64 rows = truncatedRows >= maximumRows
+        ? kMaximumMouseScrollRowsPerEvent
+        : truncatedRows <= -maximumRows ? -kMaximumMouseScrollRowsPerEvent
+                                        : static_cast<qint64>(truncatedRows);
+    // Bound one GUI dispatch without dropping coalesced or synthesized
+    // movement. Ordinary input retains only a sub-row remainder; an extreme
+    // event carries its undispatched whole-row debt into the next event.
+    pendingWheelVerticalPixels_ =
+        accumulated - static_cast<double>(rows) * physicalCellHeight;
+    if (!std::isfinite(pendingWheelVerticalPixels_)) {
+        pendingWheelVerticalPixels_ = 0.0;
+    }
+
     const Qt::KeyboardModifiers modifiers =
         effectivePointerModifiers(event->modifiers());
     if (controller_->mouseTracking()) {
         TerminalMouseInput input;
         input.action = TerminalMouseInput::Press;
-        input.button = steps > 0 ? 4 : 5;
+        input.button = rows > 0 ? 4 : 5;
         input.modifiers = static_cast<int>(modifiers);
-        const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
         input.x = static_cast<float>(event->position().x() * devicePixelRatio);
         input.y = static_cast<float>(event->position().y() * devicePixelRatio);
-        for (int index = 0; index < std::abs(steps); ++index) {
+        for (quint64 remaining = static_cast<quint64>(rows < 0 ? -rows : rows);
+             remaining > 0; --remaining) {
             controller_->sendMouse(input);
         }
     } else {
         TerminalViewportRequest request;
         request.kind = TerminalViewportRequest::Kind::Delta;
-        request.delta = -static_cast<qint64>(steps) * 3;
+        request.delta = -rows;
         controller_->scrollViewport(request);
     }
     event->accept();

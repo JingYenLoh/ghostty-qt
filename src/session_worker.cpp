@@ -1658,6 +1658,13 @@ void SessionWorker::clearSelection()
     clearSelectionState();
 }
 
+void SessionWorker::clearSelectionIfMouseTracking()
+{
+    if (vt_ != nullptr && vt_->mouseTracking()) {
+        clearSelectionState();
+    }
+}
+
 void SessionWorker::beginSelection(int column, int row, int clickCount, bool rectangular)
 {
     if (vt_ != nullptr

@@ -558,6 +558,23 @@ signals:
   preedit string remains a local UI overlay.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
+- Vertical wheel input is normalized once on the GUI thread before choosing
+  local or captured routing. A non-null Qt pixel delta is precision input;
+  otherwise the angle delta remains fractional in 120-unit wheel ticks.
+  Ghostty's independently finalized multipliers convert either form to pixel
+  distance against the pane's current cell height. Each pane retains signed
+  pending physical distance, so high-resolution input and direction reversals
+  are not lost. Whole rows become one typed viewport delta when local, or the
+  same number of repeated DEC buttons 4/5 when captured. A live multiplier or
+  cell metric change applies to new input while the already accumulated
+  physical distance remains valid. Captured input queues a worker-rechecked
+  selection clear even while its distance is below one row. One event
+  dispatches at most 10,000 rows and retains any excess distance. This makes
+  synthesized extremes finite, though a captured maximum dispatch may still
+  briefly occupy the GUI thread. Pinned `Surface.zig` documents retaining the
+  post-row remainder but currently subtracts the untruncated amount and clears
+  it; this frontend intentionally follows that documented accumulator contract
+  so high-resolution motion is not discarded.
 - Link hover requires exactly `Ctrl` on Linux. Explicit OSC 8 destinations take
   precedence over Ghostty's default regex-detected URL/path range. A matching
   result changes the pointer and underlines the visible matching cells; an
@@ -1146,7 +1163,8 @@ The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the exact scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
-required/optional provenance, the raw finite bell volume, and the lossless
+required/optional provenance, the raw finite bell volume, the independently
+finalized finite precision/discrete mouse-scroll multipliers, and the lossless
 resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
 finalized binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved

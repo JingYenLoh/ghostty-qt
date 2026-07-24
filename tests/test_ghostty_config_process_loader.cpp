@@ -228,6 +228,7 @@ private Q_SLOTS:
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsBellFeatures();
+    void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
     void realHelperCanonicalizesTerminalControlActionPayloads();
@@ -999,6 +1000,50 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
     QVERIFY(!result->values.bellFeatures.border);
     QVERIFY(!result->values.bellAudioPath.has_value());
     QCOMPARE(result->values.bellAudioVolume, 0.5);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperFinalizesMouseScrollMultiplier()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "mouse-scroll-multiplier = precision:0,discrete:20000\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.mouseScrollMultiplier.precision, 0.01);
+    QCOMPARE(result->values.mouseScrollMultiplier.discrete, 10'000.0);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "mouse-scroll-multiplier = precision:0.25,discrete:7.5\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.mouseScrollMultiplier.precision, 0.25);
+    QCOMPARE(result->values.mouseScrollMultiplier.discrete, 7.5);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("mouse-scroll-multiplier = 2.25\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.mouseScrollMultiplier.precision, 2.25);
+    QCOMPARE(result->values.mouseScrollMultiplier.discrete, 2.25);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.mouseScrollMultiplier.precision, 1.0);
+    QCOMPARE(result->values.mouseScrollMultiplier.discrete, 3.0);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

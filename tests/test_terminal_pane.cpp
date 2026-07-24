@@ -216,6 +216,17 @@ QColor itemPixel(const QQuickWindow &window, const QQuickItem &item,
     return image.pixelColor(x, y);
 }
 
+bool sendWheelEvent(TerminalPane &pane, const QPoint &pixelDelta,
+                    const QPoint &angleDelta,
+                    Qt::KeyboardModifiers modifiers = Qt::NoModifier)
+{
+    const QPointF position(8.0, 8.0);
+    QWheelEvent event(position, position, pixelDelta, angleDelta, Qt::NoButton,
+                      modifiers, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(&pane, &event);
+    return event.isAccepted();
+}
+
 bool allVisibleRowsRebuilt(
     const TerminalPaneRenderProbeSnapshot &before,
     const TerminalPaneRenderProbeSnapshot &after)
@@ -384,6 +395,8 @@ private Q_SLOTS:
     void writesClipboardDestinations();
     void copiesRawEffectiveSurfaceTitle();
     void reloadsMiddleClickClipboardPolicy();
+    void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
+    void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
@@ -2803,6 +2816,192 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     }
 }
 
+void TerminalPaneTest::scalesAndAccumulatesDiscreteWheelInputAcrossReloads()
+{
+    qRegisterMetaType<TerminalViewportRequest>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    TerminalPane *const identity = &pane;
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    TerminalController *const controllerIdentity = controller;
+    QSignalSpy scroll(controller, &TerminalController::scrollRequested);
+    QSignalSpy mouse(controller, &TerminalController::mouseRequested);
+
+    const auto requestAt = [&scroll](int index) {
+        return qvariant_cast<TerminalViewportRequest>(
+            scroll.at(index).constFirst());
+    };
+    const auto sendAngle = [&pane](int delta) {
+        return sendWheelEvent(pane, QPoint{}, QPoint(0, delta));
+    };
+
+    // One ordinary notch uses Ghostty's discrete default of three rows.
+    QVERIFY(sendAngle(120));
+    QCOMPARE(scroll.count(), 1);
+    QCOMPARE(requestAt(0).kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(requestAt(0).delta, qint64{-3});
+    QVERIFY(sendAngle(-120));
+    QCOMPARE(scroll.count(), 2);
+    QCOMPARE(requestAt(1).kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(requestAt(1).delta, qint64{3});
+    QCOMPARE(mouse.count(), 0);
+
+    // Fractional non-precision ticks accumulate as signed physical distance.
+    // Opposite movement cancels the retained half-row exactly.
+    LaunchOptions fractional = options;
+    fractional.mouseScrollMultiplier.discrete = 2.0;
+    pane.applyRuntimeOptions(fractional);
+    QVERIFY(sendAngle(30));
+    QVERIFY(sendAngle(-30));
+    QCOMPARE(scroll.count(), 2);
+
+    QVERIFY(sendAngle(30));
+    QCOMPARE(scroll.count(), 2);
+    QVERIFY(sendAngle(30));
+    QCOMPARE(scroll.count(), 3);
+    QCOMPARE(requestAt(2).delta, qint64{-1});
+    QVERIFY(sendAngle(-30));
+    QCOMPARE(scroll.count(), 3);
+    QVERIFY(sendAngle(-30));
+    QCOMPARE(scroll.count(), 4);
+    QCOMPARE(requestAt(3).delta, qint64{1});
+
+    // Reload changes only future contributions. The half-row retained from
+    // the first 1.5-row notch combines with the next 0.5-row notch.
+    LaunchOptions oneAndAHalf = fractional;
+    oneAndAHalf.mouseScrollMultiplier.discrete = 1.5;
+    pane.applyRuntimeOptions(oneAndAHalf);
+    QVERIFY(sendAngle(120));
+    QCOMPARE(scroll.count(), 5);
+    QCOMPARE(requestAt(4).delta, qint64{-1});
+
+    LaunchOptions oneHalf = oneAndAHalf;
+    oneHalf.mouseScrollMultiplier.discrete = 0.5;
+    pane.applyRuntimeOptions(oneHalf);
+    QCOMPARE(&pane, identity);
+    QCOMPARE(pane.findChild<TerminalController *>(), controllerIdentity);
+    QVERIFY(sendAngle(120));
+    QCOMPARE(scroll.count(), 6);
+    QCOMPARE(requestAt(5).delta, qint64{-1});
+
+    // A coalesced extreme cannot monopolize the GUI with an unbounded report
+    // loop. One dispatch is capped at the maximum finalized single-notch
+    // multiplier, and the retained debt still cancels against later motion.
+    LaunchOptions extreme = oneHalf;
+    extreme.mouseScrollMultiplier.discrete = 10'000.0;
+    pane.applyRuntimeOptions(extreme);
+    QVERIFY(sendAngle(240));
+    QCOMPARE(scroll.count(), 7);
+    QCOMPARE(requestAt(6).delta, qint64{-10'000});
+    QVERIFY(sendAngle(-120));
+    QCOMPARE(scroll.count(), 7);
+}
+
+void TerminalPaneTest::prefersPrecisionPixelsAndRetainsPhysicalWheelDistance()
+{
+    qRegisterMetaType<TerminalViewportRequest>();
+
+    QQuickWindow window;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+
+    const qreal dpr = window.devicePixelRatio();
+    const TerminalCellMetrics baseMetrics =
+        terminalCellMetrics(options.typography, dpr);
+    const qint32 basePhysicalCellHeight = qRound(baseMetrics.cellHeight * dpr);
+    QVERIFY(basePhysicalCellHeight > 0);
+    constexpr int logicalPixelDelta = 4;
+    options.mouseScrollMultiplier.precision =
+        static_cast<double>(basePhysicalCellHeight)
+        / (2.0 * logicalPixelDelta * dpr);
+
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(QSizeF(320.0, 160.0));
+    TerminalPane *const identity = pane;
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    TerminalController *const controllerIdentity = controller;
+    QSignalSpy scroll(controller, &TerminalController::scrollRequested);
+
+    const auto requestAt = [&scroll](int index) {
+        return qvariant_cast<TerminalViewportRequest>(
+            scroll.at(index).constFirst());
+    };
+    const auto sendPixel = [pane](int pixelDelta, int contraryAngleDelta) {
+        return sendWheelEvent(*pane, QPoint(0, pixelDelta),
+                              QPoint(0, contraryAngleDelta));
+    };
+
+    // Each pixel event contributes exactly half of the original physical cell
+    // height. The deliberately contrary angle delta proves pixelDelta wins,
+    // and opposite precision movement cancels without a viewport request.
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QVERIFY(sendPixel(-logicalPixelDelta, 120));
+    QCOMPARE(scroll.count(), 0);
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QCOMPARE(scroll.count(), 0);
+
+    // Qt does not expose a mutable test DPR, but this is the exact event used
+    // by the pane to refresh DPR-derived metrics. Retained device-pixel
+    // distance must survive that refresh.
+    QEvent dprChange(QEvent::DevicePixelRatioChange);
+    QCoreApplication::sendEvent(&window, &dprChange);
+
+    // Double the physical cell height. The retained half-old-cell is now one
+    // quarter of the current cell; three more identical contributions reach
+    // one new cell. Resetting or normalizing the pending distance on reload
+    // would fail this boundary.
+    LaunchOptions tall = options;
+    tall.typography.metricModifiers[TerminalMetric::CellHeight] =
+        TerminalMetricModifiers::Absolute{
+            .pixels = basePhysicalCellHeight,
+        };
+    const TerminalCellMetrics tallMetrics =
+        terminalCellMetrics(tall.typography, dpr);
+    const qint32 tallPhysicalCellHeight = qRound(tallMetrics.cellHeight * dpr);
+    QCOMPARE(tallPhysicalCellHeight, basePhysicalCellHeight * 2);
+    pane->applyRuntimeOptions(tall);
+    QCOMPARE(pane, identity);
+    QCOMPARE(pane->findChild<TerminalController *>(), controllerIdentity);
+
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QCOMPARE(scroll.count(), 0);
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QCOMPARE(scroll.count(), 1);
+    QCOMPARE(requestAt(0).kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(requestAt(0).delta, qint64{-1});
+
+    // A live precision reload affects the next contribution without replacing
+    // the pane or controller. One logical delta now equals one tall cell, with
+    // exact negative symmetry.
+    LaunchOptions fullCell = tall;
+    fullCell.mouseScrollMultiplier.precision =
+        static_cast<double>(tallPhysicalCellHeight) / (logicalPixelDelta * dpr);
+    pane->applyRuntimeOptions(fullCell);
+    QCOMPARE(pane, identity);
+    QCOMPARE(pane->findChild<TerminalController *>(), controllerIdentity);
+    QVERIFY(sendPixel(logicalPixelDelta, -120));
+    QCOMPARE(scroll.count(), 2);
+    QCOMPARE(requestAt(1).delta, qint64{-1});
+    QVERIFY(sendPixel(-logicalPixelDelta, 120));
+    QCOMPARE(scroll.count(), 3);
+    QCOMPARE(requestAt(2).delta, qint64{1});
+
+    delete pane;
+}
+
 void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
 {
     qRegisterMetaType<TerminalMouseInput>();
@@ -2882,13 +3081,11 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
         sendMouse(QEvent::MouseButtonRelease, moved,
                   Qt::LeftButton, Qt::NoButton);
     };
-    const auto sendWheel = [&pane, &start](
-                               Qt::KeyboardModifiers modifiers =
-                                   Qt::NoModifier) {
-        QWheelEvent event(start, start, QPoint{}, QPoint(0, 120),
-                          Qt::NoButton, modifiers, Qt::NoScrollPhase, false);
-        QCoreApplication::sendEvent(&pane, &event);
-        QVERIFY(event.isAccepted());
+    const auto sendWheel = [&pane](int angleDelta = 120,
+                                   Qt::KeyboardModifiers modifiers =
+                                       Qt::NoModifier) {
+        QVERIFY(
+            sendWheelEvent(pane, QPoint{}, QPoint(0, angleDelta), modifiers));
     };
     const auto touch = [](const QString &path) {
         QFile marker(path);
@@ -2929,25 +3126,52 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QCOMPARE(selectionEnd.count(), 2);
     QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
 
+    // Captured fractional motion clears selection on the worker even before a
+    // whole row exists and therefore emits no protocol wheel event. Reverse
+    // the retained half-row so the following default-notch checks stay exact.
+    controller->selectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 1000);
+    sendWheel(20, Qt::ShiftModifier);
+    QCOMPARE(mouse.count(), 3);
+    QCOMPARE(scroll.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+    sendWheel(-20, Qt::ShiftModifier);
+    QCOMPARE(mouse.count(), 3);
+    QCOMPARE(scroll.count(), 0);
+
     // Wheel reporting ignores Shift upstream, emits protocol button four,
     // suppresses viewport scrolling, and clears an existing selection.
     controller->selectAll();
     QTRY_VERIFY_WITH_TIMEOUT(controller->selectionAvailable(), 1000);
-    sendWheel(Qt::ShiftModifier);
-    QCOMPARE(mouse.count(), 4);
+    sendWheel(120, Qt::ShiftModifier);
+    QCOMPARE(mouse.count(), 6);
     QCOMPARE(scroll.count(), 0);
-    const TerminalMouseInput wheelInput = qvariant_cast<TerminalMouseInput>(
-        mouse.constLast().constFirst());
-    QCOMPARE(wheelInput.action, TerminalMouseInput::Press);
-    QCOMPARE(wheelInput.button, 4);
-    QVERIFY(wheelInput.modifiers & Qt::ShiftModifier);
+    for (int index = 3; index < 6; ++index) {
+        const TerminalMouseInput wheelInput =
+            qvariant_cast<TerminalMouseInput>(mouse.at(index).constFirst());
+        QCOMPARE(wheelInput.action, TerminalMouseInput::Press);
+        QCOMPARE(wheelInput.button, 4);
+        QVERIFY(wheelInput.modifiers & Qt::ShiftModifier);
+    }
     QTRY_VERIFY_WITH_TIMEOUT(!controller->selectionAvailable(), 1000);
+
+    // Negative notches have exact event-count and protocol-button symmetry.
+    sendWheel(-120, Qt::AltModifier);
+    QCOMPARE(mouse.count(), 9);
+    QCOMPARE(scroll.count(), 0);
+    for (int index = 6; index < 9; ++index) {
+        const TerminalMouseInput wheelInput =
+            qvariant_cast<TerminalMouseInput>(mouse.at(index).constFirst());
+        QCOMPARE(wheelInput.action, TerminalMouseInput::Press);
+        QCOMPARE(wheelInput.button, 5);
+        QVERIFY(wheelInput.modifiers & Qt::AltModifier);
+    }
 
     // Ghostty reevaluates capture for every event. Disabling after a reported
     // press suppresses its later motion/release and does not begin selection.
     sendMouse(QEvent::MouseButtonPress, start,
               Qt::LeftButton, Qt::LeftButton);
-    QCOMPARE(mouse.count(), 5);
+    QCOMPARE(mouse.count(), 10);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("toggle_mouse_reporting")));
     QVERIFY(!controller->mouseTracking());
@@ -2955,21 +3179,26 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
               Qt::NoButton, Qt::LeftButton);
     sendMouse(QEvent::MouseButtonRelease, moved,
               Qt::LeftButton, Qt::NoButton);
-    QCOMPARE(mouse.count(), 5);
+    QCOMPARE(mouse.count(), 10);
     QCOMPARE(selectionBegin.count(), 2);
     QCOMPARE(selectionUpdate.count(), 2);
     QCOMPARE(selectionEnd.count(), 2);
 
     // With raw DEC tracking still requested but policy off, the wheel returns
-    // to typed viewport scrolling.
+    // to typed viewport scrolling with the same signed scaling.
     sendWheel();
-    QCOMPARE(mouse.count(), 5);
-    QCOMPARE(scroll.count(), 1);
-    const TerminalViewportRequest viewport =
+    sendWheel(-120);
+    QCOMPARE(mouse.count(), 10);
+    QCOMPARE(scroll.count(), 2);
+    const TerminalViewportRequest upward =
         qvariant_cast<TerminalViewportRequest>(
-            scroll.constLast().constFirst());
-    QCOMPARE(viewport.kind, TerminalViewportRequest::Kind::Delta);
-    QCOMPARE(viewport.delta, -3);
+            scroll.constFirst().constFirst());
+    QCOMPARE(upward.kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(upward.delta, -3);
+    const TerminalViewportRequest downward =
+        qvariant_cast<TerminalViewportRequest>(scroll.constLast().constFirst());
+    QCOMPARE(downward.kind, TerminalViewportRequest::Kind::Delta);
+    QCOMPARE(downward.delta, 3);
 
     // Conversely, enabling after a local press lets later events take the
     // newly effective remote path. The local gesture still ends before the
@@ -2983,7 +3212,7 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
               Qt::NoButton, Qt::LeftButton);
     sendMouse(QEvent::MouseButtonRelease, moved,
               Qt::LeftButton, Qt::NoButton);
-    QCOMPARE(mouse.count(), 7);
+    QCOMPARE(mouse.count(), 12);
     QCOMPARE(selectionBegin.count(), 3);
     QCOMPARE(selectionUpdate.count(), 2);
     QCOMPARE(selectionEnd.count(), 3);
@@ -2999,7 +3228,7 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QVERIFY(controller->mouseReportingEnabled());
     QVERIFY(!controller->mouseTracking());
     sendGesture();
-    QCOMPARE(mouse.count(), 7);
+    QCOMPARE(mouse.count(), 12);
     QCOMPARE(selectionBegin.count(), 4);
     QCOMPARE(selectionUpdate.count(), 3);
     QCOMPARE(selectionEnd.count(), 4);
@@ -3018,7 +3247,7 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
     QVERIFY(controller->mouseTracking());
     sendGesture();
-    QCOMPARE(mouse.count(), 10);
+    QCOMPARE(mouse.count(), 15);
     QCOMPARE(selectionBegin.count(), 4);
     QCOMPARE(selectionUpdate.count(), 3);
     QCOMPARE(selectionEnd.count(), 4);
@@ -3045,6 +3274,25 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
         QStringLiteral("toggle_mouse_reporting:")));
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("toggle_mouse_reporting:false")));
+
+    // Captured routing uses repeated protocol events instead of the local
+    // O(1) viewport request. A two-notch extreme is bounded to 10,000 reports
+    // in this GUI dispatch, while the retained second-notch debt cancels
+    // against an opposite notch without producing another report.
+    LaunchOptions extreme = enabled;
+    extreme.mouseScrollMultiplier.discrete = 10'000.0;
+    pane.applyRuntimeOptions(extreme);
+    const qsizetype beforeExtreme = mouse.count();
+    sendWheel(240);
+    QCOMPARE(mouse.count() - beforeExtreme, 10'000);
+    const TerminalMouseInput firstExtreme =
+        qvariant_cast<TerminalMouseInput>(mouse.at(beforeExtreme).constFirst());
+    const TerminalMouseInput lastExtreme =
+        qvariant_cast<TerminalMouseInput>(mouse.constLast().constFirst());
+    QCOMPARE(firstExtreme.button, 4);
+    QCOMPARE(lastExtreme.button, 4);
+    sendWheel(-120);
+    QCOMPARE(mouse.count() - beforeExtreme, 10'000);
 }
 
 void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
@@ -6208,7 +6456,7 @@ void TerminalPaneTest::routesTerminalFileActions()
     QCOMPARE(screenRequest.disposition, TerminalFileDisposition::Open);
     QCOMPARE(screenRequest.format, TerminalFileFormat::Plain);
 
-    QTRY_COMPARE_WITH_TIMEOUT(openedUrls.size(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(openedUrls.size(), 1, 10000);
     const QUrl openedUrl = openedUrls.constFirst();
     QVERIFY(openedUrl.isLocalFile());
     const QFileInfo artifact(openedUrl.toLocalFile());

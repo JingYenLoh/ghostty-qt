@@ -114,6 +114,10 @@ public:
     [[nodiscard]] bool writeTerminalFile(
         quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelection();
+    // Fractional captured wheel input has no protocol event yet, but Ghostty
+    // still clears selection. The worker rechecks current DEC tracking before
+    // applying this queued side effect.
+    void clearSelectionIfMouseTracking();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);
@@ -194,6 +198,7 @@ Q_SIGNALS:
     void writeTerminalFileRequested(
         quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelectionRequested();
+    void clearSelectionIfMouseTrackingRequested();
     void beginSelectionRequested(int column, int row, int clickCount,
                                  bool rectangular);
     void updateSelectionRequested(int column, int row, bool rectangular);

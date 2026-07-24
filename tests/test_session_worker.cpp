@@ -2775,6 +2775,8 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
         QStringLiteral(
             "stty -echo; "
             "printf 'mouse-selection-target\\r\\n\\033[?9hmouse-ready'; "
+            "IFS= read -r _; "
+            "printf '\\033[?9lmouse-off-ready'; "
             "exec cat >/dev/null"),
     };
     options.hold = true;
@@ -2815,6 +2817,13 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
         .y = 8.0F,
     };
 
+    // A captured fractional wheel has no protocol event yet, but its
+    // selection side effect still runs only after this worker-owned DEC-state
+    // check.
+    selectTarget();
+    worker.clearSelectionIfMouseTracking();
+    QVERIFY(spyContainsBool(selectionSpy, false));
+
     // Cursor motion never clears a selection, but an encoded button event
     // and a protocol wheel press do so before their PTY bytes are queued.
     selectTarget();
@@ -2846,6 +2855,21 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     QVERIFY(!spyContainsBool(selectionSpy, true));
     worker.setReadOnly(false);
     worker.clearSelection();
+
+    // The queued fractional-wheel side effect must also honor a DEC mode
+    // reset that reaches the worker before it. With capture disabled, the
+    // same conditional request preserves the current selection.
+    TerminalKeyInput enter;
+    enter.key = Qt::Key_Return;
+    enter.text = QStringLiteral("\r");
+    enter.pressed = true;
+    worker.sendKey(enter);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("mouse-off-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(mouseSpy, false), 1000);
+    selectTarget();
+    worker.clearSelectionIfMouseTracking();
+    QVERIFY(!spyContainsBool(selectionSpy, false));
 
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()

@@ -258,6 +258,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.clipboardPaste.bracketedSafe);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!values.mouseReporting);
+    QCOMPARE(values.mouseScrollMultiplier.precision, 0.75);
+    QCOMPARE(values.mouseScrollMultiplier.discrete, 4.5);
     QVERIFY(!values.linkUrl);
     QCOMPARE(values.linkPreviews, LinkPreviewMode::Osc8);
 
@@ -340,6 +342,9 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
                           QStringLiteral("resize-overlay-duration"), 0);
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("bell-audio-volume"), -2.0);
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("mouse-scroll-multiplier"),
+                          mouseScrollMultiplier(0.01, 0.01));
 
     const auto low = parseGhosttyConfigExportJson(json(lowValues));
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
@@ -348,16 +353,23 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.resizeOverlay.duration,
              std::chrono::milliseconds{250});
     QCOMPARE(low->values.bellAudioVolume, -2.0);
+    QCOMPARE(low->values.mouseScrollMultiplier.precision, 0.01);
+    QCOMPARE(low->values.mouseScrollMultiplier.discrete, 0.01);
 
     QJsonObject highValues = object();
     highValues =
         withValue(std::move(highValues), QStringLiteral("cursor-opacity"), 2.0);
     highValues = withValue(std::move(highValues),
                            QStringLiteral("bell-audio-volume"), 2.0);
+    highValues = withValue(std::move(highValues),
+                           QStringLiteral("mouse-scroll-multiplier"),
+                           mouseScrollMultiplier(10'000.0, 10'000.0));
     const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
     QCOMPARE(high->values.bellAudioVolume, 2.0);
+    QCOMPARE(high->values.mouseScrollMultiplier.precision, 10'000.0);
+    QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
 }
 
 void GhosttyConfigExportTest::parsesEveryEnumSpelling()
@@ -720,6 +732,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-bell-audio-volume")
         << withoutValue(object(), QStringLiteral("bell-audio-volume"))
         << QStringLiteral("values is missing field 'bell-audio-volume'");
+    QTest::newRow("missing-mouse-scroll-multiplier")
+        << withoutValue(object(), QStringLiteral("mouse-scroll-multiplier"))
+        << QStringLiteral("values is missing field 'mouse-scroll-multiplier'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -801,6 +816,52 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("bell-audio-volume"),
                      std::numeric_limits<double>::infinity())
         << QStringLiteral("values.bell-audio-volume must be a finite number");
+    QTest::newRow("mouse-scroll-multiplier-type")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"), true)
+        << QStringLiteral("values.mouse-scroll-multiplier must be an object");
+    QTest::newRow("mouse-scroll-multiplier-missing-precision")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     QJsonObject{{QStringLiteral("discrete"), 3.0}})
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier is missing field 'precision'");
+    QTest::newRow("mouse-scroll-multiplier-missing-discrete")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     QJsonObject{{QStringLiteral("precision"), 1.0}})
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier is missing field 'discrete'");
+    QTest::newRow("mouse-scroll-multiplier-extra-field")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     QJsonObject{
+                         {QStringLiteral("precision"), 1.0},
+                         {QStringLiteral("discrete"), 3.0},
+                         {QStringLiteral("future"), true},
+                     })
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier has unexpected field 'future'");
+    QTest::newRow("mouse-scroll-multiplier-precision-type")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     QJsonObject{
+                         {QStringLiteral("precision"), QStringLiteral("1")},
+                         {QStringLiteral("discrete"), 3.0},
+                     })
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier.precision must be a finite number");
+    QTest::newRow("mouse-scroll-multiplier-discrete-nonfinite")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     mouseScrollMultiplier(
+                         1.0, std::numeric_limits<double>::infinity()))
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier.discrete must be a finite number");
+    QTest::newRow("mouse-scroll-multiplier-below-finalized-range")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     mouseScrollMultiplier(0.009, 3.0))
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier.precision is outside its supported range");
+    QTest::newRow("mouse-scroll-multiplier-above-finalized-range")
+        << withValue(object(), QStringLiteral("mouse-scroll-multiplier"),
+                     mouseScrollMultiplier(1.0, 10'000.01))
+        << QStringLiteral(
+               "values.mouse-scroll-multiplier.discrete is outside its supported range");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

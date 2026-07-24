@@ -473,6 +473,10 @@
       "status": "supported",
       "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event, reported buttons and wheels clear selection on the worker, raw DEC capture still governs Shift hyperlink escape, reload replaces local runtime toggles, and future panes use configured state."
     },
+    "mouse-scroll-multiplier": {
+      "status": "supported",
+      "note": "The strict config projection preserves Ghostty's independently finalized precision and discrete values. Qt pixel deltas select precision input and fractional angle deltas select discrete input; pane-local signed pending physical distance converts both against current cell height and routes identical whole-row counts through typed viewport scrolling or repeated DEC button 4/5 reports. Captured sub-row input clears selection only after a worker-owned DEC-state recheck. Live reload affects subsequent deltas without replacing the pane or discarding accumulated distance. A GUI dispatch is bounded to 10,000 rows and retains excess movement. Pinned Surface.zig documents retaining post-row remainder but currently clears it by subtracting the untruncated amount; the Qt path intentionally implements the documented accumulator contract so high-resolution motion is not lost."
+    },
     "palette": {
       "status": "supported",
       "note": "All 256 canonical defaults are applied. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured defaults."

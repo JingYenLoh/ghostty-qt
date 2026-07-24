@@ -100,6 +100,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("selection-clear-on-copy"),
     QLatin1StringView("middle-click-action"),
     QLatin1StringView("mouse-reporting"),
+    QLatin1StringView("mouse-scroll-multiplier"),
     QLatin1StringView("link-url"),
     QLatin1StringView("link-previews"),
     QLatin1StringView("config-file"),
@@ -156,6 +157,10 @@ constexpr auto BellFeatureFields = std::to_array<QLatin1StringView>({
 constexpr auto ConfigPathFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("path"),
     QLatin1StringView("optional"),
+});
+constexpr auto MouseScrollMultiplierFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("precision"),
+    QLatin1StringView("discrete"),
 });
 
 constexpr auto FontFamilyFields =
@@ -340,6 +345,28 @@ ParseResult<double> readFiniteDouble(const QJsonValue &value,
     if (!std::isfinite(result) || result < minimum || result > maximum) {
         return std::unexpected(
             QStringLiteral("%1 is outside its supported range").arg(context));
+    }
+    return result;
+}
+
+ParseResult<MouseScrollMultiplier>
+readMouseScrollMultiplier(const QJsonValue &value, const QString &context)
+{
+    auto object = readExactObject(value, context, MouseScrollMultiplierFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    constexpr double Minimum = 0.01;
+    constexpr double Maximum = 10'000.0;
+    MouseScrollMultiplier result;
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, double *>>({
+             {QLatin1StringView("precision"), &result.precision},
+             {QLatin1StringView("discrete"), &result.discrete},
+         })) {
+        auto parsed = readFiniteDouble(
+            object->value(name), childContext(context, name), Minimum, Maximum);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        *destination = *parsed;
     }
     return result;
 }
@@ -829,6 +856,12 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                              result.bellAudioVolume, readDouble);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed =
+            assign(QLatin1StringView("mouse-scroll-multiplier"),
+                   result.mouseScrollMultiplier, readMouseScrollMultiplier);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
 
     for (const auto [name, destination] :
          std::to_array<std::pair<QLatin1StringView, QColor *>>({

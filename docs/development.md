@@ -199,7 +199,8 @@ frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the exact `system`/`never` scrollbar policy, the five
 finalized `bell-features` booleans, nullable finalized bell-audio path and its
-required/optional provenance, raw finite bell-audio volume, the raw
+required/optional provenance, raw finite bell-audio volume, independently
+finalized finite precision/discrete mouse-scroll multipliers, the raw
 false/true/detect
 `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
@@ -303,7 +304,10 @@ C++ stack frame per configured key.
 Session and pane tests cover payload-specific typed execution without
 keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
 reload cancellation, full/fractional/line/absolute viewport movement,
-selection-target scrolling,
+selection-target scrolling, default and configured discrete wheel movement,
+precision pixel scrolling, fractional/reversing accumulation, identical local
+and DEC-captured row counts, worker-rechecked fractional-capture selection
+clearing, bounded extreme dispatch with retained debt, live multiplier reload,
 select-all, endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact

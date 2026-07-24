@@ -77,6 +77,7 @@ public Q_SLOTS:
     void writeTerminalFile(
         quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelection();
+    void clearSelectionIfMouseTracking();
     void beginSelection(int column, int row, int clickCount, bool rectangular);
     void updateSelection(int column, int row, bool rectangular);
     void endSelection(int column, int row);

@@ -40,6 +40,13 @@ struct BellFeatures {
     bool operator==(const BellFeatures &) const = default;
 };
 
+struct MouseScrollMultiplier {
+    double precision = 1.0;
+    double discrete = 3.0;
+
+    bool operator==(const MouseScrollMultiplier &) const = default;
+};
+
 enum class MiddleClickAction {
     PrimaryPaste,
     Ignore,
@@ -216,6 +223,7 @@ struct GhosttyConfigValues {
     };
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
     bool mouseReporting = false;
+    MouseScrollMultiplier mouseScrollMultiplier;
     bool linkUrl = false;
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;
 
