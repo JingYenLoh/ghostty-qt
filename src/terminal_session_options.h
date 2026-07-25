@@ -5,6 +5,7 @@
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -66,6 +67,7 @@ struct TerminalClipboardPasteOptions {
 struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
     TerminalSelectionClipboardOptions selectionClipboard;
+    QVector<quint32> selectionWordChars;
     TerminalClipboardPasteOptions clipboardPaste;
     bool linkUrl = true;
 

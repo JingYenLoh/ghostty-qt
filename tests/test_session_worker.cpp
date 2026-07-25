@@ -197,6 +197,7 @@ private Q_SLOTS:
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
+    void appliesReloadedWordBoundariesToExistingGesture();
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
@@ -2559,6 +2560,62 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesReloadedWordBoundariesToExistingGesture()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(24, 3, 8, 16, 192, 48);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'alpha;beta gamma'; sleep 5"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    options.runtime.selectionWordChars = {0, static_cast<quint32>(' ')};
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alpha;beta gamma")), 5000);
+
+    worker.beginSelection(7, 0, 2, false);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.size(), 1);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha;beta"));
+
+    // Reload does not reset or retroactively reshape the installed range.
+    // The next word drag samples the replacement list for both endpoints.
+    options.runtime.selectionWordChars = {0, static_cast<quint32>(' '),
+                                          static_cast<quint32>(';')};
+    worker.applyRuntimeOptions(options.runtime);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha;beta"));
+    worker.updateSelection(12, 0, false);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.size(), 2);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("beta gamma"));
+    worker.endSelection(12, 0);
+
+    worker.beginSelection(7, 0, 2, false);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.size(), 3);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(), QStringLiteral("beta"));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

@@ -9,6 +9,7 @@
 #include <QByteArrayView>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 
 #include <chrono>
@@ -46,6 +47,9 @@ struct LaunchOptions {
     double bellAudioVolume = 0.5;
     ConfirmCloseMode confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalSelectionClipboardOptions selectionClipboard;
+    // Finalized Unicode scalar values used by Ghostty's word-selection
+    // gestures. U+0000 is a valid boundary and remains in the vector.
+    QVector<quint32> selectionWordChars;
     TerminalClipboardPasteOptions clipboardPaste;
     // Split appearance belongs to the Qt pane/workspace renderers and never
     // crosses the terminal session-thread boundary.

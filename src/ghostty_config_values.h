@@ -217,6 +217,7 @@ struct GhosttyConfigValues {
         .clearOnTyping = false,
         .clearOnCopy = false,
     };
+    QVector<quint32> selectionWordChars;
     TerminalClipboardPasteOptions clipboardPaste{
         .protection = false,
         .bracketedSafe = false,

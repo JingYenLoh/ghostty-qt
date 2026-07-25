@@ -90,6 +90,7 @@ private Q_SLOTS:
     void selectsAndNavigatesViewportAtomically();
     void mapsAndRevealsSearchRanges();
     void formatsSelectionWithConfigurableTrimming();
+    void appliesConfiguredWordBoundariesToPressAndDrag();
     void snapshotsPlainWriteFileRanges();
     void snapshotsPlainWriteFileFormattingAndAlternateScreen();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
@@ -1670,6 +1671,60 @@ void GhosttyVtAdapterTest::formatsSelectionWithConfigurableTrimming()
     QVERIFY(adapter->updateSelection(3, 0, false));
     adapter->endSelection(3, 0);
     QVERIFY(adapter->hasSelection());
+}
+
+void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 24;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QStringLiteral("alpha;beta gamma\r\n"
+                                    "snow\u2603flake\r\n"
+                                    "one\U0001F680two")
+                         .toUtf8());
+
+    // Ghostty's default boundary set includes semicolon.
+    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
+
+    // A finalized custom set can make punctuation part of a word. The drag
+    // operation reads its own current boundary list, so live reload can
+    // change both the original and current endpoint expansion.
+    QVector<uint32_t> spaceOnly{0, uint32_t{' '}};
+    QVERIFY(adapter->setSelectionWordChars(spaceOnly));
+    spaceOnly[1] = uint32_t{';'};
+    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("alpha;beta"));
+
+    // Reject invalid direct API input without disturbing either reusable
+    // gesture event's previously copied boundary list.
+    QVERIFY(!adapter->setSelectionWordChars(
+        QVector<uint32_t>{0, uint32_t{0x110000}}));
+    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("alpha;beta"));
+
+    const QVector<uint32_t> spaceAndSemicolon{0, uint32_t{' '}, uint32_t{';'}};
+    QVERIFY(adapter->setSelectionWordChars(spaceAndSemicolon));
+    QVERIFY(adapter->updateSelection(12, 0, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("beta gamma"));
+    adapter->endSelection(12, 0);
+
+    const QVector<uint32_t> snowmanBoundary{0, 0x2603};
+    QVERIFY(adapter->setSelectionWordChars(snowmanBoundary));
+    QVERIFY(adapter->beginSelection(6, 1, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("flake"));
+
+    // Keep non-BMP values as Unicode scalars rather than UTF-16 code units.
+    const QVector<uint32_t> rocketBoundary{0, 0x1F680};
+    QVERIFY(adapter->setSelectionWordChars(rocketBoundary));
+    QVERIFY(adapter->beginSelection(6, 2, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("two"));
+
+    QVERIFY(adapter->setSelectionWordChars(QVector<uint32_t>{}));
+    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
 }
 
 void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()

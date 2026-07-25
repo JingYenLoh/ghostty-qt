@@ -254,6 +254,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
              TerminalCopyOnSelectMode::PrimaryAndClipboard);
     QVERIFY(!values.selectionClipboard.clearOnTyping);
     QVERIFY(values.selectionClipboard.clearOnCopy);
+    QCOMPARE(values.selectionWordChars,
+             QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QVERIFY(!values.clipboardPaste.protection);
     QVERIFY(values.clipboardPaste.bracketedSafe);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
@@ -357,6 +359,28 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.bellAudioVolume, -2.0);
     QCOMPARE(low->values.mouseScrollMultiplier.precision, 0.01);
     QCOMPARE(low->values.mouseScrollMultiplier.discrete, 0.01);
+
+    QJsonObject onlyRequiredNull = object();
+    onlyRequiredNull =
+        withValue(std::move(onlyRequiredNull),
+                  QStringLiteral("selection-word-chars"), QJsonArray{0});
+    const auto minimalWordChars =
+        parseGhosttyConfigExportJson(json(onlyRequiredNull));
+    QVERIFY2(minimalWordChars.has_value(),
+             qPrintable(errorMessage(minimalWordChars)));
+    QCOMPARE(minimalWordChars->values.selectionWordChars,
+             QVector<quint32>({0}));
+
+    QJsonObject orderedWordChars = object();
+    orderedWordChars = withValue(std::move(orderedWordChars),
+                                 QStringLiteral("selection-word-chars"),
+                                 QJsonArray{0, 65, 65, 0, 0x10ffff});
+    const auto preservedWordChars =
+        parseGhosttyConfigExportJson(json(orderedWordChars));
+    QVERIFY2(preservedWordChars.has_value(),
+             qPrintable(errorMessage(preservedWordChars)));
+    QCOMPARE(preservedWordChars->values.selectionWordChars,
+             QVector<quint32>({0, 65, 65, 0, 0x10ffff}));
 
     QJsonObject highValues = object();
     highValues =
@@ -743,6 +767,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-focus-follows-mouse")
         << withoutValue(object(), QStringLiteral("focus-follows-mouse"))
         << QStringLiteral("values is missing field 'focus-follows-mouse'");
+    QTest::newRow("missing-selection-word-chars")
+        << withoutValue(object(), QStringLiteral("selection-word-chars"))
+        << QStringLiteral("values is missing field 'selection-word-chars'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -876,6 +903,42 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("focus-follows-mouse-type")
         << withValue(object(), QStringLiteral("focus-follows-mouse"), 1)
         << QStringLiteral("values.focus-follows-mouse must be a boolean");
+    QTest::newRow("selection-word-chars-type")
+        << withValue(object(), QStringLiteral("selection-word-chars"), true)
+        << QStringLiteral("values.selection-word-chars must be an array");
+    QTest::newRow("selection-word-chars-negative")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{0, -1})
+        << QStringLiteral(
+               "values.selection-word-chars[1] must be a Unicode scalar value");
+    QTest::newRow("selection-word-chars-too-large")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{0, 0x110000})
+        << QStringLiteral(
+               "values.selection-word-chars[1] must be a Unicode scalar value");
+    QTest::newRow("selection-word-chars-surrogate")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{0, 0xd800})
+        << QStringLiteral(
+               "values.selection-word-chars[1] must be a Unicode scalar value");
+    QTest::newRow("selection-word-chars-fractional")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{0, 1.5})
+        << QStringLiteral(
+               "values.selection-word-chars[1] must be a Unicode scalar value");
+    QTest::newRow("selection-word-chars-nonnumeric")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{0, QStringLiteral("65")})
+        << QStringLiteral(
+               "values.selection-word-chars[1] must be a Unicode scalar value");
+    QTest::newRow("selection-word-chars-empty")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{})
+        << QStringLiteral("values.selection-word-chars must begin with U+0000");
+    QTest::newRow("selection-word-chars-missing-leading-null")
+        << withValue(object(), QStringLiteral("selection-word-chars"),
+                     QJsonArray{65})
+        << QStringLiteral("values.selection-word-chars must begin with U+0000");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

@@ -201,14 +201,16 @@ split-divider color, the boolean `link-url` setting plus the three-state
 finalized `bell-features` booleans, nullable finalized bell-audio path and its
 required/optional provenance, raw finite bell-audio volume, independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
-`mouse-hide-while-typing` and `focus-follows-mouse` booleans, the raw
-false/true/detect
+`mouse-hide-while-typing` and `focus-follows-mouse` booleans, the finalized
+`selection-word-chars` numeric Unicode-scalar array including Ghostty's
+mandatory U+0000 boundary, the raw false/true/detect
 `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
-values, nullable alternatives, transaction consistency, and default-aware
-keybinding diagnostics; launch-option and process-loader tests verify that
+values, nullable alternatives, Unicode scalar range/surrogate rejection,
+transaction consistency, and default-aware keybinding diagnostics;
+launch-option and process-loader tests verify that
 explicit font CLI arguments enter both structured queries before Ghostty
 finalization, preserving f32 and styled-role defaults while the public
 `+validate-config` action retains its exact action-specific grammar.
@@ -314,7 +316,9 @@ invalid-sequence and asynchronous `performable` fallback, stale
 pointer-activity-epoch suppression, physical-pixel movement filtering, reveal
 interactions, blank/hyperlink/default cursor priority, focus-follow defaults
 and live reload, inactive-window gating, same-position/sub-pixel focus
-suppression, and destructive focus-publication observers, select-all,
+suppression, and destructive focus-publication observers, finalized default
+and custom ASCII/NUL/non-BMP word boundaries, worker-owned double-click press
+and word-drag behavior, live boundary reload during an active pane, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact

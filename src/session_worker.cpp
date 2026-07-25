@@ -600,6 +600,10 @@ bool SessionWorker::createTerminal()
     callbacks.writePty = [this](const QByteArray &data) { queuePtyWrite(data); };
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
+        if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)) {
+            vt_.reset();
+            return false;
+        }
         compressionActivity_ = vt_->compressionActivity();
     }
     return vt_ != nullptr;
@@ -611,6 +615,13 @@ void SessionWorker::applyRuntimeOptions(
     const bool appearanceChanged =
         options_.runtime.appearance != options.appearance;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
+    const QVector<quint32> previousSelectionWordChars =
+        options_.runtime.selectionWordChars;
+    const bool selectionWordCharsChanged =
+        previousSelectionWordChars != options.selectionWordChars;
+    const bool selectionWordCharsApplied = vt_ == nullptr
+        || !selectionWordCharsChanged
+        || vt_->setSelectionWordChars(options.selectionWordChars);
     options_.runtime = options;
 
     if (linkUrlChanged && !options_.runtime.linkUrl) {
@@ -646,6 +657,11 @@ void SessionWorker::applyRuntimeOptions(
 
     // libghostty-vt cannot resize an existing scrollback allocation. Reloaded
     // limits remain workspace-owned and apply when a new pane is constructed.
+    if (!selectionWordCharsApplied) {
+        options_.runtime.selectionWordChars = previousSelectionWordChars;
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Failed to apply selection word boundaries to libghostty-vt."));
+    }
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
             Q_EMIT errorOccurred(

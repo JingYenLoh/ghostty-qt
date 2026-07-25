@@ -98,6 +98,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("copy-on-select"),
     QLatin1StringView("selection-clear-on-typing"),
     QLatin1StringView("selection-clear-on-copy"),
+    QLatin1StringView("selection-word-chars"),
     QLatin1StringView("middle-click-action"),
     QLatin1StringView("mouse-reporting"),
     QLatin1StringView("mouse-hide-while-typing"),
@@ -392,6 +393,33 @@ ParseResult<Integer> readUnsignedInteger(const QJsonValue &value,
                 .arg(context));
     }
     return static_cast<Integer>(number);
+}
+
+ParseResult<QVector<quint32>> readUnicodeScalarList(const QJsonValue &value,
+                                                    const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<quint32> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto codepoint = readUnsignedInteger<quint32>(array->at(index),
+                                                      entryContext, 0x10ffffU);
+        if (!codepoint || (*codepoint >= 0xd800U && *codepoint <= 0xdfffU)) {
+            return std::unexpected(
+                QStringLiteral("%1 must be a Unicode scalar value")
+                    .arg(entryContext));
+        }
+        result.append(*codepoint);
+    }
+    if (result.isEmpty() || result.front() != 0U) {
+        return std::unexpected(
+            QStringLiteral("%1 must begin with U+0000").arg(context));
+    }
+    return result;
 }
 
 template<std::signed_integral Integer>
@@ -861,6 +889,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed =
             assign(QLatin1StringView("mouse-scroll-multiplier"),
                    result.mouseScrollMultiplier, readMouseScrollMultiplier);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("selection-word-chars"),
+                             result.selectionWordChars, readUnicodeScalarList);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

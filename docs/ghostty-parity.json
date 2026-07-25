@@ -554,6 +554,10 @@
       "status": "supported",
       "note": "Fixed and cell-relative colors are resolved per rendered cell; unset uses the effective terminal background."
     },
+    "selection-word-chars": {
+      "status": "supported",
+      "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection. Click counting remains Qt-owned until click-repeat-interval is implemented."
+    },
     "split-divider-color": {
       "status": "supported",
       "scope": "qt_mapping",

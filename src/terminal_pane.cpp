@@ -1711,6 +1711,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.bellAudioPath = options.bellAudioPath;
     updated.bellAudioVolume = options.bellAudioVolume;
     updated.selectionClipboard = options.selectionClipboard;
+    updated.selectionWordChars = options.selectionWordChars;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;

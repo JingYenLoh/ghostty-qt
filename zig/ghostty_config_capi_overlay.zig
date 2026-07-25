@@ -224,6 +224,12 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.write(config.@"selection-clear-on-typing");
     try json.objectField("selection-clear-on-copy");
     try json.write(config.@"selection-clear-on-copy");
+    try json.objectField("selection-word-chars");
+    try json.beginArray();
+    for (config.@"selection-word-chars".codepoints) |codepoint| {
+        try json.write(codepoint);
+    }
+    try json.endArray();
     try json.objectField("middle-click-action");
     try json.write(@tagName(config.@"middle-click-action"));
     try json.objectField("mouse-reporting");

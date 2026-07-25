@@ -642,6 +642,17 @@ signals:
   paste, mouse/focus reports, and replayed sequence leaders bypass
   clear-on-typing. OSC-driven clipboard writes from terminal applications are
   denied by the host callback.
+- `selection-word-chars` crosses the strict config boundary as Ghostty's
+  finalized numeric Unicode-scalar vector, including the parser-inserted
+  U+0000 boundary. The source UTF-8 string is never reparsed by Qt. The
+  value-only runtime snapshot reaches `SessionWorker`, which supplies the
+  current vector to both the press and drag events of libghostty's selection
+  gesture. Those C events copy the borrowed scalar array into event-owned
+  storage before executing beside the terminal. Reload therefore affects the
+  next double-click press and every later word-drag update, including an
+  already active gesture, without retroactively changing an installed
+  selection. The GUI still supplies its Qt-derived click count; exact
+  `click-repeat-interval` timing remains a separate planned frontier.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain
@@ -1020,6 +1031,13 @@ all 256 palette defaults, selection and candidate/selected search colors,
 cursor color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed
 colors and Ghostty's cell-foreground and cell-background aliases remain
 distinct until the renderer has the target cell.
+
+The same schema carries `selection-word-chars` as an array of finalized
+Unicode scalar values rather than its source spelling. The strict loader
+rejects nonnumeric, fractional, surrogate, and out-of-range members; the
+parser-provided U+0000 element is preserved alongside ASCII and non-BMP
+boundaries. This vector is copied through launch and live runtime options
+without UTF-16 conversion, then consumed only on the session thread.
 
 Typography remains entirely on the GUI/render side as a value-only
 `TerminalTypography`. It carries one ordered family list and one style
@@ -1734,7 +1752,8 @@ The default CTest suite has focused layers for each ownership boundary:
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
   focus, and key input using terminal modes. It also verifies tagged viewport
   scrolling, selection-target alignment, select-all, and endpoint adjustment
-  with exact autoscroll and configurable selection trimming, plus
+  with exact autoscroll, configurable word-boundary scalars on selection
+  press and drag, and configurable selection trimming, plus
   primary/alternate-screen reset, mode clearing,
   selection invalidation, history removal, forced full-frame publication, and
   long OSC 8 URI lookup across active, scrollback, alternate-screen, and reset
@@ -1919,8 +1938,10 @@ The default CTest suite has focused layers for each ownership boundary:
 Clipboard and selection-lifecycle tests cover trim policy, copy destinations
 and primary fallback, explicit copy-and-clear ordering, automatic selection
 commits, select-all, live reload, middle-click source/ignore policy,
-clear-on-typing key traits, sequence replay exclusions, and IME/preedit
-transitions. Paste-safety tests cover Ghostty's exact bracketed and
+clear-on-typing key traits, sequence replay exclusions, IME/preedit
+transitions, finalized ASCII/NUL/non-BMP word boundaries, double-click
+selection, word dragging, and boundary reload during a live pane. Paste-safety
+tests cover Ghostty's exact bracketed and
 non-bracketed policy, live options, control-byte encoding, confirmation-time
 mode changes, accepted-only activity and viewport changes, all GUI paste entry
 points, immutable worker IDs, multi-pane dialog correlation, queued payloads,

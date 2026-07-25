@@ -2202,6 +2202,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .clearOnTyping = false,
         .clearOnCopy = true,
     };
+    reloaded.selectionWordChars = {0, quint32{' '}, quint32{';'}};
     reloaded.clipboardPaste = {
         .protection = false,
         .bracketedSafe = true,
@@ -2219,6 +2220,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.scrollbackLimit, reloaded.scrollbackLimit);
     QCOMPARE(splitOptions.appearance, reloaded.appearance);
     QCOMPARE(splitOptions.selectionClipboard, reloaded.selectionClipboard);
+    QCOMPARE(splitOptions.selectionWordChars, reloaded.selectionWordChars);
     QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);

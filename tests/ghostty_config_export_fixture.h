@@ -245,6 +245,8 @@ inline QJsonObject values()
         {QStringLiteral("copy-on-select"), QStringLiteral("clipboard")},
         {QStringLiteral("selection-clear-on-typing"), false},
         {QStringLiteral("selection-clear-on-copy"), true},
+        {QStringLiteral("selection-word-chars"),
+         QJsonArray{0, 0x20, 0x2502, 0x1f642}},
         {QStringLiteral("middle-click-action"), QStringLiteral("ignore")},
         {QStringLiteral("mouse-reporting"), false},
         {QStringLiteral("mouse-hide-while-typing"), true},

@@ -2330,6 +2330,78 @@ public:
         return match;
     }
 
+    static bool
+    setSelectionWordBoundaries(GhosttySelectionGestureEvent event,
+                               const QVector<uint32_t> &wordBoundaryCodepoints)
+    {
+        if (wordBoundaryCodepoints.isEmpty()) {
+            return ghostty_selection_gesture_event_set(
+                       event,
+                       GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS,
+                       nullptr)
+                == GHOSTTY_SUCCESS;
+        }
+        const GhosttyCodepoints codepoints{
+            .ptr = wordBoundaryCodepoints.constData(),
+            .len = static_cast<size_t>(wordBoundaryCodepoints.size()),
+        };
+        return ghostty_selection_gesture_event_set(
+                   event,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS,
+                   &codepoints)
+            == GHOSTTY_SUCCESS;
+    }
+
+    bool setSelectionWordChars(const QVector<uint32_t> &wordBoundaryCodepoints)
+    {
+        if ((!wordBoundaryCodepoints.isEmpty()
+             && wordBoundaryCodepoints.front() != 0)
+            || !std::all_of(
+                wordBoundaryCodepoints.cbegin(), wordBoundaryCodepoints.cend(),
+                [](uint32_t codepoint) {
+                    return codepoint <= 0x10ffffU
+                        && !(codepoint >= 0xd800U && codepoint <= 0xdfffU);
+                })) {
+            return false;
+        }
+        if (selectionWordChars_ == wordBoundaryCodepoints) {
+            return true;
+        }
+
+        QVector<uint32_t> replacementWordChars = wordBoundaryCodepoints;
+        GhosttySelectionGestureEvent replacementPressEvent = nullptr;
+        GhosttySelectionGestureEvent replacementDragEvent = nullptr;
+        const auto replacementGuard = qScopeGuard([&] {
+            if (replacementDragEvent != nullptr) {
+                ghostty_selection_gesture_event_free(replacementDragEvent);
+            }
+            if (replacementPressEvent != nullptr) {
+                ghostty_selection_gesture_event_free(replacementPressEvent);
+            }
+        });
+        if (ghostty_selection_gesture_event_new(
+                nullptr, &replacementPressEvent,
+                GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_new(
+                   nullptr, &replacementDragEvent,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG)
+                != GHOSTTY_SUCCESS) {
+            return false;
+        }
+        if (!setSelectionWordBoundaries(replacementPressEvent,
+                                        wordBoundaryCodepoints)
+            || !setSelectionWordBoundaries(replacementDragEvent,
+                                           wordBoundaryCodepoints)) {
+            return false;
+        }
+
+        std::swap(selectionPressEvent_, replacementPressEvent);
+        std::swap(selectionDragEvent_, replacementDragEvent);
+        selectionWordChars_.swap(replacementWordChars);
+        return true;
+    }
+
     bool beginSelection(int column, int row, int clickCount, bool rectangular)
     {
         static_cast<void>(rectangular);
@@ -3349,6 +3421,7 @@ private:
     GhosttySelectionGestureEvent selectionPressEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionDragEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
+    QVector<uint32_t> selectionWordChars_;
     TerminalFrame publishedMetadata_;
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
@@ -3522,7 +3595,14 @@ void GhosttyVtAdapter::clearSelectionAndResetGesture()
     impl_->clearSelectionAndResetGesture();
 }
 
-bool GhosttyVtAdapter::beginSelection(int column, int row, int clickCount, bool rectangular)
+bool GhosttyVtAdapter::setSelectionWordChars(
+    const QVector<uint32_t> &wordBoundaryCodepoints)
+{
+    return impl_->setSelectionWordChars(wordBoundaryCodepoints);
+}
+
+bool GhosttyVtAdapter::beginSelection(int column, int row, int clickCount,
+                                      bool rectangular)
 {
     return impl_->beginSelection(column, row, clickCount, rectangular);
 }

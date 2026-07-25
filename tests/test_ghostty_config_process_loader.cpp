@@ -230,6 +230,7 @@ private Q_SLOTS:
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
+    void realHelperExportsSelectionWordChars();
     void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
@@ -1093,6 +1094,34 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFocusFollowsMouse()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(!result->values.focusFollowsMouse);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsSelectionWordChars()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("selection-word-chars = A\\u{2502}\\u{1F642}\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.selectionWordChars,
+             QVector<quint32>({0, quint32('A'), 0x2502, 0x1f642}));
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.selectionWordChars,
+             QVector<quint32>({0,   ' ', '\t', '\'', '"', 0x2502, '`',
+                               '|', ':', ';',  ',',  '(', ')',    '[',
+                               ']', '{', '}',  '<',  '>', '$'}));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()
