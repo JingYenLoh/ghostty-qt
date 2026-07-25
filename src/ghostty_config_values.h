@@ -224,6 +224,7 @@ struct GhosttyConfigValues {
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
     bool mouseReporting = false;
     bool mouseHideWhileTyping = false;
+    bool focusFollowsMouse = false;
     MouseScrollMultiplier mouseScrollMultiplier;
     bool linkUrl = false;
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;

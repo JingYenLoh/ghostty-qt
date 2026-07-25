@@ -241,6 +241,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.middleClickAction = config.middleClickAction;
     result.mouseReporting = config.mouseReporting;
     result.mouseHideWhileTyping = config.mouseHideWhileTyping;
+    result.focusFollowsMouse = config.focusFollowsMouse;
     result.mouseScrollMultiplier = config.mouseScrollMultiplier;
     result.linkUrl = config.linkUrl;
     result.linkPreviews = config.linkPreviews;

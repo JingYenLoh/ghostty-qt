@@ -332,7 +332,8 @@ private:
     void revealMouseAfterActivity();
     void setMouseHiddenWhileTyping(bool hidden);
     void syncPointerCursor();
-    void revealMouseForPointerPosition(const QPointF &position);
+    [[nodiscard]] bool revealMouseForPointerPosition(const QPointF &position);
+    [[nodiscard]] bool handlePointerMotion(const QPointF &position);
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
                    Qt::MouseButton button, Qt::MouseButtons buttons,
                    Qt::KeyboardModifiers modifiers);
@@ -460,6 +461,7 @@ private:
     quint64 pointerActivityEpoch_ = 0;
     bool mouseHiddenWhileTyping_ = false;
     std::optional<QPointF> lastPointerActivityPosition_;
+    bool pointerFocusActivationDeferred_ = false;
     bool hoverInside_ = false;
     QPointF hoverPosition_;
     QPoint hoverCell_{-1, -1};

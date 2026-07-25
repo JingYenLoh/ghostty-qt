@@ -402,6 +402,7 @@ private Q_SLOTS:
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
     void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
+    void focusesPaneAfterPhysicalPointerMotionAndReload();
     void asyncFallbackDoesNotHideAfterPointerActivity();
     void restoresHyperlinkPointerAfterTyping();
     void runsCursorBlinkTimerOnlyWhenNeeded();
@@ -3716,6 +3717,167 @@ void TerminalPaneTest::
     expectVisible();
 }
 
+void TerminalPaneTest::focusesPaneAfterPhysicalPointerMotionAndReload()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+
+    QQuickWindow window;
+    window.resize(400, 300);
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *focusSink = new QQuickItem(window.contentItem());
+    focusSink->setSize(QSizeF(1.0, 1.0));
+    focusSink->setPosition(
+        QPointF(window.width() - 1.0, window.height() - 1.0));
+    focusSink->setFocusPolicy(Qt::StrongFocus);
+
+    window.show();
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 3000);
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QSignalSpy activations(pane, &TerminalPane::activated);
+
+    const qreal physicalPixel = 1.0 / window.devicePixelRatio();
+    const QPointF initialPosition(8.0, 8.0);
+    QPointF previousPosition = initialPosition;
+    const auto hoverAt = [pane, &previousPosition](const QPointF &position) {
+        QHoverEvent event(QEvent::HoverMove, position, position,
+                          previousPosition, Qt::NoModifier);
+        QCoreApplication::sendEvent(pane, &event);
+        QVERIFY(event.isAccepted());
+        previousPosition = position;
+    };
+
+    // The Ghostty default leaves keyboard focus unchanged while still
+    // establishing the pane's accepted pointer baseline.
+    QCOMPARE(options.focusFollowsMouse, false);
+    hoverAt(initialPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+
+    LaunchOptions enabled = options;
+    enabled.focusFollowsMouse = true;
+    pane->applyRuntimeOptions(enabled);
+
+    // Reload alone, same-position compositor events, and accumulated motion
+    // below one device pixel must not steal keyboard focus.
+    hoverAt(initialPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+    hoverAt(initialPosition + QPointF(0.4 * physicalPixel, 0.0));
+    QCOMPARE(window.activeFocusItem(), focusSink);
+    hoverAt(initialPosition + QPointF(0.8 * physicalPixel, 0.0));
+    QCOMPARE(window.activeFocusItem(), focusSink);
+
+    // The accepted baseline remains at the original point, so the final
+    // fraction reaches exactly one physical pixel and focuses the pane.
+    QPointF acceptedPosition = initialPosition + QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), pane, 1000);
+    QCOMPARE(activations.count(), 1);
+
+    // Further accepted movement within the already-focused pane must not
+    // republish activation.
+    acceptedPosition += QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QCOMPARE(window.activeFocusItem(), pane);
+    QCOMPARE(activations.count(), 1);
+
+    // Disabling applies live. Physical pointer motion still updates the
+    // accepted baseline, but no longer changes focus.
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    pane->applyRuntimeOptions(options);
+    acceptedPosition += QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+
+    pane->applyRuntimeOptions(enabled);
+    hoverAt(acceptedPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+    acceptedPosition += QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), pane, 1000);
+
+    // Pointer motion in an inactive window must never raise the window or
+    // publish pane activation.
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    QQuickWindow secondWindow;
+    secondWindow.resize(window.size());
+    secondWindow.show();
+    secondWindow.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isExposed(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondWindow.isActive(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isActive(), 1000);
+
+    const int activationsBeforeInactiveMotion = activations.count();
+    acceptedPosition += QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QVERIFY(!window.isActive());
+    QVERIFY(!pane->hasActiveFocus());
+    QCOMPARE(activations.count(), activationsBeforeInactiveMotion);
+
+    secondWindow.close();
+    window.requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isActive(), 1000);
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+
+    // Window systems may synthesize pointer motion while activation changes.
+    // Establish a deterministic baseline with the option disabled, then
+    // verify that re-enabling alone and a same-position hover remain inert.
+    pane->applyRuntimeOptions(options);
+    acceptedPosition = QPointF(200.0, 100.0);
+    hoverAt(acceptedPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+    pane->applyRuntimeOptions(enabled);
+    const int activationsBeforeSamePosition = activations.count();
+    hoverAt(acceptedPosition);
+    QCOMPARE(window.activeFocusItem(), focusSink);
+    QCOMPARE(activations.count(), activationsBeforeSamePosition);
+    acceptedPosition += QPointF(physicalPixel, 0.0);
+    hoverAt(acceptedPosition);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), pane, 1000);
+    QCOMPARE(activations.count(), activationsBeforeSamePosition + 1);
+
+    // Button-drag motion uses the same focus path. Its focus-in activation
+    // observers may synchronously remove the pane, so no subsequent mouse
+    // dispatch may dereference that pane.
+    focusSink->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), focusSink, 1000);
+    auto *doomedPane =
+        new TerminalPane(options, window.contentItem(), std::nullopt,
+                         TerminalSessionStartMode::Deferred);
+    doomedPane->setSize(window.size());
+    const QPointF doomedBaseline(20.0, 20.0);
+    QHoverEvent doomedInitialHover(QEvent::HoverMove, doomedBaseline,
+                                   doomedBaseline, doomedBaseline,
+                                   Qt::NoModifier);
+    QCoreApplication::sendEvent(doomedPane, &doomedInitialHover);
+    doomedPane->applyRuntimeOptions(enabled);
+    const QPointer<TerminalPane> doomedGuard(doomedPane);
+    QObject::connect(doomedPane, &TerminalPane::activated, &window,
+                     [doomedPane](TerminalPane *) { delete doomedPane; });
+
+    const QPointF draggedPosition =
+        doomedBaseline + QPointF(physicalPixel, 0.0);
+    QMouseEvent drag(QEvent::MouseMove, draggedPosition, draggedPosition,
+                     draggedPosition, Qt::NoButton, Qt::LeftButton,
+                     Qt::NoModifier);
+    QCoreApplication::sendEvent(doomedPane, &drag);
+    QVERIFY(drag.isAccepted());
+    QVERIFY(doomedGuard.isNull());
+
+    pane->setParentItem(nullptr);
+    delete pane;
+    window.close();
+}
+
 void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
 {
     LaunchOptions options;
@@ -6886,6 +7048,10 @@ void TerminalPaneTest::routesTerminalFileActions()
         updatesContain(
             updates, QStringLiteral("pane-terminal-file-content")),
         5000);
+    // The short-lived producer queues its exit after the final update. Wait
+    // for the held pane before issuing actions so that exit processing cannot
+    // invalidate otherwise valid in-flight file requests.
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->running(), 5000);
 
     // Missing selection is still a performed action. Queue a screen write
     // behind it as a worker-order barrier: receiving only screen.txt proves

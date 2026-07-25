@@ -201,7 +201,8 @@ split-divider color, the boolean `link-url` setting plus the three-state
 finalized `bell-features` booleans, nullable finalized bell-audio path and its
 required/optional provenance, raw finite bell-audio volume, independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
-`mouse-hide-while-typing` boolean, the raw false/true/detect
+`mouse-hide-while-typing` and `focus-follows-mouse` booleans, the raw
+false/true/detect
 `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
@@ -311,7 +312,9 @@ clearing, bounded extreme dispatch with retained debt, live multiplier reload,
 typing-hide defaults and reload, terminal-bound key and IME eligibility,
 invalid-sequence and asynchronous `performable` fallback, stale
 pointer-activity-epoch suppression, physical-pixel movement filtering, reveal
-interactions, and blank/hyperlink/default cursor priority, select-all,
+interactions, blank/hyperlink/default cursor priority, focus-follow defaults
+and live reload, inactive-window gating, same-position/sub-pixel focus
+suppression, and destructive focus-publication observers, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact

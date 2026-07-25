@@ -229,6 +229,7 @@ private Q_SLOTS:
     void realHelperExportsApplicationLifetime();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
+    void realHelperExportsFocusFollowsMouse();
     void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
@@ -1069,6 +1070,29 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsMouseHideWhileTyping()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(!result->values.mouseHideWhileTyping);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsFocusFollowsMouse()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("focus-follows-mouse = true\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.focusFollowsMouse);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.focusFollowsMouse);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

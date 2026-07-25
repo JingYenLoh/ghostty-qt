@@ -1715,6 +1715,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
     updated.mouseHideWhileTyping = options.mouseHideWhileTyping;
+    updated.focusFollowsMouse = options.focusFollowsMouse;
     updated.mouseReporting = options.mouseReporting;
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
@@ -4297,12 +4298,12 @@ void TerminalPane::syncPointerCursor()
     }
 }
 
-void TerminalPane::revealMouseForPointerPosition(const QPointF &position)
+bool TerminalPane::revealMouseForPointerPosition(const QPointF &position)
 {
     if (!lastPointerActivityPosition_.has_value()) {
         lastPointerActivityPosition_ = position;
         revealMouseAfterActivity();
-        return;
+        return true;
     }
     const qreal devicePixelRatio = normalizedDevicePixelRatio(
         window() != nullptr ? window()->devicePixelRatio() : 1.0);
@@ -4312,12 +4313,43 @@ void TerminalPane::revealMouseForPointerPosition(const QPointF &position)
         || std::abs(physicalDelta.y()) >= 1.0) {
         lastPointerActivityPosition_ = position;
         revealMouseAfterActivity();
+        return true;
     }
+    return false;
+}
+
+bool TerminalPane::handlePointerMotion(const QPointF &position)
+{
+    if (!revealMouseForPointerPosition(position) || !options_.focusFollowsMouse
+        || hasActiveFocus()) {
+        return true;
+    }
+
+    QQuickWindow *const host = window();
+    if (host == nullptr || !host->isActive()) {
+        return true;
+    }
+
+    // Focus-in observers synchronously publish the active pane and may destroy
+    // either the pane or its workspace. Defer our activation publication
+    // until forceActiveFocus returns so deletion cannot occur while Qt Quick
+    // is still traversing its internal focus tree.
+    const QPointer<TerminalPane> guard(this);
+    pointerFocusActivationDeferred_ = true;
+    forceActiveFocus(Qt::MouseFocusReason);
+    if (guard == nullptr) return false;
+    pointerFocusActivationDeferred_ = false;
+    if (!hasActiveFocus()) return true;
+    Q_EMIT activated(this);
+    return guard != nullptr;
 }
 
 void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 {
-    revealMouseForPointerPosition(event->position());
+    if (!handlePointerMotion(event->position())) {
+        event->accept();
+        return;
+    }
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
@@ -4404,7 +4436,10 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
 
 void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
-    revealMouseForPointerPosition(event->position());
+    if (!handlePointerMotion(event->position())) {
+        event->accept();
+        return;
+    }
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     if (!linkPreviewPointerCaptured_ && controller_->mouseTracking()) {
@@ -5089,7 +5124,10 @@ void TerminalPane::focusInEvent(QFocusEvent *event)
     if (guard == nullptr) return;
     syncCursorBlink(true);
     controller_->setFocused(true);
-    Q_EMIT activated(this);
+    if (guard == nullptr) return;
+    if (!pointerFocusActivationDeferred_) {
+        Q_EMIT activated(this);
+    }
 }
 
 void TerminalPane::focusOutEvent(QFocusEvent *event)

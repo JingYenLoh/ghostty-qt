@@ -120,6 +120,9 @@ struct LaunchOptions {
     // Hides the pointer after terminal-bound text input until subsequent
     // pointer interaction reveals it again.
     bool mouseHideWhileTyping = false;
+    // Transfers surface focus after real pointer motion while the host window
+    // is already active.
+    bool focusFollowsMouse = false;
     // Ghostty finalizes separate multipliers for smooth precision devices and
     // discrete wheel notches. The frontend applies the appropriate value when
     // translating each Qt wheel event.

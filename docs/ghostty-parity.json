@@ -395,6 +395,10 @@
       "status": "supported",
       "note": "Configured faint opacity applies to glyphs and text decorations without dimming cell backgrounds."
     },
+    "focus-follows-mouse": {
+      "status": "supported",
+      "note": "The exact default-false boolean reloads live per pane. Accepted hover and button-drag motion focuses an unfocused pane only while its existing Qt window is active, so an inactive host is never raised and retains its current focus item. The shared physical-pixel filter rejects synthetic same-position motion and accumulates subpixel movement against the last accepted position. Focus publication is guarded against synchronous pane or workspace destruction."
+    },
     "font-family": {
       "status": "partial",
       "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."

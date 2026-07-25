@@ -597,6 +597,14 @@ signals:
   cursor arbiter then applies the strict priority blank-while-typing,
   resolved-hyperlink hand, inherited/default cursor. Hiding never cancels a
   hyperlink lease, so revealing restores a still-valid link cursor.
+- `focus-follows-mouse` reuses that accepted physical-motion decision for
+  hover and button-drag events. When enabled, an accepted move focuses the
+  pane only if it does not already have active focus and its `QQuickWindow` is
+  active. An inactive host is never activated or raised, reload alone never
+  changes focus, and ignored same-position or sub-pixel events cannot select a
+  different split. Focus-in publication may synchronously destroy the pane or
+  workspace, so the pointer handler retains no raw continuation after calling
+  `forceActiveFocus`.
 - Link hover requires exactly `Ctrl` on Linux. Explicit OSC 8 destinations take
   precedence over Ghostty's default regex-detected URL/path range. A matching
   result changes the pointer and underlines the visible matching cells; an
@@ -1187,9 +1195,9 @@ compatibility field, the exact scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
-`mouse-hide-while-typing` boolean, and the lossless resize-overlay mode,
-position, and whole-millisecond duration plus Ghostty's finalized binding sets
-after
+`mouse-hide-while-typing` and `focus-follows-mouse` booleans, and the lossless
+resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
+finalized binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
@@ -1853,8 +1861,10 @@ The default CTest suite has focused layers for each ownership boundary:
   modifier transitions. It also verifies typing-hide defaults and live reload,
   terminal-bound text and IME commit eligibility, sequence and asynchronous
   `performable` fallback, stale pointer-epoch suppression, physical-pixel
-  motion filtering, pointer/focus/config reveal interactions, and
-  blank/hyperlink/default cursor priority. The same path covers live
+  motion filtering, pointer/focus/config reveal interactions,
+  blank/hyperlink/default cursor priority, live focus-follow reload, inactive
+  host gating, same-position/sub-pixel focus suppression, and destructive
+  focus-publication observers. The same path covers live
   `link-url` enable/disable,
   byte-exact regex copy, relative-path opening, OSC 8 independence, all three
   link-preview policies, live frontend-only reload, no-query relocation, and
