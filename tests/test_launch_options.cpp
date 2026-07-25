@@ -151,6 +151,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
     values.middleClickAction = MiddleClickAction::Ignore;
     values.mouseReporting = false;
+    values.mouseHideWhileTyping = true;
     values.mouseScrollMultiplier = {
         .precision = 0.75,
         .discrete = 4.5,
@@ -203,6 +204,7 @@ private Q_SLOTS:
     void mapsScrollbarPolicy();
     void mapsBellFeatures();
     void mapsBellAudio();
+    void mapsMouseHideWhileTyping();
     void mapsMouseScrollMultiplier();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
@@ -286,6 +288,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.bellFeatures.border);
     QVERIFY(!options.bellAudioPath.has_value());
     QCOMPARE(options.bellAudioVolume, 0.5);
+    QVERIFY(!options.mouseHideWhileTyping);
     QCOMPARE(options.mouseScrollMultiplier.precision, 1.0);
     QCOMPARE(options.mouseScrollMultiplier.discrete, 3.0);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
@@ -863,6 +866,20 @@ void LaunchOptionsTest::mapsMouseScrollMultiplier()
         applyGhosttyConfigSnapshot(configured, snapshot);
     QCOMPARE(defaults.mouseScrollMultiplier.precision, 1.0);
     QCOMPARE(defaults.mouseScrollMultiplier.discrete, 3.0);
+}
+
+void LaunchOptionsTest::mapsMouseHideWhileTyping()
+{
+    for (const bool enabled : {false, true}) {
+        LaunchOptions base;
+        base.mouseHideWhileTyping = !enabled;
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.mouseHideWhileTyping = enabled;
+
+        QCOMPARE(
+            applyGhosttyConfigSnapshot(base, snapshot).mouseHideWhileTyping,
+            enabled);
+    }
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()

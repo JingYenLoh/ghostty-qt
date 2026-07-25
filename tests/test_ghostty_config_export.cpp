@@ -258,6 +258,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.clipboardPaste.bracketedSafe);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!values.mouseReporting);
+    QVERIFY(values.mouseHideWhileTyping);
     QCOMPARE(values.mouseScrollMultiplier.precision, 0.75);
     QCOMPARE(values.mouseScrollMultiplier.discrete, 4.5);
     QVERIFY(!values.linkUrl);
@@ -735,6 +736,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-mouse-scroll-multiplier")
         << withoutValue(object(), QStringLiteral("mouse-scroll-multiplier"))
         << QStringLiteral("values is missing field 'mouse-scroll-multiplier'");
+    QTest::newRow("missing-mouse-hide-while-typing")
+        << withoutValue(object(), QStringLiteral("mouse-hide-while-typing"))
+        << QStringLiteral("values is missing field 'mouse-hide-while-typing'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -862,6 +866,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                      mouseScrollMultiplier(1.0, 10'000.01))
         << QStringLiteral(
                "values.mouse-scroll-multiplier.discrete is outside its supported range");
+    QTest::newRow("mouse-hide-while-typing-type")
+        << withValue(object(), QStringLiteral("mouse-hide-while-typing"), 1)
+        << QStringLiteral("values.mouse-hide-while-typing must be a boolean");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

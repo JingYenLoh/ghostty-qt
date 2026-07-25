@@ -228,6 +228,7 @@ private Q_SLOTS:
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsBellFeatures();
+    void realHelperExportsMouseHideWhileTyping();
     void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
@@ -1044,6 +1045,30 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesMouseScrollMultiplier()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.mouseScrollMultiplier.precision, 1.0);
     QCOMPARE(result->values.mouseScrollMultiplier.discrete, 3.0);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsMouseHideWhileTyping()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("mouse-hide-while-typing = true\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.mouseHideWhileTyping);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.mouseHideWhileTyping);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

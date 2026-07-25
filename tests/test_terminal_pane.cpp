@@ -7,18 +7,19 @@
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
 
-#include <QColor>
 #include <QClipboard>
+#include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFocusEvent>
 #include <QFontDatabase>
 #include <QFontMetricsF>
-#include <QFocusEvent>
-#include <QImage>
 #include <QHoverEvent>
+#include <QImage>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QMetaMethod>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QQuickItem>
@@ -400,6 +401,9 @@ private Q_SLOTS:
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
+    void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
+    void asyncFallbackDoesNotHideAfterPointerActivity();
+    void restoresHyperlinkPointerAfterTyping();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
     void retainsTextWhileDimmingUnfocusedSplits();
@@ -441,6 +445,7 @@ private Q_SLOTS:
     void routesStructuredSequencesAndCancelsThemOnReload();
     void preservesStateWithinAKeybindProgramGeneration();
     void newerSameProgramRuntimeUpdateWinsReentry();
+    void disabledMouseHideWinsSameProgramRuntimeReentry();
     void keyTableResetNotifiesBeforeLaterReentry();
     void runtimeOptionsObserverMayDestroyPane();
     void reloadsSafelyFromSequenceStagingNotification();
@@ -3461,6 +3466,461 @@ void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
     QCOMPARE(confirmed.count(), 1);
     QCOMPARE(confirmed.constFirst().constFirst().toULongLong(), confirmedId);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, true), 2000);
+}
+
+void TerminalPaneTest::
+    hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    GhosttyKeybindConfig keybinds;
+    keybinds.root = {
+        generationTestBinding({generationTestKey('n', GhosttyKeybindCtrl)},
+                              QStringLiteral("new_tab")),
+        generationTestBinding(
+            {
+                generationTestKey('x', GhosttyKeybindCtrl),
+                generationTestKey('y'),
+            },
+            QStringLiteral("new_tab")),
+    };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(keybinds));
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    pane.setSize(QSizeF(400.0, 300.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+    QSignalSpy newTabs(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy sequenceResolutions(
+        controller, &TerminalController::sequenceResolutionRequested);
+
+    const auto pressText = [&pane](int key, const QString &text,
+                                   Qt::KeyboardModifiers modifiers =
+                                       Qt::NoModifier) {
+        QKeyEvent event(QEvent::KeyPress, key, modifiers, text);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto expectVisible = [&pane] {
+        QVERIFY(pane.cursor().shape() != Qt::BlankCursor);
+    };
+    const auto expectHidden = [&pane] {
+        QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+    };
+
+    // The Ghostty default is disabled, so terminal-bound text remains
+    // visible until the live option is enabled.
+    QCOMPARE(options.mouseHideWhileTyping, false);
+    pressText(Qt::Key_A, QStringLiteral("a"));
+    QCOMPARE(forwarded.count(), 1);
+    expectVisible();
+
+    LaunchOptions enabled = options;
+    enabled.mouseHideWhileTyping = true;
+    pane.applyRuntimeOptions(enabled);
+
+    // Modifier-only, non-text, release, and consumed configured input are
+    // not terminal text entry and must leave the pointer visible.
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    QVERIFY(controlPress.isAccepted());
+    expectVisible();
+
+    const int beforeNonText = forwarded.count();
+    QKeyEvent leftPress(QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &leftPress);
+    QVERIFY(leftPress.isAccepted());
+    QCOMPARE(forwarded.count(), beforeNonText + 1);
+    expectVisible();
+
+    const int beforeRelease = forwarded.count();
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_A, Qt::NoModifier,
+                      QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &release);
+    QVERIFY(release.isAccepted());
+    QCOMPARE(forwarded.count(), beforeRelease + 1);
+    expectVisible();
+
+    const int beforeRepeat = forwarded.count();
+    QKeyEvent repeat(QEvent::KeyPress, Qt::Key_R, Qt::NoModifier,
+                     QStringLiteral("r"), true, 2);
+    QCoreApplication::sendEvent(&pane, &repeat);
+    QVERIFY(repeat.isAccepted());
+    QCOMPARE(forwarded.count(), beforeRepeat + 1);
+    expectVisible();
+
+    const int beforeConsumed = forwarded.count();
+    QKeyEvent consumed(QEvent::KeyPress, Qt::Key_N, Qt::ControlModifier,
+                       QStringLiteral("n"));
+    QCoreApplication::sendEvent(&pane, &consumed);
+    QVERIFY(consumed.isAccepted());
+    QCOMPARE(newTabs.count(), 1);
+    QCOMPARE(forwarded.count(), beforeConsumed);
+    expectVisible();
+
+    // A leader is delayed and does not hide by itself. If its continuation
+    // is invalid, the atomic FlushAndSendCurrent path becomes terminal text
+    // input and hides without also emitting the ordinary key signal.
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+                     QString(QChar(0x18)));
+    QCoreApplication::sendEvent(&pane, &leader);
+    expectVisible();
+    const int beforeInvalid = forwarded.count();
+    QKeyEvent invalid(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+                      QStringLiteral("z"));
+    QCoreApplication::sendEvent(&pane, &invalid);
+    QCOMPARE(forwarded.count(), beforeInvalid);
+    QCOMPARE(sequenceResolutions.count(), 1);
+    QCOMPARE(qvariant_cast<TerminalSequenceResolution>(
+                 sequenceResolutions.constLast().at(1)),
+             TerminalSequenceResolution::FlushAndSendCurrent);
+    expectHidden();
+
+    const QPointF firstPosition(8.0, 8.0);
+    const QPointF secondPosition(9.0, 8.0);
+    const QPointF thirdPosition(10.0, 8.0);
+    QHoverEvent initialHover(QEvent::HoverMove, firstPosition, firstPosition,
+                             firstPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &initialHover);
+    expectVisible();
+
+    // A pass-through key press with text is the only keyboard path that
+    // hides the pointer.
+    const int beforeText = forwarded.count();
+    pressText(Qt::Key_B, QStringLiteral("b"));
+    QCOMPARE(forwarded.count(), beforeText + 1);
+    expectHidden();
+
+    // Reloading while the policy remains enabled must preserve the newer
+    // typing state, even though the immutable keybinding generation changes.
+    pane.applyRuntimeOptions(enabled);
+    expectHidden();
+
+    // Compositors may deliver a synthetic hover after the cursor changes.
+    // A same-position event must not instantly undo typing concealment.
+    QHoverEvent phantomHover(QEvent::HoverMove, firstPosition, firstPosition,
+                             firstPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &phantomHover);
+    QVERIFY(phantomHover.isAccepted());
+    expectHidden();
+
+    // Rejected sub-physical-pixel events do not move the accepted baseline,
+    // so real high-resolution motion accumulates until it reaches one device
+    // pixel.
+    const QPointF firstSubPixelPosition = firstPosition + QPointF(0.4, 0.0);
+    QHoverEvent firstSubPixelHover(QEvent::HoverMove, firstSubPixelPosition,
+                                   firstSubPixelPosition, firstPosition,
+                                   Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &firstSubPixelHover);
+    QVERIFY(firstSubPixelHover.isAccepted());
+    expectHidden();
+    const QPointF secondSubPixelPosition = firstPosition + QPointF(0.8, 0.0);
+    QHoverEvent secondSubPixelHover(QEvent::HoverMove, secondSubPixelPosition,
+                                    secondSubPixelPosition,
+                                    firstSubPixelPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &secondSubPixelHover);
+    QVERIFY(secondSubPixelHover.isAccepted());
+    expectHidden();
+
+    // At DPR 1, the accumulated one logical pixel is one physical pixel and
+    // constitutes actual pointer movement.
+    QHoverEvent hover(QEvent::HoverMove, secondPosition, secondPosition,
+                      secondSubPixelPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &hover);
+    QVERIFY(hover.isAccepted());
+    expectVisible();
+
+    QInputMethodEvent preedit(QStringLiteral("compose"), {});
+    QCoreApplication::sendEvent(&pane, &preedit);
+    QVERIFY(preedit.isAccepted());
+    expectVisible();
+
+    QInputMethodEvent commit;
+    commit.setCommitString(QStringLiteral("é"));
+    QCoreApplication::sendEvent(&pane, &commit);
+    QVERIFY(commit.isAccepted());
+    expectHidden();
+
+    QHoverEvent imeRestore(QEvent::HoverMove, thirdPosition, thirdPosition,
+                           secondPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &imeRestore);
+    QVERIFY(imeRestore.isAccepted());
+    expectVisible();
+
+    pressText(Qt::Key_C, QStringLiteral("c"));
+    expectHidden();
+    QMouseEvent button(QEvent::MouseButtonPress, firstPosition, firstPosition,
+                       firstPosition, Qt::RightButton, Qt::RightButton,
+                       Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &button);
+    QVERIFY(button.isAccepted());
+    expectVisible();
+
+    pressText(Qt::Key_H, QStringLiteral("h"));
+    expectHidden();
+    QMouseEvent buttonRelease(QEvent::MouseButtonRelease, firstPosition,
+                              firstPosition, firstPosition, Qt::RightButton,
+                              Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &buttonRelease);
+    QVERIFY(buttonRelease.isAccepted());
+    expectVisible();
+
+    pressText(Qt::Key_I, QStringLiteral("i"));
+    expectHidden();
+    QHoverEvent hoverLeave(QEvent::HoverLeave, QPointF(), QPointF(),
+                           thirdPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &hoverLeave);
+    QVERIFY(hoverLeave.isAccepted());
+    expectVisible();
+
+    pressText(Qt::Key_J, QStringLiteral("j"));
+    expectHidden();
+    const QPointF enterPosition = thirdPosition + QPointF(1.0, 0.0);
+    QHoverEvent hoverEnter(QEvent::HoverEnter, enterPosition, enterPosition,
+                           thirdPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &hoverEnter);
+    QVERIFY(hoverEnter.isAccepted());
+    expectVisible();
+
+    pressText(Qt::Key_D, QStringLiteral("d"));
+    expectHidden();
+    QVERIFY(sendWheelEvent(pane, QPoint(), QPoint(0, 120)));
+    expectVisible();
+
+    pressText(Qt::Key_E, QStringLiteral("e"));
+    expectHidden();
+    QFocusEvent focusOut(QEvent::FocusOut, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusOut);
+    expectVisible();
+
+    pressText(Qt::Key_F, QStringLiteral("f"));
+    expectHidden();
+    QFocusEvent focusIn(QEvent::FocusIn, Qt::OtherFocusReason);
+    QCoreApplication::sendEvent(&pane, &focusIn);
+    expectVisible();
+
+    pressText(Qt::Key_G, QStringLiteral("g"));
+    expectHidden();
+    QHoverEvent postFocusPhantom(QEvent::HoverMove, enterPosition,
+                                 enterPosition, enterPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &postFocusPhantom);
+    QVERIFY(postFocusPhantom.isAccepted());
+    expectHidden();
+    pane.applyRuntimeOptions(options);
+    expectVisible();
+}
+
+void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.mouseHideWhileTyping = true;
+    options.keybindSource = GhosttyKeybindSource::text({
+        QStringLiteral("performable:alt+x=copy_to_clipboard:plain"),
+    });
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    pane.setSize(QSizeF(400.0, 300.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    // Isolate pane-side completion ordering: the real worker path is covered
+    // elsewhere, while this test controls exactly when the unavailable
+    // result reaches the suspended performable binding.
+    const QMetaMethod copySignal =
+        QMetaMethod::fromSignal(&TerminalController::copyActionRequested);
+    QVERIFY(
+        QObject::disconnect(controller, copySignal, nullptr, QMetaMethod{}));
+    QSignalSpy copies(controller, &TerminalController::copyActionRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    const QPointF firstPosition(8.0, 8.0);
+    const QPointF secondPosition(9.0, 8.0);
+    const QPointF thirdPosition(10.0, 8.0);
+    QHoverEvent initialHover(QEvent::HoverMove, firstPosition, firstPosition,
+                             firstPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &initialHover);
+
+    const auto pressPerformable = [&pane] {
+        QKeyEvent event(QEvent::KeyPress, Qt::Key_X, Qt::AltModifier,
+                        QStringLiteral("x"));
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto completeUnavailable = [controller](quint64 requestId) {
+        Q_EMIT controller->terminalActionReady({
+            .requestId = requestId,
+            .outcome = TerminalActionOutcome::Unavailable,
+            .effect = TerminalActionEffect::None,
+            .performed = false,
+        });
+    };
+
+    // Without intervening pointer activity, the delayed fallback becomes
+    // terminal text at completion time and hides the pointer.
+    pressPerformable();
+    QCOMPARE(copies.count(), 1);
+    QCOMPARE(forwarded.count(), 0);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    const quint64 firstRequestId =
+        copies.constFirst().constFirst().toULongLong();
+    QVERIFY(firstRequestId != 0);
+    completeUnavailable(firstRequestId);
+    QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), 1, 1000);
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    QHoverEvent reveal(QEvent::HoverMove, secondPosition, secondPosition,
+                       firstPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &reveal);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+
+    QKeyEvent firstRelease(QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+                           QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &firstRelease);
+    const int beforeSecondFallback = forwarded.count();
+
+    // The same unavailable fallback still reaches the terminal, but a real
+    // pointer move while it is pending starts a newer activity epoch. Its
+    // delayed concealment must not override that user activity.
+    pressPerformable();
+    QCOMPARE(copies.count(), 2);
+    QCOMPARE(forwarded.count(), beforeSecondFallback);
+    const quint64 secondRequestId =
+        copies.constLast().constFirst().toULongLong();
+    QVERIFY(secondRequestId != 0);
+    QVERIFY(secondRequestId != firstRequestId);
+    QHoverEvent activity(QEvent::HoverMove, thirdPosition, thirdPosition,
+                         secondPosition, Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &activity);
+    completeUnavailable(secondRequestId);
+    QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), beforeSecondFallback + 1,
+                              1000);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+
+    QKeyEvent secondRelease(QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
+                            QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &secondRelease);
+    const int beforePreEnableFallback = forwarded.count();
+
+    // Enabling the policy does not change the visible cursor, but it must
+    // invalidate a fallback from a key that was pressed while hiding was
+    // disabled. Otherwise that older event would gain eligibility
+    // retroactively when its worker result arrives.
+    LaunchOptions disabled = options;
+    disabled.mouseHideWhileTyping = false;
+    pane.applyRuntimeOptions(disabled);
+    pressPerformable();
+    QCOMPARE(copies.count(), 3);
+    QCOMPARE(forwarded.count(), beforePreEnableFallback);
+    const quint64 preEnableRequestId =
+        copies.constLast().constFirst().toULongLong();
+    QVERIFY(preEnableRequestId != 0);
+    QVERIFY(preEnableRequestId != secondRequestId);
+    pane.applyRuntimeOptions(options);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    completeUnavailable(preEnableRequestId);
+    QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), beforePreEnableFallback + 1,
+                              1000);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+}
+
+void TerminalPaneTest::restoresHyperlinkPointerAfterTyping()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.mouseHideWhileTyping = true;
+    useSystemFixedFont(options);
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    pane.setSize(QSizeF(metrics.cellWidth * 2.0, metrics.cellHeight * 2.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy hyperlinkQueries(controller,
+                                &TerminalController::hyperlinkQueryRequested);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    TerminalUpdate update;
+    update.columns = 1;
+    update.rows = 1;
+    update.fullFrame = true;
+    update.contentRevision = 1;
+    TerminalRowUpdate row;
+    row.row = 0;
+    row.cells.resize(1);
+    row.cells[0].text = QStringLiteral("L");
+    row.cells[0].hasHyperlink = true;
+    update.dirtyRows.append(std::move(row));
+    controller->terminalUpdated(update);
+
+    QKeyEvent controlPress(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &controlPress);
+    forwarded.clear();
+    const QPointF linkPosition(metrics.cellWidth * 0.5,
+                               metrics.cellHeight * 0.5);
+    QHoverEvent initialHover(QEvent::HoverMove, linkPosition, linkPosition,
+                             linkPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &initialHover);
+    QCOMPARE(hyperlinkQueries.count(), 1);
+
+    const QByteArray uri("https://example.test/hidden-pointer");
+    controller->hyperlinkResolved(
+        update.contentRevision, TerminalHyperlinkState::Visible,
+        TerminalLinkKind::Osc8, uri, QPoint(0, 0), {QPoint(0, 0)});
+    QCOMPARE(pane.cursor().shape(), Qt::PointingHandCursor);
+
+    // Ctrl remains held so the accepted hyperlink lease stays active while
+    // terminal-bound text hides its presentation.
+    QKeyEvent textPress(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier,
+                        QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &textPress);
+    QCOMPARE(forwarded.count(), 1);
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    // A late link result may update the logical pointer shape, but it must
+    // not bypass typing concealment before actual pointer movement.
+    controller->hyperlinkResolved(
+        update.contentRevision, TerminalHyperlinkState::Visible,
+        TerminalLinkKind::Osc8, uri, QPoint(0, 0), {QPoint(0, 0)});
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    QHoverEvent restoringHover(
+        QEvent::HoverMove, linkPosition + QPointF(1.0, 0.0),
+        linkPosition + QPointF(1.0, 0.0), linkPosition, Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &restoringHover);
+    QCOMPARE(pane.cursor().shape(), Qt::PointingHandCursor);
+
+    QKeyEvent secondTextPress(QEvent::KeyPress, Qt::Key_B, Qt::ControlModifier,
+                              QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &secondTextPress);
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    // Clearing the logical link while concealed must not expose an
+    // intermediate cursor. The next real movement reveals the inherited
+    // default because no accepted hyperlink remains.
+    controller->hyperlinkResolved(update.contentRevision,
+                                  TerminalHyperlinkState::Stale,
+                                  TerminalLinkKind::Osc8, {}, QPoint(0, 0), {});
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+    QHoverEvent revealWithoutLink(
+        QEvent::HoverMove, linkPosition + QPointF(2.0, 0.0),
+        linkPosition + QPointF(2.0, 0.0), linkPosition + QPointF(1.0, 0.0),
+        Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &revealWithoutLink);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
 }
 
 void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
@@ -8106,6 +8566,51 @@ void TerminalPaneTest::newerSameProgramRuntimeUpdateWinsReentry()
     QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
                  runtimeOptions.constLast().constFirst()),
              toTerminalSessionRuntimeOptions(newer));
+}
+
+void TerminalPaneTest::disabledMouseHideWinsSameProgramRuntimeReentry()
+{
+    const GhosttyKeybindProgram program =
+        GhosttyKeybindProgram::compile(GhosttyKeybindConfig{}).program;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.mouseHideWhileTyping = true;
+    options.keybindSource = GhosttyKeybindSource::structured({});
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Immediate, {}, program);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    QKeyEvent hide(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+                   QStringLiteral("a"));
+    QCoreApplication::sendEvent(&pane, &hide);
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    LaunchOptions disabled = options;
+    disabled.mouseHideWhileTyping = false;
+    disabled.selectionClipboard.trimTrailingSpaces = false;
+
+    bool nested = false;
+    connect(
+        controller, &TerminalController::runtimeOptionsRequested, &pane,
+        [&](const TerminalSessionRuntimeOptions &) {
+            if (nested) return;
+            nested = true;
+            pane.applyRuntimeOptions(disabled, program);
+        },
+        Qt::DirectConnection);
+
+    pane.applyRuntimeOptions(disabled, program);
+
+    QVERIFY(nested);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QKeyEvent remainsVisible(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
+                             QStringLiteral("b"));
+    QCoreApplication::sendEvent(&pane, &remainsVisible);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
 }
 
 void TerminalPaneTest::keyTableResetNotifiesBeforeLaterReentry()

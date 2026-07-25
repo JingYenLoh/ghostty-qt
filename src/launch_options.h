@@ -117,6 +117,9 @@ struct LaunchOptions {
     // Gates application-requested mouse tracking without changing the
     // terminal's DEC mouse mode. The policy is surface-local at runtime.
     bool mouseReporting = true;
+    // Hides the pointer after terminal-bound text input until subsequent
+    // pointer interaction reveals it again.
+    bool mouseHideWhileTyping = false;
     // Ghostty finalizes separate multipliers for smooth precision devices and
     // discrete wheel notches. The frontend applies the appropriate value when
     // translating each Qt wheel event.

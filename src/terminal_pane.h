@@ -218,6 +218,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void hoverEnterEvent(QHoverEvent *event) override;
     void hoverMoveEvent(QHoverEvent *event) override;
     void hoverLeaveEvent(QHoverEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
@@ -243,6 +244,7 @@ private:
     struct DeferredKeyInput {
         KeyEventSnapshot event;
         quint64 focusEpoch = 0;
+        quint64 pointerActivityEpoch = 0;
     };
     using DeferredPaneInput =
         std::variant<DeferredKeyInput, TerminalInputMethodInput>;
@@ -255,6 +257,7 @@ private:
         TerminalKeyInput currentInput;
         quint64 keyIdentity = 0;
         quint64 keyFocusEpoch = 0;
+        quint64 pointerActivityEpoch = 0;
         bool consumed = true;
         bool performable = false;
         bool ownsKeyDeferral = false;
@@ -289,10 +292,12 @@ private:
     [[nodiscard]] bool deferKeyEventIfNeeded(const QKeyEvent &event);
     void deferKeyEvent(const QKeyEvent &event);
     void drainDeferredKeyEvents();
-    KeyHandling handleShortcut(
-        QKeyEvent *event, const QPointer<TerminalPane> &guard);
-    KeyHandling handleConfiguredShortcut(
-        QKeyEvent *event, const QPointer<TerminalPane> &guard);
+    KeyHandling handleShortcut(QKeyEvent *event,
+                               const QPointer<TerminalPane> &guard,
+                               quint64 pointerActivityEpoch);
+    KeyHandling handleConfiguredShortcut(QKeyEvent *event,
+                                         const QPointer<TerminalPane> &guard,
+                                         quint64 pointerActivityEpoch);
     [[nodiscard]] bool resolveActiveSequence(
         TerminalSequenceResolution resolution,
         std::optional<TerminalKeyInput> current = std::nullopt);
@@ -322,6 +327,12 @@ private:
     int viewportPageRows() const;
     void beginLocalSelection(const QPointF &position, int clickCount,
                              Qt::KeyboardModifiers modifiers);
+    void hideMouseForTerminalKey(const TerminalKeyInput &input,
+                                 quint64 pointerActivityEpoch);
+    void revealMouseAfterActivity();
+    void setMouseHiddenWhileTyping(bool hidden);
+    void syncPointerCursor();
+    void revealMouseForPointerPosition(const QPointF &position);
     void sendMouse(const QPointF &position, TerminalMouseInput::Action action,
                    Qt::MouseButton button, Qt::MouseButtons buttons,
                    Qt::KeyboardModifiers modifiers);
@@ -438,6 +449,7 @@ private:
     int keyEventDispatchDepth_ = 0;
     bool drainingDeferredKeyEvents_ = false;
     const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
+    std::optional<quint64> replayingDeferredPointerActivityEpoch_;
     quint64 activeSequenceToken_ = 0;
     QVector<quint64> executingSequenceTokens_;
     quint64 nextTerminalActionRequestId_ = 0;
@@ -445,6 +457,9 @@ private:
     bool terminalActionsAccepted_ = true;
     QHash<quint64, PendingTerminalActionCompletion>
         pendingTerminalActionCompletions_;
+    quint64 pointerActivityEpoch_ = 0;
+    bool mouseHiddenWhileTyping_ = false;
+    std::optional<QPointF> lastPointerActivityPosition_;
     bool hoverInside_ = false;
     QPointF hoverPosition_;
     QPoint hoverCell_{-1, -1};

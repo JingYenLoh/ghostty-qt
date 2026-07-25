@@ -469,6 +469,10 @@
       "status": "supported",
       "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
     },
+    "mouse-hide-while-typing": {
+      "status": "supported",
+      "note": "The exact default-false boolean reloads live per pane. A nonempty, non-repeating text press hides only when it is forwarded to the terminal, including invalid-sequence flush and unavailable performable fallback; consumed bindings, staged leaders, modifiers, releases, raw actions, and paste are excluded. A nonempty IME commit hides while preedit alone does not. Physical motion of at least one device pixel, pointer leave, button press/release, wheel input, focus in/out, or disabling reveals it. Deferred keys and action chains retain their original pointer-activity epoch so late fallback cannot re-hide after newer interaction or become retroactively eligible when the policy is enabled. The pane cursor arbiter gives blank-while-typing priority over a retained hyperlink hand and then the inherited default."
+    },
     "mouse-reporting": {
       "status": "supported",
       "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event, reported buttons and wheels clear selection on the worker, raw DEC capture still governs Shift hyperlink escape, reload replaces local runtime toggles, and future panes use configured state."

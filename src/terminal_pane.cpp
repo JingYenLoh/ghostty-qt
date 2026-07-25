@@ -1714,6 +1714,7 @@ void TerminalPane::applyRuntimeOptions(
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
+    updated.mouseHideWhileTyping = options.mouseHideWhileTyping;
     updated.mouseReporting = options.mouseReporting;
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
@@ -1724,6 +1725,10 @@ void TerminalPane::applyRuntimeOptions(
     const bool keybindGenerationChanged =
         !keybinds_.program().isSameGeneration(keybindProgram);
     if (updated == options_ && !keybindGenerationChanged) {
+        if (!updated.mouseHideWhileTyping && mouseHiddenWhileTyping_) {
+            setMouseHiddenWhileTyping(false);
+            if (!stillCurrentUpdate()) return;
+        }
         // options_ is the configured snapshot; the controller owns this
         // mutable pane-local policy. Reapplying an unchanged snapshot must
         // still replace an action-originated toggle.
@@ -1735,6 +1740,8 @@ void TerminalPane::applyRuntimeOptions(
     const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
     const bool linkPreviewModeChanged =
         options_.linkPreviews != updated.linkPreviews;
+    const bool mouseHidePolicyChanged =
+        options_.mouseHideWhileTyping != updated.mouseHideWhileTyping;
     const BellFeatures previousBellFeatures = options_.bellFeatures;
     const ResizeOverlayOptions previousResizeOverlay = options_.resizeOverlay;
     const TerminalSessionRuntimeOptions previousRuntime =
@@ -1781,6 +1788,13 @@ void TerminalPane::applyRuntimeOptions(
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
+    // Order every policy transition ahead of pending performable fallbacks.
+    // Enabling must not retroactively make an older key eligible, while
+    // disabling must invalidate an older hide even if a reentrant same-policy
+    // update supersedes this revision before cursor presentation.
+    if (mouseHidePolicyChanged) {
+        ++pointerActivityEpoch_;
+    }
 
     quint64 previousSequenceToken = 0;
     bool keyTablesChanged = false;
@@ -1810,6 +1824,11 @@ void TerminalPane::applyRuntimeOptions(
         if (guard == nullptr) return;
     }
     if (!stillCurrentUpdate()) return;
+
+    if (!options_.mouseHideWhileTyping && mouseHiddenWhileTyping_) {
+        setMouseHiddenWhileTyping(false);
+        if (!stillCurrentUpdate()) return;
+    }
 
     controller_->setMouseReportingEnabled(options_.mouseReporting);
     if (!stillCurrentUpdate()) return;
@@ -2968,6 +2987,7 @@ void TerminalPane::deferKeyEvent(const QKeyEvent &event)
     deferredInputs_.emplace_back(DeferredKeyInput{
         .event = KeyEventSnapshot::capture(event),
         .focusEpoch = keyFocusEpoch_,
+        .pointerActivityEpoch = pointerActivityEpoch_,
     });
 }
 
@@ -2988,9 +3008,12 @@ void TerminalPane::drainDeferredKeyEvents()
         if (const auto *key = std::get_if<DeferredKeyInput>(&input)) {
             QKeyEvent replay = key->event.replay();
             guard->replayingDeferredKeyEvent_ = &replay;
+            guard->replayingDeferredPointerActivityEpoch_ =
+                key->pointerActivityEpoch;
             QCoreApplication::sendEvent(guard, &replay);
             if (guard != nullptr) {
                 guard->replayingDeferredKeyEvent_ = nullptr;
+                guard->replayingDeferredPointerActivityEpoch_.reset();
             }
         } else {
             guard->controller_->sendInputMethod(
@@ -3002,6 +3025,8 @@ void TerminalPane::drainDeferredKeyEvents()
 
 void TerminalPane::keyPressEvent(QKeyEvent *event)
 {
+    const quint64 pointerActivityEpoch =
+        replayingDeferredPointerActivityEpoch_.value_or(pointerActivityEpoch_);
     // The original interaction clears the alert before it may be deferred.
     // Replaying that old press must not clear a newer BEL received meanwhile.
     if (replayingDeferredKeyEvent_ != event
@@ -3022,7 +3047,8 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
-    const KeyHandling handling = handleShortcut(event, guard);
+    const KeyHandling handling =
+        handleShortcut(event, guard, pointerActivityEpoch);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
@@ -3046,7 +3072,13 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    controller_->sendKey(terminalKeyInput(event));
+    const TerminalKeyInput input = terminalKeyInput(event);
+    hideMouseForTerminalKey(input, pointerActivityEpoch);
+    if (guard == nullptr) {
+        event->accept();
+        return;
+    }
+    controller_->sendKey(input);
     event->accept();
 }
 
@@ -3074,11 +3106,13 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     event->accept();
 }
 
-TerminalPane::KeyHandling TerminalPane::handleShortcut(
-    QKeyEvent *event, const QPointer<TerminalPane> &guard)
+TerminalPane::KeyHandling
+TerminalPane::handleShortcut(QKeyEvent *event,
+                             const QPointer<TerminalPane> &guard,
+                             quint64 pointerActivityEpoch)
 {
     if (keybinds_.program().isAvailable()) {
-        return handleConfiguredShortcut(event, guard);
+        return handleConfiguredShortcut(event, guard, pointerActivityEpoch);
     }
 
     const Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
@@ -3202,8 +3236,10 @@ bool TerminalPane::resolveExecutingSequence(
         std::move(current));
 }
 
-TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
-    QKeyEvent *event, const QPointer<TerminalPane> &guard)
+TerminalPane::KeyHandling
+TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
+                                       const QPointer<TerminalPane> &guard,
+                                       quint64 pointerActivityEpoch)
 {
     const GhosttyKeybindEvent bindingEvent{
         .qtKey = event->key(),
@@ -3274,6 +3310,10 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
     case GhosttyKeybindStepKind::Leader:
         Q_UNREACHABLE_RETURN(KeyHandling::PassThrough);
     case GhosttyKeybindStepKind::InvalidSequence:
+        if (matchedSequenceToken != 0) {
+            hideMouseForTerminalKey(currentInput, pointerActivityEpoch);
+            if (guard == nullptr) return KeyHandling::ConsumePress;
+        }
         if (resolveSequenceToken(
                 matchedSequenceToken,
                 TerminalSequenceResolution::FlushAndSendCurrent,
@@ -3310,13 +3350,14 @@ TerminalPane::KeyHandling TerminalPane::handleConfiguredShortcut(
         return handling;
     }
 
-    auto chain = std::make_shared<PendingLocalActionChain>(
-        PendingLocalActionChain{
+    auto chain =
+        std::make_shared<PendingLocalActionChain>(PendingLocalActionChain{
             .chain = step.match.actionChain,
             .sequenceToken = matchedSequenceToken,
             .currentInput = currentInput,
             .keyIdentity = keyEventIdentity(event),
             .keyFocusEpoch = keyFocusEpoch_,
+            .pointerActivityEpoch = pointerActivityEpoch,
             .consumed = step.match.consumed,
             .performable = step.match.performable,
             .ownsKeyDeferral = false,
@@ -3462,9 +3503,12 @@ TerminalPane::continueLocalActionChain(
 TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
     PendingLocalActionChain &chain, bool delayed)
 {
-    const auto resolve = [this, &chain](
-                             TerminalSequenceResolution resolution,
-                             bool withCurrent = false) {
+    const auto resolve = [this, &chain](TerminalSequenceResolution resolution,
+                                        bool withCurrent = false) {
+        if (withCurrent && chain.sequenceToken != 0) {
+            hideMouseForTerminalKey(chain.currentInput,
+                                    chain.pointerActivityEpoch);
+        }
         return resolveSequenceToken(
             std::exchange(chain.sequenceToken, 0), resolution,
             withCurrent
@@ -3489,7 +3533,11 @@ TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
                 TerminalSequenceResolution::FlushAndSendCurrent, true)) {
             return KeyHandling::ConsumePress;
         }
-        if (delayed) controller_->sendKey(chain.currentInput);
+        if (delayed) {
+            hideMouseForTerminalKey(chain.currentInput,
+                                    chain.pointerActivityEpoch);
+            controller_->sendKey(chain.currentInput);
+        }
         return KeyHandling::PassThrough;
     }
     if (chain.consumed) {
@@ -3499,7 +3547,10 @@ TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
     if (resolve(TerminalSequenceResolution::FlushAndSendCurrent, true)) {
         return KeyHandling::ConsumePress;
     }
-    if (delayed) controller_->sendKey(chain.currentInput);
+    if (delayed) {
+        hideMouseForTerminalKey(chain.currentInput, chain.pointerActivityEpoch);
+        controller_->sendKey(chain.currentInput);
+    }
     return KeyHandling::PassThrough;
 }
 
@@ -4050,6 +4101,7 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
 
 void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
 {
+    const quint64 pointerActivityEpoch = pointerActivityEpoch_;
     const QString nextPreedit = event->preeditString();
     bool hadPreedit = false;
     {
@@ -4067,6 +4119,14 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
         if (bellGuard == nullptr) {
             event->accept();
             return;
+        }
+        if (!input.commitText.isEmpty() && options_.mouseHideWhileTyping
+            && pointerActivityEpoch == pointerActivityEpoch_) {
+            setMouseHiddenWhileTyping(true);
+            if (bellGuard == nullptr) {
+                event->accept();
+                return;
+            }
         }
         if (keyEventDeferralDepth_ != 0
             || drainingDeferredKeyEvents_) {
@@ -4103,6 +4163,7 @@ QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
 
 void TerminalPane::mousePressEvent(QMouseEvent *event)
 {
+    revealMouseAfterActivity();
     const QPointer<TerminalPane> bellGuard(this);
     setBellRinging(false);
     if (bellGuard == nullptr) {
@@ -4172,6 +4233,7 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
 
 void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    revealMouseAfterActivity();
     forceActiveFocus(Qt::MouseFocusReason);
     Q_EMIT activated(this);
     updateHyperlinkHover(event->position(), event->modifiers());
@@ -4201,8 +4263,61 @@ void TerminalPane::beginLocalSelection(const QPointF &position, int clickCount,
                                 modifiers.testFlag(Qt::AltModifier));
 }
 
+void TerminalPane::hideMouseForTerminalKey(const TerminalKeyInput &input,
+                                           quint64 pointerActivityEpoch)
+{
+    if (options_.mouseHideWhileTyping
+        && pointerActivityEpoch == pointerActivityEpoch_ && input.pressed
+        && !input.autoRepeat && !input.text.isEmpty()) {
+        setMouseHiddenWhileTyping(true);
+    }
+}
+
+void TerminalPane::revealMouseAfterActivity()
+{
+    ++pointerActivityEpoch_;
+    setMouseHiddenWhileTyping(false);
+}
+
+void TerminalPane::setMouseHiddenWhileTyping(bool hidden)
+{
+    if (mouseHiddenWhileTyping_ == hidden) return;
+    mouseHiddenWhileTyping_ = hidden;
+    syncPointerCursor();
+}
+
+void TerminalPane::syncPointerCursor()
+{
+    if (mouseHiddenWhileTyping_) {
+        setCursor(Qt::BlankCursor);
+    } else if (hyperlinkLeaseActive_ && !hoveredHyperlinkUri_.isEmpty()) {
+        setCursor(Qt::PointingHandCursor);
+    } else {
+        unsetCursor();
+    }
+}
+
+void TerminalPane::revealMouseForPointerPosition(const QPointF &position)
+{
+    if (!lastPointerActivityPosition_.has_value()) {
+        lastPointerActivityPosition_ = position;
+        revealMouseAfterActivity();
+        return;
+    }
+    const qreal devicePixelRatio = normalizedDevicePixelRatio(
+        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const QPointF physicalDelta =
+        (position - *lastPointerActivityPosition_) * devicePixelRatio;
+    if (std::abs(physicalDelta.x()) >= 1.0
+        || std::abs(physicalDelta.y()) >= 1.0) {
+        lastPointerActivityPosition_ = position;
+        revealMouseAfterActivity();
+    }
+}
+
 void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 {
+    revealMouseForPointerPosition(event->position());
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
@@ -4239,6 +4354,7 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
 
 void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
 {
+    revealMouseAfterActivity();
     if (hyperlinkPressArmed_
         && (event->position() - hyperlinkPressPosition_).manhattanLength()
             >= QGuiApplication::styleHints()->startDragDistance()) {
@@ -4288,6 +4404,7 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
 
 void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
+    revealMouseForPointerPosition(event->position());
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     if (!linkPreviewPointerCaptured_ && controller_->mouseTracking()) {
@@ -4297,8 +4414,19 @@ void TerminalPane::hoverMoveEvent(QHoverEvent *event)
     event->accept();
 }
 
+void TerminalPane::hoverEnterEvent(QHoverEvent *event)
+{
+    // QQuickItem delivers HoverEnter instead of HoverMove for the first
+    // position after crossing into the item. Route both through the same
+    // activity and terminal-hover path so entry does not require a second
+    // physical motion to reveal a typing-hidden cursor.
+    QQuickItem::hoverEnterEvent(event);
+    hoverMoveEvent(event);
+}
+
 void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 {
+    revealMouseAfterActivity();
     hoverInside_ = false;
     hoverCell_ = QPoint(-1, -1);
     clearHyperlinkHover();
@@ -4309,6 +4437,7 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 
 void TerminalPane::wheelEvent(QWheelEvent *event)
 {
+    revealMouseAfterActivity();
     qreal logicalCellHeight = 0.0;
     {
         QMutexLocker locker(&renderMutex_);
@@ -4718,7 +4847,7 @@ void TerminalPane::clearHyperlinkDecoration()
         linkPreviewGuardRect_ = {};
     }
     linkPreviewPointerCaptured_ = false;
-    unsetCursor();
+    syncPointerCursor();
     if (hadHighlight || previewChanged) {
         update();
     }
@@ -4886,7 +5015,7 @@ void TerminalPane::handleHyperlinkResult(
     if (!hyperlinkLeaseActive_) {
         return;
     }
-    setCursor(Qt::PointingHandCursor);
+    syncPointerCursor();
     update();
 }
 
@@ -4954,6 +5083,8 @@ void TerminalPane::focusInEvent(QFocusEvent *event)
     const QPointer<TerminalPane> guard(this);
     QQuickItem::focusInEvent(event);
     if (guard == nullptr) return;
+    revealMouseAfterActivity();
+    if (guard == nullptr) return;
     setBellRinging(false);
     if (guard == nullptr) return;
     syncCursorBlink(true);
@@ -4963,6 +5094,7 @@ void TerminalPane::focusInEvent(QFocusEvent *event)
 
 void TerminalPane::focusOutEvent(QFocusEvent *event)
 {
+    revealMouseAfterActivity();
     ++keyFocusEpoch_;
     consumedKeys_.clear();
     cursorTimer_->stop();

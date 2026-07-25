@@ -575,6 +575,28 @@ signals:
   post-row remainder but currently subtracts the untruncated amount and clears
   it; this frontend intentionally follows that documented accumulator contract
   so high-resolution motion is not discarded.
+- `mouse-hide-while-typing` is evaluated only after keybinding routing decides
+  that a nonempty, non-repeating text press will reach the terminal. Ordinary
+  pass-through keys, invalid-sequence flush-and-send-current, and an
+  unavailable `performable` fallback can therefore hide the pointer; consumed
+  bindings, staged leaders, modifiers, releases, raw actions, and paste cannot.
+  A nonempty IME commit hides it through the same pane-local state, while
+  preedit alone does not. Deferred keys and pending action chains retain the
+  pointer-activity epoch from the original press. A late fallback may hide only
+  if that epoch is still current, preventing old asynchronous results from
+  undoing newer pointer, focus, or disabling activity. Enabling the policy
+  advances the epoch without changing the presented cursor, so a key pressed
+  while the policy was disabled cannot become retroactively eligible.
+- Pointer motion reveals a typing-hidden cursor only after either physical
+  axis moves by at least one device pixel; same-position and sub-pixel
+  synthesized hover events are inert and do not advance the accepted position,
+  so real high-resolution movement still accumulates to that threshold.
+  Pointer leave, button press/release, wheel input, focus in/out, and live
+  disabling reveal immediately and advance the activity epoch even when the
+  cursor is already visible. One pane-local
+  cursor arbiter then applies the strict priority blank-while-typing,
+  resolved-hyperlink hand, inherited/default cursor. Hiding never cancels a
+  hyperlink lease, so revealing restores a still-valid link cursor.
 - Link hover requires exactly `Ctrl` on Linux. Explicit OSC 8 destinations take
   precedence over Ghostty's default regex-detected URL/path range. A matching
   result changes the pointer and underlines the visible matching cells; an
@@ -1164,9 +1186,10 @@ application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the exact scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
-finalized finite precision/discrete mouse-scroll multipliers, and the lossless
-resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
-finalized binding sets after
+finalized finite precision/discrete mouse-scroll multipliers, the exact
+`mouse-hide-while-typing` boolean, and the lossless resize-overlay mode,
+position, and whole-millisecond duration plus Ghostty's finalized binding sets
+after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
@@ -1684,8 +1707,8 @@ The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
   typed config, typography, appearance overlays and bell features, exact f32
-  CLI font precedence passed into helper finalization, scrollback units, and
-  close modes.
+  CLI font precedence passed into helper finalization, scrollback units,
+  mouse-hide policy, and close modes.
 - `terminal-bell` uses an audio-device-free backend to verify independent
   feature dispatch, playback-time volume clamping, source caching and retry,
   invalid-media recovery, device replacement, and per-pane isolation.
@@ -1827,7 +1850,12 @@ The default CTest suite has focused layers for each ownership boundary:
   suspension/cancellation, and tracked OSC 8 hover, copy, and
   release-only activation through a real PTY-backed pane, including live
   output, viewport hiding/restoration, resize-safe masks, and mouse-capture
-  modifier transitions. The same path covers live `link-url` enable/disable,
+  modifier transitions. It also verifies typing-hide defaults and live reload,
+  terminal-bound text and IME commit eligibility, sequence and asynchronous
+  `performable` fallback, stale pointer-epoch suppression, physical-pixel
+  motion filtering, pointer/focus/config reveal interactions, and
+  blank/hyperlink/default cursor priority. The same path covers live
+  `link-url` enable/disable,
   byte-exact regex copy, relative-path opening, OSC 8 independence, all three
   link-preview policies, live frontend-only reload, no-query relocation, and
   bounded/escaped display of arbitrary destination bytes. Search rendering
