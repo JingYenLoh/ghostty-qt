@@ -2,6 +2,7 @@
 
 #include "linux_cgroup_config.h"
 #include "terminal_appearance.h"
+#include "terminal_command.h"
 
 #include <QByteArray>
 #include <QMetaType>
@@ -91,6 +92,9 @@ struct TerminalSessionRuntimeOptions {
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
+    // A child that exits while this live policy is enabled remains readable
+    // until a terminal-encoded key dismisses it.
+    bool waitAfterCommand = false;
 
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;
 };
@@ -139,8 +143,16 @@ struct TerminalSessionLaunchOptions {
     bool processUsesSingleInstance = false;
     QString workingDirectory;
     bool inheritWorkingDirectory = false;
+    // Shared Ghostty command for this pane. The process one-shot coordinator
+    // may replace it with initial-command immediately before worker creation.
+    std::optional<TerminalCommand> command;
+    // The frontend positional command remains a separate direct argv until
+    // its process-wide first-session lease is resolved. When present it takes
+    // precedence over `command`.
     QStringList program;
     ScrollbackLimit scrollbackLimit;
+    // Initial-only frontend override. Shared wait-after-command remains in the
+    // live runtime options so a reload can affect an existing child.
     bool hold = false;
     // Frontend window dimensions never enter the reusable LaunchOptions
     // projection. The workspace supplies this one-shot value only for its

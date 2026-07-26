@@ -25,6 +25,13 @@
 
 namespace {
 
+std::optional<TerminalCommand>
+selectedFirstCommand(const LaunchOptions &options)
+{
+    return options.initialCommand.has_value() ? options.initialCommand
+                                              : options.ordinaryCommand;
+}
+
 bool isOwnedBy(const QObject *object, const QObject *owner) noexcept
 {
     for (const QObject *candidate = object; candidate != nullptr;
@@ -150,6 +157,7 @@ ApplicationController::ApplicationController(LaunchOptions effectiveOptions,
     , initialSessionCoordinator_(std::make_shared<InitialSessionCoordinator>(
           InitialSessionCoordinator::Payload{
               .program = effectiveOptions_.program,
+              .command = selectedFirstCommand(effectiveOptions_),
               .hold = effectiveOptions_.hold,
           }))
     , keybindings_(std::make_unique<GhosttyApplicationKeybindings>(
@@ -691,6 +699,7 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
 
     (void)initialSessionCoordinator_->updatePayload({
         .program = options.program,
+        .command = selectedFirstCommand(options),
         .hold = options.hold,
     });
     if (!stillCurrentRevision()) return;

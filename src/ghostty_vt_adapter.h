@@ -248,6 +248,10 @@ public:
     void writeVt(QByteArrayView data);
     void reset();
     void synchronizeInputModes();
+    // Child-exit waiting uses ordinary legacy press encoding regardless of
+    // modes left behind by the application, matching Ghostty's surface
+    // lifecycle normalization.
+    void normalizeKeyboardAfterCommandExit();
 
     EncodedKey encodeKey(const TerminalKeyInput &input);
     bool mouseTracking() const;

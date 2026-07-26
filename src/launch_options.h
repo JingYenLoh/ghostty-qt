@@ -21,6 +21,14 @@ struct LaunchOptions {
     // Finalized terminal identity for future children. This launch-only value
     // never mutates the environment of an already-running pane.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Ghostty's ordinary command applies to every new pane. Initial-command
+    // remains separate because its process-wide lease may be won by any pane
+    // whose terminal initialization reaches the coordinator first.
+    std::optional<TerminalCommand> ordinaryCommand;
+    std::optional<TerminalCommand> initialCommand;
+    // Shared live wait policy. The CLI --hold bit below remains a distinct
+    // initial-session override.
+    bool waitAfterCommand = false;
     // Finalized raw environment overrides for future terminal children.
     TerminalEnvironment environment;
     // Finalized shared Linux cgroup settings for future terminal children.
@@ -170,8 +178,9 @@ struct LaunchOptions {
     bool operator==(const LaunchOptions &) const = default;
 };
 
-// Program and hold form Ghostty's process-wide one-shot initial-session
-// payload. Every ordinary pane keeps the remaining launch policy unchanged.
+// Initial-command, positional program, and hold form Ghostty's process-wide
+// one-shot initial-session payload. Every ordinary pane keeps command and the
+// remaining launch policy unchanged.
 [[nodiscard]] LaunchOptions withoutInitialCommand(LaunchOptions options);
 
 // Explicitly project the broad application/pane configuration onto the

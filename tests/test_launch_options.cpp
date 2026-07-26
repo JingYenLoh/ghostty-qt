@@ -80,6 +80,14 @@ GhosttyConfigSnapshot completeSnapshot()
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
     values.term = QByteArrayLiteral("ghostty-qt-configured");
+    values.ordinaryCommand =
+        TerminalCommand::shell(QByteArrayLiteral("printf 'ordinary command'"));
+    values.initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/printf"),
+        QByteArray::fromHex("ff80617267"),
+        QByteArray{},
+    });
+    values.waitAfterCommand = true;
     values.environment = {
         {
             .key = QByteArrayLiteral("GHOSTTY_QT_ENV"),
@@ -248,6 +256,7 @@ private Q_SLOTS:
     void mapsUnfocusedSplitAppearance();
     void restoresNullableAppearanceDefaults();
     void removesOnlyTheInitialCommand();
+    void materializesMissingFinalizedCommandFallback();
     void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
@@ -260,6 +269,9 @@ void LaunchOptionsTest::defaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
+    QVERIFY(!options.ordinaryCommand.has_value());
+    QVERIFY(!options.initialCommand.has_value());
+    QVERIFY(!options.waitAfterCommand);
     QVERIFY(options.environment.isEmpty());
     QCOMPARE(options.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
     QVERIFY(!options.linuxCgroup.memoryLimitBytes.has_value());
@@ -743,6 +755,9 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     // projection must trust that complete value instead of rebuilding a
     // hybrid from the original frontend flags.
     QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
+    QVERIFY(cliResult.ordinaryCommand == snapshot.values.ordinaryCommand);
+    QVERIFY(cliResult.initialCommand == snapshot.values.initialCommand);
+    QVERIFY(cliResult.waitAfterCommand);
     QCOMPARE(cliResult.environment, snapshot.values.environment);
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
     QVERIFY(cliResult.processUsesSingleInstance);
@@ -1470,6 +1485,13 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.processUsesSingleInstance = true;
     options.workingDirectory = QStringLiteral("/session/working-directory");
     options.workingDirectoryExplicit = true;
+    options.ordinaryCommand = TerminalCommand::shell(
+        QByteArray::fromHex("7072696e74662027ff27"), true);
+    options.initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/initial"),
+        QByteArray{},
+    });
+    options.waitAfterCommand = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
     options.scrollbackLimit = {
         .value = 42'000,
@@ -1512,6 +1534,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
+    QVERIFY(runtime.waitAfterCommand);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.term, options.term);
     QCOMPARE(launch.environment, options.environment);
@@ -1520,6 +1543,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              options.processUsesSingleInstance);
     QCOMPARE(launch.inheritWorkingDirectory,
              options.inheritWorkingDirectory);
+    QVERIFY(launch.command == options.ordinaryCommand);
     QCOMPARE(launch.program, options.program);
     QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
     QCOMPARE(launch.hold, options.hold);
@@ -1584,6 +1608,24 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(toTerminalSessionLaunchOptions(terminalIdentityChanged) != launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(terminalIdentityChanged), runtime);
 
+    LaunchOptions commandChanged = options;
+    commandChanged.ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/future-command"),
+    });
+    QVERIFY(toTerminalSessionLaunchOptions(commandChanged) != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(commandChanged), runtime);
+
+    LaunchOptions initialCommandChanged = options;
+    initialCommandChanged.initialCommand =
+        TerminalCommand::shell(QByteArrayLiteral("initial-only"));
+    QCOMPARE(toTerminalSessionLaunchOptions(initialCommandChanged), launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(initialCommandChanged), runtime);
+
+    LaunchOptions waitChanged = options;
+    waitChanged.waitAfterCommand = false;
+    QCOMPARE(toTerminalSessionLaunchOptions(waitChanged).hold, launch.hold);
+    QVERIFY(toTerminalSessionRuntimeOptions(waitChanged) != runtime);
+
     LaunchOptions environmentChanged = options;
     environmentChanged.environment = {{
         .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1599,6 +1641,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(toTerminalSessionRuntimeOptions(inheritedDirectory), runtime);
 
     options.workingDirectory.clear();
+    options.ordinaryCommand.reset();
+    options.initialCommand.reset();
+    options.waitAfterCommand = false;
     options.environment.clear();
     options.program.clear();
     options.scrollbackLimit = {};
@@ -1613,6 +1658,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.program,
              QStringList({QStringLiteral("/bin/program"),
                           QStringLiteral("arg")}));
+    QVERIFY(launch.command.has_value());
+    QCOMPARE(launch.command->kind, TerminalCommandKind::Shell);
+    QCOMPARE(launch.command->shellCommand,
+             QByteArray::fromHex("7072696e74662027ff27"));
+    QVERIFY(launch.command->defaultShell);
+    QVERIFY(launch.runtime.waitAfterCommand);
     QCOMPARE(launch.environment,
              TerminalEnvironment({
                  {
@@ -1663,15 +1714,41 @@ void LaunchOptionsTest::removesOnlyTheInitialCommand()
     options.workingDirectory = QStringLiteral("/configured");
     options.typography.pointSize = 17.0;
     options.maximize = true;
+    options.ordinaryCommand =
+        TerminalCommand::shell(QByteArrayLiteral("ordinary"), true);
+    options.initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("initial"),
+    });
+    options.waitAfterCommand = true;
     options.program = {
         QStringLiteral("command"), QStringLiteral("argument"),
     };
     options.hold = true;
 
     LaunchOptions expected = options;
+    expected.initialCommand.reset();
     expected.program.clear();
     expected.hold = false;
     QVERIFY(withoutInitialCommand(options) == expected);
+    QVERIFY(expected.ordinaryCommand == options.ordinaryCommand);
+    QVERIFY(expected.waitAfterCommand);
+}
+
+void LaunchOptionsTest::materializesMissingFinalizedCommandFallback()
+{
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    snapshot.values.ordinaryCommand.reset();
+
+    const LaunchOptions projected = applyGhosttyConfigSnapshot({}, snapshot);
+    QVERIFY(projected.ordinaryCommand.has_value());
+    QCOMPARE(projected.ordinaryCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(projected.ordinaryCommand->shellCommand, QByteArrayLiteral("sh"));
+    QVERIFY(projected.ordinaryCommand->defaultShell);
+    QVERIFY(projected.ordinaryCommand->directArguments.isEmpty());
+
+    const TerminalSessionLaunchOptions session =
+        toTerminalSessionLaunchOptions(projected);
+    QVERIFY(session.command == projected.ordinaryCommand);
 }
 
 void LaunchOptionsTest::mapsCloseConfirmationModes()

@@ -33,7 +33,7 @@ namespace {
 
 using namespace GhosttyConfigExportFixture;
 
-template<typename Value>
+template <typename Value>
 QString errorMessage(const std::expected<Value, QString> &result)
 {
     return result ? QString{} : result.error();
@@ -79,8 +79,7 @@ struct ConfigFixture {
         if (!QDir().mkpath(directory)) {
             qFatal("could not create repository-local tmp directory");
         }
-        return QDir(directory).filePath(
-            QStringLiteral("config-loader-XXXXXX"));
+        return QDir(directory).filePath(QStringLiteral("config-loader-XXXXXX"));
     }
 
     static void writeFile(const QString &path, const QByteArray &contents)
@@ -111,10 +110,9 @@ struct HelperResult {
     bool operator==(const HelperResult &) const = default;
 };
 
-std::expected<HelperResult, QString> runRealHelper(
-    const QString &helperPath,
-    const ConfigFixture &fixture,
-    const QStringList &arguments)
+std::expected<HelperResult, QString> runRealHelper(const QString &helperPath,
+                                                   const ConfigFixture &fixture,
+                                                   const QStringList &arguments)
 {
     QProcess process;
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
@@ -124,7 +122,8 @@ std::expected<HelperResult, QString> runRealHelper(
     process.setArguments(arguments);
     process.start(QIODevice::ReadOnly);
     if (!process.waitForStarted(10'000)) {
-        return std::unexpected(QStringLiteral("structured helper did not start"));
+        return std::unexpected(
+            QStringLiteral("structured helper did not start"));
     }
     if (!process.waitForFinished(10'000)) {
         process.kill();
@@ -148,11 +147,9 @@ QJsonObject withFontSize(QJsonObject exportObject, double size)
     return exportObject;
 }
 
-GhosttyConfigProcessLoaderOptions fakeOptions(
-    const ConfigFixture &fixture,
-    const QString &mode = {},
-    const QJsonObject &first = object(),
-    const QJsonObject &second = {})
+GhosttyConfigProcessLoaderOptions
+fakeOptions(const ConfigFixture &fixture, const QString &mode = {},
+            const QJsonObject &first = object(), const QJsonObject &second = {})
 {
     static int nextInvocationLog = 0;
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
@@ -163,11 +160,10 @@ GhosttyConfigProcessLoaderOptions fakeOptions(
     environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON_SECOND"),
         QString::fromUtf8(json(second.isEmpty() ? first : second)));
-    environment.insert(
-        QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
-        QDir(fixture.temporary.path())
-            .filePath(QStringLiteral("fake-invocations-%1")
-                          .arg(++nextInvocationLog)));
+    environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
+                       QDir(fixture.temporary.path())
+                           .filePath(QStringLiteral("fake-invocations-%1")
+                                         .arg(++nextInvocationLog)));
     if (!mode.isEmpty()) {
         environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_MODE"), mode);
     }
@@ -178,17 +174,14 @@ GhosttyConfigProcessLoaderOptions fakeOptions(
     };
 }
 
-std::expected<GhosttyConfigExport, QString> queryRealConfigExport(
-    const QString &helperPath,
-    const ConfigFixture &fixture,
-    QStringList configurationArguments = {})
+std::expected<GhosttyConfigExport, QString>
+queryRealConfigExport(const QString &helperPath, const ConfigFixture &fixture,
+                      QStringList configurationArguments = {})
 {
     configurationArguments.prepend(QStringLiteral("+show-config-json"));
-    auto process = runRealHelper(
-        helperPath, fixture, configurationArguments);
+    auto process = runRealHelper(helperPath, fixture, configurationArguments);
     if (!process) return std::unexpected(std::move(process.error()));
-    if (process->exitStatus != QProcess::NormalExit
-        || process->exitCode != 0) {
+    if (process->exitStatus != QProcess::NormalExit || process->exitCode != 0) {
         return std::unexpected(
             QStringLiteral("structured helper failed: %1")
                 .arg(QString::fromUtf8(process->standardError).trimmed()));
@@ -229,6 +222,7 @@ private Q_SLOTS:
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
     void realHelperExportsEnvironment();
+    void realHelperExportsCommands();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -249,23 +243,26 @@ void GhosttyConfigProcessLoaderTest::derivesXdgHomeFromEitherCandidateOrder()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(*result, fixture.xdgHome);
 
-    result = ghosttyConfigXdgHome(
-        {fixture.preferredPath, fixture.legacyPath});
+    result = ghosttyConfigXdgHome({fixture.preferredPath, fixture.legacyPath});
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(*result, fixture.xdgHome);
 
     result = ghosttyConfigXdgHome({fixture.preferredPath});
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config candidates must contain both config and config.ghostty"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config candidates must contain both config and config.ghostty"));
 
     const QString wrongDirectory =
         QDir(fixture.temporary.path()).filePath(QStringLiteral("config"));
     ConfigFixture::writeFile(wrongDirectory, {});
     result = ghosttyConfigXdgHome({wrongDirectory, fixture.preferredPath});
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config candidates must share one XDG ghostty directory"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config candidates must share one XDG ghostty directory"));
 }
 
 void GhosttyConfigProcessLoaderTest::invokesStableFourProcessTransaction()
@@ -322,7 +319,8 @@ void GhosttyConfigProcessLoaderTest::
 void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
 {
     ConfigFixture fixture;
-    const QString included = fixture.filePath(QStringLiteral("included.ghostty"));
+    const QString included =
+        fixture.filePath(QStringLiteral("included.ghostty"));
     const QString missing = fixture.filePath(QStringLiteral("missing.ghostty"));
     ConfigFixture::writeFile(included, QByteArrayLiteral("font-size = 18\n"));
 
@@ -337,8 +335,9 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
         fakeOptions(fixture, {}, exportObject))(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QCOMPARE(result->sourcePaths,
-             QStringList({fixture.legacyPath, fixture.preferredPath, included}));
+    QCOMPARE(
+        result->sourcePaths,
+        QStringList({fixture.legacyPath, fixture.preferredPath, included}));
     QCOMPARE(result->values.configFiles.size(), 3);
     QCOMPARE(result->values.configFiles.at(0).path, included);
     QVERIFY(!result->values.configFiles.at(0).optional);
@@ -393,25 +392,26 @@ void GhosttyConfigProcessLoaderTest::diagnosesOnlyNonDefaultUnsupportedActions()
     result = makeGhosttyConfigProcessLoader(
         fakeOptions(fixture, {}, configured))(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QCOMPARE(std::ranges::count_if(
-                 result->diagnostics,
-                 [](const GhosttyConfigDiagnostic &diagnostic) {
-                     return diagnostic.message.contains(
-                         QStringLiteral("toggle_command_palette"));
-                 }),
-             1);
+    QCOMPARE(
+        std::ranges::count_if(result->diagnostics,
+                              [](const GhosttyConfigDiagnostic &diagnostic) {
+                                  return diagnostic.message.contains(
+                                      QStringLiteral("toggle_command_palette"));
+                              }),
+        1);
 }
 
 void GhosttyConfigProcessLoaderTest::rejectsQueryFailuresAndMalformedData()
 {
     ConfigFixture fixture;
-    GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
-        fakeOptions(fixture, QStringLiteral("config-query-failure")))(
-        fixture.candidates());
+    GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(fakeOptions(
+        fixture, QStringLiteral("config-query-failure")))(fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper failed during config query with exit code 8: "
-        "stderr: config query failed"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper failed during config query with exit code 8: "
+            "stderr: config query failed"));
 
     result = makeGhosttyConfigProcessLoader(
         fakeOptions(fixture, QStringLiteral("config-query-malformed")))(
@@ -421,67 +421,76 @@ void GhosttyConfigProcessLoaderTest::rejectsQueryFailuresAndMalformedData()
         "Ghostty config query returned malformed data: Invalid Ghostty "
         "structured config JSON")));
 
-    result = makeGhosttyConfigProcessLoader(
-        fakeOptions(fixture,
-                    QStringLiteral("config-consistency-query-failure")))(
+    result = makeGhosttyConfigProcessLoader(fakeOptions(
+        fixture, QStringLiteral("config-consistency-query-failure")))(
         fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper failed during config consistency query with "
-        "exit code 9: stderr: config consistency query failed"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper failed during config consistency query with "
+            "exit code 9: stderr: config consistency query failed"));
 }
 
-void GhosttyConfigProcessLoaderTest::rejectsConfigThatBecomesInvalidDuringQueries()
+void GhosttyConfigProcessLoaderTest::
+    rejectsConfigThatBecomesInvalidDuringQueries()
 {
     ConfigFixture fixture;
     const QString logPath =
         QDir(fixture.temporary.path()).filePath(QStringLiteral("invocations"));
-    auto options = fakeOptions(fixture,
-                               QStringLiteral("post-validation-failure"));
+    auto options =
+        fakeOptions(fixture, QStringLiteral("post-validation-failure"));
     options.environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_INVOCATION_LOG"),
                                logPath);
     const GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(options)(fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper failed during post-query validation with exit "
-        "code 1: stdout: config changed during query"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper failed during post-query validation with exit "
+            "code 1: stdout: config changed during query"));
     QCOMPARE(invocationLog(logPath),
              QByteArrayLiteral("+validate-config\n"
                                "+show-config-json\n"
                                "+validate-config\n"));
 }
 
-void GhosttyConfigProcessLoaderTest::rejectsConfigThatChangesValidlyDuringQueries()
+void GhosttyConfigProcessLoaderTest::
+    rejectsConfigThatChangesValidlyDuringQueries()
 {
     ConfigFixture fixture;
-    GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
-        fakeOptions(fixture, QStringLiteral("config-consistency-mismatch"),
-                    object(), withFontSize(object(), 18.0)))(
-        fixture.candidates());
+    GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(fakeOptions(
+        fixture, QStringLiteral("config-consistency-mismatch"), object(),
+        withFontSize(object(), 18.0)))(fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config changed while it was being queried; reload will retry"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config changed while it was being queried; reload will retry"));
 
-    auto formattingOnly = fakeOptions(
-        fixture, QStringLiteral("config-consistency-mismatch"));
+    auto formattingOnly =
+        fakeOptions(fixture, QStringLiteral("config-consistency-mismatch"));
     formattingOnly.environment.insert(
         QStringLiteral("GHOSTTY_QT_FAKE_CONFIG_JSON_SECOND"),
         QStringLiteral(" ") + QString::fromUtf8(json()));
     result = makeGhosttyConfigProcessLoader(std::move(formattingOnly))(
         fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config changed while it was being queried; reload will retry"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config changed while it was being queried; reload will retry"));
 }
 
 void GhosttyConfigProcessLoaderTest::preservesSuccessfulHelperWarnings()
 {
     ConfigFixture fixture;
     auto options = fakeOptions(fixture);
-    options.environment.insert(QStringLiteral("GHOSTTY_QT_FAKE_SUCCESS_WARNING"),
-                               QStringLiteral("both standard files exist\n"
-                                              "both standard files exist\n"));
+    options.environment.insert(
+        QStringLiteral("GHOSTTY_QT_FAKE_SUCCESS_WARNING"),
+        QStringLiteral("both standard files exist\n"
+                       "both standard files exist\n"));
     const GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(options)(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
@@ -498,12 +507,15 @@ void GhosttyConfigProcessLoaderTest::reportsValidationFailureDeterministically()
         fakeOptions(fixture, QStringLiteral("validation-failure")))(
         fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper failed during validation with exit code 1: "
-        "stdout: config.ghostty:2:1: invalid value"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper failed during validation with exit code 1: "
+            "stdout: config.ghostty:2:1: invalid value"));
 }
 
-void GhosttyConfigProcessLoaderTest::reportsTimeoutCrashAndStartFailureDeterministically()
+void GhosttyConfigProcessLoaderTest::
+    reportsTimeoutCrashAndStartFailureDeterministically()
 {
     ConfigFixture fixture;
     auto timeout = fakeOptions(fixture, QStringLiteral("validation-timeout"));
@@ -511,16 +523,18 @@ void GhosttyConfigProcessLoaderTest::reportsTimeoutCrashAndStartFailureDetermini
     GhosttyConfigLoadResult result =
         makeGhosttyConfigProcessLoader(timeout)(fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper timed out during validation after 25 ms"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper timed out during validation after 25 ms"));
 
     auto overall = fakeOptions(fixture, QStringLiteral("validation-timeout"));
     overall.timeoutMilliseconds = 2'000;
     overall.overallTimeoutMilliseconds = 30;
     result = makeGhosttyConfigProcessLoader(overall)(fixture.candidates());
     QVERIFY(!result);
-    QVERIFY(result.error().contains(QStringLiteral(
-        "timed out during validation after 30 ms")));
+    QVERIFY(result.error().contains(
+        QStringLiteral("timed out during validation after 30 ms")));
 
     const auto crash = fakeOptions(fixture, QStringLiteral("validation-crash"));
     result = makeGhosttyConfigProcessLoader(crash)(fixture.candidates());
@@ -534,8 +548,10 @@ void GhosttyConfigProcessLoaderTest::reportsTimeoutCrashAndStartFailureDetermini
     missing.timeoutMilliseconds = 100;
     result = makeGhosttyConfigProcessLoader(missing)(fixture.candidates());
     QVERIFY(!result);
-    QCOMPARE(result.error(), QStringLiteral(
-        "Ghostty config helper could not be started during validation"));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral(
+            "Ghostty config helper could not be started during validation"));
 }
 
 void GhosttyConfigProcessLoaderTest::
@@ -594,9 +610,8 @@ void GhosttyConfigProcessLoaderTest::
 
     auto options = realOptions(helperPath);
     options.configurationArguments = arguments;
-    const GhosttyConfigLoadResult loaded =
-        makeGhosttyConfigProcessLoader(std::move(options))(
-            fixture.candidates());
+    const GhosttyConfigLoadResult loaded = makeGhosttyConfigProcessLoader(
+        std::move(options))(fixture.candidates());
     QVERIFY2(loaded.has_value(), qPrintable(errorMessage(loaded)));
 
     const TerminalTypography &typography = loaded->values.typography;
@@ -613,40 +628,39 @@ void GhosttyConfigProcessLoaderTest::
         typography.face(TerminalFontRole::Regular).style));
     QVERIFY(std::holds_alternative<TerminalFontStyles::Disabled>(
         typography.face(TerminalFontRole::Bold).style));
-    QCOMPARE(
-        std::get<TerminalFontStyles::Named>(
-            typography.face(TerminalFontRole::Italic).style)
-            .name,
-        QStringLiteral("File Italic Style"));
+    QCOMPARE(std::get<TerminalFontStyles::Named>(
+                 typography.face(TerminalFontRole::Italic).style)
+                 .name,
+             QStringLiteral("File Italic Style"));
     QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
         typography.face(TerminalFontRole::BoldItalic).style));
     QCOMPARE(typography.pointSize, 17.25);
 
-    const auto expectedModifiers = std::to_array<
-        std::pair<TerminalMetric, TerminalMetricModifier>>({
-        {TerminalMetric::CellWidth,
-         TerminalMetricModifiers::Absolute{.pixels = 1}},
-        {TerminalMetric::CellHeight,
-         TerminalMetricModifiers::Percentage{.multiplier = 1.25}},
-        {TerminalMetric::FontBaseline,
-         TerminalMetricModifiers::Absolute{.pixels = -3}},
-        {TerminalMetric::UnderlinePosition,
-         TerminalMetricModifiers::Percentage{.multiplier = 0.8}},
-        {TerminalMetric::UnderlineThickness,
-         TerminalMetricModifiers::Absolute{.pixels = 5}},
-        {TerminalMetric::StrikethroughPosition,
-         TerminalMetricModifiers::Percentage{.multiplier = 1.6}},
-        {TerminalMetric::StrikethroughThickness,
-         TerminalMetricModifiers::Absolute{.pixels = -7}},
-        {TerminalMetric::OverlinePosition,
-         TerminalMetricModifiers::Percentage{.multiplier = 1.8}},
-        {TerminalMetric::OverlineThickness,
-         TerminalMetricModifiers::Absolute{.pixels = 9}},
-        {TerminalMetric::CursorThickness,
-         TerminalMetricModifiers::Percentage{.multiplier = 2.0}},
-        {TerminalMetric::CursorHeight,
-         TerminalMetricModifiers::Absolute{.pixels = -11}},
-    });
+    const auto expectedModifiers =
+        std::to_array<std::pair<TerminalMetric, TerminalMetricModifier>>({
+            {TerminalMetric::CellWidth,
+             TerminalMetricModifiers::Absolute{.pixels = 1}},
+            {TerminalMetric::CellHeight,
+             TerminalMetricModifiers::Percentage{.multiplier = 1.25}},
+            {TerminalMetric::FontBaseline,
+             TerminalMetricModifiers::Absolute{.pixels = -3}},
+            {TerminalMetric::UnderlinePosition,
+             TerminalMetricModifiers::Percentage{.multiplier = 0.8}},
+            {TerminalMetric::UnderlineThickness,
+             TerminalMetricModifiers::Absolute{.pixels = 5}},
+            {TerminalMetric::StrikethroughPosition,
+             TerminalMetricModifiers::Percentage{.multiplier = 1.6}},
+            {TerminalMetric::StrikethroughThickness,
+             TerminalMetricModifiers::Absolute{.pixels = -7}},
+            {TerminalMetric::OverlinePosition,
+             TerminalMetricModifiers::Percentage{.multiplier = 1.8}},
+            {TerminalMetric::OverlineThickness,
+             TerminalMetricModifiers::Absolute{.pixels = 9}},
+            {TerminalMetric::CursorThickness,
+             TerminalMetricModifiers::Percentage{.multiplier = 2.0}},
+            {TerminalMetric::CursorHeight,
+             TerminalMetricModifiers::Absolute{.pixels = -11}},
+        });
     for (const auto &[metric, expected] : expectedModifiers) {
         const auto &actual = typography.metricModifiers[metric];
         QVERIFY(actual.has_value());
@@ -669,8 +683,8 @@ void GhosttyConfigProcessLoaderTest::
             == expectedModifierOrder);
     QVERIFY(typography == direct->values.typography);
 
-    auto validation = runRealHelper(
-        helperPath, fixture, {QStringLiteral("+validate-config")});
+    auto validation = runRealHelper(helperPath, fixture,
+                                    {QStringLiteral("+validate-config")});
     QVERIFY2(validation.has_value(), qPrintable(errorMessage(validation)));
     QCOMPARE(validation->exitStatus, QProcess::NormalExit);
     QCOMPARE(validation->exitCode, 0);
@@ -708,23 +722,23 @@ void GhosttyConfigProcessLoaderTest::
         QStringLiteral("+show-config-json"),
         QStringLiteral("--font-size=not-a-number"),
     };
-    auto privateFirst = runRealHelper(
-        helperPath, fixture, invalidPrivateArguments);
-    auto privateSecond = runRealHelper(
-        helperPath, fixture, invalidPrivateArguments);
+    auto privateFirst =
+        runRealHelper(helperPath, fixture, invalidPrivateArguments);
+    auto privateSecond =
+        runRealHelper(helperPath, fixture, invalidPrivateArguments);
     QVERIFY2(privateFirst.has_value(), qPrintable(errorMessage(privateFirst)));
-    QVERIFY2(privateSecond.has_value(), qPrintable(errorMessage(privateSecond)));
+    QVERIFY2(privateSecond.has_value(),
+             qPrintable(errorMessage(privateSecond)));
     QCOMPARE(privateFirst->exitStatus, QProcess::NormalExit);
     QCOMPARE(privateFirst->exitCode, 1);
     QVERIFY(*privateFirst == *privateSecond);
     QVERIFY(privateFirst->standardOutput.isEmpty());
-    QVERIFY(privateFirst->standardError.contains(
-        QByteArrayLiteral("font-size")));
+    QVERIFY(
+        privateFirst->standardError.contains(QByteArrayLiteral("font-size")));
 
-    auto multiple = runRealHelper(
-        helperPath, fixture,
-        {QStringLiteral("+show-config-json"),
-         QStringLiteral("+validate-config")});
+    auto multiple = runRealHelper(helperPath, fixture,
+                                  {QStringLiteral("+show-config-json"),
+                                   QStringLiteral("+validate-config")});
     QVERIFY2(multiple.has_value(), qPrintable(errorMessage(multiple)));
     QCOMPARE(multiple->exitStatus, QProcess::NormalExit);
     QCOMPARE(multiple->exitCode, 64);
@@ -733,12 +747,15 @@ void GhosttyConfigProcessLoaderTest::
 
 void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
-    const QString directory = QDir(fixture.temporary.path())
-                                  .filePath(QStringLiteral("working directory"));
+    const QString directory =
+        QDir(fixture.temporary.path())
+            .filePath(QStringLiteral("working directory"));
     QVERIFY(QDir().mkpath(directory));
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
@@ -803,9 +820,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.term, byteTerm);
 
-    ConfigFixture::writeFile(
-        fixture.preferredPath,
-        QByteArrayLiteral("working-directory = home\n"));
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("working-directory = home\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.term, QByteArrayLiteral("xterm-ghostty"));
@@ -818,49 +834,50 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.workingDirectoryPath.has_value());
-    QCOMPARE(*result->values.workingDirectoryPath,
-             QDir(QDir::homePath())
-                 .filePath(QStringLiteral("ghostty-qt-test")));
+    QCOMPARE(
+        *result->values.workingDirectoryPath,
+        QDir(QDir::homePath()).filePath(QStringLiteral("ghostty-qt-test")));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QByteArrayLiteral(
-            "unfocused-split-opacity = -1\n"
-            "unfocused-split-fill = AliceBlue\n"
-            "palette = 42=#123456\n"
-            "split-divider-color = AliceBlue\n"
-            "selection-foreground = cell-background\n"
-            "selection-background = #334455\n"
-            "search-foreground = cell-background\n"
-            "search-background = #123456\n"
-            "search-selected-foreground = cell-foreground\n"
-            "search-selected-background = #654321\n"
-            "cursor-color = #abcdef\n"
-            "cursor-opacity = 0.4\n"
-            "cursor-style = block_hollow\n"
-            "cursor-style-blink = false\n"
-            "cursor-text = cell-foreground\n"
-            "bold-color = bright\n"
-            "faint-opacity = 0.25\n"
-            "clipboard-trim-trailing-spaces = 0\n"
-            "clipboard-paste-protection = 0\n"
-            "clipboard-paste-bracketed-safe = t\n"
-            "copy-on-select = clipboard\n"
-            "selection-clear-on-typing = 0\n"
-            "selection-clear-on-copy = t\n"
-            "middle-click-action = ignore\n"
-            "keybind = clear\n"
-            "keybind = ctrl+a=ignore\n"
-            "keybind = ctrl+a=unbind\n"
-            "keybind = ctrl+b=new_tab\n"));
+        QByteArrayLiteral("unfocused-split-opacity = -1\n"
+                          "unfocused-split-fill = AliceBlue\n"
+                          "palette = 42=#123456\n"
+                          "split-divider-color = AliceBlue\n"
+                          "selection-foreground = cell-background\n"
+                          "selection-background = #334455\n"
+                          "search-foreground = cell-background\n"
+                          "search-background = #123456\n"
+                          "search-selected-foreground = cell-foreground\n"
+                          "search-selected-background = #654321\n"
+                          "cursor-color = #abcdef\n"
+                          "cursor-opacity = 0.4\n"
+                          "cursor-style = block_hollow\n"
+                          "cursor-style-blink = false\n"
+                          "cursor-text = cell-foreground\n"
+                          "bold-color = bright\n"
+                          "faint-opacity = 0.25\n"
+                          "clipboard-trim-trailing-spaces = 0\n"
+                          "clipboard-paste-protection = 0\n"
+                          "clipboard-paste-bracketed-safe = t\n"
+                          "copy-on-select = clipboard\n"
+                          "selection-clear-on-typing = 0\n"
+                          "selection-clear-on-copy = t\n"
+                          "middle-click-action = ignore\n"
+                          "keybind = clear\n"
+                          "keybind = ctrl+a=ignore\n"
+                          "keybind = ctrl+a=unbind\n"
+                          "keybind = ctrl+b=new_tab\n"));
 
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
         realOptions(helperPath))(fixture.candidates());
@@ -894,8 +911,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
                  result->values.appearance.searchForeground),
              GhosttyCellRelativeColor::Background);
     QVERIFY(result->values.appearance.cursorColor.has_value());
-    QVERIFY(std::holds_alternative<QColor>(
-        *result->values.appearance.cursorColor));
+    QVERIFY(
+        std::holds_alternative<QColor>(*result->values.appearance.cursorColor));
     QCOMPARE(std::get<QColor>(*result->values.appearance.cursorColor),
              QColor(QStringLiteral("#abcdef")));
     QCOMPARE(result->values.appearance.cursorOpacity, 0.4);
@@ -921,8 +938,10 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
     ConfigFixture::writeFile(fixture.legacyPath, {});
@@ -954,15 +973,14 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QByteArrayLiteral(
-            "quit-after-last-window-closed-delay = "
-            "584y 49w 23h 34m 33s 709ms 551us 615ns\n"));
+        QByteArrayLiteral("quit-after-last-window-closed-delay = "
+                          "584y 49w 23h 34m 33s 709ms 551us 615ns\n"));
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.quitAfterLastWindowClosedDelay.has_value());
-    QCOMPARE(result->values.quitAfterLastWindowClosedDelay->count(),
-             std::chrono::milliseconds::rep{
-                 std::numeric_limits<quint32>::max()});
+    QCOMPARE(
+        result->values.quitAfterLastWindowClosedDelay->count(),
+        std::chrono::milliseconds::rep{std::numeric_limits<quint32>::max()});
 
     ConfigFixture::writeFile(fixture.preferredPath, {});
     result = queryRealConfigExport(helperPath, fixture);
@@ -1141,6 +1159,136 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsEnvironment()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(result->values.environment.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsCommands()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    const QString included =
+        fixture.filePath(QStringLiteral("commands.ghostty"));
+    const QByteArray defaultShell =
+        QByteArrayLiteral("/bin/ghostty-qt-default-shell");
+    const auto load = [&](QStringList arguments = {}) {
+        auto options = realOptions(helperPath);
+        options.configurationArguments = std::move(arguments);
+        options.environment.insert(QStringLiteral("SHELL"),
+                                   QString::fromLatin1(defaultShell));
+        return makeGhosttyConfigProcessLoader(std::move(options))(
+            fixture.candidates());
+    };
+
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    auto result = load();
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.ordinaryCommand.has_value());
+    QCOMPARE(result->values.ordinaryCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(result->values.ordinaryCommand->shellCommand, defaultShell);
+    QVERIFY(result->values.ordinaryCommand->defaultShell);
+    QVERIFY(!result->values.initialCommand.has_value());
+    QVERIFY(!result->values.waitAfterCommand);
+
+    // Provenance cannot be inferred by comparing the finalized command bytes:
+    // an explicit shell command may be identical to Ghostty's resolved default.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("command = shell:")
+                                 + defaultShell + '\n');
+    result = load();
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.ordinaryCommand.has_value());
+    QCOMPARE(result->values.ordinaryCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(result->values.ordinaryCommand->shellCommand, defaultShell);
+    QVERIFY(!result->values.ordinaryCommand->defaultShell);
+
+    // Theme files are loaded during finalization before the original config
+    // is replayed. Their commands are still explicit, even when no ordinary
+    // source had populated command before finalize.
+    const QString theme =
+        fixture.filePath(QStringLiteral("command-theme.ghostty"));
+    ConfigFixture::writeFile(
+        theme, QByteArrayLiteral("command = shell:theme-command\n"));
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("theme = %1\n").arg(theme).toUtf8());
+    result = load();
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.ordinaryCommand.has_value());
+    QCOMPARE(result->values.ordinaryCommand->shellCommand,
+             QByteArrayLiteral("theme-command"));
+    QVERIFY(!result->values.ordinaryCommand->defaultShell);
+
+    QByteArray rawArgument;
+    rawArgument.append(char(0x80));
+    rawArgument.append(char(0xff));
+    QByteArray rawShell = QByteArrayLiteral("printf initial-");
+    rawShell.append(char(0xfe));
+    rawShell.append(char(0x81));
+    QByteArray includeContents =
+        QByteArrayLiteral("command = direct:/bin/printf alpha  ");
+    includeContents.append(rawArgument);
+    includeContents.append(QByteArrayLiteral("\ninitial-command = shell:"));
+    includeContents.append(rawShell);
+    includeContents.append(QByteArrayLiteral("\nwait-after-command = true\n"));
+    ConfigFixture::writeFile(included, includeContents);
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("command = shell:root command\n"
+                       "initial-command = direct:/bin/root initial\n"
+                       "wait-after-command = false\n"
+                       "config-file = %1\n")
+            .arg(included)
+            .toUtf8());
+
+    result = load({
+        QStringLiteral("--command=shell:CLI command"),
+        QStringLiteral("--initial-command=direct:/bin/cli initial"),
+        QStringLiteral("--wait-after-command=false"),
+    });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.ordinaryCommand.has_value());
+    QCOMPARE(result->values.ordinaryCommand->kind, TerminalCommandKind::Direct);
+    const QVector<QByteArray> expectedArguments{
+        QByteArrayLiteral("/bin/printf"),
+        QByteArrayLiteral("alpha"),
+        QByteArray{},
+        rawArgument,
+    };
+    QVERIFY(result->values.ordinaryCommand->directArguments
+            == expectedArguments);
+    QVERIFY(result->values.ordinaryCommand->shellCommand.isEmpty());
+    QVERIFY(!result->values.ordinaryCommand->defaultShell);
+    QVERIFY(result->values.initialCommand.has_value());
+    QCOMPARE(result->values.initialCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(result->values.initialCommand->shellCommand, rawShell);
+    QVERIFY(result->values.initialCommand->directArguments.isEmpty());
+    QVERIFY(!result->values.initialCommand->defaultShell);
+    QVERIFY(result->values.waitAfterCommand);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QStringLiteral("theme = %1\n"
+                       "command = shell:configured\n"
+                       "command =\n"
+                       "initial-command = direct:/bin/configured\n"
+                       "initial-command =\n"
+                       "wait-after-command = true\n"
+                       "wait-after-command =\n")
+            .arg(theme)
+            .toUtf8());
+    result = load();
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.ordinaryCommand.has_value());
+    QCOMPARE(result->values.ordinaryCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(result->values.ordinaryCommand->shellCommand, defaultShell);
+    QVERIFY(result->values.ordinaryCommand->defaultShell);
+    QVERIFY(!result->values.initialCommand.has_value());
+    QVERIFY(!result->values.waitAfterCommand);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()
@@ -1405,27 +1553,27 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsMouseShiftCapture()
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
-    const QString included = fixture.filePath(QStringLiteral("included.ghostty"));
+    const QString included =
+        fixture.filePath(QStringLiteral("included.ghostty"));
     const QString missing = fixture.filePath(QStringLiteral("missing.ghostty"));
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         included,
-        QByteArrayLiteral(
-            "font-family = Included Regular\n"
-            "font-size = 19\n"));
-    ConfigFixture::writeFile(
-        fixture.preferredPath,
-        QStringLiteral(
-            "font-family = File Regular\n"
-            "font-size = 16\n"
-            "config-file = %1\n"
-            "config-file = ?%2\n")
-            .arg(included, missing)
-            .toUtf8());
+        QByteArrayLiteral("font-family = Included Regular\n"
+                          "font-size = 19\n"));
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QStringLiteral("font-family = File Regular\n"
+                                            "font-size = 16\n"
+                                            "config-file = %1\n"
+                                            "config-file = ?%2\n")
+                                 .arg(included, missing)
+                                 .toUtf8());
 
     auto options = realOptions(helperPath);
     options.configurationArguments = {
@@ -1455,33 +1603,37 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()
     QVERIFY(!result->values.configFiles.at(0).optional);
     QCOMPARE(result->values.configFiles.at(1).path, missing);
     QVERIFY(result->values.configFiles.at(1).optional);
-    QCOMPARE(result->sourcePaths,
-             QStringList({fixture.legacyPath, fixture.preferredPath, included}));
+    QCOMPARE(
+        result->sourcePaths,
+        QStringList({fixture.legacyPath, fixture.preferredPath, included}));
 }
 
-void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybindings()
+void GhosttyConfigProcessLoaderTest::
+    realHelperExportsFinalizedStructuredKeybindings()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QStringLiteral(
-            "keybind = clear\n"
-            "keybind = unconsumed:performable:ctrl+x>key_y=new_tab\n"
-            "keybind = chain=goto_split:left\n"
-            "keybind = catch_all=ignore\n"
-            "keybind = all:ctrl+g=new_tab\n"
-            "keybind = global:ctrl+j=new_tab\n"
-            "keybind = ctrl+m=activate_key_table:modeé\n"
-            "keybind = ctrl+s=set_surface_title:🌐 surface:detail\n"
-            "keybind = ctrl+t=set_tab_title:👻 main:detail\n"
-            "keybind = ctrl+v=close_tab:other\n"
-            "keybind = ctrl+w=close_tab:right\n"
-            "keybind = resize/ctrl+h=resize_split:left,10\n"
-            "keybind = modeé/ctrl+h=resize_split:right,10\n").toUtf8());
+        QStringLiteral("keybind = clear\n"
+                       "keybind = unconsumed:performable:ctrl+x>key_y=new_tab\n"
+                       "keybind = chain=goto_split:left\n"
+                       "keybind = catch_all=ignore\n"
+                       "keybind = all:ctrl+g=new_tab\n"
+                       "keybind = global:ctrl+j=new_tab\n"
+                       "keybind = ctrl+m=activate_key_table:modeé\n"
+                       "keybind = ctrl+s=set_surface_title:🌐 surface:detail\n"
+                       "keybind = ctrl+t=set_tab_title:👻 main:detail\n"
+                       "keybind = ctrl+v=close_tab:other\n"
+                       "keybind = ctrl+w=close_tab:right\n"
+                       "keybind = resize/ctrl+h=resize_split:left,10\n"
+                       "keybind = modeé/ctrl+h=resize_split:right,10\n")
+            .toUtf8());
 
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
         realOptions(helperPath))(fixture.candidates());
@@ -1519,28 +1671,31 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFinalizedStructuredKeybind
              QStringList({QStringLiteral("resize_split:right,10")}));
     QVERIFY(std::ranges::none_of(
         result->diagnostics, [](const GhosttyConfigDiagnostic &diagnostic) {
-            return diagnostic.message.contains(QStringLiteral("close_tab:other"))
-                || diagnostic.message.contains(QStringLiteral("close_tab:right"));
+            return diagnostic.message.contains(
+                       QStringLiteral("close_tab:other"))
+                || diagnostic.message.contains(
+                    QStringLiteral("close_tab:right"));
         }));
 }
 
-void GhosttyConfigProcessLoaderTest::realHelperCanonicalizesTerminalControlActionPayloads()
+void GhosttyConfigProcessLoaderTest::
+    realHelperCanonicalizesTerminalControlActionPayloads()
 {
-    const QString helperPath = QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
-    if (helperPath.isEmpty()) QSKIP("The pinned Ghostty config helper is disabled");
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty())
+        QSKIP("The pinned Ghostty config helper is disabled");
 
     ConfigFixture fixture;
     ConfigFixture::writeFile(fixture.legacyPath, {});
-    QByteArray config = QByteArrayLiteral(
-        "keybind = clear\n"
-        "keybind = ctrl+a=text:\\x15\n"
-        "keybind = ctrl+b=text:");
+    QByteArray config = QByteArrayLiteral("keybind = clear\n"
+                                          "keybind = ctrl+a=text:\\x15\n"
+                                          "keybind = ctrl+b=text:");
     config.append(QByteArray::fromHex("f09f91bb"));
     config.append(QByteArrayLiteral("\nkeybind = ctrl+c=csi:"));
     config.append(QByteArray::fromHex("c3a9"));
-    config.append(QByteArrayLiteral(
-        "\nkeybind = ctrl+d=esc:\\x7f\n"
-        "keybind = ctrl+e=text:\\q\n"));
+    config.append(QByteArrayLiteral("\nkeybind = ctrl+d=esc:\\x7f\n"
+                                    "keybind = ctrl+e=text:\\q\n"));
     ConfigFixture::writeFile(fixture.preferredPath, config);
 
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
@@ -1554,22 +1709,18 @@ void GhosttyConfigProcessLoaderTest::realHelperCanonicalizesTerminalControlActio
             [codepoint](const GhosttyKeybindDefinition &definition) {
                 return definition.sequence.size() == 1
                     && definition.sequence.constFirst().kind
-                           == GhosttyKeybindKeyKind::Unicode
+                    == GhosttyKeybindKeyKind::Unicode
                     && definition.sequence.constFirst().unicodeCodepoint
-                           == codepoint;
+                    == codepoint;
             });
         return found == keybinds.root.cend() ? QStringList{} : found->actions;
     };
-    QCOMPARE(actionFor('a'),
-             QStringList({QStringLiteral(R"(text:\\x15)")}));
+    QCOMPARE(actionFor('a'), QStringList({QStringLiteral(R"(text:\\x15)")}));
     QCOMPARE(actionFor('b'),
              QStringList({QStringLiteral(R"(text:\xf0\x9f\x91\xbb)")}));
-    QCOMPARE(actionFor('c'),
-             QStringList({QStringLiteral(R"(csi:\xc3\xa9)")}));
-    QCOMPARE(actionFor('d'),
-             QStringList({QStringLiteral(R"(esc:\\x7f)")}));
-    QCOMPARE(actionFor('e'),
-             QStringList({QStringLiteral(R"(text:\\q)")}));
+    QCOMPARE(actionFor('c'), QStringList({QStringLiteral(R"(csi:\xc3\xa9)")}));
+    QCOMPARE(actionFor('d'), QStringList({QStringLiteral(R"(esc:\\x7f)")}));
+    QCOMPARE(actionFor('e'), QStringList({QStringLiteral(R"(text:\\q)")}));
 }
 
 QTEST_GUILESS_MAIN(GhosttyConfigProcessLoaderTest)

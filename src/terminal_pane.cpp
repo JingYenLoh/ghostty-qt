@@ -1128,7 +1128,7 @@ TerminalPane::TerminalPane(
                 update();
             });
     connect(controller_, &TerminalController::sessionExited, this,
-            [this](int exitCode, int signalNumber, bool hold) {
+            [this](int exitCode, int signalNumber, bool hold, bool waitForKey) {
                 const QPointer<TerminalPane> guard(this);
                 // Advance before any destruction-capable UI notification.
                 // Results already queued to this pane, or retained by a
@@ -1152,15 +1152,21 @@ TerminalPane::TerminalPane(
                     clearSearchDecorationsLocked();
                 }
                 bool hasError = false;
+                waitingAfterCommand_ = waitForKey;
                 {
                     QMutexLocker locker(&renderMutex_);
                     hasError = !statusMessage_.isEmpty();
                     if (statusMessage_.isEmpty()) {
-                        statusMessage_ = signalNumber > 0
+                        const QString outcome = signalNumber > 0
                             ? QStringLiteral("Process ended after signal %1")
                                   .arg(signalNumber)
                             : QStringLiteral("Process exited with status %1")
                                   .arg(exitCode);
+                        statusMessage_ = waitForKey
+                            ? outcome
+                                + QStringLiteral(
+                                    ". Press any key to close the terminal.")
+                            : outcome;
                     }
                 }
                 failStaleTerminalActionCompletions();
@@ -1168,10 +1174,16 @@ TerminalPane::TerminalPane(
                 update();
                 Q_EMIT sessionEnded(this, exitCode, signalNumber);
                 if (guard == nullptr) return;
-                if (!hold && !hasError) {
+                if (!hold && !waitForKey && !hasError) {
                     QTimer::singleShot(0, this,
                                        [this] { Q_EMIT requestClose(); });
                 }
+            });
+    connect(controller_, &TerminalController::waitAfterCommandDismissed, this,
+            [this] {
+                if (!waitingAfterCommand_) return;
+                waitingAfterCommand_ = false;
+                Q_EMIT requestClose();
             });
 
     syncPointerCursor();
@@ -1379,10 +1391,7 @@ QString TerminalPane::title() const
         effective.has_value()) {
         return *effective;
     }
-    if (!controller_->launchProgram().isEmpty()) {
-        return QFileInfo(controller_->launchProgram().constFirst()).fileName();
-    }
-    return QStringLiteral("Terminal");
+    return controller_->launchTitle();
 }
 
 QRectF TerminalPane::resizeOverlayRect() const
@@ -1671,6 +1680,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
+    updated.waitAfterCommand = options.waitAfterCommand;
     updated.resizeOverlay = options.resizeOverlay;
     updated.keybindSource = options.keybindSource;
 

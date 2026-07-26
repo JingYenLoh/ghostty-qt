@@ -379,6 +379,7 @@ class TerminalPaneTest : public QObject {
 
 private Q_SLOTS:
     void presentsScrollbarFromRetainedMetadata();
+    void routesWaitAfterCommandDismissalSeparatelyFromHold();
     void movesScrollbarWithClampedAbsoluteRows();
     void reloadsScrollbarPolicyAndHandlesHugeCounts();
     void latchesClearsAndReloadsBellFeedback();
@@ -466,6 +467,63 @@ private Q_SLOTS:
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
+
+void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+
+    {
+        TerminalPane pane(options, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Deferred);
+        auto *controller = pane.findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy closed(&pane, &TerminalPane::requestClose);
+        QSignalSpy ended(&pane, &TerminalPane::sessionEnded);
+
+        Q_EMIT controller->sessionExited(0, 0, false, true);
+        QCOMPARE(ended.count(), 1);
+        QCoreApplication::processEvents();
+        QCOMPARE(closed.count(), 0);
+
+        // The worker, not the pane, decides whether a key encoded bytes.
+        // Until it publishes that one-shot result the waited pane stays open.
+        QKeyEvent modifier(QEvent::KeyPress, Qt::Key_Control,
+                           Qt::ControlModifier);
+        QCoreApplication::sendEvent(&pane, &modifier);
+        QCoreApplication::processEvents();
+        QCOMPARE(closed.count(), 0);
+
+        Q_EMIT controller->waitAfterCommandDismissed();
+        QCOMPARE(closed.count(), 1);
+        Q_EMIT controller->waitAfterCommandDismissed();
+        QCOMPARE(closed.count(), 1);
+    }
+
+    {
+        TerminalPane pane(options, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Deferred);
+        auto *controller = pane.findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy closed(&pane, &TerminalPane::requestClose);
+
+        Q_EMIT controller->sessionExited(0, 0, true, false);
+        Q_EMIT controller->waitAfterCommandDismissed();
+        QCoreApplication::processEvents();
+        QCOMPARE(closed.count(), 0);
+    }
+
+    {
+        TerminalPane pane(options, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Deferred);
+        auto *controller = pane.findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy closed(&pane, &TerminalPane::requestClose);
+
+        Q_EMIT controller->sessionExited(0, 0, false, false);
+        QTRY_COMPARE_WITH_TIMEOUT(closed.count(), 1, 1000);
+    }
+}
 
 void TerminalPaneTest::presentsScrollbarFromRetainedMetadata()
 {
@@ -2214,6 +2272,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.mouseShiftCapture = MouseShiftCapture::Never;
     reloaded.linkUrl = false;
+    reloaded.waitAfterCommand = true;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
     const LaunchOptions splitOptions = pane.splitLaunchOptions(reloaded);
@@ -2232,6 +2291,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.mouseShiftCapture, reloaded.mouseShiftCapture);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
+    QCOMPARE(splitOptions.waitAfterCommand, reloaded.waitAfterCommand);
     QCOMPARE(splitOptions.splitInheritWorkingDirectory,
              reloaded.splitInheritWorkingDirectory);
     QCOMPARE(runtimeOptions.count(), 1);
@@ -2710,6 +2770,17 @@ void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()
     QVERIFY(!pane.executeConfiguredAction(copyAction));
     QCOMPARE(clipboard->text(QClipboard::Clipboard), standardSentinel);
     verifyPrimaryUnchanged();
+
+    // Structured direct commands require an argv entry but deliberately retain
+    // an empty argv[0] for byte-exact transport and safe launch failure. Keep
+    // the presentation fallback useful rather than exposing a blank tab.
+    LaunchOptions emptyDirectOptions = options;
+    emptyDirectOptions.program.clear();
+    emptyDirectOptions.ordinaryCommand =
+        TerminalCommand::direct({QByteArray{}});
+    TerminalPane emptyDirectPane(emptyDirectOptions, nullptr, std::nullopt,
+                                 TerminalSessionStartMode::Deferred);
+    QCOMPARE(emptyDirectPane.title(), QStringLiteral("Terminal"));
 
     // An explicit empty base remains a title-layer value, but upstream treats
     // it as a copy no-op just like absence.
@@ -7080,7 +7151,7 @@ void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
 
     // A held terminal remains alive after the child exits, allowing us to
     // observe whether stale selection-derived UI work is resurrected.
-    Q_EMIT controller->sessionExited(0, 0, true);
+    Q_EMIT controller->sessionExited(0, 0, true, false);
     QVERIFY(!pane.searchUiActive());
 
     if (!resultQueuedBeforeExit) {

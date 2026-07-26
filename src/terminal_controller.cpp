@@ -3,6 +3,7 @@
 #include "session_worker.h"
 #include "terminal_clipboard.h"
 
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QPointer>
@@ -21,6 +22,12 @@ bool keyMayStartProcess(const TerminalKeyInput &input)
     return input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'));
+}
+
+bool hasExplicitCommand(const TerminalSessionLaunchOptions &options)
+{
+    return !options.program.isEmpty()
+        || (options.command.has_value() && !options.command->defaultShell);
 }
 
 TerminalActionResult failedTerminalActionResult(quint64 requestId)
@@ -155,7 +162,7 @@ TerminalController::TerminalController(
     , currentDirectory_(options.inheritWorkingDirectory
                             ? QString{}
                             : options.workingDirectory)
-    , explicitProgram_(!options.program.isEmpty())
+    , explicitProgram_(hasExplicitCommand(options))
 {
     qRegisterMetaType<TerminalUpdate>();
     qRegisterMetaType<TerminalHyperlinkState>();
@@ -181,7 +188,8 @@ TerminalController::TerminalController(
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
         launchOptions_.hold = false;
-        explicitProgram_ = false;
+        explicitProgram_ = launchOptions_.command.has_value()
+            && !launchOptions_.command->defaultShell;
         connect(initialSessionCoordinator_.get(),
                 &InitialSessionCoordinator::requestsChanged, this,
                 &TerminalController::tryStartSession, Qt::QueuedConnection);
@@ -329,9 +337,12 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             &TerminalController::errorOccurred, Qt::QueuedConnection);
     connect(worker, &SessionWorker::bell, this, &TerminalController::bell,
             Qt::QueuedConnection);
+    connect(worker, &SessionWorker::waitAfterCommandDismissed, this,
+            &TerminalController::waitAfterCommandDismissed,
+            Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::sessionExited, this,
-        [this](int exitCode, int signalNumber, bool hold) {
+        [this](int exitCode, int signalNumber, bool hold, bool waitForKey) {
             if (closing_) return;
             // Invalidate queued search progress and selection-derived
             // queries before observers clear their UI. The held terminal
@@ -352,7 +363,7 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 Q_EMIT runningChanged(false);
                 if (guard == nullptr) return;
             }
-            Q_EMIT sessionExited(exitCode, signalNumber, hold);
+            Q_EMIT sessionExited(exitCode, signalNumber, hold, waitForKey);
         },
         Qt::QueuedConnection);
 }
@@ -437,7 +448,7 @@ void TerminalController::tryStartSession()
         return;
     }
 
-    bool programChanged = false;
+    bool launchTitleChanged = false;
     if (initialSessionCoordinator_ != nullptr) {
         const InitialSessionCoordinator::RequestResult result =
             initialSessionCoordinator_->request(initialSessionTicket_);
@@ -458,7 +469,7 @@ void TerminalController::tryStartSession()
                 failPendingTerminalActions();
                 return;
             }
-            programChanged = applyInitialSessionPayload(*result.payload);
+            launchTitleChanged = applyInitialSessionPayload(*result.payload);
             break;
         case InitialSessionCoordinator::RequestStatus::Consumed:
             initialSessionTicket_.reset();
@@ -487,7 +498,7 @@ void TerminalController::tryStartSession()
     createWorkerRuntime();
 
     QPointer<TerminalController> guard(this);
-    if (programChanged) {
+    if (launchTitleChanged) {
         Q_EMIT launchProgramChanged();
         if (guard.isNull()) return;
     }
@@ -503,11 +514,43 @@ void TerminalController::tryStartSession()
 bool TerminalController::applyInitialSessionPayload(
     const InitialSessionCoordinator::Payload &payload)
 {
-    const bool programChanged = launchOptions_.program != payload.program;
+    const QStringList previousProgram = launchOptions_.program;
+    const std::optional<TerminalCommand> previousCommand =
+        launchOptions_.command;
     launchOptions_.program = payload.program;
+    if (payload.program.isEmpty()) {
+        // An empty selected command is meaningful: a reload before the first
+        // lease was granted may have reset both command settings. A positional
+        // frontend argv, however, merely overrides the first execution and
+        // leaves this pane's ordinary command snapshot intact.
+        launchOptions_.command = payload.command;
+    }
     launchOptions_.hold = payload.hold;
-    explicitProgram_ = !launchOptions_.program.isEmpty();
-    return programChanged;
+    explicitProgram_ = hasExplicitCommand(launchOptions_);
+    return launchOptions_.program != previousProgram
+        || launchOptions_.command != previousCommand;
+}
+
+QString TerminalController::launchTitle() const
+{
+    if (!launchOptions_.program.isEmpty()) {
+        return QFileInfo(launchOptions_.program.constFirst()).fileName();
+    }
+    if (!launchOptions_.command.has_value()) {
+        return QStringLiteral("Terminal");
+    }
+
+    const TerminalCommand &command = *launchOptions_.command;
+    switch (command.kind) {
+    case TerminalCommandKind::Shell: return QStringLiteral("Terminal");
+    case TerminalCommandKind::Direct:
+        if (command.directArguments.isEmpty()
+            || command.directArguments.constFirst().isEmpty()) {
+            return QStringLiteral("Terminal");
+        }
+        return QString::fromLocal8Bit(command.directArguments.constFirst());
+    }
+    return QStringLiteral("Terminal");
 }
 
 void TerminalController::cancelInitialSessionRequest()

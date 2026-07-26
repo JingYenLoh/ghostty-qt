@@ -65,9 +65,10 @@ fn configJson() !String {
     {
         var config = try Config.load(state.alloc);
         defer config.deinit();
+        const command_uses_default_shell = commandUsesDefaultShell(&config);
 
         try json.objectField("values");
-        try writeValues(&json, &config);
+        try writeValues(&json, &config, command_uses_default_shell);
 
         try json.objectField("keybindings");
         try writeKeybinds(&json, &config.keybind);
@@ -88,13 +89,54 @@ fn configJson() !String {
     return .fromSlice(try output.toOwnedSlice());
 }
 
-fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
+/// Finalization replaces a missing ordinary command with the resolved login
+/// shell. Replay steps retain every effective config assignment, including the
+/// selected theme, so inspect them after finalization to preserve whether that
+/// shell was a default or an explicit command. Empty values reset the command;
+/// later active assignments retain the same precedence as Config.load.
+fn commandUsesDefaultShell(config: *const Config) bool {
+    var configured = false;
+    steps: for (config._replay_steps.items) |step| {
+        const arg: ?[]const u8 = switch (step) {
+            .arg => |value| value,
+            .conditional_arg => |value| active: {
+                for (value.conditions) |condition| {
+                    if (!config._conditional_state.match(condition)) {
+                        break :active null;
+                    }
+                }
+                break :active value.arg;
+            },
+            .@"-e" => break :steps,
+            .expand, .diagnostic => null,
+        };
+        const value = arg orelse continue;
+        const prefix = "--command";
+        if (!std.mem.startsWith(u8, value, prefix)) continue;
+        const suffix = value[prefix.len..];
+        if (suffix.len == 0 or suffix[0] != '=') continue;
+        configured = suffix.len > 1;
+    }
+    return !configured;
+}
+
+fn writeValues(
+    json: *std.json.Stringify,
+    config: *const Config,
+    command_uses_default_shell: bool,
+) !void {
     try json.beginObject();
 
     try json.objectField("term");
     try json.beginArray();
     for (config.term) |byte| try json.write(byte);
     try json.endArray();
+    try json.objectField("command");
+    try writeOptionalCommand(json, config.command, command_uses_default_shell);
+    try json.objectField("initial-command");
+    try writeOptionalCommand(json, config.@"initial-command", false);
+    try json.objectField("wait-after-command");
+    try json.write(config.@"wait-after-command");
     try json.objectField("env");
     try writeEnvironment(json, &config.env);
     try json.objectField("linux-cgroup");
@@ -304,6 +346,37 @@ fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {
     } else {
         try json.write(null);
     }
+}
+
+fn writeOptionalCommand(
+    json: *std.json.Stringify,
+    value: ?Config.Command,
+    default_shell: bool,
+) !void {
+    const command = value orelse {
+        try json.write(null);
+        return;
+    };
+
+    try json.beginObject();
+    try json.objectField("kind");
+    switch (command) {
+        .shell => |shell| {
+            try json.write("shell");
+            try json.objectField("value");
+            try writeByteArray(json, shell);
+        },
+        .direct => |arguments| {
+            try json.write("direct");
+            try json.objectField("argv");
+            try json.beginArray();
+            for (arguments) |argument| try writeByteArray(json, argument);
+            try json.endArray();
+        },
+    }
+    try json.objectField("default-shell");
+    try json.write(default_shell and command == .shell);
+    try json.endObject();
 }
 
 fn writeEnvironment(json: *std.json.Stringify, value: anytype) !void {

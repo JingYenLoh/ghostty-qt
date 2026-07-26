@@ -225,6 +225,9 @@ class SessionWorkerTest : public QObject {
 
 private Q_SLOTS:
     void runsCommandThroughPty();
+    void runsTaggedShellAndDirectCommands();
+    void waitsForEncodedKeyUsingLiveExitPolicy();
+    void preservesStagedSequenceWhileWaitingAfterCommand();
     void writesPersistentTerminalFiles();
     void skipsUnavailableTerminalFiles();
     void reportsTerminalInitializationSeparatelyFromChildSpawn();
@@ -278,6 +281,183 @@ private Q_SLOTS:
     void explicitProgramIsActiveForItsLifetime();
     void interactiveShellTracksForegroundJobs();
 };
+
+void SessionWorkerTest::runsTaggedShellAndDirectCommands()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    {
+        SessionWorker worker;
+        QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.command = TerminalCommand::shell(
+            QByteArrayLiteral("printf 'tagged-shell:%s\\n' \"$((20 + 22))\""));
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(updates, QStringLiteral("tagged-shell:42")), 5000);
+        QVERIFY2(errors.isEmpty(),
+                 errors.isEmpty()
+                     ? ""
+                     : qPrintable(errors.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+        const QByteArray script =
+            QByteArrayLiteral("printf 'count=%s first=<%s> second=<%s> raw=' "
+                              "\"$#\" \"$1\" \"$2\"; "
+                              "printf '%s' \"$3\" | /usr/bin/od -An -tx1 "
+                              "| /usr/bin/tr -d ' \\n'; printf '\\n'");
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.command = TerminalCommand::direct({
+            QByteArrayLiteral("sh"),
+            QByteArrayLiteral("-c"),
+            script,
+            QByteArrayLiteral("ghostty-qt-direct"),
+            QByteArrayLiteral("two words"),
+            QByteArray{},
+            QByteArray::fromHex("80ff"),
+        });
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(
+                updates,
+                QStringLiteral("count=3 first=<two words> second=<> raw=80ff")),
+            5000);
+        QVERIFY2(errors.isEmpty(),
+                 errors.isEmpty()
+                     ? ""
+                     : qPrintable(errors.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        QByteArray invalid = QByteArrayLiteral("bad");
+        invalid.append('\0');
+        invalid.append("argument");
+        options.command = TerminalCommand::direct(
+            {QByteArrayLiteral("/bin/printf"), std::move(invalid)});
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+        QCOMPARE(exited.count(), 1);
+        QCOMPARE(exited.constFirst().at(0).toInt(), 127);
+        QVERIFY(errors.constFirst().constFirst().toString().contains(
+            QStringLiteral("NUL byte")));
+        worker.shutdown();
+    }
+}
+
+void SessionWorkerTest::waitsForEncodedKeyUsingLiveExitPolicy()
+{
+    SessionWorker worker;
+    QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+    QSignalSpy dismissed(&worker, &SessionWorker::waitAfterCommandDismissed);
+    QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        // Leave Kitty report-all-keys enabled. Ghostty normalizes this state
+        // on child exit so a modifier-only press still encodes no bytes.
+        QStringLiteral("printf '\\033[=15u'; sleep 0.2"),
+    };
+    QVERIFY(worker.initialize(options));
+
+    TerminalSessionRuntimeOptions reloaded = options.runtime;
+    reloaded.waitAfterCommand = true;
+    worker.applyRuntimeOptions(reloaded);
+    QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+    QVERIFY(!exited.constFirst().at(2).toBool());
+    QVERIFY(exited.constFirst().at(3).toBool());
+
+    TerminalKeyInput modifier;
+    modifier.key = Qt::Key_Control;
+    modifier.modifiers = Qt::ControlModifier;
+    modifier.pressed = true;
+    worker.sendKey(modifier);
+    QCOMPARE(dismissed.count(), 0);
+
+    TerminalKeyInput text;
+    text.key = Qt::Key_A;
+    text.text = QStringLiteral("a");
+    text.pressed = true;
+    worker.stageSequenceKey(1, text);
+    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    QCOMPARE(dismissed.count(), 0);
+
+    worker.stageSequenceKey(2, text);
+    worker.resolveSequence(2, TerminalSequenceResolution::Flush, false, {});
+    QCOMPARE(dismissed.count(), 1);
+    worker.sendKey(text);
+    QCOMPARE(dismissed.count(), 1);
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::preservesStagedSequenceWhileWaitingAfterCommand()
+{
+    SessionWorker worker;
+    QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+    QSignalSpy dismissed(&worker, &SessionWorker::waitAfterCommandDismissed);
+    QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 0.2"),
+    };
+    options.runtime.waitAfterCommand = true;
+    QVERIFY(worker.initialize(options));
+
+    TerminalKeyInput leader;
+    leader.key = Qt::Key_A;
+    leader.text = QStringLiteral("a");
+    leader.pressed = true;
+    worker.stageSequenceKey(41, leader);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+    QVERIFY(exited.constFirst().at(3).toBool());
+
+    TerminalKeyInput continuation;
+    continuation.key = Qt::Key_B;
+    continuation.text = QStringLiteral("b");
+    continuation.pressed = true;
+    worker.resolveSequence(41, TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, continuation);
+    QCOMPARE(dismissed.count(), 1);
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
 
 void SessionWorkerTest::searchesIncrementallyAndNavigates()
 {

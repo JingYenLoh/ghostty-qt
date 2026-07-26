@@ -438,6 +438,9 @@ private:
     std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
+    // Set only for Ghostty wait-after-command exits. CLI --hold remains an
+    // indefinite frontend hold and therefore never enters key dismissal.
+    bool waitingAfterCommand_ = false;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;

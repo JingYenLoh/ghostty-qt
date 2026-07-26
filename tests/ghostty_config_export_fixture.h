@@ -19,6 +19,25 @@ inline QJsonArray bytes(QByteArrayView value)
     return result;
 }
 
+inline QJsonObject shellCommand(QByteArrayView value, bool defaultShell = false)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("shell")},
+        {QStringLiteral("value"), bytes(value)},
+        {QStringLiteral("default-shell"), defaultShell},
+    };
+}
+
+inline QJsonObject directCommand(QJsonArray arguments,
+                                 bool defaultShell = false)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("direct")},
+        {QStringLiteral("argv"), std::move(arguments)},
+        {QStringLiteral("default-shell"), defaultShell},
+    };
+}
+
 inline QJsonObject environmentEntry(QByteArrayView key, QByteArrayView value)
 {
     return {
@@ -27,10 +46,8 @@ inline QJsonObject environmentEntry(QByteArrayView key, QByteArrayView value)
     };
 }
 
-inline QJsonObject flags(bool consumed = true,
-                         bool all = false,
-                         bool global = false,
-                         bool performable = false)
+inline QJsonObject flags(bool consumed = true, bool all = false,
+                         bool global = false, bool performable = false)
 {
     return {
         {QStringLiteral("consumed"), consumed},
@@ -66,8 +83,7 @@ inline QJsonObject catchAllTrigger(int modifiers = 0)
     };
 }
 
-inline QJsonObject binding(QJsonArray sequence,
-                           const QStringList &actions,
+inline QJsonObject binding(QJsonArray sequence, const QStringList &actions,
                            QJsonObject bindingFlags = flags())
 {
     QJsonArray serializedActions;
@@ -82,8 +98,7 @@ inline QJsonObject binding(QJsonArray sequence,
 inline QJsonObject keybindings()
 {
     const QJsonObject rootBinding = binding(
-        {unicodeTrigger('t', 3)},
-        {QStringLiteral("toggle_command_palette")});
+        {unicodeTrigger('t', 3)}, {QStringLiteral("toggle_command_palette")});
     return {
         {QStringLiteral("root"), QJsonArray{rootBinding}},
         {QStringLiteral("tables"), QJsonArray{}},
@@ -174,12 +189,19 @@ inline QJsonObject values()
 {
     QJsonArray palette;
     for (int index = 0; index < 256; ++index) {
-        palette.append(QStringLiteral("#%1%1%1")
-                           .arg(index, 2, 16, QLatin1Char('0')));
+        palette.append(
+            QStringLiteral("#%1%1%1").arg(index, 2, 16, QLatin1Char('0')));
     }
 
     return {
         {QStringLiteral("term"), bytes(QByteArrayLiteral("ghostty-qt-test"))},
+        {QStringLiteral("command"),
+         shellCommand(QByteArrayLiteral("/bin/fixture-shell"), true)},
+        {QStringLiteral("initial-command"),
+         directCommand({bytes(QByteArrayLiteral("/bin/printf")),
+                        bytes(QByteArray::fromHex("80ff")),
+                        bytes(QByteArrayView{})})},
+        {QStringLiteral("wait-after-command"), true},
         {QStringLiteral("env"),
          QJsonArray{
              environmentEntry(QByteArrayLiteral("GHOSTTY_QT_TEST"),

@@ -1033,6 +1033,7 @@ public:
     void reset()
     {
         ghostty_terminal_reset(terminal_);
+        normalizeKeyboardAfterCommandExit_ = false;
 
         // A full terminal reset invalidates selection grid references and
         // resets the modes mirrored by the input encoders. Keep every piece
@@ -1053,6 +1054,16 @@ public:
         // reset discards screen and scrollback contents, so the next update
         // must replace the complete frame held by TerminalPane.
         hasPublishedFrame_ = false;
+    }
+
+    void normalizeKeyboardAfterCommandExit()
+    {
+        // KAM is terminal-owned and can be reset through the public API.
+        // Kitty's active flag stack is read-only in libghostty-vt's current C
+        // surface, so force the equivalent disabled value on the encoder after
+        // each subsequent terminal-state synchronization.
+        (void)ghostty_terminal_mode_set(terminal_, GHOSTTY_MODE_KAM, false);
+        normalizeKeyboardAfterCommandExit_ = true;
     }
 
     void synchronizeInputModes()
@@ -1083,6 +1094,11 @@ public:
     GhosttyVtAdapter::EncodedKey encodeKey(const TerminalKeyInput &input)
     {
         ghostty_key_encoder_setopt_from_terminal(keyEncoder_, terminal_);
+        if (normalizeKeyboardAfterCommandExit_) {
+            const GhosttyKittyKeyFlags flags = GHOSTTY_KITTY_KEY_DISABLED;
+            ghostty_key_encoder_setopt(
+                keyEncoder_, GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS, &flags);
+        }
         ghostty_key_event_set_action(
             keyEvent_,
             input.pressed ? (input.autoRepeat ? GHOSTTY_KEY_ACTION_REPEAT
@@ -3647,6 +3663,7 @@ private:
     bool bellPending_ = false;
     uint32_t mouseModeFingerprint_ = 0;
     bool mouseEncoderConfigured_ = false;
+    bool normalizeKeyboardAfterCommandExit_ = false;
 };
 
 GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(std::unique_ptr<Impl> impl)
@@ -3747,6 +3764,11 @@ void GhosttyVtAdapter::reset()
 void GhosttyVtAdapter::synchronizeInputModes()
 {
     impl_->synchronizeInputModes();
+}
+
+void GhosttyVtAdapter::normalizeKeyboardAfterCommandExit()
+{
+    impl_->normalizeKeyboardAfterCommandExit();
 }
 
 GhosttyVtAdapter::EncodedKey

@@ -537,6 +537,7 @@ add_library(ghostty-qt-config-export STATIC
     src/ghostty_config_export.h
     src/ghostty_config_values.h
     src/ghostty_keybind_config.h
+    src/terminal_command.h
 )
 target_include_directories(ghostty-qt-config-export PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -628,6 +629,7 @@ qt_add_executable(ghostty-qt
     src/terminal_clipboard.h
     src/terminal_cell_metrics.cpp
     src/terminal_cell_metrics.h
+    src/terminal_command.h
     src/terminal_geometry.cpp
     src/terminal_geometry.h
     src/terminal_osc8_index.h

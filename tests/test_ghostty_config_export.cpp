@@ -22,14 +22,13 @@ namespace {
 
 using namespace GhosttyConfigExportFixture;
 
-template<typename Value>
+template <typename Value>
 QString errorMessage(const std::expected<Value, QString> &result)
 {
     return result ? QString{} : result.error();
 }
 
-QJsonObject withValue(QJsonObject root,
-                      const QString &name,
+QJsonObject withValue(QJsonObject root, const QString &name,
                       const QJsonValue &value)
 {
     QJsonObject configValues = root.value(QStringLiteral("values")).toObject();
@@ -70,6 +69,23 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const GhosttyConfigValues &values = parsed->values;
 
     QCOMPARE(values.term, QByteArrayLiteral("ghostty-qt-test"));
+    QVERIFY(values.ordinaryCommand.has_value());
+    QCOMPARE(values.ordinaryCommand->kind, TerminalCommandKind::Shell);
+    QCOMPARE(values.ordinaryCommand->shellCommand,
+             QByteArrayLiteral("/bin/fixture-shell"));
+    QVERIFY(values.ordinaryCommand->directArguments.isEmpty());
+    QVERIFY(values.ordinaryCommand->defaultShell);
+    QVERIFY(values.initialCommand.has_value());
+    QCOMPARE(values.initialCommand->kind, TerminalCommandKind::Direct);
+    QCOMPARE(values.initialCommand->directArguments.size(), qsizetype{3});
+    QCOMPARE(values.initialCommand->directArguments.at(0),
+             QByteArrayLiteral("/bin/printf"));
+    QCOMPARE(values.initialCommand->directArguments.at(1),
+             QByteArray::fromHex("80ff"));
+    QVERIFY(values.initialCommand->directArguments.at(2).isEmpty());
+    QVERIFY(values.initialCommand->shellCommand.isEmpty());
+    QVERIFY(!values.initialCommand->defaultShell);
+    QVERIFY(values.waitAfterCommand);
     QCOMPARE(values.environment.size(), qsizetype{3});
     QCOMPARE(values.environment.at(0).key,
              QByteArrayLiteral("GHOSTTY_QT_TEST"));
@@ -89,16 +105,15 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
     const TerminalTypography &typography = values.typography;
-    QCOMPARE(typography.face(TerminalFontRole::Regular).families,
-             QStringList({QStringLiteral("Mono One"),
-                          QStringLiteral("Emoji")}));
+    QCOMPARE(
+        typography.face(TerminalFontRole::Regular).families,
+        QStringList({QStringLiteral("Mono One"), QStringLiteral("Emoji")}));
     QCOMPARE(typography.face(TerminalFontRole::Bold).families,
              QStringList({QStringLiteral("Mono Bold"),
                           QStringLiteral("Bold Fallback")}));
     QCOMPARE(typography.face(TerminalFontRole::Italic).families,
              QStringList({QStringLiteral("Mono Italic")}));
-    QVERIFY(
-        typography.face(TerminalFontRole::BoldItalic).families.isEmpty());
+    QVERIFY(typography.face(TerminalFontRole::BoldItalic).families.isEmpty());
     QCOMPARE(typography.pointSize, 13.5);
 
     QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
@@ -114,20 +129,16 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(boldItalicStyle != nullptr);
     QCOMPARE(boldItalicStyle->name, QStringLiteral("Extra Bold Italic"));
 
-    const auto absoluteModifier =
-        [&typography](TerminalMetric metric) {
-            const auto &value = typography.metricModifiers[metric];
-            return value
-                ? std::get_if<TerminalMetricModifiers::Absolute>(&*value)
-                : nullptr;
-        };
-    const auto percentageModifier =
-        [&typography](TerminalMetric metric) {
-            const auto &value = typography.metricModifiers[metric];
-            return value
-                ? std::get_if<TerminalMetricModifiers::Percentage>(&*value)
-                : nullptr;
-        };
+    const auto absoluteModifier = [&typography](TerminalMetric metric) {
+        const auto &value = typography.metricModifiers[metric];
+        return value ? std::get_if<TerminalMetricModifiers::Absolute>(&*value)
+                     : nullptr;
+    };
+    const auto percentageModifier = [&typography](TerminalMetric metric) {
+        const auto &value = typography.metricModifiers[metric];
+        return value ? std::get_if<TerminalMetricModifiers::Percentage>(&*value)
+                     : nullptr;
+    };
     QVERIFY(absoluteModifier(TerminalMetric::CellWidth) != nullptr);
     QCOMPARE(absoluteModifier(TerminalMetric::CellWidth)->pixels, qint32{2});
     QVERIFY(absoluteModifier(TerminalMetric::CellHeight) != nullptr);
@@ -136,34 +147,27 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(percentageModifier(TerminalMetric::FontBaseline)->multiplier,
              1.25);
     QVERIFY(percentageModifier(TerminalMetric::UnderlinePosition) != nullptr);
-    QCOMPARE(
-        percentageModifier(TerminalMetric::UnderlinePosition)->multiplier,
-        0.8);
-    QVERIFY(!typography
-                 .metricModifiers[TerminalMetric::UnderlineThickness]
+    QCOMPARE(percentageModifier(TerminalMetric::UnderlinePosition)->multiplier,
+             0.8);
+    QVERIFY(!typography.metricModifiers[TerminalMetric::UnderlineThickness]
                  .has_value());
-    QVERIFY(
-        absoluteModifier(TerminalMetric::StrikethroughPosition) != nullptr);
-    QCOMPARE(
-        absoluteModifier(TerminalMetric::StrikethroughPosition)->pixels,
-        qint32{4});
-    QVERIFY(
-        absoluteModifier(TerminalMetric::StrikethroughThickness) != nullptr);
-    QCOMPARE(
-        absoluteModifier(TerminalMetric::StrikethroughThickness)->pixels,
-        qint32{-2});
+    QVERIFY(absoluteModifier(TerminalMetric::StrikethroughPosition) != nullptr);
+    QCOMPARE(absoluteModifier(TerminalMetric::StrikethroughPosition)->pixels,
+             qint32{4});
+    QVERIFY(absoluteModifier(TerminalMetric::StrikethroughThickness)
+            != nullptr);
+    QCOMPARE(absoluteModifier(TerminalMetric::StrikethroughThickness)->pixels,
+             qint32{-2});
     QVERIFY(percentageModifier(TerminalMetric::OverlinePosition) != nullptr);
     QCOMPARE(percentageModifier(TerminalMetric::OverlinePosition)->multiplier,
              1.5);
-    QVERIFY(!typography
-                 .metricModifiers[TerminalMetric::OverlineThickness]
+    QVERIFY(!typography.metricModifiers[TerminalMetric::OverlineThickness]
                  .has_value());
     QVERIFY(percentageModifier(TerminalMetric::CursorThickness) != nullptr);
     QCOMPARE(percentageModifier(TerminalMetric::CursorThickness)->multiplier,
              0.5);
     QVERIFY(absoluteModifier(TerminalMetric::CursorHeight) != nullptr);
-    QCOMPARE(absoluteModifier(TerminalMetric::CursorHeight)->pixels,
-             qint32{6});
+    QCOMPARE(absoluteModifier(TerminalMetric::CursorHeight)->pixels, qint32{6});
     const std::vector expectedModifierOrder{
         TerminalMetric::CursorHeight,
         TerminalMetric::CellWidth,
@@ -249,12 +253,10 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.maximize);
     QCOMPARE(values.fullscreen, GhosttyFullscreenMode::NonNative);
     QCOMPARE(values.resizeOverlay.mode, ResizeOverlayMode::Always);
-    QCOMPARE(values.resizeOverlay.position,
-             ResizeOverlayPosition::BottomRight);
+    QCOMPARE(values.resizeOverlay.position, ResizeOverlayPosition::BottomRight);
     QCOMPARE(values.resizeOverlay.duration, std::chrono::milliseconds{1250});
 
-    QCOMPARE(values.scrollbackLimitBytes,
-             std::numeric_limits<quint64>::max());
+    QCOMPARE(values.scrollbackLimitBytes, std::numeric_limits<quint64>::max());
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
     QVERIFY(values.bellFeatures.system);
     QVERIFY(values.bellFeatures.audio);
@@ -313,23 +315,27 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
              QStringLiteral("cursor-text"),
              QStringLiteral("bold-color"),
          }) {
-        inverseNullability = withValue(std::move(inverseNullability),
-                                       name,
-                                       QJsonValue::Null);
+        inverseNullability =
+            withValue(std::move(inverseNullability), name, QJsonValue::Null);
     }
     inverseNullability = withValue(std::move(inverseNullability),
                                    QStringLiteral("selection-foreground"),
                                    QStringLiteral("cell-background"));
     inverseNullability = withValue(std::move(inverseNullability),
-                                   QStringLiteral("cursor-style-blink"),
-                                   false);
-    inverseNullability = withValue(
-        std::move(inverseNullability),
-        QStringLiteral("quit-after-last-window-closed-delay"),
-        0);
+                                   QStringLiteral("cursor-style-blink"), false);
+    inverseNullability =
+        withValue(std::move(inverseNullability),
+                  QStringLiteral("quit-after-last-window-closed-delay"), 0);
     inverseNullability =
         withValue(std::move(inverseNullability),
                   QStringLiteral("bell-audio-path"), QJsonValue::Null);
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("command"), QJsonValue::Null);
+    inverseNullability =
+        withValue(std::move(inverseNullability),
+                  QStringLiteral("initial-command"), QJsonValue::Null);
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("wait-after-command"), false);
 
     const auto inverse = parseGhosttyConfigExportJson(json(inverseNullability));
     QVERIFY2(inverse.has_value(), qPrintable(errorMessage(inverse)));
@@ -341,8 +347,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
         std::get_if<GhosttyCellRelativeColor>(
             &*inverse->values.appearance.selectionForeground);
     QVERIFY(inverseSelectionForeground != nullptr);
-    QCOMPARE(*inverseSelectionForeground,
-             GhosttyCellRelativeColor::Background);
+    QCOMPARE(*inverseSelectionForeground, GhosttyCellRelativeColor::Background);
     QVERIFY(!inverse->values.appearance.selectionBackground.has_value());
     QVERIFY(!inverse->values.appearance.cursorColor.has_value());
     QCOMPARE(inverse->values.appearance.cursorBlink,
@@ -352,16 +357,19 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(inverse->values.quitAfterLastWindowClosedDelay,
              std::optional(std::chrono::milliseconds::zero()));
     QVERIFY(!inverse->values.bellAudioPath.has_value());
+    QVERIFY(!inverse->values.ordinaryCommand.has_value());
+    QVERIFY(!inverse->values.initialCommand.has_value());
+    QVERIFY(!inverse->values.waitAfterCommand);
 }
 
 void GhosttyConfigExportTest::normalizesBoundaryValues()
 {
     QJsonObject lowValues = object();
-    lowValues = withValue(std::move(lowValues),
-                          QStringLiteral("working-directory"),
-                          QStringLiteral("inherit"));
-    lowValues = withValue(std::move(lowValues),
-                          QStringLiteral("cursor-opacity"), -2.0);
+    lowValues =
+        withValue(std::move(lowValues), QStringLiteral("working-directory"),
+                  QStringLiteral("inherit"));
+    lowValues =
+        withValue(std::move(lowValues), QStringLiteral("cursor-opacity"), -2.0);
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("resize-overlay-duration"), 0);
     lowValues = withValue(std::move(lowValues),
@@ -390,6 +398,26 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY(!low->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
     QVERIFY(low->values.environment.isEmpty());
+
+    QJsonObject emptyCommands = object();
+    emptyCommands =
+        withValue(std::move(emptyCommands), QStringLiteral("command"),
+                  shellCommand(QByteArrayView{}));
+    emptyCommands =
+        withValue(std::move(emptyCommands), QStringLiteral("initial-command"),
+                  directCommand({bytes(QByteArrayView{})}));
+    const auto emptyCommandValues =
+        parseGhosttyConfigExportJson(json(emptyCommands));
+    QVERIFY2(emptyCommandValues.has_value(),
+             qPrintable(errorMessage(emptyCommandValues)));
+    QVERIFY(emptyCommandValues->values.ordinaryCommand.has_value());
+    QVERIFY(emptyCommandValues->values.ordinaryCommand->shellCommand.isEmpty());
+    QVERIFY(emptyCommandValues->values.initialCommand.has_value());
+    QCOMPARE(emptyCommandValues->values.initialCommand->directArguments.size(),
+             qsizetype{1});
+    QVERIFY(
+        emptyCommandValues->values.initialCommand->directArguments.constFirst()
+            .isEmpty());
 
     QJsonObject emptyKeyValues = object();
     emptyKeyValues =
@@ -449,11 +477,10 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
 void GhosttyConfigExportTest::parsesEveryEnumSpelling()
 {
     const auto verifyMappings = [](QLatin1StringView field,
-                                   const auto &mappings,
-                                   auto projection) {
+                                   const auto &mappings, auto projection) {
         for (const auto &[spelling, expected] : mappings) {
-            const auto parsed = parseGhosttyConfigExportJson(json(withValue(
-                object(), field.toString(), spelling.toString())));
+            const auto parsed = parseGhosttyConfigExportJson(json(
+                withValue(object(), field.toString(), spelling.toString())));
             QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
             QCOMPARE(projection(parsed->values), expected);
         }
@@ -494,16 +521,13 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         std::to_array<std::pair<QLatin1StringView, GhosttyFullscreenMode>>({
             {QLatin1StringView("false"), GhosttyFullscreenMode::Disabled},
             {QLatin1StringView("true"), GhosttyFullscreenMode::Enabled},
-            {QLatin1StringView("non-native"),
-             GhosttyFullscreenMode::NonNative},
+            {QLatin1StringView("non-native"), GhosttyFullscreenMode::NonNative},
             {QLatin1StringView("non-native-visible-menu"),
              GhosttyFullscreenMode::NonNativeVisibleMenu},
             {QLatin1StringView("non-native-padded-notch"),
              GhosttyFullscreenMode::NonNativePaddedNotch},
         }),
-        [](const GhosttyConfigValues &values) {
-            return values.fullscreen;
-        });
+        [](const GhosttyConfigValues &values) { return values.fullscreen; });
     verifyMappings(
         QLatin1StringView("cursor-style"),
         std::to_array<std::pair<QLatin1StringView, TerminalCursorStyle>>({
@@ -520,8 +544,7 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         QLatin1StringView("confirm-close-surface"),
         std::to_array<std::pair<QLatin1StringView, ConfirmCloseMode>>({
             {QLatin1StringView("false"), ConfirmCloseMode::Never},
-            {QLatin1StringView("true"),
-             ConfirmCloseMode::RunningProcesses},
+            {QLatin1StringView("true"), ConfirmCloseMode::RunningProcesses},
             {QLatin1StringView("always"), ConfirmCloseMode::Always},
         }),
         [](const GhosttyConfigValues &values) {
@@ -529,10 +552,8 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         });
     verifyMappings(
         QLatin1StringView("copy-on-select"),
-        std::to_array<std::pair<QLatin1StringView,
-                                TerminalCopyOnSelectMode>>({
-            {QLatin1StringView("false"),
-             TerminalCopyOnSelectMode::Disabled},
+        std::to_array<std::pair<QLatin1StringView, TerminalCopyOnSelectMode>>({
+            {QLatin1StringView("false"), TerminalCopyOnSelectMode::Disabled},
             {QLatin1StringView("true"), TerminalCopyOnSelectMode::Primary},
             {QLatin1StringView("clipboard"),
              TerminalCopyOnSelectMode::PrimaryAndClipboard},
@@ -580,9 +601,7 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
             {QLatin1StringView("true"), LinkPreviewMode::Always},
             {QLatin1StringView("osc8"), LinkPreviewMode::Osc8},
         }),
-        [](const GhosttyConfigValues &values) {
-            return values.linkPreviews;
-        });
+        [](const GhosttyConfigValues &values) { return values.linkPreviews; });
     verifyMappings(
         QLatin1StringView("scrollbar"),
         std::to_array<std::pair<QLatin1StringView, ScrollbarPolicy>>({
@@ -595,20 +614,17 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         std::to_array<std::pair<QLatin1StringView, ResizeOverlayMode>>({
             {QLatin1StringView("always"), ResizeOverlayMode::Always},
             {QLatin1StringView("never"), ResizeOverlayMode::Never},
-            {QLatin1StringView("after-first"),
-             ResizeOverlayMode::AfterFirst},
+            {QLatin1StringView("after-first"), ResizeOverlayMode::AfterFirst},
         }),
         [](const GhosttyConfigValues &values) {
             return values.resizeOverlay.mode;
         });
     verifyMappings(
         QLatin1StringView("resize-overlay-position"),
-        std::to_array<std::pair<QLatin1StringView,
-                                ResizeOverlayPosition>>({
+        std::to_array<std::pair<QLatin1StringView, ResizeOverlayPosition>>({
             {QLatin1StringView("center"), ResizeOverlayPosition::Center},
             {QLatin1StringView("top-left"), ResizeOverlayPosition::TopLeft},
-            {QLatin1StringView("top-center"),
-             ResizeOverlayPosition::TopCenter},
+            {QLatin1StringView("top-center"), ResizeOverlayPosition::TopCenter},
             {QLatin1StringView("top-right"), ResizeOverlayPosition::TopRight},
             {QLatin1StringView("bottom-left"),
              ResizeOverlayPosition::BottomLeft},
@@ -655,22 +671,21 @@ void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
         });
 
     for (const auto &[field, role] : faces) {
-        auto parsed = parseGhosttyConfigExportJson(json(withValue(
-            object(), field.toString(), automaticFontStyle())));
+        auto parsed = parseGhosttyConfigExportJson(
+            json(withValue(object(), field.toString(), automaticFontStyle())));
         QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
         QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
             parsed->values.typography.face(role).style));
 
-        parsed = parseGhosttyConfigExportJson(json(withValue(
-            object(), field.toString(), disabledFontStyle())));
+        parsed = parseGhosttyConfigExportJson(
+            json(withValue(object(), field.toString(), disabledFontStyle())));
         QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
         QVERIFY(std::holds_alternative<TerminalFontStyles::Disabled>(
             parsed->values.typography.face(role).style));
 
-        parsed = parseGhosttyConfigExportJson(json(withValue(
-            object(),
-            field.toString(),
-            namedFontStyle(QStringLiteral("Named Style")))));
+        parsed = parseGhosttyConfigExportJson(
+            json(withValue(object(), field.toString(),
+                           namedFontStyle(QStringLiteral("Named Style")))));
         QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
         const auto *named = std::get_if<TerminalFontStyles::Named>(
             &parsed->values.typography.face(role).style);
@@ -679,8 +694,8 @@ void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
     }
 
     const auto parseCellWidth = [](const QJsonValue &value) {
-        QJsonObject root = withValue(
-            object(), QStringLiteral("adjust-cell-width"), value);
+        QJsonObject root =
+            withValue(object(), QStringLiteral("adjust-cell-width"), value);
         if (value.isNull()) {
             QJsonArray order = metricModifierOrder();
             for (qsizetype index = 0; index < order.size(); ++index) {
@@ -691,16 +706,15 @@ void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
                 }
             }
             root = withValue(std::move(root),
-                             QStringLiteral("metric-modifier-order"),
-                             order);
+                             QStringLiteral("metric-modifier-order"), order);
         }
         return parseGhosttyConfigExportJson(json(root));
     };
     auto parsed = parseCellWidth(QJsonValue::Null);
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
-    QVERIFY(!parsed->values.typography
-                 .metricModifiers[TerminalMetric::CellWidth]
-                 .has_value());
+    QVERIFY(
+        !parsed->values.typography.metricModifiers[TerminalMetric::CellWidth]
+             .has_value());
 
     for (const int pixels : {-17, 23}) {
         parsed = parseCellWidth(absoluteMetricModifier(pixels));
@@ -737,17 +751,15 @@ void GhosttyConfigExportTest::parsesStructuredBindingSets()
                       unicodeTrigger(128578, 4), catchAllTrigger()},
                      {QStringLiteral("new_tab"), QStringLiteral("goto_tab:2")},
                      flags(false, false, false, true)),
-             binding({unicodeTrigger('x')},
-                     {QStringLiteral("ignore")},
+             binding({unicodeTrigger('x')}, {QStringLiteral("ignore")},
                      flags(true, true)),
          }},
         {QStringLiteral("tables"),
          QJsonArray{QJsonObject{
              {QStringLiteral("name"), QStringLiteral("modeé")},
              {QStringLiteral("bindings"),
-              QJsonArray{binding(
-                  {unicodeTrigger('h', GhosttyKeybindCtrl)},
-                  {QStringLiteral("resize_split:left,10")})}},
+              QJsonArray{binding({unicodeTrigger('h', GhosttyKeybindCtrl)},
+                                 {QStringLiteral("resize_split:left,10")})}},
          }}},
     };
     exportObject.insert(QStringLiteral("keybindings"), current);
@@ -755,15 +767,16 @@ void GhosttyConfigExportTest::parsesStructuredBindingSets()
     const auto parsed = parseGhosttyConfigExportJson(json(exportObject));
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
     QCOMPARE(parsed->keybindings.root.size(), 2);
-    const GhosttyKeybindDefinition &root = parsed->keybindings.root.constFirst();
+    const GhosttyKeybindDefinition &root =
+        parsed->keybindings.root.constFirst();
     QCOMPARE(root.sequence.size(), 3);
     QCOMPARE(root.sequence.at(0).kind, GhosttyKeybindKeyKind::Physical);
     QCOMPARE(root.sequence.at(0).physicalName, QStringLiteral("key_a"));
     QCOMPARE(root.sequence.at(1).unicodeCodepoint, quint32(128578));
     QCOMPARE(root.sequence.at(2).kind, GhosttyKeybindKeyKind::CatchAll);
-    QCOMPARE(root.actions,
-             QStringList({QStringLiteral("new_tab"),
-                          QStringLiteral("goto_tab:2")}));
+    QCOMPARE(
+        root.actions,
+        QStringList({QStringLiteral("new_tab"), QStringLiteral("goto_tab:2")}));
     QVERIFY(!root.flags.consumed);
     QVERIFY(!root.flags.all);
     QVERIFY(root.flags.performable);
@@ -793,21 +806,24 @@ void GhosttyConfigExportTest::rejectsMalformedEnvelope()
     malformed.insert(QStringLiteral("version"), 2);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
-    QCOMPARE(parsed.error(), QStringLiteral(
-        "Unsupported Ghostty structured config JSON schema version"));
+    QCOMPARE(parsed.error(),
+             QStringLiteral(
+                 "Unsupported Ghostty structured config JSON schema version"));
 
     malformed = object();
     malformed.remove(QStringLiteral("values"));
     malformed.insert(QStringLiteral("application"), QJsonObject{});
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
-    QVERIFY(parsed.error().contains(QStringLiteral("unexpected field 'application'")));
+    QVERIFY(parsed.error().contains(
+        QStringLiteral("unexpected field 'application'")));
 
     malformed = object();
     malformed.insert(QStringLiteral("future"), true);
     parsed = parseGhosttyConfigExportJson(json(malformed));
     QVERIFY(!parsed);
-    QVERIFY(parsed.error().contains(QStringLiteral("unexpected field 'future'")));
+    QVERIFY(
+        parsed.error().contains(QStringLiteral("unexpected field 'future'")));
 }
 
 void GhosttyConfigExportTest::rejectsInvalidValues_data()
@@ -828,6 +844,118 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("term"), QJsonArray{256})
         << QStringLiteral(
                "values.term[0] must be an unsigned integer in range");
+    QTest::newRow("missing-command")
+        << withoutValue(object(), QStringLiteral("command"))
+        << QStringLiteral("values is missing field 'command'");
+    QTest::newRow("missing-initial-command")
+        << withoutValue(object(), QStringLiteral("initial-command"))
+        << QStringLiteral("values is missing field 'initial-command'");
+    QTest::newRow("missing-wait-after-command")
+        << withoutValue(object(), QStringLiteral("wait-after-command"))
+        << QStringLiteral("values is missing field 'wait-after-command'");
+    QTest::newRow("command-type")
+        << withValue(object(), QStringLiteral("command"),
+                     QStringLiteral("/bin/sh"))
+        << QStringLiteral("values.command must be an object or null");
+    QTest::newRow("command-missing-kind")
+        << withValue(object(), QStringLiteral("command"), QJsonObject{})
+        << QStringLiteral("values.command.kind must be a string");
+    QTest::newRow("command-kind-type")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{{QStringLiteral("kind"), true}})
+        << QStringLiteral("values.command.kind must be a string");
+    QTest::newRow("command-kind-unsupported")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("expanded")}})
+        << QStringLiteral(
+               "values.command.kind has unsupported value 'expanded'");
+    QTest::newRow("shell-command-missing-value")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("shell")},
+                         {QStringLiteral("default-shell"), false},
+                     })
+        << QStringLiteral("values.command is missing field 'value'");
+    QTest::newRow("shell-command-missing-default") << withValue(
+        object(), QStringLiteral("command"),
+        QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("shell")},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("/bin/sh"))},
+        }) << QStringLiteral("values.command is missing field 'default-shell'");
+    QTest::newRow("shell-command-extra-field") << withValue(
+        object(), QStringLiteral("command"),
+        QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("shell")},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("/bin/sh"))},
+            {QStringLiteral("default-shell"), false},
+            {QStringLiteral("argv"), QJsonArray{}},
+        }) << QStringLiteral("values.command has unexpected field 'argv'");
+    QTest::newRow("shell-command-value-type")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("shell")},
+                         {QStringLiteral("value"), true},
+                         {QStringLiteral("default-shell"), false},
+                     })
+        << QStringLiteral("values.command.value must be an array");
+    QTest::newRow("shell-command-value-nul")
+        << withValue(object(), QStringLiteral("command"),
+                     shellCommand(QByteArray("sh\0-c", 5)))
+        << QStringLiteral("values.command.value must not contain NUL");
+    QTest::newRow("shell-command-default-type") << withValue(
+        object(), QStringLiteral("command"),
+        QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("shell")},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("/bin/sh"))},
+            {QStringLiteral("default-shell"), QStringLiteral("false")},
+        }) << QStringLiteral("values.command.default-shell must be a boolean");
+    QTest::newRow("direct-command-missing-argv")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("direct")},
+                         {QStringLiteral("default-shell"), false},
+                     })
+        << QStringLiteral("values.command is missing field 'argv'");
+    QTest::newRow("direct-command-zero-argv")
+        << withValue(object(), QStringLiteral("command"),
+                     directCommand(QJsonArray{}))
+        << QStringLiteral("values.command.argv must contain at least argv[0]");
+    QTest::newRow("direct-command-argv-type")
+        << withValue(object(), QStringLiteral("command"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("direct")},
+                         {QStringLiteral("argv"), true},
+                         {QStringLiteral("default-shell"), false},
+                     })
+        << QStringLiteral("values.command.argv must be an array");
+    QTest::newRow("direct-command-argument-type")
+        << withValue(object(), QStringLiteral("command"), directCommand({true}))
+        << QStringLiteral("values.command.argv[0] must be an array");
+    QTest::newRow("direct-command-argument-byte")
+        << withValue(object(), QStringLiteral("command"),
+                     directCommand({QJsonArray{256}}))
+        << QStringLiteral(
+               "values.command.argv[0][0] must be an unsigned integer in range");
+    QTest::newRow("direct-command-argument-nul")
+        << withValue(object(), QStringLiteral("command"),
+                     directCommand({bytes(QByteArray("a\0b", 3))}))
+        << QStringLiteral("values.command.argv[0] must not contain NUL");
+    QTest::newRow("direct-command-default-shell")
+        << withValue(
+               object(), QStringLiteral("command"),
+               directCommand({bytes(QByteArrayLiteral("/bin/direct"))}, true))
+        << QStringLiteral(
+               "values.command.default-shell is invalid for this command");
+    QTest::newRow("initial-command-default-shell")
+        << withValue(object(), QStringLiteral("initial-command"),
+                     shellCommand(QByteArrayLiteral("/bin/sh"), true))
+        << QStringLiteral(
+               "values.initial-command.default-shell is invalid for this command");
+    QTest::newRow("wait-after-command-type")
+        << withValue(object(), QStringLiteral("wait-after-command"),
+                     QStringLiteral("true"))
+        << QStringLiteral("values.wait-after-command must be a boolean");
     QTest::newRow("missing-env")
         << withoutValue(object(), QStringLiteral("env"))
         << QStringLiteral("values is missing field 'env'");
@@ -945,8 +1073,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << QStringLiteral("values is missing field 'adjust-cursor-height'");
     QTest::newRow("missing-metric-modifier-order")
         << withoutValue(object(), QStringLiteral("metric-modifier-order"))
-        << QStringLiteral(
-               "values is missing field 'metric-modifier-order'");
+        << QStringLiteral("values is missing field 'metric-modifier-order'");
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
@@ -1172,8 +1299,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << QStringLiteral(
                "values.click-repeat-interval must be an unsigned integer");
     QTest::newRow("working-directory-empty")
-        << withValue(object(), QStringLiteral("working-directory"),
-                     QString{})
+        << withValue(object(), QStringLiteral("working-directory"), QString{})
         << QStringLiteral(
                "values.working-directory must be 'inherit' or a finalized path");
     QTest::newRow("working-directory-unfinalized-home")
@@ -1186,23 +1312,21 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QJsonObject extraValues = extra.value(QStringLiteral("values")).toObject();
     extraValues.insert(QStringLiteral("future"), true);
     extra.insert(QStringLiteral("values"), extraValues);
-    QTest::newRow("extra-field") << extra
-                                  << QStringLiteral("unexpected field 'future'");
+    QTest::newRow("extra-field")
+        << extra << QStringLiteral("unexpected field 'future'");
 
     QTest::newRow("font-size-type")
         << withValue(object(), QStringLiteral("font-size"), true)
         << QStringLiteral("values.font-size must be a finite number");
     QTest::newRow("font-size-nonfinite")
-        << withValue(object(),
-                     QStringLiteral("font-size"),
+        << withValue(object(), QStringLiteral("font-size"),
                      std::numeric_limits<double>::infinity())
         << QStringLiteral("values.font-size must be a finite number");
     QTest::newRow("font-family-type")
         << withValue(object(), QStringLiteral("font-family-bold"), true)
         << QStringLiteral("values.font-family-bold must be an array");
     QTest::newRow("font-family-empty-entry")
-        << withValue(object(),
-                     QStringLiteral("font-family-bold"),
+        << withValue(object(), QStringLiteral("font-family-bold"),
                      QJsonArray{QString{}})
         << QStringLiteral(
                "values.font-family-bold[0] must be a non-empty string");
@@ -1213,163 +1337,125 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("font-style"), QJsonObject{})
         << QStringLiteral("values.font-style is missing field 'kind'");
     QTest::newRow("font-style-kind-type")
-        << withValue(
-               object(),
-               QStringLiteral("font-style"),
-               QJsonObject{{QStringLiteral("kind"), true}})
+        << withValue(object(), QStringLiteral("font-style"),
+                     QJsonObject{{QStringLiteral("kind"), true}})
         << QStringLiteral("values.font-style.kind must be a string");
     QTest::newRow("font-style-unknown-kind")
-        << withValue(
-               object(),
-               QStringLiteral("font-style"),
-               QJsonObject{{QStringLiteral("kind"),
-                            QStringLiteral("synthesized")}})
+        << withValue(object(), QStringLiteral("font-style"),
+                     QJsonObject{{QStringLiteral("kind"),
+                                  QStringLiteral("synthesized")}})
         << QStringLiteral(
                "values.font-style.kind has unsupported value 'synthesized'");
     QTest::newRow("font-style-unexpected-name")
-        << withValue(
-               object(),
-               QStringLiteral("font-style"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("automatic")},
-                   {QStringLiteral("name"), QStringLiteral("Regular")},
-               })
+        << withValue(object(), QStringLiteral("font-style"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("automatic")},
+                         {QStringLiteral("name"), QStringLiteral("Regular")},
+                     })
         << QStringLiteral("values.font-style has unexpected field 'name'");
     QTest::newRow("font-style-named-missing-name")
         << withValue(
-               object(),
-               QStringLiteral("font-style"),
-               QJsonObject{{QStringLiteral("kind"),
-                            QStringLiteral("named")}})
+               object(), QStringLiteral("font-style"),
+               QJsonObject{{QStringLiteral("kind"), QStringLiteral("named")}})
         << QStringLiteral("values.font-style is missing field 'name'");
     QTest::newRow("font-style-name-type")
-        << withValue(
-               object(),
-               QStringLiteral("font-style"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("named")},
-                   {QStringLiteral("name"), 7},
-               })
+        << withValue(object(), QStringLiteral("font-style"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("named")},
+                         {QStringLiteral("name"), 7},
+                     })
         << QStringLiteral("values.font-style.name must be a string");
     QTest::newRow("font-style-empty-name")
-        << withValue(object(),
-                     QStringLiteral("font-style"),
+        << withValue(object(), QStringLiteral("font-style"),
                      namedFontStyle(QString{}))
-        << QStringLiteral(
-               "values.font-style.name must be a non-empty string");
+        << QStringLiteral("values.font-style.name must be a non-empty string");
     QTest::newRow("metric-modifier-type")
         << withValue(object(), QStringLiteral("adjust-cell-width"), true)
         << QStringLiteral("values.adjust-cell-width must be an object");
     QTest::newRow("metric-modifier-missing-value")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{{QStringLiteral("kind"),
-                            QStringLiteral("absolute")}})
-        << QStringLiteral(
-               "values.adjust-cell-width is missing field 'value'");
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("absolute")}})
+        << QStringLiteral("values.adjust-cell-width is missing field 'value'");
     QTest::newRow("metric-modifier-extra-field")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("absolute")},
-                   {QStringLiteral("value"), 1},
-                   {QStringLiteral("pixels"), 1},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("absolute")},
+                         {QStringLiteral("value"), 1},
+                         {QStringLiteral("pixels"), 1},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width has unexpected field 'pixels'");
     QTest::newRow("metric-modifier-kind-type")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), true},
-                   {QStringLiteral("value"), 1},
-               })
-        << QStringLiteral(
-               "values.adjust-cell-width.kind must be a string");
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), true},
+                         {QStringLiteral("value"), 1},
+                     })
+        << QStringLiteral("values.adjust-cell-width.kind must be a string");
     QTest::newRow("metric-modifier-unknown-kind")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("relative")},
-                   {QStringLiteral("value"), 1},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("relative")},
+                         {QStringLiteral("value"), 1},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.kind has unsupported value");
     QTest::newRow("absolute-modifier-type")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("absolute")},
-                   {QStringLiteral("value"), true},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("absolute")},
+                         {QStringLiteral("value"), true},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.value must be a signed integer");
     QTest::newRow("absolute-modifier-fraction")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("absolute")},
-                   {QStringLiteral("value"), 1.5},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("absolute")},
+                         {QStringLiteral("value"), 1.5},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.value must be a signed integer");
     QTest::newRow("absolute-modifier-range")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("absolute")},
-                   {QStringLiteral("value"), 2147483648.0},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("absolute")},
+                         {QStringLiteral("value"), 2147483648.0},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.value must be a signed integer in range");
     QTest::newRow("percentage-modifier-type")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("percentage")},
-                   {QStringLiteral("value"), true},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("percentage")},
+                         {QStringLiteral("value"), true},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.value must be a finite number");
     QTest::newRow("percentage-modifier-negative-multiplier")
-        << withValue(object(),
-                     QStringLiteral("adjust-cell-width"),
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
                      percentageMetricModifier(-0.01))
         << QStringLiteral(
                "values.adjust-cell-width.value is outside its supported range");
     QTest::newRow("percentage-modifier-nonfinite")
-        << withValue(
-               object(),
-               QStringLiteral("adjust-cell-width"),
-               QJsonObject{
-                   {QStringLiteral("kind"), QStringLiteral("percentage")},
-                   {QStringLiteral("value"),
-                    std::numeric_limits<double>::infinity()},
-               })
+        << withValue(object(), QStringLiteral("adjust-cell-width"),
+                     QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("percentage")},
+                         {QStringLiteral("value"),
+                          std::numeric_limits<double>::infinity()},
+                     })
         << QStringLiteral(
                "values.adjust-cell-width.value must be a finite number");
     QTest::newRow("metric-modifier-order-type")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
-                     true)
+        << withValue(object(), QStringLiteral("metric-modifier-order"), true)
         << QStringLiteral("values.metric-modifier-order must be an array");
     QTest::newRow("metric-modifier-order-entry-type")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
+        << withValue(object(), QStringLiteral("metric-modifier-order"),
                      QJsonArray{true})
-        << QStringLiteral(
-               "values.metric-modifier-order[0] must be a string");
+        << QStringLiteral("values.metric-modifier-order[0] must be a string");
     QTest::newRow("metric-modifier-order-unsupported")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
+        << withValue(object(), QStringLiteral("metric-modifier-order"),
                      QJsonArray{QStringLiteral("adjust-box-thickness")})
         << QStringLiteral(
                "values.metric-modifier-order[0] has unsupported value");
@@ -1377,8 +1463,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QJsonArray duplicateModifierOrder = metricModifierOrder();
     duplicateModifierOrder.append(QStringLiteral("adjust-cell-width"));
     QTest::newRow("metric-modifier-order-duplicate")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
+        << withValue(object(), QStringLiteral("metric-modifier-order"),
                      duplicateModifierOrder)
         << QStringLiteral(
                "values.metric-modifier-order contains duplicate modifier");
@@ -1386,8 +1471,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QJsonArray unsetModifierOrder = metricModifierOrder();
     unsetModifierOrder.append(QStringLiteral("adjust-underline-thickness"));
     QTest::newRow("metric-modifier-order-unset")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
+        << withValue(object(), QStringLiteral("metric-modifier-order"),
                      unsetModifierOrder)
         << QStringLiteral(
                "refers to unset modifier 'adjust-underline-thickness'");
@@ -1395,8 +1479,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QJsonArray incompleteModifierOrder = metricModifierOrder();
     incompleteModifierOrder.removeFirst();
     QTest::newRow("metric-modifier-order-incomplete")
-        << withValue(object(),
-                     QStringLiteral("metric-modifier-order"),
+        << withValue(object(), QStringLiteral("metric-modifier-order"),
                      incompleteModifierOrder)
         << QStringLiteral(
                "does not include active modifier 'adjust-cursor-height'");
@@ -1437,7 +1520,8 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("uint-overflow")
         << withValue(object(), QStringLiteral("resize-overlay-duration"),
                      4294967296.0)
-        << QStringLiteral("values.resize-overlay-duration must be an unsigned integer");
+        << QStringLiteral(
+               "values.resize-overlay-duration must be an unsigned integer");
     QTest::newRow("scrollback-number")
         << withValue(object(), QStringLiteral("scrollback-limit"), 50000000)
         << QStringLiteral("values.scrollback-limit must be a string");
@@ -1481,7 +1565,8 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                      QJsonArray{QStringLiteral("?")})
         << QStringLiteral("values.config-file entries must contain a path");
 
-    QJsonArray shortPalette = values().value(QStringLiteral("palette")).toArray();
+    QJsonArray shortPalette =
+        values().value(QStringLiteral("palette")).toArray();
     shortPalette.removeLast();
     QTest::newRow("palette-length")
         << withValue(object(), QStringLiteral("palette"), shortPalette)
@@ -1532,7 +1617,8 @@ void GhosttyConfigExportTest::rejectsInvalidBindings()
                            const QString &diagnostic) {
         const auto parsed = parseGhosttyConfigExportJson(json(exportObject));
         QVERIFY(parsed.has_value() == false);
-        QVERIFY2(parsed.error().contains(diagnostic), qPrintable(parsed.error()));
+        QVERIFY2(parsed.error().contains(diagnostic),
+                 qPrintable(parsed.error()));
     };
 
     QJsonObject exportObject = object();
@@ -1546,23 +1632,22 @@ void GhosttyConfigExportTest::rejectsInvalidBindings()
                         {QStringLiteral("bindings"), QJsonArray{}}},
         });
     exportObject.insert(QStringLiteral("keybindings"), bindings);
-    reject(exportObject, QStringLiteral("Duplicate Ghostty keybinding table 'mode'"));
+    reject(exportObject,
+           QStringLiteral("Duplicate Ghostty keybinding table 'mode'"));
 
     exportObject = object();
     bindings = keybindings();
-    const QJsonObject duplicate = binding({unicodeTrigger('a')},
-                                          {QStringLiteral("ignore")});
-    bindings.insert(QStringLiteral("root"),
-                    QJsonArray{duplicate, duplicate});
+    const QJsonObject duplicate =
+        binding({unicodeTrigger('a')}, {QStringLiteral("ignore")});
+    bindings.insert(QStringLiteral("root"), QJsonArray{duplicate, duplicate});
     exportObject.insert(QStringLiteral("keybindings"), bindings);
     reject(exportObject, QStringLiteral("duplicate trigger sequence"));
 
     exportObject = object();
     bindings = keybindings();
-    bindings.insert(
-        QStringLiteral("root"),
-        QJsonArray{binding({unicodeTrigger(0xd800)},
-                           {QStringLiteral("ignore")})});
+    bindings.insert(QStringLiteral("root"),
+                    QJsonArray{binding({unicodeTrigger(0xd800)},
+                                       {QStringLiteral("ignore")})});
     exportObject.insert(QStringLiteral("default-keybindings"), bindings);
     reject(exportObject,
            QStringLiteral("default-keybindings.root[0].sequence[0].codepoint"));
@@ -1571,8 +1656,7 @@ void GhosttyConfigExportTest::rejectsInvalidBindings()
     bindings = keybindings();
     bindings.insert(
         QStringLiteral("root"),
-        QJsonArray{binding({unicodeTrigger(0)},
-                           {QStringLiteral("ignore")})});
+        QJsonArray{binding({unicodeTrigger(0)}, {QStringLiteral("ignore")})});
     exportObject.insert(QStringLiteral("keybindings"), bindings);
     reject(exportObject, QStringLiteral("nonzero Unicode scalar"));
 
@@ -1581,18 +1665,17 @@ void GhosttyConfigExportTest::rejectsInvalidBindings()
     bindings.insert(
         QStringLiteral("root"),
         QJsonArray{binding({unicodeTrigger('a'), unicodeTrigger('b')},
-                           {QStringLiteral("ignore")},
-                           flags(true, true))});
+                           {QStringLiteral("ignore")}, flags(true, true))});
     exportObject.insert(QStringLiteral("keybindings"), bindings);
-    reject(exportObject,
-           QStringLiteral("all/global binding must contain exactly one trigger"));
+    reject(
+        exportObject,
+        QStringLiteral("all/global binding must contain exactly one trigger"));
 
     exportObject = object();
     bindings = keybindings();
-    bindings.insert(
-        QStringLiteral("root"),
-        QJsonArray{binding({unicodeTrigger('a', 16)},
-                           {QStringLiteral("ignore")})});
+    bindings.insert(QStringLiteral("root"),
+                    QJsonArray{binding({unicodeTrigger('a', 16)},
+                                       {QStringLiteral("ignore")})});
     exportObject.insert(QStringLiteral("keybindings"), bindings);
     reject(exportObject, QStringLiteral("mods must be an unsigned integer"));
 

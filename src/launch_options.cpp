@@ -143,11 +143,13 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
+        .waitAfterCommand = options.waitAfterCommand,
     };
 }
 
 LaunchOptions withoutInitialCommand(LaunchOptions options)
 {
+    options.initialCommand.reset();
     options.program.clear();
     options.hold = false;
     return options;
@@ -163,6 +165,7 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
         .processUsesSingleInstance = options.processUsesSingleInstance,
         .workingDirectory = options.workingDirectory,
         .inheritWorkingDirectory = options.inheritWorkingDirectory,
+        .command = options.ordinaryCommand,
         .program = options.program,
         .scrollbackLimit = options.scrollbackLimit,
         .hold = options.hold,
@@ -178,6 +181,15 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     const GhosttyConfigValues &config = snapshot.values;
 
     result.term = config.term;
+    // Ghostty finalization normally resolves the default shell, but its
+    // runtime still defines shell-form `sh` when neither SHELL nor passwd
+    // provides one. Materialize that fallback while this value is known to
+    // come from a finalized Ghostty snapshot; raw worker callers retain their
+    // generic no-snapshot behavior.
+    result.ordinaryCommand = config.ordinaryCommand.value_or(
+        TerminalCommand::shell(QByteArrayLiteral("sh"), true));
+    result.initialCommand = config.initialCommand;
+    result.waitAfterCommand = config.waitAfterCommand;
     result.environment = config.environment;
     result.linuxCgroup = config.linuxCgroup;
     if (!base.workingDirectoryExplicit) {

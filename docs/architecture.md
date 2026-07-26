@@ -359,15 +359,20 @@ normal, maximized, or fullscreen Qt window state through the activation-aware
 presentation call. Qt Quick exposes only the dominant fullscreen state, so
 when both settings are enabled the retained state and a visibility observer
 restore maximized after either an action- or compositor-driven fullscreen
-exit. A separate session-start transaction consumes the initial one-shot
-command and hold state only when the first session successfully initializes
-libghostty-vt. A process-wide coordinator grants immutable program/hold
-snapshots in FIFO start order, commits a grant before child launch, and
-releases it if terminal initialization fails. Suppressed startup, window
-construction or presentation failure before terminal initialization, and a
-deferred root closed before exposure therefore retain the current values for
-the next eligible session. A later child-launch failure does not restore a
-committed grant; later sessions use ordinary launch defaults. A
+exit. A separate session-start transaction consumes the selected initial
+command and CLI hold state only when the first session successfully initializes
+libghostty-vt. A process-wide coordinator grants immutable positional-program,
+tagged-command, and hold snapshots in FIFO start order, commits a grant before
+child launch, and releases it if terminal initialization fails. Positional CLI
+argv wins over the configured `initial-command`, which in turn replaces
+`command` for this one lease. Suppressed startup, window construction or
+presentation failure before terminal initialization, and a deferred root
+closed before exposure therefore retain the current values for the next
+eligible session. Reload may replace the pending tagged command before a pane
+reserves the lease; an existing holder keeps its immutable snapshot, and a
+reload cannot re-arm the command after consumption. A later child-launch
+failure does not restore a committed grant; later sessions use the ordinary
+configured command or finalized default shell. A
 surface source is the composite live workspace plus stable `PaneId`, because
 pane IDs are only workspace-local;
 stale sources fall back to the focused or most recently active workspace, then
@@ -503,7 +508,8 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
 ## Output path
 
 1. `SessionWorker` creates a `GhosttyVtAdapter`, which owns the Ghostty terminal
-   and render-state handles, then starts the command with `forkpty`.
+   and render-state handles, then starts the selected tagged or positional
+   command with `forkpty`.
 2. A nonblocking `QSocketNotifier` drains the PTY master and sends bytes to
    the adapter's VT-write operation.
 3. Ghostty applies VT state changes and reports deferred effects such as title,
@@ -979,11 +985,31 @@ other terminal access remain serialized on the pane's worker thread.
 ## Session and environment
 
 Every pane receives the applicable current launch policy, while only the
-process's first successfully initialized session receives the one-shot initial
-program and hold values. A deferred pane destroyed before start does not
-consume them. Without an explicit command, the worker starts executable
-`$SHELL` or `/bin/sh`; later sessions follow the ordinary default-command
-policy.
+process's first successfully initialized session receives the one-shot
+`initial-command`, positional CLI program, and hold values. A deferred pane
+destroyed before start or a failed libghostty-vt initialization does not
+consume them; once initialization succeeds, an exec failure does. CLI argv has
+highest execution precedence, then `initial-command`, then the ordinary
+`command`. Later sessions always skip both one-shot CLI values and
+`initial-command`.
+
+The helper transports both configured commands as a tagged raw-byte value.
+Shell commands execute exactly as `/bin/sh -c <value>`. Direct commands retain
+Ghostty's literal-space-split argv and are passed directly to `execve`; their
+bare argv[0] lookup uses the launching process's raw `PATH`, not the later
+configured child environment. With no explicit value, Ghostty finalizes its
+default shell from `SHELL` or the passwd database; the worker retains
+Ghostty's shell-form `sh` fallback for a missing finalized value. Embedded NUL
+is rejected at the structured boundary because `execve` cannot represent it.
+
+`wait-after-command` is a live runtime policy rather than a launch snapshot.
+The worker samples its newest value at child exit. A waiting pane closes only
+after libghostty encodes a pressed key or nonempty IME commit to bytes;
+modifier-only input, consumed bindings, and unresolved or dropped sequence
+chains remain inert. `--hold` is a distinct, initial-only launch override and
+does not become dismissible through this path. Ghostty's separate
+`abnormal-command-exit-runtime` fast-nonzero-exit classification remains
+planned.
 A new tab retains the exact action-target pane; an empty-context QML request
 uses the current tab's recorded active pane. When
 `tab-inherit-working-directory` is true, that source's latest nonempty reported
@@ -1166,14 +1192,15 @@ helper context. Explicit `inherit`, `home`, tilde, and concrete path values are
 still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
-The current typed compatibility slice covers launch and window geometry,
-working-directory and inheritance policy, the finalized child-environment
-override map, Linux cgroup resource isolation, application lifetime, typography
-and terminal appearance, scrollback, selection/clipboard/mouse/link behavior,
-resize-overlay presentation, included config files, and the finalized
-keybinding sets. The README and machine-checked parity ledger describe the
-individual keys. One strict schema-v1 document carries the whole slice,
-including nullable values such as `quit-after-last-window-closed-delay` and
+The current typed compatibility slice covers tagged ordinary/initial commands
+and live post-exit waiting, launch and window geometry, working-directory and
+inheritance policy, the finalized child-environment override map, Linux cgroup
+resource isolation, application lifetime, typography and terminal appearance,
+scrollback, selection/clipboard/mouse/link behavior, resize-overlay
+presentation, included config files, and the finalized keybinding sets. The
+README and machine-checked parity ledger describe the individual keys. One
+strict schema-v1 document carries the whole slice, including nullable command
+objects, nullable values such as `quit-after-last-window-closed-delay`, and
 both cgroup limits; there is no version fallback, separate defaults merge, or
 partially populated snapshot.
 Optional cgroup uint64 limits cross JSON as null or canonical decimal strings
@@ -1182,6 +1209,8 @@ The finalized `env` map crosses as an ordered array of objects whose `key` and
 `value` members are byte arrays, avoiding both UTF-8 conversion and JSON object
 key normalization. The decoder rejects duplicate keys, empty values, `=` in a
 key, embedded NUL, and every noncanonical shape.
+Command objects retain an exact `shell`/`direct` tag, byte-array payloads, and
+whether the finalized ordinary shell came from Ghostty's default lookup.
 Canonical enum tags, optional include markers, working-directory inheritance,
 and nullable color alternatives are decoded only at this boundary. The four
 font styles remain tagged `automatic`, `disabled`, or
@@ -1909,9 +1938,10 @@ for user-defined expressions and actions.
 The default CTest suite has focused layers for each ownership boundary:
 
 - `launch-options` validates defaults, accepted values, invalid CLI input,
-  typed config, typography, appearance overlays and bell features, exact f32
-  CLI font precedence passed into helper finalization, scrollback units,
-  mouse-hide policy, and close modes.
+  tagged ordinary/initial command projection, live wait policy, typography,
+  appearance overlays and bell features, exact f32 CLI font precedence passed
+  into helper finalization, scrollback units, mouse-hide policy, and close
+  modes.
 - `terminal-bell` uses an audio-device-free backend to verify independent
   feature dispatch, playback-time volume clamping, source caching and retry,
   invalid-media recovery, device replacement, and per-pane isolation.
@@ -1947,7 +1977,9 @@ The default CTest suite has focused layers for each ownership boundary:
   `src/config/url.zig` corpus against the vendored Oniguruma implementation.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
-  output draining, the configured `TERM`, initial private
+  output draining, exact shell and direct command execution, raw argv
+  boundaries, live wait-at-exit sampling and encoded-key dismissal, the
+  configured `TERM`, initial private
   `TERMINFO`/`COLORTERM` values, byte-exact finalized environment overrides,
   concrete-directory `PWD` precedence, inherited fallback, and parent-`PATH`
   executable lookup, plus byte-exact terminal-control action writes,
@@ -2032,10 +2064,10 @@ The default CTest suite has focused layers for each ownership boundary:
   handling, and last-good retention. `application-tabs-location` verifies the
   real QML toolbar moves to the configured edge without a binding loop.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
-  frontend projection, including finalized non-empty byte-valued `term`, the
-  ordered raw-byte `env` pairs and their closed validity rules, the cgroup
-  enum/boolean and exact nullable uint64 limits, exact shapes, four role-family
-  lists, tagged
+  frontend projection, including tagged nullable command objects and their raw
+  bytes, finalized non-empty byte-valued `term`, the ordered raw-byte `env`
+  pairs and their closed validity rules, the cgroup enum/boolean and exact
+  nullable uint64 limits, exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, the fixed 256-color palette, the full unsigned scrollback
@@ -2045,6 +2077,7 @@ The default CTest suite has focused layers for each ownership boundary:
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact trailing font CLI arguments and role finalization,
+  ordinary/initial shell and direct command export plus wait finalization,
   default/custom/empty and non-UTF-8 `term` finalization, repeated `env`
   replacement, configured-map removal/reset, include precedence, and raw-byte
   environment transport,

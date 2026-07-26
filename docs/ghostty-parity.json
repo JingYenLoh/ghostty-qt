@@ -257,6 +257,10 @@
         "x11-instance-name"
       ],
       "overrides": {
+        "abnormal-command-exit-runtime": {
+          "status": "planned",
+          "note": "The Linux runtime-threshold classification for fast nonzero exits and its dedicated abnormal-exit presentation remain unimplemented. This is independent of the supported command and wait-after-command paths."
+        },
         "adjust-box-thickness": {
           "status": "planned",
           "note": "Exact behavior depends on Ghostty's private generated-box sprite and font-classification pipeline, which is not exposed through public libghostty-vt."
@@ -360,8 +364,8 @@
       "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."
     },
     "command": {
-      "status": "partial",
-      "note": "An initial positional command exists, but Ghostty config and initial-command semantics do not."
+      "status": "supported",
+      "note": "The exact pinned parser supplies a nullable raw-byte shell/direct union. Shell values execute byte-for-byte through /bin/sh -c; direct values preserve the parser's literal-space argv boundaries and use the launching process PATH for bare argv[0] lookup before finalized env overrides are installed. The finalized default shell follows Ghostty's SHELL/passwd selection, and reload affects future panes."
     },
     "config-file": {
       "status": "partial",
@@ -451,6 +455,10 @@
       "status": "supported",
       "scope": "linux",
       "note": "The exact pinned enum defaults false. True and every non-native variant map to Qt native fullscreen on Linux for each subsequently created window; reload never changes existing window state. When maximize is also true, action- and compositor-driven fullscreen exits restore maximized."
+    },
+    "initial-command": {
+      "status": "supported",
+      "note": "The tagged command replaces ordinary command only for the first session that successfully initializes libghostty-vt. Suppressed startup, close-before-deferred-start, and terminal initialization failure preserve the process-wide FIFO lease; child-launch failure consumes it. Reload can replace the pending value before reservation, an existing holder keeps its immutable snapshot, and a consumed lease cannot be re-armed. Positional CLI argv has first-pane precedence, and later surfaces use ordinary command."
     },
     "initial-window": {
       "status": "supported",
@@ -792,8 +800,8 @@
           "note": "The exact system/never enum applies live to a Qt-styled control overlaid independently on every pane. System appears only for an authoritative active-screen range with scrollback; never removes the affordance without disabling other viewport actions. C++ normalizes the worker's u64 total/offset/length and saturates user movement back to an absolute-row request, avoiding QML integer precision loss and feedback loops. Splits and zoom retain each control and session without reserving grid or PTY geometry."
         },
         "wait-after-command": {
-          "status": "partial",
-          "note": "The --hold launch flag implements one subset of the behavior."
+          "status": "supported",
+          "note": "The exact default-false boolean applies live and is sampled when each child exits. A waiting pane reports the exit and closes only when a pressed key or IME commit produces libghostty-encoded bytes; modifiers, consumed bindings, and unresolved or dropped key sequences are inert. The CLI --hold path remains a distinct indefinite initial-pane policy."
         },
         "window-position-x": {
           "status": "not_applicable",

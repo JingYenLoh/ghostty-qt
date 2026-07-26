@@ -152,56 +152,57 @@ bool terminalFileHasPrivateMode(const QFile &file)
         && (status.st_mode & 0777) == 0600;
 }
 
-QString appendPath(QString directory, QStringView path)
+QByteArray appendPath(QByteArray directory, QByteArrayView path)
 {
-    if (!directory.endsWith(QLatin1Char('/'))) {
-        directory += QLatin1Char('/');
+    if (!directory.endsWith('/')) {
+        directory += '/';
     }
-    directory += path;
+    directory.append(path.data(), path.size());
     return directory;
 }
 
-QString absolutePathFromWorkingDirectory(QString workingDirectory,
-                                         QStringView relativePath)
+QByteArray absolutePathFromWorkingDirectory(QByteArray workingDirectory,
+                                            QByteArrayView relativePath)
 {
-    if (QDir::isRelativePath(workingDirectory)) {
-        workingDirectory = appendPath(QDir::currentPath(), workingDirectory);
+    if (!workingDirectory.startsWith('/')) {
+        workingDirectory = appendPath(QFile::encodeName(QDir::currentPath()),
+                                      workingDirectory);
     }
     return appendPath(std::move(workingDirectory), relativePath);
 }
 
-QStringList executableCandidates(QStringView name)
+QVector<QByteArray> executableCandidates(QByteArrayView name)
 {
-    if (name.contains(QLatin1Char('/'))) {
-        return {name.toString()};
+    if (name.contains('/')) {
+        return {QByteArray(name.data(), name.size())};
     }
 
-    const QString path = qEnvironmentVariableIsSet("PATH")
-        ? qEnvironmentVariable("PATH")
-        : QStringLiteral("/usr/local/bin:/bin/:/usr/bin");
+    const QByteArray path = qEnvironmentVariableIsSet("PATH")
+        ? qgetenv("PATH")
+        : QByteArrayLiteral("/usr/local/bin:/bin/:/usr/bin");
     // Pinned Zig's tokenizeScalar skips empty entries rather than treating
     // them as the current directory.
-    QStringList candidates;
-    candidates.reserve(path.count(QDir::listSeparator()) + 1);
-    for (const QStringView directory : QStringView(path).tokenize(
-             QDir::listSeparator(), Qt::SkipEmptyParts)) {
-        QString candidate = directory.toString();
-        candidate += QLatin1Char('/');
-        candidate += name;
-        candidates.append(std::move(candidate));
+    QVector<QByteArray> candidates;
+    candidates.reserve(path.count(':') + 1);
+    for (const QByteArray &directory : path.split(':')) {
+        if (directory.isEmpty()) continue;
+        candidates.append(appendPath(directory, name));
     }
     return candidates;
 }
 
-bool hasExecutableCandidate(const QStringList &candidates,
-                            const QString &workingDirectory)
+bool hasExecutableCandidate(const QVector<QByteArray> &candidates,
+                            const QByteArray &workingDirectory)
 {
-    return std::ranges::any_of(candidates, [&](const QString &candidate) {
-        const QString validationPath = QDir::isRelativePath(candidate)
-            ? absolutePathFromWorkingDirectory(workingDirectory, candidate)
-            : candidate;
-        const QFileInfo info(validationPath);
-        return info.isFile() && info.isExecutable();
+    return std::ranges::any_of(candidates, [&](const QByteArray &candidate) {
+        if (candidate.contains('\0')) return false;
+        const QByteArray validationPath = candidate.startsWith('/')
+            ? candidate
+            : absolutePathFromWorkingDirectory(workingDirectory, candidate);
+        struct stat status{};
+        return ::stat(validationPath.constData(), &status) == 0
+            && S_ISREG(status.st_mode)
+            && ::access(validationPath.constData(), X_OK) == 0;
     });
 }
 
@@ -608,6 +609,7 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                        geometry.surfaceHeightPixels);
     }
     shuttingDown_ = false;
+    waitingAfterCommand_ = false;
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
@@ -657,14 +659,14 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
         if (observer) observer(false);
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to initialize libghostty-vt."));
-        Q_EMIT sessionExited(127, 0, options_.hold);
+        Q_EMIT sessionExited(127, 0, options_.hold, false);
         return false;
     }
 
     if (observer) observer(true);
     publishFrame();
     if (!spawnChild()) {
-        Q_EMIT sessionExited(127, 0, options_.hold);
+        Q_EMIT sessionExited(127, 0, options_.hold, false);
     }
     return true;
 }
@@ -804,54 +806,78 @@ bool SessionWorker::spawnChild()
         }
     }
 
-    QString requestedExecutable;
-    QStringList arguments = options_.program;
-    interactiveShell_ = arguments.isEmpty();
-
-    if (interactiveShell_) {
-        requestedExecutable = qEnvironmentVariable("SHELL");
-        if (requestedExecutable.isEmpty()) {
-            requestedExecutable = QStringLiteral("/bin/sh");
+    QVector<QByteArray> argumentStorage;
+    bool legacyInteractiveFallback = false;
+    if (!options_.program.isEmpty()) {
+        argumentStorage.reserve(options_.program.size());
+        for (const QString &argument : options_.program) {
+            argumentStorage.push_back(argument.toLocal8Bit());
         }
-        // Force interactive mode. Relying only on isatty can leave shells
-        // without job control during startup races, which in turn prevents
-        // the PTY foreground group from identifying active jobs.
-        arguments = {requestedExecutable, QStringLiteral("-i")};
+        interactiveShell_ = false;
+    } else if (options_.command.has_value()) {
+        const TerminalCommand &command = *options_.command;
+        interactiveShell_ = command.defaultShell;
+        switch (command.kind) {
+        case TerminalCommandKind::Shell:
+            argumentStorage = {
+                QByteArrayLiteral("/bin/sh"),
+                QByteArrayLiteral("-c"),
+                command.shellCommand,
+            };
+            break;
+        case TerminalCommandKind::Direct:
+            argumentStorage = command.directArguments;
+            break;
+        }
     } else {
-        requestedExecutable = arguments.constFirst();
+        // Generic callers without a finalized Ghostty snapshot retain the
+        // frontend's historical interactive-shell fallback. Config projection
+        // materializes Ghostty's distinct shell-form `sh` fallback.
+        QByteArray executable = qgetenv("SHELL");
+        if (executable.isEmpty()) executable = QByteArrayLiteral("/bin/sh");
+        argumentStorage = {executable, QByteArrayLiteral("-i")};
+        interactiveShell_ = true;
+        legacyInteractiveFallback = true;
     }
 
-    QStringList executablePaths = executableCandidates(requestedExecutable);
+    if (argumentStorage.isEmpty()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Configured direct command has no argv entries."));
+        return false;
+    }
+    for (qsizetype index = 0; index < argumentStorage.size(); ++index) {
+        if (argumentStorage.at(index).contains('\0')) {
+            Q_EMIT errorOccurred(
+                QStringLiteral(
+                    "Command argument %1 contains a NUL byte and cannot be passed to execve.")
+                    .arg(index));
+            return false;
+        }
+    }
+
+    QByteArray requestedExecutable = argumentStorage.constFirst();
+    QVector<QByteArray> executablePaths =
+        executableCandidates(requestedExecutable);
     // Preserve the existing synchronous diagnostic, but do not preselect a
     // candidate: the child still attempts the complete ordered list below.
-    bool executableAvailable =
-        hasExecutableCandidate(executablePaths, childWorkingDirectory);
-    if (interactiveShell_ && !executableAvailable
-        && requestedExecutable != QLatin1StringView("/bin/sh")) {
-        requestedExecutable = QStringLiteral("/bin/sh");
-        arguments[0] = requestedExecutable;
+    bool executableAvailable = hasExecutableCandidate(
+        executablePaths, QFile::encodeName(childWorkingDirectory));
+    if (legacyInteractiveFallback && !executableAvailable
+        && requestedExecutable != QByteArrayLiteral("/bin/sh")) {
+        requestedExecutable = QByteArrayLiteral("/bin/sh");
+        argumentStorage[0] = requestedExecutable;
         executablePaths = executableCandidates(requestedExecutable);
-        executableAvailable =
-            hasExecutableCandidate(executablePaths, childWorkingDirectory);
+        executableAvailable = hasExecutableCandidate(
+            executablePaths, QFile::encodeName(childWorkingDirectory));
     }
     if (requestedExecutable.isEmpty() || !executableAvailable) {
         Q_EMIT errorOccurred(
             QStringLiteral("Program is not executable: %1")
-                .arg(options_.program.value(0, requestedExecutable)));
+                .arg(QString::fromLocal8Bit(requestedExecutable)));
         return false;
     }
 
-    QVector<QByteArray> executableStorage;
-    executableStorage.reserve(executablePaths.size());
-    for (const QString &path : executablePaths) {
-        executableStorage.push_back(QFile::encodeName(path));
-    }
-
-    QVector<QByteArray> argumentStorage;
-    argumentStorage.reserve(arguments.size());
-    for (const QString &argument : std::as_const(arguments)) {
-        argumentStorage.push_back(argument.toLocal8Bit());
-    }
+    QVector<QByteArray> executableStorage = std::move(executablePaths);
     QVector<char *> argv;
     argv.reserve(argumentStorage.size() + 1);
     for (QByteArray &argument : argumentStorage) {
@@ -1330,16 +1356,24 @@ void SessionWorker::flushPtyWrites()
 
 void SessionWorker::sendKey(const TerminalKeyInput &input)
 {
-    if (!readOnly_ && input.pressed
+    if (!readOnly_ && masterFd_ >= 0 && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
         notePotentialActivity();
     }
-    if (vt_ == nullptr || masterFd_ < 0) {
+    if (vt_ == nullptr) {
         return;
     }
     const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(input);
     if (encoded.bytes.isEmpty()) {
+        return;
+    }
+    if (waitingAfterCommand_ && input.pressed) {
+        waitingAfterCommand_ = false;
+        Q_EMIT waitAfterCommandDismissed();
+        return;
+    }
+    if (masterFd_ < 0) {
         return;
     }
     queueInputWrite(encoded.bytes);
@@ -1415,6 +1449,12 @@ void SessionWorker::resolveSequence(quint64 token,
     stagedSequenceBytes_.clear();
     stagedSequencePotentialActivity_ = false;
 
+    if (!bytes.isEmpty() && waitingAfterCommand_) {
+        waitingAfterCommand_ = false;
+        Q_EMIT waitAfterCommandDismissed();
+        return;
+    }
+
     // Append once so the staged leaders and the resolving key cannot be
     // interleaved by another queued operation on this worker thread.
     if (!bytes.isEmpty() && masterFd_ >= 0) {
@@ -1435,10 +1475,10 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
         clearSelectionState();
     }
 
-    if (input.commitText.isEmpty() || vt_ == nullptr || masterFd_ < 0) {
+    if (input.commitText.isEmpty() || vt_ == nullptr) {
         return;
     }
-    if (!readOnly_
+    if (!readOnly_ && masterFd_ >= 0
         && (input.commitText.contains(u'\n')
             || input.commitText.contains(u'\r'))) {
         notePotentialActivity();
@@ -1449,6 +1489,14 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     key.pressed = true;
     const GhosttyVtAdapter::EncodedKey encoded = vt_->encodeKey(key);
     if (encoded.bytes.isEmpty()) {
+        return;
+    }
+    if (waitingAfterCommand_) {
+        waitingAfterCommand_ = false;
+        Q_EMIT waitAfterCommandDismissed();
+        return;
+    }
+    if (masterFd_ < 0) {
         return;
     }
     queueInputWrite(encoded.bytes);
@@ -3071,7 +3119,7 @@ void SessionWorker::checkChild()
         if (!shuttingDown_) {
             Q_EMIT errorOccurred(
                 QStringLiteral("The child process was reaped unexpectedly."));
-            Q_EMIT sessionExited(127, 0, options_.hold);
+            Q_EMIT sessionExited(127, 0, options_.hold, false);
         }
     } else if (result < 0 && errno != EINTR) {
         Q_EMIT errorOccurred(
@@ -3145,6 +3193,8 @@ void SessionWorker::handleChildStatus(int status)
     if (childTimer_ != nullptr) {
         childTimer_->stop();
     }
+    waitingAfterCommand_ =
+        !shuttingDown_ && !options_.hold && options_.runtime.waitAfterCommand;
     closePty();
 
     int exitCode = 0;
@@ -3156,7 +3206,11 @@ void SessionWorker::handleChildStatus(int status)
         exitCode = 128 + signalNumber;
     }
     if (!shuttingDown_) {
-        Q_EMIT sessionExited(exitCode, signalNumber, options_.hold);
+        if (waitingAfterCommand_ && vt_ != nullptr) {
+            vt_->normalizeKeyboardAfterCommandExit();
+        }
+        Q_EMIT sessionExited(exitCode, signalNumber, options_.hold,
+                             waitingAfterCommand_);
     }
 }
 
@@ -3176,9 +3230,16 @@ void SessionWorker::closePty()
     }
     pendingWrites_.clear();
     pendingPastes_.clear();
-    stagedSequenceBytes_.clear();
-    activeSequenceToken_ = 0;
-    stagedSequencePotentialActivity_ = false;
+    // A keybinding leader may have been staged while the child was alive.
+    // Ghostty closes a waited surface when the first post-exit continuation
+    // resolves to encoded bytes, so retain that sequence across this one
+    // lifecycle boundary. Drop/binding resolutions still consume it without
+    // dismissing; every other close path clears it normally.
+    if (!waitingAfterCommand_) {
+        stagedSequenceBytes_.clear();
+        activeSequenceToken_ = 0;
+        stagedSequencePotentialActivity_ = false;
+    }
 }
 
 void SessionWorker::shutdown()
@@ -3187,6 +3248,7 @@ void SessionWorker::shutdown()
         return;
     }
     shuttingDown_ = true;
+    waitingAfterCommand_ = false;
     if (frameTimer_ != nullptr) {
         frameTimer_->stop();
     }

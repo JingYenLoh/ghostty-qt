@@ -71,6 +71,13 @@ public:
     {
         return launchOptions_.program;
     }
+    [[nodiscard]] const std::optional<TerminalCommand> &launchCommand() const
+    {
+        return launchOptions_.command;
+    }
+    // Human-readable fallback derived without changing the raw bytes used for
+    // execution. Terminal-reported titles still take precedence in the pane.
+    [[nodiscard]] QString launchTitle() const;
     [[nodiscard]] bool launchHold() const { return launchOptions_.hold; }
     [[nodiscard]] const QByteArray &launchTerm() const
     {
@@ -181,7 +188,9 @@ Q_SIGNALS:
     void selectionAvailableChanged(bool available);
     void readOnlyChanged(bool readOnly);
     void launchProgramChanged();
-    void sessionExited(int exitCode, int signalNumber, bool hold);
+    void sessionExited(int exitCode, int signalNumber, bool hold,
+                       bool waitForKey);
+    void waitAfterCommandDismissed();
     void errorOccurred(const QString &message);
     void bell();
     void hyperlinkResolved(quint64 contentRevision,

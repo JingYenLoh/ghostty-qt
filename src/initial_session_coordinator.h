@@ -1,5 +1,7 @@
 #pragma once
 
+#include "terminal_command.h"
+
 #include <QMutex>
 #include <QObject>
 #include <QSet>
@@ -18,7 +20,12 @@ class InitialSessionCoordinator final : public QObject {
 
 public:
     struct Payload {
+        // Positional CLI argv has highest execution precedence. The selected
+        // tagged command is initial-command when configured and otherwise the
+        // current ordinary fallback; assigning even null lets a reload reset
+        // a pane snapshot before the first lease is granted.
         QStringList program;
+        std::optional<TerminalCommand> command;
         bool hold = false;
 
         bool operator==(const Payload &) const = default;

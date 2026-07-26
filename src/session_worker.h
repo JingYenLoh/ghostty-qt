@@ -135,7 +135,12 @@ Q_SIGNALS:
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
-    void sessionExited(int exitCode, int signalNumber, bool hold);
+    void sessionExited(int exitCode, int signalNumber, bool hold,
+                       bool waitForKey);
+    // Emitted once after an exited wait-after-command surface receives a key
+    // that libghostty actually encoded. Modifier-only and consumed bindings
+    // never reach this boundary.
+    void waitAfterCommandDismissed();
     void errorOccurred(const QString &message);
 
 private Q_SLOTS:
@@ -214,6 +219,7 @@ private:
     int surfaceWidthPixels_ = 640;
     int surfaceHeightPixels_ = 384;
     bool running_ = false;
+    bool waitingAfterCommand_ = false;
     bool interactiveShell_ = false;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;

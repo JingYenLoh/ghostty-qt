@@ -5865,7 +5865,7 @@ void TerminalWorkspaceTest::
 
     // A held surface survives its child exit, but crossing that lifecycle
     // boundary expires the result already retained by BroadExecution.
-    Q_EMIT controllers[0]->sessionExited(0, 0, true);
+    Q_EMIT controllers[0]->sessionExited(0, 0, true, false);
     QVERIFY(!panes[0]->searchUiActive());
     QCOMPARE(staleActive.count(), 0);
     QCOMPARE(staleText.count(), 0);

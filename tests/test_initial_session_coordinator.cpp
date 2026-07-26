@@ -5,17 +5,21 @@
 #include <QThread>
 
 #include <initializer_list>
+#include <optional>
 #include <thread>
+#include <utility>
 
 namespace {
 
 using Coordinator = InitialSessionCoordinator;
 
-Coordinator::Payload payload(
-    std::initializer_list<QString> program, bool hold = false)
+Coordinator::Payload
+payload(std::initializer_list<QString> program, bool hold = false,
+        std::optional<TerminalCommand> command = std::nullopt)
 {
     return {
         .program = QStringList(program),
+        .command = std::move(command),
         .hold = hold,
     };
 }
@@ -37,14 +41,18 @@ private Q_SLOTS:
 
 void InitialSessionCoordinatorTest::promotesWaitersInFifoOrder()
 {
-    Coordinator coordinator(payload({QStringLiteral("first")}, true));
+    const std::optional<TerminalCommand> initialCommand =
+        TerminalCommand::shell(QByteArrayLiteral("first shell"));
+    Coordinator coordinator(
+        payload({QStringLiteral("first")}, true, initialCommand));
 
     const Coordinator::RequestResult first = coordinator.request();
     const Coordinator::RequestResult second = coordinator.request();
     const Coordinator::RequestResult third = coordinator.request();
     QVERIFY(first.granted());
-    QVERIFY(first.payload == std::optional(payload(
-                                 {QStringLiteral("first")}, true)));
+    QVERIFY(first.payload
+            == std::optional(
+                payload({QStringLiteral("first")}, true, initialCommand)));
     QCOMPARE(second.status, Coordinator::RequestStatus::Waiting);
     QCOMPARE(third.status, Coordinator::RequestStatus::Waiting);
     QCOMPARE(coordinator.state(), Coordinator::State::Reserved);
@@ -110,12 +118,19 @@ void InitialSessionCoordinatorTest::cancellationDoesNotDisturbFifoOrder()
 
 void InitialSessionCoordinatorTest::payloadUpdatesApplyToTheNextGrant()
 {
-    const Coordinator::Payload original = payload(
-        {QStringLiteral("old")});
-    const Coordinator::Payload updated = payload(
-        {QStringLiteral("new"), QStringLiteral("argument")}, true);
-    const Coordinator::Payload ignored = payload(
-        {QStringLiteral("ignored")});
+    const Coordinator::Payload original =
+        payload({QStringLiteral("old")}, false,
+                TerminalCommand::shell(QByteArrayLiteral("old command"), true));
+    const Coordinator::Payload updated =
+        payload({QStringLiteral("new"), QStringLiteral("argument")}, true,
+                TerminalCommand::direct({
+                    QByteArrayLiteral("/bin/new"),
+                    QByteArray::fromHex("ff80"),
+                    QByteArray{},
+                }));
+    const Coordinator::Payload ignored =
+        payload({QStringLiteral("ignored")}, false,
+                TerminalCommand::shell(QByteArrayLiteral("ignored command")));
     Coordinator coordinator(original);
 
     const Coordinator::RequestResult holder = coordinator.request();

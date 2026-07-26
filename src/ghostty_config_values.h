@@ -193,6 +193,12 @@ struct SplitAppearance {
 struct GhosttyConfigValues {
     // Ghostty finalizes an empty source value back to this non-empty default.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // The ordinary command is finalized for every terminal surface. The
+    // optional initial command replaces it only for the first surface that
+    // successfully initializes.
+    std::optional<TerminalCommand> ordinaryCommand;
+    std::optional<TerminalCommand> initialCommand;
+    bool waitAfterCommand = false;
     // The helper has already applied repeat/reset/remove/overwrite and include
     // precedence. Preserve the finalized raw key/value bytes unchanged.
     TerminalEnvironment environment;

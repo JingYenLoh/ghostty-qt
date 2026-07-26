@@ -33,6 +33,9 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("term"),
+    QLatin1StringView("command"),
+    QLatin1StringView("initial-command"),
+    QLatin1StringView("wait-after-command"),
     QLatin1StringView("env"),
     QLatin1StringView("linux-cgroup"),
     QLatin1StringView("linux-cgroup-memory-limit"),
@@ -182,6 +185,16 @@ constexpr auto ConfigPathFields = std::to_array<QLatin1StringView>({
 constexpr auto EnvironmentEntryFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("key"),
     QLatin1StringView("value"),
+});
+constexpr auto ShellCommandFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"),
+    QLatin1StringView("value"),
+    QLatin1StringView("default-shell"),
+});
+constexpr auto DirectCommandFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"),
+    QLatin1StringView("argv"),
+    QLatin1StringView("default-shell"),
 });
 constexpr auto MouseScrollMultiplierFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("precision"),
@@ -437,6 +450,85 @@ ParseResult<QByteArray> readNonEmptyByteArray(const QJsonValue &value,
             QStringLiteral("%1 must be a non-empty byte array").arg(context));
     }
     return result;
+}
+
+ParseResult<QByteArray> readCommandBytes(const QJsonValue &value,
+                                         const QString &context)
+{
+    auto result = readByteArray(value, context);
+    if (result && result->contains('\0')) {
+        return std::unexpected(
+            QStringLiteral("%1 must not contain NUL").arg(context));
+    }
+    return result;
+}
+
+ParseResult<std::optional<TerminalCommand>>
+readOptionalCommand(const QJsonValue &value, const QString &context,
+                    bool allowDefaultShell)
+{
+    if (value.isNull()) return std::optional<TerminalCommand>{};
+    if (!value.isObject()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be an object or null").arg(context));
+    }
+
+    const QJsonObject candidate = value.toObject();
+    auto kind = readString(candidate.value(QLatin1StringView("kind")),
+                           childContext(context, QLatin1StringView("kind")));
+    if (!kind) return std::unexpected(std::move(kind.error()));
+
+    const Fields fields = *kind == QLatin1StringView("shell")
+        ? Fields(ShellCommandFields)
+        : *kind == QLatin1StringView("direct") ? Fields(DirectCommandFields)
+                                               : Fields{};
+    if (fields.empty()) {
+        return std::unexpected(
+            QStringLiteral("%1.kind has unsupported value '%2'")
+                .arg(context, *kind));
+    }
+    auto object = readExactObject(value, context, fields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    auto defaultShell =
+        readBoolean(object->value(QLatin1StringView("default-shell")),
+                    childContext(context, QLatin1StringView("default-shell")));
+    if (!defaultShell) {
+        return std::unexpected(std::move(defaultShell.error()));
+    }
+    if (*defaultShell
+        && (!allowDefaultShell || *kind != QLatin1StringView("shell"))) {
+        return std::unexpected(
+            QStringLiteral("%1.default-shell is invalid for this command")
+                .arg(context));
+    }
+
+    if (*kind == QLatin1StringView("shell")) {
+        auto shell =
+            readCommandBytes(object->value(QLatin1StringView("value")),
+                             childContext(context, QLatin1StringView("value")));
+        if (!shell) return std::unexpected(std::move(shell.error()));
+        return TerminalCommand::shell(std::move(*shell), *defaultShell);
+    }
+
+    auto argv = readArray(object->value(QLatin1StringView("argv")),
+                          childContext(context, QLatin1StringView("argv")));
+    if (!argv) return std::unexpected(std::move(argv.error()));
+    if (argv->isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("%1.argv must contain at least argv[0]")
+                .arg(context));
+    }
+    QVector<QByteArray> arguments;
+    arguments.reserve(argv->size());
+    for (qsizetype index = 0; index < argv->size(); ++index) {
+        const QString argumentContext =
+            QStringLiteral("%1.argv[%2]").arg(context).arg(index);
+        auto argument = readCommandBytes(argv->at(index), argumentContext);
+        if (!argument) return std::unexpected(std::move(argument.error()));
+        arguments.push_back(std::move(*argument));
+    }
+    return TerminalCommand::direct(std::move(arguments));
 }
 
 ParseResult<TerminalEnvironment> readEnvironment(const QJsonValue &value,
@@ -921,6 +1013,25 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 
     if (auto parsed = assign(QLatin1StringView("term"), result.term,
                              readNonEmptyByteArray);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("command");
+        auto parsed =
+            readOptionalCommand(fieldValue(name), context(name), true);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.ordinaryCommand = std::move(*parsed);
+    }
+    {
+        constexpr QLatin1StringView name("initial-command");
+        auto parsed =
+            readOptionalCommand(fieldValue(name), context(name), false);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.initialCommand = std::move(*parsed);
+    }
+    if (auto parsed = assignBoolean(QLatin1StringView("wait-after-command"),
+                                    result.waitAfterCommand);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

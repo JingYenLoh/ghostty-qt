@@ -327,6 +327,7 @@ private Q_SLOTS:
     void rootApplicationChainSurvivesSourceDestruction();
     void configuredNewWindowAndQuitPreserveOrder_data();
     void configuredNewWindowAndQuitPreserveOrder();
+    void commandPrecedenceAndReloadUseFirstSessionLease();
     void suppressedStartupPreservesFirstSessionOptions();
     void failedLazyCreationDoesNotConsumeFirstSession();
     void terminalInitializationFailurePromotesNextSession();
@@ -1882,6 +1883,79 @@ void ApplicationControllerTest::workspaceLossRetiresOwningWindow()
     QCOMPARE(controller.windowCount(), 0);
     QVERIFY(controller.windows().isEmpty());
     QCOMPARE(controller.lifetimeController()->registeredWindowCount(), 0);
+}
+
+void ApplicationControllerTest::commandPrecedenceAndReloadUseFirstSessionLease()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.initialWindow = false;
+    options.program.clear();
+    options.hold = false;
+    options.ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("30"),
+    });
+    options.initialCommand =
+        TerminalCommand::shell(QByteArrayLiteral("exec sleep 30"));
+
+    ApplicationController controller(options, harness.factory(), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+
+    const TerminalCommand reloadedOrdinary = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("29"),
+    });
+    const TerminalCommand reloadedInitial =
+        TerminalCommand::shell(QByteArrayLiteral("exec sleep 28"));
+    LaunchOptions reloaded = options;
+    reloaded.ordinaryCommand = reloadedOrdinary;
+    reloaded.initialCommand = reloadedInitial;
+    controller.applyLaunchOptions(reloaded);
+
+    // No surface has reserved the one-shot lease, so reload replaces both the
+    // initial command granted to the first starter and the ordinary fallback.
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 1, 1000);
+    TerminalController *const first =
+        onlyController(controller.windows().constFirst().workspace);
+    QVERIFY(first != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(first->sessionStarted(), 2000);
+    QVERIFY(first->launchProgram().isEmpty());
+    QVERIFY(first->launchCommand()
+            == std::optional<TerminalCommand>(reloadedInitial));
+    QCOMPARE(first->launchTitle(), QStringLiteral("Terminal"));
+
+    QVERIFY(controller.dispatch(ApplicationAction::NewWindow));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
+    TerminalController *const second =
+        onlyController(controller.windows().constLast().workspace);
+    QVERIFY(second != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(second->sessionStarted(), 2000);
+    QVERIFY(second->launchProgram().isEmpty());
+    QVERIFY(second->launchCommand()
+            == std::optional<TerminalCommand>(reloadedOrdinary));
+    QCOMPARE(second->launchTitle(), QStringLiteral("/bin/sleep"));
+
+    // The existing positional frontend command is already direct argv and has
+    // higher first-session precedence than Ghostty initial-command. The
+    // ordinary command remains the controller fallback but is not executed.
+    WindowFactoryHarness cliHarness;
+    LaunchOptions cli = reloaded;
+    cli.initialWindow = true;
+    cli.program = {QStringLiteral("/bin/true")};
+    cli.hold = true;
+    ApplicationController cliController(cli, cliHarness.factory(), false);
+    const auto cliWindow = cliController.createInitialWindow();
+    QVERIFY(cliWindow.has_value());
+    TerminalController *const cliFirst = onlyController(cliWindow->workspace);
+    QVERIFY(cliFirst != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(cliFirst->sessionStarted(), 2000);
+    QCOMPARE(cliFirst->launchProgram(),
+             QStringList({QStringLiteral("/bin/true")}));
+    QVERIFY(cliFirst->launchCommand()
+            == std::optional<TerminalCommand>(reloadedOrdinary));
+    QCOMPARE(cliFirst->launchTitle(), QStringLiteral("true"));
 }
 
 void ApplicationControllerTest::suppressedStartupPreservesFirstSessionOptions()
