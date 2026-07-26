@@ -407,6 +407,7 @@ private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
     void typographyReloadReachesLiveAndFuturePanes();
+    void termReloadAffectsOnlyFuturePanes();
     void inheritedTypographyChangesOnlyPointSize();
     void initializationSurvivesReentrantConfigurationObservers();
     void tabPublicationMayDestroyWorkspace();
@@ -606,6 +607,60 @@ void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
          workspace.findChildren<TerminalPane *>()) {
         verifyTypography(pane);
     }
+}
+
+void TerminalWorkspaceTest::termReloadAffectsOnlyFuturePanes()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.term = QByteArrayLiteral("ghostty-qt-initial");
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(options));
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QCOMPARE(firstController->launchTerm(),
+             QByteArrayLiteral("ghostty-qt-initial"));
+    QSignalSpy runtimeOptions(firstController,
+                              &TerminalController::runtimeOptionsRequested);
+
+    LaunchOptions reloaded = options;
+    reloaded.term = QByteArrayLiteral("ghostty-qt-reloaded");
+    workspace.applyLaunchOptions(reloaded);
+    QCOMPARE(workspace.effectiveLaunchOptions().term, reloaded.term);
+    QCOMPARE(first.pane->findChild<TerminalController *>(), firstController);
+    QCOMPARE(firstController->launchTerm(),
+             QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(runtimeOptions.count(), 0);
+
+    workspace.newTab();
+    const CurrentTabProbe tab = currentTabProbe(workspace);
+    QVERIFY(tab.pane != nullptr);
+    QVERIFY(tab.pane != first.pane);
+    TerminalController *const tabController =
+        tab.pane->findChild<TerminalController *>();
+    QVERIFY(tabController != nullptr);
+    QCOMPARE(tabController->launchTerm(),
+             QByteArrayLiteral("ghostty-qt-reloaded"));
+
+    const CurrentTabProbe split = splitRightProbe(workspace);
+    QVERIFY(split.pane != nullptr);
+    QVERIFY(split.pane != tab.pane);
+    TerminalController *const splitController =
+        split.pane->findChild<TerminalController *>();
+    QVERIFY(splitController != nullptr);
+    QCOMPARE(splitController->launchTerm(),
+             QByteArrayLiteral("ghostty-qt-reloaded"));
+    QCOMPARE(firstController->launchTerm(),
+             QByteArrayLiteral("ghostty-qt-initial"));
 }
 
 void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()

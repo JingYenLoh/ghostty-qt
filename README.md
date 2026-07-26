@@ -298,6 +298,7 @@ The current compatibility slice applies these keys:
 | `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
 | `split-preserve-zoom` | Ghostty's canonical `no-navigation` default clears split zoom after a successful `goto_split`. Canonical `navigation` instead transfers the zoomed presentation to the newly focused pane for successful previous/next or spatial navigation. Reload affects subsequent navigation immediately. A direction with no target changes neither focus nor zoom; direct activation of another pane and structural changes such as creating a split retain their existing unzoom behavior. |
 | `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
+| `term` | Sets `TERM` for each pane's child from Ghostty's finalized non-empty raw bytes. It defaults to `xterm-ghostty`, and an empty setting finalizes back to that default. Each pane snapshots the value at construction; reload affects panes created afterward, while already constructed panes—including deferred panes without a child yet—retain their snapshot. `TERMINFO` continues to point at ghostty-qt's private database and `COLORTERM=truecolor` remains fixed. |
 | `window-inherit-working-directory` | Defaults to `true`. A pane-originated new window inherits that exact pane's latest accepted local OSC 7 directory; an application/global action uses the focused or most recently active live pane, and a stale or zero-window source uses the newest `working-directory`. `false` always uses that application fallback. Reload affects future windows only. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
 | `window-inherit-font-size` | Defaults to `true`. New tabs and pane-originated windows inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. An application/global new-window action uses the focused or most recently active pane. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |
@@ -672,10 +673,13 @@ The build generates Ghostty's `xterm-ghostty` entry and compiles it with `tic`
 under `build/<preset>/share/terminfo`. Every child receives:
 
 ```text
-TERM=xterm-ghostty
+TERM=<finalized term value; xterm-ghostty by default>
 TERMINFO=<that preset's generated terminfo directory>
 COLORTERM=truecolor
 ```
+
+Changing `term` does not generate another terminfo entry; the private database
+continues to contain Ghostty's `xterm-ghostty` definition.
 
 Inspect the generated entry with:
 

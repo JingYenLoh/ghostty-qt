@@ -69,6 +69,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY2(parsed.has_value(), qPrintable(errorMessage(parsed)));
     const GhosttyConfigValues &values = parsed->values;
 
+    QCOMPARE(values.term, QByteArrayLiteral("ghostty-qt-test"));
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
     const TerminalTypography &typography = values.typography;
@@ -764,6 +765,19 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::addColumn<QJsonObject>("exportObject");
     QTest::addColumn<QString>("diagnostic");
 
+    QTest::newRow("missing-term")
+        << withoutValue(object(), QStringLiteral("term"))
+        << QStringLiteral("values is missing field 'term'");
+    QTest::newRow("term-type")
+        << withValue(object(), QStringLiteral("term"), true)
+        << QStringLiteral("values.term must be an array");
+    QTest::newRow("term-empty")
+        << withValue(object(), QStringLiteral("term"), QJsonArray{})
+        << QStringLiteral("values.term must be a non-empty byte array");
+    QTest::newRow("term-byte-range")
+        << withValue(object(), QStringLiteral("term"), QJsonArray{256})
+        << QStringLiteral(
+               "values.term[0] must be an unsigned integer in range");
     QTest::newRow("missing-field")
         << withoutValue(object(), QStringLiteral("font-size"))
         << QStringLiteral("values is missing field 'font-size'");

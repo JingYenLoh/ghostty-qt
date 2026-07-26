@@ -186,7 +186,8 @@ path. Tests must always remove inherited editor variables or install a
 deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
-The schema-v1 projection includes the finalized working-directory,
+The schema-v1 projection includes the finalized non-empty raw-byte `term`
+child identity, finalized working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
@@ -265,14 +266,16 @@ The five focused config tests have distinct boundaries:
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
-  of process execution, including exact typography role lists, tagged style and
-  metric alternatives, fields and types, the full unsigned scrollback range,
-  nullable values, and malformed keybinding trees.
+  of process execution, including finalized non-empty byte-valued `term`, exact
+  typography role lists, tagged style and metric alternatives, fields and
+  types, the full unsigned scrollback range, nullable values, and malformed
+  keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
-  surface-inheritance booleans, exact font CLI forwarding and role
-  finalization, Ghostty's effective
+  surface-inheritance booleans, default/custom/empty and non-UTF-8 `term`
+  finalization, exact font CLI forwarding and role finalization, Ghostty's
+  effective
   `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned

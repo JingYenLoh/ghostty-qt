@@ -72,6 +72,10 @@ public:
         return launchOptions_.program;
     }
     [[nodiscard]] bool launchHold() const { return launchOptions_.hold; }
+    [[nodiscard]] const QByteArray &launchTerm() const
+    {
+        return launchOptions_.term;
+    }
     [[nodiscard]] const std::optional<TerminalSessionGeometry> &
     launchGeometry() const
     {

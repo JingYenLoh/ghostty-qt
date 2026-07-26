@@ -588,6 +588,10 @@
       "status": "partial",
       "note": "The exact default-true boolean reloads for future tabs only. True uses the explicit action-target pane, or the current tab's recorded active pane for an empty-context UI request, and inherits its newest accepted local OSC 7 directory; false or a cleared/unavailable report uses working-directory. Stable broad fanout retains each source independently. The shared unset desktop-launch fallback and lossless non-UTF-8 path transport remain incomplete."
     },
+    "term": {
+      "status": "supported",
+      "note": "Ghostty's finalized non-empty raw bytes set TERM for each pane's child and default empty input to xterm-ghostty. The private schema and direct envp insertion preserve non-UTF-8 values. Reload affects panes constructed afterward; already constructed panes, including deferred panes without a child yet, retain their snapshot. TERMINFO continues to point at ghostty-qt's resolved private database and COLORTERM remains truecolor."
+    },
     "theme": {
       "status": "partial",
       "note": "Static themes can contribute canonical values for the supported appearance slice through the pinned parser; dynamic light/dark theme selection and switching are not implemented."

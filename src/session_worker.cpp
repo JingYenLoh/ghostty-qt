@@ -774,7 +774,16 @@ bool SessionWorker::spawnChild()
         Q_EMIT errorOccurred(terminfo.error());
         return false;
     }
-    environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-ghostty"));
+    if (options_.term.isEmpty() || options_.term.contains('\0')) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Configured TERM must be non-empty and contain no "
+                           "NUL bytes."));
+        return false;
+    }
+    // QProcessEnvironment is QString-valued. Remove the inherited entry and
+    // append TERM directly below so Ghostty's raw finalized bytes survive
+    // independently of the process locale.
+    environment.remove(QStringLiteral("TERM"));
     environment.insert(QStringLiteral("TERMINFO"), *terminfo);
     environment.insert(QStringLiteral("COLORTERM"),
                        QStringLiteral("truecolor"));
@@ -790,10 +799,11 @@ bool SessionWorker::spawnChild()
 
     const QStringList environmentList = environment.toStringList();
     QVector<QByteArray> environmentStorage;
-    environmentStorage.reserve(environmentList.size());
+    environmentStorage.reserve(environmentList.size() + 1);
     for (const QString &entry : environmentList) {
         environmentStorage.push_back(entry.toLocal8Bit());
     }
+    environmentStorage.push_back(QByteArrayLiteral("TERM=") + options_.term);
     QVector<char *> envp;
     envp.reserve(environmentStorage.size() + 1);
     for (QByteArray &entry : environmentStorage) {

@@ -79,6 +79,7 @@ GhosttyConfigSnapshot completeSnapshot()
 {
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
+    values.term = QByteArrayLiteral("ghostty-qt-configured");
     values.workingDirectoryPath = QStringLiteral("/work/ghostty");
     values.typography = completeTypography();
 
@@ -242,6 +243,7 @@ void LaunchOptionsTest::defaults()
         parseLaunchOptions({QStringLiteral("ghostty-qt")});
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
+    QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
     QCOMPARE(options.workingDirectory, QDir::currentPath());
     QVERIFY(options.inheritWorkingDirectory);
     QVERIFY(!options.workingDirectoryExplicit);
@@ -713,6 +715,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     // recursive includes, and styled-family finalization. The broad snapshot
     // projection must trust that complete value instead of rebuilding a
     // hybrid from the original frontend flags.
+    QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
     QVERIFY(cliResult.typography == completeTypography());
     QCOMPARE(cliResult.appearance.foregroundColor,
              QColor(QStringLiteral("#112233")));
@@ -1417,6 +1420,7 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
 void LaunchOptionsTest::projectsTerminalSessionOptions()
 {
     LaunchOptions options;
+    options.term = QByteArrayLiteral("ghostty-qt-session");
     options.workingDirectory = QStringLiteral("/session/working-directory");
     options.workingDirectoryExplicit = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
@@ -1462,6 +1466,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
+    QCOMPARE(launch.term, options.term);
     QCOMPARE(launch.inheritWorkingDirectory,
              options.inheritWorkingDirectory);
     QCOMPARE(launch.program, options.program);
@@ -1522,6 +1527,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.showVersion = true;
     QCOMPARE(toTerminalSessionLaunchOptions(frontendOnlyChanged), launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(frontendOnlyChanged), runtime);
+
+    LaunchOptions terminalIdentityChanged = options;
+    terminalIdentityChanged.term = QByteArrayLiteral("future-terminal");
+    QVERIFY(toTerminalSessionLaunchOptions(terminalIdentityChanged) != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(terminalIdentityChanged), runtime);
 
     LaunchOptions inheritedDirectory = options;
     inheritedDirectory.inheritWorkingDirectory = true;

@@ -3,6 +3,7 @@
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
+#include <QByteArray>
 #include <QColor>
 #include <QString>
 #include <QVector>
@@ -190,6 +191,8 @@ struct SplitAppearance {
 // value type regular and must not be treated as a second copy of Ghostty's
 // configuration defaults.
 struct GhosttyConfigValues {
+    // Ghostty finalizes an empty source value back to this non-empty default.
+    QByteArray term = QByteArrayLiteral("xterm-ghostty");
     // nullopt is Ghostty's semantic `inherit`; a value is an already-finalized
     // concrete path whose lexical spelling must be preserved.
     std::optional<QString> workingDirectoryPath;

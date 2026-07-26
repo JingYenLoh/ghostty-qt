@@ -741,7 +741,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QStringLiteral("working-directory = %1\n"
+        QStringLiteral("term = ghostty-qt-configured\n"
+                       "working-directory = %1\n"
                        "split-inherit-working-directory = false\n"
                        "split-preserve-zoom = navigation\n"
                        "tab-inherit-working-directory = false\n"
@@ -763,6 +764,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     const auto load = makeGhosttyConfigProcessLoader(std::move(options));
     GhosttyConfigLoadResult result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.term, QByteArrayLiteral("ghostty-qt-configured"));
     QVERIFY(result->values.workingDirectoryPath.has_value());
     QCOMPARE(*result->values.workingDirectoryPath, directory);
     QVERIFY(!result->values.splitInheritWorkingDirectory);
@@ -781,16 +783,30 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
     QCOMPARE(result->values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
 
-    ConfigFixture::writeFile(fixture.preferredPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("term =\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(!result->values.workingDirectoryPath.has_value());
+
+    QByteArray byteTerm = QByteArrayLiteral("ghostty-");
+    byteTerm.append(char(0x80));
+    byteTerm.append(char(0xff));
+    QByteArray byteTermConfig = QByteArrayLiteral("term = ");
+    byteTermConfig.append(byteTerm);
+    byteTermConfig.append('\n');
+    ConfigFixture::writeFile(fixture.preferredPath, byteTermConfig);
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.term, byteTerm);
 
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral("working-directory = home\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(result->values.workingDirectoryPath.has_value());
     QCOMPARE(*result->values.workingDirectoryPath, QDir::homePath());
 

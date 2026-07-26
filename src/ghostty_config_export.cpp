@@ -32,6 +32,7 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 });
 
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("term"),
     QLatin1StringView("working-directory"),
     QLatin1StringView("font-family"),
     QLatin1StringView("font-family-bold"),
@@ -398,6 +399,28 @@ readUnsignedInteger(const QJsonValue &value, const QString &context,
                 .arg(context));
     }
     return static_cast<Integer>(number);
+}
+
+ParseResult<QByteArray> readNonEmptyByteArray(const QJsonValue &value,
+                                              const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+    if (array->isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be a non-empty byte array").arg(context));
+    }
+
+    QByteArray result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto byte = readUnsignedInteger<quint8>(array->at(index), entryContext);
+        if (!byte) return std::unexpected(std::move(byte.error()));
+        result.append(static_cast<char>(*byte));
+    }
+    return result;
 }
 
 ParseResult<QVector<quint32>> readUnicodeScalarList(const QJsonValue &value,
@@ -819,6 +842,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return assign(name, destination, readBoolean);
     };
 
+    if (auto parsed = assign(QLatin1StringView("term"), result.term,
+                             readNonEmptyByteArray);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     {
         constexpr QLatin1StringView name("working-directory");
         auto parsed = readString(fieldValue(name), context(name));

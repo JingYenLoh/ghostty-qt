@@ -157,6 +157,7 @@ TerminalSessionLaunchOptions
 toTerminalSessionLaunchOptions(const LaunchOptions &options)
 {
     return {
+        .term = options.term,
         .workingDirectory = options.workingDirectory,
         .inheritWorkingDirectory = options.inheritWorkingDirectory,
         .program = options.program,
@@ -173,6 +174,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     LaunchOptions result = base;
     const GhosttyConfigValues &config = snapshot.values;
 
+    result.term = config.term;
     if (!base.workingDirectoryExplicit) {
         result.inheritWorkingDirectory = !config.workingDirectoryPath;
         if (config.workingDirectoryPath) {

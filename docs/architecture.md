@@ -68,14 +68,18 @@ divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
 session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
-appearance, URL-matching state, and an optional one-shot initial geometry owned
-by the session. The geometry is not produced by the reusable `LaunchOptions`
+terminal identity, appearance, URL-matching state, and an optional one-shot
+initial geometry owned by the session. The geometry is not produced by the
+reusable `LaunchOptions`
 projection: a workspace supplies it explicitly only while constructing its
 first pane. Before session start, the controller folds the newest runtime
 values into that pending launch state. Later live reloads cross the queued
 controller/worker boundary as `TerminalSessionRuntimeOptions`, which is limited
-to appearance and URL matching. Working directory, program, hold, and the
-existing terminal's scrollback allocation are launch-only by construction.
+to appearance and URL matching. Terminal identity, working directory, program,
+hold, and the existing terminal's scrollback allocation are launch-only by
+construction. A pane snapshots those values when constructed, so even a
+deferred pane that has not spawned its child retains its original identity
+across reload; panes constructed afterward use the newest workspace snapshot.
 A separate launch bit distinguishes process-cwd inheritance from a concrete
 CLI, config, or OSC-derived directory; this prevents a display path from
 silently turning `inherit` into a `chdir` and `PWD` rewrite.
@@ -1018,7 +1022,7 @@ to the next entry after the child changes directory.
 The child inherits the host environment with these terminal-specific values:
 
 ```text
-TERM=xterm-ghostty
+TERM=<finalized Ghostty term; xterm-ghostty by default>
 TERMINFO=<resolved private database>
 COLORTERM=truecolor
 TERM_PROGRAM=ghostty-qt
@@ -1313,7 +1317,8 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
-compatibility field, the exact scrollbar policy, all five finalized
+compatibility field, the finalized non-empty raw-byte child terminal identity,
+the exact scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
@@ -1785,7 +1790,12 @@ beside the executable. An installed executable first resolves its private
 `${CMAKE_INSTALL_DATADIR}/ghostty-qt/terminfo` directory using only a relative
 path, so moving the complete installation prefix does not invalidate it. The
 `GHOSTTY_QT_TERMINFO` environment variable is an authoritative diagnostic
-override. No system terminfo installation is required.
+override. No system terminfo installation is required. The generated database
+always contains Ghostty's `xterm-ghostty` entry; a custom finalized `term`
+changes the child environment but does not synthesize another entry or stop
+exporting the private `TERMINFO` path. The config schema transports that value
+as bytes, and the worker appends `TERM=` directly to `envp`, preserving
+non-UTF-8 values independently of the process locale.
 
 Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
 developer and release CMake trees. Those presets must not build concurrently.
@@ -1875,7 +1885,9 @@ The default CTest suite has focused layers for each ownership boundary:
   `src/config/url.zig` corpus against the vendored Oniguruma implementation.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
-  output draining, byte-exact terminal-control action writes, reset cache
+  output draining, the configured `TERM` together with the fixed private
+  `TERMINFO`/`COLORTERM` contract, byte-exact terminal-control action writes,
+  reset cache
   synchronization, correlated terminal-action outcomes and effects, process
   exit, explicit-program activity, and an interactive shell's idle/job/idle
   foreground transitions. Read-only cases cover ordered
@@ -1951,7 +1963,8 @@ The default CTest suite has focused layers for each ownership boundary:
   handling, and last-good retention. `application-tabs-location` verifies the
   real QML toolbar moves to the configured edge without a binding loop.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
-  frontend projection, including exact shapes, four role-family lists, tagged
+  frontend projection, including finalized non-empty byte-valued `term`, exact
+  shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, the fixed 256-color palette, the full unsigned scrollback
@@ -1961,6 +1974,7 @@ The default CTest suite has focused layers for each ownership boundary:
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact trailing font CLI arguments and role finalization,
+  default/custom/empty and non-UTF-8 `term` finalization,
   nullable/capped application-lifetime duration export, and nullable X11
   divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and

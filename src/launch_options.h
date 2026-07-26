@@ -6,6 +6,7 @@
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
+#include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
 #include <QStringList>
@@ -17,6 +18,9 @@
 #include <optional>
 
 struct LaunchOptions {
+    // Finalized terminal identity for future children. This launch-only value
+    // never mutates the environment of an already-running pane.
+    QByteArray term = QByteArrayLiteral("xterm-ghostty");
     QString workingDirectory;
     // `inherit` preserves the process cwd and its logical PWD spelling. A
     // concrete CLI, config, or OSC-derived directory clears this bit.

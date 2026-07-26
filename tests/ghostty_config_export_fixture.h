@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArrayView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -8,6 +9,15 @@
 #include <utility>
 
 namespace GhosttyConfigExportFixture {
+
+inline QJsonArray bytes(QByteArrayView value)
+{
+    QJsonArray result;
+    for (const char byte : value) {
+        result.append(static_cast<unsigned char>(byte));
+    }
+    return result;
+}
 
 inline QJsonObject flags(bool consumed = true,
                          bool all = false,
@@ -161,6 +171,7 @@ inline QJsonObject values()
     }
 
     return {
+        {QStringLiteral("term"), bytes(QByteArrayLiteral("ghostty-qt-test"))},
         {QStringLiteral("working-directory"), QStringLiteral("/work/ghostty")},
         {QStringLiteral("font-family"),
          QJsonArray{QStringLiteral("Mono One"), QStringLiteral("Emoji")}},

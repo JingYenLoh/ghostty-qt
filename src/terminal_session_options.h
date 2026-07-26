@@ -2,6 +2,7 @@
 
 #include "terminal_appearance.h"
 
+#include <QByteArray>
 #include <QMetaType>
 #include <QString>
 #include <QStringList>
@@ -116,6 +117,7 @@ normalizedTerminalSessionGeometry(TerminalSessionGeometry geometry) noexcept
 // One-time process and terminal construction settings. Runtime state is
 // composed here so initialization and reload use the same representation.
 struct TerminalSessionLaunchOptions {
+    QByteArray term = QByteArrayLiteral("xterm-ghostty");
     QString workingDirectory;
     bool inheritWorkingDirectory = false;
     QStringList program;

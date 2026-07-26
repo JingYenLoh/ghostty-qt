@@ -91,6 +91,10 @@ fn configJson() !String {
 fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.beginObject();
 
+    try json.objectField("term");
+    try json.beginArray();
+    for (config.term) |byte| try json.write(byte);
+    try json.endArray();
     try json.objectField("working-directory");
     try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
     inline for (.{

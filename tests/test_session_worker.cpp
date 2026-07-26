@@ -1,5 +1,6 @@
 #include "session_worker.h"
 #include "terminal_types.h"
+#include "terminfo_paths.h"
 
 #include <QDir>
 #include <QFile>
@@ -227,6 +228,7 @@ private Q_SLOTS:
     void reportsTerminalInitializationSeparatelyFromChildSpawn();
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
+    void usesConfiguredTerminalEnvironment();
     void stripsDesktopActivationFromChildEnvironment();
     void fallsBackFromUnavailableWorkingDirectory_data();
     void fallsBackFromUnavailableWorkingDirectory();
@@ -988,6 +990,55 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
     const QString contents = frameText(accumulatedFrame(updateSpy));
     QVERIFY2(contents.contains(QStringLiteral(
                  "xdg=unset startup=unset sentinel=preserved")),
+             qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::usesConfiguredTerminalEnvironment()
+{
+    const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
+    QVERIFY2(terminfo.has_value(),
+             terminfo ? "" : qPrintable(terminfo.error()));
+
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 8, 8, 16, 1920, 128);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.term = QByteArrayLiteral("ghostty-qt-");
+    options.term.append(char(0x80));
+    options.term.append(char(0xff));
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'term='; "
+                       "printf '%s' \"$TERM\" | od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\nterminfo=%s\\ncolorterm=%s\\nprogram=%s\\n' "
+                       "\"$TERMINFO\" \"$COLORTERM\" \"$TERM_PROGRAM\""),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(
+        contents.contains(QStringLiteral("term=67686f737474792d71742d80ff")),
+        qPrintable(contents));
+    QVERIFY2(contents.contains(QStringLiteral("terminfo=%1").arg(*terminfo)),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(QStringLiteral("colorterm=truecolor")),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(QStringLiteral("program=ghostty-qt")),
              qPrintable(contents));
     worker.shutdown();
 }
