@@ -19,6 +19,14 @@ inline QJsonArray bytes(QByteArrayView value)
     return result;
 }
 
+inline QJsonObject environmentEntry(QByteArrayView key, QByteArrayView value)
+{
+    return {
+        {QStringLiteral("key"), bytes(key)},
+        {QStringLiteral("value"), bytes(value)},
+    };
+}
+
 inline QJsonObject flags(bool consumed = true,
                          bool all = false,
                          bool global = false,
@@ -172,6 +180,15 @@ inline QJsonObject values()
 
     return {
         {QStringLiteral("term"), bytes(QByteArrayLiteral("ghostty-qt-test"))},
+        {QStringLiteral("env"),
+         QJsonArray{
+             environmentEntry(QByteArrayLiteral("GHOSTTY_QT_TEST"),
+                              QByteArrayLiteral("alpha=beta")),
+             environmentEntry(QByteArray::fromHex("80ff"),
+                              QByteArray::fromHex("fe8176616c7565")),
+             environmentEntry(QByteArrayView{},
+                              QByteArrayLiteral("empty-key-value")),
+         }},
         {QStringLiteral("linux-cgroup"), QStringLiteral("always")},
         {QStringLiteral("linux-cgroup-memory-limit"),
          QStringLiteral("18446744073709551615")},

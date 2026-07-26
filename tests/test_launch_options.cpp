@@ -80,6 +80,16 @@ GhosttyConfigSnapshot completeSnapshot()
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
     values.term = QByteArrayLiteral("ghostty-qt-configured");
+    values.environment = {
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QT_ENV"),
+            .value = QByteArrayLiteral("configured"),
+        },
+        {
+            .key = QByteArrayLiteral("RAW_VALUE"),
+            .value = QByteArray::fromHex("ff8061"),
+        },
+    };
     values.linuxCgroup = {
         .mode = LinuxCgroupMode::Always,
         .memoryLimitBytes = std::numeric_limits<quint64>::max(),
@@ -250,6 +260,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
+    QVERIFY(options.environment.isEmpty());
     QCOMPARE(options.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
     QVERIFY(!options.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!options.linuxCgroup.processesLimit.has_value());
@@ -719,6 +730,10 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
                             .unit = ScrollbackLimitUnit::Lines};
     base.scrollbackLimitExplicit = true;
     base.processUsesSingleInstance = true;
+    base.environment = {{
+        .key = QByteArrayLiteral("STALE"),
+        .value = QByteArrayLiteral("launch-value"),
+    }};
 
     const GhosttyConfigSnapshot snapshot = completeSnapshot();
 
@@ -728,6 +743,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     // projection must trust that complete value instead of rebuilding a
     // hybrid from the original frontend flags.
     QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
+    QCOMPARE(cliResult.environment, snapshot.values.environment);
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
     QVERIFY(cliResult.processUsesSingleInstance);
     QVERIFY(cliResult.typography == completeTypography());
@@ -1435,6 +1451,16 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 {
     LaunchOptions options;
     options.term = QByteArrayLiteral("ghostty-qt-session");
+    options.environment = {
+        {
+            .key = QByteArrayLiteral("SESSION_ASCII"),
+            .value = QByteArrayLiteral("projected"),
+        },
+        {
+            .key = QByteArrayLiteral("SESSION_RAW"),
+            .value = QByteArray::fromHex("fe817f"),
+        },
+    };
     options.linuxCgroup = {
         .mode = LinuxCgroupMode::SingleInstance,
         .memoryLimitBytes = quint64{8'589'934'592},
@@ -1488,6 +1514,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.term, options.term);
+    QCOMPARE(launch.environment, options.environment);
     QCOMPARE(launch.linuxCgroup, options.linuxCgroup);
     QCOMPARE(launch.processUsesSingleInstance,
              options.processUsesSingleInstance);
@@ -1557,12 +1584,22 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(toTerminalSessionLaunchOptions(terminalIdentityChanged) != launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(terminalIdentityChanged), runtime);
 
+    LaunchOptions environmentChanged = options;
+    environmentChanged.environment = {{
+        .key = QByteArrayLiteral("SESSION_ASCII"),
+        .value = QByteArrayLiteral("future-value"),
+    }};
+    QVERIFY(environmentChanged != options);
+    QVERIFY(toTerminalSessionLaunchOptions(environmentChanged) != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(environmentChanged), runtime);
+
     LaunchOptions inheritedDirectory = options;
     inheritedDirectory.inheritWorkingDirectory = true;
     QVERIFY(toTerminalSessionLaunchOptions(inheritedDirectory) != launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(inheritedDirectory), runtime);
 
     options.workingDirectory.clear();
+    options.environment.clear();
     options.program.clear();
     options.scrollbackLimit = {};
     options.hold = false;
@@ -1576,6 +1613,17 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.program,
              QStringList({QStringLiteral("/bin/program"),
                           QStringLiteral("arg")}));
+    QCOMPARE(launch.environment,
+             TerminalEnvironment({
+                 {
+                     .key = QByteArrayLiteral("SESSION_ASCII"),
+                     .value = QByteArrayLiteral("projected"),
+                 },
+                 {
+                     .key = QByteArrayLiteral("SESSION_RAW"),
+                     .value = QByteArray::fromHex("fe817f"),
+                 },
+             }));
     QCOMPARE(launch.scrollbackLimit.value, quint64(42'000));
     QCOMPARE(launch.runtime.appearance.foregroundColor,
              QColor(QStringLiteral("#123456")));

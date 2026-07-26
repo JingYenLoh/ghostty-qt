@@ -26,6 +26,15 @@ struct ScrollbackLimit {
     bool operator==(const ScrollbackLimit &) const = default;
 };
 
+struct TerminalEnvironmentEntry {
+    QByteArray key;
+    QByteArray value;
+
+    bool operator==(const TerminalEnvironmentEntry &) const = default;
+};
+
+using TerminalEnvironment = QVector<TerminalEnvironmentEntry>;
+
 enum class TerminalCopyOnSelectMode : quint8 {
     Disabled,
     Primary,
@@ -119,6 +128,10 @@ normalizedTerminalSessionGeometry(TerminalSessionGeometry geometry) noexcept
 // composed here so initialization and reload use the same representation.
 struct TerminalSessionLaunchOptions {
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Ghostty's finalized raw environment overrides replace inherited and
+    // frontend-injected values immediately before exec. A concrete
+    // working-directory-derived PWD is the pinned runtime's later exception.
+    TerminalEnvironment environment;
     // Linux resource isolation is fixed when this pane is constructed. The
     // process role is resolved once during application startup; config reloads
     // can change the policy for future panes without changing that role.

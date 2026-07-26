@@ -33,6 +33,7 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("term"),
+    QLatin1StringView("env"),
     QLatin1StringView("linux-cgroup"),
     QLatin1StringView("linux-cgroup-memory-limit"),
     QLatin1StringView("linux-cgroup-processes-limit"),
@@ -177,6 +178,10 @@ constexpr auto BellFeatureFields = std::to_array<QLatin1StringView>({
 constexpr auto ConfigPathFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("path"),
     QLatin1StringView("optional"),
+});
+constexpr auto EnvironmentEntryFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("key"),
+    QLatin1StringView("value"),
 });
 constexpr auto MouseScrollMultiplierFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("precision"),
@@ -405,15 +410,11 @@ readUnsignedInteger(const QJsonValue &value, const QString &context,
     return static_cast<Integer>(number);
 }
 
-ParseResult<QByteArray> readNonEmptyByteArray(const QJsonValue &value,
-                                              const QString &context)
+ParseResult<QByteArray> readByteArray(const QJsonValue &value,
+                                      const QString &context)
 {
     auto array = readArray(value, context);
     if (!array) return std::unexpected(std::move(array.error()));
-    if (array->isEmpty()) {
-        return std::unexpected(
-            QStringLiteral("%1 must be a non-empty byte array").arg(context));
-    }
 
     QByteArray result;
     result.reserve(array->size());
@@ -423,6 +424,69 @@ ParseResult<QByteArray> readNonEmptyByteArray(const QJsonValue &value,
         auto byte = readUnsignedInteger<quint8>(array->at(index), entryContext);
         if (!byte) return std::unexpected(std::move(byte.error()));
         result.append(static_cast<char>(*byte));
+    }
+    return result;
+}
+
+ParseResult<QByteArray> readNonEmptyByteArray(const QJsonValue &value,
+                                              const QString &context)
+{
+    auto result = readByteArray(value, context);
+    if (result && result->isEmpty()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be a non-empty byte array").arg(context));
+    }
+    return result;
+}
+
+ParseResult<TerminalEnvironment> readEnvironment(const QJsonValue &value,
+                                                 const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    TerminalEnvironment result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      EnvironmentEntryFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+
+        auto key =
+            readByteArray(object->value(QLatin1StringView("key")),
+                          childContext(entryContext, QLatin1StringView("key")));
+        if (!key) return std::unexpected(std::move(key.error()));
+        if (key->contains('=')) {
+            return std::unexpected(QStringLiteral("%1.key must not contain '='")
+                                       .arg(entryContext));
+        }
+        if (key->contains('\0')) {
+            return std::unexpected(QStringLiteral("%1.key must not contain NUL")
+                                       .arg(entryContext));
+        }
+        auto entryValue = readNonEmptyByteArray(
+            object->value(QLatin1StringView("value")),
+            childContext(entryContext, QLatin1StringView("value")));
+        if (!entryValue) {
+            return std::unexpected(std::move(entryValue.error()));
+        }
+        if (entryValue->contains('\0')) {
+            return std::unexpected(
+                QStringLiteral("%1.value must not contain NUL")
+                    .arg(entryContext));
+        }
+        if (std::ranges::any_of(result, [&key](const auto &entry) {
+                return entry.key == *key;
+            })) {
+            return std::unexpected(
+                QStringLiteral("%1 contains duplicate key").arg(entryContext));
+        }
+        result.push_back({
+            .key = std::move(*key),
+            .value = std::move(*entryValue),
+        });
     }
     return result;
 }
@@ -857,6 +921,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 
     if (auto parsed = assign(QLatin1StringView("term"), result.term,
                              readNonEmptyByteArray);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("env"), result.environment,
+                             readEnvironment);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

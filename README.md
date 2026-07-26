@@ -301,11 +301,12 @@ The current compatibility slice applies these keys:
 
 | Key | Current behavior |
 | --- | --- |
+| `env` | Exports Ghostty's finalized ordered override map as raw non-NUL byte key/value pairs and applies it to every pane after inheriting the process environment and injecting the terminal defaults. Later assignments replace earlier ones; `env = KEY=` removes only that key from the configured override map, and a bare `env =` clears that map. Neither form unsets an inherited variable: a key absent from the finalized map is simply inherited. Configured values can override `TERM`, `TERMINFO`, `COLORTERM`, `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION`; a concrete launch directory writes its exact `PWD` afterward, while inherit mode permits an `env` override of `PWD`. A configured `PATH` is visible inside the child but, matching pinned Ghostty, does not affect lookup of a bare executable, which uses the launching process's `PATH`; likewise, configured `SHELL` is child payload and does not select the shell. Each pane snapshots the map at construction, so reload affects only panes created afterward, including leaving an already deferred pane unchanged. Embedded NUL bytes are rejected as a safety hardening because they cannot be represented losslessly in `execve` environment strings. |
 | `working-directory` | Sets the default directory for initial panes and the fallback for new tabs, splits, and windows. Ghostty's helper finalizes `home` and `~/...`; empty/`inherit` preserves the launching process cwd and logical `PWD`. Concrete path spelling is retained, including symlink-sensitive `..`. Explicit `--working-directory` wins. As in pinned Ghostty, an unavailable concrete directory starts the child in the process directory while retaining the requested logical `PWD` until OSC 7 corrects it. Because the helper itself is invoked with CLI arguments, an unset desktop launch currently resolves as `inherit` rather than GTK Ghostty's context-dependent `home` default. |
 | `split-inherit-working-directory` | Defaults to `true`. A future split then uses its explicit source pane's latest accepted local OSC 7 directory, falling back to `working-directory` when the terminal has none. `false` always uses `working-directory`. Reload affects future splits only and remains independent of font-size inheritance. The split policy is implemented, but exact unset desktop fallback remains partial with `working-directory`. |
 | `split-preserve-zoom` | Ghostty's canonical `no-navigation` default clears split zoom after a successful `goto_split`. Canonical `navigation` instead transfers the zoomed presentation to the newly focused pane for successful previous/next or spatial navigation. Reload affects subsequent navigation immediately. A direction with no target changes neither focus nor zoom; direct activation of another pane and structural changes such as creating a split retain their existing unzoom behavior. |
 | `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
-| `term` | Sets `TERM` for each pane's child from Ghostty's finalized non-empty raw bytes. It defaults to `xterm-ghostty`, and an empty setting finalizes back to that default. Each pane snapshots the value at construction; reload affects panes created afterward, while already constructed panes—including deferred panes without a child yet—retain their snapshot. `TERMINFO` continues to point at ghostty-qt's private database and `COLORTERM=truecolor` remains fixed. |
+| `term` | Supplies the initially injected `TERM` for each pane's child from Ghostty's finalized non-empty raw bytes. It defaults to `xterm-ghostty`, and an empty setting finalizes back to that default. Each pane snapshots the value at construction; reload affects panes created afterward, while already constructed panes—including deferred panes without a child yet—retain their snapshot. `TERMINFO` initially points at ghostty-qt's private database and `COLORTERM` is initially `truecolor`; a finalized `env` entry can override any of these injected values. |
 | `linux-cgroup` | Supports `never`, `always`, and the Linux default `single-instance`. Enabled panes place their child PID in `app-ghostty-surface-transient-<pid>.scope` through the user systemd manager before allowing `exec`; the child and all descendants then inherit that scope. `single-instance` follows ghostty-qt's actual primary D-Bus role fixed at startup, not `gtk-single-instance` or a later frontend reload. A reachable user systemd manager and session D-Bus are required; membership verification uses the first `/proc/<pid>/cgroup` entry. Reload affects only panes constructed afterward. |
 | `linux-cgroup-hard-fail` | Defaults to `false`. Pre-fork gate allocation, scope creation, or the 250 ms `/proc/<pid>/cgroup` membership check then logs a warning and continues the launch. With `true`, any such failure aborts the pane launch; an already gated child is rejected with status 127. Post-fork gate/protocol failures are always fatal because the frontend cannot safely decide that the child was released. |
 | `linux-cgroup-memory-limit` | An unset value adds no memory limit. Every configured `u64`, including zero and the maximum value, is preserved exactly and sent as systemd `MemoryHigh`; this is a soft pressure threshold rather than an immediate kill limit. The scope always also requests `ManagedOOMMemoryPressure=kill`, matching pinned Ghostty. |
@@ -673,15 +674,18 @@ returns `NotSupported` until URI and action payload semantics are implemented.
 strings, carried with their request, and exposed as `XDG_ACTIVATION_TOKEN` and
 `DESKTOP_STARTUP_ID` only during the target window's `show()` call. A direct
 launcher captures and clears the same environment variables before Qt starts;
-all paths clear them after presentation and strip them from every terminal
-child. Other platform data is ignored. The service file deliberately uses
-direct D-Bus activation: no dangling `SystemdService` is advertised before a
-matching user unit and notification lifecycle exist.
+all paths clear them after presentation and scrub them from the inherited base
+of every terminal child. A finalized `env` entry may explicitly reintroduce
+either name without leaking the consumed activation value. Other platform data
+is ignored. The service file deliberately uses direct D-Bus activation: no
+dangling `SystemdService` is advertised before a matching user unit and
+notification lifecycle exist.
 
 ## Terminfo
 
 The build generates Ghostty's `xterm-ghostty` entry and compiles it with `tic`
-under `build/<preset>/share/terminfo`. Every child receives:
+under `build/<preset>/share/terminfo`. Before finalized `env` overrides, every
+child receives:
 
 ```text
 TERM=<finalized term value; xterm-ghostty by default>
@@ -690,7 +694,8 @@ COLORTERM=truecolor
 ```
 
 Changing `term` does not generate another terminfo entry; the private database
-continues to contain Ghostty's `xterm-ghostty` definition.
+continues to contain Ghostty's `xterm-ghostty` definition. Configured `env`
+entries may replace any of the three injected values for the executed child.
 
 Inspect the generated entry with:
 

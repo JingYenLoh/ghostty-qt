@@ -187,7 +187,8 @@ deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
 The schema-v1 projection includes the finalized non-empty raw-byte `term`
-child identity, finalized working-directory,
+child identity, the finalized ordered raw-byte `env` override map, finalized
+working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
@@ -267,18 +268,20 @@ The five focused config tests have distinct boundaries:
   snapshot behavior with an injected loader.
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
   of process execution, including finalized non-empty byte-valued `term`, the
-  exact cgroup enum/boolean and nullable canonical-decimal uint64 limits,
-  typography role lists, tagged style and metric alternatives, fields and
-  types, the full unsigned scrollback range, nullable values, and malformed
-  keybinding trees.
+  ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
+  rejection, the exact cgroup enum/boolean and nullable canonical-decimal
+  uint64 limits, typography role lists, tagged style and metric alternatives,
+  fields and types, the full unsigned scrollback range, nullable values, and
+  malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
   surface-inheritance booleans, default/custom/empty and non-UTF-8 `term`
-  finalization, default/custom/empty Linux cgroup settings and maximum-width
-  limits, exact font CLI forwarding and role finalization, Ghostty's effective
-  `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
-  flags, and named-table transport.
+  finalization, repeated `env` replacement, configured-map removal/reset,
+  include precedence and raw-byte transport, default/custom/empty Linux cgroup
+  settings and maximum-width limits, exact font CLI forwarding and role
+  finalization, Ghostty's effective `clear`/`unbind` result, and structured
+  sequences, chains, catch-all triggers, flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a
@@ -321,8 +324,10 @@ C++ stack frame per configured key.
 
 Session and pane tests cover payload-specific typed execution without
 keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
-launch-only TERM/cgroup snapshot reload, pre-exec cgroup gating, soft/hard
-scope failures, full/fractional/line/absolute viewport movement,
+launch-only TERM/environment/cgroup snapshot reload, inherited and injected
+environment override order, concrete `PWD` precedence, parent-`PATH`
+executable lookup, invalid raw environment rejection, pre-exec cgroup gating,
+soft/hard scope failures, full/fractional/line/absolute viewport movement,
 selection-target scrolling, default and configured discrete wheel movement,
 precision pixel scrolling, fractional/reversing accumulation, identical local
 and DEC-captured row counts, worker-rechecked fractional-capture selection
@@ -445,7 +450,8 @@ discover, start, activate, retire, and restart a cold service using only its
 starter-bus environment. Focused activation tests also verify exact D-Bus string filtering,
 FIFO platform-data retention, pre-Qt launcher capture, scoped window-show
 projection, cached race-free worker snapshots, fallback-executable forwarding,
-cleanup, and removal from terminal child environments. The DESTDIR-staged
+cleanup, removal from inherited terminal child environments, and explicit
+reintroduction through finalized `env` overrides. The DESTDIR-staged
 desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, and config-helper presence.

@@ -76,6 +76,10 @@ public:
     {
         return launchOptions_.term;
     }
+    [[nodiscard]] const TerminalEnvironment &launchEnvironment() const
+    {
+        return launchOptions_.environment;
+    }
     [[nodiscard]] const LinuxCgroupConfig &launchLinuxCgroup() const
     {
         return launchOptions_.linuxCgroup;

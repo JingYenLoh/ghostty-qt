@@ -614,6 +614,16 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
     options.term = QByteArrayLiteral("ghostty-qt-initial");
+    options.environment = {
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QT_RELOAD"),
+            .value = QByteArrayLiteral("initial"),
+        },
+        {
+            .key = QByteArrayLiteral("INITIAL_ONLY"),
+            .value = QByteArray::fromHex("ff01"),
+        },
+    };
     options.linuxCgroup = {
         .mode = LinuxCgroupMode::Never,
         .memoryLimitBytes = quint64{4096},
@@ -636,6 +646,7 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(firstController != nullptr);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchEnvironment(), options.environment);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
     QVERIFY(!firstController->launchProcessUsesSingleInstance());
     QSignalSpy runtimeOptions(firstController,
@@ -643,6 +654,16 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
 
     LaunchOptions reloaded = options;
     reloaded.term = QByteArrayLiteral("ghostty-qt-reloaded");
+    reloaded.environment = {
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QT_RELOAD"),
+            .value = QByteArrayLiteral("reloaded"),
+        },
+        {
+            .key = QByteArrayLiteral("RELOADED_ONLY"),
+            .value = QByteArray::fromHex("fe02"),
+        },
+    };
     reloaded.linuxCgroup = {
         .mode = LinuxCgroupMode::SingleInstance,
         .memoryLimitBytes = std::numeric_limits<quint64>::max(),
@@ -651,11 +672,14 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     };
     workspace.applyLaunchOptions(reloaded);
     QCOMPARE(workspace.effectiveLaunchOptions().term, reloaded.term);
+    QCOMPARE(workspace.effectiveLaunchOptions().environment,
+             reloaded.environment);
     QCOMPARE(workspace.effectiveLaunchOptions().linuxCgroup,
              reloaded.linuxCgroup);
     QCOMPARE(first.pane->findChild<TerminalController *>(), firstController);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchEnvironment(), options.environment);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
     QCOMPARE(runtimeOptions.count(), 0);
 
@@ -668,6 +692,7 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(tabController != nullptr);
     QCOMPARE(tabController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
+    QCOMPARE(tabController->launchEnvironment(), reloaded.environment);
     QCOMPARE(tabController->launchLinuxCgroup(), reloaded.linuxCgroup);
     QVERIFY(!tabController->launchProcessUsesSingleInstance());
 
@@ -679,10 +704,12 @@ void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
     QVERIFY(splitController != nullptr);
     QCOMPARE(splitController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
+    QCOMPARE(splitController->launchEnvironment(), reloaded.environment);
     QCOMPARE(splitController->launchLinuxCgroup(), reloaded.linuxCgroup);
     QVERIFY(!splitController->launchProcessUsesSingleInstance());
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchEnvironment(), options.environment);
     QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
 }
 

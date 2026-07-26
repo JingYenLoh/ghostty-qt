@@ -996,6 +996,7 @@ set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
     TIMEOUT 20
 )
 set_tests_properties(session-worker PROPERTIES
+    TIMEOUT 30
     ENVIRONMENT "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
 )
 

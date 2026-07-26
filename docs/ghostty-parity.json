@@ -395,6 +395,10 @@
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
     },
+    "env": {
+      "status": "supported",
+      "note": "The private typed projection preserves Ghostty's finalized ordered raw-byte override map, including repeated-key replacement, configured-key removal, whole-map reset, and include precedence. Each pane snapshots the map at construction and applies it byte-exactly after inherited and terminal-injected values; a concrete working directory writes PWD last, while a configured PATH is visible to the child without changing parent-PATH executable lookup. Removal/reset do not unset inherited variables. Embedded NUL is rejected as an execve-safety hardening."
+    },
     "faint-opacity": {
       "status": "supported",
       "note": "Configured faint opacity applies to glyphs and text decorations without dimming cell backgrounds."
@@ -590,7 +594,7 @@
     },
     "term": {
       "status": "supported",
-      "note": "Ghostty's finalized non-empty raw bytes set TERM for each pane's child and default empty input to xterm-ghostty. The private schema and direct envp insertion preserve non-UTF-8 values. Reload affects panes constructed afterward; already constructed panes, including deferred panes without a child yet, retain their snapshot. TERMINFO continues to point at ghostty-qt's resolved private database and COLORTERM remains truecolor."
+      "note": "Ghostty's finalized non-empty raw bytes supply each pane's initially injected TERM and default empty input to xterm-ghostty. The private schema and direct bytewise envp insertion preserve non-UTF-8 values. Reload affects panes constructed afterward; already constructed panes, including deferred panes without a child yet, retain their snapshot. TERMINFO initially points at ghostty-qt's resolved private database and COLORTERM initially equals truecolor; finalized env entries may replace all three before exec."
     },
     "theme": {
       "status": "partial",

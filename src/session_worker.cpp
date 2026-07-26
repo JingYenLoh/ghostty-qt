@@ -57,6 +57,26 @@ constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
 
+bool environmentEntryHasKey(const QByteArray &entry, const QByteArray &key)
+{
+    return entry.size() > key.size() && entry.at(key.size()) == '='
+        && entry.startsWith(key);
+}
+
+void setEnvironmentEntry(QVector<QByteArray> &environment,
+                         const QByteArray &key, const QByteArray &value)
+{
+    environment.removeIf([&key](const QByteArray &entry) {
+        return environmentEntryHasKey(entry, key);
+    });
+    QByteArray serialized;
+    serialized.reserve(key.size() + value.size() + 1);
+    serialized.append(key);
+    serialized.append('=');
+    serialized.append(value);
+    environment.push_back(std::move(serialized));
+}
+
 ssize_t writeWithoutSigpipe(int fd, const void *data, size_t size)
 {
     sigset_t blocked;
@@ -839,42 +859,77 @@ bool SessionWorker::spawnChild()
     }
     argv.push_back(nullptr);
 
-    QProcessEnvironment environment = sanitizedChildEnvironment();
     const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
     if (!terminfo) {
         Q_EMIT errorOccurred(terminfo.error());
         return false;
     }
-    if (options_.term.isEmpty() || options_.term.contains('\0')) {
+    const bool environmentOverridesTerm = std::ranges::any_of(
+        options_.environment, [](const TerminalEnvironmentEntry &entry) {
+            return entry.key == QByteArrayLiteral("TERM");
+        });
+    // Pinned Ghostty applies env_override after injecting the finalized term.
+    // An exact TERM entry therefore makes only that later value observable.
+    if (!environmentOverridesTerm
+        && (options_.term.isEmpty() || options_.term.contains('\0'))) {
         Q_EMIT errorOccurred(
             QStringLiteral("Configured TERM must be non-empty and contain no "
                            "NUL bytes."));
         return false;
     }
-    // QProcessEnvironment is QString-valued. Remove the inherited entry and
-    // append TERM directly below so Ghostty's raw finalized bytes survive
-    // independently of the process locale.
-    environment.remove(QStringLiteral("TERM"));
-    environment.insert(QStringLiteral("TERMINFO"), *terminfo);
-    environment.insert(QStringLiteral("COLORTERM"),
-                       QStringLiteral("truecolor"));
-    environment.insert(QStringLiteral("TERM_PROGRAM"),
-                       QStringLiteral("ghostty-qt"));
-    environment.insert(QStringLiteral("TERM_PROGRAM_VERSION"),
-                       QStringLiteral(GHOSTTY_QT_VERSION));
-    if (!options_.inheritWorkingDirectory) {
-        // Match pinned Ghostty's logical-path behavior: PWD retains the
-        // request even if cwd validation or chdir later falls back.
-        environment.insert(QStringLiteral("PWD"), requestedWorkingDirectory);
+    for (qsizetype index = 0; index < options_.environment.size(); ++index) {
+        const TerminalEnvironmentEntry &entry = options_.environment.at(index);
+        if (entry.key.contains('=') || entry.key.contains('\0')
+            || entry.value.isEmpty() || entry.value.contains('\0')) {
+            Q_EMIT errorOccurred(
+                QStringLiteral(
+                    "Configured environment entry %1 is not representable by execve.")
+                    .arg(index));
+            return false;
+        }
+        for (qsizetype previous = 0; previous < index; ++previous) {
+            if (options_.environment.at(previous).key == entry.key) {
+                Q_EMIT errorOccurred(
+                    QStringLiteral(
+                        "Configured environment contains duplicate key at entry %1.")
+                        .arg(index));
+                return false;
+            }
+        }
     }
-
-    const QStringList environmentList = environment.toStringList();
+    const QStringList environmentList =
+        sanitizedChildEnvironment().toStringList();
     QVector<QByteArray> environmentStorage;
-    environmentStorage.reserve(environmentList.size() + 1);
+    environmentStorage.reserve(environmentList.size()
+                               + options_.environment.size() + 6);
     for (const QString &entry : environmentList) {
         environmentStorage.push_back(entry.toLocal8Bit());
     }
-    environmentStorage.push_back(QByteArrayLiteral("TERM=") + options_.term);
+    // Apply frontend-injected entries directly to the byte representation so
+    // Ghostty's raw finalized TERM does not cross QString. Configured env
+    // entries then replace these and inherited values byte-for-byte, matching
+    // pinned Ghostty's late env_override merge.
+    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERM"),
+                        options_.term);
+    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERMINFO"),
+                        terminfo->toLocal8Bit());
+    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("COLORTERM"),
+                        QByteArrayLiteral("truecolor"));
+    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERM_PROGRAM"),
+                        QByteArrayLiteral("ghostty-qt"));
+    setEnvironmentEntry(environmentStorage,
+                        QByteArrayLiteral("TERM_PROGRAM_VERSION"),
+                        QByteArrayLiteral(GHOSTTY_QT_VERSION));
+    for (const TerminalEnvironmentEntry &entry : options_.environment) {
+        setEnvironmentEntry(environmentStorage, entry.key, entry.value);
+    }
+    if (!options_.inheritWorkingDirectory) {
+        // Pinned Ghostty applies concrete cwd-derived PWD after env overrides,
+        // retaining the requested logical spelling even when chdir falls back.
+        setEnvironmentEntry(environmentStorage, QByteArrayLiteral("PWD"),
+                            requestedWorkingDirectory.toLocal8Bit());
+    }
+
     QVector<char *> envp;
     envp.reserve(environmentStorage.size() + 1);
     for (QByteArray &entry : environmentStorage) {

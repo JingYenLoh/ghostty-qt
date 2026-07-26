@@ -68,19 +68,20 @@ divider color. Split appearance stays
 frontend-owned and never crosses the session-worker boundary. Before a
 session starts, the pane projects `LaunchOptions` to
 `TerminalSessionLaunchOptions`, containing only the child process, scrollback,
-terminal identity, appearance, URL-matching state, and an optional one-shot
-initial geometry owned by the session. The geometry is not produced by the
-reusable `LaunchOptions`
+terminal identity, configured environment overrides, appearance, URL-matching
+state, and an optional one-shot initial geometry owned by the session. The
+geometry is not produced by the reusable `LaunchOptions`
 projection: a workspace supplies it explicitly only while constructing its
 first pane. Before session start, the controller folds the newest runtime
 values into that pending launch state. Later live reloads cross the queued
 controller/worker boundary as `TerminalSessionRuntimeOptions`, which is limited
-to appearance and URL matching. Terminal identity, Linux cgroup policy and
-limits, working directory, program, hold, and the existing terminal's
-scrollback allocation are launch-only by construction. A pane snapshots those
-values when constructed, so even a deferred pane that has not spawned its child
-retains its original identity and resource policy across reload; panes
-constructed afterward use the newest workspace snapshot.
+to appearance and URL matching. Terminal identity, configured environment
+overrides, Linux cgroup policy and limits, working directory, program, hold,
+and the existing terminal's scrollback allocation are launch-only by
+construction. A pane snapshots those values when constructed, so even a
+deferred pane that has not spawned its child retains its original identity,
+environment, and resource policy across reload; panes constructed afterward
+use the newest workspace snapshot.
 A separate launch bit distinguishes process-cwd inheritance from a concrete
 CLI, config, or OSC-derived directory; this prevents a display path from
 silently turning `inherit` into a `chdir` and `PWD` rewrite.
@@ -446,9 +447,12 @@ is active, `SessionWorker` returns that cache instead of walking process-global
 `environ`; outside presentation it takes a fresh sanitized snapshot under the
 same state mutex. This avoids racing Qt Wayland's own internal token unset and
 also lets a synchronously destroyed workspace join its worker without
-deadlocking on `show()`. An RAII guard always clears the one-shot variables
-afterward and never restores a consumed value. A window shown with transferred
-platform data does not issue a second `requestActivate()`.
+deadlocking on `show()`. The sanitization removes both names from the inherited
+child base; a finalized `env` override is deliberately later and may explicitly
+reintroduce either name without recovering the consumed activation value. An
+RAII guard always clears the one-shot variables afterward and never restores a
+consumed value. A window shown with transferred platform data does not issue a
+second `requestActivate()`.
 
 Window creation is a checked ownership transaction. The workspace must be
 both visually associated with the root and inside its QObject ownership tree;
@@ -1044,9 +1048,14 @@ Relative explicit programs and relative `PATH` entries are likewise resolved
 from the effective child directory without lexical normalization. Matching the
 pinned Zig launcher, empty `PATH` components are skipped, an unset `PATH` uses
 `/usr/local/bin:/bin/:/usr/bin`, and `ENOENT`/`ENOTDIR` candidates fall through
-to the next entry after the child changes directory.
+to the next entry after the child changes directory. This lookup deliberately
+uses the launching process's `PATH`, not a later shared-config `env` override;
+the configured `PATH` is nevertheless present in the executed child's
+environment. Shell selection is also completed before the override map is
+applied, so configured `SHELL` is child payload rather than a selector.
 
-The child inherits the host environment with these terminal-specific values:
+The worker starts from the inherited host environment and injects these
+terminal-specific values:
 
 ```text
 TERM=<finalized Ghostty term; xterm-ghostty by default>
@@ -1054,8 +1063,23 @@ TERMINFO=<resolved private database>
 COLORTERM=truecolor
 TERM_PROGRAM=ghostty-qt
 TERM_PROGRAM_VERSION=<project version>
-PWD=<exact concrete request, even on cwd fallback; inherited unchanged for inherit mode>
 ```
+
+It then overlays Ghostty's finalized ordered `env` map with byte-exact key
+deduplication. Keys and values remain raw bytes across the private schema and
+launch boundary; ghostty-qt rejects embedded NUL bytes as a safety hardening
+because an `execve` environment string cannot carry them losslessly. Finalized
+map entries may replace any inherited or injected value, including `TERM`,
+`TERMINFO`, `COLORTERM`, `TERM_PROGRAM`, and `TERM_PROGRAM_VERSION`. A concrete
+working directory writes its exact logical `PWD` once after those overrides,
+even on cwd fallback, so that value wins. Inherit mode performs no write and
+therefore retains the inherited `PWD` unless `env` overrides it.
+
+Ghostty resolves the repeatable setting before export. A later
+`env = KEY=VALUE` replaces an earlier configured value, `env = KEY=` removes
+that key only from the configured map, and a bare `env =` clears the configured
+map. Removal and reset are map operations, not inherited-environment unsets:
+an absent finalized key keeps its inherited value.
 
 When a child exits, its final PTY output is drained and one last frame is
 published. A normal, non-held pane then closes automatically. A held or failed
@@ -1143,16 +1167,21 @@ still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
 The current typed compatibility slice covers launch and window geometry,
-working-directory and inheritance policy, Linux cgroup resource isolation,
-application lifetime, typography and terminal appearance, scrollback,
-selection/clipboard/mouse/link behavior, resize-overlay presentation, included
-config files, and the finalized keybinding sets. The README and machine-checked
-parity ledger describe the individual keys. One strict schema-v1 document
-carries the whole slice, including nullable values such as
-`quit-after-last-window-closed-delay` and both cgroup limits; there is no
-version fallback, separate defaults merge, or partially populated snapshot.
+working-directory and inheritance policy, the finalized child-environment
+override map, Linux cgroup resource isolation, application lifetime, typography
+and terminal appearance, scrollback, selection/clipboard/mouse/link behavior,
+resize-overlay presentation, included config files, and the finalized
+keybinding sets. The README and machine-checked parity ledger describe the
+individual keys. One strict schema-v1 document carries the whole slice,
+including nullable values such as `quit-after-last-window-closed-delay` and
+both cgroup limits; there is no version fallback, separate defaults merge, or
+partially populated snapshot.
 Optional cgroup uint64 limits cross JSON as null or canonical decimal strings
 so the complete range remains exact despite Qt JSON's double representation.
+The finalized `env` map crosses as an ordered array of objects whose `key` and
+`value` members are byte arrays, avoiding both UTF-8 conversion and JSON object
+key normalization. The decoder rejects duplicate keys, empty values, `=` in a
+key, embedded NUL, and every noncanonical shape.
 Canonical enum tags, optional include markers, working-directory inheritance,
 and nullable color alternatives are decoded only at this boundary. The four
 font styles remain tagged `automatic`, `disabled`, or
@@ -1348,7 +1377,8 @@ guarantee because Ghostty pages also store styles and grapheme metadata.
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the finalized non-empty raw-byte child terminal identity,
-the exact scrollbar policy, all five finalized
+the finalized ordered raw-byte child-environment override map, the exact
+scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
@@ -1822,10 +1852,11 @@ path, so moving the complete installation prefix does not invalidate it. The
 `GHOSTTY_QT_TERMINFO` environment variable is an authoritative diagnostic
 override. No system terminfo installation is required. The generated database
 always contains Ghostty's `xterm-ghostty` entry; a custom finalized `term`
-changes the child environment but does not synthesize another entry or stop
-exporting the private `TERMINFO` path. The config schema transports that value
-as bytes, and the worker appends `TERM=` directly to `envp`, preserving
-non-UTF-8 values independently of the process locale.
+changes the initially injected child `TERM` but does not synthesize another
+entry. The worker inserts that raw value and the resolved private `TERMINFO`
+path bytewise, then applies the finalized `env` map, which may replace either
+one before `exec`. This preserves non-UTF-8 configured values independently of
+the process locale.
 
 Ghostty places generated artifacts in its source-tree `zig-out`, shared by the
 developer and release CMake trees. Those presets must not build concurrently.
@@ -1916,8 +1947,10 @@ The default CTest suite has focused layers for each ownership boundary:
   `src/config/url.zig` corpus against the vendored Oniguruma implementation.
 - `session-worker` starts real PTY children and verifies DA replies, bracketed
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
-  output draining, the configured `TERM` together with the fixed private
-  `TERMINFO`/`COLORTERM` contract, byte-exact terminal-control action writes,
+  output draining, the configured `TERM`, initial private
+  `TERMINFO`/`COLORTERM` values, byte-exact finalized environment overrides,
+  concrete-directory `PWD` precedence, inherited fallback, and parent-`PATH`
+  executable lookup, plus byte-exact terminal-control action writes,
   injected cgroup placement before child exec, soft fallback, hard rejection,
   disabled-policy bypass, reset cache
   synchronization, correlated terminal-action outcomes and effects, process
@@ -2000,8 +2033,9 @@ The default CTest suite has focused layers for each ownership boundary:
   real QML toolbar moves to the configured edge without a binding loop.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including finalized non-empty byte-valued `term`, the
-  cgroup enum/boolean and exact nullable uint64 limits, exact shapes, four
-  role-family lists, tagged
+  ordered raw-byte `env` pairs and their closed validity rules, the cgroup
+  enum/boolean and exact nullable uint64 limits, exact shapes, four role-family
+  lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, the fixed 256-color palette, the full unsigned scrollback
@@ -2011,7 +2045,9 @@ The default CTest suite has focused layers for each ownership boundary:
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact trailing font CLI arguments and role finalization,
-  default/custom/empty and non-UTF-8 `term` finalization,
+  default/custom/empty and non-UTF-8 `term` finalization, repeated `env`
+  replacement, configured-map removal/reset, include precedence, and raw-byte
+  environment transport,
   default/custom/empty cgroup policy and full-width limits,
   nullable/capped application-lifetime duration export, and nullable X11
   divider-color canonicalization.

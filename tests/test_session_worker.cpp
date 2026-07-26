@@ -230,7 +230,10 @@ private Q_SLOTS:
     void reportsTerminalInitializationSeparatelyFromChildSpawn();
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
+    void injectsRawTerminalIdentity();
     void usesConfiguredTerminalEnvironment();
+    void appliesConfiguredEnvironmentPwdPrecedence();
+    void rejectsInvalidConfiguredEnvironment();
     void cgroupGateMovesChildBeforeExec();
     void cgroupSoftFailureContinuesLaunch();
     void cgroupHardFailurePreventsExec();
@@ -1000,15 +1003,11 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
     worker.shutdown();
 }
 
-void SessionWorkerTest::usesConfiguredTerminalEnvironment()
+void SessionWorkerTest::injectsRawTerminalIdentity()
 {
-    const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
-    QVERIFY2(terminfo.has_value(),
-             terminfo ? "" : qPrintable(terminfo.error()));
-
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
-    worker.resizeTerminal(240, 8, 8, 16, 1920, 128);
+    worker.resizeTerminal(120, 4, 8, 16, 960, 64);
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
@@ -1022,9 +1021,10 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
         QStringLiteral("printf 'term='; "
-                       "printf '%s' \"$TERM\" | od -An -tx1 | tr -d ' \\n'; "
-                       "printf '\\nterminfo=%s\\ncolorterm=%s\\nprogram=%s\\n' "
-                       "\"$TERMINFO\" \"$COLORTERM\" \"$TERM_PROGRAM\""),
+                       "printf '%s' \"$TERM\" "
+                       "| /usr/bin/od -An -tx1 "
+                       "| /usr/bin/tr -d ' \\n'; "
+                       "printf '\\n'"),
     };
     options.hold = true;
     worker.initialize(options);
@@ -1040,13 +1040,269 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
     QVERIFY2(
         contents.contains(QStringLiteral("term=67686f737474792d71742d80ff")),
         qPrintable(contents));
-    QVERIFY2(contents.contains(QStringLiteral("terminfo=%1").arg(*terminfo)),
+    worker.shutdown();
+}
+
+void SessionWorkerTest::usesConfiguredTerminalEnvironment()
+{
+    const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
+    QVERIFY2(terminfo.has_value(),
+             terminfo ? "" : qPrintable(terminfo.error()));
+    const ScopedEnvironmentVariable inherited(
+        QByteArrayLiteral("GHOSTTY_QT_CHILD_ENV_SENTINEL"),
+        QByteArrayLiteral("inherited"));
+    const ScopedEnvironmentVariable removedOverride(
+        QByteArrayLiteral("GHOSTTY_QT_REMOVED_ENV"),
+        QByteArrayLiteral("still-inherited"));
+    const ScopedEnvironmentVariable activationToken(
+        QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
+        QByteArrayLiteral("sanitized"));
+    const ScopedEnvironmentVariable parentPath(
+        QByteArrayLiteral("PATH"), QByteArrayLiteral("/bin:/usr/bin"));
+
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(240, 14, 8, 16, 1920, 224);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.term = QByteArray("invalid\0term", 12);
+    options.workingDirectory = QDir::currentPath();
+    QByteArray configuredTerm = QByteArrayLiteral("configured-term-");
+    configuredTerm.append(char(0x80));
+    configuredTerm.append(char(0xff));
+    QByteArray rawValue = QByteArrayLiteral("raw-");
+    rawValue.append(char(0xfe));
+    rawValue.append(char(0x81));
+    rawValue.append(QByteArrayLiteral("=tail"));
+    QByteArray rawKey = QByteArrayLiteral("raw-key-");
+    rawKey.append(char(0x80));
+    rawKey.append(char(0xff));
+    options.environment = {
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QT_CHILD_ENV_SENTINEL"),
+            .value = QByteArrayLiteral("configured"),
+        },
+        {
+            .key = QByteArrayLiteral("XDG_ACTIVATION_TOKEN"),
+            .value = QByteArrayLiteral("configured-token"),
+        },
+        {.key = QByteArrayLiteral("TERM"), .value = configuredTerm},
+        {
+            .key = QByteArrayLiteral("TERMINFO"),
+            .value = QByteArrayLiteral("configured-terminfo"),
+        },
+        {
+            .key = QByteArrayLiteral("COLORTERM"),
+            .value = QByteArrayLiteral("configured-color"),
+        },
+        {
+            .key = QByteArrayLiteral("TERM_PROGRAM"),
+            .value = QByteArrayLiteral("configured-program"),
+        },
+        {
+            .key = QByteArrayLiteral("TERM_PROGRAM_VERSION"),
+            .value = QByteArrayLiteral("configured-version"),
+        },
+        {
+            .key = QByteArrayLiteral("PATH"),
+            .value = QByteArrayLiteral("/configured/child/path"),
+        },
+        {
+            .key = QByteArrayLiteral("PWD"),
+            .value = QByteArrayLiteral("/configured/pwd/must-not-win"),
+        },
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QT_RAW_ENV"),
+            .value = rawValue,
+        },
+        {
+            .key = rawKey,
+            .value = QByteArrayLiteral("RAW_KEY_VALUE"),
+        },
+    };
+    options.program = {
+        QStringLiteral("sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'sentinel=%s xdg=%s removed=%s\\n' "
+                       "\"$GHOSTTY_QT_CHILD_ENV_SENTINEL\" "
+                       "\"$XDG_ACTIVATION_TOKEN\" \"$GHOSTTY_QT_REMOVED_ENV\"; "
+                       "printf 'terminfo=%s color=%s program=%s version=%s\\n' "
+                       "\"$TERMINFO\" \"$COLORTERM\" \"$TERM_PROGRAM\" "
+                       "\"$TERM_PROGRAM_VERSION\"; "
+                       "printf 'path=%s\\npwd=%s\\n' \"$PATH\" \"$PWD\"; "
+                       "printf 'term='; printf '%s' \"$TERM\" "
+                       "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
+                       "printf '\\nraw='; printf '%s' \"$GHOSTTY_QT_RAW_ENV\" "
+                       "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
+                       "printf '\\nrawkey='; "
+                       "/usr/bin/env | /usr/bin/grep -a -F 'RAW_KEY_VALUE' "
+                       "| /usr/bin/od -An -tx1 | /usr/bin/tr -d ' \\n'; "
+                       "printf '\\n'"),
+    };
+    options.hold = true;
+    worker.initialize(options);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("sentinel=configured xdg=configured-token "
+                                "removed=still-inherited")),
              qPrintable(contents));
-    QVERIFY2(contents.contains(QStringLiteral("colorterm=truecolor")),
+    QVERIFY2(contents.contains(QStringLiteral(
+                 "terminfo=configured-terminfo color=configured-color "
+                 "program=configured-program version=configured-version")),
              qPrintable(contents));
-    QVERIFY2(contents.contains(QStringLiteral("program=ghostty-qt")),
+    QVERIFY2(contents.contains(QStringLiteral("path=/configured/child/path")),
+             qPrintable(contents));
+    QVERIFY2(
+        contents.contains(QStringLiteral("pwd=%1").arg(QDir::currentPath())),
+        qPrintable(contents));
+    QVERIFY2(contents.contains(
+                 QStringLiteral("term=636f6e666967757265642d7465726d2d80ff")),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(QStringLiteral("raw=7261772dfe813d7461696c")),
+             qPrintable(contents));
+    QVERIFY2(contents.contains(QStringLiteral(
+                 "rawkey=7261772d6b65792d80ff3d5241575f4b45595f56414c55450a")),
              qPrintable(contents));
     worker.shutdown();
+}
+
+void SessionWorkerTest::appliesConfiguredEnvironmentPwdPrecedence()
+{
+    const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
+    QVERIFY2(terminfo.has_value(),
+             terminfo ? "" : qPrintable(terminfo.error()));
+    qRegisterMetaType<TerminalUpdate>();
+    const QString concreteDirectory = QDir::currentPath();
+
+    for (const bool inheritWorkingDirectory : {true, false}) {
+        SessionWorker worker;
+        worker.resizeTerminal(160, 16, 8, 16, 1280, 256);
+        QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.inheritWorkingDirectory = inheritWorkingDirectory;
+        options.workingDirectory = concreteDirectory;
+        options.environment = {{
+            .key = QByteArrayLiteral("PWD"),
+            .value = QByteArrayLiteral("/configured/logical/pwd"),
+        }};
+        options.program = {QStringLiteral("/usr/bin/env")};
+        options.hold = true;
+        worker.initialize(options);
+
+        QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
+        QVERIFY2(
+            errorSpy.isEmpty(),
+            errorSpy.isEmpty()
+                ? ""
+                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+        QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+        const QString contents = frameText(accumulatedFrame(updateSpy));
+        const QString expected = inheritWorkingDirectory
+            ? QStringLiteral("PWD=/configured/logical/pwd")
+            : QStringLiteral("PWD=%1").arg(concreteDirectory);
+        QVERIFY2(contents.contains(expected), qPrintable(contents));
+        QVERIFY2(contents.contains(QStringLiteral("TERM=xterm-ghostty")),
+                 qPrintable(contents));
+        QVERIFY2(
+            contents.contains(QStringLiteral("TERMINFO=%1").arg(*terminfo)),
+            qPrintable(contents));
+        QVERIFY2(contents.contains(QStringLiteral("COLORTERM=truecolor")),
+                 qPrintable(contents));
+        QVERIFY2(contents.contains(QStringLiteral("TERM_PROGRAM=ghostty-qt")),
+                 qPrintable(contents));
+        QVERIFY2(
+            contents.contains(QStringLiteral("TERM_PROGRAM_VERSION=%1")
+                                  .arg(QStringLiteral(GHOSTTY_QT_VERSION))),
+            qPrintable(contents));
+        worker.shutdown();
+    }
+}
+
+void SessionWorkerTest::rejectsInvalidConfiguredEnvironment()
+{
+    struct InvalidCase {
+        TerminalEnvironment environment;
+        QString diagnostic;
+    };
+
+    QByteArray nulKey("A\0B", 3);
+    QByteArray nulValue("A\0B", 3);
+    const QVector<InvalidCase> cases = {
+        {
+            .environment = {{.key = QByteArrayLiteral("A=B"),
+                             .value = QByteArrayLiteral("value")}},
+            .diagnostic = QStringLiteral("not representable by execve"),
+        },
+        {
+            .environment = {{.key = nulKey,
+                             .value = QByteArrayLiteral("value")}},
+            .diagnostic = QStringLiteral("not representable by execve"),
+        },
+        {
+            .environment = {{.key = QByteArrayLiteral("EMPTY"), .value = {}}},
+            .diagnostic = QStringLiteral("not representable by execve"),
+        },
+        {
+            .environment = {{.key = QByteArrayLiteral("NUL"),
+                             .value = nulValue}},
+            .diagnostic = QStringLiteral("not representable by execve"),
+        },
+        {
+            .environment =
+                {
+                    {
+                        .key = QByteArrayLiteral("DUPLICATE"),
+                        .value = QByteArrayLiteral("first"),
+                    },
+                    {
+                        .key = QByteArrayLiteral("DUPLICATE"),
+                        .value = QByteArrayLiteral("second"),
+                    },
+                },
+            .diagnostic = QStringLiteral("duplicate key"),
+        },
+    };
+
+    for (const InvalidCase &testCase : cases) {
+        SessionWorker worker;
+        QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.environment = testCase.environment;
+        options.program = {QStringLiteral("/bin/true")};
+        options.hold = true;
+
+        std::optional<bool> initializationResult;
+        QVERIFY(worker.initialize(options, [&](bool initialized) {
+            initializationResult = initialized;
+        }));
+        QCOMPARE(initializationResult, std::optional(true));
+        QCOMPARE(errorSpy.count(), 1);
+        QVERIFY2(errorSpy.constFirst().constFirst().toString().contains(
+                     testCase.diagnostic),
+                 qPrintable(errorSpy.constFirst().constFirst().toString()));
+        QCOMPARE(exitSpy.count(), 1);
+        QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
+        QCOMPARE(exitSpy.constFirst().at(1).toInt(), 0);
+        QVERIFY(exitSpy.constFirst().at(2).toBool());
+        worker.shutdown();
+    }
 }
 
 void SessionWorkerTest::cgroupGateMovesChildBeforeExec()

@@ -70,6 +70,16 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const GhosttyConfigValues &values = parsed->values;
 
     QCOMPARE(values.term, QByteArrayLiteral("ghostty-qt-test"));
+    QCOMPARE(values.environment.size(), qsizetype{3});
+    QCOMPARE(values.environment.at(0).key,
+             QByteArrayLiteral("GHOSTTY_QT_TEST"));
+    QCOMPARE(values.environment.at(0).value, QByteArrayLiteral("alpha=beta"));
+    QCOMPARE(values.environment.at(1).key, QByteArray::fromHex("80ff"));
+    QCOMPARE(values.environment.at(1).value,
+             QByteArray::fromHex("fe8176616c7565"));
+    QVERIFY(values.environment.at(2).key.isEmpty());
+    QCOMPARE(values.environment.at(2).value,
+             QByteArrayLiteral("empty-key-value"));
     QCOMPARE(values.linuxCgroup.mode, LinuxCgroupMode::Always);
     QCOMPARE(values.linuxCgroup.memoryLimitBytes,
              std::optional<quint64>(std::numeric_limits<quint64>::max()));
@@ -365,6 +375,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("linux-cgroup-processes-limit"),
                           QJsonValue::Null);
+    lowValues =
+        withValue(std::move(lowValues), QStringLiteral("env"), QJsonArray{});
 
     const auto low = parseGhosttyConfigExportJson(json(lowValues));
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
@@ -377,6 +389,19 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.mouseScrollMultiplier.discrete, 0.01);
     QVERIFY(!low->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
+    QVERIFY(low->values.environment.isEmpty());
+
+    QJsonObject emptyKeyValues = object();
+    emptyKeyValues =
+        withValue(std::move(emptyKeyValues), QStringLiteral("env"),
+                  QJsonArray{environmentEntry(QByteArrayView{},
+                                              QByteArrayLiteral("accepted"))});
+    const auto emptyKey = parseGhosttyConfigExportJson(json(emptyKeyValues));
+    QVERIFY2(emptyKey.has_value(), qPrintable(errorMessage(emptyKey)));
+    QCOMPARE(emptyKey->values.environment.size(), qsizetype{1});
+    QVERIFY(emptyKey->values.environment.constFirst().key.isEmpty());
+    QCOMPARE(emptyKey->values.environment.constFirst().value,
+             QByteArrayLiteral("accepted"));
 
     QJsonObject onlyRequiredNull = object();
     onlyRequiredNull =
@@ -803,6 +828,93 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("term"), QJsonArray{256})
         << QStringLiteral(
                "values.term[0] must be an unsigned integer in range");
+    QTest::newRow("missing-env")
+        << withoutValue(object(), QStringLiteral("env"))
+        << QStringLiteral("values is missing field 'env'");
+    QTest::newRow("env-type")
+        << withValue(object(), QStringLiteral("env"), true)
+        << QStringLiteral("values.env must be an array");
+    QTest::newRow("env-entry-type")
+        << withValue(object(), QStringLiteral("env"), QJsonArray{true})
+        << QStringLiteral("values.env[0] must be an object");
+    QTest::newRow("env-entry-missing-key") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("value"))},
+        }}) << QStringLiteral("values.env[0] is missing field 'key'");
+    QTest::newRow("env-entry-missing-value") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), bytes(QByteArrayLiteral("KEY"))},
+        }}) << QStringLiteral("values.env[0] is missing field 'value'");
+    QTest::newRow("env-entry-extra-field") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), bytes(QByteArrayLiteral("KEY"))},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("value"))},
+            {QStringLiteral("future"), true},
+        }}) << QStringLiteral("values.env[0] has unexpected field 'future'");
+    QTest::newRow("env-key-type") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), true},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("value"))},
+        }}) << QStringLiteral("values.env[0].key must be an array");
+    QTest::newRow("env-value-type") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), bytes(QByteArrayLiteral("KEY"))},
+            {QStringLiteral("value"), true},
+        }}) << QStringLiteral("values.env[0].value must be an array");
+    QTest::newRow("env-key-byte-range")
+        << withValue(
+               object(), QStringLiteral("env"),
+               QJsonArray{QJsonObject{
+                   {QStringLiteral("key"), QJsonArray{256}},
+                   {QStringLiteral("value"), bytes(QByteArrayLiteral("value"))},
+               }})
+        << QStringLiteral(
+               "values.env[0].key[0] must be an unsigned integer in range");
+    QTest::newRow("env-value-byte-range")
+        << withValue(
+               object(), QStringLiteral("env"),
+               QJsonArray{QJsonObject{
+                   {QStringLiteral("key"), bytes(QByteArrayLiteral("KEY"))},
+                   {QStringLiteral("value"), QJsonArray{-1}},
+               }})
+        << QStringLiteral(
+               "values.env[0].value[0] must be an unsigned integer in range");
+    QTest::newRow("env-key-equals")
+        << withValue(object(), QStringLiteral("env"),
+                     QJsonArray{environmentEntry(QByteArrayLiteral("BAD=KEY"),
+                                                 QByteArrayLiteral("value"))})
+        << QStringLiteral("values.env[0].key must not contain '='");
+    QTest::newRow("env-key-nul") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), QJsonArray{'K', 0, 'Y'}},
+            {QStringLiteral("value"), bytes(QByteArrayLiteral("value"))},
+        }}) << QStringLiteral("values.env[0].key must not contain NUL");
+    QTest::newRow("env-value-empty")
+        << withValue(object(), QStringLiteral("env"),
+                     QJsonArray{environmentEntry(QByteArrayLiteral("KEY"),
+                                                 QByteArrayView{})})
+        << QStringLiteral("values.env[0].value must be a non-empty byte array");
+    QTest::newRow("env-value-nul") << withValue(
+        object(), QStringLiteral("env"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("key"), bytes(QByteArrayLiteral("KEY"))},
+            {QStringLiteral("value"), QJsonArray{'v', 0, 'e'}},
+        }}) << QStringLiteral("values.env[0].value must not contain NUL");
+    QTest::newRow("env-duplicate-key")
+        << withValue(object(), QStringLiteral("env"),
+                     QJsonArray{
+                         environmentEntry(QByteArrayLiteral("KEY"),
+                                          QByteArrayLiteral("first")),
+                         environmentEntry(QByteArrayLiteral("KEY"),
+                                          QByteArrayLiteral("second")),
+                     })
+        << QStringLiteral("values.env[1] contains duplicate key");
     QTest::newRow("missing-linux-cgroup")
         << withoutValue(object(), QStringLiteral("linux-cgroup"))
         << QStringLiteral("values is missing field 'linux-cgroup'");

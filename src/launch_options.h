@@ -21,6 +21,8 @@ struct LaunchOptions {
     // Finalized terminal identity for future children. This launch-only value
     // never mutates the environment of an already-running pane.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Finalized raw environment overrides for future terminal children.
+    TerminalEnvironment environment;
     // Finalized shared Linux cgroup settings for future terminal children.
     LinuxCgroupConfig linuxCgroup;
     // Startup arbitration fixes this process fact once. Reloading the

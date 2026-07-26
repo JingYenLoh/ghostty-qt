@@ -228,6 +228,7 @@ private Q_SLOTS:
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
+    void realHelperExportsEnvironment();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -1017,6 +1018,129 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsLinuxCgroup()
     QVERIFY(!result->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!result->values.linuxCgroup.processesLimit.has_value());
     QVERIFY(!result->values.linuxCgroup.hardFail);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsEnvironment()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    const QString includeA =
+        fixture.filePath(QStringLiteral("environment-a.ghostty"));
+    const QString includeB =
+        fixture.filePath(QStringLiteral("environment-b.ghostty"));
+    const QString includeChild =
+        fixture.filePath(QStringLiteral("environment-a-child.ghostty"));
+
+    ConfigFixture::writeFile(fixture.legacyPath,
+                             QByteArrayLiteral("env = LEGACY=legacy\n"
+                                               "env = ORDER=legacy\n"));
+    ConfigFixture::writeFile(includeChild,
+                             QByteArrayLiteral("env = CHILD=child\n"
+                                               "env = ORDER=child\n"));
+    ConfigFixture::writeFile(includeA,
+                             QStringLiteral("env = A=include-a\n"
+                                            "env = ORDER=include-a\n"
+                                            "env = REMOVE_CLI=\n"
+                                            "config-file = %1\n")
+                                 .arg(includeChild)
+                                 .toUtf8());
+    ConfigFixture::writeFile(includeB,
+                             QByteArrayLiteral("env = B=include-b\n"
+                                               "env = ORDER=include-b\n"));
+
+    QByteArray preferred =
+        QStringLiteral("env = PREFERRED=preferred\n"
+                       "env = ORDER=preferred\n"
+                       "env = REMOVE_FILE=temporary\n"
+                       "env = REMOVE_FILE=\n"
+                       "env = VALUE_EQUALS=alpha=beta=gamma\n"
+                       "env = =empty-key\n"
+                       "config-file = %1\n"
+                       "config-file = %2\n")
+            .arg(includeA, includeB)
+            .toUtf8();
+    QByteArray rawKey;
+    rawKey.append(char(0x80));
+    rawKey.append(char(0xff));
+    QByteArray rawValue = QByteArrayLiteral("raw-");
+    rawValue.append(char(0xfe));
+    rawValue.append(char(0x81));
+    preferred.append(QByteArrayLiteral("env = "));
+    preferred.append(rawKey);
+    preferred.append('=');
+    preferred.append(rawValue);
+    preferred.append('\n');
+    ConfigFixture::writeFile(fixture.preferredPath, preferred);
+
+    const QStringList arguments{
+        QStringLiteral("--env=CLI=cli"),
+        QStringLiteral("--env=ORDER=cli"),
+        QStringLiteral("--env=REMOVE_CLI=temporary"),
+    };
+    auto result = queryRealConfigExport(helperPath, fixture, arguments);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+
+    const TerminalEnvironment expected{
+        {
+            .key = QByteArrayLiteral("LEGACY"),
+            .value = QByteArrayLiteral("legacy"),
+        },
+        {
+            .key = QByteArrayLiteral("ORDER"),
+            .value = QByteArrayLiteral("child"),
+        },
+        {
+            .key = QByteArrayLiteral("PREFERRED"),
+            .value = QByteArrayLiteral("preferred"),
+        },
+        {
+            .key = QByteArrayLiteral("VALUE_EQUALS"),
+            .value = QByteArrayLiteral("alpha=beta=gamma"),
+        },
+        {.key = QByteArray{}, .value = QByteArrayLiteral("empty-key")},
+        {.key = rawKey, .value = rawValue},
+        {
+            .key = QByteArrayLiteral("CLI"),
+            .value = QByteArrayLiteral("cli"),
+        },
+        {
+            .key = QByteArrayLiteral("A"),
+            .value = QByteArrayLiteral("include-a"),
+        },
+        {
+            .key = QByteArrayLiteral("B"),
+            .value = QByteArrayLiteral("include-b"),
+        },
+        {
+            .key = QByteArrayLiteral("CHILD"),
+            .value = QByteArrayLiteral("child"),
+        },
+    };
+    QVERIFY(result->values.environment == expected);
+    QVERIFY(std::ranges::none_of(
+        result->values.environment, [](const TerminalEnvironmentEntry &entry) {
+            return entry.key == QByteArrayLiteral("REMOVE_FILE")
+                || entry.key == QByteArrayLiteral("REMOVE_CLI");
+        }));
+
+    // A bare env assignment clears the map produced by every earlier source.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("env = BEFORE_RESET=value\n"
+                                               "env =\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.environment.isEmpty());
+
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.environment.isEmpty());
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

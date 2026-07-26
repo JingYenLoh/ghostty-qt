@@ -95,6 +95,8 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.beginArray();
     for (config.term) |byte| try json.write(byte);
     try json.endArray();
+    try json.objectField("env");
+    try writeEnvironment(json, &config.env);
     try json.objectField("linux-cgroup");
     try json.write(@tagName(config.@"linux-cgroup"));
     try json.objectField("linux-cgroup-memory-limit");
@@ -302,6 +304,26 @@ fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {
     } else {
         try json.write(null);
     }
+}
+
+fn writeEnvironment(json: *std.json.Stringify, value: anytype) !void {
+    try json.beginArray();
+    var iterator = value.iterator();
+    while (iterator.next()) |entry| {
+        try json.beginObject();
+        try json.objectField("key");
+        try writeByteArray(json, entry.key_ptr.*);
+        try json.objectField("value");
+        try writeByteArray(json, entry.value_ptr.*);
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn writeByteArray(json: *std.json.Stringify, value: []const u8) !void {
+    try json.beginArray();
+    for (value) |byte| try json.write(byte);
+    try json.endArray();
 }
 
 fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !void {
