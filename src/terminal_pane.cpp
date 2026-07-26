@@ -1657,6 +1657,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.mouseHideWhileTyping = options.mouseHideWhileTyping;
     updated.focusFollowsMouse = options.focusFollowsMouse;
     updated.mouseReporting = options.mouseReporting;
+    updated.mouseShiftCapture = options.mouseShiftCapture;
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
@@ -1681,6 +1682,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     const bool linkUrlChanged = options_.linkUrl != updated.linkUrl;
     const bool linkPreviewModeChanged =
         options_.linkPreviews != updated.linkPreviews;
+    const bool mouseShiftCaptureChanged =
+        options_.mouseShiftCapture != updated.mouseShiftCapture;
     const bool mouseHidePolicyChanged =
         options_.mouseHideWhileTyping != updated.mouseHideWhileTyping;
     const BellFeatures previousBellFeatures = options_.bellFeatures;
@@ -1804,11 +1807,11 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
             if (!stillCurrentUpdate()) return;
         }
     }
-    if (linkUrlChanged) {
+    if (linkUrlChanged || mouseShiftCaptureChanged) {
         clearHyperlinkHover();
         if (!stillCurrentUpdate()) return;
     }
-    if (linkUrlChanged) {
+    if (linkUrlChanged || mouseShiftCaptureChanged) {
         recomputeHyperlinkHover();
         if (!stillCurrentUpdate()) return;
     }
@@ -4071,8 +4074,8 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
     }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool terminalMouseCaptured = controller_->terminalMouseTracking();
-    const bool report =
-        controller_->mouseTracking() && !modifiers.testFlag(Qt::ShiftModifier);
+    const bool shiftBypassesCapture = shiftBypassesMouseCapture(modifiers);
+    const bool report = controller_->mouseTracking() && !shiftBypassesCapture;
     if (report) {
         // Ghostty resets a local selection gesture whenever a reported
         // button event takes over. In particular, disabling reporting before
@@ -4114,7 +4117,7 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
         const QPointer<TerminalPane> guard(this);
         const quint64 requestId = controller_->requestRightClick(
             contentRevision, cell.x(), cell.y(), static_cast<int>(modifiers),
-            terminalMouseCaptured && modifiers.testFlag(Qt::ShiftModifier));
+            terminalMouseCaptured && shiftBypassesCapture);
         if (guard == nullptr) {
             event->accept();
             return;
@@ -4267,7 +4270,7 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
     // application capture only while a physical button is held; ordinary
     // hover motion remains reportable.
     const bool shiftBypassesCapture = event->buttons() != Qt::NoButton
-        && modifiers.testFlag(Qt::ShiftModifier);
+        && shiftBypassesMouseCapture(modifiers);
     const bool report = controller_->mouseTracking() && !shiftBypassesCapture;
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
@@ -4302,7 +4305,7 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
     const bool report =
-        controller_->mouseTracking() && !modifiers.testFlag(Qt::ShiftModifier);
+        controller_->mouseTracking() && !shiftBypassesMouseCapture(modifiers);
     if (event->button() == Qt::LeftButton && selecting_) {
         const QPoint cell = cellAt(event->position());
         controller_->endSelection(cell.x(), cell.y());
@@ -4525,6 +4528,21 @@ TerminalPane::effectivePointerModifiers(Qt::KeyboardModifiers modifiers) const
     return normalizedModifiers(modifiers) | keyboardModifiers_;
 }
 
+bool TerminalPane::shiftBypassesMouseCapture(
+    Qt::KeyboardModifiers modifiers) const noexcept
+{
+    if (!normalizedModifiers(modifiers).testFlag(Qt::ShiftModifier)) {
+        return false;
+    }
+    switch (options_.mouseShiftCapture) {
+    case MouseShiftCapture::True:
+    case MouseShiftCapture::Always: return false;
+    case MouseShiftCapture::False:
+    case MouseShiftCapture::Never: return true;
+    }
+    return true;
+}
+
 bool TerminalPane::hyperlinkModifiersMatch(
     Qt::KeyboardModifiers modifiers) const
 {
@@ -4533,7 +4551,7 @@ bool TerminalPane::hyperlinkModifiersMatch(
         // Shift is Ghostty's Linux escape hatch from application mouse
         // capture. Once it releases capture, it is removed before matching
         // the exact Ctrl-only OSC 8 modifier.
-        if (!modifiers.testFlag(Qt::ShiftModifier)) {
+        if (!shiftBypassesMouseCapture(modifiers)) {
             return false;
         }
         modifiers &= ~Qt::ShiftModifier;

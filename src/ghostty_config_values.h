@@ -52,6 +52,13 @@ enum class MiddleClickAction {
     Ignore,
 };
 
+enum class MouseShiftCapture {
+    False,
+    True,
+    Always,
+    Never,
+};
+
 enum class WindowNewTabPosition {
     Current,
     End,
@@ -226,6 +233,7 @@ struct GhosttyConfigValues {
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
     bool mouseReporting = false;
+    MouseShiftCapture mouseShiftCapture = MouseShiftCapture::False;
     bool mouseHideWhileTyping = false;
     bool focusFollowsMouse = false;
     MouseScrollMultiplier mouseScrollMultiplier;

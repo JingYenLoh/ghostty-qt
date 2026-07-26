@@ -401,6 +401,7 @@ private Q_SLOTS:
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
     void forwardsTypedSelectionPointerMetadataOnce();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
+    void appliesMouseShiftCaptureAcrossPointerRoutes();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
     void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
@@ -2211,6 +2212,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .bracketedSafe = true,
     };
     reloaded.middleClickAction = MiddleClickAction::Ignore;
+    reloaded.mouseShiftCapture = MouseShiftCapture::Never;
     reloaded.linkUrl = false;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
@@ -2228,6 +2230,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
              reloaded.clickRepeatIntervalMilliseconds);
     QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
+    QCOMPARE(splitOptions.mouseShiftCapture, reloaded.mouseShiftCapture);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
     QCOMPARE(splitOptions.splitInheritWorkingDirectory,
              reloaded.splitInheritWorkingDirectory);
@@ -3594,6 +3597,203 @@ void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()
     QCOMPARE(lastExtreme.button, 4);
     sendWheel(-120);
     QCOMPARE(mouse.count() - beforeExtreme, 10'000);
+}
+
+void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
+{
+    qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<TerminalRightClickInput>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("stty -echo; printf '\\033[?1003hshift-capture-ready'; "
+                       "exec cat >/dev/null"),
+    };
+    options.hold = true;
+    options.mouseReporting = true;
+    options.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+
+    TerminalPane pane(options);
+    pane.setSize(QSizeF(320.0, 160.0));
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy mouse(controller, &TerminalController::mouseRequested);
+    QSignalSpy selectionBegin(controller,
+                              &TerminalController::beginSelectionRequested);
+    QSignalSpy selectionUpdate(controller,
+                               &TerminalController::updateSelectionRequested);
+    QSignalSpy selectionEnd(controller,
+                            &TerminalController::endSelectionRequested);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+    QSignalSpy rightClicks(controller,
+                           &TerminalController::rightClickRequested);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("shift-capture-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->terminalMouseTracking(), 1000);
+    QVERIFY(controller->mouseTracking());
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    clipboard->setText(QStringLiteral("shift-capture-paste"),
+                       QClipboard::Clipboard);
+    if (clipboard->supportsSelection()) {
+        clipboard->setText(QStringLiteral("shift-capture-paste"),
+                           QClipboard::Selection);
+    }
+
+    const QPointF start(8.0, 8.0);
+    const QPointF moved(24.0, 8.0);
+    const auto sendMouse = [&](QEvent::Type type, const QPointF &position,
+                               Qt::MouseButton button, Qt::MouseButtons buttons,
+                               Qt::KeyboardModifiers modifiers) {
+        QMouseEvent event(type, position, position, position, button, buttons,
+                          modifiers);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto sendShiftGesture = [&] {
+        sendMouse(QEvent::MouseButtonPress, start, Qt::LeftButton,
+                  Qt::LeftButton, Qt::ShiftModifier);
+        sendMouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton,
+                  Qt::ShiftModifier);
+        sendMouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton,
+                  Qt::NoButton, Qt::ShiftModifier);
+    };
+    const auto sendHover = [&] {
+        QHoverEvent event(QEvent::HoverMove, start, moved, moved,
+                          Qt::ShiftModifier);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+
+    struct PolicyCase {
+        MouseShiftCapture mode;
+        bool captures;
+    };
+    constexpr std::array cases{
+        PolicyCase{MouseShiftCapture::False, false},
+        PolicyCase{MouseShiftCapture::True, true},
+        PolicyCase{MouseShiftCapture::Always, true},
+        PolicyCase{MouseShiftCapture::Never, false},
+    };
+    for (const PolicyCase policy : cases) {
+        LaunchOptions reloaded = options;
+        reloaded.mouseShiftCapture = policy.mode;
+        pane.applyRuntimeOptions(reloaded);
+
+        const qsizetype mouseBeforeGesture = mouse.size();
+        const qsizetype beginBefore = selectionBegin.size();
+        const qsizetype updateBefore = selectionUpdate.size();
+        const qsizetype endBefore = selectionEnd.size();
+        sendShiftGesture();
+        if (policy.captures) {
+            QCOMPARE(mouse.size(), mouseBeforeGesture + 3);
+            QCOMPARE(selectionBegin.size(), beginBefore);
+            QCOMPARE(selectionUpdate.size(), updateBefore);
+            QCOMPARE(selectionEnd.size(), endBefore);
+            for (qsizetype index = mouseBeforeGesture;
+                 index < mouseBeforeGesture + 3; ++index) {
+                const TerminalMouseInput input =
+                    qvariant_cast<TerminalMouseInput>(
+                        mouse.at(index).constFirst());
+                QVERIFY(input.modifiers & Qt::ShiftModifier);
+            }
+        } else {
+            QCOMPARE(mouse.size(), mouseBeforeGesture);
+            QCOMPARE(selectionBegin.size(), beginBefore + 1);
+            QCOMPARE(selectionUpdate.size(), updateBefore + 1);
+            QCOMPARE(selectionEnd.size(), endBefore + 1);
+        }
+
+        const qsizetype mouseBeforeMiddle = mouse.size();
+        const qsizetype pasteBefore = pasted.size();
+        sendMouse(QEvent::MouseButtonPress, start, Qt::MiddleButton,
+                  Qt::MiddleButton, Qt::ShiftModifier);
+        QCOMPARE(mouse.size(), mouseBeforeMiddle + (policy.captures ? 1 : 0));
+        QCOMPARE(pasted.size(), pasteBefore + (policy.captures ? 0 : 1));
+
+        const qsizetype mouseBeforeRight = mouse.size();
+        const qsizetype rightBefore = rightClicks.size();
+        sendMouse(QEvent::MouseButtonPress, start, Qt::RightButton,
+                  Qt::RightButton, Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(mouse.size(), mouseBeforeRight + (policy.captures ? 1 : 0));
+        QCOMPARE(rightClicks.size(), rightBefore + (policy.captures ? 0 : 1));
+        if (!policy.captures) {
+            const TerminalRightClickInput input =
+                qvariant_cast<TerminalRightClickInput>(
+                    rightClicks.constLast().constFirst());
+            QVERIFY(input.shiftBypassedMouseCapture);
+        }
+
+        // Upstream deliberately excludes both DEC reporting routes from
+        // mouse-shift-capture: no-button hover remains a motion report, and
+        // one discrete wheel notch remains three button-four reports. Local
+        // hyperlink eligibility is covered separately below.
+        const qsizetype mouseBeforeHover = mouse.size();
+        sendHover();
+        QCOMPARE(mouse.size(), mouseBeforeHover + 1);
+        const TerminalMouseInput hover =
+            qvariant_cast<TerminalMouseInput>(mouse.constLast().constFirst());
+        QCOMPARE(hover.action, TerminalMouseInput::Motion);
+        QVERIFY(hover.modifiers & Qt::ShiftModifier);
+
+        const qsizetype mouseBeforeWheel = mouse.size();
+        QVERIFY(
+            sendWheelEvent(pane, QPoint{}, QPoint(0, 120), Qt::ShiftModifier));
+        QCOMPARE(mouse.size(), mouseBeforeWheel + 3);
+        for (qsizetype index = mouseBeforeWheel; index < mouseBeforeWheel + 3;
+             ++index) {
+            const TerminalMouseInput wheel =
+                qvariant_cast<TerminalMouseInput>(mouse.at(index).constFirst());
+            QCOMPARE(wheel.action, TerminalMouseInput::Press);
+            QCOMPARE(wheel.button, 4);
+            QVERIFY(wheel.modifiers & Qt::ShiftModifier);
+        }
+    }
+
+    // The independent frontend reporting gate still wins over an Always
+    // capture policy. Raw DEC state remains authoritative only for deciding
+    // whether a local right click had used the Shift escape.
+    LaunchOptions disabled = options;
+    disabled.mouseReporting = false;
+    disabled.mouseShiftCapture = MouseShiftCapture::Always;
+    pane.applyRuntimeOptions(disabled);
+    QVERIFY(controller->terminalMouseTracking());
+    QVERIFY(!controller->mouseTracking());
+    const qsizetype mouseBeforeDisabled = mouse.size();
+    const qsizetype beginBeforeDisabled = selectionBegin.size();
+    sendShiftGesture();
+    QCOMPARE(mouse.size(), mouseBeforeDisabled);
+    QCOMPARE(selectionBegin.size(), beginBeforeDisabled + 1);
+
+    const qsizetype rightBeforeAlways = rightClicks.size();
+    sendMouse(QEvent::MouseButtonPress, start, Qt::RightButton, Qt::RightButton,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(rightClicks.size(), rightBeforeAlways + 1);
+    QVERIFY(!qvariant_cast<TerminalRightClickInput>(
+                 rightClicks.constLast().constFirst())
+                 .shiftBypassedMouseCapture);
+
+    disabled.mouseShiftCapture = MouseShiftCapture::Never;
+    pane.applyRuntimeOptions(disabled);
+    const qsizetype rightBeforeNever = rightClicks.size();
+    sendMouse(QEvent::MouseButtonPress, start, Qt::RightButton, Qt::RightButton,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(rightClicks.size(), rightBeforeNever + 1);
+    QVERIFY(qvariant_cast<TerminalRightClickInput>(
+                rightClicks.constLast().constFirst())
+                .shiftBypassedMouseCapture);
+
+    clipboard->clear(QClipboard::Clipboard);
+    if (clipboard->supportsSelection()) {
+        clipboard->clear(QClipboard::Selection);
+    }
 }
 
 void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
@@ -8571,6 +8771,24 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCOMPARE(mouseRequests.count(), 0);
     QTRY_VERIFY_WITH_TIMEOUT(!hyperlinkResolved.isEmpty(), 1000);
 
+    // The raw DEC state also governs link normalization while the independent
+    // frontend reporting gate is off. Always removes the stationary local
+    // lease; Never restores it without reporting a DEC motion event.
+    LaunchOptions disabledCapture = options;
+    disabledCapture.mouseShiftCapture = MouseShiftCapture::Always;
+    pane.applyRuntimeOptions(disabledCapture);
+    QVERIFY(controller->terminalMouseTracking());
+    QVERIFY(!controller->mouseTracking());
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::ArrowCursor, 1000);
+    const qsizetype disabledQueriesBeforeNever = hyperlinkQueries.size();
+    disabledCapture.mouseShiftCapture = MouseShiftCapture::Never;
+    pane.applyRuntimeOptions(disabledCapture);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hyperlinkQueries.size() > disabledQueriesBeforeNever, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
+    QCOMPARE(mouseRequests.count(), 0);
+
     QKeyEvent shiftRelease(QEvent::KeyRelease, Qt::Key_Shift,
                            Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &shiftRelease);
@@ -8688,6 +8906,42 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     QCOMPARE(leftRelease.action, TerminalMouseInput::Release);
     QCOMPARE(leftRelease.button, 1);
     QVERIFY(!leftRelease.anyButtonPressed);
+
+    // Reload resolves a stationary Ctrl+Shift hover immediately. Capture
+    // removes the local link lease without waiting for pointer motion, while
+    // release recomputes the same stored cell and modifiers.
+    QKeyEvent reloadControlPress(QEvent::KeyPress, Qt::Key_Control,
+                                 Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &reloadControlPress);
+    QKeyEvent reloadShiftPress(QEvent::KeyPress, Qt::Key_Shift,
+                               Qt::ControlModifier | Qt::ShiftModifier);
+    QCoreApplication::sendEvent(&pane, &reloadShiftPress);
+    sendHover(Qt::NoModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
+
+    LaunchOptions captureReload = options;
+    captureReload.mouseReporting = true;
+    captureReload.mouseShiftCapture = MouseShiftCapture::Always;
+    pane.applyRuntimeOptions(captureReload);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::ArrowCursor, 1000);
+    QVERIFY(
+        !pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
+
+    const qsizetype queriesBeforeReleaseReload = hyperlinkQueries.size();
+    captureReload.mouseShiftCapture = MouseShiftCapture::Never;
+    pane.applyRuntimeOptions(captureReload);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        hyperlinkQueries.size() > queriesBeforeReleaseReload, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::PointingHandCursor,
+                              1000);
+
+    QKeyEvent reloadShiftRelease(QEvent::KeyRelease, Qt::Key_Shift,
+                                 Qt::ControlModifier);
+    QCoreApplication::sendEvent(&pane, &reloadShiftRelease);
+    QKeyEvent reloadControlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                                   Qt::NoModifier);
+    QCoreApplication::sendEvent(&pane, &reloadControlRelease);
 
     // Focus loss does not lock a route: a Shift release remains local.
     const int beforeFocusLoss = mouseRequests.count();

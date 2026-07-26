@@ -152,6 +152,7 @@ GhosttyConfigSnapshot completeSnapshot()
     values.rightClickAction = RightClickAction::CopyOrPaste;
     values.middleClickAction = MiddleClickAction::Ignore;
     values.mouseReporting = false;
+    values.mouseShiftCapture = MouseShiftCapture::Never;
     values.mouseHideWhileTyping = true;
     values.focusFollowsMouse = true;
     values.selectionWordChars = {0, 0x20, 0x2502, 0x1f642};
@@ -338,6 +339,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.singleInstanceModeExplicit);
     QCOMPARE(options.rightClickAction, RightClickAction::ContextMenu);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
+    QCOMPARE(options.mouseShiftCapture, MouseShiftCapture::False);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
     QVERIFY(!options.keybindSource.isAvailable());
@@ -768,6 +770,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.mouseReporting);
+    QCOMPARE(cliResult.mouseShiftCapture, MouseShiftCapture::Never);
     QCOMPARE(cliResult.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QCOMPARE(cliResult.clickRepeatIntervalMilliseconds, quint32{731});
@@ -1011,10 +1014,25 @@ void LaunchOptionsTest::mapsClipboardModes()
                  enabled);
     }
 
+    for (const MouseShiftCapture configured : {
+             MouseShiftCapture::False,
+             MouseShiftCapture::True,
+             MouseShiftCapture::Always,
+             MouseShiftCapture::Never,
+         }) {
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.mouseShiftCapture = configured;
+        QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot).mouseShiftCapture,
+                 configured);
+    }
+
     LaunchOptions baseline;
     LaunchOptions changed = baseline;
     QVERIFY(changed == baseline);
     changed.rightClickAction = RightClickAction::Ignore;
+    QVERIFY(changed != baseline);
+    changed = baseline;
+    changed.mouseShiftCapture = MouseShiftCapture::Always;
     QVERIFY(changed != baseline);
 }
 
@@ -1497,6 +1515,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         QColor(QStringLiteral("#abcdef"));
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
+    frontendOnlyChanged.mouseShiftCapture = MouseShiftCapture::Always;
     frontendOnlyChanged.keybindSource = GhosttyKeybindSource::text(
         {QStringLiteral("ctrl+x=ignore")});
     frontendOnlyChanged.showHelp = true;

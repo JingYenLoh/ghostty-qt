@@ -262,6 +262,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!values.mouseReporting);
+    QCOMPARE(values.mouseShiftCapture, MouseShiftCapture::Never);
     QVERIFY(values.mouseHideWhileTyping);
     QVERIFY(values.focusFollowsMouse);
     QCOMPARE(values.mouseScrollMultiplier.precision, 0.75);
@@ -520,6 +521,17 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }),
         [](const GhosttyConfigValues &values) {
             return values.middleClickAction;
+        });
+    verifyMappings(
+        QLatin1StringView("mouse-shift-capture"),
+        std::to_array<std::pair<QLatin1StringView, MouseShiftCapture>>({
+            {QLatin1StringView("false"), MouseShiftCapture::False},
+            {QLatin1StringView("true"), MouseShiftCapture::True},
+            {QLatin1StringView("always"), MouseShiftCapture::Always},
+            {QLatin1StringView("never"), MouseShiftCapture::Never},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.mouseShiftCapture;
         });
     verifyMappings(
         QLatin1StringView("link-previews"),
@@ -795,6 +807,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-right-click-action")
         << withoutValue(object(), QStringLiteral("right-click-action"))
         << QStringLiteral("values is missing field 'right-click-action'");
+    QTest::newRow("missing-mouse-shift-capture")
+        << withoutValue(object(), QStringLiteral("mouse-shift-capture"))
+        << QStringLiteral("values is missing field 'mouse-shift-capture'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -1301,6 +1316,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("copy-on-select"),
              QStringLiteral("right-click-action"),
              QStringLiteral("middle-click-action"),
+             QStringLiteral("mouse-shift-capture"),
              QStringLiteral("link-previews"),
              QStringLiteral("scrollbar"),
              QStringLiteral("resize-overlay"),

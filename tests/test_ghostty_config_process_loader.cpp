@@ -233,6 +233,7 @@ private Q_SLOTS:
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
     void realHelperExportsRightClickAction();
+    void realHelperExportsMouseShiftCapture();
     void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
@@ -1178,6 +1179,39 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsRightClickAction()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.rightClickAction, RightClickAction::ContextMenu);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsMouseShiftCapture()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+
+    for (const auto &[spelling, expected] :
+         std::to_array<std::pair<QByteArray, MouseShiftCapture>>({
+             {QByteArrayLiteral("false"), MouseShiftCapture::False},
+             {QByteArrayLiteral("true"), MouseShiftCapture::True},
+             {QByteArrayLiteral("always"), MouseShiftCapture::Always},
+             {QByteArrayLiteral("never"), MouseShiftCapture::Never},
+         })) {
+        ConfigFixture::writeFile(fixture.preferredPath,
+                                 QByteArrayLiteral("mouse-shift-capture = ")
+                                     + spelling + '\n');
+        const auto result = queryRealConfigExport(helperPath, fixture);
+        QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+        QCOMPARE(result->values.mouseShiftCapture, expected);
+    }
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    const auto defaultResult = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(defaultResult.has_value(),
+             qPrintable(errorMessage(defaultResult)));
+    QCOMPARE(defaultResult->values.mouseShiftCapture, MouseShiftCapture::False);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

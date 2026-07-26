@@ -557,7 +557,16 @@ signals:
   preedit start/change/end clears independently when configured. The rendered
   preedit string remains a local UI overlay.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
-  tracking. Holding `Shift` retains local selection and scrollback behavior.
+  tracking. The finalized four-state `mouse-shift-capture` value crosses the
+  strict configuration wire and reloads into each existing pane. `always`
+  keeps `Shift` in captured DEC button events and `never` releases captured
+  button input for local handling; those terminal-override-independent
+  capture-routing branches are exact.
+  `true` and `false` currently select the same configured capture/release
+  fallback, respectively. They cannot yet honor a program's later
+  `XTSHIFTESCAPE` request because official libghostty-vt does not expose the
+  terminal's private unset/false/true flag. The missing public query contract
+  is tracked in `REQUIRES_UPSTREAM.md`.
 - A local right press crosses to `SessionWorker` as a correlated value carrying
   its cell, retained-frame revision, normalized modifiers, and whether `Shift`
   released raw DEC capture, even when the `mouse-reporting` policy disables
@@ -589,9 +598,17 @@ signals:
   Dismissal only restores focus; cancellation when the origin disappears or a
   newer popup supersedes it is inert, and a consumed or stale token cannot
   dispatch again.
-  Ghostty's configurable `mouse-shift-capture` and terminal-controlled
-  `XTSHIFTESCAPE` exceptions are not yet represented, so Qt currently applies
-  the default Linux Shift escape whenever raw capture is active.
+  The same live shift-capture decision is used for pointer button press and
+  release, held-button drag motion, middle/right actions, and modifier
+  normalization for `Ctrl+Shift` link hover and activation. Matching Ghostty,
+  captured wheel/fractional scrolling and buttonless DEC-motion reporting do
+  not consult this policy and remain reported. Buttonless `Ctrl+Shift` hover
+  still uses the same decision for local hyperlink eligibility. Raw DEC
+  capture remains the
+  modifier-normalization authority even when the frontend's independent
+  `mouse-reporting` policy suppresses effective reporting, so disabling
+  reporting does not silently change raw-capture link/right-click modifier
+  normalization.
 - For local selection, Qt performs hit testing and forwards only typed press
   metadata: the cell, physical surface-relative pixel position,
   arbitrary-origin window-system timestamp, and modifiers. A nonzero Qt
@@ -664,8 +681,9 @@ signals:
   precedence over Ghostty's default regex-detected URL/path range. A matching
   result changes the pointer and underlines the visible matching cells; an
   already single-underlined cell becomes double-underlined while hovered. With
-  application mouse capture, `Shift` first bypasses capture and is removed
-  before modifier matching, so the equivalent gesture is `Ctrl+Shift`.
+  application mouse capture and a shift-capture policy that permits the
+  escape, `Shift` first bypasses capture and is removed before modifier
+  matching, so the equivalent gesture is `Ctrl+Shift`.
 - `link-previews = true` shows the accepted raw destination for either link
   kind, `false` shows neither, and `osc8` shows only explicit OSC 8
   destinations. This presentation policy does not change link detection,

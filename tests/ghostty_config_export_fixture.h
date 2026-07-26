@@ -251,6 +251,7 @@ inline QJsonObject values()
         {QStringLiteral("right-click-action"), QStringLiteral("copy-or-paste")},
         {QStringLiteral("middle-click-action"), QStringLiteral("ignore")},
         {QStringLiteral("mouse-reporting"), false},
+        {QStringLiteral("mouse-shift-capture"), QStringLiteral("never")},
         {QStringLiteral("mouse-hide-while-typing"), true},
         {QStringLiteral("focus-follows-mouse"), true},
         {QStringLiteral("mouse-scroll-multiplier"),

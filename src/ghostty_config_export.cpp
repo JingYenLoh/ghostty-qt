@@ -102,6 +102,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("right-click-action"),
     QLatin1StringView("middle-click-action"),
     QLatin1StringView("mouse-reporting"),
+    QLatin1StringView("mouse-shift-capture"),
     QLatin1StringView("mouse-hide-while-typing"),
     QLatin1StringView("focus-follows-mouse"),
     QLatin1StringView("mouse-scroll-multiplier"),
@@ -1036,6 +1037,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("copy-or-paste"), RightClickAction::CopyOrPaste},
             {QLatin1StringView("ignore"), RightClickAction::Ignore},
         });
+    constexpr auto MouseShiftCaptureModes =
+        std::to_array<std::pair<QLatin1StringView, MouseShiftCapture>>({
+            {QLatin1StringView("false"), MouseShiftCapture::False},
+            {QLatin1StringView("true"), MouseShiftCapture::True},
+            {QLatin1StringView("always"), MouseShiftCapture::Always},
+            {QLatin1StringView("never"), MouseShiftCapture::Never},
+        });
     constexpr auto LinkPreviewModes =
         std::to_array<std::pair<QLatin1StringView, LinkPreviewMode>>({
             {QLatin1StringView("false"), LinkPreviewMode::Never},
@@ -1115,6 +1123,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("middle-click-action"),
                                  result.middleClickAction, MiddleClickActions);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed =
+            assignEnum(QLatin1StringView("mouse-shift-capture"),
+                       result.mouseShiftCapture, MouseShiftCaptureModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("link-previews"),

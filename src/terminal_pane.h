@@ -351,6 +351,8 @@ private:
     int normalizedMouseButton(Qt::MouseButton button) const;
     Qt::KeyboardModifiers
     effectivePointerModifiers(Qt::KeyboardModifiers modifiers) const;
+    bool
+    shiftBypassesMouseCapture(Qt::KeyboardModifiers modifiers) const noexcept;
     bool hyperlinkModifiersMatch(Qt::KeyboardModifiers modifiers) const;
     void updateHyperlinkHover(const QPointF &position,
                               Qt::KeyboardModifiers modifiers);

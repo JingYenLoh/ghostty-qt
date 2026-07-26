@@ -125,6 +125,11 @@ struct LaunchOptions {
     // Gates application-requested mouse tracking without changing the
     // terminal's DEC mouse mode. The policy is surface-local at runtime.
     bool mouseReporting = true;
+    // Controls whether Shift remains terminal-bound while a DEC mouse mode is
+    // active. True/False are overridable by XTSHIFTESCAPE upstream; until the
+    // public libghostty-vt API exposes that terminal flag, the frontend uses
+    // their configured fallback. Always/Never capture routing is exact.
+    MouseShiftCapture mouseShiftCapture = MouseShiftCapture::False;
     // Hides the pointer after terminal-bound text input until subsequent
     // pointer interaction reveals it again.
     bool mouseHideWhileTyping = false;

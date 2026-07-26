@@ -7,6 +7,130 @@ public contract here and do not mark the unavailable behavior supported. Use
 `partial`, `planned`, or `blocked_upstream` as appropriate until an official
 Ghostty commit provides it.
 
+## Terminal XTSHIFTESCAPE state query
+
+**Status:** the four-value `mouse-shift-capture` configuration and the
+override-independent `always`/`never` capture routing are implemented; exact
+terminal overrides for `true`/`false` are blocked on an upstream public query.
+
+Ghostty stores a running program's `XTSHIFTESCAPE` request in the private
+`Terminal.flags.mouse_shift_capture` tri-state:
+
+- unset means that the configured `mouse-shift-capture` fallback applies;
+- false means that `Shift` releases application mouse capture; and
+- true means that `Shift` remains in the encoded mouse protocol.
+
+`Surface.mouseShiftCapture` ignores that terminal state for the configuration
+values `always` and `never`. For `true` and `false`, it first honors an
+explicit terminal value and otherwise uses the configured fallback.
+
+Public libghostty-vt exposes whether any DEC mouse tracking mode is active, but
+does not expose the separate unset/false/true `XTSHIFTESCAPE` state. The public
+parser consumes valid `CSI > s`, `CSI > 0 s`, and `CSI > 1 s` input into the
+private flag, so the information already exists at the correct terminal-model
+boundary. It is unavailable to an embedding frontend after parsing. This was
+last verified against official upstream commit
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-26.
+
+ghostty-qt therefore transports and reloads all four configuration values and
+implements the capture-routing branches of `always` and `never` exactly. Its
+staged `true` and `false` paths use their configured capture and release
+defaults, respectively, for every implemented capture-routing path, but cannot
+observe a later terminal override. Captured wheel and buttonless DEC-motion
+reporting intentionally remain outside the routing decision, while buttonless
+`Ctrl+Shift` hover still consults it for local link eligibility. The parity
+ledger keeps `mouse-shift-capture` partial until the public state query and the
+separate delayed Shift-click selection behavior are both implemented.
+
+### Why ghostty-qt does not inspect PTY bytes
+
+Mirroring `XTSHIFTESCAPE` in the session worker would create a second terminal
+parser outside libghostty-vt. It would need to duplicate streaming escape
+sequence boundaries, malformed-input handling, the exact point at which a
+valid sequence commits, and every reset path. It could also diverge when
+Ghostty extends its parser while the Qt byte watcher remains unchanged.
+
+The state cannot be inferred from the public mouse-tracking boolean or from
+encoded mouse bytes: tracking and shift capture are independent, and no mouse
+event may occur between a terminal request and a local gesture. A local
+Ghostty patch would expose the private field but violates this repository's
+official-submodule policy. Keeping the configured fallback explicit is safer
+than claiming that the conditional modes are exact.
+
+### Required upstream contract
+
+Official libghostty-vt needs an append-only terminal-data query for the current
+program-controlled mouse-shift state. The exact API shape remains an upstream
+decision, but the result must distinguish all three values:
+
+- no `XTSHIFTESCAPE` override, so the frontend must use its configuration;
+- explicit release, produced by valid zero or omitted input; and
+- explicit capture, produced by valid one input.
+
+An explicit enum result is preferable to overloading `GHOSTTY_NO_VALUE`,
+because unset is successful terminal state rather than unavailable data. A
+minimal compatible shape would append a `GhosttyTerminalData` member whose
+output type is a new C enum with unset, false, and true values, and support it
+through both `ghostty_terminal_get` and `ghostty_terminal_get_multi`.
+
+The query must:
+
+- report the state owned by the same terminal instance that parsed the input;
+- reflect the latest valid sequence after `ghostty_terminal_vt_write` returns;
+- leave the prior state unchanged after malformed or unsupported parameters;
+- return unset for a new terminal and after the same reset operations that
+  reset Ghostty's private flag;
+- remain independent of whether DEC mouse tracking is currently enabled and
+  which screen is active; and
+- preserve every existing public enum ordinal and ABI layout.
+
+The public contract should expose terminal state, not accept a frontend
+configuration value or return a pre-resolved boolean. `always`/`never` policy
+belongs to the embedding surface, while the unset distinction is necessary to
+apply the `true`/`false` fallback correctly.
+
+### Upstream acceptance evidence
+
+Public C API tests should verify:
+
+- unset from a newly initialized terminal;
+- false after both `CSI > s` and `CSI > 0 s`;
+- true after `CSI > 1 s`;
+- fragmented input producing the same result as one complete write;
+- the latest valid sequence winning;
+- unsupported parameters and malformed sequences retaining the prior value;
+- terminal reset restoring unset;
+- mouse-tracking mode and primary/alternate-screen changes leaving the value
+  intact; and
+- identical typed results from the single and multi-data getters.
+
+An integration matrix should also compare the public result with Ghostty's
+existing `Surface.mouseShiftCapture` resolution for configured `false` and
+`true` across unset, explicit-false, and explicit-true terminal states. The
+`never` and `always` cases must remain independent of the queried value.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once the query is present in an official, publicly reachable Ghostty commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Add a typed tri-state to the adapter's mouse-input snapshot and refresh it
+   after terminal writes and resets alongside DEC mouse-tracking state.
+3. Publish state changes through the existing worker-to-pane input-mode path;
+   do not parse escape bytes or expose a Ghostty handle to the GUI thread.
+4. Resolve `true`/`false` from an explicit terminal value first and their
+   configured fallback second, while retaining the direct `always`/`never`
+   branches.
+5. Exercise button press/release, held-button drag, middle/right click, and
+   `Ctrl+Shift` link hover/activation across the full configuration and
+   terminal-state matrix, while verifying that wheel/fractional scroll and
+   buttonless DEC-motion reporting remain unaffected.
+6. Implement and test Ghostty's separate delayed Shift-click extension of an
+   existing selection; this behavior also consults the resolved capture
+   policy but does not depend on the upstream query API.
+7. Promote `mouse-shift-capture` to supported in
+   `docs/ghostty-parity.json` only after both gaps are closed.
+
 ## Semantic prompt viewport navigation
 
 **Status:** blocked on an upstream public API.

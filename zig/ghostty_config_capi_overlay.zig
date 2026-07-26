@@ -238,6 +238,8 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.write(@tagName(config.@"middle-click-action"));
     try json.objectField("mouse-reporting");
     try json.write(config.@"mouse-reporting");
+    try json.objectField("mouse-shift-capture");
+    try json.write(@tagName(config.@"mouse-shift-capture"));
     try json.objectField("mouse-hide-while-typing");
     try json.write(config.@"mouse-hide-while-typing");
     try json.objectField("focus-follows-mouse");
