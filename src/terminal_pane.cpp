@@ -1070,6 +1070,8 @@ TerminalPane::TerminalPane(
             &TerminalPane::handleHyperlinkResult);
     connect(controller_, &TerminalController::hyperlinkActivationResolved, this,
             &TerminalPane::handleHyperlinkActivation);
+    connect(controller_, &TerminalController::rightClickResolved, this,
+            &TerminalPane::handleRightClickResult);
     connect(controller_, &TerminalController::titleChanged, this, [this] {
         if (!surfaceTitleOverride_.has_value()) {
             Q_EMIT titleChanged();
@@ -1650,6 +1652,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         options.clickRepeatIntervalMilliseconds;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
+    updated.rightClickAction = options.rightClickAction;
     updated.middleClickAction = options.middleClickAction;
     updated.mouseHideWhileTyping = options.mouseHideWhileTyping;
     updated.focusFollowsMouse = options.focusFollowsMouse;
@@ -1863,6 +1866,8 @@ void TerminalPane::beginShutdown()
         terminalActionsAccepted_ = false;
         advanceTerminalActionEpoch();
     }
+    pendingRightClickWindowPositions_.clear();
+    newestRightClickRequestId_ = 0;
     // Queue worker teardown before resolving a suspended action chain. Its
     // completion may release pane- or process-level input deferral and replay
     // key/IME work; worker queue ordering then makes that replay inert instead
@@ -4065,6 +4070,7 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
         }
     }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
+    const bool terminalMouseCaptured = controller_->terminalMouseTracking();
     const bool report =
         controller_->mouseTracking() && !modifiers.testFlag(Qt::ShiftModifier);
     if (report) {
@@ -4089,6 +4095,32 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
                 pasteText(text);
             }
         }
+    } else if (event->button() == Qt::RightButton) {
+        const QPoint cell = cellAt(event->position());
+        quint64 contentRevision = 0;
+        {
+            QMutexLocker locker(&renderMutex_);
+            if (hasFrame_) {
+                contentRevision = frame_.contentRevision;
+            }
+        }
+        QPointF windowPosition = event->position();
+        if (QQuickWindow *const quickWindow = window();
+            quickWindow != nullptr && quickWindow->contentItem() != nullptr) {
+            windowPosition =
+                mapToItem(quickWindow->contentItem(), event->position());
+        }
+
+        const QPointer<TerminalPane> guard(this);
+        const quint64 requestId = controller_->requestRightClick(
+            contentRevision, cell.x(), cell.y(), static_cast<int>(modifiers),
+            terminalMouseCaptured && modifiers.testFlag(Qt::ShiftModifier));
+        if (guard == nullptr) {
+            event->accept();
+            return;
+        }
+        pendingRightClickWindowPositions_.insert(requestId, windowPosition);
+        newestRightClickRequestId_ = requestId;
     }
     event->accept();
 }
@@ -4968,6 +5000,39 @@ void TerminalPane::handleHyperlinkActivation(quint64 contentRevision,
     const QUrl url = hyperlinkUrl(uri, kind);
     if (url.isValid() && !url.isEmpty()) {
         static_cast<void>(urlOpener_(url));
+    }
+}
+
+void TerminalPane::handleRightClickResult(
+    const TerminalRightClickResult &result)
+{
+    if (result.requestId == 0
+        || !pendingRightClickWindowPositions_.contains(result.requestId)) {
+        return;
+    }
+    const QPointF windowPosition =
+        pendingRightClickWindowPositions_.take(result.requestId);
+    const bool newest = result.requestId == newestRightClickRequestId_;
+    if (newest) {
+        newestRightClickRequestId_ = 0;
+    }
+
+    switch (result.effect) {
+    case TerminalRightClickEffect::None: return;
+    case TerminalRightClickEffect::Paste: {
+        const std::optional<QString> text = readTerminalClipboard(
+            QGuiApplication::clipboard(), TerminalClipboardSource::Standard);
+        if (text.has_value()) {
+            pasteText(*text);
+        }
+        return;
+    }
+    case TerminalRightClickEffect::ContextMenu:
+        if (newest) {
+            Q_EMIT contextMenuRequested(windowPosition,
+                                        result.selectionAvailable);
+        }
+        return;
     }
 }
 

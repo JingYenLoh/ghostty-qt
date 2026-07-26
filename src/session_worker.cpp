@@ -1361,6 +1361,92 @@ void SessionWorker::sendMouse(const TerminalMouseInput &input)
     queueInputWrite(encodeMouse(input));
 }
 
+void SessionWorker::resolveRightClick(const TerminalRightClickInput &input)
+{
+    TerminalRightClickResult result{
+        .requestId = input.requestId,
+        .contentRevision = terminalContentRevision_,
+        .effect = TerminalRightClickEffect::None,
+        .selectionAvailable = false,
+    };
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT rightClickFinished(result); });
+    if (input.requestId == 0 || vt_ == nullptr) {
+        return;
+    }
+
+    syncSelectionAvailability();
+    switch (options_.runtime.rightClickAction) {
+    case RightClickAction::Ignore: break;
+    case RightClickAction::Paste:
+        clearSelectionState();
+        result.effect = TerminalRightClickEffect::Paste;
+        break;
+    case RightClickAction::Copy:
+        if (selectionAvailable_) {
+            copySelectionTo(TerminalClipboardDestination::Standard, false);
+        }
+        clearSelectionState();
+        break;
+    case RightClickAction::CopyOrPaste:
+        if (selectionAvailable_) {
+            copySelectionTo(TerminalClipboardDestination::Standard, false);
+            clearSelectionState();
+        } else {
+            result.effect = TerminalRightClickEffect::Paste;
+        }
+        break;
+    case RightClickAction::ContextMenu: {
+        result.effect = TerminalRightClickEffect::ContextMenu;
+        const bool coordinateIsCurrent =
+            input.contentRevision == terminalContentRevision_
+            && hyperlinkState_->viewport.hasFrame()
+            && hyperlinkState_->viewport.contentRevision()
+                == terminalContentRevision_;
+        if (!coordinateIsCurrent
+            || vt_->selectionContains(input.column, input.row)) {
+            break;
+        }
+
+        Qt::KeyboardModifiers modifiers =
+            static_cast<Qt::KeyboardModifiers>(input.modifiers);
+        if (input.shiftBypassedMouseCapture) {
+            modifiers &= ~Qt::ShiftModifier;
+        }
+        std::optional<DetectedTerminalLink> detected;
+        if (modifiers == Qt::ControlModifier) {
+            detected = detectTerminalLinkAt(
+                *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                hyperlinkState_->viewport, input.column, input.row);
+        }
+
+        bool selected = false;
+        if (detected.has_value()) {
+            if (detected->resolved.kind == TerminalLinkKind::Osc8) {
+                // libghostty exposes an OSC 8 URI but not the link's logical
+                // identity/range. Ghostty selects only the clicked cell for
+                // this context-menu affordance.
+                selected = vt_->selectCell(input.column, input.row);
+            } else if (const auto *range =
+                           std::get_if<GhosttyVtAdapter::TrackedTextRange>(
+                               &detected->tracked)) {
+                selected = vt_->installTextRange(*range);
+            }
+        }
+        if (!selected) {
+            selected = vt_->selectWord(input.column, input.row);
+        }
+        syncSelectionAvailability();
+        if (selected) {
+            copySelectionOnSelect();
+            scheduleFrame();
+        }
+        break;
+    }
+    }
+    result.selectionAvailable = selectionAvailable_;
+}
+
 QByteArray SessionWorker::encodeMouse(const TerminalMouseInput &input)
 {
     return vt_ != nullptr ? vt_->encodeMouse(input) : QByteArray{};

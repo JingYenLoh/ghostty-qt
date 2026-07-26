@@ -204,8 +204,8 @@ finalized finite precision/discrete mouse-scroll multipliers, the exact
 `mouse-hide-while-typing` and `focus-follows-mouse` booleans, the finalized
 whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's
-mandatory U+0000 boundary, the raw false/true/detect
-`gtk-single-instance` mode as an unused schema-v1
+mandatory U+0000 boundary, the exact five-state `right-click-action`, the raw
+false/true/detect `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic

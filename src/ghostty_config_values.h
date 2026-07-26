@@ -223,6 +223,7 @@ struct GhosttyConfigValues {
         .protection = false,
         .bracketedSafe = false,
     };
+    RightClickAction rightClickAction = RightClickAction::ContextMenu;
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;
     bool mouseReporting = false;
     bool mouseHideWhileTyping = false;

@@ -208,6 +208,8 @@ Q_SIGNALS:
     void applicationActionRequested(ApplicationAction action);
     void windowNavigationRequested(WindowNavigationAction action);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
+    void contextMenuRequested(const QPointF &windowPosition,
+                              bool selectionAvailable);
     void unsafePasteRequested(quint64 requestId, const QString &text,
                               TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
@@ -373,6 +375,7 @@ private:
     void handleHyperlinkActivation(quint64 contentRevision,
                                    TerminalLinkKind kind,
                                    const QByteArray &uri);
+    void handleRightClickResult(const TerminalRightClickResult &result);
     QUrl hyperlinkUrl(const QByteArray &uri, TerminalLinkKind kind) const;
     void startSearchUi();
     void startSearchUiWithSelection(const QString &text);
@@ -496,6 +499,8 @@ private:
     QByteArray pendingActivationUri_;
     TerminalLinkKind pendingActivationKind_ = TerminalLinkKind::Osc8;
     quint64 pendingActivationRequestId_ = 0;
+    QHash<quint64, QPointF> pendingRightClickWindowPositions_;
+    quint64 newestRightClickRequestId_ = 0;
     std::function<bool(const QUrl &)> urlOpener_;
     std::shared_ptr<std::function<bool(WorkspaceActionRequest)>>
         workspaceActionHandler_;

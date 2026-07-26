@@ -116,6 +116,9 @@ struct LaunchOptions {
     // originating process can resolve detect from its real invocation.
     SingleInstanceMode singleInstanceMode = SingleInstanceMode::Detect;
     bool singleInstanceModeExplicit = false;
+    // The GUI routes a right-click, but the worker resolves the configured
+    // semantics against authoritative selection and link state.
+    RightClickAction rightClickAction = RightClickAction::ContextMenu;
     // Middle-click is a GUI input policy. It intentionally stays outside the
     // worker-owned terminal session options.
     MiddleClickAction middleClickAction = MiddleClickAction::PrimaryPaste;

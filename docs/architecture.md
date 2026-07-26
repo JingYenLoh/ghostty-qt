@@ -558,6 +558,25 @@ signals:
   preedit string remains a local UI overlay.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
+- A local right press crosses to `SessionWorker` as a correlated value carrying
+  its cell, retained-frame revision, normalized modifiers, and whether `Shift`
+  released raw DEC capture, even when the `mouse-reporting` policy disables
+  effective event routing. This keeps `copy-or-paste`, selection containment,
+  and link/word selection atomic with the worker-owned terminal. Reported DEC
+  input retains precedence. Each request remains independently correlated so
+  rapid paste effects are not collapsed; the pane supersedes only obsolete
+  context-menu presentation. For `context-menu`, a current click inside the
+  installed selection preserves it; otherwise the worker selects an exact
+  `Ctrl` OSC 8 cell, a complete configured-regex match, or the clicked word and
+  then applies copy-on-select. A stale coordinate may still request the menu
+  but cannot select unrelated current content. The GUI retains only the press
+  positions and maps results to paste or a workspace-issued stable menu token.
+  One Qt Quick `Menu` per window requests `Popup.Native`, routes only fixed
+  Copy/Paste actions back to the originating pane, cancels when that pane
+  disappears, and restores focus to the current active pane when closed.
+  Ghostty's configurable `mouse-shift-capture` and terminal-controlled
+  `XTSHIFTESCAPE` exceptions are not yet represented, so Qt currently applies
+  the default Linux Shift escape whenever raw capture is active.
 - For local selection, Qt performs hit testing and forwards only typed press
   metadata: the cell, physical surface-relative pixel position,
   arbitrary-origin window-system timestamp, and modifiers. A nonzero Qt
@@ -1055,11 +1074,14 @@ distinct until the renderer has the target cell.
 The same schema carries `click-repeat-interval` as Ghostty's finalized
 unsigned whole-millisecond value, including the Linux 500 ms default, and
 `selection-word-chars` as an array of finalized Unicode scalar values rather
-than its source spelling. The strict loader rejects an invalid interval and
-nonnumeric, fractional, surrogate, or out-of-range boundary members; the
-parser-provided U+0000 element is preserved alongside ASCII and non-BMP
-boundaries. Both values are copied through launch and live runtime options
-without frontend reinterpretation, then consumed only on the session thread.
+than its source spelling. It also carries the exact finalized
+`right-click-action` enum so live reload changes the next worker-resolved
+right press without replacing the pane. The strict loader rejects an invalid
+interval, unknown right-click tag, and nonnumeric, fractional, surrogate, or
+out-of-range boundary members; the parser-provided U+0000 element is preserved
+alongside ASCII and non-BMP boundaries. These values are copied through launch
+and live runtime options without frontend reinterpretation, then consumed only
+on the session thread.
 
 Typography remains entirely on the GUI/render side as a value-only
 `TerminalTypography`. It carries one ordered family list and one style

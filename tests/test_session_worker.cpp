@@ -78,6 +78,14 @@ TerminalActionResult terminalActionResultAt(
         spy.at(index).constFirst());
 }
 
+TerminalRightClickResult rightClickResultAt(const QSignalSpy &spy,
+                                            qsizetype index)
+{
+    Q_ASSERT(index >= 0 && index < spy.size());
+    Q_ASSERT(!spy.at(index).isEmpty());
+    return qvariant_cast<TerminalRightClickResult>(spy.at(index).constFirst());
+}
+
 std::optional<TerminalSearchUpdate> latestSearchUpdate(
     const QSignalSpy &spy, quint64 generation)
 {
@@ -240,6 +248,7 @@ private Q_SLOTS:
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
+    void resolvesConfiguredRightClickActions();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
     void routesTypedViewportAndSelectionOperations();
@@ -3168,6 +3177,196 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     QVERIFY(failedResult.payload.isEmpty());
     QCOMPARE(failedResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
+}
+
+void SessionWorkerTest::resolvesConfiguredRightClickActions()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalRightClickResult>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(40, 4, 8, 16, 320, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy rightClickSpy(&worker, &SessionWorker::rightClickFinished);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "printf 'alpha beta \\033]8;;https://osc.test\\033\\\\LINK\\033]8;;\\033\\\\ https://example.test\\r\\nright-ready'"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("right-ready")), 5000);
+    // Let a split PTY read publish its final revision before using that
+    // retained GUI-frame revision for correlated coordinate operations.
+    QTest::qWait(50);
+    quint64 contentRevision = accumulatedFrame(updateSpy).contentRevision;
+    QVERIFY(contentRevision != 0);
+    const auto refreshContentRevision = [&] {
+        QTest::qWait(25);
+        contentRevision = accumulatedFrame(updateSpy).contentRevision;
+    };
+
+    const auto selectRange = [&worker](int start, int end) {
+        worker.clearSelection();
+        worker.beginSelection(selectionPress(start, 0));
+        worker.updateSelection(selectionDrag(end + 1, 0));
+        worker.endSelection(end + 1, 0);
+    };
+    quint64 nextRequestId = 1;
+    const auto resolve = [&](int column, int modifiers = 0,
+                             std::optional<quint64> revision = std::nullopt,
+                             bool shiftBypassedMouseCapture = false) {
+        const qsizetype previous = rightClickSpy.size();
+        worker.resolveRightClick({
+            .requestId = nextRequestId++,
+            .contentRevision = revision.value_or(contentRevision),
+            .column = column,
+            .row = 0,
+            .modifiers = modifiers,
+            .shiftBypassedMouseCapture = shiftBypassedMouseCapture,
+        });
+        return rightClickResultAt(rightClickSpy, previous);
+    };
+    const auto applyAction = [&](RightClickAction action) {
+        options.runtime.rightClickAction = action;
+        worker.applyRuntimeOptions(options.runtime);
+    };
+
+    selectRange(0, 4);
+    applyAction(RightClickAction::Ignore);
+    TerminalRightClickResult result = resolve(20);
+    QCOMPARE(result.effect, TerminalRightClickEffect::None);
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha"));
+
+    clipboardSpy.clear();
+    selectionSpy.clear();
+    applyAction(RightClickAction::Copy);
+    result = resolve(20);
+    QCOMPARE(result.effect, TerminalRightClickEffect::None);
+    QVERIFY(!result.selectionAvailable);
+    QCOMPARE(clipboardSpy.size(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("alpha"));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Standard);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+
+    selectRange(6, 9);
+    clipboardSpy.clear();
+    applyAction(RightClickAction::CopyOrPaste);
+    result = resolve(2);
+    QCOMPARE(result.effect, TerminalRightClickEffect::None);
+    QVERIFY(!result.selectionAvailable);
+    QCOMPARE(clipboardSpy.size(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("beta"));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Standard);
+
+    clipboardSpy.clear();
+    result = resolve(2);
+    QCOMPARE(result.effect, TerminalRightClickEffect::Paste);
+    QVERIFY(!result.selectionAvailable);
+    QVERIFY(clipboardSpy.isEmpty());
+
+    selectRange(6, 9);
+    selectionSpy.clear();
+    applyAction(RightClickAction::Paste);
+    result = resolve(2);
+    QCOMPARE(result.effect, TerminalRightClickEffect::Paste);
+    QVERIFY(!result.selectionAvailable);
+    QVERIFY(spyContainsBool(selectionSpy, false));
+
+    clipboardSpy.clear();
+    applyAction(RightClickAction::ContextMenu);
+    refreshContentRevision();
+    result = resolve(6);
+    QCOMPARE(result.effect, TerminalRightClickEffect::ContextMenu);
+    QCOMPARE(result.contentRevision, contentRevision);
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(), QStringLiteral("beta"));
+
+    selectRange(0, 9);
+    refreshContentRevision();
+    clipboardSpy.clear();
+    result = resolve(2);
+    QCOMPARE(result.effect, TerminalRightClickEffect::ContextMenu);
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha beta"));
+
+    // A blank context click cannot derive a replacement word and therefore
+    // leaves the existing selection intact.
+    selectRange(0, 4);
+    refreshContentRevision();
+    clipboardSpy.clear();
+    result = resolve(39);
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha"));
+
+    worker.clearSelection();
+    clipboardSpy.clear();
+    result =
+        resolve(20, static_cast<int>(Qt::ControlModifier | Qt::ShiftModifier),
+                std::nullopt, true);
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("https://example.test"));
+
+    // OSC 8 remains a context-link candidate when link-url disables the
+    // default regex matcher, and upstream selects the exact clicked cell.
+    worker.clearSelection();
+    options.runtime.linkUrl = false;
+    worker.applyRuntimeOptions(options.runtime);
+    clipboardSpy.clear();
+    result = resolve(11, static_cast<int>(Qt::ControlModifier));
+    QVERIFY(result.selectionAvailable);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(), QStringLiteral("L"));
+
+    worker.clearSelection();
+    result = resolve(2, 0, contentRevision - 1);
+    QCOMPARE(result.effect, TerminalRightClickEffect::ContextMenu);
+    QVERIFY(!result.selectionAvailable);
+
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Primary;
+    worker.applyRuntimeOptions(options.runtime);
+    clipboardSpy.clear();
+    result = resolve(6);
+    QVERIFY(result.selectionAvailable);
+    QCOMPARE(clipboardSpy.size(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("beta"));
+    QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
+                 clipboardSpy.constFirst().at(1)),
+             TerminalClipboardDestination::Primary);
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
 }
 
 void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()

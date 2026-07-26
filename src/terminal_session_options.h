@@ -62,6 +62,14 @@ struct TerminalClipboardPasteOptions {
     bool operator==(const TerminalClipboardPasteOptions &) const = default;
 };
 
+enum class RightClickAction {
+    ContextMenu,
+    Paste,
+    Copy,
+    CopyOrPaste,
+    Ignore,
+};
+
 // Value-only settings that an existing terminal session can apply. Keep this
 // boundary limited to state that SessionWorker actually owns at runtime.
 struct TerminalSessionRuntimeOptions {
@@ -70,6 +78,7 @@ struct TerminalSessionRuntimeOptions {
     QVector<quint32> selectionWordChars;
     quint32 clickRepeatIntervalMilliseconds = 500;
     TerminalClipboardPasteOptions clipboardPaste;
+    RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
 
     bool operator==(const TerminalSessionRuntimeOptions &) const = default;

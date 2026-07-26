@@ -424,6 +424,7 @@ private Q_SLOTS:
     void broadFanoutSurvivesSynchronousWorkspaceDestruction();
     void unexpectedDirectObserverDestructionStopsChainSafely();
     void synchronousObserversMayDestroyWorkspace();
+    void contextMenuRequestsUseStablePaneTargets();
     void applicationQuitEscalatesCloseLifecycle();
     void closingOnlyPaneRemovesTab();
     void closeSurfaceUsesStableOriginsAndAdjacentFocus();
@@ -1549,6 +1550,160 @@ void TerminalWorkspaceTest::synchronousObserversMayDestroyWorkspace()
         QVERIFY(guard.isNull());
         QCOMPARE(removals, 1);
     }
+
+    {
+        auto *workspace = new TerminalWorkspace;
+        const QPointer<TerminalWorkspace> guard(workspace);
+        QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        QVERIFY(pane != nullptr);
+        Q_EMIT pane->contextMenuRequested(QPointF(20.0, 30.0), true);
+        connect(workspace, &TerminalWorkspace::contextMenuCancelled, this,
+                [workspace] { delete workspace; });
+
+        workspace->closeCurrentTab();
+
+        QVERIFY(guard.isNull());
+    }
+}
+
+void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    const CurrentTabProbe second = splitRightProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(second.pane != nullptr);
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    TerminalController *const secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QSignalSpy firstCopies(firstController,
+                           &TerminalController::copyActionRequested);
+    QSignalSpy secondCopies(secondController,
+                            &TerminalController::copyActionRequested);
+    QSignalSpy firstPastes(firstController,
+                           &TerminalController::pasteRequested);
+    QSignalSpy secondPastes(secondController,
+                            &TerminalController::pasteRequested);
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString previousClipboardText = clipboard->text();
+    const auto restoreClipboard =
+        qScopeGuard([clipboard, previousClipboardText] {
+            clipboard->setText(previousClipboardText);
+        });
+    const QString pasteText = QStringLiteral("context-menu-stable-target");
+    clipboard->setText(pasteText);
+
+    QSignalSpy requests(&workspace, &TerminalWorkspace::contextMenuRequested);
+    QSignalSpy cancellations(&workspace,
+                             &TerminalWorkspace::contextMenuCancelled);
+    const QPointF windowPosition(123.5, 87.25);
+    Q_EMIT first.pane->contextMenuRequested(windowPosition, true);
+    QCOMPARE(requests.count(), 1);
+    QCOMPARE(requests.constFirst().at(1).toPointF(), windowPosition);
+    QCOMPARE(requests.constFirst().at(2).toBool(), true);
+    const quint64 firstRequestId =
+        requests.constFirst().constFirst().toULongLong();
+    QVERIFY(firstRequestId != 0);
+
+    QVERIFY(!workspace.executeContextMenuAction(
+        firstRequestId + 1, QStringLiteral("copy_to_clipboard:mixed")));
+    QVERIFY(!workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("copy_to_clipboard")));
+    QVERIFY(!workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("toggle_mouse_reporting")));
+    QVERIFY(workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("copy_to_clipboard:mixed")));
+    QCOMPARE(firstCopies.count(), 1);
+    QCOMPARE(secondCopies.count(), 0);
+
+    workspace.finishContextMenu(firstRequestId + 1);
+    QVERIFY(workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("paste_from_clipboard")));
+    QCOMPARE(firstPastes.count(), 1);
+    QCOMPARE(firstPastes.constFirst().constFirst().toString(), pasteText);
+    QCOMPARE(secondPastes.count(), 0);
+
+    QQuickItem focusSink(window.contentItem());
+    focusSink.forceActiveFocus();
+    QCOMPARE(window.activeFocusItem(), &focusSink);
+    QVERIFY(second.pane != nullptr);
+    workspace.finishContextMenu(firstRequestId);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), second.pane.data(),
+                              1000);
+    QVERIFY(!workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("copy_to_clipboard:mixed")));
+
+    // A synchronous cancellation observer may publish a still-newer menu.
+    // That nested request wins; the outer superseding request must not
+    // overwrite it without a matching cancellation.
+    const QPointF supersededPosition(210.0, 110.0);
+    const QPointF nestedPosition(220.0, 120.0);
+    Q_EMIT first.pane->contextMenuRequested(supersededPosition, false);
+    QCOMPARE(requests.count(), 2);
+    connect(
+        &workspace, &TerminalWorkspace::contextMenuCancelled, &workspace,
+        [pane = first.pane, nestedPosition] {
+            if (pane != nullptr) {
+                Q_EMIT pane->contextMenuRequested(nestedPosition, true);
+            }
+        },
+        Qt::SingleShotConnection);
+    Q_EMIT second.pane->contextMenuRequested(QPointF(230.0, 130.0), false);
+    QCOMPARE(cancellations.count(), 1);
+    QCOMPARE(requests.count(), 3);
+    QCOMPARE(requests.constLast().at(1).toPointF(), nestedPosition);
+    const quint64 nestedRequestId =
+        requests.constLast().constFirst().toULongLong();
+    QVERIFY(workspace.executeContextMenuAction(
+        nestedRequestId, QStringLiteral("copy_to_clipboard:mixed")));
+    QCOMPARE(firstCopies.count(), 2);
+    QCOMPARE(secondCopies.count(), 0);
+    workspace.finishContextMenu(nestedRequestId);
+
+    Q_EMIT first.pane->contextMenuRequested(windowPosition, false);
+    QCOMPARE(requests.count(), 4);
+    QCOMPARE(requests.constLast().at(2).toBool(), false);
+    const quint64 removalRequestId =
+        requests.constLast().constFirst().toULongLong();
+    QVERIFY(removalRequestId != 0);
+    QVERIFY(removalRequestId != firstRequestId);
+
+    QPointer<TerminalPane> removedPane(first.pane);
+    connect(
+        &workspace, &TerminalWorkspace::contextMenuCancelled, &workspace,
+        [pane = first.pane] {
+            if (pane != nullptr) {
+                Q_EMIT pane->contextMenuRequested(QPointF(240.0, 140.0), false);
+            }
+        },
+        Qt::SingleShotConnection);
+    QVERIFY(
+        first.pane->executeConfiguredAction(QStringLiteral("close_surface")));
+    QCOMPARE(cancellations.count(), 2);
+    QCOMPARE(cancellations.constLast().constFirst().toULongLong(),
+             removalRequestId);
+    QCOMPARE(requests.count(), 4);
+    QVERIFY(!workspace.executeContextMenuAction(
+        removalRequestId, QStringLiteral("paste_from_clipboard")));
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
 }
 
 void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()

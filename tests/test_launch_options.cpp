@@ -149,6 +149,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .protection = false,
         .bracketedSafe = true,
     };
+    values.rightClickAction = RightClickAction::CopyOrPaste;
     values.middleClickAction = MiddleClickAction::Ignore;
     values.mouseReporting = false;
     values.mouseHideWhileTyping = true;
@@ -335,6 +336,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.hasUnforwardedLaunchPayload);
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QVERIFY(!options.singleInstanceModeExplicit);
+    QCOMPARE(options.rightClickAction, RightClickAction::ContextMenu);
     QCOMPARE(options.middleClickAction, MiddleClickAction::PrimaryPaste);
     QVERIFY(options.linkUrl);
     QCOMPARE(options.linkPreviews, LinkPreviewMode::Always);
@@ -763,6 +765,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
+    QCOMPARE(cliResult.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.mouseReporting);
     QCOMPARE(cliResult.selectionWordChars,
@@ -976,6 +979,19 @@ void LaunchOptionsTest::mapsClipboardModes()
                  configured);
     }
 
+    for (const RightClickAction configured : {
+             RightClickAction::ContextMenu,
+             RightClickAction::Paste,
+             RightClickAction::Copy,
+             RightClickAction::CopyOrPaste,
+             RightClickAction::Ignore,
+         }) {
+        GhosttyConfigSnapshot snapshot = completeSnapshot();
+        snapshot.values.rightClickAction = configured;
+        QCOMPARE(applyGhosttyConfigSnapshot({}, snapshot).rightClickAction,
+                 configured);
+    }
+
     for (const MiddleClickAction configured : {
              MiddleClickAction::PrimaryPaste,
              MiddleClickAction::Ignore,
@@ -994,6 +1010,12 @@ void LaunchOptionsTest::mapsClipboardModes()
         QCOMPARE(applyGhosttyConfigSnapshot(base, snapshot).mouseReporting,
                  enabled);
     }
+
+    LaunchOptions baseline;
+    LaunchOptions changed = baseline;
+    QVERIFY(changed == baseline);
+    changed.rightClickAction = RightClickAction::Ignore;
+    QVERIFY(changed != baseline);
 }
 
 void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
@@ -1400,6 +1422,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .protection = false,
         .bracketedSafe = true,
     };
+    options.rightClickAction = RightClickAction::CopyOrPaste;
     options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
     options.splitAppearance = {
@@ -1418,6 +1441,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clickRepeatIntervalMilliseconds,
              options.clickRepeatIntervalMilliseconds);
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
+    QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.inheritWorkingDirectory,
@@ -1434,6 +1458,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
                 QVariant::fromValue(launch)) == launch);
     QVERIFY(qvariant_cast<TerminalSessionRuntimeOptions>(
                 QVariant::fromValue(runtime)) == runtime);
+
+    LaunchOptions workerPolicyChanged = options;
+    workerPolicyChanged.rightClickAction = RightClickAction::Ignore;
+    QVERIFY(toTerminalSessionRuntimeOptions(workerPolicyChanged) != runtime);
+    QVERIFY(toTerminalSessionLaunchOptions(workerPolicyChanged) != launch);
 
     LaunchOptions frontendOnlyChanged = options;
     frontendOnlyChanged.typography.face(TerminalFontRole::Regular).families = {

@@ -208,6 +208,81 @@ ApplicationWindow {
         }
     }
 
+    Menu {
+        id: terminalContextMenu
+        property var requestId: 0
+        property var closingRequestId: 0
+        property point requestPosition: Qt.point(0, 0)
+        property bool selectionAvailable: false
+        objectName: "terminalContextMenu"
+        popupType: Popup.Native
+
+        function scheduleOpen(requestId) {
+            Qt.callLater(function() {
+                if (terminalContextMenu.requestId !== requestId
+                        || terminalContextMenu.visible
+                        || terminalContextMenu.closingRequestId !== 0)
+                    return
+                terminalContextMenu.popup(window.contentItem,
+                                          terminalContextMenu.requestPosition)
+            })
+        }
+
+        function showFor(requestId, position, selectionAvailable) {
+            terminalContextMenu.requestId = requestId
+            terminalContextMenu.requestPosition = position
+            terminalContextMenu.selectionAvailable = selectionAvailable
+            if (!terminalContextMenu.visible
+                    && terminalContextMenu.closingRequestId === 0)
+                terminalContextMenu.scheduleOpen(requestId)
+        }
+
+        function cancel(requestId) {
+            if (terminalContextMenu.requestId !== requestId)
+                return
+            terminalContextMenu.requestId = 0
+            if (terminalContextMenu.visible) {
+                if (terminalContextMenu.closingRequestId === 0)
+                    terminalContextMenu.closingRequestId = requestId
+                terminalContextMenu.close()
+            }
+        }
+
+        Action {
+            objectName: "terminalContextMenuCopy"
+            text: qsTr("Copy")
+            enabled: terminalContextMenu.selectionAvailable
+            onTriggered: workspace.executeContextMenuAction(
+                             terminalContextMenu.requestId,
+                             "copy_to_clipboard:mixed")
+        }
+
+        Action {
+            objectName: "terminalContextMenuPaste"
+            text: qsTr("Paste")
+            onTriggered: workspace.executeContextMenuAction(
+                             terminalContextMenu.requestId,
+                             "paste_from_clipboard")
+        }
+
+        onClosed: {
+            const cancelledClose = closingRequestId !== 0
+            const finishedRequestId = cancelledClose
+                                      ? closingRequestId
+                                      : requestId
+            closingRequestId = 0
+            if (!cancelledClose)
+                requestId = 0
+            if (finishedRequestId !== 0) {
+                Qt.callLater(function() {
+                    workspace.finishContextMenu(finishedRequestId)
+                })
+            }
+            if (requestId !== 0)
+                terminalContextMenu.scheduleOpen(requestId)
+        }
+    }
+
     Dialog {
         id: closeDialog
         property var confirmationId: 0
@@ -335,6 +410,14 @@ ApplicationWindow {
                 return
             titleDialog.promptId = 0
             titleDialog.close()
+        }
+        function onContextMenuRequested(requestId, windowPosition,
+                                        selectionAvailable) {
+            terminalContextMenu.showFor(requestId, windowPosition,
+                                        selectionAvailable)
+        }
+        function onContextMenuCancelled(requestId) {
+            terminalContextMenu.cancel(requestId)
         }
         function onToggleFullscreenRequested() {
             window.toggleFullscreen()

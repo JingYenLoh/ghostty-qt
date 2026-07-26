@@ -10,6 +10,7 @@
 
 #include <QHash>
 #include <QMetaObject>
+#include <QPointF>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickItem>
@@ -178,6 +179,9 @@ public:
     Q_INVOKABLE void cancelPaste(quint64 confirmationId);
     Q_INVOKABLE void confirmTitlePrompt(quint64 promptId, const QString &title);
     Q_INVOKABLE void cancelTitlePrompt(quint64 promptId);
+    Q_INVOKABLE bool executeContextMenuAction(quint64 requestId,
+                                              const QString &action);
+    Q_INVOKABLE void finishContextMenu(quint64 requestId);
 
 Q_SIGNALS:
     void tabTitlesChanged();
@@ -194,6 +198,9 @@ Q_SIGNALS:
     void titlePromptRequested(quint64 promptId, const QString &heading,
                               const QString &initialTitle);
     void titlePromptResolved(quint64 promptId);
+    void contextMenuRequested(quint64 requestId, const QPointF &windowPosition,
+                              bool selectionAvailable);
+    void contextMenuCancelled(quint64 requestId);
     void applicationActionRequested(ApplicationAction action,
                                     PaneId sourcePaneId);
     void windowNavigationRequested(WindowNavigationAction action,
@@ -247,6 +254,11 @@ private:
     struct PendingPaste {
         QString text;
         QVector<PendingPasteTarget> targets;
+    };
+    struct PendingContextMenu {
+        quint64 requestId = 0;
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
     };
     using TitlePromptTarget = std::variant<PaneId, TabId>;
     struct PendingTitlePrompt {
@@ -386,6 +398,9 @@ private:
     void schedulePendingPastePreview();
     void showPendingPastePreview();
     static QString pastePreview(const QString &text);
+    void beginContextMenu(PaneHandle handle, const QPointF &windowPosition,
+                          bool selectionAvailable);
+    void removeContextMenuForPane(PaneHandle handle);
     bool enqueueTitlePrompt(PaneId paneId);
     bool enqueueTitlePrompt(TabId tabId);
     bool enqueueTitlePrompt(TitlePromptTarget target, QString initialTitle);
@@ -431,6 +446,8 @@ private:
     bool pendingPastePreviewScheduled_ = false;
     quint64 nextPasteConfirmationId_ = 0;
     quint64 activePasteConfirmationId_ = 0;
+    std::optional<PendingContextMenu> pendingContextMenu_;
+    quint64 nextContextMenuId_ = 0;
     std::deque<PendingTitlePrompt> pendingTitlePrompts_;
     std::optional<PendingTitlePrompt> activeTitlePrompt_;
     quint64 nextTitlePromptId_ = 0;

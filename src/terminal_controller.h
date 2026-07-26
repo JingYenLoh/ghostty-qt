@@ -106,6 +106,12 @@ public:
     void sendRawText(const QByteArray &serializedText);
     void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
+    // Returns a non-zero correlation ID retained until the worker resolves
+    // this request. Multiple presses remain independently in flight because
+    // paste is non-idempotent; popup supersession belongs to TerminalPane.
+    [[nodiscard]] quint64 requestRightClick(quint64 contentRevision, int column,
+                                            int row, int modifiers,
+                                            bool shiftBypassedMouseCapture);
     void setFocused(bool focused);
     void paste(const QString &text);
     void confirmPaste(quint64 requestId);
@@ -173,6 +179,7 @@ Q_SIGNALS:
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
     void terminalActionReady(const TerminalActionResult &result);
+    void rightClickResolved(const TerminalRightClickResult &result);
 
     void resizeRequested(int columns, int rows, int cellWidthPixels,
                          int cellHeightPixels, int surfaceWidthPixels,
@@ -192,6 +199,7 @@ Q_SIGNALS:
     void rawTextRequested(const QByteArray &serializedText);
     void resetTerminalRequested();
     void mouseRequested(const TerminalMouseInput &input);
+    void rightClickRequested(const TerminalRightClickInput &input);
     void focusRequested(bool focused);
     void pasteRequested(const QString &text);
     void confirmPasteRequested(quint64 requestId);
@@ -270,6 +278,7 @@ private:
     void resolveSequence(
         quint64 token, TerminalSequenceResolution resolution,
         const std::optional<TerminalKeyInput> &current = std::nullopt);
+    quint64 nextRightClickRequestId();
     quint64 nextHyperlinkRequestId();
     quint64 nextSearchGeneration();
 
@@ -297,6 +306,8 @@ private:
     quint64 nextHyperlinkRequestId_ = 0;
     quint64 activeHyperlinkRequestId_ = 0;
     quint64 activeHyperlinkActivationId_ = 0;
+    quint64 nextRightClickRequestId_ = 0;
+    QSet<quint64> pendingRightClickRequestIds_;
     quint64 nextSearchGeneration_ = 0;
     quint64 activeSearchGeneration_ = 0;
     bool searchExpected_ = false;

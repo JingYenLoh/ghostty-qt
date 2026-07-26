@@ -1202,6 +1202,12 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 }
                 beginUnsafePaste(requestId, text, paneId);
             });
+    connect(pane, &TerminalPane::contextMenuRequested, this,
+            [this, paneId, pane](const QPointF &windowPosition,
+                                 bool selectionAvailable) {
+                beginContextMenu({paneId, pane}, windowPosition,
+                                 selectionAvailable);
+            });
 
     // Parent and overlay publication can execute arbitrary QML. The pending
     // registry makes this pane participate in any nested config reload before
@@ -1879,6 +1885,8 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
 void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
 {
     const QPointer<TerminalWorkspace> guard(this);
+    removeContextMenuForPane(handle);
+    if (guard == nullptr) return;
     removePendingPastesForPane(handle);
     if (guard == nullptr) return;
     removeTitlePrompts(TitlePromptTarget{handle.id});
@@ -1889,6 +1897,79 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
         return;
     }
     (void)takePendingClose();
+}
+
+void TerminalWorkspace::beginContextMenu(PaneHandle handle,
+                                         const QPointF &windowPosition,
+                                         bool selectionAvailable)
+{
+    if (topologyMutation_ || !handle.isValid()
+        || paneForId(handle.id) != handle.pane
+        || !std::isfinite(windowPosition.x())
+        || !std::isfinite(windowPosition.y())) {
+        return;
+    }
+
+    const QPointer<TerminalWorkspace> guard(this);
+    if (pendingContextMenu_.has_value()) {
+        const quint64 supersededRequestId = pendingContextMenu_->requestId;
+        pendingContextMenu_.reset();
+        Q_EMIT contextMenuCancelled(supersededRequestId);
+        if (guard == nullptr || handle.pane == nullptr
+            || paneForId(handle.id) != handle.pane
+            || pendingContextMenu_.has_value()) {
+            return;
+        }
+    }
+
+    const quint64 requestId = nextNonzeroId(nextContextMenuId_);
+    pendingContextMenu_ = PendingContextMenu{
+        .requestId = requestId,
+        .paneId = handle.id,
+        .pane = handle.pane,
+    };
+    Q_EMIT contextMenuRequested(requestId, windowPosition, selectionAvailable);
+}
+
+void TerminalWorkspace::removeContextMenuForPane(PaneHandle handle)
+{
+    if (!pendingContextMenu_.has_value()
+        || pendingContextMenu_->paneId != handle.id
+        || pendingContextMenu_->pane != handle.pane) {
+        return;
+    }
+
+    const quint64 requestId = pendingContextMenu_->requestId;
+    pendingContextMenu_.reset();
+    Q_EMIT contextMenuCancelled(requestId);
+}
+
+bool TerminalWorkspace::executeContextMenuAction(quint64 requestId,
+                                                 const QString &action)
+{
+    if ((action != QStringLiteral("copy_to_clipboard:mixed")
+         && action != QStringLiteral("paste_from_clipboard"))
+        || requestId == 0 || !pendingContextMenu_.has_value()
+        || pendingContextMenu_->requestId != requestId
+        || pendingContextMenu_->pane == nullptr
+        || paneForId(pendingContextMenu_->paneId)
+            != pendingContextMenu_->pane) {
+        return false;
+    }
+
+    const QPointer<TerminalPane> target = pendingContextMenu_->pane;
+    return target->executeConfiguredAction(QStringView(action));
+}
+
+void TerminalWorkspace::finishContextMenu(quint64 requestId)
+{
+    if (requestId == 0 || !pendingContextMenu_.has_value()
+        || pendingContextMenu_->requestId != requestId) {
+        return;
+    }
+
+    pendingContextMenu_.reset();
+    focusActivePane();
 }
 
 void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)

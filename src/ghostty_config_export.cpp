@@ -99,6 +99,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("selection-clear-on-copy"),
     QLatin1StringView("selection-word-chars"),
     QLatin1StringView("click-repeat-interval"),
+    QLatin1StringView("right-click-action"),
     QLatin1StringView("middle-click-action"),
     QLatin1StringView("mouse-reporting"),
     QLatin1StringView("mouse-hide-while-typing"),
@@ -1027,6 +1028,14 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
              MiddleClickAction::PrimaryPaste},
             {QLatin1StringView("ignore"), MiddleClickAction::Ignore},
         });
+    constexpr auto RightClickActions =
+        std::to_array<std::pair<QLatin1StringView, RightClickAction>>({
+            {QLatin1StringView("context-menu"), RightClickAction::ContextMenu},
+            {QLatin1StringView("paste"), RightClickAction::Paste},
+            {QLatin1StringView("copy"), RightClickAction::Copy},
+            {QLatin1StringView("copy-or-paste"), RightClickAction::CopyOrPaste},
+            {QLatin1StringView("ignore"), RightClickAction::Ignore},
+        });
     constexpr auto LinkPreviewModes =
         std::to_array<std::pair<QLatin1StringView, LinkPreviewMode>>({
             {QLatin1StringView("false"), LinkPreviewMode::Never},
@@ -1098,6 +1107,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed = assignEnum(QLatin1StringView("copy-on-select"),
                                  result.selectionClipboard.copyOnSelect,
                                  CopyOnSelectModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("right-click-action"),
+                                 result.rightClickAction, RightClickActions);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("middle-click-action"),

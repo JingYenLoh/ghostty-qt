@@ -232,6 +232,8 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.endArray();
     try json.objectField("click-repeat-interval");
     try json.write(config.@"click-repeat-interval");
+    try json.objectField("right-click-action");
+    try json.write(@tagName(config.@"right-click-action"));
     try json.objectField("middle-click-action");
     try json.write(@tagName(config.@"middle-click-action"));
     try json.objectField("mouse-reporting");

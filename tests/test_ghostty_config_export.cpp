@@ -259,6 +259,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.clickRepeatIntervalMilliseconds, quint32{731});
     QVERIFY(!values.clipboardPaste.protection);
     QVERIFY(values.clipboardPaste.bracketedSafe);
+    QCOMPARE(values.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!values.mouseReporting);
     QVERIFY(values.mouseHideWhileTyping);
@@ -497,6 +498,18 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }),
         [](const GhosttyConfigValues &values) {
             return values.selectionClipboard.copyOnSelect;
+        });
+    verifyMappings(
+        QLatin1StringView("right-click-action"),
+        std::to_array<std::pair<QLatin1StringView, RightClickAction>>({
+            {QLatin1StringView("context-menu"), RightClickAction::ContextMenu},
+            {QLatin1StringView("paste"), RightClickAction::Paste},
+            {QLatin1StringView("copy"), RightClickAction::Copy},
+            {QLatin1StringView("copy-or-paste"), RightClickAction::CopyOrPaste},
+            {QLatin1StringView("ignore"), RightClickAction::Ignore},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.rightClickAction;
         });
     verifyMappings(
         QLatin1StringView("middle-click-action"),
@@ -779,6 +792,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-click-repeat-interval")
         << withoutValue(object(), QStringLiteral("click-repeat-interval"))
         << QStringLiteral("values is missing field 'click-repeat-interval'");
+    QTest::newRow("missing-right-click-action")
+        << withoutValue(object(), QStringLiteral("right-click-action"))
+        << QStringLiteral("values is missing field 'right-click-action'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -1283,6 +1299,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),
              QStringLiteral("copy-on-select"),
+             QStringLiteral("right-click-action"),
              QStringLiteral("middle-click-action"),
              QStringLiteral("link-previews"),
              QStringLiteral("scrollbar"),

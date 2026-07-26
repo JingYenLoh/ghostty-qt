@@ -396,6 +396,7 @@ private Q_SLOTS:
     void writesClipboardDestinations();
     void copiesRawEffectiveSurfaceTitle();
     void reloadsMiddleClickClipboardPolicy();
+    void routesConfiguredRightClickPolicy();
     void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
     void forwardsTypedSelectionPointerMetadataOnce();
@@ -2826,6 +2827,173 @@ void TerminalPaneTest::reloadsMiddleClickClipboardPolicy()
     if (supportsPrimary) {
         clipboard->clear(QClipboard::Selection);
     }
+}
+
+void TerminalPaneTest::routesConfiguredRightClickPolicy()
+{
+    qRegisterMetaType<TerminalRightClickInput>();
+    qRegisterMetaType<TerminalRightClickResult>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033[?1000hright-ready'; sleep 5"),
+    };
+    options.hold = true;
+
+    QQuickWindow window;
+    window.resize(640, 480);
+    QQuickItem container(window.contentItem());
+    container.setPosition(QPointF(31.0, 43.0));
+    container.setSize(QSizeF(500.0, 300.0));
+    TerminalPane pane(options, &container);
+    pane.setPosition(QPointF(7.0, 11.0));
+    pane.setSize(QSizeF(320.0, 160.0));
+    window.show();
+
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy mouseRequests(controller, &TerminalController::mouseRequested);
+    QSignalSpy rightClickRequests(controller,
+                                  &TerminalController::rightClickRequested);
+    QSignalSpy menuRequests(&pane, &TerminalPane::contextMenuRequested);
+    QSignalSpy pasteRequests(controller, &TerminalController::pasteRequested);
+    QSignalSpy runtimeRequests(controller,
+                               &TerminalController::runtimeOptionsRequested);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("right-ready")), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->mouseTracking(), 1000);
+
+    QStringList lifecycle;
+    connect(&pane, &TerminalPane::activated, &pane,
+            [&lifecycle] { lifecycle.append(QStringLiteral("activated")); });
+    connect(controller, &TerminalController::rightClickRequested, &pane,
+            [&lifecycle] { lifecycle.append(QStringLiteral("right-click")); });
+
+    const QPointF localPosition(17.0, 23.0);
+    const QPointF expectedWindowPosition =
+        pane.mapToItem(window.contentItem(), localPosition);
+    const auto sendRight = [&](QEvent::Type type,
+                               Qt::KeyboardModifiers modifiers) {
+        const Qt::MouseButtons buttons =
+            type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::RightButton;
+        QMouseEvent event(type, localPosition, localPosition, localPosition,
+                          Qt::RightButton, buttons, modifiers);
+        QCoreApplication::sendEvent(&pane, &event);
+        QVERIFY(event.isAccepted());
+    };
+    const auto rightClickInputAt = [&rightClickRequests](qsizetype index) {
+        return qvariant_cast<TerminalRightClickInput>(
+            rightClickRequests.at(index).constFirst());
+    };
+
+    sendRight(QEvent::MouseButtonPress, Qt::NoModifier);
+    QCOMPARE(mouseRequests.size(), 1);
+    QCOMPARE(rightClickRequests.size(), 0);
+
+    lifecycle.clear();
+    sendRight(QEvent::MouseButtonPress,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(mouseRequests.size(), 1);
+    QCOMPARE(rightClickRequests.size(), 1);
+    QVERIFY(lifecycle.contains(QStringLiteral("activated")));
+    QVERIFY(lifecycle.contains(QStringLiteral("right-click")));
+    QVERIFY(lifecycle.indexOf(QStringLiteral("activated"))
+            < lifecycle.indexOf(QStringLiteral("right-click")));
+    const TerminalRightClickInput first = rightClickInputAt(0);
+    QVERIFY(first.requestId != 0);
+    QVERIFY(first.contentRevision != 0);
+    QVERIFY(first.modifiers & Qt::ControlModifier);
+    QVERIFY(first.modifiers & Qt::ShiftModifier);
+    QVERIFY(first.shiftBypassedMouseCapture);
+
+    Q_EMIT controller->rightClickResolved({
+        .requestId = first.requestId,
+        .effect = TerminalRightClickEffect::ContextMenu,
+        .selectionAvailable = true,
+    });
+    QCOMPARE(menuRequests.size(), 1);
+    QCOMPARE(menuRequests.constFirst().at(0).toPointF(),
+             expectedWindowPosition);
+    QCOMPARE(menuRequests.constFirst().at(1).toBool(), true);
+
+    // Release has no local action, and an older completion cannot reuse the
+    // popup position retained for a newer press.
+    sendRight(QEvent::MouseButtonRelease,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(rightClickRequests.size(), 1);
+    sendRight(QEvent::MouseButtonPress, Qt::ShiftModifier);
+    sendRight(QEvent::MouseButtonPress, Qt::ShiftModifier);
+    QCOMPARE(rightClickRequests.size(), 3);
+    const TerminalRightClickInput superseded = rightClickInputAt(1);
+    const TerminalRightClickInput current = rightClickInputAt(2);
+    Q_EMIT controller->rightClickResolved({
+        .requestId = superseded.requestId,
+        .effect = TerminalRightClickEffect::ContextMenu,
+        .selectionAvailable = false,
+    });
+    QCOMPARE(menuRequests.size(), 1);
+    Q_EMIT controller->rightClickResolved({
+        .requestId = current.requestId,
+        .effect = TerminalRightClickEffect::ContextMenu,
+        .selectionAvailable = false,
+    });
+    QCOMPARE(menuRequests.size(), 2);
+    QCOMPARE(menuRequests.constLast().at(0).toPointF(), expectedWindowPosition);
+    QCOMPARE(menuRequests.constLast().at(1).toBool(), false);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    clipboard->setText(QStringLiteral("right-click-paste"),
+                       QClipboard::Clipboard);
+    sendRight(QEvent::MouseButtonPress, Qt::ShiftModifier);
+    const TerminalRightClickInput paste = rightClickInputAt(3);
+    Q_EMIT controller->rightClickResolved({
+        .requestId = paste.requestId,
+        .effect = TerminalRightClickEffect::Paste,
+    });
+    QCOMPARE(pasteRequests.size(), 1);
+    QCOMPARE(pasteRequests.constFirst().constFirst().toString(),
+             QStringLiteral("right-click-paste"));
+    QCOMPARE(menuRequests.size(), 2);
+
+    // Raw DEC capture still strips the Shift escape modifier when the
+    // mouse-reporting policy routes the physical press locally. Independent
+    // in-flight paste effects must both survive popup supersession.
+    LaunchOptions reloaded = options;
+    reloaded.mouseReporting = false;
+    reloaded.rightClickAction = RightClickAction::Paste;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(runtimeRequests.size(), 1);
+    const TerminalSessionRuntimeOptions pastedRuntime =
+        qvariant_cast<TerminalSessionRuntimeOptions>(
+            runtimeRequests.constFirst().constFirst());
+    QCOMPARE(pastedRuntime.rightClickAction, RightClickAction::Paste);
+    QVERIFY(controller->terminalMouseTracking());
+    QVERIFY(!controller->mouseTracking());
+
+    sendRight(QEvent::MouseButtonPress,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    sendRight(QEvent::MouseButtonPress,
+              Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(rightClickRequests.size(), 6);
+    QVERIFY(rightClickInputAt(4).shiftBypassedMouseCapture);
+    QVERIFY(rightClickInputAt(5).shiftBypassedMouseCapture);
+    QTRY_COMPARE_WITH_TIMEOUT(pasteRequests.size(), 3, 1000);
+
+    reloaded.rightClickAction = RightClickAction::Ignore;
+    pane.applyRuntimeOptions(reloaded);
+    QCOMPARE(runtimeRequests.size(), 2);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeRequests.constLast().constFirst())
+                 .rightClickAction,
+             RightClickAction::Ignore);
+
+    clipboard->clear(QClipboard::Clipboard);
 }
 
 void TerminalPaneTest::scalesAndAccumulatesDiscreteWheelInputAcrossReloads()

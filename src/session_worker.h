@@ -65,6 +65,7 @@ public Q_SLOTS:
     void sendRawText(const QByteArray &serializedText);
     void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
+    void resolveRightClick(const TerminalRightClickInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);
     void confirmPaste(quint64 requestId);
@@ -116,6 +117,7 @@ Q_SIGNALS:
     // interactive shell remains running but reports false here.
     void activeProcessChanged(bool active);
     void selectionAvailableChanged(bool available);
+    void rightClickFinished(const TerminalRightClickResult &result);
     // Emitted for every select-all request, including a blank terminal where
     // selection availability remains false. This reconciles the UI's queued
     // selection intent without relying on a state-change-only signal.

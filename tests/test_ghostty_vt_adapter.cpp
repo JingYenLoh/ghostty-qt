@@ -143,9 +143,11 @@ private Q_SLOTS:
     void searchSnapshotsFollowLiveDeccolmDimensions();
     void tracksTextRangesAcrossReflowViewportAndScreenChanges();
     void invalidatesTrackedTextRangesAfterCoveredTextMutation();
+    void installsTrackedTextRangesAsSelections();
     void selectsAndNavigatesViewportAtomically();
     void mapsAndRevealsSearchRanges();
     void formatsSelectionWithConfigurableTrimming();
+    void selectsCellsWordsAndQueriesSelectionContainment();
     void classifiesRepeatedSelectionPresses();
     void appliesConfiguredWordBoundariesToPressAndDrag();
     void snapshotsPlainWriteFileRanges();
@@ -1151,6 +1153,48 @@ void GhosttyVtAdapterTest::invalidatesTrackedTextRangesAfterCoveredTextMutation(
     QVERIFY(!adapter->resolveTextRange(*tracked).has_value());
 }
 
+void GhosttyVtAdapterTest::installsTrackedTextRangesAsSelections()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 48;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    const QByteArray line =
+        QByteArrayLiteral("prefix https://example.test/path suffix");
+    const QByteArray matched = QByteArrayLiteral("https://example.test/path");
+    const qsizetype begin = line.indexOf(matched);
+    QVERIFY(begin >= 0);
+    const qsizetype end = begin + matched.size();
+    adapter->writeVt(line);
+
+    auto snapshot =
+        adapter->snapshotLogicalLineAt(static_cast<int>(begin + 8), 0);
+    QVERIFY(snapshot.has_value());
+    auto tracked = adapter->trackTextRange(*snapshot, begin, end);
+    QVERIFY(tracked.has_value());
+
+    QVERIFY(adapter->installTextRange(*tracked));
+    QCOMPARE(adapter->selectedText(false), QString::fromUtf8(matched));
+    QVERIFY(adapter->selectionContains(static_cast<int>(begin), 0));
+    QVERIFY(adapter->selectionContains(static_cast<int>(end - 1), 0));
+    QVERIFY(!adapter->selectionContains(static_cast<int>(begin - 1), 0));
+    QVERIFY(!adapter->selectionContains(static_cast<int>(end), 0));
+
+    auto foreign = GhosttyVtAdapter::create(options);
+    QVERIFY(foreign != nullptr);
+    foreign->writeVt(line);
+    QVERIFY(!foreign->installTextRange(*tracked));
+    QVERIFY(!foreign->hasSelection());
+
+    adapter->clearSelection();
+    adapter->writeVt(QByteArrayLiteral("\033[1;8HX"));
+    QVERIFY(!adapter->trackedTextRangeValid(*tracked));
+    QVERIFY(!adapter->installTextRange(*tracked));
+    QVERIFY(!adapter->hasSelection());
+}
+
 void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
 {
     GhosttyVtAdapter::Options options;
@@ -1738,6 +1782,50 @@ void GhosttyVtAdapterTest::formatsSelectionWithConfigurableTrimming()
     QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 3, 0)));
     adapter->endSelection(3, 0);
     QVERIFY(adapter->hasSelection());
+}
+
+void GhosttyVtAdapterTest::selectsCellsWordsAndQueriesSelectionContainment()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 24;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("alpha;beta gamma\r\ncell target"));
+
+    QVERIFY(!adapter->selectionContains(0, 0));
+    QVERIFY(!adapter->selectionContains(-1, 0));
+    QVERIFY(!adapter->selectionContains(0, -1));
+    QVERIFY(!adapter->selectionContains(options.geometry.columns, 0));
+    QVERIFY(!adapter->selectionContains(0, options.geometry.rows));
+    QVERIFY(!adapter->selectionContains(std::numeric_limits<int>::max(),
+                                        std::numeric_limits<int>::max()));
+
+    QVERIFY(adapter->selectWord(7, 0));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
+    QVERIFY(adapter->selectionContains(7, 0));
+    QVERIFY(!adapter->selectionContains(5, 0));
+    QVERIFY(!adapter->selectionContains(10, 0));
+
+    const QVector<uint32_t> spaceOnly{0, uint32_t{' '}};
+    QVERIFY(adapter->setSelectionWordChars(spaceOnly));
+    QVERIFY(adapter->selectWord(7, 0));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("alpha;beta"));
+    QVERIFY(adapter->selectionContains(0, 0));
+    QVERIFY(adapter->selectionContains(9, 0));
+    QVERIFY(!adapter->selectionContains(10, 0));
+
+    QVERIFY(adapter->selectCell(1, 1));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("e"));
+    QVERIFY(adapter->selectionContains(1, 1));
+    QVERIFY(!adapter->selectionContains(0, 1));
+    QVERIFY(!adapter->selectionContains(2, 1));
+    QVERIFY(!adapter->selectCell(-1, 1));
+    QVERIFY(!adapter->selectCell(options.geometry.columns, 1));
+
+    adapter->clearSelection();
+    QVERIFY(!adapter->selectWord(0, 2));
+    QVERIFY(!adapter->hasSelection());
 }
 
 void GhosttyVtAdapterTest::classifiesRepeatedSelectionPresses()

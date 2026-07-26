@@ -526,6 +526,11 @@
       "scope": "qt_mapping",
       "note": "All seven exact values—center, top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right—map in logical coordinates relative to the owning pane. Reload moves an existing visible overlay immediately, independently for split panes and at any device scale."
     },
+    "right-click-action": {
+      "status": "partial",
+      "scope": "qt_mapping",
+      "note": "All five finalized values reload live and preserve DEC mouse-reporting precedence with Linux Shift bypass; raw DEC state governs modifier removal even when mouse-reporting disables effective routing. Paste, copy, copy-or-paste, and ignore are resolved atomically against worker-owned selection state, and independently correlated paste effects are not lost to popup supersession. Context-menu preserves a containing selection or selects an exact-Ctrl OSC 8 cell, full default-regex match, or configured word before requesting one stable-pane-targeted Qt Quick Popup.Native menu with Copy and Paste; stale coordinates cannot reselect current content. Status remains partial because copy uses the current plain clipboard representation instead of Ghostty's mixed plain-plus-HTML contract, the menu omits Notify, Clear/Reset, Split, Tab, Window, and Config sections, and configurable mouse-shift-capture/XTSHIFTESCAPE overrides are not yet represented."
+    },
     "search-background": {
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background values apply live to candidate matches; the Ghostty default #FFE082 is retained when unset."

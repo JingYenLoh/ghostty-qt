@@ -339,6 +339,39 @@ struct TerminalMouseInput {
     bool anyButtonPressed = false;
 };
 
+// A local right press is resolved on the session thread because selection
+// containment, link matching, and copy-or-paste branching must observe one
+// authoritative terminal state. The GUI retains only the popup position.
+struct TerminalRightClickInput {
+    quint64 requestId = 0;
+    quint64 contentRevision = 0;
+    int column = 0;
+    int row = 0;
+    int modifiers = 0;
+    // Shift is removed from Ghostty link matching only when it was the
+    // physical escape hatch from an otherwise captured DEC mouse gesture.
+    bool shiftBypassedMouseCapture = false;
+
+    friend bool operator==(const TerminalRightClickInput &,
+                           const TerminalRightClickInput &) = default;
+};
+
+enum class TerminalRightClickEffect : quint8 {
+    None,
+    Paste,
+    ContextMenu,
+};
+
+struct TerminalRightClickResult {
+    quint64 requestId = 0;
+    quint64 contentRevision = 0;
+    TerminalRightClickEffect effect = TerminalRightClickEffect::None;
+    bool selectionAvailable = false;
+
+    friend bool operator==(const TerminalRightClickResult &,
+                           const TerminalRightClickResult &) = default;
+};
+
 // Qt owns pointer hit testing and timestamp capture, but libghostty owns the
 // stateful repeat-click classification. Keep the cross-thread payload
 // value-only and explicit about coordinate and timestamp units.
@@ -380,5 +413,8 @@ Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalInputMethodInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)
+Q_DECLARE_METATYPE(TerminalRightClickInput)
+Q_DECLARE_METATYPE(TerminalRightClickEffect)
+Q_DECLARE_METATYPE(TerminalRightClickResult)
 Q_DECLARE_METATYPE(TerminalSelectionPressInput)
 Q_DECLARE_METATYPE(TerminalSelectionDragInput)

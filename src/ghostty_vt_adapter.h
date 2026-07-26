@@ -272,6 +272,9 @@ public:
     bool beginSelection(const TerminalSelectionPressInput &input);
     bool updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
+    bool selectionContains(int column, int row) const;
+    bool selectCell(int column, int row);
+    bool selectWord(int column, int row);
     bool selectAll();
     bool adjustSelection(TerminalSelectionAdjustment adjustment);
     bool scrollViewport(const TerminalViewportRequest &request);
@@ -316,6 +319,9 @@ public:
     // range retains the text it covered when it was created. An inactive
     // owning screen is valid but cannot be resolved for viewport decoration.
     bool trackedTextRangeValid(const TrackedTextRange &range) const;
+    // Install the current tracked endpoints as the active selection only if
+    // their covered text and owning active screen still match.
+    bool installTextRange(const TrackedTextRange &range);
     // Resolve the currently visible portion of a tracked range. A valid range
     // that is wholly outside the viewport or on the inactive screen returns
     // no match; callers can distinguish that from invalidation with the

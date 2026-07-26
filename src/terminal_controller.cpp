@@ -77,6 +77,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::resetTerminal);
     relayWorkerRequest(&TerminalController::mouseRequested,
                        &SessionWorker::sendMouse);
+    relayWorkerRequest(&TerminalController::rightClickRequested,
+                       &SessionWorker::resolveRightClick);
     relayWorkerRequest(&TerminalController::focusRequested,
                        &SessionWorker::setFocused);
     relayWorkerRequest(&TerminalController::pasteRequested,
@@ -166,6 +168,8 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalInputMethodInput>();
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<TerminalRightClickInput>();
+    qRegisterMetaType<TerminalRightClickResult>();
     qRegisterMetaType<TerminalSelectionPressInput>();
     qRegisterMetaType<TerminalSelectionDragInput>();
     qRegisterMetaType<QVector<QPoint>>();
@@ -236,6 +240,22 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             if (selectionAvailable_ == available) return;
             selectionAvailable_ = available;
             Q_EMIT selectionAvailableChanged(selectionAvailable_);
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::rightClickFinished, this,
+        [this](const TerminalRightClickResult &result) {
+            if (result.requestId == 0
+                || !pendingRightClickRequestIds_.remove(result.requestId)) {
+                return;
+            }
+            if (selectionAvailable_ != result.selectionAvailable) {
+                selectionAvailable_ = result.selectionAvailable;
+                const QPointer<TerminalController> guard(this);
+                Q_EMIT selectionAvailableChanged(selectionAvailable_);
+                if (guard == nullptr) return;
+            }
+            Q_EMIT rightClickResolved(result);
         },
         Qt::QueuedConnection);
     connect(
@@ -502,6 +522,7 @@ void TerminalController::cancelInitialSessionRequest()
 TerminalController::~TerminalController()
 {
     closing_ = true;
+    pendingRightClickRequestIds_.clear();
     pendingWorkerRequests_.clear();
     pendingTerminalActionRequests_.clear();
     if (thread_ != nullptr && thread_->isRunning()) {
@@ -561,6 +582,7 @@ void TerminalController::applyRuntimeOptions(
 
 void TerminalController::beginShutdown()
 {
+    pendingRightClickRequestIds_.clear();
     if (sessionStartState_ != SessionStartState::Started) {
         sessionStartState_ = SessionStartState::Cancelled;
         pendingWorkerRequests_.clear();
@@ -704,6 +726,34 @@ void TerminalController::resetTerminal()
 void TerminalController::sendMouse(const TerminalMouseInput &input)
 {
     Q_EMIT mouseRequested(input);
+}
+
+quint64 TerminalController::nextRightClickRequestId()
+{
+    do {
+        ++nextRightClickRequestId_;
+    } while (
+        nextRightClickRequestId_ == 0
+        || pendingRightClickRequestIds_.contains(nextRightClickRequestId_));
+    return nextRightClickRequestId_;
+}
+
+quint64 TerminalController::requestRightClick(quint64 contentRevision,
+                                              int column, int row,
+                                              int modifiers,
+                                              bool shiftBypassedMouseCapture)
+{
+    const quint64 requestId = nextRightClickRequestId();
+    pendingRightClickRequestIds_.insert(requestId);
+    Q_EMIT rightClickRequested({
+        .requestId = requestId,
+        .contentRevision = contentRevision,
+        .column = column,
+        .row = row,
+        .modifiers = modifiers,
+        .shiftBypassedMouseCapture = shiftBypassedMouseCapture,
+    });
+    return requestId;
 }
 
 void TerminalController::setFocused(bool focused)

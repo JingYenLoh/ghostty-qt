@@ -2117,6 +2117,27 @@ public:
         return current.has_value() && current->text == range.coveredText_;
     }
 
+    bool installTextRange(const TrackedTextRange::Impl &range)
+    {
+        const std::optional<TextMapData> current = currentTextRangeData(range);
+        if (!current.has_value() || current->text != range.coveredText_) {
+            return false;
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        selection.start.size = sizeof(selection.start);
+        selection.end.size = sizeof(selection.end);
+        if (ghostty_tracked_grid_ref_snapshot(range.start_, &selection.start)
+                != GHOSTTY_SUCCESS
+            || ghostty_tracked_grid_ref_snapshot(range.end_, &selection.end)
+                != GHOSTTY_SUCCESS) {
+            return false;
+        }
+        selection.rectangle = false;
+        return installSelection(selection);
+    }
+
     std::optional<TextRangeMatch>
     resolveTextRange(const TrackedTextRange::Impl &range) const
     {
@@ -2538,6 +2559,70 @@ public:
         return ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION,
                                     &selection)
             == GHOSTTY_SUCCESS;
+    }
+
+    bool selectionContains(int column, int row) const
+    {
+        if (column < 0 || column >= geometry_.columns || row < 0
+            || row >= geometry_.rows) {
+            return false;
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION,
+                                 &selection)
+            != GHOSTTY_SUCCESS) {
+            return false;
+        }
+
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
+        point.value.coordinate.x = static_cast<uint16_t>(column);
+        point.value.coordinate.y = static_cast<uint32_t>(row);
+        bool contains = false;
+        return ghostty_terminal_selection_contains(terminal_, &selection, point,
+                                                   &contains)
+            == GHOSTTY_SUCCESS
+            && contains;
+    }
+
+    bool selectCell(int column, int row)
+    {
+        GhosttyGridRef reference{};
+        if (!pointToGridRefExact(column, row, &reference)) {
+            return false;
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        selection.start = reference;
+        selection.end = reference;
+        selection.rectangle = false;
+        return installSelection(selection);
+    }
+
+    bool selectWord(int column, int row)
+    {
+        GhosttyGridRef reference{};
+        if (!pointToGridRefExact(column, row, &reference)) {
+            return false;
+        }
+
+        GhosttyTerminalSelectWordOptions options{};
+        options.size = sizeof(options);
+        options.ref = reference;
+        if (!selectionWordChars_.isEmpty()) {
+            options.boundary_codepoints = selectionWordChars_.constData();
+            options.boundary_codepoints_len =
+                static_cast<size_t>(selectionWordChars_.size());
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        return ghostty_terminal_select_word(terminal_, &options, &selection)
+            == GHOSTTY_SUCCESS
+            && installSelection(selection);
     }
 
     bool selectAll()
@@ -3675,6 +3760,21 @@ void GhosttyVtAdapter::endSelection(int column, int row)
     impl_->endSelection(column, row);
 }
 
+bool GhosttyVtAdapter::selectionContains(int column, int row) const
+{
+    return impl_->selectionContains(column, row);
+}
+
+bool GhosttyVtAdapter::selectCell(int column, int row)
+{
+    return impl_->selectCell(column, row);
+}
+
+bool GhosttyVtAdapter::selectWord(int column, int row)
+{
+    return impl_->selectWord(column, row);
+}
+
 bool GhosttyVtAdapter::selectAll()
 {
     return impl_->selectAll();
@@ -3764,6 +3864,11 @@ bool GhosttyVtAdapter::trackedTextRangeValid(
     const TrackedTextRange &range) const
 {
     return range.impl_ != nullptr && impl_->trackedTextRangeValid(*range.impl_);
+}
+
+bool GhosttyVtAdapter::installTextRange(const TrackedTextRange &range)
+{
+    return range.impl_ != nullptr && impl_->installTextRange(*range.impl_);
 }
 
 std::optional<GhosttyVtAdapter::TextRangeMatch>
