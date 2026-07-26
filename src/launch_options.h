@@ -50,6 +50,9 @@ struct LaunchOptions {
     // Finalized Unicode scalar values used by Ghostty's word-selection
     // gestures. U+0000 is a valid boundary and remains in the vector.
     QVector<quint32> selectionWordChars;
+    // Ghostty finalizes the platform click-repeat interval in milliseconds.
+    // Preserve the full u32 value so the worker can classify repeated clicks.
+    quint32 clickRepeatIntervalMilliseconds = 500;
     TerminalClipboardPasteOptions clipboardPaste;
     // Split appearance belongs to the Qt pane/workspace renderers and never
     // crosses the terminal session-thread boundary.

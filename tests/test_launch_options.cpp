@@ -154,6 +154,7 @@ GhosttyConfigSnapshot completeSnapshot()
     values.mouseHideWhileTyping = true;
     values.focusFollowsMouse = true;
     values.selectionWordChars = {0, 0x20, 0x2502, 0x1f642};
+    values.clickRepeatIntervalMilliseconds = 731;
     values.mouseScrollMultiplier = {
         .precision = 0.75,
         .discrete = 4.5,
@@ -209,6 +210,7 @@ private Q_SLOTS:
     void mapsMouseHideWhileTyping();
     void mapsFocusFollowsMouse();
     void mapsSelectionWordChars();
+    void mapsClickRepeatInterval();
     void mapsMouseScrollMultiplier();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
@@ -295,6 +297,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.mouseHideWhileTyping);
     QVERIFY(!options.focusFollowsMouse);
     QVERIFY(options.selectionWordChars.isEmpty());
+    QCOMPARE(options.clickRepeatIntervalMilliseconds, quint32{500});
     QCOMPARE(options.mouseScrollMultiplier.precision, 1.0);
     QCOMPARE(options.mouseScrollMultiplier.discrete, 3.0);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
@@ -764,6 +767,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(!cliResult.mouseReporting);
     QCOMPARE(cliResult.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
+    QCOMPARE(cliResult.clickRepeatIntervalMilliseconds, quint32{731});
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindSource.isAvailable());
@@ -917,6 +921,23 @@ void LaunchOptionsTest::mapsSelectionWordChars()
     const LaunchOptions reloaded =
         applyGhosttyConfigSnapshot(configured, snapshot);
     QCOMPARE(reloaded.selectionWordChars, QVector<quint32>({0, quint32('y')}));
+}
+
+void LaunchOptionsTest::mapsClickRepeatInterval()
+{
+    LaunchOptions base;
+    base.clickRepeatIntervalMilliseconds = 1;
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+
+    const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(configured.clickRepeatIntervalMilliseconds, quint32{731});
+
+    snapshot.values.clickRepeatIntervalMilliseconds =
+        std::numeric_limits<quint32>::max();
+    const LaunchOptions reloaded =
+        applyGhosttyConfigSnapshot(configured, snapshot);
+    QCOMPARE(reloaded.clickRepeatIntervalMilliseconds,
+             std::numeric_limits<quint32>::max());
 }
 
 void LaunchOptionsTest::mapsLinkPreviewModes_data()
@@ -1373,6 +1394,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .clearOnCopy = true,
     };
     options.selectionWordChars = {0, 0x20, 0x2502, 0x1f642};
+    options.clickRepeatIntervalMilliseconds =
+        std::numeric_limits<quint32>::max();
     options.clipboardPaste = {
         .protection = false,
         .bracketedSafe = true,
@@ -1392,6 +1415,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.appearance, options.appearance);
     QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
     QCOMPARE(runtime.selectionWordChars, options.selectionWordChars);
+    QCOMPARE(runtime.clickRepeatIntervalMilliseconds,
+             options.clickRepeatIntervalMilliseconds);
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);

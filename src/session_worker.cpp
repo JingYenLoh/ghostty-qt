@@ -600,7 +600,9 @@ bool SessionWorker::createTerminal()
     callbacks.writePty = [this](const QByteArray &data) { queuePtyWrite(data); };
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
-        if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)) {
+        if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)
+            || !vt_->setClickRepeatIntervalMilliseconds(
+                options_.runtime.clickRepeatIntervalMilliseconds)) {
             vt_.reset();
             return false;
         }
@@ -619,9 +621,17 @@ void SessionWorker::applyRuntimeOptions(
         options_.runtime.selectionWordChars;
     const bool selectionWordCharsChanged =
         previousSelectionWordChars != options.selectionWordChars;
+    const quint32 previousClickRepeatInterval =
+        options_.runtime.clickRepeatIntervalMilliseconds;
+    const bool clickRepeatIntervalChanged =
+        previousClickRepeatInterval != options.clickRepeatIntervalMilliseconds;
     const bool selectionWordCharsApplied = vt_ == nullptr
         || !selectionWordCharsChanged
         || vt_->setSelectionWordChars(options.selectionWordChars);
+    const bool clickRepeatIntervalApplied = vt_ == nullptr
+        || !clickRepeatIntervalChanged
+        || vt_->setClickRepeatIntervalMilliseconds(
+            options.clickRepeatIntervalMilliseconds);
     options_.runtime = options;
 
     if (linkUrlChanged && !options_.runtime.linkUrl) {
@@ -661,6 +671,12 @@ void SessionWorker::applyRuntimeOptions(
         options_.runtime.selectionWordChars = previousSelectionWordChars;
         Q_EMIT errorOccurred(QStringLiteral(
             "Failed to apply selection word boundaries to libghostty-vt."));
+    }
+    if (!clickRepeatIntervalApplied) {
+        options_.runtime.clickRepeatIntervalMilliseconds =
+            previousClickRepeatInterval;
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Failed to apply click repeat interval to libghostty-vt."));
     }
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
@@ -1681,18 +1697,17 @@ void SessionWorker::clearSelectionIfMouseTracking()
     }
 }
 
-void SessionWorker::beginSelection(int column, int row, int clickCount, bool rectangular)
+void SessionWorker::beginSelection(const TerminalSelectionPressInput &input)
 {
-    if (vt_ != nullptr
-        && vt_->beginSelection(column, row, clickCount, rectangular)) {
+    if (vt_ != nullptr && vt_->beginSelection(input)) {
         syncSelectionAvailability();
         scheduleFrame();
     }
 }
 
-void SessionWorker::updateSelection(int column, int row, bool rectangular)
+void SessionWorker::updateSelection(const TerminalSelectionDragInput &input)
 {
-    if (vt_ != nullptr && vt_->updateSelection(column, row, rectangular)) {
+    if (vt_ != nullptr && vt_->updateSelection(input)) {
         // Selection dragging may scroll the viewport atomically inside
         // libghostty, invalidating viewport-relative hyperlink coordinates.
         markTerminalContentChanged();

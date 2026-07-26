@@ -558,6 +558,26 @@ signals:
   preedit string remains a local UI overlay.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. Holding `Shift` retains local selection and scrollback behavior.
+- For local selection, Qt performs hit testing and forwards only typed press
+  metadata: the cell, physical surface-relative pixel position,
+  arbitrary-origin window-system timestamp, and modifiers. A nonzero Qt
+  millisecond timestamp is converted to nanoseconds with checked
+  multiplication; zero or overflow omits time from that press.
+  `SessionWorker` supplies Ghostty's finalized `click-repeat-interval` and the
+  current physical cell width to the reusable libghostty selection gesture.
+  Libghostty accepts a repeat when the consecutive press-time difference is
+  less than or equal to the interval and the Euclidean distance from the
+  original first press is less than or equal to one cell width. It owns cell,
+  word, and line behavior for single-, double-, and triple-clicks and clamps
+  later repeats at triple. On Linux, `Ctrl` maps triple-click to OSC 133
+  semantic-output selection; `Meta`/Super remains line selection. Qt's
+  `MouseButtonDblClick` notification is ignored because the physical second
+  press has already traversed the ordinary path. Ordinary left-button release
+  preserves the gesture's time, original position, and count. A reported
+  physical button clears selection and resets that history; reported motion
+  does neither, while reported wheels and worker-rechecked captured fractional
+  scrolling clear selection without resetting history. Live interval reload
+  is sampled by the next press and does not reclassify an installed selection.
 - Vertical wheel input is normalized once on the GUI thread before choosing
   local or captured routing. A non-null Qt pixel delta is precision input;
   otherwise the angle delta remains fractional in 120-unit wheel ticks.
@@ -568,13 +588,14 @@ signals:
   same number of repeated DEC buttons 4/5 when captured. A live multiplier or
   cell metric change applies to new input while the already accumulated
   physical distance remains valid. Captured input queues a worker-rechecked
-  selection clear even while its distance is below one row. One event
-  dispatches at most 10,000 rows and retains any excess distance. This makes
-  synthesized extremes finite, though a captured maximum dispatch may still
-  briefly occupy the GUI thread. Pinned `Surface.zig` documents retaining the
-  post-row remainder but currently subtracts the untruncated amount and clears
-  it; this frontend intentionally follows that documented accumulator contract
-  so high-resolution motion is not discarded.
+  selection clear even while its distance is below one row, without resetting
+  repeat-click history. One event dispatches at most 10,000 rows and retains
+  any excess distance. This makes synthesized extremes finite, though a
+  captured maximum dispatch may still briefly occupy the GUI thread. Pinned
+  `Surface.zig` documents retaining the post-row remainder but currently
+  subtracts the untruncated amount and clears it; this frontend intentionally
+  follows that documented accumulator contract so high-resolution motion is
+  not discarded.
 - `mouse-hide-while-typing` is evaluated only after keybinding routing decides
   that a nonempty, non-repeating text press will reach the terminal. Ordinary
   pass-through keys, invalid-sequence flush-and-send-current, and an
@@ -649,10 +670,9 @@ signals:
   current vector to both the press and drag events of libghostty's selection
   gesture. Those C events copy the borrowed scalar array into event-owned
   storage before executing beside the terminal. Reload therefore affects the
-  next double-click press and every later word-drag update, including an
-  already active gesture, without retroactively changing an installed
-  selection. The GUI still supplies its Qt-derived click count; exact
-  `click-repeat-interval` timing remains a separate planned frontier.
+  next libghostty-classified word press and every later word-drag update,
+  including an already active gesture, without retroactively changing an
+  installed selection.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain
@@ -1032,12 +1052,14 @@ cursor color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed
 colors and Ghostty's cell-foreground and cell-background aliases remain
 distinct until the renderer has the target cell.
 
-The same schema carries `selection-word-chars` as an array of finalized
-Unicode scalar values rather than its source spelling. The strict loader
-rejects nonnumeric, fractional, surrogate, and out-of-range members; the
+The same schema carries `click-repeat-interval` as Ghostty's finalized
+unsigned whole-millisecond value, including the Linux 500 ms default, and
+`selection-word-chars` as an array of finalized Unicode scalar values rather
+than its source spelling. The strict loader rejects an invalid interval and
+nonnumeric, fractional, surrogate, or out-of-range boundary members; the
 parser-provided U+0000 element is preserved alongside ASCII and non-BMP
-boundaries. This vector is copied through launch and live runtime options
-without UTF-16 conversion, then consumed only on the session thread.
+boundaries. Both values are copied through launch and live runtime options
+without frontend reinterpretation, then consumed only on the session thread.
 
 Typography remains entirely on the GUI/render side as a value-only
 `TerminalTypography`. It carries one ordered family list and one style
@@ -1213,9 +1235,10 @@ compatibility field, the exact scrollbar policy, all five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
-`mouse-hide-while-typing` and `focus-follows-mouse` booleans, and the lossless
-resize-overlay mode, position, and whole-millisecond duration plus Ghostty's
-finalized binding sets after
+`mouse-hide-while-typing` and `focus-follows-mouse` booleans, the finalized
+whole-millisecond `click-repeat-interval`, and the lossless resize-overlay
+mode, position, and whole-millisecond duration plus Ghostty's finalized
+binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
 retains full root sequences, named tables, physical/Unicode/catch-all triggers,
@@ -1940,8 +1963,13 @@ and primary fallback, explicit copy-and-clear ordering, automatic selection
 commits, select-all, live reload, middle-click source/ignore policy,
 clear-on-typing key traits, sequence replay exclusions, IME/preedit
 transitions, finalized ASCII/NUL/non-BMP word boundaries, double-click
-selection, word dragging, and boundary reload during a live pane. Paste-safety
-tests cover Ghostty's exact bracketed and
+selection, checked timestamp conversion, inclusive consecutive-time and
+original-anchor Euclidean-distance repeat thresholds, triple-count clamping,
+line and Ctrl semantic-output selection, ignored duplicate Qt double-click
+notification, ordinary-release history retention, per-report selection-clear
+and gesture-reset behavior, word dragging, and live interval/boundary reload
+during a live pane.
+Paste-safety tests cover Ghostty's exact bracketed and
 non-bracketed policy, live options, control-byte encoding, confirmation-time
 mode changes, accepted-only activity and viewport changes, all GUI paste entry
 points, immutable worker IDs, multi-pane dialog correlation, queued payloads,

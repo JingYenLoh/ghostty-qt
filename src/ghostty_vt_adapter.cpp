@@ -2402,29 +2402,71 @@ public:
         return true;
     }
 
-    bool beginSelection(int column, int row, int clickCount, bool rectangular)
+    bool setClickRepeatIntervalMilliseconds(quint32 milliseconds)
     {
-        static_cast<void>(rectangular);
+        if (milliseconds == 0) {
+            return false;
+        }
+        clickRepeatIntervalMilliseconds_ = milliseconds;
+        return true;
+    }
+
+    bool beginSelection(const TerminalSelectionPressInput &input)
+    {
+        if (!std::isfinite(input.surfaceX) || !std::isfinite(input.surfaceY)) {
+            return false;
+        }
+
         GhosttyGridRef reference{};
-        if (!pointToGridRef(column, row, &reference)) {
+        if (!pointToGridRef(input.column, input.row, &reference)) {
             return false;
         }
 
         const bool hadSelection = hasSelection();
-        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
-        const int boundedClickCount = std::clamp(clickCount, 1, 3);
-        const GhosttySelectionGestureBehavior behavior = boundedClickCount == 2
-            ? GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD
-            : boundedClickCount >= 3 ? GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE
-                                     : GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL;
-        const GhosttySelectionGestureBehaviors behaviors{behavior, behavior, behavior};
+        const GhosttySurfacePosition position{
+            .x = input.surfaceX,
+            .y = input.surfaceY,
+        };
+        const double repeatDistance =
+            static_cast<double>(geometry_.cellWidthPixels);
+        const quint64 repeatIntervalNanoseconds =
+            static_cast<quint64>(clickRepeatIntervalMilliseconds_) * 1'000'000;
+        const GhosttySelectionGestureBehaviors behaviors{
+            .single_click = GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
+            .double_click = GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD,
+            .triple_click = input.controlModifier
+                ? GHOSTTY_SELECTION_GESTURE_BEHAVIOR_OUTPUT
+                : GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE,
+        };
+        const void *const timestamp = input.timestampValid
+            ? static_cast<const void *>(&input.timestampNanoseconds)
+            : nullptr;
         if (ghostty_selection_gesture_event_set(
-                selectionPressEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &reference)
+                selectionPressEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF,
+                &reference)
                 != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_set(
-                   selectionPressEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS,
-                   &behaviors)
-                   != GHOSTTY_SUCCESS) {
+                   selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE,
+                   &repeatDistance)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS, timestamp)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS,
+                   &repeatIntervalNanoseconds)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS, &behaviors)
+                != GHOSTTY_SUCCESS) {
             return false;
         }
 
@@ -2435,8 +2477,13 @@ public:
         if (result == GHOSTTY_SUCCESS) {
             return installSelection(selection);
         }
-        if (result == GHOSTTY_NO_VALUE && boundedClickCount == 1
-            && hadSelection) {
+        uint8_t clickCount = 0;
+        if (result == GHOSTTY_NO_VALUE
+            && ghostty_selection_gesture_get(
+                   selectionGesture_, terminal_,
+                   GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT, &clickCount)
+                == GHOSTTY_SUCCESS
+            && clickCount == 1 && hadSelection) {
             // A single press creates the drag anchor without returning an
             // installed range. Match Ghostty's surface lifecycle by clearing
             // the old range without resetting that new gesture state.
@@ -2447,13 +2494,21 @@ public:
         return false;
     }
 
-    bool updateSelection(int column, int row, bool rectangular)
+    bool updateSelection(const TerminalSelectionDragInput &input)
     {
-        GhosttyGridRef end{};
-        if (!pointToGridRef(column, row, &end)) {
+        if (!std::isfinite(input.surfaceX) || !std::isfinite(input.surfaceY)) {
             return false;
         }
 
+        GhosttyGridRef end{};
+        if (!pointToGridRef(input.column, input.row, &end)) {
+            return false;
+        }
+
+        const GhosttySurfacePosition position{
+            .x = input.surfaceX,
+            .y = input.surfaceY,
+        };
         const GhosttySelectionGestureGeometry geometry{
             .columns = boundedU32(geometry_.columns),
             .cell_width = boundedU32(geometry_.cellWidthPixels),
@@ -2461,16 +2516,22 @@ public:
             .screen_height = boundedU32(geometry_.surfaceHeightPixels),
         };
         if (ghostty_selection_gesture_event_set(
-                selectionDragEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &end)
+                selectionDragEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF,
+                &end)
                 != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_set(
-                   selectionDragEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY,
-                   &geometry)
-                   != GHOSTTY_SUCCESS
+                   selectionDragEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position)
+                != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_set(
-                   selectionDragEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE,
-                   &rectangular)
-                   != GHOSTTY_SUCCESS) {
+                   selectionDragEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY, &geometry)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionDragEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE,
+                   &input.rectangular)
+                != GHOSTTY_SUCCESS) {
             return false;
         }
 
@@ -3422,6 +3483,7 @@ private:
     GhosttySelectionGestureEvent selectionDragEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
     QVector<uint32_t> selectionWordChars_;
+    quint32 clickRepeatIntervalMilliseconds_ = 500;
     TerminalFrame publishedMetadata_;
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
@@ -3601,15 +3663,19 @@ bool GhosttyVtAdapter::setSelectionWordChars(
     return impl_->setSelectionWordChars(wordBoundaryCodepoints);
 }
 
-bool GhosttyVtAdapter::beginSelection(int column, int row, int clickCount,
-                                      bool rectangular)
+bool GhosttyVtAdapter::setClickRepeatIntervalMilliseconds(quint32 milliseconds)
 {
-    return impl_->beginSelection(column, row, clickCount, rectangular);
+    return impl_->setClickRepeatIntervalMilliseconds(milliseconds);
 }
 
-bool GhosttyVtAdapter::updateSelection(int column, int row, bool rectangular)
+bool GhosttyVtAdapter::beginSelection(const TerminalSelectionPressInput &input)
 {
-    return impl_->updateSelection(column, row, rectangular);
+    return impl_->beginSelection(input);
+}
+
+bool GhosttyVtAdapter::updateSelection(const TerminalSelectionDragInput &input)
+{
+    return impl_->updateSelection(input);
 }
 
 void GhosttyVtAdapter::endSelection(int column, int row)

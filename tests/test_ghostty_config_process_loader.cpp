@@ -231,6 +231,7 @@ private Q_SLOTS:
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
     void realHelperExportsSelectionWordChars();
+    void realHelperExportsClickRepeatInterval();
     void realHelperFinalizesMouseScrollMultiplier();
     void realHelperExportsConfigFileSources();
     void realHelperExportsFinalizedStructuredKeybindings();
@@ -1122,6 +1123,36 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsSelectionWordChars()
              QVector<quint32>({0,   ' ', '\t', '\'', '"', 0x2502, '`',
                                '|', ':', ';',  ',',  '(', ')',    '[',
                                ']', '{', '}',  '<',  '>', '$'}));
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsClickRepeatInterval()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("click-repeat-interval = 731\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.clickRepeatIntervalMilliseconds, quint32{731});
+
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("click-repeat-interval = 0\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.clickRepeatIntervalMilliseconds, quint32{500});
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.clickRepeatIntervalMilliseconds, quint32{500});
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsConfigFileSources()

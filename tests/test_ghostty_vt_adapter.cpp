@@ -11,10 +11,66 @@
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <utility>
 
 namespace {
+
+constexpr quint64 nanosecondsPerMillisecond = 1'000'000;
+
+TerminalSelectionPressInput
+selectionPress(const GhosttyVtAdapter::Geometry &geometry, int column, int row,
+               std::optional<quint64> timestampNanoseconds = std::nullopt,
+               bool controlModifier = false)
+{
+    return {
+        .column = column,
+        .row = row,
+        .surfaceX =
+            (static_cast<double>(column) + 0.5) * geometry.cellWidthPixels,
+        .surfaceY =
+            (static_cast<double>(row) + 0.5) * geometry.cellHeightPixels,
+        .timestampNanoseconds = timestampNanoseconds.value_or(0),
+        .timestampValid = timestampNanoseconds.has_value(),
+        .controlModifier = controlModifier,
+    };
+}
+
+TerminalSelectionDragInput
+selectionDrag(const GhosttyVtAdapter::Geometry &geometry, int column, int row,
+              bool rectangular = false)
+{
+    return {
+        .column = column,
+        .row = row,
+        .surfaceX =
+            (static_cast<double>(column) + 0.5) * geometry.cellWidthPixels,
+        .surfaceY =
+            (static_cast<double>(row) + 0.5) * geometry.cellHeightPixels,
+        .rectangular = rectangular,
+    };
+}
+
+bool beginFreshDoubleClick(GhosttyVtAdapter *adapter,
+                           const GhosttyVtAdapter::Geometry &geometry,
+                           int column, int row,
+                           quint64 firstTimestampNanoseconds = 1'000
+                               * nanosecondsPerMillisecond,
+                           bool controlModifier = false)
+{
+    adapter->clearSelectionAndResetGesture();
+    if (adapter->beginSelection(selectionPress(geometry, column, row,
+                                               firstTimestampNanoseconds,
+                                               controlModifier))) {
+        return false;
+    }
+    adapter->endSelection(column, row);
+    return adapter->beginSelection(
+        selectionPress(geometry, column, row,
+                       firstTimestampNanoseconds + nanosecondsPerMillisecond,
+                       controlModifier));
+}
 
 QString frameText(const TerminalFrame &frame)
 {
@@ -90,6 +146,7 @@ private Q_SLOTS:
     void selectsAndNavigatesViewportAtomically();
     void mapsAndRevealsSearchRanges();
     void formatsSelectionWithConfigurableTrimming();
+    void classifiesRepeatedSelectionPresses();
     void appliesConfiguredWordBoundariesToPressAndDrag();
     void snapshotsPlainWriteFileRanges();
     void snapshotsPlainWriteFileFormattingAndAlternateScreen();
@@ -1381,8 +1438,8 @@ void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()
     QVERIFY(adapter != nullptr);
     adapter->writeVt(QByteArrayLiteral("selection-target"));
 
-    adapter->beginSelection(0, 0, 1, false);
-    QVERIFY(adapter->updateSelection(5, 0, false));
+    adapter->beginSelection(selectionPress(options.geometry, 0, 0));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 5, 0)));
     QVERIFY(adapter->hasSelection());
 
     adapter->clearSelection();
@@ -1390,14 +1447,14 @@ void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()
 
     // Ghostty's setSelection(null) keeps the active drag anchor. A later
     // motion in that same gesture can establish a new installed range.
-    QVERIFY(adapter->updateSelection(8, 0, false));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 8, 0)));
     QVERIFY(adapter->hasSelection());
 
     // Reported physical buttons clear the installed range and release the
     // gesture's tracked grid reference. A later drag cannot resurrect it.
     adapter->clearSelectionAndResetGesture();
     QVERIFY(!adapter->hasSelection());
-    QVERIFY(!adapter->updateSelection(10, 0, false));
+    QVERIFY(!adapter->updateSelection(selectionDrag(options.geometry, 10, 0)));
 }
 
 void GhosttyVtAdapterTest::resetsAllTerminalStateAndPublishesFullFrame()
@@ -1518,8 +1575,8 @@ void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
     QCOMPARE(frame.scrollOffset, quint64{1});
     QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-1"));
 
-    adapter->beginSelection(0, 0, 1, false);
-    QVERIFY(adapter->updateSelection(5, 0, false));
+    adapter->beginSelection(selectionPress(options.geometry, 0, 0));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 5, 0)));
     adapter->endSelection(5, 0);
     QCOMPARE(adapter->selectedText(), QStringLiteral("row-1"));
 
@@ -1538,8 +1595,8 @@ void GhosttyVtAdapterTest::selectsAndNavigatesViewportAtomically()
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     }));
-    adapter->beginSelection(4, 2, 1, false);
-    QVERIFY(adapter->updateSelection(1, 0, false));
+    adapter->beginSelection(selectionPress(options.geometry, 4, 2));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 1, 0)));
     adapter->endSelection(1, 0);
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Bottom,
@@ -1653,24 +1710,191 @@ void GhosttyVtAdapterTest::formatsSelectionWithConfigurableTrimming()
     QVERIFY(adapter != nullptr);
     adapter->writeVt(QByteArrayLiteral("abc   "));
 
-    adapter->beginSelection(0, 0, 1, false);
-    QVERIFY(adapter->updateSelection(6, 0, false));
+    adapter->beginSelection(selectionPress(options.geometry, 0, 0,
+                                           1'000 * nanosecondsPerMillisecond));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 6, 0)));
     adapter->endSelection(6, 0);
     QCOMPARE(adapter->selectedText(), QStringLiteral("abc"));
     QCOMPARE(adapter->selectedText(true), QStringLiteral("abc"));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("abc   "));
 
-    // A no-value repeat click does not clear an existing selection upstream.
-    QVERIFY(!adapter->beginSelection(0, 1, 2, false));
+    // A repeat press that expands to no value does not clear an existing
+    // selection. Establish the repeat anchor on an empty cell, then install an
+    // unrelated range without resetting the gesture.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!adapter->beginSelection(selectionPress(
+        options.geometry, 0, 1, 2'000 * nanosecondsPerMillisecond)));
+    adapter->endSelection(0, 1);
+    QVERIFY(adapter->selectAll());
+    QVERIFY(!adapter->beginSelection(selectionPress(
+        options.geometry, 0, 1, 2'001 * nanosecondsPerMillisecond)));
     QVERIFY(adapter->hasSelection());
 
     // A fresh single press clears the installed selection while retaining
     // the new drag anchor maintained by Ghostty's gesture state.
-    QVERIFY(adapter->beginSelection(1, 0, 1, false));
+    QVERIFY(adapter->beginSelection(selectionPress(
+        options.geometry, 1, 0, 3'000 * nanosecondsPerMillisecond)));
     QVERIFY(!adapter->hasSelection());
-    QVERIFY(adapter->updateSelection(3, 0, false));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 3, 0)));
     adapter->endSelection(3, 0);
     QVERIFY(adapter->hasSelection());
+}
+
+void GhosttyVtAdapterTest::classifiesRepeatedSelectionPresses()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 20;
+    options.geometry.rows = 6;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("alpha beta\r\n"
+                                       "second line\r\n"
+                                       "third line"));
+
+    const auto press = [&adapter, &options](int column, int row,
+                                            quint64 timestampNanoseconds,
+                                            bool controlModifier = false) {
+        return adapter->beginSelection(selectionPress(options.geometry, column,
+                                                      row, timestampNanoseconds,
+                                                      controlModifier));
+    };
+
+    TerminalSelectionPressInput invalidPosition =
+        selectionPress(options.geometry, 1, 0, 1);
+    invalidPosition.surfaceX = std::numeric_limits<double>::quiet_NaN();
+    QVERIFY(!adapter->beginSelection(invalidPosition));
+    invalidPosition.surfaceX = 1.0;
+    invalidPosition.surfaceY = std::numeric_limits<double>::infinity();
+    QVERIFY(!adapter->beginSelection(invalidPosition));
+
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(100));
+    QVERIFY(!press(1, 0, 1'000 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(1, 0);
+
+    // Both the time and physical-distance boundaries are inclusive. Moving
+    // exactly one cell between the first two presses still selects the word.
+    QVERIFY(press(2, 0, 1'100 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha"));
+    adapter->endSelection(2, 0);
+
+    // Distance remains anchored at the original press rather than following
+    // the previous press. Another one-cell move is therefore too far and
+    // starts a new single-click gesture, clearing the installed word.
+    QVERIFY(press(3, 0, 1'100 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(3, 0);
+
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 1'500 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    TerminalSelectionPressInput beyondRadius = selectionPress(
+        options.geometry, 2, 0, 1'501 * nanosecondsPerMillisecond);
+    beyondRadius.surfaceX += 0.001;
+    QVERIFY(!adapter->beginSelection(beyondRadius));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(2, 0);
+
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 2'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    QVERIFY(press(1, 0, 2'001 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha"));
+    adapter->endSelection(1, 0);
+    QVERIFY(press(1, 0, 2'002 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha beta"));
+    adapter->endSelection(1, 0);
+
+    // Further repeats clamp at triple-click rather than wrapping back to a
+    // single click.
+    QVERIFY(press(1, 0, 2'003 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha beta"));
+
+    // A live interval update applies to the next press without resetting the
+    // current gesture.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(100));
+    QVERIFY(!press(1, 0, 3'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(99));
+    QVERIFY(!press(1, 0, 3'100 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(1, 0);
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(100));
+    QVERIFY(press(1, 0, 3'200 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha"));
+
+    // Invalid direct updates are rejected without disturbing the last valid
+    // interval. The full u32 range remains usable and inclusive.
+    QVERIFY(!adapter->setClickRepeatIntervalMilliseconds(0));
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(
+        std::numeric_limits<quint32>::max()));
+    adapter->clearSelectionAndResetGesture();
+    constexpr quint64 maxIntervalNanoseconds =
+        static_cast<quint64>(std::numeric_limits<quint32>::max())
+        * nanosecondsPerMillisecond;
+    QVERIFY(!press(1, 0, 1));
+    adapter->endSelection(1, 0);
+    QVERIFY(press(1, 0, 1 + maxIntervalNanoseconds));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alpha"));
+
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(100));
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 4'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    QVERIFY(!press(1, 0, 4'101 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 5'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    QVERIFY(!press(1, 0, 4'999 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 6'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    QVERIFY(!adapter->beginSelection(selectionPress(options.geometry, 1, 0)));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(1, 0);
+    QVERIFY(!press(1, 0, 6'001 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    // Switching active screens changes the tracked screen generation, so a
+    // nearby press cannot continue the primary-screen click sequence.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!press(1, 0, 7'000 * nanosecondsPerMillisecond));
+    adapter->endSelection(1, 0);
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h\033[Halternate"));
+    QVERIFY(!press(1, 0, 7'001 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+    adapter->endSelection(1, 0);
+    QVERIFY(press(1, 0, 7'002 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(), QStringLiteral("alternate"));
+
+    GhosttyVtAdapter::Options semanticOptions;
+    semanticOptions.geometry.columns = 12;
+    semanticOptions.geometry.rows = 6;
+    auto semantic = GhosttyVtAdapter::create(semanticOptions);
+    QVERIFY(semantic != nullptr);
+    semantic->writeVt(QByteArrayLiteral("out-a\r\n"
+                                        "out-b"
+                                        "\033]133;A\a"
+                                        "$ \033]133;B\acmd\033]133;C\a\r\n"
+                                        "out-c"));
+
+    QVERIFY(!semantic->beginSelection(
+        selectionPress(semanticOptions.geometry, 1, 0,
+                       8'000 * nanosecondsPerMillisecond, true)));
+    semantic->endSelection(1, 0);
+    QVERIFY(semantic->beginSelection(
+        selectionPress(semanticOptions.geometry, 1, 0,
+                       8'001 * nanosecondsPerMillisecond, true)));
+    semantic->endSelection(1, 0);
+    QVERIFY(semantic->beginSelection(
+        selectionPress(semanticOptions.geometry, 1, 0,
+                       8'002 * nanosecondsPerMillisecond, true)));
+    QCOMPARE(semantic->selectedText(), QStringLiteral("out-a\nout-b"));
 }
 
 void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()
@@ -1686,7 +1910,7 @@ void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()
                          .toUtf8());
 
     // Ghostty's default boundary set includes semicolon.
-    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 7, 0));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
 
     // A finalized custom set can make punctuation part of a word. The drag
@@ -1695,35 +1919,35 @@ void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()
     QVector<uint32_t> spaceOnly{0, uint32_t{' '}};
     QVERIFY(adapter->setSelectionWordChars(spaceOnly));
     spaceOnly[1] = uint32_t{';'};
-    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 7, 0));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("alpha;beta"));
 
     // Reject invalid direct API input without disturbing either reusable
     // gesture event's previously copied boundary list.
     QVERIFY(!adapter->setSelectionWordChars(
         QVector<uint32_t>{0, uint32_t{0x110000}}));
-    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 7, 0));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("alpha;beta"));
 
     const QVector<uint32_t> spaceAndSemicolon{0, uint32_t{' '}, uint32_t{';'}};
     QVERIFY(adapter->setSelectionWordChars(spaceAndSemicolon));
-    QVERIFY(adapter->updateSelection(12, 0, false));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 12, 0)));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("beta gamma"));
     adapter->endSelection(12, 0);
 
     const QVector<uint32_t> snowmanBoundary{0, 0x2603};
     QVERIFY(adapter->setSelectionWordChars(snowmanBoundary));
-    QVERIFY(adapter->beginSelection(6, 1, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 6, 1));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("flake"));
 
     // Keep non-BMP values as Unicode scalars rather than UTF-16 code units.
     const QVector<uint32_t> rocketBoundary{0, 0x1F680};
     QVERIFY(adapter->setSelectionWordChars(rocketBoundary));
-    QVERIFY(adapter->beginSelection(6, 2, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 6, 2));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("two"));
 
     QVERIFY(adapter->setSelectionWordChars(QVector<uint32_t>{}));
-    QVERIFY(adapter->beginSelection(7, 0, 2, false));
+    QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 7, 0));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
 }
 
@@ -1772,8 +1996,8 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
         "history-0  \n"
         "history-1"));
 
-    adapter->beginSelection(0, 2, 1, false);
-    QVERIFY(adapter->updateSelection(8, 2, false));
+    adapter->beginSelection(selectionPress(options.geometry, 0, 2));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 8, 2)));
     adapter->endSelection(8, 2);
     const auto selection =
         adapter->snapshotPlainFile(TerminalFileLocation::Selection);
@@ -1793,8 +2017,9 @@ void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()
     rectangle->writeVt(QByteArrayLiteral(
         "abcdef\r\n"
         "uvwxyz"));
-    rectangle->beginSelection(1, 0, 1, true);
-    QVERIFY(rectangle->updateSelection(4, 1, true));
+    rectangle->beginSelection(selectionPress(rectangleOptions.geometry, 1, 0));
+    QVERIFY(rectangle->updateSelection(
+        selectionDrag(rectangleOptions.geometry, 4, 1, true)));
     rectangle->endSelection(4, 1);
     const auto rectangularSelection =
         rectangle->snapshotPlainFile(TerminalFileLocation::Selection);
@@ -1903,8 +2128,8 @@ void GhosttyVtAdapterTest::adjustsSelectionAndScrollsLogicalEndpointIntoView()
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Top,
     }));
-    adapter->beginSelection(4, 2, 1, false);
-    QVERIFY(adapter->updateSelection(4, 0, false));
+    adapter->beginSelection(selectionPress(options.geometry, 4, 2));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 4, 0)));
     adapter->endSelection(4, 0);
     QVERIFY(adapter->scrollViewport({
         .kind = TerminalViewportRequest::Kind::Bottom,
@@ -1942,8 +2167,9 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
         QVERIFY(adapter != nullptr);
         adapter->writeVt(QByteArrayLiteral("abcde\r\nfghij\r\nklmno"));
 
-        adapter->beginSelection(0, 1, 1, false);
-        QVERIFY(adapter->updateSelection(2, 1, false));
+        adapter->beginSelection(selectionPress(options.geometry, 0, 1));
+        QVERIFY(
+            adapter->updateSelection(selectionDrag(options.geometry, 2, 1)));
         adapter->endSelection(2, 1);
         QCOMPARE(adapter->selectedText(), QStringLiteral("fg"));
         QVERIFY(adapter->adjustSelection(testCase.adjustment));
@@ -1977,8 +2203,8 @@ void GhosttyVtAdapterTest::mapsEverySelectionAdjustment()
             return std::optional<QString>{};
         }
         renderInto(adapter.get(), &frame);
-        adapter->beginSelection(0, 0, 1, false);
-        if (!adapter->updateSelection(2, 0, false)) {
+        adapter->beginSelection(selectionPress(options.geometry, 0, 0));
+        if (!adapter->updateSelection(selectionDrag(options.geometry, 2, 0))) {
             return std::optional<QString>{};
         }
         adapter->endSelection(2, 0);

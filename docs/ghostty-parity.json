@@ -343,6 +343,10 @@
       "status": "supported",
       "note": "The renderer implements Ghostty's unset, bright-palette, and fixed-color bold foreground rules while retaining palette/direct/default color provenance."
     },
+    "click-repeat-interval": {
+      "status": "supported",
+      "note": "The strict config projection carries Ghostty's finalized whole-millisecond value, including the Linux 500 ms default. Qt converts a nonzero arbitrary-origin millisecond window-system timestamp to nanoseconds with checked multiplication; zero or overflow produces an untimed press. The worker supplies the live interval and physical cell width, and libghostty accepts a repeat at inclusive consecutive-time and Euclidean-distance thresholds, with distance anchored to the original first press. It owns cell/word/line classification and clamps later repeats at triple; Linux Ctrl maps triple-click to OSC 133 semantic output while Meta/Super remains line. Qt ignores MouseButtonDblClick because its physical press already arrived. Reload affects the next press without reshaping an installed selection; ordinary release preserves repeat history, reported physical buttons reset it, and reported motion, wheels, or captured fractional scrolling preserve it."
+    },
     "clipboard-paste-bracketed-safe": {
       "status": "supported",
       "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
@@ -479,7 +483,7 @@
     },
     "mouse-reporting": {
       "status": "supported",
-      "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event, reported buttons and wheels clear selection on the worker, raw DEC capture still governs Shift hyperlink escape, reload replaces local runtime toggles, and future panes use configured state."
+      "note": "The default-true policy gates terminal-requested DEC mouse tracking per pane without changing raw terminal mode. The conjunction is reevaluated per pointer event. Reported physical buttons clear selection and reset repeat-click history, motion does neither, and wheels plus captured fractional scrolling clear selection while preserving that history. Raw DEC capture still governs Shift hyperlink escape; reload replaces local runtime toggles, and future panes use configured state."
     },
     "mouse-scroll-multiplier": {
       "status": "supported",
@@ -556,7 +560,7 @@
     },
     "selection-word-chars": {
       "status": "supported",
-      "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection. Click counting remains Qt-owned until click-repeat-interval is implemented."
+      "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection."
     },
     "split-divider-color": {
       "status": "supported",

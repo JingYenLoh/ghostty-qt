@@ -325,7 +325,7 @@ private:
     [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
     [[nodiscard]] bool performWorkspaceAction(WorkspaceActionRequest request);
     int viewportPageRows() const;
-    void beginLocalSelection(const QPointF &position, int clickCount,
+    void beginLocalSelection(const QMouseEvent &event,
                              Qt::KeyboardModifiers modifiers);
     void hideMouseForTerminalKey(const TerminalKeyInput &input,
                                  quint64 pointerActivityEpoch);

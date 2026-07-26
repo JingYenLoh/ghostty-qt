@@ -175,6 +175,8 @@ TerminalController::TerminalController(
     qRegisterMetaType<TerminalInputMethodInput>();
     qRegisterMetaType<TerminalSequenceResolution>();
     qRegisterMetaType<TerminalMouseInput>();
+    qRegisterMetaType<TerminalSelectionPressInput>();
+    qRegisterMetaType<TerminalSelectionDragInput>();
     qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
@@ -794,15 +796,16 @@ void TerminalController::clearSelectionIfMouseTracking()
     Q_EMIT clearSelectionIfMouseTrackingRequested();
 }
 
-void TerminalController::beginSelection(int column, int row, int clickCount,
-                                        bool rectangular)
+void TerminalController::beginSelection(
+    const TerminalSelectionPressInput &input)
 {
-    Q_EMIT beginSelectionRequested(column, row, clickCount, rectangular);
+    Q_EMIT beginSelectionRequested(input);
 }
 
-void TerminalController::updateSelection(int column, int row, bool rectangular)
+void TerminalController::updateSelection(
+    const TerminalSelectionDragInput &input)
 {
-    Q_EMIT updateSelectionRequested(column, row, rectangular);
+    Q_EMIT updateSelectionRequested(input);
 }
 
 void TerminalController::endSelection(int column, int row)

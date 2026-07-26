@@ -340,6 +340,35 @@ struct TerminalMouseInput {
     bool anyButtonPressed = false;
 };
 
+// Qt owns pointer hit testing and timestamp capture, but libghostty owns the
+// stateful repeat-click classification. Keep the cross-thread payload
+// value-only and explicit about coordinate and timestamp units.
+struct TerminalSelectionPressInput {
+    int column = 0;
+    int row = 0;
+    double surfaceX = 0.0;
+    double surfaceY = 0.0;
+    quint64 timestampNanoseconds = 0;
+    bool timestampValid = false;
+    // On Linux, Ghostty maps Ctrl triple-clicks to semantic command output
+    // rather than the ordinary logical line.
+    bool controlModifier = false;
+
+    friend bool operator==(const TerminalSelectionPressInput &,
+                           const TerminalSelectionPressInput &) = default;
+};
+
+struct TerminalSelectionDragInput {
+    int column = 0;
+    int row = 0;
+    double surfaceX = 0.0;
+    double surfaceY = 0.0;
+    bool rectangular = false;
+
+    friend bool operator==(const TerminalSelectionDragInput &,
+                           const TerminalSelectionDragInput &) = default;
+};
+
 Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
 Q_DECLARE_METATYPE(TerminalHyperlinkState)
@@ -352,3 +381,5 @@ Q_DECLARE_METATYPE(TerminalKeyInput)
 Q_DECLARE_METATYPE(TerminalInputMethodInput)
 Q_DECLARE_METATYPE(TerminalSequenceResolution)
 Q_DECLARE_METATYPE(TerminalMouseInput)
+Q_DECLARE_METATYPE(TerminalSelectionPressInput)
+Q_DECLARE_METATYPE(TerminalSelectionDragInput)

@@ -114,6 +114,44 @@ bool writeExecutableScript(const QString &path, QByteArrayView contents)
             | QFileDevice::ExeOwner);
 }
 
+TerminalSelectionPressInput
+selectionPress(int column, int row,
+               std::optional<quint64> timestampNanoseconds = std::nullopt,
+               bool controlModifier = false)
+{
+    return {
+        .column = column,
+        .row = row,
+        .surfaceX = (static_cast<double>(column) + 0.5) * 8.0,
+        .surfaceY = (static_cast<double>(row) + 0.5) * 16.0,
+        .timestampNanoseconds = timestampNanoseconds.value_or(0),
+        .timestampValid = timestampNanoseconds.has_value(),
+        .controlModifier = controlModifier,
+    };
+}
+
+TerminalSelectionDragInput selectionDrag(int column, int row,
+                                         bool rectangular = false)
+{
+    return {
+        .column = column,
+        .row = row,
+        .surfaceX = (static_cast<double>(column) + 0.5) * 8.0,
+        .surfaceY = (static_cast<double>(row) + 0.5) * 16.0,
+        .rectangular = rectangular,
+    };
+}
+
+void beginWordSelection(SessionWorker &worker, int column, int row,
+                        quint64 firstTimestampNanoseconds)
+{
+    worker.beginSelection(
+        selectionPress(column, row, firstTimestampNanoseconds));
+    worker.endSelection(column, row);
+    worker.beginSelection(
+        selectionPress(column, row, firstTimestampNanoseconds + 100'000'000));
+}
+
 class ScopedEnvironmentVariable final {
 public:
     ScopedEnvironmentVariable(QByteArray name, const QByteArray &value)
@@ -198,6 +236,7 @@ private Q_SLOTS:
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void appliesReloadedWordBoundariesToExistingGesture();
+    void appliesClickRepeatIntervalAtLaunchAndReload();
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
@@ -571,8 +610,8 @@ void SessionWorkerTest::writesPersistentTerminalFiles()
                  TerminalClipboardDestination::Standard);
         historyPath = historyResult.payload;
 
-        worker.beginSelection(0, 0, 1, true);
-        worker.updateSelection(8, 1, true);
+        worker.beginSelection(selectionPress(0, 0));
+        worker.updateSelection(selectionDrag(8, 1, true));
         worker.endSelection(8, 1);
         worker.writeTerminalFile(303, {
             .location = TerminalFileLocation::Selection,
@@ -2588,7 +2627,7 @@ void SessionWorkerTest::appliesReloadedWordBoundariesToExistingGesture()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("alpha;beta gamma")), 5000);
 
-    worker.beginSelection(7, 0, 2, false);
+    beginWordSelection(worker, 7, 0, 1'000'000'000);
     worker.copySelection();
     QCOMPARE(clipboardSpy.size(), 1);
     QCOMPARE(clipboardSpy.constLast().at(0).toString(),
@@ -2601,14 +2640,14 @@ void SessionWorkerTest::appliesReloadedWordBoundariesToExistingGesture()
     worker.applyRuntimeOptions(options.runtime);
     QCOMPARE(clipboardSpy.constLast().at(0).toString(),
              QStringLiteral("alpha;beta"));
-    worker.updateSelection(12, 0, false);
+    worker.updateSelection(selectionDrag(12, 0));
     worker.copySelection();
     QCOMPARE(clipboardSpy.size(), 2);
     QCOMPARE(clipboardSpy.constLast().at(0).toString(),
              QStringLiteral("beta gamma"));
     worker.endSelection(12, 0);
 
-    worker.beginSelection(7, 0, 2, false);
+    beginWordSelection(worker, 7, 0, 2'000'000'000);
     worker.copySelection();
     QCOMPARE(clipboardSpy.size(), 3);
     QCOMPARE(clipboardSpy.constLast().at(0).toString(), QStringLiteral("beta"));
@@ -2616,6 +2655,72 @@ void SessionWorkerTest::appliesReloadedWordBoundariesToExistingGesture()
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesClickRepeatIntervalAtLaunchAndReload()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(24, 3, 8, 16, 192, 48);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'alpha beta'; sleep 5"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    options.runtime.clickRepeatIntervalMilliseconds = 100;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alpha beta")), 5000);
+
+    // The launch-time 100 ms interval rejects this 150 ms repeat, leaving the
+    // second press as the new single-click history anchor.
+    worker.beginSelection(selectionPress(2, 0, 1'000'000'000));
+    worker.endSelection(2, 0);
+    worker.beginSelection(selectionPress(2, 0, 1'150'000'000));
+    worker.endSelection(2, 0);
+    QVERIFY(!spyContainsBool(selectionSpy, true));
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 0);
+
+    // Reloading only the interval preserves that 1.15 s anchor. The next
+    // press is now a 250 ms repeat and therefore selects the word.
+    options.runtime.clickRepeatIntervalMilliseconds = 300;
+    worker.applyRuntimeOptions(options.runtime);
+    worker.beginSelection(selectionPress(2, 0, 1'400'000'000));
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("alpha"));
+    QVERIFY(spyContainsBool(selectionSpy, true));
+    worker.endSelection(2, 0);
+
+    // Strict configuration rejects zero, but the worker still defends its
+    // direct runtime API. A rejected update reports the failure and leaves the
+    // prior 300 ms adapter policy and click history intact.
+    TerminalSessionRuntimeOptions invalidRuntime = options.runtime;
+    invalidRuntime.clickRepeatIntervalMilliseconds = 0;
+    worker.applyRuntimeOptions(invalidRuntime);
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.constFirst().constFirst().toString(),
+             QStringLiteral(
+                 "Failed to apply click repeat interval to libghostty-vt."));
+    worker.beginSelection(selectionPress(2, 0, 1'700'000'000));
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 2);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha beta"));
     worker.shutdown();
 }
 
@@ -2669,8 +2774,8 @@ void SessionWorkerTest::clearsSelectionOnlyForUpstreamTypingPaths()
     const auto selectTarget = [&] {
         worker.clearSelection();
         selectionSpy.clear();
-        worker.beginSelection(0, 0, 1, false);
-        worker.updateSelection(7, 0, false);
+        worker.beginSelection(selectionPress(0, 0));
+        worker.updateSelection(selectionDrag(7, 0));
         worker.endSelection(7, 0);
         QVERIFY(spyContainsBool(selectionSpy, true));
         selectionSpy.clear();
@@ -2848,8 +2953,8 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     const auto selectTarget = [&] {
         worker.clearSelection();
         selectionSpy.clear();
-        worker.beginSelection(0, 0, 1, false);
-        worker.updateSelection(7, 0, false);
+        worker.beginSelection(selectionPress(0, 0));
+        worker.updateSelection(selectionDrag(7, 0));
         QVERIFY(spyContainsBool(selectionSpy, true));
         selectionSpy.clear();
     };
@@ -2880,25 +2985,39 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     selectTarget();
     worker.clearSelectionIfMouseTracking();
     QVERIFY(spyContainsBool(selectionSpy, false));
+    selectionSpy.clear();
+    worker.updateSelection(selectionDrag(10, 0));
+    QVERIFY(spyContainsBool(selectionSpy, true));
 
     // Cursor motion never clears a selection, but an encoded button event
-    // and a protocol wheel press do so before their PTY bytes are queued.
-    selectTarget();
+    // and a protocol wheel press do so before their PTY bytes are queued. A
+    // reported button also discards repeat-click history: the later timed
+    // press must remain a single click rather than selecting its word.
+    worker.clearSelection();
+    selectionSpy.clear();
+    worker.beginSelection(selectionPress(0, 0, 1'000'000'000));
+    worker.updateSelection(selectionDrag(7, 0));
+    QVERIFY(spyContainsBool(selectionSpy, true));
+    selectionSpy.clear();
     worker.sendMouse(motion);
     QVERIFY(!spyContainsBool(selectionSpy, false));
     worker.sendMouse(press);
     QVERIFY(spyContainsBool(selectionSpy, false));
     selectionSpy.clear();
-    worker.updateSelection(10, 0, false);
+    worker.updateSelection(selectionDrag(10, 0));
     QVERIFY(!spyContainsBool(selectionSpy, true));
+    worker.beginSelection(selectionPress(0, 0, 1'100'000'000));
+    QVERIFY(!spyContainsBool(selectionSpy, true));
+    worker.endSelection(0, 0);
 
     // X10 consumes wheel routing but intentionally encodes no wheel bytes.
-    // It still clears the range without resetting a physical drag gesture.
+    // Surface.scrollCallback clears the range without resetting the physical
+    // drag gesture, even when X10 ultimately emits no wheel bytes.
     selectTarget();
     worker.sendMouse(wheel);
     QVERIFY(spyContainsBool(selectionSpy, false));
     selectionSpy.clear();
-    worker.updateSelection(10, 0, false);
+    worker.updateSelection(selectionDrag(10, 0));
     QVERIFY(spyContainsBool(selectionSpy, true));
 
     // Read-only suppresses only the PTY write. Terminal-local selection clear,
@@ -2908,7 +3027,7 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     worker.sendMouse(press);
     QVERIFY(spyContainsBool(selectionSpy, false));
     selectionSpy.clear();
-    worker.updateSelection(10, 0, false);
+    worker.updateSelection(selectionDrag(10, 0));
     QVERIFY(!spyContainsBool(selectionSpy, true));
     worker.setReadOnly(false);
     worker.clearSelection();
@@ -2964,8 +3083,8 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("copy-ready")), 5000);
 
-    worker.beginSelection(0, 0, 1, false);
-    worker.updateSelection(6, 0, false);
+    worker.beginSelection(selectionPress(0, 0));
+    worker.updateSelection(selectionDrag(6, 0));
     worker.endSelection(6, 0);
     QCOMPARE(clipboardSpy.count(), 0);
     QVERIFY(spyContainsBool(selectionSpy, true));
@@ -3082,8 +3201,8 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("auto-ready")), 5000);
 
-    worker.beginSelection(0, 0, 1, false);
-    worker.updateSelection(9, 0, false);
+    worker.beginSelection(selectionPress(0, 0));
+    worker.updateSelection(selectionDrag(9, 0));
     QCOMPARE(clipboardSpy.count(), 0);
     worker.endSelection(9, 0);
     QCOMPARE(clipboardSpy.count(), 0);
@@ -3096,8 +3215,8 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     worker.applyRuntimeOptions(options.runtime);
     QCOMPARE(clipboardSpy.count(), 0);
 
-    worker.beginSelection(0, 0, 1, false);
-    worker.updateSelection(9, 0, false);
+    worker.beginSelection(selectionPress(0, 0));
+    worker.updateSelection(selectionDrag(9, 0));
     QCOMPARE(clipboardSpy.count(), 0);
     worker.endSelection(9, 0);
     QCOMPARE(clipboardSpy.count(), 1);
@@ -3111,7 +3230,7 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
 
     clipboardSpy.clear();
     selectionSpy.clear();
-    worker.beginSelection(0, 1, 1, false);
+    worker.beginSelection(selectionPress(0, 1));
     QVERIFY(spyContainsBool(selectionSpy, false));
     worker.endSelection(0, 1);
     QCOMPARE(clipboardSpy.count(), 0);
@@ -3168,8 +3287,8 @@ void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("row-099")), 5000);
 
-    worker.beginSelection(0, 20, 1, false);
-    worker.updateSelection(6, 20, false);
+    worker.beginSelection(selectionPress(0, 20));
+    worker.updateSelection(selectionDrag(6, 20));
     worker.endSelection(6, 20);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
 
@@ -3296,8 +3415,8 @@ void SessionWorkerTest::resolvesCorrelatedSelectionActions()
         .kind = TerminalViewportRequest::Kind::Top,
     });
     QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset == 0, 1000);
-    worker.beginSelection(0, 0, 1, false);
-    worker.updateSelection(16, 0, false);
+    worker.beginSelection(selectionPress(0, 0));
+    worker.updateSelection(selectionDrag(16, 0));
     worker.endSelection(16, 0);
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
 

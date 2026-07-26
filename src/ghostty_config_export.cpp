@@ -99,6 +99,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("selection-clear-on-typing"),
     QLatin1StringView("selection-clear-on-copy"),
     QLatin1StringView("selection-word-chars"),
+    QLatin1StringView("click-repeat-interval"),
     QLatin1StringView("middle-click-action"),
     QLatin1StringView("mouse-reporting"),
     QLatin1StringView("mouse-hide-while-typing"),
@@ -418,6 +419,19 @@ ParseResult<QVector<quint32>> readUnicodeScalarList(const QJsonValue &value,
     if (result.isEmpty() || result.front() != 0U) {
         return std::unexpected(
             QStringLiteral("%1 must begin with U+0000").arg(context));
+    }
+    return result;
+}
+
+ParseResult<quint32> readFinalizedClickRepeatInterval(const QJsonValue &value,
+                                                      const QString &context)
+{
+    auto result = readUnsignedInteger<quint32>(value, context);
+    if (!result) return std::unexpected(std::move(result.error()));
+    if (*result == 0) {
+        return std::unexpected(
+            QStringLiteral("%1 must be a nonzero unsigned integer")
+                .arg(context));
     }
     return result;
 }
@@ -894,6 +908,12 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     }
     if (auto parsed = assign(QLatin1StringView("selection-word-chars"),
                              result.selectionWordChars, readUnicodeScalarList);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("click-repeat-interval"),
+                             result.clickRepeatIntervalMilliseconds,
+                             readFinalizedClickRepeatInterval);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

@@ -270,8 +270,9 @@ public:
     void clearSelection();
     void clearSelectionAndResetGesture();
     bool setSelectionWordChars(const QVector<uint32_t> &wordBoundaryCodepoints);
-    bool beginSelection(int column, int row, int clickCount, bool rectangular);
-    bool updateSelection(int column, int row, bool rectangular);
+    bool setClickRepeatIntervalMilliseconds(quint32 milliseconds);
+    bool beginSelection(const TerminalSelectionPressInput &input);
+    bool updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
     bool selectAll();
     bool adjustSelection(TerminalSelectionAdjustment adjustment);

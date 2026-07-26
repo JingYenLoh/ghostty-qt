@@ -202,6 +202,7 @@ finalized `bell-features` booleans, nullable finalized bell-audio path and its
 required/optional provenance, raw finite bell-audio volume, independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
 `mouse-hide-while-typing` and `focus-follows-mouse` booleans, the finalized
+whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's
 mandatory U+0000 boundary, the raw false/true/detect
 `gtk-single-instance` mode as an unused schema-v1
@@ -317,8 +318,13 @@ pointer-activity-epoch suppression, physical-pixel movement filtering, reveal
 interactions, blank/hyperlink/default cursor priority, focus-follow defaults
 and live reload, inactive-window gating, same-position/sub-pixel focus
 suppression, and destructive focus-publication observers, finalized default
-and custom ASCII/NUL/non-BMP word boundaries, worker-owned double-click press
-and word-drag behavior, live boundary reload during an active pane, select-all,
+and custom ASCII/NUL/non-BMP word boundaries, worker-owned timestamp,
+interval, and distance repeat classification with checked Qt timestamp
+conversion, inclusive consecutive-time and original-anchor Euclidean-distance
+thresholds, triple-count clamping, single/word/line and Ctrl semantic-output
+behavior, duplicate Qt double-click suppression, ordinary-release history
+retention, distinct button/motion/wheel reporting side effects, word-drag
+behavior, live interval/boundary reload during an active pane, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact

@@ -147,6 +147,8 @@ TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
         .appearance = options.appearance,
         .selectionClipboard = options.selectionClipboard,
         .selectionWordChars = options.selectionWordChars,
+        .clickRepeatIntervalMilliseconds =
+            options.clickRepeatIntervalMilliseconds,
         .clipboardPaste = options.clipboardPaste,
         .linkUrl = options.linkUrl,
     };
@@ -239,6 +241,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.confirmCloseMode = config.confirmCloseMode;
     result.selectionClipboard = config.selectionClipboard;
     result.selectionWordChars = config.selectionWordChars;
+    result.clickRepeatIntervalMilliseconds =
+        config.clickRepeatIntervalMilliseconds;
     result.clipboardPaste = config.clipboardPaste;
     result.middleClickAction = config.middleClickAction;
     result.mouseReporting = config.mouseReporting;

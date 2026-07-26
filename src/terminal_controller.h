@@ -118,8 +118,8 @@ public:
     // still clears selection. The worker rechecks current DEC tracking before
     // applying this queued side effect.
     void clearSelectionIfMouseTracking();
-    void beginSelection(int column, int row, int clickCount, bool rectangular);
-    void updateSelection(int column, int row, bool rectangular);
+    void beginSelection(const TerminalSelectionPressInput &input);
+    void updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
     void selectAll();
     [[nodiscard]] bool selectAllAction(quint64 requestId);
@@ -199,9 +199,8 @@ Q_SIGNALS:
         quint64 requestId, const TerminalWriteFileAction &action);
     void clearSelectionRequested();
     void clearSelectionIfMouseTrackingRequested();
-    void beginSelectionRequested(int column, int row, int clickCount,
-                                 bool rectangular);
-    void updateSelectionRequested(int column, int row, bool rectangular);
+    void beginSelectionRequested(const TerminalSelectionPressInput &input);
+    void updateSelectionRequested(const TerminalSelectionDragInput &input);
     void endSelectionRequested(int column, int row);
     void selectAllRequested();
     void selectAllActionRequested(quint64 requestId);

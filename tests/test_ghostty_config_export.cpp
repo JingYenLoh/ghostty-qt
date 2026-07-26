@@ -256,6 +256,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.selectionClipboard.clearOnCopy);
     QCOMPARE(values.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
+    QCOMPARE(values.clickRepeatIntervalMilliseconds, quint32{731});
     QVERIFY(!values.clipboardPaste.protection);
     QVERIFY(values.clipboardPaste.bracketedSafe);
     QCOMPARE(values.middleClickAction, MiddleClickAction::Ignore);
@@ -390,12 +391,17 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     highValues = withValue(std::move(highValues),
                            QStringLiteral("mouse-scroll-multiplier"),
                            mouseScrollMultiplier(10'000.0, 10'000.0));
+    highValues =
+        withValue(std::move(highValues),
+                  QStringLiteral("click-repeat-interval"), 4294967295.0);
     const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
     QCOMPARE(high->values.bellAudioVolume, 2.0);
     QCOMPARE(high->values.mouseScrollMultiplier.precision, 10'000.0);
     QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
+    QCOMPARE(high->values.clickRepeatIntervalMilliseconds,
+             std::numeric_limits<quint32>::max());
 }
 
 void GhosttyConfigExportTest::parsesEveryEnumSpelling()
@@ -770,6 +776,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-selection-word-chars")
         << withoutValue(object(), QStringLiteral("selection-word-chars"))
         << QStringLiteral("values is missing field 'selection-word-chars'");
+    QTest::newRow("missing-click-repeat-interval")
+        << withoutValue(object(), QStringLiteral("click-repeat-interval"))
+        << QStringLiteral("values is missing field 'click-repeat-interval'");
     QTest::newRow("bell-features-type")
         << withValue(object(), QStringLiteral("bell-features"), true)
         << QStringLiteral("values.bell-features must be an object");
@@ -939,6 +948,28 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("selection-word-chars"),
                      QJsonArray{65})
         << QStringLiteral("values.selection-word-chars must begin with U+0000");
+    QTest::newRow("click-repeat-interval-zero")
+        << withValue(object(), QStringLiteral("click-repeat-interval"), 0)
+        << QStringLiteral(
+               "values.click-repeat-interval must be a nonzero unsigned integer");
+    QTest::newRow("click-repeat-interval-negative")
+        << withValue(object(), QStringLiteral("click-repeat-interval"), -1)
+        << QStringLiteral(
+               "values.click-repeat-interval must be an unsigned integer");
+    QTest::newRow("click-repeat-interval-fractional")
+        << withValue(object(), QStringLiteral("click-repeat-interval"), 1.5)
+        << QStringLiteral(
+               "values.click-repeat-interval must be an unsigned integer");
+    QTest::newRow("click-repeat-interval-overflow")
+        << withValue(object(), QStringLiteral("click-repeat-interval"),
+                     4294967296.0)
+        << QStringLiteral(
+               "values.click-repeat-interval must be an unsigned integer");
+    QTest::newRow("click-repeat-interval-nonnumeric")
+        << withValue(object(), QStringLiteral("click-repeat-interval"),
+                     QStringLiteral("500"))
+        << QStringLiteral(
+               "values.click-repeat-interval must be an unsigned integer");
     QTest::newRow("working-directory-empty")
         << withValue(object(), QStringLiteral("working-directory"),
                      QString{})

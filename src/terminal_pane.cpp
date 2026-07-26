@@ -1712,6 +1712,8 @@ void TerminalPane::applyRuntimeOptions(
     updated.bellAudioVolume = options.bellAudioVolume;
     updated.selectionClipboard = options.selectionClipboard;
     updated.selectionWordChars = options.selectionWordChars;
+    updated.clickRepeatIntervalMilliseconds =
+        options.clickRepeatIntervalMilliseconds;
     updated.clipboardPaste = options.clipboardPaste;
     updated.splitAppearance = options.splitAppearance;
     updated.middleClickAction = options.middleClickAction;
@@ -4218,7 +4220,7 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
         // Ghostty starts its normal selection gesture even for a potential
         // link click. A release may activate the link, while a drag naturally
         // continues as selection instead.
-        beginLocalSelection(event->position(), 1, modifiers);
+        beginLocalSelection(*event, modifiers);
     } else if (event->button() == Qt::MiddleButton) {
         QClipboard *const clipboard = QGuiApplication::clipboard();
         if (options_.middleClickAction == MiddleClickAction::PrimaryPaste
@@ -4235,34 +4237,39 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
 
 void TerminalPane::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    revealMouseAfterActivity();
-    forceActiveFocus(Qt::MouseFocusReason);
-    Q_EMIT activated(this);
-    updateHyperlinkHover(event->position(), event->modifiers());
-    if (linkPreviewPointerCaptured_) {
-        event->accept();
-        return;
-    }
-    const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier);
-    if (!report) {
-        beginLocalSelection(event->position(), 2, modifiers);
-    } else {
-        selecting_ = false;
-        sendMouse(event->position(), TerminalMouseInput::Press, event->button(),
-                  event->buttons(), modifiers);
-    }
+    // Qt delivers MouseButtonPress for the physical second click before this
+    // additional notification. The ordinary press path has already handled
+    // focus, hover, local selection or DEC reporting; forwarding this event
+    // would turn every double click into a libghostty triple click (and emit a
+    // duplicate application mouse report).
     event->accept();
 }
 
-void TerminalPane::beginLocalSelection(const QPointF &position, int clickCount,
+void TerminalPane::beginLocalSelection(const QMouseEvent &event,
                                        Qt::KeyboardModifiers modifiers)
 {
+    const QPointF position = event.position();
     const QPoint cell = cellAt(position);
+    const qreal devicePixelRatio = normalizedDevicePixelRatio(
+        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    constexpr quint64 nanosecondsPerMillisecond = 1'000'000;
+    const quint64 timestampMilliseconds = event.timestamp();
+    const bool timestampValid = timestampMilliseconds != 0
+        && timestampMilliseconds
+            <= std::numeric_limits<quint64>::max() / nanosecondsPerMillisecond;
+    const TerminalSelectionPressInput input{
+        .column = cell.x(),
+        .row = cell.y(),
+        .surfaceX = position.x() * devicePixelRatio,
+        .surfaceY = position.y() * devicePixelRatio,
+        .timestampNanoseconds = timestampValid
+            ? timestampMilliseconds * nanosecondsPerMillisecond
+            : 0,
+        .timestampValid = timestampValid,
+        .controlModifier = modifiers.testFlag(Qt::ControlModifier),
+    };
     selecting_ = true;
-    controller_->beginSelection(cell.x(), cell.y(), clickCount,
-                                modifiers.testFlag(Qt::AltModifier));
+    controller_->beginSelection(input);
 }
 
 void TerminalPane::hideMouseForTerminalKey(const TerminalKeyInput &input,
@@ -4379,8 +4386,15 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
                   event->buttons(), modifiers);
     } else if (selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint cell = cellAt(event->position());
-        controller_->updateSelection(cell.x(), cell.y(),
-                                     modifiers.testFlag(Qt::AltModifier));
+        const qreal devicePixelRatio = normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+        controller_->updateSelection({
+            .column = cell.x(),
+            .row = cell.y(),
+            .surfaceX = event->position().x() * devicePixelRatio,
+            .surfaceY = event->position().y() * devicePixelRatio,
+            .rectangular = modifiers.testFlag(Qt::AltModifier),
+        });
     }
     event->accept();
 }

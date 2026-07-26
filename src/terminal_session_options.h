@@ -68,6 +68,7 @@ struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
     TerminalSelectionClipboardOptions selectionClipboard;
     QVector<quint32> selectionWordChars;
+    quint32 clickRepeatIntervalMilliseconds = 500;
     TerminalClipboardPasteOptions clipboardPaste;
     bool linkUrl = true;
 

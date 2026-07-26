@@ -398,6 +398,7 @@ private Q_SLOTS:
     void reloadsMiddleClickClipboardPolicy();
     void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
+    void forwardsTypedSelectionPointerMetadataOnce();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
@@ -2203,6 +2204,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .clearOnCopy = true,
     };
     reloaded.selectionWordChars = {0, quint32{' '}, quint32{';'}};
+    reloaded.clickRepeatIntervalMilliseconds = 731;
     reloaded.clipboardPaste = {
         .protection = false,
         .bracketedSafe = true,
@@ -2221,6 +2223,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.appearance, reloaded.appearance);
     QCOMPARE(splitOptions.selectionClipboard, reloaded.selectionClipboard);
     QCOMPARE(splitOptions.selectionWordChars, reloaded.selectionWordChars);
+    QCOMPARE(splitOptions.clickRepeatIntervalMilliseconds,
+             reloaded.clickRepeatIntervalMilliseconds);
     QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
@@ -3006,6 +3010,127 @@ void TerminalPaneTest::prefersPrecisionPixelsAndRetainsPhysicalWheelDistance()
     QVERIFY(sendPixel(-logicalPixelDelta, 120));
     QCOMPARE(scroll.count(), 3);
     QCOMPARE(requestAt(2).delta, qint64{1});
+
+    delete pane;
+}
+
+void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
+{
+    qRegisterMetaType<TerminalSelectionPressInput>();
+    qRegisterMetaType<TerminalSelectionDragInput>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    window.resize(320, 160);
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy presses(controller,
+                       &TerminalController::beginSelectionRequested);
+    QSignalSpy drags(controller, &TerminalController::updateSelectionRequested);
+    QSignalSpy releases(controller, &TerminalController::endSelectionRequested);
+
+    const qreal devicePixelRatio = window.devicePixelRatio();
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography, devicePixelRatio);
+    const QPointF pressPosition(metrics.cellWidth * 2.25,
+                                metrics.cellHeight * 1.5);
+    const QPointF dragPosition(metrics.cellWidth * 4.75,
+                               metrics.cellHeight * 2.5);
+    constexpr quint64 pressTimestampMilliseconds = 271;
+    const auto sendMouse =
+        [pane](QEvent::Type type, const QPointF &position,
+               Qt::MouseButton button, Qt::MouseButtons buttons,
+               Qt::KeyboardModifiers modifiers, quint64 timestampMilliseconds) {
+            QMouseEvent event(type, position, position, position, button,
+                              buttons, modifiers);
+            event.setTimestamp(timestampMilliseconds);
+            QCoreApplication::sendEvent(pane, &event);
+            QVERIFY(event.isAccepted());
+        };
+
+    sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::ControlModifier, pressTimestampMilliseconds);
+    QCOMPARE(presses.count(), 1);
+    const TerminalSelectionPressInput firstPress =
+        qvariant_cast<TerminalSelectionPressInput>(
+            presses.constFirst().constFirst());
+    QCOMPARE(firstPress.column, 2);
+    QCOMPARE(firstPress.row, 1);
+    QCOMPARE(firstPress.surfaceX, pressPosition.x() * devicePixelRatio);
+    QCOMPARE(firstPress.surfaceY, pressPosition.y() * devicePixelRatio);
+    QCOMPARE(firstPress.timestampNanoseconds,
+             pressTimestampMilliseconds * quint64{1'000'000});
+    QVERIFY(firstPress.timestampValid);
+    QVERIFY(firstPress.controlModifier);
+
+    sendMouse(QEvent::MouseMove, dragPosition, Qt::NoButton, Qt::LeftButton,
+              Qt::AltModifier, pressTimestampMilliseconds + 1);
+    QCOMPARE(drags.count(), 1);
+    const TerminalSelectionDragInput drag =
+        qvariant_cast<TerminalSelectionDragInput>(
+            drags.constFirst().constFirst());
+    QCOMPARE(drag.column, 4);
+    QCOMPARE(drag.row, 2);
+    QCOMPARE(drag.surfaceX, dragPosition.x() * devicePixelRatio);
+    QCOMPARE(drag.surfaceY, dragPosition.y() * devicePixelRatio);
+    QVERIFY(drag.rectangular);
+
+    sendMouse(QEvent::MouseButtonRelease, dragPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::AltModifier, pressTimestampMilliseconds + 2);
+    QCOMPARE(releases.count(), 1);
+
+    // Qt sends the physical second press through mousePressEvent and follows
+    // it with an informational MouseButtonDblClick event. Only the former may
+    // reach libghostty, otherwise a double click would classify as a triple.
+    sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::MetaModifier,
+              pressTimestampMilliseconds + 100);
+    QCOMPARE(presses.count(), 2);
+    const TerminalSelectionPressInput secondPress =
+        qvariant_cast<TerminalSelectionPressInput>(
+            presses.constLast().constFirst());
+    QVERIFY(!secondPress.controlModifier);
+    sendMouse(QEvent::MouseButtonDblClick, pressPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::MetaModifier,
+              pressTimestampMilliseconds + 100);
+    QCOMPARE(presses.count(), 2);
+    QCOMPARE(drags.count(), 1);
+    QCOMPARE(releases.count(), 1);
+
+    sendMouse(QEvent::MouseButtonRelease, pressPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::MetaModifier, pressTimestampMilliseconds + 101);
+    QCOMPARE(releases.count(), 2);
+
+    // Zero is Qt's unavailable timestamp sentinel in synthetic/unsupported
+    // input. Forward it explicitly as untimed rather than inventing an epoch.
+    sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::NoModifier, 0);
+    QCOMPARE(presses.count(), 3);
+    const TerminalSelectionPressInput untimedPress =
+        qvariant_cast<TerminalSelectionPressInput>(
+            presses.constLast().constFirst());
+    QVERIFY(!untimedPress.timestampValid);
+    QCOMPARE(untimedPress.timestampNanoseconds, quint64{0});
+    sendMouse(QEvent::MouseButtonRelease, pressPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::NoModifier, 0);
+
+    sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
+              Qt::LeftButton, Qt::NoModifier,
+              std::numeric_limits<quint64>::max());
+    QCOMPARE(presses.count(), 4);
+    const TerminalSelectionPressInput overflowingPress =
+        qvariant_cast<TerminalSelectionPressInput>(
+            presses.constLast().constFirst());
+    QVERIFY(!overflowingPress.timestampValid);
+    QCOMPARE(overflowingPress.timestampNanoseconds, quint64{0});
 
     delete pane;
 }

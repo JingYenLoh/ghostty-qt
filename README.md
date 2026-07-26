@@ -26,12 +26,12 @@ the host-language comparison and remaining engineering risks.
   text blink is retained but deliberately not animated, matching the pinned
   Ghostty generic renderer.
 - Keyboard, focus, mouse-reporting, bracketed-paste, and IME input paths.
-- Mouse selection, double-click word selection, rectangular selection with
-  `Alt`, keyboard select-all/endpoint adjustment, configurable trailing-space
-  trimming and copy-on-select destinations, primary-selection fallback,
-  selection clearing after explicit copy or typed input, configurable
-  middle-click paste, and worker-authoritative unsafe-paste review with
-  correlated confirmation.
+- Mouse selection with libghostty-classified single-, double-, and triple-click
+  cell/word/line behavior, rectangular selection with `Alt`, keyboard
+  select-all/endpoint adjustment, configurable trailing-space trimming and
+  copy-on-select destinations, primary-selection fallback, selection clearing
+  after explicit copy or typed input, configurable middle-click paste, and
+  worker-authoritative unsafe-paste review with correlated confirmation.
 - Plain-text screen, scrollback, and selection file actions, with the resulting
   private temporary artifact copied as a path, pasted into the terminal, or
   opened through the desktop URL handler.
@@ -337,11 +337,12 @@ The current compatibility slice applies these keys:
 | `clipboard-trim-trailing-spaces`, `copy-on-select`, `selection-clear-on-copy` | Apply live to selection copying. Linux `copy-on-select` accepts Ghostty's `false`, `true` (primary selection), and `clipboard` (primary and standard clipboard) modes, with standard-clipboard fallback when primary selection is unavailable. Explicit copy can clear only after formatting; automatic copy never clears. |
 | `clipboard-paste-protection`, `clipboard-paste-bracketed-safe` | Default to `true` and apply live. The session worker uses Ghostty's current bracketed-paste mode, exact safety check, and encoder. Unsafe text is retained under a correlated request ID; cancellation is inert, while confirmation rechecks current terminal mode before encoding and returns to the active screen before writing. |
 | `selection-clear-on-typing` | Defaults to `true` and applies live. A non-modifier key clears only after it produces terminal bytes; encoded repeats/releases follow the same rule, and physical Escape clears even when configured `false`. IME commit and preedit transitions participate, while consumed bindings, sequence-leader replay, raw `text`/`csi`/`esc` actions, and paste do not. |
-| `selection-word-chars` | Uses Ghostty's finalized ordered Unicode-scalar boundary list, including its mandatory U+0000 boundary, without reinterpreting the source string in Qt. Reload applies to subsequent worker-owned Ghostty selection-gesture press and drag events, so both double-click word selection and word dragging use the newest ASCII or non-BMP boundaries. An installed selection is not reshaped by reload alone. Click counting remains Qt-owned until the separately tracked `click-repeat-interval` is implemented. |
+| `click-repeat-interval` | Uses Ghostty's finalized whole-millisecond value; an unset or zero value becomes the Linux default of 500 ms. Qt converts a nonzero arbitrary-origin millisecond window-system timestamp to nanoseconds with checked multiplication; zero or overflow leaves that press untimed. Libghostty accepts a repeat when the time since the preceding press is at most the interval and its Euclidean distance from the sequence's original press is at most one physical cell width. It classifies single-click cell, double-click word, and triple-click line selection, clamping later repeats at triple. On Linux, `Ctrl` changes triple-click to OSC 133 semantic-output selection; `Meta`/Super does not. Qt ignores its extra double-click notification because the physical second press has already arrived. Reload applies to the next press without reclassifying the installed selection, and ordinary release preserves repeat history. Reported physical buttons reset that history, while reported motion, wheel input, and captured fractional scrolling do not; the latter two still clear the installed selection. |
+| `selection-word-chars` | Uses Ghostty's finalized ordered Unicode-scalar boundary list, including its mandatory U+0000 boundary, without reinterpreting the source string in Qt. Reload applies to subsequent worker-owned Ghostty selection-gesture press and drag events, so both double-click word selection and word dragging use the newest ASCII or non-BMP boundaries. An installed selection is not reshaped by reload alone. |
 | `middle-click-action` | Applies `primary-paste` or `ignore` live. Primary paste reads the standard clipboard in `copy-on-select=clipboard` mode; otherwise it reads the primary selection with standard fallback. Terminal mouse reporting takes precedence. |
 | `mouse-hide-while-typing` | Defaults to `false` and applies live per pane. A nonempty, non-repeating text key hides the pointer only when that key is actually forwarded to the terminal, including invalid-sequence flush and unavailable `performable` fallback; consumed bindings, sequence leaders, modifiers, releases, raw actions, and paste do not. A nonempty IME commit also hides it, while preedit alone does not. Real pointer motion of at least one physical pixel, pointer leave, button press/release, wheel input, focus change, or disabling the setting reveals it. Deferred binding results retain their original pointer-activity epoch, so stale fallback cannot re-hide after later interaction or become retroactively eligible when the policy is enabled. While hidden, the blank cursor takes priority over the hyperlink hand cursor; revealing restores the still-valid hyperlink cursor or the inherited default. |
 | `focus-follows-mouse` | Defaults to `false` and applies live per pane. When enabled, actual hover or drag motion focuses the pane only if its Qt window is already active; it never raises or changes retained focus in an inactive window. Same-position compositor events and accumulated motion below one physical pixel are inert, while the accepted baseline retains subpixel movement until it reaches that threshold. |
-| `mouse-reporting` | Defaults to `true` and gates application-requested DEC mouse capture independently for each pane. `false` leaves the terminal's requested mode intact while restoring local selection and scrolling. Every pointer event rechecks the policy/DEC conjunction; reported buttons and wheels atomically clear terminal selection. Reload replaces any pane-local runtime toggle, while new tabs and splits use the configured value. |
+| `mouse-reporting` | Defaults to `true` and gates application-requested DEC mouse capture independently for each pane. `false` leaves the terminal's requested mode intact while restoring local selection and scrolling. Every pointer event rechecks the policy/DEC conjunction. Reported physical buttons clear selection and reset repeat-click history; motion does neither. Reported wheels and captured fractional scrolling clear selection while preserving that history. Reload replaces any pane-local runtime toggle, while new tabs and splits use configured state. |
 | `mouse-scroll-multiplier` | Preserves Ghostty's independently finalized precision and discrete multipliers, including the `1` and `3` defaults. Qt pixel deltas take the precision path; otherwise fractional 120-unit angle deltas take the discrete path. Each pane accumulates movement in physical-pixel space, retains direction reversals and remainder across events, and emits the same whole-row count through native viewport scrolling or repeated DEC wheel reports. A single GUI dispatch is bounded to 10,000 rows and retains excess motion for later input. Reload affects new movement without replacing the pane or discarding existing distance. |
 | `link-url` | Enables Ghostty's pinned default regex matcher for scheme URLs and file paths. The default is `true`; live reload recomputes hover state. Explicit OSC 8 hyperlinks are unaffected. |
 | `link-previews` | Controls the destination overlay for an accepted `Ctrl` hover. `true` (the default) previews OSC 8 and regex links, `false` previews neither, and `osc8` previews only explicit OSC 8 destinations. Reload is frontend-only and preserves a hover over the terminal link. Removing a preview while its bottom-left guard owns the pointer resumes physical terminal hit testing and may query that newly exposed cell. |
@@ -593,15 +594,17 @@ entry text, matching Ghostty's GTK behavior. In the overlay,
 Enter selects the next result, Shift+Enter selects the previous result, and
 Escape ends search. Reopening search retains and selects the previous entry.
 
-Drag with the left mouse button to select; double-click to select a word and
-hold `Alt` while dragging for a rectangular selection. `Shift` bypasses an
-application's mouse-reporting mode so local selection and scrolling remain
-available. Hold `Ctrl` over an OSC 8 hyperlink or a URL/path recognized by
-Ghostty's default matcher to show its pointer and underline, then release the
-left button over the same tracked target without dragging to open it. Relative
-file matches are resolved against the terminal's current working directory
-when that target exists. When enabled, the preview shows the accepted raw
-destination in a bounded, middle-elided overlay at the bottom-left of that
+Drag with the left mouse button to select; double-click to select a word,
+triple-click to select a line, and hold `Alt` while dragging for a rectangular
+selection. On Linux, holding `Ctrl` for a triple-click selects the OSC 133
+semantic command output instead; `Meta`/Super retains line selection. `Shift`
+bypasses an application's mouse-reporting mode so local selection and scrolling
+remain available. Hold `Ctrl` over an OSC 8 hyperlink or a URL/path recognized
+by Ghostty's default matcher to show its pointer and underline, then release
+the left button over the same tracked target without dragging to open it.
+Relative file matches are resolved against the terminal's current working
+directory when that target exists. When enabled, the preview shows the accepted
+raw destination in a bounded, middle-elided overlay at the bottom-left of that
 pane. Moving into the overlay retains the logical link hover and relocates the
 overlay to the bottom-right; leaving its original guard resumes terminal hit
 testing. Control and bidirectional formatting characters are escaped, invalid
