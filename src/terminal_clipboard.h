@@ -19,12 +19,12 @@ struct TerminalClipboardWriteTargets {
     bool primary = false;
 };
 
-constexpr TerminalClipboardWriteTargets terminalClipboardWriteTargets(
-    TerminalClipboardDestination destination, bool supportsPrimary)
+constexpr TerminalClipboardWriteTargets
+terminalClipboardWriteTargets(TerminalClipboardDestination destination,
+                              bool supportsPrimary)
 {
     switch (destination) {
-    case TerminalClipboardDestination::Standard:
-        return {.standard = true};
+    case TerminalClipboardDestination::Standard: return {.standard = true};
     case TerminalClipboardDestination::Primary:
         return supportsPrimary
             ? TerminalClipboardWriteTargets{.primary = true}
@@ -35,8 +35,9 @@ constexpr TerminalClipboardWriteTargets terminalClipboardWriteTargets(
     return {};
 }
 
-constexpr TerminalClipboardSource terminalMiddleClickSource(
-    TerminalCopyOnSelectMode copyOnSelect, bool supportsPrimary)
+constexpr TerminalClipboardSource
+terminalMiddleClickSource(TerminalCopyOnSelectMode copyOnSelect,
+                          bool supportsPrimary)
 {
     if (copyOnSelect == TerminalCopyOnSelectMode::PrimaryAndClipboard
         || !supportsPrimary) {
@@ -51,7 +52,7 @@ void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
 // A present empty string is distinct from a clipboard without a text MIME
 // representation. Explicit primary reads never fall back to the standard
 // clipboard; middle-click fallback remains a separate policy below.
-std::optional<QString> readTerminalClipboard(
-    QClipboard *clipboard, TerminalClipboardSource source);
+std::optional<QString> readTerminalClipboard(QClipboard *clipboard,
+                                             TerminalClipboardSource source);
 QString readMiddleClickClipboard(QClipboard *clipboard,
                                  TerminalCopyOnSelectMode copyOnSelect);

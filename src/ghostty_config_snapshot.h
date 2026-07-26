@@ -15,7 +15,8 @@ enum class GhosttyConfigDiagnosticSeverity {
 };
 
 struct GhosttyConfigDiagnostic {
-    GhosttyConfigDiagnosticSeverity severity = GhosttyConfigDiagnosticSeverity::Warning;
+    GhosttyConfigDiagnosticSeverity severity =
+        GhosttyConfigDiagnosticSeverity::Warning;
     QString message;
     QString sourcePath;
     int line = 0;
@@ -33,8 +34,7 @@ struct GhosttyConfigSnapshot {
     explicit GhosttyConfigSnapshot(GhosttyConfigExport exported)
         : values(std::move(exported.values))
         , keybindings(std::move(exported.keybindings))
-    {
-    }
+    {}
 
     GhosttyConfigValues values;
     GhosttyKeybindConfig keybindings;

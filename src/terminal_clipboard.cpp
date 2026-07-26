@@ -24,9 +24,8 @@ void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
         return;
     }
 
-    const TerminalClipboardWriteTargets targets =
-        terminalClipboardWriteTargets(destination,
-                                      clipboard->supportsSelection());
+    const TerminalClipboardWriteTargets targets = terminalClipboardWriteTargets(
+        destination, clipboard->supportsSelection());
     if (targets.standard) {
         clipboard->setText(text, QClipboard::Clipboard);
     }
@@ -35,8 +34,8 @@ void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
     }
 }
 
-std::optional<QString> readTerminalClipboard(
-    QClipboard *clipboard, TerminalClipboardSource source)
+std::optional<QString> readTerminalClipboard(QClipboard *clipboard,
+                                             TerminalClipboardSource source)
 {
     assertGuiThread();
     if (clipboard == nullptr
@@ -59,7 +58,6 @@ QString readMiddleClickClipboard(QClipboard *clipboard,
                                  TerminalCopyOnSelectMode copyOnSelect)
 {
     const TerminalClipboardSource source = terminalMiddleClickSource(
-        copyOnSelect,
-        clipboard != nullptr && clipboard->supportsSelection());
+        copyOnSelect, clipboard != nullptr && clipboard->supportsSelection());
     return readTerminalClipboard(clipboard, source).value_or(QString{});
 }

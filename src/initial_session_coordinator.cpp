@@ -9,25 +9,22 @@
 
 InitialSessionCoordinator::InitialSessionCoordinator()
     : InitialSessionCoordinator(Payload{})
-{
-}
+{}
 
 InitialSessionCoordinator::InitialSessionCoordinator(Payload payload)
     : QObject(nullptr)
     , payload_(std::move(payload))
-{
-}
+{}
 
-InitialSessionCoordinator::RequestResult InitialSessionCoordinator::request(
-    std::optional<Ticket> existingTicket)
+InitialSessionCoordinator::RequestResult
+InitialSessionCoordinator::request(std::optional<Ticket> existingTicket)
 {
     const QMutexLocker lock(&mutex_);
     return requestLocked(existingTicket);
 }
 
 InitialSessionCoordinator::RequestResult
-InitialSessionCoordinator::requestLocked(
-    std::optional<Ticket> existingTicket)
+InitialSessionCoordinator::requestLocked(std::optional<Ticket> existingTicket)
 {
     if (existingTicket.has_value()) {
         const Ticket ticket = *existingTicket;
@@ -159,8 +156,7 @@ InitialSessionCoordinator::State InitialSessionCoordinator::state() const
     return state_;
 }
 
-InitialSessionCoordinator::Ticket
-InitialSessionCoordinator::nextTicketLocked()
+InitialSessionCoordinator::Ticket InitialSessionCoordinator::nextTicketLocked()
 {
     // Exhausting every non-zero 64-bit ticket is not operationally possible,
     // but refusing a request is safer than wrapping and reviving stale tickets.

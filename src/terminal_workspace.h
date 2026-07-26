@@ -11,8 +11,8 @@
 #include <QHash>
 #include <QMetaObject>
 #include <QPointer>
-#include <QQuickItem>
 #include <QQmlComponent>
+#include <QQuickItem>
 #include <QStringList>
 #include <QStringView>
 #include <QVector>
@@ -32,8 +32,8 @@ struct WorkspaceCloseAssessment {
     bool needsConfirmation = false;
     bool hasReadOnlyPane = false;
 
-    WorkspaceCloseAssessment &operator|=(
-        const WorkspaceCloseAssessment &other) noexcept
+    WorkspaceCloseAssessment &
+    operator|=(const WorkspaceCloseAssessment &other) noexcept
     {
         needsConfirmation |= other.needsConfirmation;
         hasReadOnlyPane |= other.hasReadOnlyPane;
@@ -46,24 +46,24 @@ class TerminalWorkspace : public QQuickItem {
     QML_NAMED_ELEMENT(TerminalWorkspace)
     Q_PROPERTY(QAbstractItemModel *tabModel READ qmlTabModel CONSTANT)
     Q_PROPERTY(QStringList tabTitles READ tabTitles NOTIFY tabTitlesChanged)
-    Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
-    Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
+    Q_PROPERTY(
+        QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
+    Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY
+                   currentIndexChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabTitlesChanged)
-    Q_PROPERTY(bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
+    Q_PROPERTY(
+        bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
     Q_PROPERTY(
         bool tabBarAtBottom READ tabBarAtBottom NOTIFY tabsLocationChanged)
-    Q_PROPERTY(QQmlComponent *searchOverlayComponent
-               READ searchOverlayComponent
-               WRITE setSearchOverlayComponent
-               NOTIFY searchOverlayComponentChanged)
-    Q_PROPERTY(QQmlComponent *readOnlyOverlayComponent
-               READ readOnlyOverlayComponent
-               WRITE setReadOnlyOverlayComponent
-               NOTIFY readOnlyOverlayComponentChanged)
-    Q_PROPERTY(QQmlComponent *resizeOverlayComponent
-               READ resizeOverlayComponent
-               WRITE setResizeOverlayComponent
-               NOTIFY resizeOverlayComponentChanged)
+    Q_PROPERTY(
+        QQmlComponent *searchOverlayComponent READ searchOverlayComponent WRITE
+            setSearchOverlayComponent NOTIFY searchOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *readOnlyOverlayComponent READ
+                   readOnlyOverlayComponent WRITE setReadOnlyOverlayComponent
+                       NOTIFY readOnlyOverlayComponentChanged)
+    Q_PROPERTY(
+        QQmlComponent *resizeOverlayComponent READ resizeOverlayComponent WRITE
+            setResizeOverlayComponent NOTIFY resizeOverlayComponentChanged)
     Q_PROPERTY(QQmlComponent *scrollbarComponent READ scrollbarComponent WRITE
                    setScrollbarComponent NOTIFY scrollbarComponentChanged)
     Q_PROPERTY(QQmlComponent *bellBorderComponent READ bellBorderComponent WRITE
@@ -77,17 +77,15 @@ public:
     // QML constructs the item before the process controller can supply the
     // per-window launch request. Initialization is one-shot and creates the
     // first tab only after those options and QML components are ready.
-    bool initialize(
-        const LaunchOptions &options,
-        TerminalSessionStartMode initialSessionStartMode =
-            TerminalSessionStartMode::Immediate,
-        std::shared_ptr<InitialSessionCoordinator>
-            initialSessionCoordinator = {});
+    bool initialize(const LaunchOptions &options,
+                    TerminalSessionStartMode initialSessionStartMode =
+                        TerminalSessionStartMode::Immediate,
+                    std::shared_ptr<InitialSessionCoordinator>
+                        initialSessionCoordinator = {});
     bool initialize(
         const LaunchOptions &options,
         TerminalSessionStartMode initialSessionStartMode,
-        std::shared_ptr<InitialSessionCoordinator>
-            initialSessionCoordinator,
+        std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
         GhosttyKeybindProgram keybindProgram);
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
@@ -117,9 +115,9 @@ public:
     {
         return keybindProgram_;
     }
-    [[nodiscard]] std::optional<LaunchOptions> newWindowLaunchOptions(
-        const LaunchOptions &applicationOptions,
-        PaneId sourcePaneId = {}) const;
+    [[nodiscard]] std::optional<LaunchOptions>
+    newWindowLaunchOptions(const LaunchOptions &applicationOptions,
+                           PaneId sourcePaneId = {}) const;
     [[nodiscard]] WorkspaceCloseAssessment closeAssessment() const;
     [[nodiscard]] bool hasActivePane() const;
     bool focusActivePane();
@@ -165,8 +163,7 @@ public:
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
-    bool executeSurfaceActionOnAllPanes(
-        const GhosttyConfiguredAction &action);
+    bool executeSurfaceActionOnAllPanes(const GhosttyConfiguredAction &action);
 
     Q_INVOKABLE void setCurrentIndex(int index);
     Q_INVOKABLE void newTab();
@@ -179,8 +176,7 @@ public:
     Q_INVOKABLE void cancelClose(quint64 confirmationId);
     Q_INVOKABLE void confirmPaste(quint64 confirmationId);
     Q_INVOKABLE void cancelPaste(quint64 confirmationId);
-    Q_INVOKABLE void confirmTitlePrompt(quint64 promptId,
-                                        const QString &title);
+    Q_INVOKABLE void confirmTitlePrompt(quint64 promptId, const QString &title);
     Q_INVOKABLE void cancelTitlePrompt(quint64 promptId);
 
 Q_SIGNALS:
@@ -218,7 +214,8 @@ Q_SIGNALS:
     void bellBorderComponentChanged();
 
 protected:
-    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry,
+                        const QRectF &oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;
 
 private:
@@ -280,9 +277,8 @@ private:
     struct PendingWindowClose {
         quint64 requestId = 0;
     };
-    using PendingClose = std::variant<
-        std::monostate, PendingPaneClose, PendingTabClose,
-        PendingWindowClose>;
+    using PendingClose = std::variant<std::monostate, PendingPaneClose,
+                                      PendingTabClose, PendingWindowClose>;
     enum class PaneActivationReason {
         Direct,
         SplitNavigation,
@@ -293,19 +289,17 @@ private:
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate);
-    void setPaneOverlayComponent(
-        PaneOverlaySlot &slot,
-        QQmlComponent *component,
-        const char *paneProperty,
-        const char *description,
-        void (TerminalWorkspace::*changedSignal)());
+    void setPaneOverlayComponent(PaneOverlaySlot &slot,
+                                 QQmlComponent *component,
+                                 const char *paneProperty,
+                                 const char *description,
+                                 void (TerminalWorkspace::*changedSignal)());
     [[nodiscard]] bool attachPaneOverlays(TerminalPane *pane);
-    template<typename Visitor>
-    void forEachPane(Visitor &&visitor) const;
+    template <typename Visitor> void forEachPane(Visitor &&visitor) const;
     [[nodiscard]] QVector<QPointer<TerminalPane>> paneSnapshot() const;
     [[nodiscard]] QVector<BroadPaneTarget> broadPaneSnapshot() const;
-    [[nodiscard]] bool broadPaneTargetIsLive(
-        const BroadPaneTarget &target) const;
+    [[nodiscard]] bool
+    broadPaneTargetIsLive(const BroadPaneTarget &target) const;
     bool executeAction(const WorkspaceActionRequest &request);
     PaneHandle createNewTab(
         PaneId sourcePaneId = {},
@@ -315,9 +309,9 @@ private:
     void activateTab(TabId id);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);
-    void activatePane(
-        PaneId id,
-        PaneActivationReason reason = PaneActivationReason::Direct);
+    void
+    activatePane(PaneId id,
+                 PaneActivationReason reason = PaneActivationReason::Direct);
     void requestWindowCloseImpl(WindowCloseIntent intent);
     void approveWindowClose();
     void publishWindowCloseApproval();
@@ -337,15 +331,13 @@ private:
     const Tab *tabById(TabId id) const;
     TabId currentTabId() const;
     PaneId currentPaneId() const;
-    [[nodiscard]] bool splitPane(PaneId paneId,
-                                 Qt::Orientation orientation,
+    [[nodiscard]] bool splitPane(PaneId paneId, Qt::Orientation orientation,
                                  bool placeNewPaneFirst);
     void closePane(PaneId paneId, bool force = false);
     void closeTab(TabId tabId, CloseTabMode mode = CloseTabMode::This,
                   bool force = false);
     void closeTabs(PendingTabClose close, bool force = false);
-    std::vector<TabId> closeTabTargets(TabId tabId,
-                                       CloseTabMode mode) const;
+    std::vector<TabId> closeTabTargets(TabId tabId, CloseTabMode mode) const;
     void removeTab(TabId tabId);
     void removeTabs(PendingTabClose close);
     void refreshTab(TabId tabId);
@@ -357,8 +349,8 @@ private:
     void updateSplitDividers(const Tab *tab);
     void updateSplitDividers(Node *node, quint64 generation);
     Node *findSplitNode(Node *node, quint64 splitId) const;
-    [[nodiscard]] std::optional<SplitDividerDrag> beginSplitDividerDrag(
-        quint64 splitId, const QPointF &position) const;
+    [[nodiscard]] std::optional<SplitDividerDrag>
+    beginSplitDividerDrag(quint64 splitId, const QPointF &position) const;
     bool dragSplitDivider(quint64 splitId, const QPointF &position,
                           const SplitDividerDrag &drag);
     void setSplitRatio(Tab &tab, Node &split, qreal ratio);
@@ -379,8 +371,8 @@ private:
     bool findNodePath(Node *node, PaneId paneId,
                       std::vector<Node *> *path) const;
     WorkspaceCloseAssessment assessTabClose(const Tab &tab) const;
-    WorkspaceCloseAssessment assessTabsClose(
-        const std::vector<TabId> &tabIds) const;
+    WorkspaceCloseAssessment
+    assessTabsClose(const std::vector<TabId> &tabIds) const;
     WorkspaceCloseAssessment assessWorkspaceClose() const;
     bool shouldConfirmPaneClose(const TerminalPane &pane) const;
     int tabIndexForId(TabId tabId) const;

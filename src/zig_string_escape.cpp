@@ -45,8 +45,8 @@ bool appendUtf8(QByteArray &output, quint32 codepoint)
     return false;
 }
 
-std::optional<QByteArray> decodeZigEscapes(
-    QByteArrayView serialized, HexEscapeEncoding hexEscapeEncoding)
+std::optional<QByteArray> decodeZigEscapes(QByteArrayView serialized,
+                                           HexEscapeEncoding hexEscapeEncoding)
 {
     QByteArray decoded;
     decoded.reserve(serialized.size());
@@ -89,8 +89,7 @@ std::optional<QByteArray> decodeZigEscapes(
         }
         case 'u': {
             if (index >= serialized.size() || serialized.at(index++) != '{'
-                || index >= serialized.size()
-                || serialized.at(index) == '}') {
+                || index >= serialized.size() || serialized.at(index) == '}') {
                 return std::nullopt;
             }
             bool closed = false;
@@ -114,8 +113,7 @@ std::optional<QByteArray> decodeZigEscapes(
             }
             break;
         }
-        default:
-            return std::nullopt;
+        default: return std::nullopt;
         }
 
         if (!appendUtf8(decoded, codepoint)) {
@@ -127,14 +125,12 @@ std::optional<QByteArray> decodeZigEscapes(
 
 } // namespace
 
-std::optional<QByteArray> decodeGhosttyActionString(
-    QByteArrayView serialized)
+std::optional<QByteArray> decodeGhosttyActionString(QByteArrayView serialized)
 {
     return decodeZigEscapes(serialized, HexEscapeEncoding::RawByte);
 }
 
-std::optional<QByteArray> decodeGhosttyConfigString(
-    QByteArrayView serialized)
+std::optional<QByteArray> decodeGhosttyConfigString(QByteArrayView serialized)
 {
     return decodeZigEscapes(serialized, HexEscapeEncoding::Utf8Codepoint);
 }

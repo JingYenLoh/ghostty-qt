@@ -24,8 +24,7 @@ QStringList uniquePathsInOrder(const QStringList &paths)
     return result;
 }
 
-void synchronizePaths(QFileSystemWatcher *watcher,
-                      const QStringList &current,
+void synchronizePaths(QFileSystemWatcher *watcher, const QStringList &current,
                       const QStringList &desired)
 {
     QStringList removed;
@@ -55,8 +54,7 @@ GhosttyConfigService::GhosttyConfigService(GhosttyConfigLoader loader,
                                            QObject *parent)
     : GhosttyConfigService(standardConfigPaths(), std::move(loader),
                            DefaultDebounceMilliseconds, true, parent)
-{
-}
+{}
 
 GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            GhosttyConfigLoader loader,
@@ -64,8 +62,7 @@ GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, false, parent)
-{
-}
+{}
 
 GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            GhosttyConfigLoader loader,
@@ -98,12 +95,12 @@ GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
     });
     failureRetryTimer_.setSingleShot(true);
     failureRetryTimer_.setInterval(5'000);
-    connect(&failureRetryTimer_, &QTimer::timeout,
-            this, &GhosttyConfigService::requestReload);
-    connect(&watcher_, &QFileSystemWatcher::fileChanged,
-            this, &GhosttyConfigService::watchedPathChanged);
-    connect(&watcher_, &QFileSystemWatcher::directoryChanged,
-            this, &GhosttyConfigService::watchedPathChanged);
+    connect(&failureRetryTimer_, &QTimer::timeout, this,
+            &GhosttyConfigService::requestReload);
+    connect(&watcher_, &QFileSystemWatcher::fileChanged, this,
+            &GhosttyConfigService::watchedPathChanged);
+    connect(&watcher_, &QFileSystemWatcher::directoryChanged, this,
+            &GhosttyConfigService::watchedPathChanged);
 
     refreshWatchPaths();
     reloadNow();
@@ -254,30 +251,29 @@ void GhosttyConfigService::beginAsyncReload()
     const QStringList candidates = candidatePaths_;
     GhosttyConfigService *const self = this;
     QMutex *const loaderMutex = &loaderMutex_;
-    reloadPool_.start(
-        [self, loader, candidates, generation, loaderMutex] {
-            GhosttyConfigLoadResult result = [&] {
-                QMutexLocker locker(loaderMutex);
-                return loader(candidates);
-            }();
-            QMetaObject::invokeMethod(
-                self,
-                [self, generation, result = std::move(result)]() mutable {
-                    const QPointer<GhosttyConfigService> guard(self);
-                    self->loadInProgress_ = false;
-                    if (generation == self->loadGeneration_) {
-                        self->applyLoadResult(std::move(result));
-                    }
-                    if (!guard) {
-                        return;
-                    }
-                    if (self->reloadPending_) {
-                        self->reloadPending_ = false;
-                        self->beginAsyncReload();
-                    }
-                },
-                Qt::QueuedConnection);
-        });
+    reloadPool_.start([self, loader, candidates, generation, loaderMutex] {
+        GhosttyConfigLoadResult result = [&] {
+            QMutexLocker locker(loaderMutex);
+            return loader(candidates);
+        }();
+        QMetaObject::invokeMethod(
+            self,
+            [self, generation, result = std::move(result)]() mutable {
+                const QPointer<GhosttyConfigService> guard(self);
+                self->loadInProgress_ = false;
+                if (generation == self->loadGeneration_) {
+                    self->applyLoadResult(std::move(result));
+                }
+                if (!guard) {
+                    return;
+                }
+                if (self->reloadPending_) {
+                    self->reloadPending_ = false;
+                    self->beginAsyncReload();
+                }
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 QString GhosttyConfigService::normalizedAbsolutePath(const QString &path)

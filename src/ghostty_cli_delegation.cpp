@@ -9,15 +9,13 @@
 
 namespace {
 
-const GhosttyCliActionCatalogEntry *findPinnedAction(
-    std::string_view argument) noexcept
+const GhosttyCliActionCatalogEntry *
+findPinnedAction(std::string_view argument) noexcept
 {
-    const auto action = std::ranges::find(
-        GhosttyPinnedCliActions, argument,
-        &GhosttyCliActionCatalogEntry::argument);
-    return action == GhosttyPinnedCliActions.end()
-        ? nullptr
-        : &*action;
+    const auto action =
+        std::ranges::find(GhosttyPinnedCliActions, argument,
+                          &GhosttyCliActionCatalogEntry::argument);
+    return action == GhosttyPinnedCliActions.end() ? nullptr : &*action;
 }
 
 std::error_code invalidArgument() noexcept
@@ -27,8 +25,8 @@ std::error_code invalidArgument() noexcept
 
 } // namespace
 
-GhosttyCliActionSelection selectGhosttyCliAction(
-    std::span<char *const> arguments) noexcept
+GhosttyCliActionSelection
+selectGhosttyCliAction(std::span<char *const> arguments) noexcept
 {
     if (arguments.empty()) return {};
     const GhosttyCliActionCatalogEntry *selected = nullptr;
@@ -48,8 +46,7 @@ GhosttyCliActionSelection selectGhosttyCliAction(
 
         // Pinned Ghostty stops looking at -e before an action. This frontend
         // additionally documents -- as its command boundary.
-        if (selected == nullptr
-            && (argument == "-e" || argument == "--")) {
+        if (selected == nullptr && (argument == "-e" || argument == "--")) {
             return {};
         }
         if (!argument.starts_with('+')) continue;
@@ -87,9 +84,8 @@ int GhosttyCliExecError::exitCode() const noexcept
         : 126;
 }
 
-GhosttyCliExecError execGhosttyCliHelper(
-    std::span<char *const> arguments,
-    std::string_view helperName)
+GhosttyCliExecError execGhosttyCliHelper(std::span<char *const> arguments,
+                                         std::string_view helperName)
 {
     const std::filesystem::path helperFilename{std::string(helperName)};
     if (arguments.empty() || helperName.empty()
@@ -117,14 +113,13 @@ GhosttyCliExecError execGhosttyCliHelper(
         };
     }
 
-    std::filesystem::path helper =
-        executable.parent_path() / helperFilename;
+    std::filesystem::path helper = executable.parent_path() / helperFilename;
     std::string encodedHelper = helper.native();
     std::vector<char *> helperArguments;
     helperArguments.reserve(arguments.size() + 1);
     helperArguments.push_back(encodedHelper.data());
-    helperArguments.insert(helperArguments.end(),
-                           arguments.begin() + 1, arguments.end());
+    helperArguments.insert(helperArguments.end(), arguments.begin() + 1,
+                           arguments.end());
     helperArguments.push_back(nullptr);
 
     ::execv(encodedHelper.c_str(), helperArguments.data());

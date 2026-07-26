@@ -14,8 +14,7 @@
 
 namespace {
 
-QString nativeError(const QString &operation,
-                    const QString &path,
+QString nativeError(const QString &operation, const QString &path,
                     int errorNumber)
 {
     return QStringLiteral("%1 '%2': %3")
@@ -23,27 +22,25 @@ QString nativeError(const QString &operation,
              QString::fromLocal8Bit(std::strerror(errorNumber)));
 }
 
-std::expected<std::optional<qint64>, QString> candidateSize(
-    const QString &path)
+std::expected<std::optional<qint64>, QString> candidateSize(const QString &path)
 {
     const QByteArray nativePath = QFile::encodeName(path);
-    const int descriptor = ::open(
-        nativePath.constData(), O_RDONLY | O_CLOEXEC);
+    const int descriptor = ::open(nativePath.constData(), O_RDONLY | O_CLOEXEC);
     if (descriptor < 0) {
         const int errorNumber = errno;
         if (errorNumber == ENOENT) return std::optional<qint64>{};
-        return std::unexpected(nativeError(
-            QStringLiteral("Could not inspect"), path, errorNumber));
+        return std::unexpected(nativeError(QStringLiteral("Could not inspect"),
+                                           path, errorNumber));
     }
 
-    struct stat status {};
+    struct stat status{};
     if (::fstat(descriptor, &status) != 0) {
         const int errorNumber = errno;
-        (void) ::close(descriptor);
-        return std::unexpected(nativeError(
-            QStringLiteral("Could not inspect"), path, errorNumber));
+        (void)::close(descriptor);
+        return std::unexpected(nativeError(QStringLiteral("Could not inspect"),
+                                           path, errorNumber));
     }
-    (void) ::close(descriptor);
+    (void)::close(descriptor);
     return std::optional<qint64>{static_cast<qint64>(status.st_size)};
 }
 
@@ -58,11 +55,9 @@ std::expected<void, QString> createConfigFile(const QString &path)
 
     const QByteArray nativePath = QFile::encodeName(path);
     const int descriptor = ::open(
-        nativePath.constData(),
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-        0666);
+        nativePath.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0666);
     if (descriptor >= 0) {
-        (void) ::close(descriptor);
+        (void)::close(descriptor);
         return {};
     }
 
@@ -74,8 +69,8 @@ std::expected<void, QString> createConfigFile(const QString &path)
 
 } // namespace
 
-std::expected<QString, QString> prepareGhosttyConfigForEditing(
-    const QStringList &editCandidatePaths)
+std::expected<QString, QString>
+prepareGhosttyConfigForEditing(const QStringList &editCandidatePaths)
 {
     if (editCandidatePaths.isEmpty()) {
         return std::unexpected(
@@ -109,18 +104,16 @@ std::expected<QString, QString> prepareGhosttyConfigForEditing(
     return selectedPath;
 }
 
-std::expected<QString, QString> openGhosttyConfigForEditing(
-    const QStringList &editCandidatePaths,
-    GhosttyConfigUrlOpener opener)
+std::expected<QString, QString>
+openGhosttyConfigForEditing(const QStringList &editCandidatePaths,
+                            GhosttyConfigUrlOpener opener)
 {
     std::expected<QString, QString> selected =
         prepareGhosttyConfigForEditing(editCandidatePaths);
     if (!selected.has_value()) return selected;
 
     if (!opener) {
-        opener = [](const QUrl &url) {
-            return QDesktopServices::openUrl(url);
-        };
+        opener = [](const QUrl &url) { return QDesktopServices::openUrl(url); };
     }
     const QUrl url = QUrl::fromLocalFile(*selected);
     if (!opener(url)) {

@@ -90,8 +90,8 @@ struct TerminalSessionGeometry {
     bool operator==(const TerminalSessionGeometry &) const = default;
 };
 
-inline TerminalSessionGeometry normalizedTerminalSessionGeometry(
-    TerminalSessionGeometry geometry) noexcept
+inline TerminalSessionGeometry
+normalizedTerminalSessionGeometry(TerminalSessionGeometry geometry) noexcept
 {
     constexpr int maximumCells =
         static_cast<int>(std::numeric_limits<quint16>::max());
@@ -132,9 +132,8 @@ inline quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns)
     const quint64 boundedColumns = static_cast<quint64>(std::max(1, columns));
     constexpr quint64 EstimatedBytesPerCell = 16;
     constexpr quint64 MinimumEstimatedRowBytes = 256;
-    const quint64 rowBytes = std::max(
-        MinimumEstimatedRowBytes,
-        boundedColumns * EstimatedBytesPerCell);
+    const quint64 rowBytes = std::max(MinimumEstimatedRowBytes,
+                                      boundedColumns * EstimatedBytesPerCell);
     if (limit.value > std::numeric_limits<quint64>::max() / rowBytes) {
         return std::numeric_limits<quint64>::max();
     }

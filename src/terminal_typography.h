@@ -37,10 +37,9 @@ struct Named {
 
 } // namespace TerminalFontStyles
 
-using TerminalFontStyle = std::variant<
-    TerminalFontStyles::Automatic,
-    TerminalFontStyles::Disabled,
-    TerminalFontStyles::Named>;
+using TerminalFontStyle =
+    std::variant<TerminalFontStyles::Automatic, TerminalFontStyles::Disabled,
+                 TerminalFontStyles::Named>;
 
 struct TerminalFontFace {
     QStringList families;
@@ -66,9 +65,9 @@ struct Percentage {
 
 } // namespace TerminalMetricModifiers
 
-using TerminalMetricModifier = std::variant<
-    TerminalMetricModifiers::Absolute,
-    TerminalMetricModifiers::Percentage>;
+using TerminalMetricModifier =
+    std::variant<TerminalMetricModifiers::Absolute,
+                 TerminalMetricModifiers::Percentage>;
 
 enum class TerminalMetric : quint8 {
     CellWidth,
@@ -85,7 +84,7 @@ enum class TerminalMetric : quint8 {
     Count,
 };
 
-template<typename Enum>
+template <typename Enum>
 [[nodiscard]] constexpr std::size_t terminalEnumIndex(Enum value) noexcept
 {
     return static_cast<std::size_t>(std::to_underlying(value));
@@ -114,8 +113,8 @@ struct TerminalMetricModifierSet {
 };
 
 struct TerminalTypography {
-    std::array<TerminalFontFace,
-               terminalEnumIndex(TerminalFontRole::Count)> faces;
+    std::array<TerminalFontFace, terminalEnumIndex(TerminalFontRole::Count)>
+        faces;
     double pointSize = 12.0;
     TerminalMetricModifierSet metricModifiers;
 
@@ -124,8 +123,8 @@ struct TerminalTypography {
         return faces[terminalEnumIndex(role)];
     }
 
-    [[nodiscard]] const TerminalFontFace &face(
-        TerminalFontRole role) const noexcept
+    [[nodiscard]] const TerminalFontFace &
+    face(TerminalFontRole role) const noexcept
     {
         return faces[terminalEnumIndex(role)];
     }

@@ -12,15 +12,15 @@
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQuickWindow>
+#include <QSGSimpleRectNode>
 #include <QScopeGuard>
 #include <QSet>
-#include <QSGSimpleRectNode>
 #include <QTimer>
 
 #include <algorithm>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
-#include <cmath>
 #include <iterator>
 #include <limits>
 #include <ranges>
@@ -46,8 +46,7 @@ quint64 nextNonzeroId(quint64 &counter) noexcept
 }
 
 struct AxisWeights {
-    [[nodiscard]] std::size_t along(
-        Qt::Orientation orientation) const noexcept
+    [[nodiscard]] std::size_t along(Qt::Orientation orientation) const noexcept
     {
         return orientation == Qt::Horizontal ? horizontal : vertical;
     }
@@ -58,9 +57,8 @@ struct AxisWeights {
 
 qreal splitExtent(const QRectF &geometry, Qt::Orientation orientation)
 {
-    const qreal extent = orientation == Qt::Horizontal
-        ? geometry.width()
-        : geometry.height();
+    const qreal extent =
+        orientation == Qt::Horizontal ? geometry.width() : geometry.height();
     return std::max(0.0, extent - splitGap);
 }
 
@@ -80,20 +78,17 @@ struct TerminalWorkspace::Node {
     explicit Node(PaneHandle handle)
         : paneId(handle.id)
         , pane(handle.pane.data())
-    {
-    }
+    {}
 
     bool isLeaf() const { return pane != nullptr; }
 
     void collectPanes(std::vector<PaneHandle> &panes) const
     {
-        forEachPane([&panes](const PaneHandle &handle) {
-            panes.push_back(handle);
-        });
+        forEachPane(
+            [&panes](const PaneHandle &handle) { panes.push_back(handle); });
     }
 
-    template<typename Visitor>
-    void forEachPane(Visitor &&visitor) const
+    template <typename Visitor> void forEachPane(Visitor &&visitor) const
     {
         if (isLeaf()) {
             visitor(PaneHandle{paneId, pane});
@@ -107,19 +102,18 @@ struct TerminalWorkspace::Node {
     {
         if (isLeaf()) return {};
 
-        const AxisWeights firstWeights = first != nullptr
-            ? first->equalize() : AxisWeights{};
-        const AxisWeights secondWeights = second != nullptr
-            ? second->equalize() : AxisWeights{};
+        const AxisWeights firstWeights =
+            first != nullptr ? first->equalize() : AxisWeights{};
+        const AxisWeights secondWeights =
+            second != nullptr ? second->equalize() : AxisWeights{};
         const std::size_t firstWeight = firstWeights.along(orientation);
         const std::size_t secondWeight = secondWeights.along(orientation);
         const std::size_t combinedWeight = firstWeight + secondWeight;
         ratio = static_cast<qreal>(firstWeight)
             / static_cast<qreal>(combinedWeight);
 
-        return orientation == Qt::Horizontal
-            ? AxisWeights{combinedWeight, 1}
-            : AxisWeights{1, combinedWeight};
+        return orientation == Qt::Horizontal ? AxisWeights{combinedWeight, 1}
+                                             : AxisWeights{1, combinedWeight};
     }
 
     PaneId paneId;
@@ -163,9 +157,8 @@ void clearPaneOverlay(QPointer<TerminalPane> pane, const char *property)
     }
     if (overlay == nullptr) {
         if (component != nullptr) {
-            qWarning().noquote()
-                << "Could not create" << description << ':'
-                << component->errorString();
+            qWarning().noquote() << "Could not create" << description << ':'
+                                 << component->errorString();
         }
         return true;
     }
@@ -204,7 +197,7 @@ struct TerminalWorkspace::Tab {
     bool attention = false;
 };
 
-template<typename Visitor>
+template <typename Visitor>
 void TerminalWorkspace::forEachPane(Visitor &&visitor) const
 {
     for (const std::unique_ptr<Tab> &tab : tabs_) {
@@ -231,14 +224,11 @@ public:
 
     void setOrientation(Qt::Orientation orientation)
     {
-        setCursor(orientation == Qt::Horizontal
-            ? Qt::SplitHCursor : Qt::SplitVCursor);
+        setCursor(orientation == Qt::Horizontal ? Qt::SplitHCursor
+                                                : Qt::SplitVCursor);
     }
 
-    void markCurrent(quint64 generation)
-    {
-        generation_ = generation;
-    }
+    void markCurrent(quint64 generation) { generation_ = generation; }
 
     void setColor(std::optional<QColor> color)
     {
@@ -267,8 +257,7 @@ protected:
         }
     }
 
-    QSGNode *updatePaintNode(QSGNode *oldNode,
-                             UpdatePaintNodeData *) override
+    QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override
     {
         if (!color_.has_value()) {
             delete oldNode;
@@ -309,8 +298,7 @@ protected:
         }
         if (workspace_ == nullptr || !(event->buttons() & Qt::LeftButton)
             || !workspace_->dragSplitDivider(
-                splitId_, mapToItem(workspace_, event->position()),
-                drag_)) {
+                splitId_, mapToItem(workspace_, event->position()), drag_)) {
             cancelDragging();
         }
         event->accept();
@@ -323,9 +311,8 @@ protected:
             return;
         }
         if (workspace_ != nullptr) {
-            (void) workspace_->dragSplitDivider(
-                splitId_, mapToItem(workspace_, event->position()),
-                drag_);
+            (void)workspace_->dragSplitDivider(
+                splitId_, mapToItem(workspace_, event->position()), drag_);
         }
         clearDragging();
         event->accept();
@@ -336,10 +323,7 @@ protected:
         mousePressEvent(event);
     }
 
-    void mouseUngrabEvent() override
-    {
-        clearDragging();
-    }
+    void mouseUngrabEvent() override { clearDragging(); }
 
 private:
     void clearDragging()
@@ -370,7 +354,7 @@ TerminalWorkspace::TerminalWorkspace(QQuickItem *parent)
 {
     setClip(true);
     QTimer::singleShot(0, this, [this] {
-        if (!initialized_) (void) initialize(effectiveOptions_);
+        if (!initialized_) (void)initialize(effectiveOptions_);
     });
 }
 
@@ -378,10 +362,9 @@ TerminalWorkspace::~TerminalWorkspace() = default;
 
 void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
 {
-    setPaneOverlayComponent(
-        searchOverlay_, component, kSearchOverlayProperty,
-        "terminal search overlay",
-        &TerminalWorkspace::searchOverlayComponentChanged);
+    setPaneOverlayComponent(searchOverlay_, component, kSearchOverlayProperty,
+                            "terminal search overlay",
+                            &TerminalWorkspace::searchOverlayComponentChanged);
 }
 
 void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
@@ -394,10 +377,9 @@ void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
 
 void TerminalWorkspace::setResizeOverlayComponent(QQmlComponent *component)
 {
-    setPaneOverlayComponent(
-        resizeOverlay_, component, kResizeOverlayProperty,
-        "terminal resize overlay",
-        &TerminalWorkspace::resizeOverlayComponentChanged);
+    setPaneOverlayComponent(resizeOverlay_, component, kResizeOverlayProperty,
+                            "terminal resize overlay",
+                            &TerminalWorkspace::resizeOverlayComponentChanged);
 }
 
 void TerminalWorkspace::setScrollbarComponent(QQmlComponent *component)
@@ -415,11 +397,8 @@ void TerminalWorkspace::setBellBorderComponent(QQmlComponent *component)
 }
 
 void TerminalWorkspace::setPaneOverlayComponent(
-    PaneOverlaySlot &slot,
-    QQmlComponent *component,
-    const char *paneProperty,
-    const char *description,
-    void (TerminalWorkspace::*changedSignal)())
+    PaneOverlaySlot &slot, QQmlComponent *component, const char *paneProperty,
+    const char *description, void (TerminalWorkspace::*changedSignal)())
 {
     if (slot.component == component) {
         return;
@@ -483,8 +462,7 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
     const QPointer<TerminalWorkspace> guard(this);
     const QPointer<TerminalPane> paneGuard(pane);
     if (!attachPaneOverlay(searchOverlay_.component, paneGuard,
-                           kSearchOverlayProperty,
-                           "terminal search overlay")
+                           kSearchOverlayProperty, "terminal search overlay")
         || guard == nullptr) {
         return false;
     }
@@ -539,8 +517,7 @@ TerminalWorkspace::broadPaneSnapshot() const
 bool TerminalWorkspace::broadPaneTargetIsLive(
     const BroadPaneTarget &target) const
 {
-    return target.pane != nullptr
-        && paneForId(target.paneId) == target.pane;
+    return target.pane != nullptr && paneForId(target.paneId) == target.pane;
 }
 
 void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
@@ -554,8 +531,7 @@ bool TerminalWorkspace::initialize(
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
 {
     return initialize(
-        options, initialSessionStartMode,
-        std::move(initialSessionCoordinator),
+        options, initialSessionStartMode, std::move(initialSessionCoordinator),
         GhosttyKeybindProgram::compile(options.keybindSource).program);
 }
 
@@ -575,13 +551,14 @@ bool TerminalWorkspace::initialize(
     const LaunchOptions initialOptions = effectiveOptions_;
     const qreal devicePixelRatio =
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
-    const TerminalCellMetrics metrics = terminalCellMetrics(
-        initialOptions.typography, devicePixelRatio);
-    const PaneHandle initialPane = createNewTab(
-        {}, terminalSessionGeometryForViewport(
-                width(), height(), metrics.cellWidth, metrics.cellHeight,
-                devicePixelRatio),
-        initialSessionStartMode);
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(initialOptions.typography, devicePixelRatio);
+    const PaneHandle initialPane =
+        createNewTab({},
+                     terminalSessionGeometryForViewport(
+                         width(), height(), metrics.cellWidth,
+                         metrics.cellHeight, devicePixelRatio),
+                     initialSessionStartMode);
     if (guard == nullptr) return true;
     if (!initialPane.isValid()) return false;
     if (initialSessionStartMode == TerminalSessionStartMode::Deferred) {
@@ -607,21 +584,20 @@ bool TerminalWorkspace::armInitialSessionStart()
             if (pane->isVisible()) {
                 return pane->size();
             }
-            Tab *const tab = workspace->tabById(
-                workspace->tabIdForPane(paneId));
+            Tab *const tab =
+                workspace->tabById(workspace->tabIdForPane(paneId));
             if (tab == nullptr || tab->root == nullptr) {
                 return pane->size();
             }
-            workspace->updateNodeGeometry(
-                tab->root.get(), workspace->boundingRect());
+            workspace->updateNodeGeometry(tab->root.get(),
+                                          workspace->boundingRect());
             QSizeF viewportSize;
             if (tab->zoomedPaneId == paneId) {
                 viewportSize = workspace->boundingRect().size();
             } else {
-                Node *const node = workspace->findNode(
-                    tab->root.get(), paneId);
-                viewportSize = node != nullptr
-                    ? node->geometry.size() : pane->size();
+                Node *const node = workspace->findNode(tab->root.get(), paneId);
+                viewportSize =
+                    node != nullptr ? node->geometry.size() : pane->size();
             }
             // No PTY exists yet, so keeping this hidden item's logical size in
             // sync cannot violate inactive-tab resize suppression. It also
@@ -642,13 +618,11 @@ bool TerminalWorkspace::armInitialSessionStart()
 void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options)
 {
     applyLaunchOptions(
-        options,
-        GhosttyKeybindProgram::compile(options.keybindSource).program);
+        options, GhosttyKeybindProgram::compile(options.keybindSource).program);
 }
 
-void TerminalWorkspace::applyLaunchOptions(
-    const LaunchOptions &options,
-    GhosttyKeybindProgram keybindProgram)
+void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
+                                           GhosttyKeybindProgram keybindProgram)
 {
     const RevisionCounter::Value revision = launchOptionsRevision_.advance();
     const QPointer<TerminalWorkspace> guard(this);
@@ -659,8 +633,7 @@ void TerminalWorkspace::applyLaunchOptions(
     const GhosttyKeybindProgram appliedProgram = keybindProgram_;
     effectiveOptions_ = options;
     const LaunchOptions appliedOptions = effectiveOptions_;
-    const auto stillCurrentUpdate =
-        [guard, revision, appliedProgram] {
+    const auto stillCurrentUpdate = [guard, revision, appliedProgram] {
         return guard != nullptr
             && guard->launchOptionsRevision_.isCurrent(revision)
             && guard->keybindProgram().isSameGeneration(appliedProgram);
@@ -692,12 +665,9 @@ void TerminalWorkspace::applyLaunchOptions(
 bool TerminalWorkspace::tabBarVisible() const
 {
     switch (effectiveOptions_.windowShowTabBar) {
-    case WindowShowTabBar::Always:
-        return true;
-    case WindowShowTabBar::Auto:
-        return tabs_.size() >= 2;
-    case WindowShowTabBar::Never:
-        return false;
+    case WindowShowTabBar::Always: return true;
+    case WindowShowTabBar::Auto: return tabs_.size() >= 2;
+    case WindowShowTabBar::Never: return false;
     }
     Q_UNREACHABLE_RETURN(false);
 }
@@ -707,8 +677,9 @@ QStringList TerminalWorkspace::tabTitles() const
     QStringList result;
     result.reserve(tabModel_.count());
     for (int index = 0; index < tabModel_.count(); ++index) {
-        result.append(tabModel_.data(tabModel_.index(index, 0),
-                                     TabListModel::TitleRole).toString());
+        result.append(
+            tabModel_.data(tabModel_.index(index, 0), TabListModel::TitleRole)
+                .toString());
     }
     return result;
 }
@@ -729,8 +700,7 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(QStringView action)
 {
     const std::optional<GhosttyConfiguredAction> parsed =
         GhosttyActionCatalog::parseConfiguredAction(action);
-    return parsed.has_value()
-        && executeSurfaceActionOnAllPanes(*parsed);
+    return parsed.has_value() && executeSurfaceActionOnAllPanes(*parsed);
 }
 
 bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
@@ -759,8 +729,7 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
     // toggle synchronously once per pane would cancel itself for an even pane
     // count. Keep broad dispatch once per registered workspace/window while
     // leaving all other surface actions on the ordinary per-pane fanout path.
-    const auto *workspaceAction =
-        std::get_if<WorkspaceActionRequest>(&action);
+    const auto *workspaceAction = std::get_if<WorkspaceActionRequest>(&action);
     if (workspaceAction != nullptr
         && (workspaceAction->action == WorkspaceAction::ToggleFullscreen
             || workspaceAction->action == WorkspaceAction::ToggleMaximize
@@ -770,14 +739,12 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
     }
 
     const QPointer<TerminalWorkspace> guard(this);
-    const bool previousBroadFanout =
-        std::exchange(broadActionFanout_, true);
-    const auto restoreBroadFanout = qScopeGuard(
-        [guard, previousBroadFanout] {
-            if (guard != nullptr) {
-                guard->broadActionFanout_ = previousBroadFanout;
-            }
-        });
+    const bool previousBroadFanout = std::exchange(broadActionFanout_, true);
+    const auto restoreBroadFanout = qScopeGuard([guard, previousBroadFanout] {
+        if (guard != nullptr) {
+            guard->broadActionFanout_ = previousBroadFanout;
+        }
+    });
     bool performed = false;
     for (const QPointer<TerminalPane> &pane : panes) {
         if (guard == nullptr) break;
@@ -823,7 +790,8 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         return true;
     case WorkspaceAction::ActivatePane:
         if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
+            || !contextMatchesPane())
+            return false;
         activatePane(request.context.paneId);
         return true;
     case WorkspaceAction::CloseTab:
@@ -837,7 +805,8 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         return true;
     case WorkspaceAction::ClosePane:
         if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
+            || !contextMatchesPane())
+            return false;
         closePane(request.context.paneId);
         return true;
     case WorkspaceAction::SplitLeft:
@@ -852,10 +821,10 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
             const qreal devicePixelRatio = sourcePane->window() != nullptr
                 ? sourcePane->window()->devicePixelRatio()
                 : 1.0;
-            const int surfaceWidth = std::max(
-                1, qRound(sourcePane->width() * devicePixelRatio));
-            const int surfaceHeight = std::max(
-                1, qRound(sourcePane->height() * devicePixelRatio));
+            const int surfaceWidth =
+                std::max(1, qRound(sourcePane->width() * devicePixelRatio));
+            const int surfaceHeight =
+                std::max(1, qRound(sourcePane->height() * devicePixelRatio));
             direction = surfaceWidth > surfaceHeight
                 ? WorkspaceAction::SplitRight
                 : WorkspaceAction::SplitDown;
@@ -870,17 +839,19 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     }
     case WorkspaceAction::NavigatePane:
         if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
+            || !contextMatchesPane())
+            return false;
         return navigateFrom(request.context.paneId,
                             static_cast<int>(request.context.value));
     case WorkspaceAction::NavigatePaneRelative:
         if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
-        return navigateRelative(request.context.paneId,
-                                request.context.value);
+            || !contextMatchesPane())
+            return false;
+        return navigateRelative(request.context.paneId, request.context.value);
     case WorkspaceAction::ChangeTabRelative:
         if (request.context.tabId.isValid()
-            && tabById(request.context.tabId) == nullptr) return false;
+            && tabById(request.context.tabId) == nullptr)
+            return false;
         return changeTabRelativeImpl(static_cast<int>(request.context.value),
                                      request.context.tabId);
     case WorkspaceAction::ActivateTabByIndex:
@@ -919,9 +890,8 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         }
         const TabId tabId = request.context.paneId.isValid()
             ? tabIdForPane(request.context.paneId)
-            : (request.context.tabId.isValid()
-                   ? request.context.tabId
-                   : currentTabId());
+            : (request.context.tabId.isValid() ? request.context.tabId
+                                               : currentTabId());
         return enqueueTitlePrompt(tabId);
     }
     case WorkspaceAction::SetTabTitle: {
@@ -932,9 +902,8 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
         }
         const TabId tabId = request.context.paneId.isValid()
             ? tabIdForPane(request.context.paneId)
-            : (request.context.tabId.isValid()
-                   ? request.context.tabId
-                   : currentTabId());
+            : (request.context.tabId.isValid() ? request.context.tabId
+                                               : currentTabId());
         Tab *tab = tabById(tabId);
         if (tab == nullptr) return false;
         if (tab->titleOverride != request.payload) {
@@ -945,7 +914,8 @@ bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
     }
     case WorkspaceAction::ResizeSplit:
         if (paneForId(request.context.paneId) == nullptr
-            || !contextMatchesPane()) return false;
+            || !contextMatchesPane())
+            return false;
         return resizeSplit(request.context.paneId,
                            static_cast<int>(request.context.value),
                            request.context.amount);
@@ -1065,8 +1035,7 @@ bool TerminalWorkspace::focusActivePane()
 }
 
 std::optional<LaunchOptions> TerminalWorkspace::newWindowLaunchOptions(
-    const LaunchOptions &applicationOptions,
-    PaneId sourcePaneId) const
+    const LaunchOptions &applicationOptions, PaneId sourcePaneId) const
 {
     if (!sourcePaneId.isValid()) sourcePaneId = currentPaneId();
     TerminalPane *const pane = paneForId(sourcePaneId);
@@ -1121,16 +1090,15 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                         request.context.paneId = tab->activePaneId;
                     }
                     break;
-                default:
-                    break;
+                default: break;
                 }
             }
             return dispatchAction(request);
         });
     connect(pane, &TerminalPane::activated, this,
             [this, paneId](TerminalPane *) {
-                dispatchAction({WorkspaceAction::ActivatePane,
-                                {TabId{}, paneId, 0}});
+                dispatchAction(
+                    {WorkspaceAction::ActivatePane, {TabId{}, paneId, 0}});
                 Q_EMIT workspaceActivated();
             });
     connect(pane, &TerminalPane::titleChanged, this,
@@ -1171,31 +1139,26 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 removePendingPastesForPane({paneId, pane});
                 refreshTab(tabIdForPane(paneId));
             });
-    connect(pane, &TerminalPane::processStateChanged, this,
-            [this, paneId] {
-                refreshTab(tabIdForPane(paneId));
-                reevaluatePendingClose();
-            });
-    connect(pane, &TerminalPane::readOnlyChanged, this,
-            [this, paneId] {
-                refreshTab(tabIdForPane(paneId));
-                reevaluatePendingClose();
-            });
-    connect(pane, &TerminalPane::requestNewTab, this,
-            [this, paneId] {
-                dispatchAction({WorkspaceAction::NewTab,
-                                {tabIdForPane(paneId), paneId, 0}});
-            });
+    connect(pane, &TerminalPane::processStateChanged, this, [this, paneId] {
+        refreshTab(tabIdForPane(paneId));
+        reevaluatePendingClose();
+    });
+    connect(pane, &TerminalPane::readOnlyChanged, this, [this, paneId] {
+        refreshTab(tabIdForPane(paneId));
+        reevaluatePendingClose();
+    });
+    connect(pane, &TerminalPane::requestNewTab, this, [this, paneId] {
+        dispatchAction(
+            {WorkspaceAction::NewTab, {tabIdForPane(paneId), paneId, 0}});
+    });
     connect(pane, &TerminalPane::requestSplit, this,
             [this, paneId](WorkspaceAction action) {
-                dispatchAction({action,
-                                {tabIdForPane(paneId), paneId, 0}});
+                dispatchAction({action, {tabIdForPane(paneId), paneId, 0}});
             });
-    connect(pane, &TerminalPane::requestClose, this,
-            [this, paneId] {
-                dispatchAction({WorkspaceAction::ClosePane,
-                                {tabIdForPane(paneId), paneId, 0}});
-            });
+    connect(pane, &TerminalPane::requestClose, this, [this, paneId] {
+        dispatchAction(
+            {WorkspaceAction::ClosePane, {tabIdForPane(paneId), paneId, 0}});
+    });
     connect(pane, &TerminalPane::requestCloseTab, this,
             [this, paneId](CloseTabMode mode) {
                 const TabId tabId = tabIdForPane(paneId);
@@ -1212,14 +1175,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             });
     connect(pane, &TerminalPane::requestTabChange, this,
             [this, paneId](int delta) {
-        dispatchAction({WorkspaceAction::ChangeTabRelative,
-                        {tabIdForPane(paneId), paneId, delta}});
-    });
+                dispatchAction({WorkspaceAction::ChangeTabRelative,
+                                {tabIdForPane(paneId), paneId, delta}});
+            });
     // Close approval may synchronously destroy this workspace. Queue pane
     // requests so a multi-action keybinding always unwinds first.
     connect(pane, &TerminalPane::requestCloseWindow, this,
-            &TerminalWorkspace::requestWindowClose,
-            Qt::QueuedConnection);
+            &TerminalWorkspace::requestWindowClose, Qt::QueuedConnection);
     connect(pane, &TerminalPane::applicationActionRequested, this,
             [this, paneId](ApplicationAction action) {
                 Q_EMIT applicationActionRequested(action, paneId);
@@ -1229,8 +1191,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 if (paneForId(paneId) != pane) return;
                 Q_EMIT windowNavigationRequested(action, paneId);
             });
-    connect(pane, &TerminalPane::broadActionsRequested,
-            this, &TerminalWorkspace::broadActionsRequested);
+    connect(pane, &TerminalPane::broadActionsRequested, this,
+            &TerminalWorkspace::broadActionsRequested);
     connect(pane, &TerminalPane::unsafePasteRequested, this,
             [this, paneId, pane](quint64 requestId, const QString &text,
                                  TerminalPane *) {
@@ -1245,22 +1207,21 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     // registry makes this pane participate in any nested config reload before
     // its stable ID is inserted into the tab tree.
     detachedPane.release();
-    const auto validateOwnership =
-        [workspaceGuard, paneGuard](bool requireVisualParent) {
-            const bool valid = workspaceGuard != nullptr
-                && paneGuard != nullptr
-                && paneGuard->parent() == workspaceGuard
-                && (!requireVisualParent
-                    || paneGuard->parentItem() == workspaceGuard);
-            if (!valid && paneGuard != nullptr) delete paneGuard.data();
-            return valid;
-        };
+    const auto validateOwnership = [workspaceGuard,
+                                    paneGuard](bool requireVisualParent) {
+        const bool valid = workspaceGuard != nullptr && paneGuard != nullptr
+            && paneGuard->parent() == workspaceGuard
+            && (!requireVisualParent
+                || paneGuard->parentItem() == workspaceGuard);
+        if (!valid && paneGuard != nullptr) delete paneGuard.data();
+        return valid;
+    };
     pane->setParent(this);
     if (!validateOwnership(false)) return {};
     pane->setParentItem(this);
     if (!validateOwnership(true)) return {};
     if (!attachPaneOverlays(paneGuard)) {
-        (void) validateOwnership(true);
+        (void)validateOwnership(true);
         return {};
     }
     if (!validateOwnership(true)) return {};
@@ -1273,8 +1234,7 @@ void TerminalWorkspace::newTab()
 }
 
 TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
-    PaneId sourcePaneId,
-    std::optional<TerminalSessionGeometry> initialGeometry,
+    PaneId sourcePaneId, std::optional<TerminalSessionGeometry> initialGeometry,
     TerminalSessionStartMode startMode)
 {
     if (topologyMutation_) return {};
@@ -1305,8 +1265,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
         ? currentIndex_ + 1
         : static_cast<int>(tabs_.size());
 
-    const PaneHandle pane = createPane(
-        options, std::move(initialGeometry), startMode);
+    const PaneHandle pane =
+        createPane(options, std::move(initialGeometry), startMode);
     if (guard == nullptr || !pane.isValid()) return {};
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);
@@ -1403,9 +1363,7 @@ bool TerminalWorkspace::moveTab(TabId tabId, qint64 delta)
     if (tabs_.size() <= 1) {
         return false;
     }
-    const int source = tabId.isValid()
-        ? tabIndexForId(tabId)
-        : currentIndex_;
+    const int source = tabId.isValid() ? tabIndexForId(tabId) : currentIndex_;
     if (source < 0) {
         return false;
     }
@@ -1462,18 +1420,16 @@ bool TerminalWorkspace::changeTabRelativeImpl(int delta, TabId origin)
 
 void TerminalWorkspace::splitRight()
 {
-    dispatchAction({WorkspaceAction::SplitRight,
-                    {TabId{}, currentPaneId(), 0}});
+    dispatchAction(
+        {WorkspaceAction::SplitRight, {TabId{}, currentPaneId(), 0}});
 }
 
 void TerminalWorkspace::splitDown()
 {
-    dispatchAction({WorkspaceAction::SplitDown,
-                    {TabId{}, currentPaneId(), 0}});
+    dispatchAction({WorkspaceAction::SplitDown, {TabId{}, currentPaneId(), 0}});
 }
 
-bool TerminalWorkspace::splitPane(PaneId paneId,
-                                  Qt::Orientation orientation,
+bool TerminalWorkspace::splitPane(PaneId paneId, Qt::Orientation orientation,
                                   bool placeNewPaneFirst)
 {
     if (topologyMutation_) return false;
@@ -1498,8 +1454,7 @@ bool TerminalWorkspace::splitPane(PaneId paneId,
             guard->topologyMutation_ = previousMutation;
         }
     });
-    const PaneHandle newPane = createPane(
-        newPaneOptions);
+    const PaneHandle newPane = createPane(newPaneOptions);
     if (guard == nullptr || oldPane == nullptr || !newPane.isValid()) {
         return false;
     }
@@ -1523,10 +1478,10 @@ bool TerminalWorkspace::splitPane(PaneId paneId,
     } while (node->splitId == 0);
     node->orientation = orientation;
     node->ratio = 0.5;
-    node->first = std::make_unique<Node>(
-        placeNewPaneFirst ? newPane : oldHandle);
-    node->second = std::make_unique<Node>(
-        placeNewPaneFirst ? oldHandle : newPane);
+    node->first =
+        std::make_unique<Node>(placeNewPaneFirst ? newPane : oldHandle);
+    node->second =
+        std::make_unique<Node>(placeNewPaneFirst ? oldHandle : newPane);
     tab->activePaneId = newPane.id;
     updateSplitMembership(*tab);
     if (guard == nullptr) return true;
@@ -1544,8 +1499,7 @@ bool TerminalWorkspace::splitPane(PaneId paneId,
     return true;
 }
 
-void TerminalWorkspace::activatePane(PaneId paneId,
-                                     PaneActivationReason reason)
+void TerminalWorkspace::activatePane(PaneId paneId, PaneActivationReason reason)
 {
     const int tabIndex = tabIndexForPane(paneId);
     if (tabIndex < 0) {
@@ -1593,8 +1547,7 @@ void TerminalWorkspace::activatePane(PaneId paneId,
 void TerminalWorkspace::closeActivePane()
 {
     const PaneId paneId = currentPaneId();
-    dispatchAction({WorkspaceAction::ClosePane,
-                    {currentTabId(), paneId, 0}});
+    dispatchAction({WorkspaceAction::ClosePane, {currentTabId(), paneId, 0}});
 }
 
 void TerminalWorkspace::closePane(PaneId paneId, bool force)
@@ -1610,11 +1563,11 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     if (!force && shouldConfirmPaneClose(*pane)) {
         if (!std::holds_alternative<std::monostate>(pendingClose_)) return;
         beginCloseConfirmation(
-            PendingPaneClose{
-                paneId, tabs_[static_cast<size_t>(tabIndex)]->id},
+            PendingPaneClose{paneId, tabs_[static_cast<size_t>(tabIndex)]->id},
             pane->isReadOnly()
                 ? QStringLiteral("This pane is read-only. Close it?")
-                : QStringLiteral("A process is still running in this pane. Close it?"));
+                : QStringLiteral(
+                      "A process is still running in this pane. Close it?"));
         return;
     }
 
@@ -1622,14 +1575,12 @@ void TerminalWorkspace::closePane(PaneId paneId, bool force)
     {
         // Pending-prompt resolution and model updates below emit synchronous
         // signals. Keep the cached tab/tree valid until this mutation commits.
-        const bool previousMutation =
-            std::exchange(topologyMutation_, true);
-        const auto restoreMutation = qScopeGuard(
-            [guard, previousMutation] {
-                if (guard != nullptr) {
-                    guard->topologyMutation_ = previousMutation;
-                }
-            });
+        const bool previousMutation = std::exchange(topologyMutation_, true);
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) {
+                guard->topologyMutation_ = previousMutation;
+            }
+        });
         Tab *tab = tabs_[static_cast<size_t>(tabIndex)].get();
         const TabId tabId = tab->id;
         const bool removedActivePane = tab->activePaneId == paneId;
@@ -1698,8 +1649,7 @@ bool TerminalWorkspace::removePaneFromNode(std::unique_ptr<Node> &node,
 
 void TerminalWorkspace::closeCurrentTab()
 {
-    dispatchAction({WorkspaceAction::CloseTab,
-                    {currentTabId(), PaneId{}, 0}});
+    dispatchAction({WorkspaceAction::CloseTab, {currentTabId(), PaneId{}, 0}});
 }
 
 void TerminalWorkspace::closeTab(TabId tabId, CloseTabMode mode, bool force)
@@ -1707,8 +1657,8 @@ void TerminalWorkspace::closeTab(TabId tabId, CloseTabMode mode, bool force)
     closeTabs({tabId, closeTabTargets(tabId, mode)}, force);
 }
 
-std::vector<TabId> TerminalWorkspace::closeTabTargets(
-    TabId tabId, CloseTabMode mode) const
+std::vector<TabId> TerminalWorkspace::closeTabTargets(TabId tabId,
+                                                      CloseTabMode mode) const
 {
     const int source = tabIndexForId(tabId);
     if (source < 0) return {};
@@ -1726,8 +1676,7 @@ std::vector<TabId> TerminalWorkspace::closeTabTargets(
     }();
     std::vector<TabId> targets;
     targets.reserve(tabs_.size() - static_cast<std::size_t>(firstTarget));
-    for (int index = static_cast<int>(tabs_.size()) - 1;
-         index >= firstTarget;
+    for (int index = static_cast<int>(tabs_.size()) - 1; index >= firstTarget;
          --index) {
         if (index != source) {
             targets.push_back(tabs_[static_cast<std::size_t>(index)]->id);
@@ -1766,11 +1715,15 @@ void TerminalWorkspace::closeTabs(PendingTabClose close, bool force)
                 std::move(close),
                 assessment.hasReadOnlyPane
                     ? (plural
-                           ? QStringLiteral("Some tabs contain read-only panes. Close the tabs?")
-                           : QStringLiteral("This tab contains a read-only pane. Close the tab?"))
+                           ? QStringLiteral(
+                                 "Some tabs contain read-only panes. Close the tabs?")
+                           : QStringLiteral(
+                                 "This tab contains a read-only pane. Close the tab?"))
                     : (plural
-                           ? QStringLiteral("Processes are still running in these tabs. Close the tabs?")
-                           : QStringLiteral("Processes are still running in this tab. Close the tab?")));
+                           ? QStringLiteral(
+                                 "Processes are still running in these tabs. Close the tabs?")
+                           : QStringLiteral(
+                                 "Processes are still running in this tab. Close the tab?")));
             return;
         }
     }
@@ -1848,12 +1801,11 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
     bool becameEmpty = false;
     {
         const bool previousMutation = std::exchange(topologyMutation_, true);
-        const auto restoreMutation = qScopeGuard(
-            [guard, previousMutation] {
-                if (guard != nullptr) {
-                    guard->topologyMutation_ = previousMutation;
-                }
-            });
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) {
+                guard->topologyMutation_ = previousMutation;
+            }
+        });
         for (const PaneHandle &handle : panes) {
             resolvePendingPaneRemoval(handle);
             if (guard == nullptr) return;
@@ -1905,7 +1857,7 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
             Q_EMIT currentTitleChanged();
             if (guard == nullptr) return;
             if (!std::holds_alternative<std::monostate>(pendingClose_)) {
-                (void) takePendingClose();
+                (void)takePendingClose();
                 if (guard == nullptr) return;
             }
         } else if (nextSelectedTabId != selectedTabId) {
@@ -1936,7 +1888,7 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
     if (pending == nullptr || pending->paneId != handle.id) {
         return;
     }
-    (void) takePendingClose();
+    (void)takePendingClose();
 }
 
 void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)
@@ -1950,7 +1902,7 @@ void TerminalWorkspace::resolvePendingTabRemoval(TabId tabId)
 
     std::erase(pending->targets, tabId);
     if (pending->targets.empty()) {
-        (void) takePendingClose();
+        (void)takePendingClose();
     }
 }
 
@@ -1972,8 +1924,8 @@ void TerminalWorkspace::beginCloseConfirmation(PendingClose close,
     Q_EMIT closeConfirmationRequested(requestId, message);
 }
 
-quint64 TerminalWorkspace::pendingCloseRequestId(
-    const PendingClose &close) const
+quint64
+TerminalWorkspace::pendingCloseRequestId(const PendingClose &close) const
 {
     return std::visit(
         [](const auto &pending) -> quint64 {
@@ -2003,12 +1955,11 @@ void TerminalWorkspace::commitPendingClose()
     // insert, split, or close a different target between those phases.
     const QPointer<TerminalWorkspace> guard(this);
     const bool previousMutation = std::exchange(topologyMutation_, true);
-    const auto restoreMutation = qScopeGuard(
-        [guard, previousMutation] {
-            if (guard != nullptr) {
-                guard->topologyMutation_ = previousMutation;
-            }
-        });
+    const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+        if (guard != nullptr) {
+            guard->topologyMutation_ = previousMutation;
+        }
+    });
     PendingClose close = takePendingClose();
     if (guard != nullptr) {
         performPendingClose(std::move(close));
@@ -2090,13 +2041,12 @@ void TerminalWorkspace::forceShutdownForApplicationQuit()
     if (!std::holds_alternative<std::monostate>(pendingClose_)) {
         const QPointer<TerminalWorkspace> guard(this);
         const bool previousMutation = std::exchange(topologyMutation_, true);
-        const auto restoreMutation = qScopeGuard(
-            [guard, previousMutation] {
-                if (guard != nullptr) {
-                    guard->topologyMutation_ = previousMutation;
-                }
-            });
-        (void) takePendingClose();
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) {
+                guard->topologyMutation_ = previousMutation;
+            }
+        });
+        (void)takePendingClose();
         if (guard == nullptr) return;
     }
     approveWindowClose();
@@ -2131,27 +2081,30 @@ void TerminalWorkspace::requestWindowCloseImpl(WindowCloseIntent intent)
         // correlation ID; responses from the replaced dialog stay harmless.
         const QPointer<TerminalWorkspace> guard(this);
         const bool previousMutation = std::exchange(topologyMutation_, true);
-        const auto restoreMutation = qScopeGuard(
-            [guard, previousMutation] {
-                if (guard != nullptr) {
-                    guard->topologyMutation_ = previousMutation;
-                }
-            });
-        (void) takePendingClose();
+        const auto restoreMutation = qScopeGuard([guard, previousMutation] {
+            if (guard != nullptr) {
+                guard->topologyMutation_ = previousMutation;
+            }
+        });
+        (void)takePendingClose();
         if (guard == nullptr) return;
     }
 
     const WorkspaceCloseAssessment assessment =
         applicationQuitRequested_ && applicationQuitAssessment_.has_value()
-        ? *applicationQuitAssessment_ : assessWorkspaceClose();
+        ? *applicationQuitAssessment_
+        : assessWorkspaceClose();
     if (assessment.needsConfirmation) {
         beginCloseConfirmation(
             PendingWindowClose{},
             assessment.hasReadOnlyPane
                 ? (applicationQuitRequested_
-                       ? QStringLiteral("A terminal window contains a read-only pane. Quit the application?")
-                       : QStringLiteral("This window contains a read-only pane. Quit?"))
-                : QStringLiteral("Terminal processes are still running. Quit and terminate them?"));
+                       ? QStringLiteral(
+                             "A terminal window contains a read-only pane. Quit the application?")
+                       : QStringLiteral(
+                             "This window contains a read-only pane. Quit?"))
+                : QStringLiteral(
+                      "Terminal processes are still running. Quit and terminate them?"));
         return;
     }
     approveWindowClose();
@@ -2185,8 +2138,7 @@ void TerminalWorkspace::approveWindowClose()
     // Publishing is the externally destructive boundary: a host observer may
     // synchronously destroy the workspace. Leave the current key event and
     // complete configured action chain before crossing it.
-    QTimer::singleShot(
-        0, this, &TerminalWorkspace::publishWindowCloseApproval);
+    QTimer::singleShot(0, this, &TerminalWorkspace::publishWindowCloseApproval);
 }
 
 void TerminalWorkspace::publishWindowCloseApproval()
@@ -2227,9 +2179,8 @@ void TerminalWorkspace::scheduleApplicationQuitReconciliation()
 void TerminalWorkspace::confirmClose(quint64 confirmationId)
 {
     if (topologyMutation_) {
-        QTimer::singleShot(0, this, [this, confirmationId] {
-            confirmClose(confirmationId);
-        });
+        QTimer::singleShot(
+            0, this, [this, confirmationId] { confirmClose(confirmationId); });
         return;
     }
     if (confirmationId == 0
@@ -2242,9 +2193,8 @@ void TerminalWorkspace::confirmClose(quint64 confirmationId)
 void TerminalWorkspace::cancelClose(quint64 confirmationId)
 {
     if (topologyMutation_) {
-        QTimer::singleShot(0, this, [this, confirmationId] {
-            cancelClose(confirmationId);
-        });
+        QTimer::singleShot(
+            0, this, [this, confirmationId] { cancelClose(confirmationId); });
         return;
     }
     if (confirmationId == 0
@@ -2258,7 +2208,7 @@ void TerminalWorkspace::cancelClose(quint64 confirmationId)
         applicationQuitRequested_ = false;
         applicationQuitAssessment_.reset();
         const QPointer<TerminalWorkspace> guard(this);
-        (void) takePendingClose();
+        (void)takePendingClose();
         if (guard == nullptr) return;
         // A synchronous resolution observer may already have submitted a new
         // application quit. In that case the replacement request wins and the
@@ -2268,19 +2218,18 @@ void TerminalWorkspace::cancelClose(quint64 confirmationId)
         }
         return;
     }
-    (void) takePendingClose();
+    (void)takePendingClose();
 }
 
-void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
-                                         const QString &text,
+void TerminalWorkspace::beginUnsafePaste(quint64 requestId, const QString &text,
                                          PaneId paneId)
 {
     if (requestId == 0 || text.isEmpty() || !paneId.isValid()) {
         return;
     }
 
-    const auto matchesTarget = [paneId, requestId](
-                                   const PendingPasteTarget &target) {
+    const auto matchesTarget = [paneId,
+                                requestId](const PendingPasteTarget &target) {
         return target.paneId == paneId && target.requestId == requestId;
     };
     for (const PendingPaste &pending : std::as_const(pendingPastes_)) {
@@ -2293,8 +2242,7 @@ void TerminalWorkspace::beginUnsafePaste(quint64 requestId,
     if (!firstRequest && pendingPastes_.front().text == text) {
         PendingPaste &active = pendingPastes_.front();
         const bool alreadyTargetsPane = std::ranges::contains(
-            std::as_const(active.targets), paneId,
-            &PendingPasteTarget::paneId);
+            std::as_const(active.targets), paneId, &PendingPasteTarget::paneId);
         if (!alreadyTargetsPane) {
             active.targets.append({paneId, requestId});
             return;
@@ -2327,8 +2275,7 @@ void TerminalWorkspace::showPendingPastePreview()
     }
     activePasteConfirmationId_ = nextNonzeroId(nextPasteConfirmationId_);
     Q_EMIT unsafePasteConfirmationRequested(
-        activePasteConfirmationId_,
-        pastePreview(pendingPastes_.front().text));
+        activePasteConfirmationId_, pastePreview(pendingPastes_.front().text));
 }
 
 void TerminalWorkspace::schedulePendingPastePreview()
@@ -2373,9 +2320,8 @@ bool TerminalWorkspace::enqueueTitlePrompt(PaneId paneId)
         return false;
     }
     const std::optional<QString> effective = pane->effectiveSurfaceTitle();
-    return enqueueTitlePrompt(
-        TitlePromptTarget{paneId},
-        effective.has_value() ? *effective : QString{});
+    return enqueueTitlePrompt(TitlePromptTarget{paneId},
+                              effective.has_value() ? *effective : QString{});
 }
 
 bool TerminalWorkspace::enqueueTitlePrompt(TabId tabId)
@@ -2385,8 +2331,8 @@ bool TerminalWorkspace::enqueueTitlePrompt(TabId tabId)
         return false;
     }
 
-    return enqueueTitlePrompt(
-        TitlePromptTarget{tabId}, tabTitlePromptInitialValue(*tab));
+    return enqueueTitlePrompt(TitlePromptTarget{tabId},
+                              tabTitlePromptInitialValue(*tab));
 }
 
 bool TerminalWorkspace::enqueueTitlePrompt(TitlePromptTarget target,
@@ -2403,8 +2349,7 @@ bool TerminalWorkspace::enqueueTitlePrompt(TitlePromptTarget target,
         std::move(initialTitle),
     });
 
-    if (!activeTitlePrompt_.has_value()
-        && !titlePromptAdvanceScheduled_) {
+    if (!activeTitlePrompt_.has_value() && !titlePromptAdvanceScheduled_) {
         showNextTitlePrompt();
     }
     return true;
@@ -2426,30 +2371,26 @@ void TerminalWorkspace::showNextTitlePrompt()
     }
 
     while (!pendingTitlePrompts_.empty()) {
-        PendingTitlePrompt prompt =
-            std::move(pendingTitlePrompts_.front());
+        PendingTitlePrompt prompt = std::move(pendingTitlePrompts_.front());
         pendingTitlePrompts_.pop_front();
         if (!titlePromptTargetExists(prompt.target)) {
             continue;
         }
 
         activeTitlePrompt_ = std::move(prompt);
-        const QString heading = std::holds_alternative<PaneId>(
-            activeTitlePrompt_->target)
+        const QString heading =
+            std::holds_alternative<PaneId>(activeTitlePrompt_->target)
             ? QStringLiteral("Change Terminal Title")
             : QStringLiteral("Change Tab Title");
-        Q_EMIT titlePromptRequested(
-            activeTitlePrompt_->requestId,
-            heading,
-            activeTitlePrompt_->initialTitle);
+        Q_EMIT titlePromptRequested(activeTitlePrompt_->requestId, heading,
+                                    activeTitlePrompt_->initialTitle);
         return;
     }
 }
 
 void TerminalWorkspace::scheduleNextTitlePrompt()
 {
-    if (activeTitlePrompt_.has_value()
-        || pendingTitlePrompts_.empty()
+    if (activeTitlePrompt_.has_value() || pendingTitlePrompts_.empty()
         || titlePromptAdvanceScheduled_) {
         return;
     }
@@ -2472,9 +2413,8 @@ void TerminalWorkspace::cancelTitlePrompt(quint64 promptId)
     finishTitlePrompt(promptId, std::nullopt);
 }
 
-void TerminalWorkspace::finishTitlePrompt(
-    quint64 promptId,
-    const std::optional<QString> &title)
+void TerminalWorkspace::finishTitlePrompt(quint64 promptId,
+                                          const std::optional<QString> &title)
 {
     if (promptId == 0 || !activeTitlePrompt_.has_value()
         || activeTitlePrompt_->requestId != promptId) {
@@ -2558,8 +2498,7 @@ void TerminalWorkspace::removePendingPastesForPane(PaneHandle handle)
 {
     const QPointer<TerminalWorkspace> guard(this);
     bool removedActiveRequest = false;
-    for (qsizetype pendingIndex = pendingPastes_.size();
-         pendingIndex-- > 0;) {
+    for (qsizetype pendingIndex = pendingPastes_.size(); pendingIndex-- > 0;) {
         PendingPaste &pending = pendingPastes_[pendingIndex];
         for (qsizetype targetIndex = pending.targets.size();
              targetIndex-- > 0;) {
@@ -2609,13 +2548,11 @@ TabListEntry TerminalWorkspace::tabListEntry(const Tab &tab) const
     entry.zoomed = tab.zoomedPaneId.isValid();
     entry.bell = activePane != nullptr && activePane->bellTitleVisible();
     entry.attention = tab.attention;
-    entry.title = activePane != nullptr
-        ? activePane->title()
-        : QStringLiteral("Terminal");
+    entry.title = activePane != nullptr ? activePane->title()
+                                        : QStringLiteral("Terminal");
     entry.titleOverride = tab.titleOverride;
-    entry.currentDirectory = activePane != nullptr
-        ? activePane->currentDirectory()
-        : QString{};
+    entry.currentDirectory =
+        activePane != nullptr ? activePane->currentDirectory() : QString{};
     entry.running = running;
     entry.readOnly = activePane != nullptr && activePane->isReadOnly();
     return entry;
@@ -2696,8 +2633,7 @@ void TerminalWorkspace::layoutCurrentTab()
     updateSplitDividers(tab);
 }
 
-void TerminalWorkspace::updateNodeGeometry(Node *node,
-                                           const QRectF &geometry)
+void TerminalWorkspace::updateNodeGeometry(Node *node, const QRectF &geometry)
 {
     if (node == nullptr) {
         return;
@@ -2713,20 +2649,20 @@ void TerminalWorkspace::updateNodeGeometry(Node *node,
         updateNodeGeometry(
             node->first.get(),
             QRectF(geometry.x(), geometry.y(), firstWidth, geometry.height()));
-        updateNodeGeometry(
-            node->second.get(),
-            QRectF(geometry.x() + firstWidth + splitGap, geometry.y(),
-                   available - firstWidth, geometry.height()));
+        updateNodeGeometry(node->second.get(),
+                           QRectF(geometry.x() + firstWidth + splitGap,
+                                  geometry.y(), available - firstWidth,
+                                  geometry.height()));
     } else {
         const qreal available = splitExtent(geometry, node->orientation);
         const qreal firstHeight = std::floor(available * node->ratio);
         updateNodeGeometry(
             node->first.get(),
             QRectF(geometry.x(), geometry.y(), geometry.width(), firstHeight));
-        updateNodeGeometry(
-            node->second.get(),
-            QRectF(geometry.x(), geometry.y() + firstHeight + splitGap,
-                   geometry.width(), available - firstHeight));
+        updateNodeGeometry(node->second.get(),
+                           QRectF(geometry.x(),
+                                  geometry.y() + firstHeight + splitGap,
+                                  geometry.width(), available - firstHeight));
     }
 }
 
@@ -2744,8 +2680,8 @@ void TerminalWorkspace::applyNodeGeometry(Node *node)
     applyNodeGeometry(node->second.get());
 }
 
-TerminalWorkspace::Node *TerminalWorkspace::findSplitNode(
-    Node *node, quint64 splitId) const
+TerminalWorkspace::Node *TerminalWorkspace::findSplitNode(Node *node,
+                                                          quint64 splitId) const
 {
     if (node == nullptr || node->isLeaf()) {
         return nullptr;
@@ -2786,7 +2722,8 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
     }
 
     const qreal perpendicular = node->orientation == Qt::Horizontal
-        ? node->geometry.height() : node->geometry.width();
+        ? node->geometry.height()
+        : node->geometry.width();
     if (splitExtent(node->geometry, node->orientation) > 0.0
         && perpendicular > 0.0) {
         SplitDividerItem *divider = splitDividers_.value(node->splitId);
@@ -2798,13 +2735,13 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
         divider->markCurrent(generation);
         QRectF geometry;
         if (node->orientation == Qt::Horizontal) {
-            geometry = QRectF(
-                node->first->geometry.right(), node->geometry.top(),
-                splitGap, node->geometry.height());
+            geometry =
+                QRectF(node->first->geometry.right(), node->geometry.top(),
+                       splitGap, node->geometry.height());
         } else {
-            geometry = QRectF(
-                node->geometry.left(), node->first->geometry.bottom(),
-                node->geometry.width(), splitGap);
+            geometry =
+                QRectF(node->geometry.left(), node->first->geometry.bottom(),
+                       node->geometry.width(), splitGap);
         }
         divider->setOrientation(node->orientation);
         divider->setPosition(geometry.topLeft());
@@ -2817,12 +2754,11 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
 }
 
 std::optional<TerminalWorkspace::SplitDividerDrag>
-TerminalWorkspace::beginSplitDividerDrag(
-    quint64 splitId, const QPointF &position) const
+TerminalWorkspace::beginSplitDividerDrag(quint64 splitId,
+                                         const QPointF &position) const
 {
     const Tab *tab = currentTab();
-    if (tab == nullptr || tab->root == nullptr
-        || tab->zoomedPaneId.isValid()) {
+    if (tab == nullptr || tab->root == nullptr || tab->zoomedPaneId.isValid()) {
         return std::nullopt;
     }
     const Node *split = findSplitNode(tab->root.get(), splitId);
@@ -2833,21 +2769,20 @@ TerminalWorkspace::beginSplitDividerDrag(
     if (available <= 0.0) {
         return std::nullopt;
     }
-    const qreal pointer = split->orientation == Qt::Horizontal
-        ? position.x() : position.y();
+    const qreal pointer =
+        split->orientation == Qt::Horizontal ? position.x() : position.y();
     if (!std::isfinite(pointer)) {
         return std::nullopt;
     }
     return SplitDividerDrag{pointer, split->ratio};
 }
 
-bool TerminalWorkspace::dragSplitDivider(
-    quint64 splitId, const QPointF &position,
-    const SplitDividerDrag &drag)
+bool TerminalWorkspace::dragSplitDivider(quint64 splitId,
+                                         const QPointF &position,
+                                         const SplitDividerDrag &drag)
 {
     Tab *tab = currentTab();
-    if (tab == nullptr || tab->root == nullptr
-        || tab->zoomedPaneId.isValid()) {
+    if (tab == nullptr || tab->root == nullptr || tab->zoomedPaneId.isValid()) {
         return false;
     }
     Node *split = findSplitNode(tab->root.get(), splitId);
@@ -2858,14 +2793,14 @@ bool TerminalWorkspace::dragSplitDivider(
     if (available <= 0.0) {
         return false;
     }
-    const qreal pointer = split->orientation == Qt::Horizontal
-        ? position.x() : position.y();
+    const qreal pointer =
+        split->orientation == Qt::Horizontal ? position.x() : position.y();
     if (!std::isfinite(pointer) || !std::isfinite(drag.pointer)
         || !std::isfinite(drag.ratio)) {
         return false;
     }
-    const qreal ratio = std::clamp(
-        drag.ratio + (pointer - drag.pointer) / available, 0.0, 1.0);
+    const qreal ratio =
+        std::clamp(drag.ratio + (pointer - drag.pointer) / available, 0.0, 1.0);
     if (ratio > 0.0 && ratio < 1.0
         && std::floor(available * ratio)
             == std::floor(available * split->ratio)) {
@@ -2946,8 +2881,8 @@ PaneId TerminalWorkspace::firstPaneId(Node *node) const
     return first.isValid() ? first : firstPaneId(node->second.get());
 }
 
-PaneId TerminalWorkspace::focusTargetAfterClosing(
-    const Tab &tab, PaneId paneId) const
+PaneId TerminalWorkspace::focusTargetAfterClosing(const Tab &tab,
+                                                  PaneId paneId) const
 {
     std::vector<PaneHandle> panes;
     if (tab.root != nullptr) tab.root->collectPanes(panes);
@@ -3012,19 +2947,17 @@ bool TerminalWorkspace::navigateFrom(PaneId paneId, int direction)
     if (slots.size() <= 1) return false;
 
     const auto sourceSlot = std::ranges::find_if(
-        slots,
-        [paneId](const auto &slot) { return slot.first == paneId; });
+        slots, [paneId](const auto &slot) { return slot.first == paneId; });
     if (sourceSlot == slots.end()) return false;
 
-    const auto findNearest = [&slots, paneId, direction](
-                                 const QRectF &source) -> PaneId {
+    const auto findNearest = [&slots, paneId,
+                              direction](const QRectF &source) -> PaneId {
         PaneId best;
         qreal bestDistance = std::numeric_limits<qreal>::max();
         for (const auto &[candidateId, candidate] : slots) {
             if (candidateId == paneId) continue;
-            const bool valid =
-                (direction == Qt::Key_Left
-                 && candidate.right() <= source.left())
+            const bool valid = (direction == Qt::Key_Left
+                                && candidate.right() <= source.left())
                 || (direction == Qt::Key_Right
                     && candidate.left() >= source.right())
                 || (direction == Qt::Key_Up
@@ -3083,12 +3016,11 @@ bool TerminalWorkspace::navigateRelative(PaneId paneId, qint64 delta)
     const qint64 count = static_cast<qint64>(panes.size());
     const qint64 source = std::ranges::distance(panes.begin(), current);
     const qint64 offset = delta % count;
-    const size_t destination = static_cast<size_t>(
-        (source + offset + count) % count);
+    const size_t destination =
+        static_cast<size_t>((source + offset + count) % count);
     if (destination == static_cast<size_t>(source)) return false;
 
-    activatePane(panes[destination].id,
-                 PaneActivationReason::SplitNavigation);
+    activatePane(panes[destination].id, PaneActivationReason::SplitNavigation);
     return true;
 }
 
@@ -3151,9 +3083,9 @@ bool TerminalWorkspace::resizeSplit(PaneId paneId, int direction, int amount)
     if (split != nullptr) {
         const qreal extent = splitExtent(split->geometry, orientation);
         if (extent > 0.0) {
-            setSplitRatio(
-                *tab, *split,
-                split->ratio + sign * static_cast<qreal>(amount) / extent);
+            setSplitRatio(*tab, *split,
+                          split->ratio
+                              + sign * static_cast<qreal>(amount) / extent);
         }
     }
 
@@ -3166,7 +3098,7 @@ bool TerminalWorkspace::equalizeSplits(TabId tabId)
 {
     Tab *tab = tabById(tabId);
     if (tab == nullptr || tab->root == nullptr) return false;
-    (void) tab->root->equalize();
+    (void)tab->root->equalize();
     if (tab->id == currentTabId()) {
         layoutCurrentTab();
     } else {
@@ -3181,9 +3113,8 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
     if (tab == nullptr || tab->root == nullptr || tab->root->isLeaf()) {
         return false;
     }
-    tab->zoomedPaneId = tab->zoomedPaneId.isValid()
-        ? PaneId{}
-        : tab->activePaneId;
+    tab->zoomedPaneId =
+        tab->zoomedPaneId.isValid() ? PaneId{} : tab->activePaneId;
     refreshTab(tab->id);
     if (tab->id == currentTabId()) {
         layoutCurrentTab();
@@ -3193,22 +3124,18 @@ bool TerminalWorkspace::toggleSplitZoom(TabId tabId)
     return true;
 }
 
-WorkspaceCloseAssessment TerminalWorkspace::assessTabClose(
-    const Tab &tab) const
+WorkspaceCloseAssessment TerminalWorkspace::assessTabClose(const Tab &tab) const
 {
     bool hasReadOnlyPane = false;
     bool childRunning = false;
     bool activeProcess = false;
     if (tab.root != nullptr) {
-        tab.root->forEachPane(
-            [&hasReadOnlyPane, &childRunning, &activeProcess](
-                const PaneHandle &handle) {
-                hasReadOnlyPane = hasReadOnlyPane
-                    || handle.pane->isReadOnly();
-                childRunning = childRunning || handle.pane->isRunning();
-                activeProcess = activeProcess
-                    || handle.pane->hasActiveProcess();
-            });
+        tab.root->forEachPane([&hasReadOnlyPane, &childRunning,
+                               &activeProcess](const PaneHandle &handle) {
+            hasReadOnlyPane = hasReadOnlyPane || handle.pane->isReadOnly();
+            childRunning = childRunning || handle.pane->isRunning();
+            activeProcess = activeProcess || handle.pane->hasActiveProcess();
+        });
     }
     return {
         .needsConfirmation = hasReadOnlyPane
@@ -3218,8 +3145,8 @@ WorkspaceCloseAssessment TerminalWorkspace::assessTabClose(
     };
 }
 
-WorkspaceCloseAssessment TerminalWorkspace::assessTabsClose(
-    const std::vector<TabId> &tabIds) const
+WorkspaceCloseAssessment
+TerminalWorkspace::assessTabsClose(const std::vector<TabId> &tabIds) const
 {
     QSet<TabId> targetIds;
     targetIds.reserve(static_cast<qsizetype>(tabIds.size()));
@@ -3242,8 +3169,7 @@ WorkspaceCloseAssessment TerminalWorkspace::assessWorkspaceClose() const
     return result;
 }
 
-bool TerminalWorkspace::shouldConfirmPaneClose(
-    const TerminalPane &pane) const
+bool TerminalWorkspace::shouldConfirmPaneClose(const TerminalPane &pane) const
 {
     return pane.isReadOnly()
         || shouldConfirmClose(effectiveOptions_.confirmCloseMode,
@@ -3263,7 +3189,8 @@ int TerminalWorkspace::tabIndexForId(TabId tabId) const
 int TerminalWorkspace::tabIndexForPane(PaneId paneId) const
 {
     for (int index = 0; index < static_cast<int>(tabs_.size()); ++index) {
-        if (findNode(tabs_[static_cast<size_t>(index)]->root.get(), paneId) != nullptr) {
+        if (findNode(tabs_[static_cast<size_t>(index)]->root.get(), paneId)
+            != nullptr) {
             return index;
         }
     }

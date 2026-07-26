@@ -24,16 +24,14 @@ int boundedTimeout(std::chrono::milliseconds timeout)
 
 } // namespace
 
-SingleInstanceActivation::SingleInstanceActivation(
-    QDBusConnection connection,
-    QString serviceName,
-    QObject *parent)
+SingleInstanceActivation::SingleInstanceActivation(QDBusConnection connection,
+                                                   QString serviceName,
+                                                   QObject *parent)
     : QObject(parent)
     , connection_(std::move(connection))
     , serviceName_(std::move(serviceName))
     , objectPath_(objectPathForApplicationId(serviceName_))
-{
-}
+{}
 
 SingleInstanceActivation::~SingleInstanceActivation()
 {
@@ -55,8 +53,8 @@ QDBusConnection SingleInstanceActivation::defaultConnection()
     return QDBusConnection::sessionBus();
 }
 
-QString SingleInstanceActivation::objectPathForApplicationId(
-    QStringView applicationId)
+QString
+SingleInstanceActivation::objectPathForApplicationId(QStringView applicationId)
 {
     QString path = QStringLiteral("/");
     path += applicationId;
@@ -65,8 +63,8 @@ QString SingleInstanceActivation::objectPathForApplicationId(
     return path;
 }
 
-SingleInstanceActivation::StartResult SingleInstanceActivation::start(
-    StartOptions options)
+SingleInstanceActivation::StartResult
+SingleInstanceActivation::start(StartOptions options)
 {
     if (started_) {
         return {
@@ -88,14 +86,14 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
     // Export under this connection's unique name before atomically claiming
     // the well-known name. A secondary may then call as soon as RequestName
     // reports that an owner exists without observing a missing object.
-    objectRegistered_ = connection_.registerObject(objectPath_,
-        QString::fromLatin1(InterfaceName), this,
+    objectRegistered_ = connection_.registerObject(
+        objectPath_, QString::fromLatin1(InterfaceName), this,
         QDBusConnection::ExportScriptableSlots);
     if (!objectRegistered_) {
         return {
             .role = Role::Failed,
-            .diagnostic = QStringLiteral(
-                "Could not export the activation endpoint"),
+            .diagnostic =
+                QStringLiteral("Could not export the activation endpoint"),
         };
     }
     const auto fail = [this](QString diagnostic) {
@@ -108,8 +106,8 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
 
     const auto deadline = std::chrono::steady_clock::now()
         + std::max(options.timeout, std::chrono::milliseconds(1));
-    for (std::size_t transition = 0;
-         transition <= MaximumOwnerTransitions; ++transition) {
+    for (std::size_t transition = 0; transition <= MaximumOwnerTransitions;
+         ++transition) {
         ClaimResult claim = tryClaimService();
         if (claim.status == ClaimStatus::Primary) {
             return {.role = Role::Primary, .diagnostic = {}};
@@ -129,22 +127,22 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         }
         if (owner->isEmpty()) continue;
 
-        const auto remaining = std::chrono::duration_cast<
-            std::chrono::milliseconds>(deadline
-                                       - std::chrono::steady_clock::now());
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - std::chrono::steady_clock::now());
         if (remaining <= std::chrono::milliseconds::zero()) {
             return fail(QStringLiteral(
                 "Single-instance activation exceeded its deadline"));
         }
 
         QDBusMessage message = QDBusMessage::createMethodCall(
-            serviceName_, objectPath_,
-            QString::fromLatin1(InterfaceName), QStringLiteral("Activate"));
+            serviceName_, objectPath_, QString::fromLatin1(InterfaceName),
+            QStringLiteral("Activate"));
         message << options.activation.toPlatformData();
-        const QDBusMessage activationReply = connection_.call(
-            message, QDBus::Block, boundedTimeout(remaining));
-        const bool accepted
-            = activationReply.type() == QDBusMessage::ReplyMessage
+        const QDBusMessage activationReply =
+            connection_.call(message, QDBus::Block, boundedTimeout(remaining));
+        const bool accepted =
+            activationReply.type() == QDBusMessage::ReplyMessage
             && activationReply.arguments().isEmpty();
         if (accepted) {
             unregisterObject();
@@ -177,8 +175,8 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         }
         if (successor->isEmpty() || *successor != *owner) continue;
 
-        const QString reason = activationReply.type()
-                == QDBusMessage::ReplyMessage
+        const QString reason =
+            activationReply.type() == QDBusMessage::ReplyMessage
             ? QStringLiteral(
                   "The existing instance returned an invalid activation reply")
             : QStringLiteral("The existing instance rejected activation: %1")
@@ -186,19 +184,19 @@ SingleInstanceActivation::StartResult SingleInstanceActivation::start(
         return fail(reason);
     }
 
-    return fail(QStringLiteral(
-        "The activation service changed owners too many times"));
+    return fail(
+        QStringLiteral("The activation service changed owners too many times"));
 }
 
-void SingleInstanceActivation::setActivationHandler(
-    ActivationHandler handler)
+void SingleInstanceActivation::setActivationHandler(ActivationHandler handler)
 {
     handler_ = std::move(handler);
     std::vector<PendingActivation> pending =
         std::exchange(pendingActivations_, {});
     for (PendingActivation &activation : pending) {
         completeActivation(activation.request,
-            handler_ && handler_(std::move(activation.activation)));
+                           handler_
+                               && handler_(std::move(activation.activation)));
     }
 }
 
@@ -211,7 +209,7 @@ void SingleInstanceActivation::release()
     if (ownsService_) {
         if (QDBusConnectionInterface *const interface =
                 connection_.interface()) {
-            (void) interface->unregisterService(serviceName_);
+            (void)interface->unregisterService(serviceName_);
         }
         ownsService_ = false;
     }
@@ -246,8 +244,8 @@ void SingleInstanceActivation::Activate(const QVariantMap &platformData)
     }
 }
 
-void SingleInstanceActivation::Open(
-    const QStringList &uris, const QVariantMap &platformData)
+void SingleInstanceActivation::Open(const QStringList &uris,
+                                    const QVariantMap &platformData)
 {
     Q_UNUSED(uris);
     Q_UNUSED(platformData);
@@ -255,7 +253,8 @@ void SingleInstanceActivation::Open(
 }
 
 void SingleInstanceActivation::ActivateAction(const QString &actionName,
-    const QVariantList &parameter, const QVariantMap &platformData)
+                                              const QVariantList &parameter,
+                                              const QVariantMap &platformData)
 {
     Q_UNUSED(actionName);
     Q_UNUSED(parameter);
@@ -270,8 +269,8 @@ SingleInstanceActivation::tryClaimService()
     if (interface == nullptr) {
         return {
             .status = ClaimStatus::Failed,
-            .diagnostic = QStringLiteral(
-                "The session D-Bus has no connection interface"),
+            .diagnostic =
+                QStringLiteral("The session D-Bus has no connection interface"),
         };
     }
 
@@ -282,34 +281,32 @@ SingleInstanceActivation::tryClaimService()
     if (!reply.isValid()) {
         return {
             .status = ClaimStatus::Failed,
-            .diagnostic = QStringLiteral(
-                "Could not request the activation service name: %1")
-                              .arg(reply.error().message()),
+            .diagnostic =
+                QStringLiteral(
+                    "Could not request the activation service name: %1")
+                    .arg(reply.error().message()),
         };
     }
-    if (reply.value()
-        == QDBusConnectionInterface::ServiceRegistered) {
+    if (reply.value() == QDBusConnectionInterface::ServiceRegistered) {
         ownsService_ = true;
         return {.status = ClaimStatus::Primary, .diagnostic = {}};
     }
-    if (reply.value()
-        == QDBusConnectionInterface::ServiceNotRegistered) {
+    if (reply.value() == QDBusConnectionInterface::ServiceNotRegistered) {
         return {.status = ClaimStatus::Occupied, .diagnostic = {}};
     }
     return {
         .status = ClaimStatus::Failed,
-        .diagnostic = QStringLiteral(
-            "The activation service was unexpectedly queued"),
+        .diagnostic =
+            QStringLiteral("The activation service was unexpectedly queued"),
     };
 }
 
-std::expected<QString, QString>
-SingleInstanceActivation::currentOwner() const
+std::expected<QString, QString> SingleInstanceActivation::currentOwner() const
 {
     QDBusConnectionInterface *const interface = connection_.interface();
     if (interface == nullptr) {
-        return std::unexpected(QStringLiteral(
-            "The session D-Bus has no connection interface"));
+        return std::unexpected(
+            QStringLiteral("The session D-Bus has no connection interface"));
     }
 
     const QDBusReply<QString> reply = interface->serviceOwner(serviceName_);
@@ -324,8 +321,8 @@ SingleInstanceActivation::currentOwner() const
             .arg(reply.error().message()));
 }
 
-void SingleInstanceActivation::completeActivation(
-    const QDBusMessage &request, bool accepted)
+void SingleInstanceActivation::completeActivation(const QDBusMessage &request,
+                                                  bool accepted)
 {
     QDBusMessage reply = accepted
         ? request.createReply()

@@ -45,8 +45,7 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+crash-report", GhosttyCliFrontendSupport::Unsupported},
         {"+boo", GhosttyCliFrontendSupport::Unsupported},
         {"+new-window", GhosttyCliFrontendSupport::Unsupported},
-        {"+toggle-quick-terminal",
-         GhosttyCliFrontendSupport::Unsupported},
+        {"+toggle-quick-terminal", GhosttyCliFrontendSupport::Unsupported},
     });
 
 enum class GhosttyCliActionDisposition {
@@ -57,8 +56,7 @@ enum class GhosttyCliActionDisposition {
 };
 
 struct GhosttyCliActionSelection final {
-    GhosttyCliActionDisposition disposition =
-        GhosttyCliActionDisposition::None;
+    GhosttyCliActionDisposition disposition = GhosttyCliActionDisposition::None;
     std::string_view argument;
 
     bool operator==(const GhosttyCliActionSelection &) const = default;
@@ -66,8 +64,8 @@ struct GhosttyCliActionSelection final {
 
 // Classify raw process arguments before Qt or frontend option parsing. The
 // returned string_view aliases argv and remains valid for the process lifetime.
-[[nodiscard]] GhosttyCliActionSelection selectGhosttyCliAction(
-    std::span<char *const> arguments) noexcept;
+[[nodiscard]] GhosttyCliActionSelection
+selectGhosttyCliAction(std::span<char *const> arguments) noexcept;
 
 struct GhosttyCliExecError final {
     std::filesystem::path target;
@@ -80,6 +78,6 @@ struct GhosttyCliExecError final {
 // argv bytes, environment, non-close-on-exec descriptors, PID, and process
 // relationship. A successful exec never returns; the value describes the
 // failure otherwise.
-[[nodiscard]] GhosttyCliExecError execGhosttyCliHelper(
-    std::span<char *const> arguments,
-    std::string_view helperName);
+[[nodiscard]] GhosttyCliExecError
+execGhosttyCliHelper(std::span<char *const> arguments,
+                     std::string_view helperName);

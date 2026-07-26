@@ -26,11 +26,15 @@ class TerminalPane;
 class TerminalController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
-    Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
-    Q_PROPERTY(bool mouseTracking READ mouseTracking NOTIFY mouseTrackingChanged)
+    Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY
+                   currentDirectoryChanged)
+    Q_PROPERTY(
+        bool mouseTracking READ mouseTracking NOTIFY mouseTrackingChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
-    Q_PROPERTY(bool activeProcess READ activeProcess NOTIFY activeProcessChanged)
-    Q_PROPERTY(bool selectionAvailable READ selectionAvailable NOTIFY selectionAvailableChanged)
+    Q_PROPERTY(
+        bool activeProcess READ activeProcess NOTIFY activeProcessChanged)
+    Q_PROPERTY(bool selectionAvailable READ selectionAvailable NOTIFY
+                   selectionAvailableChanged)
     Q_PROPERTY(bool readOnly READ readOnly NOTIFY readOnlyChanged)
 
 public:
@@ -111,8 +115,8 @@ public:
     // actions. A false return means the request was not accepted and no
     // terminalActionReady signal will be published for that invocation.
     [[nodiscard]] bool copySelectionAction(quint64 requestId);
-    [[nodiscard]] bool writeTerminalFile(
-        quint64 requestId, const TerminalWriteFileAction &action);
+    [[nodiscard]] bool writeTerminalFile(quint64 requestId,
+                                         const TerminalWriteFileAction &action);
     void clearSelection();
     // Fractional captured wheel input has no protocol event yet, but Ghostty
     // still clears selection. The worker rechecks current DEC tracking before
@@ -124,8 +128,9 @@ public:
     void selectAll();
     [[nodiscard]] bool selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
-    [[nodiscard]] bool adjustSelectionAction(
-        quint64 requestId, TerminalSelectionAdjustment adjustment);
+    [[nodiscard]] bool
+    adjustSelectionAction(quint64 requestId,
+                          TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
     [[nodiscard]] bool scrollToSelectionAction(quint64 requestId);
     // Search requests are generation-scoped so an incremental scan can yield
@@ -138,10 +143,9 @@ public:
     [[nodiscard]] bool searchExpected() const { return searchExpected_; }
     void requestHyperlink(int column, int row, quint64 contentRevision);
     void cancelHyperlinkRequest();
-    [[nodiscard]] quint64 prepareHyperlinkActivation(
-        int column, int row, quint64 contentRevision);
-    void commitHyperlinkActivation(quint64 requestId,
-                                   int column, int row);
+    [[nodiscard]] quint64 prepareHyperlinkActivation(int column, int row,
+                                                     quint64 contentRevision);
+    void commitHyperlinkActivation(quint64 requestId, int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
 
 Q_SIGNALS:
@@ -159,8 +163,7 @@ Q_SIGNALS:
     void errorOccurred(const QString &message);
     void bell();
     void hyperlinkResolved(quint64 contentRevision,
-                           TerminalHyperlinkState state,
-                           TerminalLinkKind kind,
+                           TerminalHyperlinkState state, TerminalLinkKind kind,
                            const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
     void hyperlinkActivationResolved(quint64 contentRevision,
@@ -195,8 +198,8 @@ Q_SIGNALS:
     void cancelPasteRequested(quint64 requestId);
     void copyRequested();
     void copyActionRequested(quint64 requestId);
-    void writeTerminalFileRequested(
-        quint64 requestId, const TerminalWriteFileAction &action);
+    void writeTerminalFileRequested(quint64 requestId,
+                                    const TerminalWriteFileAction &action);
     void clearSelectionRequested();
     void clearSelectionIfMouseTrackingRequested();
     void beginSelectionRequested(const TerminalSelectionPressInput &input);
@@ -205,8 +208,9 @@ Q_SIGNALS:
     void selectAllRequested();
     void selectAllActionRequested(quint64 requestId);
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);
-    void selectionAdjustmentActionRequested(
-        quint64 requestId, TerminalSelectionAdjustment adjustment);
+    void
+    selectionAdjustmentActionRequested(quint64 requestId,
+                                       TerminalSelectionAdjustment adjustment);
     void scrollRequested(const TerminalViewportRequest &request);
     void scrollToSelectionActionRequested(quint64 requestId);
     void searchRequested(quint64 generation, const QByteArray &needle);
@@ -219,10 +223,11 @@ Q_SIGNALS:
     void hyperlinkQueryRequested(quint64 requestId, quint64 contentRevision,
                                  int column, int row);
     void hyperlinkQueryCancellationRequested(quint64 requestId);
-    void hyperlinkActivationPreparationRequested(
-        quint64 requestId, quint64 contentRevision, int column, int row);
-    void hyperlinkActivationCommitRequested(
-        quint64 requestId, int column, int row);
+    void hyperlinkActivationPreparationRequested(quint64 requestId,
+                                                 quint64 contentRevision,
+                                                 int column, int row);
+    void hyperlinkActivationCommitRequested(quint64 requestId, int column,
+                                            int row);
     void hyperlinkActivationCancellationRequested(quint64 requestId);
     void runtimeOptionsRequested(const TerminalSessionRuntimeOptions &options);
     void readOnlyRequested(bool readOnly);
@@ -239,10 +244,9 @@ private:
         Cancelled,
     };
 
-    template<typename... SignalArgs, typename... WorkerArgs>
-    void relayWorkerRequest(
-        void (TerminalController::*signal)(SignalArgs...),
-        void (SessionWorker::*slot)(WorkerArgs...));
+    template <typename... SignalArgs, typename... WorkerArgs>
+    void relayWorkerRequest(void (TerminalController::*signal)(SignalArgs...),
+                            void (SessionWorker::*slot)(WorkerArgs...));
     void connectWorkerRequestRelays();
     void enqueueWorkerRequest(WorkerRequest request);
     void createWorkerRuntime();
@@ -261,8 +265,8 @@ private:
     [[nodiscard]] quint64 beginSequence();
     // False means a synchronous staging observer resolved or superseded the
     // token (or destroyed this controller); the pane must not retain it.
-    [[nodiscard]] bool stageSequenceKey(
-        quint64 token, const TerminalKeyInput &input);
+    [[nodiscard]] bool stageSequenceKey(quint64 token,
+                                        const TerminalKeyInput &input);
     void resolveSequence(
         quint64 token, TerminalSequenceResolution resolution,
         const std::optional<TerminalKeyInput> &current = std::nullopt);

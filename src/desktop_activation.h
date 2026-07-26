@@ -22,8 +22,8 @@ struct DesktopActivationContext final {
     friend bool operator==(const DesktopActivationContext &,
                            const DesktopActivationContext &) = default;
 
-    [[nodiscard]] static DesktopActivationContext fromPlatformData(
-        const QVariantMap &platformData);
+    [[nodiscard]] static DesktopActivationContext
+    fromPlatformData(const QVariantMap &platformData);
     // Capture and clear one-shot launcher state before any terminal or helper
     // child can inherit it.
     [[nodiscard]] static DesktopActivationContext takeFromEnvironment();
@@ -37,10 +37,9 @@ struct DesktopActivationContext final {
 // Presents one new primary window. Qt Wayland consumes the standard launcher
 // variables synchronously while showing the window; their scoped projection
 // avoids process-wide stale state and keeps the typed context above D-Bus.
-void showWindowWithActivation(QWindow &window,
-                              const DesktopActivationContext &activation,
-                              WindowPresentationMode mode =
-                                  WindowPresentationMode::Windowed);
+void showWindowWithActivation(
+    QWindow &window, const DesktopActivationContext &activation,
+    WindowPresentationMode mode = WindowPresentationMode::Windowed);
 
 // Session workers run outside the GUI thread. During presentation they reuse a
 // clean pre-projection snapshot because Qt Wayland may itself mutate the

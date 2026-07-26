@@ -11,8 +11,8 @@
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
-#include <QScreen>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QTimer>
 #include <QVariant>
 
@@ -37,10 +37,8 @@ bool isOwnedBy(const QObject *object, const QObject *owner) noexcept
 bool isValidWindowPair(const QQuickWindow *window,
                        const TerminalWorkspace *workspace) noexcept
 {
-    return window != nullptr
-        && workspace != nullptr
-        && workspace->window() == window
-        && isOwnedBy(workspace, window);
+    return window != nullptr && workspace != nullptr
+        && workspace->window() == window && isOwnedBy(workspace, window);
 }
 
 constexpr quint32 minimumWindowColumns = 10;
@@ -57,20 +55,18 @@ qreal nonNegativeWindowProperty(const QQuickWindow &window,
 int pixelExtent(qreal cellExtent, quint32 cells, qreal chromeExtent) noexcept
 {
     const long double pixels =
-        static_cast<long double>(cellExtent)
-            * static_cast<long double>(cells)
+        static_cast<long double>(cellExtent) * static_cast<long double>(cells)
         + static_cast<long double>(chromeExtent);
     constexpr int maximum = std::numeric_limits<int>::max();
-    if (!std::isfinite(pixels)
-        || pixels >= static_cast<long double>(maximum)) {
+    if (!std::isfinite(pixels) || pixels >= static_cast<long double>(maximum)) {
         return maximum;
     }
     return std::max(1, static_cast<int>(std::ceil(pixels)));
 }
 
-QSize windowSizeForGrid(const TerminalCellMetrics &metrics,
-                        quint32 columns, quint32 rows,
-                        qreal chromeWidth, qreal chromeHeight) noexcept
+QSize windowSizeForGrid(const TerminalCellMetrics &metrics, quint32 columns,
+                        quint32 rows, qreal chromeWidth,
+                        qreal chromeHeight) noexcept
 {
     return {
         pixelExtent(metrics.cellWidth, columns, chromeWidth),
@@ -92,9 +88,9 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
         nonNegativeWindowProperty(window, "terminalChromeWidth");
     const qreal chromeHeight =
         nonNegativeWindowProperty(window, "terminalChromeHeight");
-    QSize minimum = windowSizeForGrid(
-        metrics, minimumWindowColumns, minimumWindowRows,
-        chromeWidth, chromeHeight);
+    QSize minimum =
+        windowSizeForGrid(metrics, minimumWindowColumns, minimumWindowRows,
+                          chromeWidth, chromeHeight);
 
     QSize available;
     if (const QScreen *const screen = window.screen(); screen != nullptr) {
@@ -118,10 +114,9 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
     }
 
     QSize requested = windowSizeForGrid(
-        metrics,
-        std::max(options.windowWidth, minimumWindowColumns),
-        std::max(options.windowHeight, minimumWindowRows),
-        chromeWidth, chromeHeight);
+        metrics, std::max(options.windowWidth, minimumWindowColumns),
+        std::max(options.windowHeight, minimumWindowRows), chromeWidth,
+        chromeHeight);
     if (available.width() > 0) {
         requested.setWidth(std::min(requested.width(), available.width()));
     }
@@ -136,32 +131,27 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
 
 } // namespace
 
-ApplicationController::ApplicationController(
-    QQmlEngine &engine,
-    LaunchOptions effectiveOptions,
-    bool enableGlobalShortcutsPortal,
-    QObject *parent)
+ApplicationController::ApplicationController(QQmlEngine &engine,
+                                             LaunchOptions effectiveOptions,
+                                             bool enableGlobalShortcutsPortal,
+                                             QObject *parent)
     : ApplicationController(std::move(effectiveOptions),
                             qmlWindowFactory(engine),
-                            enableGlobalShortcutsPortal,
-                            parent)
-{
-}
+                            enableGlobalShortcutsPortal, parent)
+{}
 
-ApplicationController::ApplicationController(
-    LaunchOptions effectiveOptions,
-    WindowFactory windowFactory,
-    bool enableGlobalShortcutsPortal,
-    QObject *parent)
+ApplicationController::ApplicationController(LaunchOptions effectiveOptions,
+                                             WindowFactory windowFactory,
+                                             bool enableGlobalShortcutsPortal,
+                                             QObject *parent)
     : QObject(parent)
     , windowFactory_(std::move(windowFactory))
     , effectiveOptions_(std::move(effectiveOptions))
-    , initialSessionCoordinator_(
-          std::make_shared<InitialSessionCoordinator>(
-              InitialSessionCoordinator::Payload{
-                  .program = effectiveOptions_.program,
-                  .hold = effectiveOptions_.hold,
-              }))
+    , initialSessionCoordinator_(std::make_shared<InitialSessionCoordinator>(
+          InitialSessionCoordinator::Payload{
+              .program = effectiveOptions_.program,
+              .hold = effectiveOptions_.hold,
+          }))
     , keybindings_(std::make_unique<GhosttyApplicationKeybindings>(
           effectiveOptions_, enableGlobalShortcutsPortal))
 {
@@ -169,13 +159,12 @@ ApplicationController::ApplicationController(
         withoutInitialCommand(effectiveOptions_));
     lifetime_.applyLaunchOptions(effectiveOptions_);
 
-    connect(&lifetime_, &ApplicationLifetimeController::quitRequested,
-            this, &ApplicationController::quitRequested);
-    connect(keybindings_.get(),
-            &GhosttyApplicationKeybindings::applicationActionRequested,
-            this, [this](ApplicationAction action) {
-                dispatchRequestedAction(action);
-            });
+    connect(&lifetime_, &ApplicationLifetimeController::quitRequested, this,
+            &ApplicationController::quitRequested);
+    connect(
+        keybindings_.get(),
+        &GhosttyApplicationKeybindings::applicationActionRequested, this,
+        [this](ApplicationAction action) { dispatchRequestedAction(action); });
 }
 
 ApplicationController::~ApplicationController()
@@ -206,11 +195,11 @@ ApplicationController::WindowFactory
 ApplicationController::qmlWindowFactory(QQmlEngine &engine)
 {
     auto component = std::make_shared<QQmlComponent>(&engine);
-    component->loadFromModule(
-        QStringLiteral("GhosttyQt"), QStringLiteral("Main"));
+    component->loadFromModule(QStringLiteral("GhosttyQt"),
+                              QStringLiteral("Main"));
 
-    return [component = std::move(component)]()
-        -> std::expected<ApplicationWindow, QString> {
+    return [component = std::move(
+                component)]() -> std::expected<ApplicationWindow, QString> {
         if (!component->isReady()) {
             return std::unexpected(component->errorString());
         }
@@ -224,20 +213,19 @@ ApplicationController::qmlWindowFactory(QQmlEngine &engine)
             root->findChild<TerminalWorkspace *>();
         if (window == nullptr || workspace == nullptr) {
             delete root;
-            return std::unexpected(
-                QStringLiteral("Main.qml must create a QQuickWindow containing a TerminalWorkspace"));
+            return std::unexpected(QStringLiteral(
+                "Main.qml must create a QQuickWindow containing a TerminalWorkspace"));
         }
         return ApplicationWindow{window, workspace};
     };
 }
 
 std::expected<ApplicationWindow, QString>
-ApplicationController::createInitialWindow(
-    DesktopActivationContext activation)
+ApplicationController::createInitialWindow(DesktopActivationContext activation)
 {
     if (startupWindowHandled_) {
-        return std::unexpected(
-            QStringLiteral("The initial application window was already handled"));
+        return std::unexpected(QStringLiteral(
+            "The initial application window was already handled"));
     }
 
     // createWindow marks the startup decision as soon as its workspace is
@@ -263,30 +251,31 @@ bool ApplicationController::activateNoCommand(
         return false;
     }
     TerminalWorkspace *const source = focusedWorkspace();
-    QScreen *const preferredScreen = source != nullptr
-        && source->window() != nullptr
+    QScreen *const preferredScreen =
+        source != nullptr && source->window() != nullptr
         ? source->window()->screen()
         : nullptr;
     const QPointer<ApplicationController> guard(this);
-    auto created = createWindow(
-        activationWindowOptions(), activation, preferredScreen);
+    auto created =
+        createWindow(activationWindowOptions(), activation, preferredScreen);
     if (guard == nullptr) return false;
     if (created.has_value()) return true;
     Q_EMIT windowCreationFailed(created.error());
     return false;
 }
 
-std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
-    LaunchOptions options,
-    const DesktopActivationContext &activation,
-    QScreen *preferredScreen)
+std::expected<ApplicationWindow, QString>
+ApplicationController::createWindow(LaunchOptions options,
+                                    const DesktopActivationContext &activation,
+                                    QScreen *preferredScreen)
 {
     if (windowCreationInProgress_) {
-        return std::unexpected(
-            QStringLiteral("Application window creation is already in progress"));
+        return std::unexpected(QStringLiteral(
+            "Application window creation is already in progress"));
     }
     if (!windowFactory_) {
-        return std::unexpected(QStringLiteral("No window factory is available"));
+        return std::unexpected(
+            QStringLiteral("No window factory is available"));
     }
     if (lifetime_.hasRequestedQuit() || quitState_ != QuitState::Idle) {
         return std::unexpected(
@@ -302,32 +291,30 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
 
     const QPointer<ApplicationController> controllerGuard(this);
     windowCreationInProgress_ = true;
-    const auto creationGuard = qScopeGuard(
-        [controllerGuard] {
-            if (controllerGuard != nullptr) {
-                controllerGuard->windowCreationInProgress_ = false;
-            }
-        });
+    const auto creationGuard = qScopeGuard([controllerGuard] {
+        if (controllerGuard != nullptr) {
+            controllerGuard->windowCreationInProgress_ = false;
+        }
+    });
 
     // Keep the callable alive independently of this object while it runs. A
     // custom factory is allowed to synchronously delete its controller.
     WindowFactory invocationFactory = std::move(windowFactory_);
-    const auto factoryGuard = qScopeGuard(
-        [controllerGuard, &invocationFactory] {
+    const auto factoryGuard =
+        qScopeGuard([controllerGuard, &invocationFactory] {
             if (controllerGuard != nullptr) {
-                controllerGuard->windowFactory_ =
-                    std::move(invocationFactory);
+                controllerGuard->windowFactory_ = std::move(invocationFactory);
             }
         });
 
     std::expected<ApplicationWindow, QString> created = invocationFactory();
-    QPointer<QQuickWindow> guardedWindow(
-        created.has_value() ? created->window : nullptr);
+    QPointer<QQuickWindow> guardedWindow(created.has_value() ? created->window
+                                                             : nullptr);
     QPointer<TerminalWorkspace> guardedWorkspace(
         created.has_value() ? created->workspace : nullptr);
     const auto pairIsValid = [&] {
-        return controllerGuard != nullptr && isValidWindowPair(
-            guardedWindow.data(), guardedWorkspace.data());
+        return controllerGuard != nullptr
+            && isValidWindowPair(guardedWindow.data(), guardedWorkspace.data());
     };
     const auto discardCreated = [&] {
         if (guardedWindow != nullptr) delete guardedWindow.data();
@@ -352,10 +339,9 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     }
     if (!isOwnedBy(created->workspace, created->window)) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The window factory returned a workspace outside the "
-                "window's QObject ownership tree"));
+        return std::unexpected(QStringLiteral(
+            "The window factory returned a workspace outside the "
+            "window's QObject ownership tree"));
     }
 
     if (preferredScreen != nullptr
@@ -363,10 +349,9 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         guardedWindow->setScreen(preferredScreen);
         if (!pairIsValid()) {
             discardCreated();
-            return std::unexpected(
-                QStringLiteral(
-                    "The application window became invalid while selecting "
-                    "its initial screen"));
+            return std::unexpected(QStringLiteral(
+                "The application window became invalid while selecting "
+                "its initial screen"));
         }
     }
 
@@ -375,19 +360,17 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     guardedWindow->setMinimumSize(geometry.minimumSize);
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid while configuring "
-                "its initial geometry"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid while configuring "
+            "its initial geometry"));
     }
     if (geometry.requestedSize.has_value()) {
         guardedWindow->resize(*geometry.requestedSize);
         if (!pairIsValid()) {
             discardCreated();
-            return std::unexpected(
-                QStringLiteral(
-                    "The application window became invalid while configuring "
-                    "its initial geometry"));
+            return std::unexpected(QStringLiteral(
+                "The application window became invalid while configuring "
+                "its initial geometry"));
         }
     }
 
@@ -407,10 +390,9 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     }
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid during workspace "
-                "initialization"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid during workspace "
+            "initialization"));
     }
     if (!initialized) {
         discardCreated();
@@ -419,16 +401,15 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     }
     if (!lifetime_.registerWindow(guardedWindow.data())) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral("Could not register the primary application window"));
+        return std::unexpected(QStringLiteral(
+            "Could not register the primary application window"));
     }
 
     registerWindow({guardedWindow.data(), guardedWorkspace.data()});
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid during registration"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid during registration"));
     }
 
     if (requestedOptionsRevision != launchOptionsRevision_.current()) {
@@ -438,10 +419,9 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
             withoutInitialCommand(effectiveOptions_), currentProgram);
         if (!pairIsValid()) {
             discardCreated();
-            return std::unexpected(
-                QStringLiteral(
-                    "The application window became invalid while applying "
-                    "updated configuration"));
+            return std::unexpected(QStringLiteral(
+                "The application window became invalid while applying "
+                "updated configuration"));
         }
     }
 
@@ -458,65 +438,55 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
         return pairIsValid();
     };
     if (!setInitialProperty("initialNormalSize", initialNormalSize)
-        || !setInitialProperty(
-            "initialNormalSizePending",
-            options.maximize || options.fullscreen)
-        || !setInitialProperty(
-            "visibilityBeforeFullscreen",
-            static_cast<int>(options.maximize
-                                 ? QWindow::Maximized
-                                 : QWindow::Windowed))) {
+        || !setInitialProperty("initialNormalSizePending",
+                               options.maximize || options.fullscreen)
+        || !setInitialProperty("visibilityBeforeFullscreen",
+                               static_cast<int>(options.maximize
+                                                    ? QWindow::Maximized
+                                                    : QWindow::Windowed))) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid while configuring "
-                "its initial state"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid while configuring "
+            "its initial state"));
     }
 
     const WindowPresentationMode presentationMode = options.fullscreen
         ? WindowPresentationMode::Fullscreen
-        : (options.maximize
-               ? WindowPresentationMode::Maximized
-               : WindowPresentationMode::Windowed);
-    showWindowWithActivation(
-        *guardedWindow, activation, presentationMode);
+        : (options.maximize ? WindowPresentationMode::Maximized
+                            : WindowPresentationMode::Windowed);
+    showWindowWithActivation(*guardedWindow, activation, presentationMode);
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid while being shown"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid while being shown"));
     }
     if (initialSessionStartMode == TerminalSessionStartMode::Deferred
         && !guardedWorkspace->armInitialSessionStart()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "Could not arm the initial terminal session after window "
-                "presentation"));
+        return std::unexpected(QStringLiteral(
+            "Could not arm the initial terminal session after window "
+            "presentation"));
     }
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid while arming its "
-                "initial terminal session"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid while arming its "
+            "initial terminal session"));
     }
     if (activation.isEmpty()) {
         guardedWindow->requestActivate();
         if (!pairIsValid()) {
             discardCreated();
-            return std::unexpected(
-                QStringLiteral(
-                    "The application window became invalid during activation"));
+            return std::unexpected(QStringLiteral(
+                "The application window became invalid during activation"));
         }
     }
     Q_EMIT windowCreated(guardedWindow.data(), guardedWorkspace.data());
     if (!pairIsValid()) {
         discardCreated();
-        return std::unexpected(
-            QStringLiteral(
-                "The application window became invalid in its creation "
-                "observer"));
+        return std::unexpected(QStringLiteral(
+            "The application window became invalid in its creation "
+            "observer"));
     }
     return ApplicationWindow{
         guardedWindow.data(),
@@ -529,8 +499,7 @@ bool ApplicationController::dispatch(ApplicationAction action,
                                      PaneId sourcePaneId)
 {
     switch (action) {
-    case ApplicationAction::Ignore:
-        return true;
+    case ApplicationAction::Ignore: return true;
     case ApplicationAction::OpenConfig:
         Q_EMIT configOpenRequested();
         return true;
@@ -542,33 +511,29 @@ bool ApplicationController::dispatch(ApplicationAction action,
             return false;
         }
         const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
-        QTimer::singleShot(
-            0, this, [this, guardedSource, sourcePaneId] {
-                if (quitState_ != QuitState::Idle
-                    || lifetime_.hasRequestedQuit()) {
-                    return;
-                }
-                TerminalWorkspace *screenSource = guardedSource;
-                if (!containsWorkspace(screenSource)) {
-                    screenSource = activeWorkspace();
-                }
-                QScreen *const preferredScreen = screenSource != nullptr
-                    && screenSource->window() != nullptr
-                    ? screenSource->window()->screen()
-                    : nullptr;
-                const QPointer<ApplicationController> guard(this);
-                auto created = createWindow(
-                    nextWindowOptions(guardedSource, sourcePaneId), {},
-                    preferredScreen);
-                if (guard != nullptr && !created.has_value()) {
-                    Q_EMIT windowCreationFailed(created.error());
-                }
-            });
+        QTimer::singleShot(0, this, [this, guardedSource, sourcePaneId] {
+            if (quitState_ != QuitState::Idle || lifetime_.hasRequestedQuit()) {
+                return;
+            }
+            TerminalWorkspace *screenSource = guardedSource;
+            if (!containsWorkspace(screenSource)) {
+                screenSource = activeWorkspace();
+            }
+            QScreen *const preferredScreen =
+                screenSource != nullptr && screenSource->window() != nullptr
+                ? screenSource->window()->screen()
+                : nullptr;
+            const QPointer<ApplicationController> guard(this);
+            auto created =
+                createWindow(nextWindowOptions(guardedSource, sourcePaneId), {},
+                             preferredScreen);
+            if (guard != nullptr && !created.has_value()) {
+                Q_EMIT windowCreationFailed(created.error());
+            }
+        });
         return true;
     }
-    case ApplicationAction::Quit:
-        requestApplicationQuit();
-        return true;
+    case ApplicationAction::Quit: requestApplicationQuit(); return true;
     }
     return false;
 }
@@ -593,17 +558,14 @@ bool ApplicationController::dispatch(WindowNavigationAction action)
     std::size_t index = activeIndex.value_or(0);
     for (std::size_t visited = 0; visited < windows_.size(); ++visited) {
         const QPointer<QQuickWindow> window = windows_[index].window;
-        const QPointer<TerminalWorkspace> workspace =
-            windows_[index].workspace;
+        const QPointer<TerminalWorkspace> workspace = windows_[index].workspace;
         if (isValidWindowPair(window.data(), workspace.data())
-            && window->isVisible()
-            && !window->isActive()
+            && window->isVisible() && !window->isActive()
             && workspace->canHostApplicationQuitConfirmation()
             && workspace->hasActivePane()) {
             const QPointer<ApplicationController> controllerGuard(this);
             const auto destinationRemainsEligible = [&] {
-                return controllerGuard != nullptr
-                    && window != nullptr
+                return controllerGuard != nullptr && window != nullptr
                     && workspace != nullptr
                     && isValidWindowPair(window.data(), workspace.data())
                     && controllerGuard->containsWorkspace(workspace.data())
@@ -616,14 +578,14 @@ bool ApplicationController::dispatch(WindowNavigationAction action)
             // any simultaneous maximized/fullscreen state while doing the Qt
             // equivalent for a minimized destination.
             if (window->windowStates().testFlag(Qt::WindowMinimized)) {
-                window->setWindowStates(
-                    window->windowStates() & ~Qt::WindowMinimized);
+                window->setWindowStates(window->windowStates()
+                                        & ~Qt::WindowMinimized);
                 if (!destinationRemainsEligible()) return true;
             }
 
             window->requestActivate();
             if (!destinationRemainsEligible()) return true;
-            (void) workspace->focusActivePane();
+            (void)workspace->focusActivePane();
             return true;
         }
 
@@ -637,8 +599,7 @@ bool ApplicationController::dispatch(WindowNavigationAction action)
 }
 
 void ApplicationController::dispatchRequestedAction(
-    ApplicationAction action,
-    TerminalWorkspace *sourceWorkspace,
+    ApplicationAction action, TerminalWorkspace *sourceWorkspace,
     PaneId sourcePaneId)
 {
     // New-window already posts its actual creation from dispatch(). Posting a
@@ -647,12 +608,11 @@ void ApplicationController::dispatchRequestedAction(
     switch (action) {
     case ApplicationAction::Ignore:
     case ApplicationAction::NewWindow:
-        (void) dispatch(action, sourceWorkspace, sourcePaneId);
+        (void)dispatch(action, sourceWorkspace, sourcePaneId);
         return;
     case ApplicationAction::OpenConfig:
     case ApplicationAction::ReloadConfig:
-    case ApplicationAction::Quit:
-        break;
+    case ApplicationAction::Quit: break;
     }
 
     // External config callbacks and quit may synchronously destroy their
@@ -660,16 +620,14 @@ void ApplicationController::dispatchRequestedAction(
     // these application actions only after the complete keybinding chain and
     // originating key event have unwound.
     const QPointer<TerminalWorkspace> guardedSource(sourceWorkspace);
-    QTimer::singleShot(0, this,
-                       [this, action, guardedSource, sourcePaneId] {
-        (void) dispatch(action,
-                        guardedSource.data(), sourcePaneId);
+    QTimer::singleShot(0, this, [this, action, guardedSource, sourcePaneId] {
+        (void)dispatch(action, guardedSource.data(), sourcePaneId);
     });
 }
 
-LaunchOptions ApplicationController::nextWindowOptions(
-    TerminalWorkspace *sourceWorkspace,
-    PaneId sourcePaneId) const
+LaunchOptions
+ApplicationController::nextWindowOptions(TerminalWorkspace *sourceWorkspace,
+                                         PaneId sourcePaneId) const
 {
     TerminalWorkspace *const fallback = activeWorkspace();
     TerminalWorkspace *source = sourceWorkspace;
@@ -680,8 +638,8 @@ LaunchOptions ApplicationController::nextWindowOptions(
 
     if (source != nullptr) {
         if (const std::optional<LaunchOptions> inherited =
-                source->newWindowLaunchOptions(
-                    effectiveOptions_, sourcePaneId)) {
+                source->newWindowLaunchOptions(effectiveOptions_,
+                                               sourcePaneId)) {
             return *inherited;
         }
         if (source != fallback && fallback != nullptr) {
@@ -708,8 +666,7 @@ LaunchOptions ApplicationController::activationWindowOptions() const
         if (const auto inherited =
                 source->newWindowLaunchOptions(directoryProbe)) {
             result.workingDirectory = inherited->workingDirectory;
-            result.inheritWorkingDirectory =
-                inherited->inheritWorkingDirectory;
+            result.inheritWorkingDirectory = inherited->inheritWorkingDirectory;
         }
     }
     return result;
@@ -732,7 +689,7 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
             && guard->launchOptionsRevision_.isCurrent(revision);
     };
 
-    (void) initialSessionCoordinator_->updatePayload({
+    (void)initialSessionCoordinator_->updatePayload({
         .program = options.program,
         .hold = options.hold,
     });
@@ -747,23 +704,19 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
     const GhosttyKeybindProgram keybindProgram =
         keybindings_->applyLaunchOptions(effectiveOptions_);
     if (!stillCurrentRevision()
-        || !keybindings_->keybindProgram().isSameGeneration(
-            keybindProgram)) {
+        || !keybindings_->keybindProgram().isSameGeneration(keybindProgram)) {
         return;
     }
 
     TerminalWorkspace::setDefaultLaunchOptions(ordinaryOptions);
-    const auto stillCurrentUpdate =
-        [guard, revision, keybindProgram] {
+    const auto stillCurrentUpdate = [guard, revision, keybindProgram] {
         return guard != nullptr
             && guard->launchOptionsRevision_.isCurrent(revision)
-            && guard->keybindProgram().isSameGeneration(
-                    keybindProgram);
+            && guard->keybindProgram().isSameGeneration(keybindProgram);
     };
     for (const QPointer<TerminalWorkspace> &workspace : workspaceSnapshot()) {
         if (workspace != nullptr) {
-            workspace->applyLaunchOptions(
-                ordinaryOptions, keybindProgram);
+            workspace->applyLaunchOptions(ordinaryOptions, keybindProgram);
             if (!stillCurrentUpdate()) return;
         }
     }
@@ -801,8 +754,8 @@ TerminalWorkspace *ApplicationController::focusedWorkspace() const
 
 int ApplicationController::windowCount() const
 {
-    return static_cast<int>(std::ranges::count_if(
-        windows_, [](const WindowRecord &record) {
+    return static_cast<int>(
+        std::ranges::count_if(windows_, [](const WindowRecord &record) {
             return record.window != nullptr && record.workspace != nullptr;
         }));
 }
@@ -828,9 +781,11 @@ bool ApplicationController::containsWorkspace(
     const TerminalWorkspace *workspace) const
 {
     return workspace != nullptr
-        && std::ranges::any_of(windows_, [workspace](const WindowRecord &record) {
-               return record.workspace == workspace && record.window != nullptr;
-           });
+        && std::ranges::any_of(windows_,
+                               [workspace](const WindowRecord &record) {
+                                   return record.workspace == workspace
+                                       && record.window != nullptr;
+                               });
 }
 
 std::vector<QPointer<TerminalWorkspace>>
@@ -867,21 +822,21 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
     // its per-window runtime override.
     syncWindowDecoration(window, workspace);
 
-    connect(workspace, &TerminalWorkspace::applicationActionRequested,
-            this, [this, guarded = QPointer(workspace)](
-                      ApplicationAction action, PaneId paneId) {
+    connect(workspace, &TerminalWorkspace::applicationActionRequested, this,
+            [this, guarded = QPointer(workspace)](ApplicationAction action,
+                                                  PaneId paneId) {
                 if (guarded != nullptr) {
                     dispatchRequestedAction(action, guarded, paneId);
                 }
             });
-    connect(workspace, &TerminalWorkspace::windowNavigationRequested,
-            this, [this](WindowNavigationAction action, PaneId) {
+    connect(workspace, &TerminalWorkspace::windowNavigationRequested, this,
+            [this](WindowNavigationAction action, PaneId) {
                 // Keep activation in the originating event dispatch so Qt's
                 // Wayland backend still has the user-input serial.
-                (void) dispatch(action);
+                (void)dispatch(action);
             });
-    connect(workspace, &TerminalWorkspace::workspaceActivated,
-            this, [this, guarded = QPointer(workspace)] {
+    connect(workspace, &TerminalWorkspace::workspaceActivated, this,
+            [this, guarded = QPointer(workspace)] {
                 noteWorkspaceActivated(guarded);
             });
     connect(window, &QWindow::activeChanged, this,
@@ -891,37 +846,38 @@ void ApplicationController::registerWindow(ApplicationWindow applicationWindow)
                     noteWorkspaceActivated(guardedWorkspace);
                 }
             });
-    connect(workspace, &TerminalWorkspace::applicationQuitApproved,
-            this, [this, guarded = QPointer(workspace)] {
+    connect(workspace, &TerminalWorkspace::applicationQuitApproved, this,
+            [this, guarded = QPointer(workspace)] {
                 commitApplicationQuit(guarded);
             });
-    connect(workspace, &TerminalWorkspace::applicationQuitCancelled,
-            this, [this, guarded = QPointer(workspace)] {
+    connect(workspace, &TerminalWorkspace::applicationQuitCancelled, this,
+            [this, guarded = QPointer(workspace)] {
                 applicationQuitCancelled(guarded);
             });
-    connect(workspace, &TerminalWorkspace::windowCloseApproved,
-            this, [this, guardedWindow = QPointer(window),
-                   guardedWorkspace = QPointer(workspace)] {
-                workspaceShutdownApproved(guardedWorkspace);
-                if (guardedWindow == nullptr) return;
-                guardedWindow->setProperty("closeApproved", true);
-                connect(guardedWindow, &QWindow::visibleChanged,
-                        guardedWindow,
-                        [guardedWindow](bool visible) {
-                            if (!visible && guardedWindow != nullptr) {
-                                guardedWindow->deleteLater();
-                            }
-                        },
-                        Qt::SingleShotConnection);
-                QTimer::singleShot(0, guardedWindow, [guardedWindow] {
-                    if (guardedWindow == nullptr) return;
-                    guardedWindow->close();
-                    if (!guardedWindow->isVisible()) {
+    connect(
+        workspace, &TerminalWorkspace::windowCloseApproved, this,
+        [this, guardedWindow = QPointer(window),
+         guardedWorkspace = QPointer(workspace)] {
+            workspaceShutdownApproved(guardedWorkspace);
+            if (guardedWindow == nullptr) return;
+            guardedWindow->setProperty("closeApproved", true);
+            connect(
+                guardedWindow, &QWindow::visibleChanged, guardedWindow,
+                [guardedWindow](bool visible) {
+                    if (!visible && guardedWindow != nullptr) {
                         guardedWindow->deleteLater();
                     }
-                });
-            },
-            Qt::SingleShotConnection);
+                },
+                Qt::SingleShotConnection);
+            QTimer::singleShot(0, guardedWindow, [guardedWindow] {
+                if (guardedWindow == nullptr) return;
+                guardedWindow->close();
+                if (!guardedWindow->isVisible()) {
+                    guardedWindow->deleteLater();
+                }
+            });
+        },
+        Qt::SingleShotConnection);
 }
 
 void ApplicationController::syncWindowDecoration(QQuickWindow *window,
@@ -942,8 +898,7 @@ void ApplicationController::syncWindowDecoration(QQuickWindow *window,
     window->setFlag(Qt::FramelessWindowHint, frameless);
 }
 
-void ApplicationController::noteWorkspaceActivated(
-    TerminalWorkspace *workspace)
+void ApplicationController::noteWorkspaceActivated(TerminalWorkspace *workspace)
 {
     if (containsWorkspace(workspace)) lastActiveWorkspace_ = workspace;
 }
@@ -952,8 +907,7 @@ void ApplicationController::retireWindow(QQuickWindow *window)
 {
     const auto previousSize = windows_.size();
     std::erase_if(windows_, [this, window](const WindowRecord &record) {
-        const bool remove = record.window == nullptr
-            || record.window == window;
+        const bool remove = record.window == nullptr || record.window == window;
         if (remove && record.workspace == lastActiveWorkspace_) {
             lastActiveWorkspace_.clear();
         }
@@ -964,11 +918,10 @@ void ApplicationController::retireWindow(QQuickWindow *window)
     Q_EMIT windowRetired();
 }
 
-void ApplicationController::workspaceDestroyed(
-    TerminalWorkspace *workspace, QQuickWindow *window)
+void ApplicationController::workspaceDestroyed(TerminalWorkspace *workspace,
+                                               QQuickWindow *window)
 {
-    if (lastActiveWorkspace_.isNull()
-        || lastActiveWorkspace_ == workspace) {
+    if (lastActiveWorkspace_.isNull() || lastActiveWorkspace_ == workspace) {
         lastActiveWorkspace_.clear();
     }
     awaitingShutdown_.remove(workspace);
@@ -1078,8 +1031,7 @@ void ApplicationController::commitApplicationQuit(TerminalWorkspace *host)
     beginApplicationShutdown();
 }
 
-void ApplicationController::applicationQuitCancelled(
-    TerminalWorkspace *host)
+void ApplicationController::applicationQuitCancelled(TerminalWorkspace *host)
 {
     if (quitState_ != QuitState::AwaitingConfirmation
         || quitDialogHost_ != host) {
@@ -1100,8 +1052,7 @@ void ApplicationController::finishApplicationQuitIfReady()
 {
     if (destroying_ || startingApplicationShutdown_
         || quitState_ != QuitState::ClosingWindows
-        || !awaitingShutdown_.isEmpty()
-        || lifetime_.hasRequestedQuit()) {
+        || !awaitingShutdown_.isEmpty() || lifetime_.hasRequestedQuit()) {
         return;
     }
     Q_EMIT applicationQuitCommitted();

@@ -40,11 +40,10 @@ class ApplicationController final : public QObject {
     Q_OBJECT
 
 public:
-    using WindowFactory = std::move_only_function<
-        std::expected<ApplicationWindow, QString>()>;
+    using WindowFactory =
+        std::move_only_function<std::expected<ApplicationWindow, QString>()>;
 
-    ApplicationController(QQmlEngine &engine,
-                          LaunchOptions effectiveOptions,
+    ApplicationController(QQmlEngine &engine, LaunchOptions effectiveOptions,
                           bool enableGlobalShortcutsPortal = true,
                           QObject *parent = nullptr);
     ApplicationController(LaunchOptions effectiveOptions,
@@ -64,12 +63,11 @@ public:
     // inherits the focused surface's cwd for this path, but not its font size.
     // Startup must first choose createInitialWindow or
     // startWithoutInitialWindow.
-    [[nodiscard]] bool activateNoCommand(
-        DesktopActivationContext activation = {});
-    [[nodiscard]] bool dispatch(
-        ApplicationAction action,
-        TerminalWorkspace *sourceWorkspace = nullptr,
-        PaneId sourcePaneId = {});
+    [[nodiscard]] bool
+    activateNoCommand(DesktopActivationContext activation = {});
+    [[nodiscard]] bool dispatch(ApplicationAction action,
+                                TerminalWorkspace *sourceWorkspace = nullptr,
+                                PaneId sourcePaneId = {});
     // goto_window remains a surface-scoped binding action, but top-level
     // traversal belongs to the process owner. Dispatch stays synchronous so
     // Wayland can associate requestActivate() with the originating key event.
@@ -107,30 +105,28 @@ private:
     };
 
     static WindowFactory qmlWindowFactory(QQmlEngine &engine);
-    [[nodiscard]] std::expected<ApplicationWindow, QString> createWindow(
-        LaunchOptions options,
-        const DesktopActivationContext &activation = {},
-        QScreen *preferredScreen = nullptr);
-    [[nodiscard]] LaunchOptions nextWindowOptions(
-        TerminalWorkspace *sourceWorkspace,
-        PaneId sourcePaneId) const;
+    [[nodiscard]] std::expected<ApplicationWindow, QString>
+    createWindow(LaunchOptions options,
+                 const DesktopActivationContext &activation = {},
+                 QScreen *preferredScreen = nullptr);
+    [[nodiscard]] LaunchOptions
+    nextWindowOptions(TerminalWorkspace *sourceWorkspace,
+                      PaneId sourcePaneId) const;
     [[nodiscard]] LaunchOptions activationWindowOptions() const;
     [[nodiscard]] TerminalWorkspace *focusedWorkspace() const;
-    [[nodiscard]] bool containsWorkspace(
-        const TerminalWorkspace *workspace) const;
+    [[nodiscard]] bool
+    containsWorkspace(const TerminalWorkspace *workspace) const;
     [[nodiscard]] std::vector<QPointer<TerminalWorkspace>>
     workspaceSnapshot() const;
-    void dispatchRequestedAction(
-        ApplicationAction action,
-        TerminalWorkspace *sourceWorkspace = nullptr,
-        PaneId sourcePaneId = {});
+    void dispatchRequestedAction(ApplicationAction action,
+                                 TerminalWorkspace *sourceWorkspace = nullptr,
+                                 PaneId sourcePaneId = {});
     void registerWindow(ApplicationWindow window);
     void syncWindowDecoration(QQuickWindow *window,
                               TerminalWorkspace *workspace);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);
     void retireWindow(QQuickWindow *window);
-    void workspaceDestroyed(TerminalWorkspace *workspace,
-                            QQuickWindow *window);
+    void workspaceDestroyed(TerminalWorkspace *workspace, QQuickWindow *window);
     void requestApplicationQuit();
     void beginApplicationShutdown();
     void commitApplicationQuit(TerminalWorkspace *host);

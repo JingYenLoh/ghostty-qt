@@ -63,8 +63,7 @@ public:
     };
 
     struct PlainFileSnapshot {
-        PlainFileSnapshotStatus status =
-            PlainFileSnapshotStatus::Failed;
+        PlainFileSnapshotStatus status = PlainFileSnapshotStatus::Failed;
         QByteArray bytes;
     };
 
@@ -235,8 +234,8 @@ public:
         TerminalSearchCell newlineCell;
     };
 
-    static std::unique_ptr<GhosttyVtAdapter> create(
-        const Options &options, Callbacks callbacks = {});
+    static std::unique_ptr<GhosttyVtAdapter> create(const Options &options,
+                                                    Callbacks callbacks = {});
     ~GhosttyVtAdapter();
 
     GhosttyVtAdapter(const GhosttyVtAdapter &) = delete;
@@ -264,8 +263,7 @@ public:
     // Snapshot the exact plain write_*_file range. Ready may contain zero
     // bytes; Unavailable distinguishes a missing selection/history range from
     // an adapter failure so the worker can preserve Ghostty's no-op behavior.
-    PlainFileSnapshot snapshotPlainFile(
-        TerminalFileLocation location) const;
+    PlainFileSnapshot snapshotPlainFile(TerminalFileLocation location) const;
     bool hasSelection() const;
     void clearSelection();
     void clearSelectionAndResetGesture();
@@ -278,16 +276,16 @@ public:
     bool adjustSelection(TerminalSelectionAdjustment adjustment);
     bool scrollViewport(const TerminalViewportRequest &request);
     std::optional<SearchExtent> searchExtent() const;
-    std::optional<SearchRowSnapshot> snapshotSearchRow(
-        quint32 screenRow) const;
-    QVector<QPoint> visibleCellsForSearchRange(
-        const TerminalSearchRange &range) const;
+    std::optional<SearchRowSnapshot> snapshotSearchRow(quint32 screenRow) const;
+    QVector<QPoint>
+    visibleCellsForSearchRange(const TerminalSearchRange &range) const;
     bool scrollSearchRangeIntoView(const TerminalSearchRange &range);
     // Resolve a viewport-relative cell and, for hover rendering, every
     // candidate visible cell with the same URI. Public libghostty-vt does not
     // expose OSC 8 identity, so equal-URI links cannot be distinguished here.
-    std::optional<HyperlinkMatch> hyperlinkAt(
-        int column, int row, const QVector<QPoint> &candidateCells) const;
+    std::optional<HyperlinkMatch>
+    hyperlinkAt(int column, int row,
+                const QVector<QPoint> &candidateCells) const;
     // Create a sparse, owned logical anchor for an OSC 8 cell. The target can
     // move through scroll, pruning, and reflow without exposing a Ghostty
     // handle outside this adapter.
@@ -298,22 +296,22 @@ public:
     bool trackedHyperlinkValid(const TrackedHyperlink &target) const;
     // Resolve a tracked target only when its owning screen is active and its
     // logical cell is visible in the current viewport.
-    std::optional<HyperlinkMatch> resolveHyperlink(
-        const TrackedHyperlink &target,
-        const QVector<QPoint> &candidateCells) const;
+    std::optional<HyperlinkMatch>
+    resolveHyperlink(const TrackedHyperlink &target,
+                     const QVector<QPoint> &candidateCells) const;
 
     // Snapshot the complete logical line under a viewport cell. Soft wraps
     // are removed and semantic prompt-state transitions remain boundaries,
     // matching Ghostty's configured-link behavior.
-    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(
-        int column, int row) const;
+    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(int column,
+                                                             int row) const;
     // Convert a non-empty half-open UTF-8 byte match into three owned logical
     // cell anchors: both inclusive endpoints and the queried target. The
     // snapshot must still belong to this adapter and no terminal mutation may
     // occur between snapshotting and this call.
-    std::optional<TrackedTextRange> trackTextRange(
-        const LogicalLineSnapshot &line,
-        qsizetype beginByte, qsizetype endByte) const;
+    std::optional<TrackedTextRange>
+    trackTextRange(const LogicalLineSnapshot &line, qsizetype beginByte,
+                   qsizetype endByte) const;
     // Whether both endpoints and the queried target still exist and the cell
     // range retains the text it covered when it was created. An inactive
     // owning screen is valid but cannot be resolved for viewport decoration.
@@ -322,8 +320,8 @@ public:
     // that is wholly outside the viewport or on the inactive screen returns
     // no match; callers can distinguish that from invalidation with the
     // validity query above.
-    std::optional<TextRangeMatch> resolveTextRange(
-        const TrackedTextRange &range) const;
+    std::optional<TextRangeMatch>
+    resolveTextRange(const TrackedTextRange &range) const;
 
     std::uint64_t compressionActivity() const;
     bool compressScrollback();

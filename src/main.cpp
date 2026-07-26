@@ -56,13 +56,12 @@ void printHelp()
               "      --initial-window BOOLEAN    Request an initial window.\n";
 #if GHOSTTY_QT_CONFIG_ENABLED
     output << "\nPinned Ghostty CLI actions:\n";
-    for (const GhosttyCliActionCatalogEntry &entry
-         : GhosttyPinnedCliActions) {
+    for (const GhosttyCliActionCatalogEntry &entry : GhosttyPinnedCliActions) {
         if (!entry.isDelegated()) continue;
         const std::string_view action = entry.argument;
         output << "  "
-               << QString::fromLatin1(
-                      action.data(), static_cast<qsizetype>(action.size()))
+               << QString::fromLatin1(action.data(),
+                                      static_cast<qsizetype>(action.size()))
                << '\n';
     }
 #endif
@@ -100,40 +99,41 @@ bool installCloseDialogTestHook(QObject *rootObject,
 
     const auto acceptanceInvoked = std::make_shared<bool>(false);
     QObject::connect(
-        workspace, &TerminalWorkspace::closeConfirmationRequested,
-        closeDialog, [closeDialog, acceptanceInvoked](
-                         quint64 confirmationId, const QString &) {
-            QTimer::singleShot(0, closeDialog,
-                               [closeDialog, acceptanceInvoked,
-                                confirmationId] {
-                if (!closeDialog->property("visible").toBool()) {
-                    qCritical()
-                        << "Close-dialog test hook observed a hidden QML dialog";
-                    QCoreApplication::exit(1);
-                    return;
-                }
-                if (confirmationId == 0
-                    || closeDialog->property("confirmationId").toULongLong()
-                        != confirmationId) {
-                    qCritical()
-                        << "Close-dialog test hook observed the wrong request ID";
-                    QCoreApplication::exit(1);
-                    return;
-                }
-                *acceptanceInvoked = true;
-                if (!QMetaObject::invokeMethod(closeDialog, "accept")) {
-                    *acceptanceInvoked = false;
-                    qCritical()
-                        << "Close-dialog test hook could not accept the QML dialog";
-                    QCoreApplication::exit(1);
-                }
-            });
+        workspace, &TerminalWorkspace::closeConfirmationRequested, closeDialog,
+        [closeDialog, acceptanceInvoked](quint64 confirmationId,
+                                         const QString &) {
+            QTimer::singleShot(
+                0, closeDialog,
+                [closeDialog, acceptanceInvoked, confirmationId] {
+                    if (!closeDialog->property("visible").toBool()) {
+                        qCritical()
+                            << "Close-dialog test hook observed a hidden QML dialog";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    if (confirmationId == 0
+                        || closeDialog->property("confirmationId").toULongLong()
+                            != confirmationId) {
+                        qCritical()
+                            << "Close-dialog test hook observed the wrong request ID";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    *acceptanceInvoked = true;
+                    if (!QMetaObject::invokeMethod(closeDialog, "accept")) {
+                        *acceptanceInvoked = false;
+                        qCritical()
+                            << "Close-dialog test hook could not accept the QML dialog";
+                        QCoreApplication::exit(1);
+                    }
+                });
         });
     QObject::connect(
-        workspace, &TerminalWorkspace::windowCloseApproved,
-        closeDialog, [acceptanceInvoked] {
+        workspace, &TerminalWorkspace::windowCloseApproved, closeDialog,
+        [acceptanceInvoked] {
             if (!*acceptanceInvoked) {
-                qCritical() << "Close-dialog test hook quit without QML acceptance";
+                qCritical()
+                    << "Close-dialog test hook quit without QML acceptance";
                 QCoreApplication::exit(1);
             }
         });
@@ -141,8 +141,7 @@ bool installCloseDialogTestHook(QObject *rootObject,
     const auto requestSurfaceClose = [workspace] {
         TerminalPane *const pane = workspace->findChild<TerminalPane *>();
         if (pane == nullptr
-            || !pane->executeConfiguredAction(
-                QStringLiteral("toggle_readonly"))
+            || !pane->executeConfiguredAction(QStringLiteral("toggle_readonly"))
             || !pane->executeConfiguredAction(
                 QStringLiteral("close_surface"))) {
             qCritical()
@@ -153,10 +152,9 @@ bool installCloseDialogTestHook(QObject *rootObject,
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, requestSurfaceClose);
     } else {
-        QObject::connect(
-            workspace, &TerminalWorkspace::tabTitlesChanged,
-            workspace, requestSurfaceClose,
-            Qt::SingleShotConnection);
+        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                         workspace, requestSurfaceClose,
+                         Qt::SingleShotConnection);
     }
     return true;
 }
@@ -188,13 +186,12 @@ ApplicationLifetimeTestMode applicationLifetimeTestMode()
     return ApplicationLifetimeTestMode::None;
 }
 
-bool installApplicationLifetimeTestHook(
-    QWindow *applicationWindow,
-    TerminalWorkspace *workspace,
-    ApplicationController *controller,
-    const LaunchOptions &options,
-    ApplicationLifetimeTestMode mode,
-    bool *completed)
+bool installApplicationLifetimeTestHook(QWindow *applicationWindow,
+                                        TerminalWorkspace *workspace,
+                                        ApplicationController *controller,
+                                        const LaunchOptions &options,
+                                        ApplicationLifetimeTestMode mode,
+                                        bool *completed)
 {
     if (mode == ApplicationLifetimeTestMode::None) return true;
     if (options.quitAfterLastWindowClosed) {
@@ -219,7 +216,8 @@ bool installApplicationLifetimeTestHook(
 
         QObject::connect(
             controller, &ApplicationController::windowCreationFailed,
-            controller, [](const QString &message) {
+            controller,
+            [](const QString &message) {
                 qCritical().noquote()
                     << "Resident lifetime test could not recreate a window:"
                     << message;
@@ -227,14 +225,12 @@ bool installApplicationLifetimeTestHook(
             },
             Qt::SingleShotConnection);
         QObject::connect(
-            controller, &ApplicationController::windowRetired,
-            controller,
+            controller, &ApplicationController::windowRetired, controller,
             [controller, lifetime, completed, state, mode] {
                 QTimer::singleShot(
                     50, controller,
                     [controller, lifetime, completed, state, mode] {
-                        if (lifetime->hasOpenWindow()
-                            || lifetime->quitPending()
+                        if (lifetime->hasOpenWindow() || lifetime->quitPending()
                             || lifetime->hasRequestedQuit()
                             || controller->windowCount() != 0
                             || !state->expectedRetiredWindow.isNull()
@@ -265,7 +261,8 @@ bool installApplicationLifetimeTestHook(
                                         replacementWorkspace;
                                     state->replacementObserved = true;
                                     if (mode
-                                        == ApplicationLifetimeTestMode::ExternalActivation) {
+                                        == ApplicationLifetimeTestMode::
+                                            ExternalActivation) {
                                         QTextStream(stdout)
                                             << "GHOSTTY_QT_ACTIVATION_ACCEPTED\n"
                                             << Qt::flush;
@@ -276,13 +273,14 @@ bool installApplicationLifetimeTestHook(
                                                 ->requestWindowClose();
                                         };
                                     if (replacementWorkspace->tabCount() > 0) {
-                                        QTimer::singleShot(
-                                            0, replacementWorkspace,
-                                            closeReplacement);
+                                        QTimer::singleShot(0,
+                                                           replacementWorkspace,
+                                                           closeReplacement);
                                     } else {
                                         QObject::connect(
                                             replacementWorkspace,
-                                            &TerminalWorkspace::tabTitlesChanged,
+                                            &TerminalWorkspace::
+                                                tabTitlesChanged,
                                             replacementWorkspace,
                                             closeReplacement,
                                             Qt::SingleShotConnection);
@@ -290,7 +288,8 @@ bool installApplicationLifetimeTestHook(
                                 },
                                 Qt::SingleShotConnection);
                             if (mode
-                                == ApplicationLifetimeTestMode::ExternalActivation) {
+                                == ApplicationLifetimeTestMode::
+                                    ExternalActivation) {
                                 QTextStream(stdout)
                                     << "GHOSTTY_QT_ACTIVATION_READY\n"
                                     << Qt::flush;
@@ -313,8 +312,7 @@ bool installApplicationLifetimeTestHook(
                         }
 
                         *completed = true;
-                        (void) controller->dispatch(
-                            ApplicationAction::Quit);
+                        (void)controller->dispatch(ApplicationAction::Quit);
                     });
             });
     } else {
@@ -326,9 +324,9 @@ bool installApplicationLifetimeTestHook(
 
     const auto request = [controller, workspace, mode] {
         if (mode == ApplicationLifetimeTestMode::ExplicitQuit) {
-            if (!controller->dispatch(ApplicationAction::Quit,
-                                      workspace)) {
-                qCritical() << "Could not execute the explicit quit test action";
+            if (!controller->dispatch(ApplicationAction::Quit, workspace)) {
+                qCritical()
+                    << "Could not execute the explicit quit test action";
                 QCoreApplication::exit(1);
             }
             return;
@@ -338,32 +336,29 @@ bool installApplicationLifetimeTestHook(
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, request);
     } else {
-        QObject::connect(
-            workspace, &TerminalWorkspace::tabTitlesChanged,
-            workspace, request, Qt::SingleShotConnection);
+        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
+                         workspace, request, Qt::SingleShotConnection);
     }
     return true;
 }
 
-bool installSuppressedStartupTestHook(
-    ApplicationController *controller,
-    const LaunchOptions &options,
-    bool *completed)
+bool installSuppressedStartupTestHook(ApplicationController *controller,
+                                      const LaunchOptions &options,
+                                      bool *completed)
 {
     ApplicationLifetimeController *const lifetime =
         controller->lifetimeController();
     if (options.initialWindow || controller->windowCount() != 0
-        || lifetime->registeredWindowCount() != 0
-        || lifetime->hasOpenWindow() || lifetime->quitPending()
-        || lifetime->hasRequestedQuit()) {
+        || lifetime->registeredWindowCount() != 0 || lifetime->hasOpenWindow()
+        || lifetime->quitPending() || lifetime->hasRequestedQuit()) {
         qCritical()
             << "Suppressed-startup test hook did not begin with an idle zero-window application";
         return false;
     }
 
     QObject::connect(
-        controller, &ApplicationController::windowCreationFailed,
-        controller, [](const QString &message) {
+        controller, &ApplicationController::windowCreationFailed, controller,
+        [](const QString &message) {
             qCritical().noquote()
                 << "Suppressed-startup test could not create its first window:"
                 << message;
@@ -371,14 +366,11 @@ bool installSuppressedStartupTestHook(
         },
         Qt::SingleShotConnection);
     QObject::connect(
-        controller, &ApplicationController::windowCreated,
-        controller,
-        [controller, lifetime, options, completed](
-            QQuickWindow *, TerminalWorkspace *workspace) {
-            const LaunchOptions &actual =
-                workspace->effectiveLaunchOptions();
-            if (controller->windowCount() != 1
-                || !lifetime->hasOpenWindow()
+        controller, &ApplicationController::windowCreated, controller,
+        [controller, lifetime, options,
+         completed](QQuickWindow *, TerminalWorkspace *workspace) {
+            const LaunchOptions &actual = workspace->effectiveLaunchOptions();
+            if (controller->windowCount() != 1 || !lifetime->hasOpenWindow()
                 || actual.program != options.program
                 || actual.hold != options.hold) {
                 qCritical()
@@ -387,11 +379,11 @@ bool installSuppressedStartupTestHook(
                 return;
             }
 
-            QTextStream(stdout)
-                << "GHOSTTY_QT_INITIAL_WINDOW_CREATED\n" << Qt::flush;
+            QTextStream(stdout) << "GHOSTTY_QT_INITIAL_WINDOW_CREATED\n"
+                                << Qt::flush;
             QObject::connect(
-                controller, &ApplicationController::windowRetired,
-                controller, [controller, lifetime, completed] {
+                controller, &ApplicationController::windowRetired, controller,
+                [controller, lifetime, completed] {
                     if (controller->windowCount() != 0
                         || lifetime->hasOpenWindow()) {
                         qCritical()
@@ -410,23 +402,21 @@ bool installSuppressedStartupTestHook(
                 QTimer::singleShot(0, workspace, closeFirstWindow);
             } else {
                 QObject::connect(
-                    workspace, &TerminalWorkspace::tabTitlesChanged,
-                    workspace, closeFirstWindow,
-                    Qt::SingleShotConnection);
+                    workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+                    closeFirstWindow, Qt::SingleShotConnection);
             }
         },
         Qt::SingleShotConnection);
 
-    QTextStream(stdout)
-        << "GHOSTTY_QT_INITIAL_WINDOW_READY\n" << Qt::flush;
+    QTextStream(stdout) << "GHOSTTY_QT_INITIAL_WINDOW_READY\n" << Qt::flush;
     return true;
 }
 
-bool installDesktopActivationTestHook(
-    ApplicationController *controller, bool *completed)
+bool installDesktopActivationTestHook(ApplicationController *controller,
+                                      bool *completed)
 {
-    ApplicationLifetimeController *const lifetime
-        = controller->lifetimeController();
+    ApplicationLifetimeController *const lifetime =
+        controller->lifetimeController();
     if (controller->windowCount() != 0 || lifetime->registeredWindowCount() != 0
         || lifetime->hasOpenWindow()) {
         qCritical()
@@ -457,12 +447,11 @@ bool installDesktopActivationTestHook(
             QTextStream(stdout) << "GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED\n"
                                 << Qt::flush;
             QTimer::singleShot(0, QCoreApplication::instance(),
-                [] { QCoreApplication::quit(); });
+                               [] { QCoreApplication::quit(); });
         },
         Qt::SingleShotConnection);
 
-    QTextStream(stdout) << "GHOSTTY_QT_DESKTOP_ACTIVATION_READY\n"
-                        << Qt::flush;
+    QTextStream(stdout) << "GHOSTTY_QT_DESKTOP_ACTIVATION_READY\n" << Qt::flush;
     return true;
 }
 
@@ -492,14 +481,11 @@ bool installTitlePromptTestHook(QObject *rootObject,
         : QStringLiteral("prompt_tab_title");
     const auto activePromptId = std::make_shared<quint64>(0);
     const auto acceptanceInvoked = std::make_shared<bool>(false);
-    const auto focusedPane =
-        std::make_shared<QPointer<TerminalPane>>(nullptr);
+    const auto focusedPane = std::make_shared<QPointer<TerminalPane>>(nullptr);
     QObject::connect(
-        workspace, &TerminalWorkspace::titlePromptRequested,
-        dialog,
+        workspace, &TerminalWorkspace::titlePromptRequested, dialog,
         [dialog, field, seed, replacement, heading, activePromptId,
-         acceptanceInvoked](quint64 promptId,
-                            const QString &actualHeading,
+         acceptanceInvoked](quint64 promptId, const QString &actualHeading,
                             const QString &initialTitle) {
             if (*activePromptId != 0 || promptId == 0
                 || actualHeading != heading || initialTitle != seed) {
@@ -510,8 +496,7 @@ bool installTitlePromptTestHook(QObject *rootObject,
             }
             *activePromptId = promptId;
             QTimer::singleShot(
-                0, dialog,
-                [dialog, field, replacement, acceptanceInvoked] {
+                0, dialog, [dialog, field, replacement, acceptanceInvoked] {
                     if (!dialog->property("visible").toBool()
                         || field->property("text").toString()
                             != QStringLiteral("existing title")
@@ -534,43 +519,45 @@ bool installTitlePromptTestHook(QObject *rootObject,
                 });
         });
     QObject::connect(
-        workspace, &TerminalWorkspace::titlePromptResolved,
-        dialog,
+        workspace, &TerminalWorkspace::titlePromptResolved, dialog,
         [workspace, dialog, replacement, target, activePromptId,
          acceptanceInvoked, focusedPane](quint64 promptId) {
             if (!*acceptanceInvoked || promptId != *activePromptId) {
-                qCritical() << "Title-prompt test hook resolved the wrong request";
+                qCritical()
+                    << "Title-prompt test hook resolved the wrong request";
                 QCoreApplication::exit(1);
                 return;
             }
             *activePromptId = 0;
-            QTimer::singleShot(0, dialog, [workspace, dialog, replacement,
-                                           target, focusedPane] {
-                const TabListEntry *entry = workspace->tabModel()->entryAt(
-                    workspace->currentIndex());
-                TerminalPane *const pane = focusedPane->data();
-                bool committed = entry != nullptr && pane != nullptr
-                    && pane->hasActiveFocus()
-                    && workspace->currentTitle() == replacement;
-                if (target == TitlePromptTestTarget::Surface) {
-                    committed = committed
-                        && pane->surfaceTitleOverride()
-                            == std::optional<QString>{replacement}
-                        && workspace->executeSurfaceActionOnAllPanes(
-                            QStringLiteral("set_surface_title:changed base"))
+            QTimer::singleShot(
+                0, dialog,
+                [workspace, dialog, replacement, target, focusedPane] {
+                    const TabListEntry *entry = workspace->tabModel()->entryAt(
+                        workspace->currentIndex());
+                    TerminalPane *const pane = focusedPane->data();
+                    bool committed = entry != nullptr && pane != nullptr
+                        && pane->hasActiveFocus()
                         && workspace->currentTitle() == replacement;
-                } else {
-                    committed = committed
-                        && entry->titleOverride == replacement;
-                }
-                if (dialog->property("visible").toBool() || !committed) {
-                    qCritical()
-                        << "Title-prompt test hook did not commit through QML";
-                    QCoreApplication::exit(1);
-                    return;
-                }
-                QCoreApplication::quit();
-            });
+                    if (target == TitlePromptTestTarget::Surface) {
+                        committed = committed
+                            && pane->surfaceTitleOverride()
+                                == std::optional<QString>{replacement}
+                            && workspace->executeSurfaceActionOnAllPanes(
+                                QStringLiteral(
+                                    "set_surface_title:changed base"))
+                            && workspace->currentTitle() == replacement;
+                    } else {
+                        committed =
+                            committed && entry->titleOverride == replacement;
+                    }
+                    if (dialog->property("visible").toBool() || !committed) {
+                        qCritical()
+                            << "Title-prompt test hook did not commit through QML";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    QCoreApplication::quit();
+                });
         });
 
     const auto exercise = [workspace, seed, setAction, promptAction,
@@ -583,26 +570,26 @@ bool installTitlePromptTestHook(QObject *rootObject,
         }
         pane->forceActiveFocus();
         *focusedPane = pane;
-        QTimer::singleShot(0, workspace,
-                           [workspace, seed, setAction, promptAction,
-                            focusedPane] {
-            if (focusedPane->isNull()
-                || !focusedPane->data()->hasActiveFocus()
-                || !workspace->executeSurfaceActionOnAllPanes(setAction)
-                || workspace->currentTitle() != seed
-                || !workspace->executeSurfaceActionOnAllPanes(promptAction)) {
-                qCritical()
-                    << "Title-prompt test hook could not start the prompt";
-                QCoreApplication::exit(1);
-            }
-        });
+        QTimer::singleShot(
+            0, workspace,
+            [workspace, seed, setAction, promptAction, focusedPane] {
+                if (focusedPane->isNull()
+                    || !focusedPane->data()->hasActiveFocus()
+                    || !workspace->executeSurfaceActionOnAllPanes(setAction)
+                    || workspace->currentTitle() != seed
+                    || !workspace->executeSurfaceActionOnAllPanes(
+                        promptAction)) {
+                    qCritical()
+                        << "Title-prompt test hook could not start the prompt";
+                    QCoreApplication::exit(1);
+                }
+            });
     };
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, exercise);
     } else {
         QObject::connect(
-            workspace, &TerminalWorkspace::tabTitlesChanged,
-            workspace,
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
             [workspace, exercise] {
                 QTimer::singleShot(0, workspace, exercise);
             },
@@ -633,41 +620,43 @@ bool installFullscreenActionTestHook(QQuickWindow *window,
             QCoreApplication::exit(1);
             return;
         }
-        QTimer::singleShot(0, workspace,
-                           [workspace, window, originalVisibility] {
-            if (window->visibility() != QWindow::FullScreen) {
-                qCritical() << "QML window did not enter fullscreen";
-                QCoreApplication::exit(1);
-                return;
-            }
-            if (!workspace->executeSurfaceActionOnAllPanes(
-                    QStringLiteral("toggle_fullscreen"))) {
-                qCritical() << "Fullscreen test hook could not leave fullscreen";
-                QCoreApplication::exit(1);
-                return;
-            }
-            QTimer::singleShot(0, workspace,
-                               [window, originalVisibility] {
-                if (window->visibility() != originalVisibility) {
-                    qCritical() << "QML window did not restore its visibility";
+        QTimer::singleShot(
+            0, workspace, [workspace, window, originalVisibility] {
+                if (window->visibility() != QWindow::FullScreen) {
+                    qCritical() << "QML window did not enter fullscreen";
                     QCoreApplication::exit(1);
                     return;
                 }
-                QCoreApplication::quit();
+                if (!workspace->executeSurfaceActionOnAllPanes(
+                        QStringLiteral("toggle_fullscreen"))) {
+                    qCritical()
+                        << "Fullscreen test hook could not leave fullscreen";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                QTimer::singleShot(0, workspace, [window, originalVisibility] {
+                    if (window->visibility() != originalVisibility) {
+                        qCritical()
+                            << "QML window did not restore its visibility";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+                    QCoreApplication::quit();
+                });
             });
-        });
     };
 
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, exercise);
     } else {
-        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
-                         workspace,
-                         [workspace, exercise] {
-            // The model notification precedes activateTab(); defer until the
-            // new tab's active pane and geometry have been installed.
-            QTimer::singleShot(0, workspace, exercise);
-        }, Qt::SingleShotConnection);
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                // The model notification precedes activateTab(); defer until
+                // the new tab's active pane and geometry have been installed.
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
     }
     return true;
 }
@@ -761,8 +750,8 @@ bool installWindowDecorationActionTestHook(QQuickWindow *window,
 bool installInitialWindowStateTestHook(QQuickWindow *window,
                                        const LaunchOptions &options)
 {
-    if (window == nullptr
-        || options.windowWidth == 0 || options.windowHeight == 0) {
+    if (window == nullptr || options.windowWidth == 0
+        || options.windowHeight == 0) {
         qCritical()
             << "Initial-window-state test hook requires configured geometry";
         return false;
@@ -776,22 +765,19 @@ bool installInitialWindowStateTestHook(QQuickWindow *window,
         timer, &QTimer::timeout, window,
         [window, options, timer, stage, retries] {
             constexpr std::array expectedStates{
-                QWindow::FullScreen,
-                QWindow::Maximized,
-                QWindow::FullScreen,
-                QWindow::Maximized,
-                QWindow::Windowed,
+                QWindow::FullScreen, QWindow::Maximized, QWindow::FullScreen,
+                QWindow::Maximized,  QWindow::Windowed,
             };
-            const QWindow::Visibility expected = expectedStates.at(
-                static_cast<std::size_t>(*stage));
+            const QWindow::Visibility expected =
+                expectedStates.at(static_cast<std::size_t>(*stage));
             const TerminalCellMetrics metrics = terminalCellMetrics(
                 options.typography, window->devicePixelRatio());
             const QSize configuredSize(
                 qCeil(metrics.cellWidth
-                      * static_cast<qreal>(options.windowWidth)
+                          * static_cast<qreal>(options.windowWidth)
                       + window->property("terminalChromeWidth").toDouble()),
                 qCeil(metrics.cellHeight
-                      * static_cast<qreal>(options.windowHeight)
+                          * static_cast<qreal>(options.windowHeight)
                       + window->property("terminalChromeHeight").toDouble()));
             if (window->visibility() != expected
                 || (*stage == 4 && window->size() != configuredSize)) {
@@ -825,16 +811,16 @@ bool installInitialWindowStateTestHook(QQuickWindow *window,
                 // which does not call the QML action helper.
                 window->setVisibility(QWindow::Windowed);
             } else if (*stage == 1 || *stage == 2) {
-                if (!QMetaObject::invokeMethod(
-                        window, "toggleFullscreen", Qt::DirectConnection)) {
+                if (!QMetaObject::invokeMethod(window, "toggleFullscreen",
+                                               Qt::DirectConnection)) {
                     qCritical()
                         << "Initial-window-state test hook could not invoke the QML fullscreen toggle";
                     QCoreApplication::exit(1);
                     return;
                 }
             } else {
-                if (!QMetaObject::invokeMethod(
-                        window, "toggleMaximize", Qt::DirectConnection)) {
+                if (!QMetaObject::invokeMethod(window, "toggleMaximize",
+                                               Qt::DirectConnection)) {
                     qCritical()
                         << "Initial-window-state test hook could not invoke the QML maximize toggle";
                     QCoreApplication::exit(1);
@@ -852,8 +838,8 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                                       TerminalWorkspace *workspace,
                                       const LaunchOptions &options)
 {
-    if (window == nullptr || workspace == nullptr
-        || options.windowWidth == 0 || options.windowHeight == 0) {
+    if (window == nullptr || workspace == nullptr || options.windowWidth == 0
+        || options.windowHeight == 0) {
         qCritical()
             << "Initial-window-size test hook requires a configured QML window:"
             << window << workspace << options.windowWidth
@@ -881,26 +867,26 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                 window->property("terminalChromeHeight").toDouble();
             const QSize configuredSize(
                 qCeil(metrics.cellWidth
-                      * static_cast<qreal>(options.windowWidth)
+                          * static_cast<qreal>(options.windowWidth)
                       + chromeWidth),
                 qCeil(metrics.cellHeight
-                      * static_cast<qreal>(options.windowHeight)
+                          * static_cast<qreal>(options.windowHeight)
                       + chromeHeight));
             const QSize minimumSize(
                 qCeil(metrics.cellWidth * 10.0 + chromeWidth),
                 qCeil(metrics.cellHeight * 4.0 + chromeHeight));
-            const bool shouldBeWindowed = *stage == 0
-                || *stage == 2 || *stage == 4;
+            const bool shouldBeWindowed =
+                *stage == 0 || *stage == 2 || *stage == 4;
             const bool windowReady = pane != nullptr
                 && (!shouldBeWindowed
                     || (window->visibility() == QWindow::Windowed
                         && window->size() == configuredSize
                         && window->minimumSize() == minimumSize
-                        && static_cast<quint32>(std::floor(
-                               pane->width() / metrics.cellWidth))
+                        && static_cast<quint32>(
+                               std::floor(pane->width() / metrics.cellWidth))
                             == options.windowWidth
-                        && static_cast<quint32>(std::floor(
-                               pane->height() / metrics.cellHeight))
+                        && static_cast<quint32>(
+                               std::floor(pane->height() / metrics.cellHeight))
                             == options.windowHeight));
             const QWindow::Visibility expectedState = *stage == 1
                 ? QWindow::Maximized
@@ -912,12 +898,11 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                 }
                 qCritical()
                     << "Initial-window-size test hook failed at stage" << *stage
-                    << "visibility" << window->visibility()
-                    << "window" << window->size() << "minimum"
-                    << window->minimumSize() << "pane"
-                    << (pane != nullptr ? pane->size() : QSizeF())
-                    << "expected window" << configuredSize
-                    << "expected minimum" << minimumSize;
+                    << "visibility" << window->visibility() << "window"
+                    << window->size() << "minimum" << window->minimumSize()
+                    << "pane" << (pane != nullptr ? pane->size() : QSizeF())
+                    << "expected window" << configuredSize << "expected minimum"
+                    << minimumSize;
                 QCoreApplication::exit(1);
                 return;
             }
@@ -926,8 +911,8 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
             switch ((*stage)++) {
             case 0:
             case 1:
-                if (!QMetaObject::invokeMethod(
-                        window, "toggleMaximize", Qt::DirectConnection)) {
+                if (!QMetaObject::invokeMethod(window, "toggleMaximize",
+                                               Qt::DirectConnection)) {
                     qCritical()
                         << "Initial-window-size test hook could not toggle maximize";
                     QCoreApplication::exit(1);
@@ -936,19 +921,16 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                 break;
             case 2:
             case 3:
-                if (!QMetaObject::invokeMethod(
-                        window, "toggleFullscreen", Qt::DirectConnection)) {
+                if (!QMetaObject::invokeMethod(window, "toggleFullscreen",
+                                               Qt::DirectConnection)) {
                     qCritical()
                         << "Initial-window-size test hook could not toggle fullscreen";
                     QCoreApplication::exit(1);
                     return;
                 }
                 break;
-            case 4:
-                QCoreApplication::quit();
-                return;
-            default:
-                Q_UNREACHABLE();
+            case 4: QCoreApplication::quit(); return;
+            default: Q_UNREACHABLE();
             }
             timer->start(0);
         });
@@ -1018,8 +1000,8 @@ bool installMaximizeActionTestHook(QQuickWindow *window,
                     }
                     qCritical()
                         << "Window-state action did not reach visibility"
-                        << step.expected << "at stage" << *stage
-                        << "actual" << window->visibility();
+                        << step.expected << "at stage" << *stage << "actual"
+                        << window->visibility();
                     QCoreApplication::exit(1);
                     return;
                 }
@@ -1048,8 +1030,7 @@ bool installMaximizeActionTestHook(QQuickWindow *window,
                     }
                 }
                 if (*stage + 1 >= steps.size()) {
-                    qCritical()
-                        << "Window-state test hook exhausted its steps";
+                    qCritical() << "Window-state test hook exhausted its steps";
                     QCoreApplication::exit(1);
                     return;
                 }
@@ -1062,19 +1043,18 @@ bool installMaximizeActionTestHook(QQuickWindow *window,
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, exercise);
     } else {
-        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
-                         workspace,
-                         [workspace, exercise] {
-            QTimer::singleShot(0, workspace, exercise);
-        }, Qt::SingleShotConnection);
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
     }
     return true;
 }
 
-bool verifyTabBarTestState(TerminalWorkspace *workspace,
-                           QObject *tabBar,
-                           int expectedCount,
-                           bool expectedVisible,
+bool verifyTabBarTestState(TerminalWorkspace *workspace, QObject *tabBar,
+                           int expectedCount, bool expectedVisible,
                            const char *stage)
 {
     const bool qmlVisible = tabBar->property("visible").toBool();
@@ -1084,11 +1064,11 @@ bool verifyTabBarTestState(TerminalWorkspace *workspace,
         return true;
     }
 
-    qCritical().nospace()
-        << "Tab-bar test hook mismatch at " << stage
-        << ": count=" << workspace->tabCount()
-        << ", workspace-visible=" << workspace->tabBarVisible()
-        << ", qml-visible=" << qmlVisible;
+    qCritical().nospace() << "Tab-bar test hook mismatch at " << stage
+                          << ": count=" << workspace->tabCount()
+                          << ", workspace-visible="
+                          << workspace->tabBarVisible()
+                          << ", qml-visible=" << qmlVisible;
     QCoreApplication::exit(1);
     return false;
 }
@@ -1123,16 +1103,16 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
              quitObserved] {
                 switch (*stage) {
                 case 0:
-                    if (!verifyTabBarTestState(
-                            workspace, tabBar, 1, false, "auto with one tab")) {
+                    if (!verifyTabBarTestState(workspace, tabBar, 1, false,
+                                               "auto with one tab")) {
                         return;
                     }
                     applyMode(WindowShowTabBar::Auto);
                     workspace->newTab();
                     break;
                 case 1:
-                    if (!verifyTabBarTestState(
-                            workspace, tabBar, 2, true, "auto with two tabs")) {
+                    if (!verifyTabBarTestState(workspace, tabBar, 2, true,
+                                               "auto with two tabs")) {
                         return;
                     }
                     workspace->closeCurrentTab();
@@ -1146,15 +1126,15 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                     applyMode(WindowShowTabBar::Always);
                     break;
                 case 3:
-                    if (!verifyTabBarTestState(
-                            workspace, tabBar, 1, true, "always with one tab")) {
+                    if (!verifyTabBarTestState(workspace, tabBar, 1, true,
+                                               "always with one tab")) {
                         return;
                     }
                     applyMode(WindowShowTabBar::Never);
                     break;
                 case 4:
-                    if (!verifyTabBarTestState(
-                            workspace, tabBar, 1, false, "never with one tab")) {
+                    if (!verifyTabBarTestState(workspace, tabBar, 1, false,
+                                               "never with one tab")) {
                         return;
                     }
                     if (!windowToolbar->property("visible").toBool()) {
@@ -1187,7 +1167,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                     break;
                 default:
                     if (!*quitObserved) {
-                        qCritical() << "Tab-bar test hook did not observe shutdown";
+                        qCritical()
+                            << "Tab-bar test hook did not observe shutdown";
                         QCoreApplication::exit(1);
                     }
                     return;
@@ -1202,11 +1183,12 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, exercise);
     } else {
-        QObject::connect(workspace, &TerminalWorkspace::tabTitlesChanged,
-                         workspace,
-                         [workspace, exercise] {
-            QTimer::singleShot(0, workspace, exercise);
-        }, Qt::SingleShotConnection);
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
     }
     return true;
 }
@@ -1326,41 +1308,37 @@ bool installTabsLocationTestHook(QQuickWindow *window,
 
 int main(int argc, char *argv[])
 {
-    const std::span<char *const> rawArguments(
-        argv, static_cast<std::size_t>(argc));
+    const std::span<char *const> rawArguments(argv,
+                                              static_cast<std::size_t>(argc));
     const GhosttyCliActionSelection cliAction =
         selectGhosttyCliAction(rawArguments);
     switch (cliAction.disposition) {
-    case GhosttyCliActionDisposition::None:
-        break;
+    case GhosttyCliActionDisposition::None: break;
     case GhosttyCliActionDisposition::Unsupported:
-        std::fprintf(
-            stderr,
-            "ghostty-qt: unsupported Ghostty CLI action '%.*s'\n",
-            static_cast<int>(cliAction.argument.size()),
-            cliAction.argument.data());
+        std::fprintf(stderr,
+                     "ghostty-qt: unsupported Ghostty CLI action '%.*s'\n",
+                     static_cast<int>(cliAction.argument.size()),
+                     cliAction.argument.data());
         return 2;
     case GhosttyCliActionDisposition::Multiple:
-        std::fprintf(
-            stderr,
-            "ghostty-qt: multiple Ghostty CLI actions are not allowed "
-            "(second action: '%.*s')\n",
-            static_cast<int>(cliAction.argument.size()),
-            cliAction.argument.data());
+        std::fprintf(stderr,
+                     "ghostty-qt: multiple Ghostty CLI actions are not allowed "
+                     "(second action: '%.*s')\n",
+                     static_cast<int>(cliAction.argument.size()),
+                     cliAction.argument.data());
         return 2;
     case GhosttyCliActionDisposition::Delegate:
 #if GHOSTTY_QT_CONFIG_ENABLED
-        {
-            const GhosttyCliExecError failure = execGhosttyCliHelper(
-                rawArguments,
-                GHOSTTY_QT_CONFIG_HELPER_NAME);
-            const std::string target = failure.target.native();
-            const std::string cause = failure.cause.message();
-            std::fprintf(stderr,
-                         "ghostty-qt: could not execute CLI helper '%s': %s\n",
-                         target.c_str(), cause.c_str());
-            return failure.exitCode();
-        }
+    {
+        const GhosttyCliExecError failure =
+            execGhosttyCliHelper(rawArguments, GHOSTTY_QT_CONFIG_HELPER_NAME);
+        const std::string target = failure.target.native();
+        const std::string cause = failure.cause.message();
+        std::fprintf(stderr,
+                     "ghostty-qt: could not execute CLI helper '%s': %s\n",
+                     target.c_str(), cause.c_str());
+        return failure.exitCode();
+    }
 #else
         std::fprintf(
             stderr,
@@ -1415,9 +1393,10 @@ int main(int argc, char *argv[])
     QGuiApplication::setDesktopFileName(
         QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
 
-    const bool allowNonWayland = qEnvironmentVariableIntValue(
-        "GHOSTTY_QT_ALLOW_NON_WAYLAND") == 1;
-    if (QGuiApplication::platformName() != QStringLiteral("wayland") && !allowNonWayland) {
+    const bool allowNonWayland =
+        qEnvironmentVariableIntValue("GHOSTTY_QT_ALLOW_NON_WAYLAND") == 1;
+    if (QGuiApplication::platformName() != QStringLiteral("wayland")
+        && !allowNonWayland) {
         QTextStream(stderr)
             << "ghostty-qt supports the Qt Wayland platform only (active platform: "
             << QGuiApplication::platformName() << ").\n";
@@ -1442,13 +1421,12 @@ int main(int argc, char *argv[])
         });
 
 #if GHOSTTY_QT_CONFIG_ENABLED
-    const QString configHelperPath = QDir(QCoreApplication::applicationDirPath())
-                                         .filePath(QStringLiteral(
-                                             GHOSTTY_QT_CONFIG_HELPER_NAME));
+    const QString configHelperPath =
+        QDir(QCoreApplication::applicationDirPath())
+            .filePath(QStringLiteral(GHOSTTY_QT_CONFIG_HELPER_NAME));
     GhosttyConfigService configService(makeGhosttyConfigProcessLoader({
         .helperPath = configHelperPath,
-        .configurationArguments =
-            ghosttyConfigCliFontArguments(options),
+        .configurationArguments = ghosttyConfigCliFontArguments(options),
     }));
     if (!configService.hasSnapshot()) {
         qWarning().noquote()
@@ -1458,12 +1436,13 @@ int main(int argc, char *argv[])
     } else {
         reportConfigDiagnostics(configService.snapshot());
     }
-    QObject::connect(&configService, &GhosttyConfigService::reloadFailed,
-                     &application, [](const QString &message) {
-                         qWarning().noquote()
-                             << "Ghostty configuration reload failed; keeping the last valid configuration:"
-                             << message;
-                     });
+    QObject::connect(
+        &configService, &GhosttyConfigService::reloadFailed, &application,
+        [](const QString &message) {
+            qWarning().noquote()
+                << "Ghostty configuration reload failed; keeping the last valid configuration:"
+                << message;
+        });
     std::optional<GhosttyConfigSnapshot> currentGhosttySnapshot;
     if (configService.hasSnapshot()) {
         currentGhosttySnapshot = configService.snapshot();
@@ -1484,21 +1463,21 @@ int main(int argc, char *argv[])
     LaunchOptions effectiveApplicationOptions = resolveCurrentOptions();
 
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
-    if (shouldUseSingleInstance(
-            effectiveApplicationOptions,
-            QByteArrayView(qgetenv("TERM_PROGRAM")))) {
+    if (shouldUseSingleInstance(effectiveApplicationOptions,
+                                QByteArrayView(qgetenv("TERM_PROGRAM")))) {
         auto candidate = std::make_unique<SingleInstanceActivation>();
         const SingleInstanceActivation::StartResult activation =
             candidate->start({
-                .existingInstanceAction = effectiveApplicationOptions.initialWindow
+                .existingInstanceAction =
+                    effectiveApplicationOptions.initialWindow
                     ? SingleInstanceActivation::ExistingInstanceAction::Activate
-                    : SingleInstanceActivation::ExistingInstanceAction::DoNotActivate,
+                    : SingleInstanceActivation::ExistingInstanceAction::
+                          DoNotActivate,
                 .activation = startupActivation,
             });
         switch (activation.role) {
         case SingleInstanceActivation::Role::ActivatedExisting:
-        case SingleInstanceActivation::Role::ExistingInstance:
-            return 0;
+        case SingleInstanceActivation::Role::ExistingInstance: return 0;
         case SingleInstanceActivation::Role::Failed:
             qCritical().noquote() << activation.diagnostic;
             return 1;
@@ -1517,28 +1496,29 @@ int main(int argc, char *argv[])
     // declaration order tears down the controller, portal, windows, and pane
     // workers before the engine itself.
     QQmlApplicationEngine engine;
-    ApplicationController applicationController(
-        engine, effectiveApplicationOptions);
-    QObject::connect(
-        &applicationController, &ApplicationController::quitRequested,
-        &application, &QCoreApplication::quit);
-    QObject::connect(
-        &applicationController, &ApplicationController::windowCreationFailed,
-        &application, [](const QString &message) {
-            qWarning().noquote()
-                << "Could not create a new terminal window:" << message;
-        });
-    QObject::connect(
-        &applicationController, &ApplicationController::configOpenRequested,
-        &application, [] {
-            const auto opened = openGhosttyConfigForEditing(
-                GhosttyConfigService::standardConfigEditPaths());
-            if (!opened.has_value()) {
-                qWarning().noquote()
-                    << "Could not open the Ghostty configuration:"
-                    << opened.error();
-            }
-        });
+    ApplicationController applicationController(engine,
+                                                effectiveApplicationOptions);
+    QObject::connect(&applicationController,
+                     &ApplicationController::quitRequested, &application,
+                     &QCoreApplication::quit);
+    QObject::connect(&applicationController,
+                     &ApplicationController::windowCreationFailed, &application,
+                     [](const QString &message) {
+                         qWarning().noquote()
+                             << "Could not create a new terminal window:"
+                             << message;
+                     });
+    QObject::connect(&applicationController,
+                     &ApplicationController::configOpenRequested, &application,
+                     [] {
+                         const auto opened = openGhosttyConfigForEditing(
+                             GhosttyConfigService::standardConfigEditPaths());
+                         if (!opened.has_value()) {
+                             qWarning().noquote()
+                                 << "Could not open the Ghostty configuration:"
+                                 << opened.error();
+                         }
+                     });
 
 #if GHOSTTY_QT_CONFIG_ENABLED
     const auto applyCurrentOptions = [&] {
@@ -1553,9 +1533,9 @@ int main(int argc, char *argv[])
                      });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
-    QObject::connect(
-        &applicationController, &ApplicationController::configReloadRequested,
-        &configService, &GhosttyConfigService::requestReload);
+    QObject::connect(&applicationController,
+                     &ApplicationController::configReloadRequested,
+                     &configService, &GhosttyConfigService::requestReload);
 #else
     const auto applyCurrentOptions = [&] {
         applicationController.applyLaunchOptions(resolveCurrentOptions());
@@ -1588,12 +1568,10 @@ int main(int argc, char *argv[])
         qCritical() << "Could not start without an initial application window";
         return 1;
     }
-    QQuickWindow *const applicationWindow = initialWindow
-        ? initialWindow->window
-        : nullptr;
-    TerminalWorkspace *const workspace = initialWindow
-        ? initialWindow->workspace
-        : nullptr;
+    QQuickWindow *const applicationWindow =
+        initialWindow ? initialWindow->window : nullptr;
+    TerminalWorkspace *const workspace =
+        initialWindow ? initialWindow->workspace : nullptr;
 
     const ApplicationLifetimeTestMode lifetimeTestMode =
         applicationLifetimeTestMode();
@@ -1607,8 +1585,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    const bool suppressedStartupTest = qEnvironmentVariableIntValue(
-        "GHOSTTY_QT_TEST_INITIAL_WINDOW") == 1;
+    const bool suppressedStartupTest =
+        qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_INITIAL_WINDOW") == 1;
     bool suppressedStartupTestCompleted = false;
     if (suppressedStartupTest
         && (initialWindow
@@ -1618,9 +1596,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    const bool desktopActivationTest
-        = qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION")
-        == 1;
+    const bool desktopActivationTest =
+        qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION") == 1;
     bool desktopActivationTestCompleted = false;
     if (desktopActivationTest
         && (initialWindow
@@ -1632,52 +1609,52 @@ int main(int argc, char *argv[])
     // Headless regression hook: exercise the real QML confirmation dialog and
     // complete shutdown without synthesizing compositor input. It is inert in
     // every normal launch.
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_CONFIRM_CLOSE_DIALOG")
+        == 1) {
         if (!initialWindow
             || !installCloseDialogTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_TAB_TITLE_PROMPT") == 1) {
-        if (!initialWindow || !installTitlePromptTestHook(
-                applicationWindow, workspace, TitlePromptTestTarget::Tab)) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TAB_TITLE_PROMPT") == 1) {
+        if (!initialWindow
+            || !installTitlePromptTestHook(applicationWindow, workspace,
+                                           TitlePromptTestTarget::Tab)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_SURFACE_TITLE_PROMPT") == 1) {
-        if (!initialWindow || !installTitlePromptTestHook(
-                applicationWindow, workspace, TitlePromptTestTarget::Surface)) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_SURFACE_TITLE_PROMPT")
+        == 1) {
+        if (!initialWindow
+            || !installTitlePromptTestHook(applicationWindow, workspace,
+                                           TitlePromptTestTarget::Surface)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TOGGLE_FULLSCREEN")
+        == 1) {
         if (!initialWindow
             || !installFullscreenActionTestHook(applicationWindow, workspace)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_INITIAL_WINDOW_STATE")
+        == 1) {
         if (!initialWindow
             || !installInitialWindowStateTestHook(
                 applicationWindow, effectiveApplicationOptions)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_INITIAL_WINDOW_SIZE") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_INITIAL_WINDOW_SIZE")
+        == 1) {
         if (!initialWindow
-            || !installInitialWindowSizeTestHook(
-                applicationWindow, workspace, effectiveApplicationOptions)) {
+            || !installInitialWindowSizeTestHook(applicationWindow, workspace,
+                                                 effectiveApplicationOptions)) {
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_TOGGLE_MAXIMIZE") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TOGGLE_MAXIMIZE") == 1) {
         if (!initialWindow
             || !installMaximizeActionTestHook(applicationWindow, workspace)) {
             return 1;
@@ -1692,8 +1669,8 @@ int main(int argc, char *argv[])
             return 1;
         }
     }
-    if (qEnvironmentVariableIntValue(
-            "GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY") == 1) {
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_TAB_BAR_VISIBILITY")
+        == 1) {
         if (!initialWindow
             || !installTabBarVisibilityTestHook(applicationWindow, workspace)) {
             return 1;

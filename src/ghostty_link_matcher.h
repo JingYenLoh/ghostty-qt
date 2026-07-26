@@ -36,14 +36,11 @@ public:
     GhosttyLinkMatcher &operator=(GhosttyLinkMatcher &&) = delete;
 
     [[nodiscard]] bool isValid() const;
-    [[nodiscard]] GhosttyLinkMatchResult findNext(
-        QByteArrayView utf8,
-        qsizetype searchOffset,
-        GhosttyLinkMatch *match);
-    [[nodiscard]] GhosttyLinkMatchResult matchAt(
-        QByteArrayView utf8,
-        qsizetype byteOffset,
-        GhosttyLinkMatch *match);
+    [[nodiscard]] GhosttyLinkMatchResult findNext(QByteArrayView utf8,
+                                                  qsizetype searchOffset,
+                                                  GhosttyLinkMatch *match);
+    [[nodiscard]] GhosttyLinkMatchResult
+    matchAt(QByteArrayView utf8, qsizetype byteOffset, GhosttyLinkMatch *match);
 
 private:
     std::unique_ptr<Impl> impl_;

@@ -31,8 +31,7 @@ private:
         : values(std::move(exportedValues))
         , keybindings(std::move(exportedKeybindings))
         , defaultKeybindings(std::move(exportedDefaultKeybindings))
-    {
-    }
+    {}
 
     friend std::expected<GhosttyConfigExport, QString>
     parseGhosttyConfigExportJson(const QByteArray &json);

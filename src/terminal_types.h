@@ -66,9 +66,8 @@ struct TerminalSearchCell {
     quint16 column = 0;
     quint32 screenRow = 0;
 
-    friend constexpr std::strong_ordering operator<=>(
-        const TerminalSearchCell &left,
-        const TerminalSearchCell &right)
+    friend constexpr std::strong_ordering
+    operator<=>(const TerminalSearchCell &left, const TerminalSearchCell &right)
     {
         if (const auto rowOrder = left.screenRow <=> right.screenRow;
             rowOrder != 0) {
@@ -213,8 +212,7 @@ struct TerminalUpdate {
 // Validates the value-only shape shared by every retained view of a render
 // update. Keeping one representability ceiling prevents the GUI frame and
 // worker-side indexes from accepting different viewport dimensions.
-[[nodiscard]] inline bool validTerminalUpdateShape(
-    const TerminalUpdate &update)
+[[nodiscard]] inline bool validTerminalUpdateShape(const TerminalUpdate &update)
 {
     if (update.columns <= 0 || update.rows <= 0) {
         return false;
@@ -245,14 +243,14 @@ struct TerminalUpdate {
 // happens before mutation so a malformed or incomplete delta cannot leave the
 // retained frame half-updated. Returns false for an invalid update or a
 // partial update whose dimensions do not match the retained frame.
-[[nodiscard]] inline bool applyTerminalUpdate(
-    TerminalFrame &frame, const TerminalUpdate &update)
+[[nodiscard]] inline bool applyTerminalUpdate(TerminalFrame &frame,
+                                              const TerminalUpdate &update)
 {
     if (!validTerminalUpdateShape(update)) {
         return false;
     }
-    const qsizetype cellCount = static_cast<qsizetype>(update.columns)
-        * update.rows;
+    const qsizetype cellCount =
+        static_cast<qsizetype>(update.columns) * update.rows;
     if (!update.fullFrame
         && (frame.columns != update.columns || frame.rows != update.rows
             || frame.cells.size() != cellCount)) {
@@ -265,7 +263,8 @@ struct TerminalUpdate {
         frame.cells.resize(cellCount);
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
-        const qsizetype destination = static_cast<qsizetype>(row.row) * update.columns;
+        const qsizetype destination =
+            static_cast<qsizetype>(row.row) * update.columns;
         std::copy(row.cells.cbegin(), row.cells.cend(),
                   frame.cells.begin() + destination);
     }

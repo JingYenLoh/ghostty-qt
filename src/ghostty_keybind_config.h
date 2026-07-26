@@ -71,8 +71,8 @@ class GhosttyKeybindSource final {
 public:
     GhosttyKeybindSource() = default;
 
-    [[nodiscard]] static GhosttyKeybindSource structured(
-        GhosttyKeybindConfig config)
+    [[nodiscard]] static GhosttyKeybindSource
+    structured(GhosttyKeybindConfig config)
     {
         return GhosttyKeybindSource(std::move(config));
     }
@@ -97,8 +97,7 @@ public:
         return std::get_if<QStringList>(&value_);
     }
 
-    template<typename Visitor>
-    decltype(auto) visit(Visitor &&visitor) const
+    template <typename Visitor> decltype(auto) visit(Visitor &&visitor) const
     {
         return std::visit(std::forward<Visitor>(visitor), value_);
     }
@@ -108,13 +107,11 @@ public:
 private:
     explicit GhosttyKeybindSource(GhosttyKeybindConfig config)
         : value_(std::move(config))
-    {
-    }
+    {}
 
     explicit GhosttyKeybindSource(QStringList values)
         : value_(std::move(values))
-    {
-    }
+    {}
 
     std::variant<std::monostate, GhosttyKeybindConfig, QStringList> value_;
 };

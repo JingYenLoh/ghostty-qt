@@ -53,15 +53,15 @@ struct GhosttyGlobalShortcutRegistry {
 // Translate a structured Ghostty trigger to the keysym spelling required by
 // the XDG Global Shortcuts specification. std::nullopt means that the pinned
 // GTK frontend would not be able to register the trigger either.
-[[nodiscard]] std::optional<QString> ghosttyXdgShortcutFromTrigger(
-    const GhosttyKeybindTrigger &trigger);
+[[nodiscard]] std::optional<QString>
+ghosttyXdgShortcutFromTrigger(const GhosttyKeybindTrigger &trigger);
 
 // Build the authoritative portal registry. This intentionally mirrors the
 // pinned GTK implementation's current eligibility rules: finalized root
 // bindings only, global flag, one trigger, one action, and a translatable
 // non-catch-all key. Output ordering and collision selection are stable.
-[[nodiscard]] GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
-    const GhosttyKeybindConfig &config);
+[[nodiscard]] GhosttyGlobalShortcutRegistry
+buildGhosttyGlobalShortcutRegistry(const GhosttyKeybindConfig &config);
 
 class GhosttyGlobalShortcutPortal final : public QObject {
     Q_OBJECT
@@ -73,10 +73,11 @@ public:
     ~GhosttyGlobalShortcutPortal() override;
 
     GhosttyGlobalShortcutPortal(const GhosttyGlobalShortcutPortal &) = delete;
-    GhosttyGlobalShortcutPortal &operator=(
-        const GhosttyGlobalShortcutPortal &) = delete;
+    GhosttyGlobalShortcutPortal &
+    operator=(const GhosttyGlobalShortcutPortal &) = delete;
 
-    [[nodiscard]] const GhosttyGlobalShortcutRegistry &registry() const noexcept;
+    [[nodiscard]] const GhosttyGlobalShortcutRegistry &
+    registry() const noexcept;
     [[nodiscard]] quint64 generation() const noexcept;
     [[nodiscard]] bool isActive() const noexcept;
     [[nodiscard]] QString sessionHandle() const;
@@ -93,14 +94,11 @@ Q_SIGNALS:
     void shortcutActivated(const QString &action);
 
 private Q_SLOTS:
-    void onRequestResponse(uint response,
-                           const QVariantMap &results,
+    void onRequestResponse(uint response, const QVariantMap &results,
                            const QDBusMessage &message);
     void onActivated(const QDBusObjectPath &sessionHandle,
-                     const QString &shortcutId,
-                     qulonglong timestamp,
-                     const QVariantMap &options,
-                     const QDBusMessage &message);
+                     const QString &shortcutId, qulonglong timestamp,
+                     const QVariantMap &options, const QDBusMessage &message);
     void onSessionClosed(const QVariantMap &details,
                          const QDBusMessage &message);
 
@@ -118,8 +116,7 @@ private:
 
     void beginCreateSession();
     void beginBindShortcuts();
-    void beginRequest(RequestKind kind,
-                      const QDBusMessage &methodCall,
+    void beginRequest(RequestKind kind, const QDBusMessage &methodCall,
                       const QString &expectedPath);
     [[nodiscard]] QString subscribeToResponse(RequestKind kind,
                                               const QString &requestToken);

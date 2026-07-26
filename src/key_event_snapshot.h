@@ -42,8 +42,13 @@ struct KeyEventSnapshot final {
     {
         return {
             pressed ? QEvent::KeyPress : QEvent::KeyRelease,
-            key, modifiers, nativeScanCode, nativeVirtualKey,
-            nativeModifiers, text, autoRepeat,
+            key,
+            modifiers,
+            nativeScanCode,
+            nativeVirtualKey,
+            nativeModifiers,
+            text,
+            autoRepeat,
             static_cast<quint16>(std::clamp(
                 count, 0,
                 static_cast<int>(std::numeric_limits<quint16>::max()))),

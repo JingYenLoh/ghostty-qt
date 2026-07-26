@@ -73,8 +73,7 @@ public:
     WorkspaceActionDispatcher() = default;
     explicit WorkspaceActionDispatcher(Handler handler)
         : handler_(std::move(handler))
-    {
-    }
+    {}
 
     void setHandler(Handler handler) { handler_ = std::move(handler); }
 

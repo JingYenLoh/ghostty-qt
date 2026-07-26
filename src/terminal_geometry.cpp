@@ -13,13 +13,12 @@ bool positiveFinite(qreal value) noexcept
 
 int boundedCellCount(qreal extent, qreal cellExtent) noexcept
 {
-    const long double cells = std::floor(
-        static_cast<long double>(extent)
-        / static_cast<long double>(cellExtent));
+    const long double cells =
+        std::floor(static_cast<long double>(extent)
+                   / static_cast<long double>(cellExtent));
     constexpr int maximum =
         static_cast<int>(std::numeric_limits<quint16>::max());
-    if (!std::isfinite(cells)
-        || cells >= static_cast<long double>(maximum)) {
+    if (!std::isfinite(cells) || cells >= static_cast<long double>(maximum)) {
         return maximum;
     }
     return std::max(1, static_cast<int>(cells));
@@ -27,12 +26,11 @@ int boundedCellCount(qreal extent, qreal cellExtent) noexcept
 
 int boundedDevicePixels(qreal logicalExtent, qreal devicePixelRatio) noexcept
 {
-    const long double pixels = std::round(
-        static_cast<long double>(logicalExtent)
-        * static_cast<long double>(devicePixelRatio));
+    const long double pixels =
+        std::round(static_cast<long double>(logicalExtent)
+                   * static_cast<long double>(devicePixelRatio));
     constexpr int maximum = std::numeric_limits<int>::max();
-    if (!std::isfinite(pixels)
-        || pixels >= static_cast<long double>(maximum)) {
+    if (!std::isfinite(pixels) || pixels >= static_cast<long double>(maximum)) {
         return maximum;
     }
     return std::max(1, static_cast<int>(pixels));
@@ -41,10 +39,9 @@ int boundedDevicePixels(qreal logicalExtent, qreal devicePixelRatio) noexcept
 } // namespace
 
 std::optional<TerminalSessionGeometry>
-terminalSessionGeometryForViewport(
-    qreal width, qreal height,
-    qreal cellWidth, qreal cellHeight,
-    qreal devicePixelRatio) noexcept
+terminalSessionGeometryForViewport(qreal width, qreal height, qreal cellWidth,
+                                   qreal cellHeight,
+                                   qreal devicePixelRatio) noexcept
 {
     if (!positiveFinite(width) || !positiveFinite(height)
         || !positiveFinite(cellWidth) || !positiveFinite(cellHeight)
@@ -55,13 +52,9 @@ terminalSessionGeometryForViewport(
     return TerminalSessionGeometry{
         .columns = boundedCellCount(width, cellWidth),
         .rows = boundedCellCount(height, cellHeight),
-        .cellWidthPixels = boundedDevicePixels(
-            cellWidth, devicePixelRatio),
-        .cellHeightPixels = boundedDevicePixels(
-            cellHeight, devicePixelRatio),
-        .surfaceWidthPixels = boundedDevicePixels(
-            width, devicePixelRatio),
-        .surfaceHeightPixels = boundedDevicePixels(
-            height, devicePixelRatio),
+        .cellWidthPixels = boundedDevicePixels(cellWidth, devicePixelRatio),
+        .cellHeightPixels = boundedDevicePixels(cellHeight, devicePixelRatio),
+        .surfaceWidthPixels = boundedDevicePixels(width, devicePixelRatio),
+        .surfaceHeightPixels = boundedDevicePixels(height, devicePixelRatio),
     };
 }

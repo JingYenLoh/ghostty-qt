@@ -53,8 +53,7 @@ void appendUnique(QStringList &destination, const QStringList &families)
             continue;
         }
         const bool duplicate = std::ranges::any_of(
-            destination,
-            [&family](const QString &existing) {
+            destination, [&family](const QString &existing) {
                 return existing.compare(family, Qt::CaseInsensitive) == 0;
             });
         if (!duplicate) {
@@ -82,9 +81,8 @@ void appendUnique(QStringList &destination, const QStringList &families)
     }
     if (result.isEmpty()) {
         const QStringList databaseFamilies = QFontDatabase::families();
-        const auto fixedPitch = std::ranges::find_if(
-            databaseFamilies,
-            [](const QString &family) {
+        const auto fixedPitch =
+            std::ranges::find_if(databaseFamilies, [](const QString &family) {
                 return QFontDatabase::isFixedPitch(family);
             });
         if (fixedPitch != databaseFamilies.end()) {
@@ -107,10 +105,9 @@ void appendUnique(QStringList &destination, const QStringList &families)
     }
     result.setPointSizeF(normalizedPointSize(pointSize));
     result.setFixedPitch(true);
-    result.setStyleHint(
-        QFont::Monospace,
-        static_cast<QFont::StyleStrategy>(
-            QFont::PreferDefault | QFont::ContextFontMerging));
+    result.setStyleHint(QFont::Monospace,
+                        static_cast<QFont::StyleStrategy>(
+                            QFont::PreferDefault | QFont::ContextFontMerging));
     result.setStyleName({});
     result.setWeight(QFont::Normal);
     result.setStyle(QFont::StyleNormal);
@@ -125,14 +122,12 @@ void appendUnique(QStringList &destination, const QStringList &families)
 [[nodiscard]] std::optional<QString> databaseFamily(const QString &family)
 {
     const QStringList families = QFontDatabase::families();
-    const auto match = std::ranges::find_if(
-        families,
-        [&family](const QString &candidate) {
+    const auto match =
+        std::ranges::find_if(families, [&family](const QString &candidate) {
             return sameFamily(candidate, family);
         });
-    return match == families.end()
-        ? std::nullopt
-        : std::optional<QString>{*match};
+    return match == families.end() ? std::nullopt
+                                   : std::optional<QString>{*match};
 }
 
 [[nodiscard]] bool isGenericFamily(const QString &family)
@@ -140,27 +135,22 @@ void appendUnique(QStringList &destination, const QStringList &families)
     // These generic families are recognized by Qt's platform font backends
     // and fontconfig, but are not necessarily concrete database families.
     static const QStringList genericFamilies{
-        QStringLiteral("serif"),
-        QStringLiteral("sans-serif"),
-        QStringLiteral("monospace"),
-        QStringLiteral("cursive"),
-        QStringLiteral("fantasy"),
-        QStringLiteral("system-ui"),
-        QStringLiteral("emoji"),
-        QStringLiteral("math"),
+        QStringLiteral("serif"),     QStringLiteral("sans-serif"),
+        QStringLiteral("monospace"), QStringLiteral("cursive"),
+        QStringLiteral("fantasy"),   QStringLiteral("system-ui"),
+        QStringLiteral("emoji"),     QStringLiteral("math"),
         QStringLiteral("fangsong"),
     };
     return genericFamilies.contains(family, Qt::CaseInsensitive);
 }
 
-[[nodiscard]] std::optional<QString> canonicalFamily(
-    const QString &family, double pointSize)
+[[nodiscard]] std::optional<QString> canonicalFamily(const QString &family,
+                                                     double pointSize)
 {
     // A configured QFont substitution is also a real alias. Do not accept
     // every unknown family: QFontInfo would silently resolve those through
     // the fallback font and make a typo look valid.
-    if (!databaseFamily(family)
-        && !isGenericFamily(family)
+    if (!databaseFamily(family) && !isGenericFamily(family)
         && QFont::substitutes(family).isEmpty()) {
         return std::nullopt;
     }
@@ -171,12 +161,12 @@ void appendUnique(QStringList &destination, const QStringList &families)
     return databaseFamily(resolved.family());
 }
 
-[[nodiscard]] std::optional<QString> familyWithNamedStyle(
-    const QString &family, const QString &style, double pointSize)
+[[nodiscard]] std::optional<QString> familyWithNamedStyle(const QString &family,
+                                                          const QString &style,
+                                                          double pointSize)
 {
     const auto canonical = canonicalFamily(family, pointSize);
-    if (!canonical
-        || !QFontDatabase::styles(*canonical).contains(style)) {
+    if (!canonical || !QFontDatabase::styles(*canonical).contains(style)) {
         return std::nullopt;
     }
 
@@ -189,11 +179,10 @@ void appendUnique(QStringList &destination, const QStringList &families)
         : std::nullopt;
 }
 
-[[nodiscard]] std::optional<QFont> namedFont(
-    const QStringList &specificFamilies,
-    const QStringList &regularFamilies,
-    const QString &style,
-    double pointSize)
+[[nodiscard]] std::optional<QFont>
+namedFont(const QStringList &specificFamilies,
+          const QStringList &regularFamilies, const QString &style,
+          double pointSize)
 {
     if (specificFamilies.isEmpty() || style.isEmpty()) {
         return std::nullopt;
@@ -221,9 +210,9 @@ void appendUnique(QStringList &destination, const QStringList &families)
     return result;
 }
 
-[[nodiscard]] QFont automaticFont(
-    QStringList families, const QStringList &regularFamilies,
-    TerminalFontRole role, double pointSize)
+[[nodiscard]] QFont automaticFont(QStringList families,
+                                  const QStringList &regularFamilies,
+                                  TerminalFontRole role, double pointSize)
 {
     appendUnique(families, regularFamilies);
     QFont result = baseFont(families, pointSize);
@@ -234,9 +223,8 @@ void appendUnique(QStringList &destination, const QStringList &families)
     return result;
 }
 
-[[nodiscard]] std::array<
-    QFont, terminalEnumIndex(TerminalFontRole::Count)> resolveFonts(
-    const TerminalTypography &typography)
+[[nodiscard]] std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
+resolveFonts(const TerminalTypography &typography)
 {
     QStringList regularFamilies =
         requestedFamilies(typography.face(TerminalFontRole::Regular).families);
@@ -249,9 +237,9 @@ void appendUnique(QStringList &destination, const QStringList &families)
     if (const auto *named =
             std::get_if<TerminalFontStyles::Named>(&regularStyle)) {
         // Like Ghostty, a style without its corresponding family is ignored.
-        if (const auto resolved = namedFont(
-                configuredRegularFamilies, regularFamilies,
-                named->name, typography.pointSize)) {
+        if (const auto resolved =
+                namedFont(configuredRegularFamilies, regularFamilies,
+                          named->name, typography.pointSize)) {
             regular = *resolved;
         }
     }
@@ -259,27 +247,25 @@ void appendUnique(QStringList &destination, const QStringList &families)
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> result;
     result[terminalEnumIndex(TerminalFontRole::Regular)] = regular;
     for (const TerminalFontRole role :
-         {TerminalFontRole::Bold,
-          TerminalFontRole::Italic,
+         {TerminalFontRole::Bold, TerminalFontRole::Italic,
           TerminalFontRole::BoldItalic}) {
         const TerminalFontFace &face = typography.face(role);
         const QStringList specificFamilies = requestedFamilies(face.families);
         result[terminalEnumIndex(role)] = std::visit(
             [&](const auto &style) -> QFont {
                 using Style = std::decay_t<decltype(style)>;
-                if constexpr (std::same_as<
-                                  Style, TerminalFontStyles::Disabled>) {
+                if constexpr (std::same_as<Style,
+                                           TerminalFontStyles::Disabled>) {
                     return regular;
-                } else if constexpr (std::same_as<
-                                         Style, TerminalFontStyles::Named>) {
-                    const auto resolved = namedFont(
-                        specificFamilies, regularFamilies,
-                        style.name, typography.pointSize);
+                } else if constexpr (std::same_as<Style,
+                                                  TerminalFontStyles::Named>) {
+                    const auto resolved =
+                        namedFont(specificFamilies, regularFamilies, style.name,
+                                  typography.pointSize);
                     return resolved.value_or(regular);
                 } else {
-                    return automaticFont(
-                        specificFamilies, regularFamilies,
-                        role, typography.pointSize);
+                    return automaticFont(specificFamilies, regularFamilies,
+                                         role, typography.pointSize);
                 }
             },
             face.style);
@@ -287,7 +273,7 @@ void appendUnique(QStringList &destination, const QStringList &families)
     return result;
 }
 
-template<typename Integer>
+template <typename Integer>
 [[nodiscard]] Integer roundedSaturated(double value) noexcept
 {
     constexpr Integer minimum = std::numeric_limits<Integer>::lowest();
@@ -334,45 +320,40 @@ template<typename Integer>
     return decrement > value ? 0U : value - static_cast<Pixel>(decrement);
 }
 
-[[nodiscard]] SignedPixel addSaturated(
-    SignedPixel value, qint64 delta) noexcept
+[[nodiscard]] SignedPixel addSaturated(SignedPixel value, qint64 delta) noexcept
 {
     const qint64 sum = static_cast<qint64>(value) + delta;
     return static_cast<SignedPixel>(std::clamp(
-        sum,
-        static_cast<qint64>(std::numeric_limits<SignedPixel>::lowest()),
+        sum, static_cast<qint64>(std::numeric_limits<SignedPixel>::lowest()),
         static_cast<qint64>(std::numeric_limits<SignedPixel>::max())));
 }
 
-template<typename Integer>
-[[nodiscard]] Integer applyModifier(
-    Integer value, const TerminalMetricModifier &modifier) noexcept
+template <typename Integer>
+[[nodiscard]] Integer
+applyModifier(Integer value, const TerminalMetricModifier &modifier) noexcept
 {
     return std::visit(
         [value](const auto &typed) -> Integer {
             using Modifier = std::decay_t<decltype(typed)>;
-            if constexpr (std::same_as<
-                              Modifier, TerminalMetricModifiers::Absolute>) {
-                return addSaturated(
-                    value, static_cast<qint64>(typed.pixels));
+            if constexpr (std::same_as<Modifier,
+                                       TerminalMetricModifiers::Absolute>) {
+                return addSaturated(value, static_cast<qint64>(typed.pixels));
             } else {
-                const double multiplier =
-                    std::isnan(typed.multiplier)
+                const double multiplier = std::isnan(typed.multiplier)
                     ? 0.0
                     : std::max(0.0, typed.multiplier);
-                return roundedSaturated<Integer>(
-                    static_cast<double>(value) * multiplier);
+                return roundedSaturated<Integer>(static_cast<double>(value)
+                                                 * multiplier);
             }
         },
         modifier);
 }
 
-[[nodiscard]] std::optional<quint16> positiveBigEndianFword(
-    QByteArrayView table, qsizetype offset) noexcept
+[[nodiscard]] std::optional<quint16>
+positiveBigEndianFword(QByteArrayView table, qsizetype offset) noexcept
 {
     constexpr qsizetype width = 2;
-    if (offset < 0 || table.size() < width
-        || offset > table.size() - width) {
+    if (offset < 0 || table.size() < width || offset > table.size() - width) {
         return std::nullopt;
     }
 
@@ -382,20 +363,18 @@ template<typename Integer>
         static_cast<quint16>((static_cast<quint16>(high) << 8U) | low);
     // FWORD is signed. Negative and zero stroke widths are unusable.
     return value > 0
-            && value <= static_cast<quint16>(
-                std::numeric_limits<qint16>::max())
+            && value <= static_cast<quint16>(std::numeric_limits<qint16>::max())
         ? std::optional<quint16>{value}
         : std::nullopt;
 }
 
-[[nodiscard]] std::optional<double> physicalTableThickness(
-    const QRawFont &font, const char *tableName, qsizetype offset,
-    qreal devicePixelRatio)
+[[nodiscard]] std::optional<double>
+physicalTableThickness(const QRawFont &font, const char *tableName,
+                       qsizetype offset, qreal devicePixelRatio)
 {
     const qreal unitsPerEm = font.unitsPerEm();
     const qreal pixelSize = font.pixelSize();
-    if (!font.isValid()
-        || !std::isfinite(unitsPerEm) || unitsPerEm <= 0.0
+    if (!font.isValid() || !std::isfinite(unitsPerEm) || unitsPerEm <= 0.0
         || !std::isfinite(pixelSize) || pixelSize <= 0.0) {
         return std::nullopt;
     }
@@ -407,14 +386,11 @@ template<typename Integer>
         return std::nullopt;
     }
 
-    const double result =
-        static_cast<double>(*designUnits)
-        * static_cast<double>(pixelSize)
-        * static_cast<double>(devicePixelRatio)
+    const double result = static_cast<double>(*designUnits)
+        * static_cast<double>(pixelSize) * static_cast<double>(devicePixelRatio)
         / static_cast<double>(unitsPerEm);
-    return std::isfinite(result) && result > 0.0
-        ? std::optional<double>{result}
-        : std::nullopt;
+    return std::isfinite(result) && result > 0.0 ? std::optional<double>{result}
+                                                 : std::nullopt;
 }
 
 struct PhysicalStrokeThicknesses {
@@ -422,23 +398,22 @@ struct PhysicalStrokeThicknesses {
     double strikethrough = 1.0;
 };
 
-[[nodiscard]] PhysicalStrokeThicknesses physicalStrokeThicknesses(
-    const QFont &font, const QFontMetricsF &metrics,
-    qreal devicePixelRatio)
+[[nodiscard]] PhysicalStrokeThicknesses
+physicalStrokeThicknesses(const QFont &font, const QFontMetricsF &metrics,
+                          qreal devicePixelRatio)
 {
     // OpenType `post` stores underlineThickness at byte 10. OS/2 stores
     // yStrikeoutSize at byte 26. Both are signed FWORD design units.
     const QRawFont rawFont = QRawFont::fromFont(font);
     const double fallback =
         static_cast<double>(metrics.lineWidth() * devicePixelRatio);
-    const double underline = physicalTableThickness(
-                                 rawFont, "post", 10, devicePixelRatio)
-                                 .value_or(fallback);
+    const double underline =
+        physicalTableThickness(rawFont, "post", 10, devicePixelRatio)
+            .value_or(fallback);
     return {
         .underline = underline,
         .strikethrough =
-            physicalTableThickness(
-                rawFont, "OS/2", 26, devicePixelRatio)
+            physicalTableThickness(rawFont, "OS/2", 26, devicePixelRatio)
                 .value_or(underline),
     };
 }
@@ -459,8 +434,8 @@ struct PhysicalMetrics {
     double faceY = 0.0;
 };
 
-[[nodiscard]] PhysicalMetrics baseMetrics(
-    const QFont &font, qreal devicePixelRatio)
+[[nodiscard]] PhysicalMetrics baseMetrics(const QFont &font,
+                                          qreal devicePixelRatio)
 {
     const QFontMetricsF metrics(font);
     const double dpr = devicePixelRatio;
@@ -468,8 +443,7 @@ struct PhysicalMetrics {
     for (char value = 0x20; value <= 0x7e; ++value) {
         faceWidth = std::max(
             faceWidth,
-            static_cast<double>(
-                metrics.horizontalAdvance(QLatin1Char(value))));
+            static_cast<double>(metrics.horizontalAdvance(QLatin1Char(value))));
     }
     faceWidth *= dpr;
     const double faceHeight = metrics.lineSpacing() * dpr;
@@ -479,29 +453,25 @@ struct PhysicalMetrics {
     const double faceBaseline =
         (metrics.leading() / 2.0 + metrics.descent()) * dpr;
     const Pixel cellBaseline = roundedPixel(
-        faceBaseline
-        - (static_cast<double>(cellHeight) - faceHeight) / 2.0);
+        faceBaseline - (static_cast<double>(cellHeight) - faceHeight) / 2.0);
     const qint64 topToBaseline =
-        static_cast<qint64>(cellHeight)
-        - static_cast<qint64>(cellBaseline);
+        static_cast<qint64>(cellHeight) - static_cast<qint64>(cellBaseline);
     const PhysicalStrokeThicknesses strokes =
         physicalStrokeThicknesses(font, metrics, devicePixelRatio);
-    const Pixel underlineThickness = std::max<Pixel>(
-        1, ceiledPixel(strokes.underline));
-    const Pixel strikethroughThickness = std::max<Pixel>(
-        1, ceiledPixel(strokes.strikethrough));
+    const Pixel underlineThickness =
+        std::max<Pixel>(1, ceiledPixel(strokes.underline));
+    const Pixel strikethroughThickness =
+        std::max<Pixel>(1, ceiledPixel(strokes.strikethrough));
 
     return {
         .cellWidth = cellWidth,
         .cellHeight = cellHeight,
         .cellBaseline = cellBaseline,
-        .underlinePosition = roundedPixel(
-            static_cast<double>(topToBaseline)
-            + metrics.underlinePos() * dpr),
+        .underlinePosition = roundedPixel(static_cast<double>(topToBaseline)
+                                          + metrics.underlinePos() * dpr),
         .underlineThickness = underlineThickness,
-        .strikethroughPosition = roundedPixel(
-            static_cast<double>(topToBaseline)
-            - metrics.strikeOutPos() * dpr),
+        .strikethroughPosition = roundedPixel(static_cast<double>(topToBaseline)
+                                              - metrics.strikeOutPos() * dpr),
         .strikethroughThickness = strikethroughThickness,
         .overlinePosition = 0,
         .overlineThickness = underlineThickness,
@@ -512,8 +482,8 @@ struct PhysicalMetrics {
     };
 }
 
-void adjustCellHeight(
-    PhysicalMetrics &metrics, const TerminalMetricModifier &modifier)
+void adjustCellHeight(PhysicalMetrics &metrics,
+                      const TerminalMetricModifier &modifier)
 {
     const Pixel original = metrics.cellHeight;
     const Pixel adjusted =
@@ -525,21 +495,17 @@ void adjustCellHeight(
     const double difference =
         static_cast<double>(adjusted) - static_cast<double>(original);
     const double halfDifference = difference / 2.0;
-    const double positionWithRespectToCenter =
-        metrics.faceY
+    const double positionWithRespectToCenter = metrics.faceY
         - (static_cast<double>(original) - metrics.faceHeight) / 2.0;
     const qint64 differenceTop = static_cast<qint64>(
-        positionWithRespectToCenter > 0.0
-            ? std::ceil(halfDifference)
-            : std::floor(halfDifference));
+        positionWithRespectToCenter > 0.0 ? std::ceil(halfDifference)
+                                          : std::floor(halfDifference));
     const qint64 differenceBottom = static_cast<qint64>(
-        positionWithRespectToCenter > 0.0
-            ? std::floor(halfDifference)
-            : std::ceil(halfDifference));
+        positionWithRespectToCenter > 0.0 ? std::floor(halfDifference)
+                                          : std::ceil(halfDifference));
 
     metrics.cellHeight = adjusted;
-    metrics.cellBaseline =
-        addSaturated(metrics.cellBaseline, differenceBottom);
+    metrics.cellBaseline = addSaturated(metrics.cellBaseline, differenceBottom);
     metrics.faceY += static_cast<double>(differenceBottom);
     metrics.underlinePosition =
         addSaturated(metrics.underlinePosition, differenceTop);
@@ -549,21 +515,17 @@ void adjustCellHeight(
         addSaturated(metrics.overlinePosition, differenceTop);
 }
 
-void applyOne(
-    PhysicalMetrics &metrics, TerminalMetric key,
-    const TerminalMetricModifier &modifier)
+void applyOne(PhysicalMetrics &metrics, TerminalMetric key,
+              const TerminalMetricModifier &modifier)
 {
     switch (key) {
     case TerminalMetric::CellWidth:
         metrics.cellWidth =
             std::max<Pixel>(1, applyModifier(metrics.cellWidth, modifier));
         break;
-    case TerminalMetric::CellHeight:
-        adjustCellHeight(metrics, modifier);
-        break;
+    case TerminalMetric::CellHeight: adjustCellHeight(metrics, modifier); break;
     case TerminalMetric::FontBaseline:
-        metrics.cellBaseline =
-            applyModifier(metrics.cellBaseline, modifier);
+        metrics.cellBaseline = applyModifier(metrics.cellBaseline, modifier);
         break;
     case TerminalMetric::UnderlinePosition:
         metrics.underlinePosition =
@@ -594,16 +556,14 @@ void applyOne(
             applyModifier(metrics.cursorThickness, modifier);
         break;
     case TerminalMetric::CursorHeight:
-        metrics.cursorHeight =
-            applyModifier(metrics.cursorHeight, modifier);
+        metrics.cursorHeight = applyModifier(metrics.cursorHeight, modifier);
         break;
-    case TerminalMetric::Count:
-        break;
+    case TerminalMetric::Count: break;
     }
 }
 
-void applyModifiers(
-    PhysicalMetrics &metrics, const TerminalMetricModifierSet &modifiers)
+void applyModifiers(PhysicalMetrics &metrics,
+                    const TerminalMetricModifierSet &modifiers)
 {
     std::array<bool, terminalEnumIndex(TerminalMetric::Count)> applied{};
     const auto apply = [&](TerminalMetric key) {
@@ -623,14 +583,11 @@ void applyModifiers(
 
     metrics.cellWidth = std::max<Pixel>(1, metrics.cellWidth);
     metrics.cellHeight = std::max<Pixel>(1, metrics.cellHeight);
-    metrics.underlineThickness =
-        std::max<Pixel>(1, metrics.underlineThickness);
+    metrics.underlineThickness = std::max<Pixel>(1, metrics.underlineThickness);
     metrics.strikethroughThickness =
         std::max<Pixel>(1, metrics.strikethroughThickness);
-    metrics.overlineThickness =
-        std::max<Pixel>(1, metrics.overlineThickness);
-    metrics.cursorThickness =
-        std::max<Pixel>(1, metrics.cursorThickness);
+    metrics.overlineThickness = std::max<Pixel>(1, metrics.overlineThickness);
+    metrics.cursorThickness = std::max<Pixel>(1, metrics.cursorThickness);
     metrics.cursorHeight = std::max<Pixel>(1, metrics.cursorHeight);
 }
 
@@ -651,8 +608,8 @@ void applyModifiers(
 
 } // namespace
 
-TerminalCellMetrics terminalCellMetrics(
-    const TerminalTypography &typography, qreal devicePixelRatio)
+TerminalCellMetrics terminalCellMetrics(const TerminalTypography &typography,
+                                        qreal devicePixelRatio)
 {
     const qreal dpr = normalizedDpr(devicePixelRatio);
     auto fonts = resolveFonts(typography);
@@ -660,21 +617,18 @@ TerminalCellMetrics terminalCellMetrics(
         baseMetrics(fonts[terminalEnumIndex(TerminalFontRole::Regular)], dpr);
     applyModifiers(physical, typography.metricModifiers);
 
-    const qint64 baselineFromTop =
-        static_cast<qint64>(physical.cellHeight)
+    const qint64 baselineFromTop = static_cast<qint64>(physical.cellHeight)
         - static_cast<qint64>(physical.cellBaseline);
-    const qint64 cursorTop =
-        (static_cast<qint64>(physical.cellHeight)
-         - static_cast<qint64>(physical.cursorHeight))
+    const qint64 cursorTop = (static_cast<qint64>(physical.cellHeight)
+                              - static_cast<qint64>(physical.cursorHeight))
         / 2;
     const qint64 cursorBarLeft =
         -((static_cast<qint64>(physical.cursorThickness) + 1) / 2);
     const Pixel underlineLimitWithoutThickness = addSaturated(
-        physical.cellHeight,
-        static_cast<qint64>(physical.cellHeight / 4));
-    const Pixel underlineMaximumPosition = addSaturated(
-        underlineLimitWithoutThickness,
-        -static_cast<qint64>(physical.underlineThickness));
+        physical.cellHeight, static_cast<qint64>(physical.cellHeight / 4));
+    const Pixel underlineMaximumPosition =
+        addSaturated(underlineLimitWithoutThickness,
+                     -static_cast<qint64>(physical.underlineThickness));
     const qint64 overlineMinimumPosition =
         -static_cast<qint64>(physical.cellHeight / 4);
     return {
@@ -684,19 +638,15 @@ TerminalCellMetrics terminalCellMetrics(
         .baseline = static_cast<qreal>(baselineFromTop) / dpr,
         .underlinePosition = logical(physical.underlinePosition, dpr),
         .underlineThickness = logical(physical.underlineThickness, dpr),
-        .strikethroughPosition =
-            logical(physical.strikethroughPosition, dpr),
-        .strikethroughThickness =
-            logical(physical.strikethroughThickness, dpr),
+        .strikethroughPosition = logical(physical.strikethroughPosition, dpr),
+        .strikethroughThickness = logical(physical.strikethroughThickness, dpr),
         .overlinePosition = logical(physical.overlinePosition, dpr),
         .overlineThickness = logical(physical.overlineThickness, dpr),
         .cursorThickness = logical(physical.cursorThickness, dpr),
         .cursorHeight = logical(physical.cursorHeight, dpr),
         .cursorTop = logical(cursorTop, dpr),
         .cursorBarLeft = logical(cursorBarLeft, dpr),
-        .underlineMaximumPosition =
-            logical(underlineMaximumPosition, dpr),
-        .overlineMinimumPosition =
-            logical(overlineMinimumPosition, dpr),
+        .underlineMaximumPosition = logical(underlineMaximumPosition, dpr),
+        .overlineMinimumPosition = logical(overlineMinimumPosition, dpr),
     };
 }

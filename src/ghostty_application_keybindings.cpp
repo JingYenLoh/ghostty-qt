@@ -57,37 +57,34 @@ std::uint32_t unshiftedCodepoint(int key)
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
-    const quint64 logical = static_cast<quint64>(
-        static_cast<quint32>(event->key()));
+    const quint64 logical =
+        static_cast<quint64>(static_cast<quint32>(event->key()));
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
 quint64 keyEventIdentity(const KeyEventSnapshot &event)
 {
-    const quint64 physical =
-        static_cast<quint64>(event.nativeScanCode);
-    const quint64 logical = static_cast<quint64>(
-        static_cast<quint32>(event.key));
+    const quint64 physical = static_cast<quint64>(event.nativeScanCode);
+    const quint64 logical =
+        static_cast<quint64>(static_cast<quint32>(event.key));
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
-bool actionRequiresTerminalBarrier(
-    const GhosttyConfiguredAction &action)
+bool actionRequiresTerminalBarrier(const GhosttyConfiguredAction &action)
 {
     const auto *paneAction = std::get_if<GhosttyPaneAction>(&action);
     return paneAction != nullptr
-        && (std::holds_alternative<
-                GhosttyPaneActions::CopyToClipboard>(*paneAction)
-            || std::holds_alternative<
-                GhosttyPaneActions::SelectAll>(*paneAction)
-            || std::holds_alternative<
-                GhosttyPaneActions::AdjustSelection>(*paneAction)
-            || std::holds_alternative<
-                GhosttyPaneActions::ScrollToSelection>(*paneAction)
-            || std::holds_alternative<
-                GhosttyPaneActions::SearchSelection>(*paneAction)
-            || std::holds_alternative<TerminalWriteFileAction>(
-                *paneAction));
+        && (std::holds_alternative<GhosttyPaneActions::CopyToClipboard>(
+                *paneAction)
+            || std::holds_alternative<GhosttyPaneActions::SelectAll>(
+                *paneAction)
+            || std::holds_alternative<GhosttyPaneActions::AdjustSelection>(
+                *paneAction)
+            || std::holds_alternative<GhosttyPaneActions::ScrollToSelection>(
+                *paneAction)
+            || std::holds_alternative<GhosttyPaneActions::SearchSelection>(
+                *paneAction)
+            || std::holds_alternative<TerminalWriteFileAction>(*paneAction));
 }
 
 } // namespace
@@ -117,8 +114,7 @@ struct GhosttyApplicationKeybindings::BroadExecution {
 };
 
 GhosttyApplicationKeybindings::GhosttyApplicationKeybindings(
-    const LaunchOptions &options,
-    bool enableGlobalShortcutsPortal,
+    const LaunchOptions &options, bool enableGlobalShortcutsPortal,
     QObject *parent)
     : QObject(parent)
 {
@@ -127,21 +123,17 @@ GhosttyApplicationKeybindings::GhosttyApplicationKeybindings(
     }
     if (enableGlobalShortcutsPortal) {
         portal_ = std::make_unique<GhosttyGlobalShortcutPortal>();
-        connect(portal_.get(),
-                &GhosttyGlobalShortcutPortal::shortcutActivated,
-                this,
-                [this](const QString &action) {
+        connect(portal_.get(), &GhosttyGlobalShortcutPortal::shortcutActivated,
+                this, [this](const QString &action) {
                     dispatchBroadActions({action});
                 });
-        connect(portal_.get(),
-                &GhosttyGlobalShortcutPortal::warningOccurred,
-                this,
-                [](const QString &message) {
+        connect(portal_.get(), &GhosttyGlobalShortcutPortal::warningOccurred,
+                this, [](const QString &message) {
                     qWarning().noquote()
                         << "Ghostty global shortcut registration:" << message;
                 });
     }
-    (void) applyLaunchOptions(options);
+    (void)applyLaunchOptions(options);
 }
 
 GhosttyApplicationKeybindings::~GhosttyApplicationKeybindings()
@@ -171,8 +163,7 @@ void GhosttyApplicationKeybindings::endConfigurationUpdate()
 void GhosttyApplicationKeybindings::dispatchOrDeferBroadActions(
     GhosttyCompiledActionChain actions)
 {
-    if (configurationUpdateDepth_ != 0
-        || drainingDeferredInputs_
+    if (configurationUpdateDepth_ != 0 || drainingDeferredInputs_
         || broadExecution_ != nullptr) {
         deferredInputs_.emplace_back(std::move(actions));
         return;
@@ -193,14 +184,12 @@ void GhosttyApplicationKeybindings::drainDeferredInputs()
            && guard->keyEventDispatchDepth_ == 0
            && guard->broadExecution_ == nullptr
            && !guard->deferredInputs_.empty()) {
-        DeferredInput deferred =
-            std::move(guard->deferredInputs_.front());
+        DeferredInput deferred = std::move(guard->deferredInputs_.front());
         guard->deferredInputs_.pop_front();
         if (auto *key = std::get_if<DeferredKeyEvent>(&deferred)) {
             if (key->target == nullptr) {
                 if (!key->event.pressed) {
-                    guard->consumedKeys_.remove(
-                        keyEventIdentity(key->event));
+                    guard->consumedKeys_.remove(keyEventIdentity(key->event));
                 }
                 continue;
             }
@@ -211,18 +200,15 @@ void GhosttyApplicationKeybindings::drainDeferredInputs()
                 guard->replayingDeferredKeyEvent_ = nullptr;
             }
         } else if (auto *inputMethod =
-                       std::get_if<DeferredInputMethodEvent>(
-                           &deferred)) {
+                       std::get_if<DeferredInputMethodEvent>(&deferred)) {
             if (inputMethod->target == nullptr) continue;
-            QInputMethodEvent replay(
-                inputMethod->preedit, inputMethod->attributes);
-            replay.setCommitString(
-                inputMethod->commit,
-                inputMethod->replacementStart,
-                inputMethod->replacementLength);
+            QInputMethodEvent replay(inputMethod->preedit,
+                                     inputMethod->attributes);
+            replay.setCommitString(inputMethod->commit,
+                                   inputMethod->replacementStart,
+                                   inputMethod->replacementLength);
             guard->replayingDeferredInputMethodEvent_ = &replay;
-            QCoreApplication::sendEvent(
-                inputMethod->target, &replay);
+            QCoreApplication::sendEvent(inputMethod->target, &replay);
             if (guard != nullptr) {
                 guard->replayingDeferredInputMethodEvent_ = nullptr;
             }
@@ -238,32 +224,30 @@ void GhosttyApplicationKeybindings::registerWorkspace(
     TerminalWorkspace *workspace)
 {
     if (workspace == nullptr) return;
-    if (std::ranges::any_of(
-            std::as_const(workspaces_), [workspace](const auto &candidate) {
-                return candidate == workspace;
-            })) {
+    if (std::ranges::any_of(std::as_const(workspaces_),
+                            [workspace](const auto &candidate) {
+                                return candidate == workspace;
+                            })) {
         return;
     }
 
     workspaces_.append(workspace);
-    connect(workspace, &TerminalWorkspace::broadActionsRequested,
-            this,
+    connect(workspace, &TerminalWorkspace::broadActionsRequested, this,
             [this](const GhosttyCompiledActionChain &actions) {
                 dispatchOrDeferBroadActions(actions);
             });
     connect(workspace, &QObject::destroyed, this, [this] {
-        workspaces_.removeIf([](const auto &candidate) {
-            return candidate.isNull();
-        });
+        workspaces_.removeIf(
+            [](const auto &candidate) { return candidate.isNull(); });
     });
 }
 
-GhosttyKeybindProgram GhosttyApplicationKeybindings::applyLaunchOptions(
-    const LaunchOptions &options)
+GhosttyKeybindProgram
+GhosttyApplicationKeybindings::applyLaunchOptions(const LaunchOptions &options)
 {
     GhosttyKeybindProgram program =
         GhosttyKeybindProgram::compile(options.keybindSource).program;
-    (void) rootState_.replaceProgram(program);
+    (void)rootState_.replaceProgram(program);
 
     if (portal_ != nullptr) {
         if (const GhosttyKeybindConfig *config =
@@ -321,20 +305,19 @@ void GhosttyApplicationKeybindings::dispatchCompiledBroadActions(
     do {
         ++nextBroadExecutionGeneration_;
     } while (nextBroadExecutionGeneration_ == 0);
-    broadExecution_ = std::make_shared<BroadExecution>(
-        BroadExecution{
-            .generation = nextBroadExecutionGeneration_,
-            .actions = actions,
-            .entryIndex = 0,
-            .barrierInitialized = false,
-            .startingTargets = false,
-            .continuing = false,
-            .continuationMustDefer = false,
-            .continuationQueued = false,
-            .unresolvedTargets = 0,
-            .publishIndex = 0,
-            .targets = {},
-        });
+    broadExecution_ = std::make_shared<BroadExecution>(BroadExecution{
+        .generation = nextBroadExecutionGeneration_,
+        .actions = actions,
+        .entryIndex = 0,
+        .barrierInitialized = false,
+        .startingTargets = false,
+        .continuing = false,
+        .continuationMustDefer = false,
+        .continuationQueued = false,
+        .unresolvedTargets = 0,
+        .publishIndex = 0,
+        .targets = {},
+    });
     continueBroadExecution();
 }
 
@@ -350,14 +333,12 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
     const QPointer<GhosttyApplicationKeybindings> guard(this);
     execution->continuing = true;
     const auto continuingGuard = qScopeGuard([guard, execution] {
-        if (guard != nullptr
-            && guard->broadExecution_ == execution) {
+        if (guard != nullptr && guard->broadExecution_ == execution) {
             execution->continuing = false;
         }
     });
     const auto stillCurrent = [guard, execution, generation] {
-        return guard != nullptr
-            && guard->broadExecution_ == execution
+        return guard != nullptr && guard->broadExecution_ == execution
             && execution->generation == generation;
     };
 
@@ -403,7 +384,7 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
                 workspaceSnapshot();
             for (const QPointer<TerminalWorkspace> &workspace : workspaces) {
                 if (workspace != nullptr) {
-                    (void) workspace->executeSurfaceActionOnAllPanes(
+                    (void)workspace->executeSurfaceActionOnAllPanes(
                         *entry.action);
                     if (!stillCurrent()) return;
                 }
@@ -443,50 +424,47 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             }
 
             execution->unresolvedTargets = execution->targets.size();
-            for (qsizetype index = 0;
-                 index < execution->targets.size(); ++index) {
-                BroadExecution::Target &target =
-                    execution->targets[index];
+            for (qsizetype index = 0; index < execution->targets.size();
+                 ++index) {
+                BroadExecution::Target &target = execution->targets[index];
                 if (target.workspace == nullptr || target.pane == nullptr) {
-                    resolveBroadTarget(
-                        generation, index,
-                        TerminalActionExecutionResult{}, true);
+                    resolveBroadTarget(generation, index,
+                                       TerminalActionExecutionResult{}, true);
                     if (!stillCurrent()) return;
                     continue;
                 }
 
-                target.paneDestruction = connect(
-                    target.pane, &QObject::destroyed, this,
-                    [this, generation, index] {
-                        resolveBroadTarget(
-                            generation, index,
-                            TerminalActionExecutionResult{}, true);
-                    });
-                target.workspaceDestruction = connect(
-                    target.workspace, &QObject::destroyed, this,
-                    [this, generation, index] {
-                        resolveBroadTarget(
-                            generation, index,
-                            TerminalActionExecutionResult{}, true);
-                    });
+                target.paneDestruction =
+                    connect(target.pane, &QObject::destroyed, this,
+                            [this, generation, index] {
+                                resolveBroadTarget(
+                                    generation, index,
+                                    TerminalActionExecutionResult{}, true);
+                            });
+                target.workspaceDestruction =
+                    connect(target.workspace, &QObject::destroyed, this,
+                            [this, generation, index] {
+                                resolveBroadTarget(
+                                    generation, index,
+                                    TerminalActionExecutionResult{}, true);
+                            });
 
-                const QPointer<GhosttyApplicationKeybindings>
-                    completionGuard(this);
+                const QPointer<GhosttyApplicationKeybindings> completionGuard(
+                    this);
                 TerminalActionExecutionStart start =
                     target.pane->startConfiguredAction(
                         *entry.action,
-                        [completionGuard, generation, index](
-                            TerminalActionExecutionResult result) {
+                        [completionGuard, generation,
+                         index](TerminalActionExecutionResult result) {
                             if (completionGuard != nullptr) {
                                 completionGuard->resolveBroadTarget(
-                                    generation, index,
-                                    std::move(result));
+                                    generation, index, std::move(result));
                             }
                         });
                 if (!stillCurrent()) return;
                 if (!start.pending) {
-                    resolveBroadTarget(
-                        generation, index, std::move(start.result));
+                    resolveBroadTarget(generation, index,
+                                       std::move(start.result));
                     if (!stillCurrent()) return;
                 }
             }
@@ -495,8 +473,7 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
             if (execution->unresolvedTargets != 0) {
                 return;
             }
-            execution->continuationMustDefer =
-                execution->continuationMustDefer
+            execution->continuationMustDefer = execution->continuationMustDefer
                 || broadExecutionHasLostTarget(*execution);
             if (execution->continuationMustDefer) {
                 deferBroadExecutionContinuation(generation);
@@ -519,8 +496,7 @@ void GhosttyApplicationKeybindings::continueBroadExecution()
                     .paneId = target.paneId,
                     .pane = target.pane,
                 })) {
-                (void) target.pane->commitConfiguredActionResult(
-                    target.result);
+                (void)target.pane->commitConfiguredActionResult(target.result);
                 if (!stillCurrent()) return;
             }
             QObject::disconnect(target.paneDestruction);
@@ -570,13 +546,10 @@ void GhosttyApplicationKeybindings::resolveBroadTarget(
     target.result = std::move(result);
     Q_ASSERT(execution->unresolvedTargets > 0);
     --execution->unresolvedTargets;
-    if (execution->unresolvedTargets == 0
-        && !execution->startingTargets) {
-        execution->continuationMustDefer =
-            execution->continuationMustDefer
+    if (execution->unresolvedTargets == 0 && !execution->startingTargets) {
+        execution->continuationMustDefer = execution->continuationMustDefer
             || broadExecutionHasLostTarget(*execution);
-        if (configurationUpdateDepth_ != 0
-            || execution->continuing) {
+        if (configurationUpdateDepth_ != 0 || execution->continuing) {
             return;
         }
         if (!execution->continuationMustDefer) {
@@ -601,8 +574,7 @@ void GhosttyApplicationKeybindings::deferBroadExecutionContinuation(
     QMetaObject::invokeMethod(
         this,
         [guard, generation] {
-            if (guard == nullptr
-                || guard->broadExecution_ == nullptr
+            if (guard == nullptr || guard->broadExecution_ == nullptr
                 || guard->broadExecution_->generation != generation) {
                 return;
             }
@@ -642,15 +614,12 @@ bool GhosttyApplicationKeybindings::broadExecutionHasLostTarget(
     const BroadExecution &execution)
 {
     return std::ranges::any_of(
-        execution.targets,
-        [](const BroadExecution::Target &target) {
-            return target.workspace == nullptr
-                || target.pane == nullptr;
+        execution.targets, [](const BroadExecution::Target &target) {
+            return target.workspace == nullptr || target.pane == nullptr;
         });
 }
 
-bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
-                                                 QEvent *event)
+bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
 {
     if (event == nullptr) {
         return QObject::eventFilter(watched, event);
@@ -660,39 +629,30 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
     auto *pane = qobject_cast<TerminalPane *>(watched);
     const bool inputMethod =
         event->type() == QEvent::InputMethod && pane != nullptr;
-    const bool currentReplay =
-        (keyPress || keyRelease)
-        && replayingDeferredKeyEvent_
-            == static_cast<QKeyEvent *>(event);
-    const bool currentInputMethodReplay =
-        inputMethod
+    const bool currentReplay = (keyPress || keyRelease)
+        && replayingDeferredKeyEvent_ == static_cast<QKeyEvent *>(event);
+    const bool currentInputMethodReplay = inputMethod
         && replayingDeferredInputMethodEvent_
             == static_cast<QInputMethodEvent *>(event);
     if ((keyPress || keyRelease || inputMethod)
-        && (configurationUpdateDepth_ > 0
-            || broadExecution_ != nullptr
-            || (drainingDeferredInputs_
-                && !currentReplay
+        && (configurationUpdateDepth_ > 0 || broadExecution_ != nullptr
+            || (drainingDeferredInputs_ && !currentReplay
                 && !currentInputMethodReplay))) {
         if (inputMethod) {
-            const auto *input =
-                static_cast<QInputMethodEvent *>(event);
-            deferredInputs_.emplace_back(
-                DeferredInputMethodEvent{
-                    .target = watched,
-                    .preedit = input->preeditString(),
-                    .attributes = input->attributes(),
-                    .commit = input->commitString(),
-                    .replacementStart =
-                        input->replacementStart(),
-                    .replacementLength =
-                        input->replacementLength(),
-                });
+            const auto *input = static_cast<QInputMethodEvent *>(event);
+            deferredInputs_.emplace_back(DeferredInputMethodEvent{
+                .target = watched,
+                .preedit = input->preeditString(),
+                .attributes = input->attributes(),
+                .commit = input->commitString(),
+                .replacementStart = input->replacementStart(),
+                .replacementLength = input->replacementLength(),
+            });
         } else {
             deferredInputs_.emplace_back(DeferredKeyEvent{
                 .target = watched,
-                .event = KeyEventSnapshot::capture(
-                    *static_cast<QKeyEvent *>(event)),
+                .event =
+                    KeyEventSnapshot::capture(*static_cast<QKeyEvent *>(event)),
             });
         }
         event->accept();
@@ -752,10 +712,9 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched,
     // independently of its unconsumed/performable flags.
     const QPointer<GhosttyApplicationKeybindings> guard(this);
     const QPointer<QObject> watchedGuard(watched);
-    (void) executeApplicationActions(match->actionChain);
+    (void)executeApplicationActions(match->actionChain);
     if (guard == nullptr || watchedGuard == nullptr) return true;
-    if (match->actionChain.inputEffect
-        != GhosttyActionInputEffect::Ignore) {
+    if (match->actionChain.inputEffect != GhosttyActionInputEffect::Ignore) {
         consumedKeys_.insert(keyEventIdentity(keyEvent));
     }
     return true;

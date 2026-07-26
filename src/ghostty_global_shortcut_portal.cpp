@@ -185,8 +185,7 @@ std::optional<QString> physicalKeysym(QStringView name)
 
 std::optional<QString> unicodeKeysym(quint32 codepoint)
 {
-    if (codepoint > 0x10ffff
-        || (codepoint >= 0xd800 && codepoint <= 0xdfff)
+    if (codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)
         || codepoint < 0x20 || (codepoint >= 0x7f && codepoint < 0xa0)) {
         return std::nullopt;
     }
@@ -197,8 +196,8 @@ std::optional<QString> unicodeKeysym(quint32 codepoint)
     // "gcedilla"). Unnamed XKB values are formatted as 0x..., whereas GDK
     // returns null and Ghostty falls back to the literal character.
     char name[64] = {};
-    const int length = xkb_keysym_get_name(
-        static_cast<xkb_keysym_t>(codepoint), name, sizeof(name));
+    const int length = xkb_keysym_get_name(static_cast<xkb_keysym_t>(codepoint),
+                                           name, sizeof(name));
     if (length > 0 && length < static_cast<int>(sizeof(name))) {
         const QString keysym = QString::fromLatin1(name, length);
         if (!keysym.startsWith(QLatin1StringView("0x"))) {
@@ -235,14 +234,10 @@ struct Candidate {
 
 bool preferredCandidate(const Candidate &candidate, const Candidate &current)
 {
-    const int candidateKind = candidate.trigger.kind
-            == GhosttyKeybindKeyKind::Physical
-        ? 0
-        : 1;
-    const int currentKind = current.trigger.kind
-            == GhosttyKeybindKeyKind::Physical
-        ? 0
-        : 1;
+    const int candidateKind =
+        candidate.trigger.kind == GhosttyKeybindKeyKind::Physical ? 0 : 1;
+    const int currentKind =
+        current.trigger.kind == GhosttyKeybindKeyKind::Physical ? 0 : 1;
     if (candidateKind != currentKind) {
         return candidateKind < currentKind;
     }
@@ -258,10 +253,9 @@ bool preferredCandidate(const Candidate &candidate, const Candidate &current)
     return candidate.rootIndex < current.rootIndex;
 }
 
-GhosttyGlobalShortcutDiagnostic diagnostic(
-    GhosttyGlobalShortcutDiagnosticCode code,
-    int rootIndex,
-    const QString &reason)
+GhosttyGlobalShortcutDiagnostic
+diagnostic(GhosttyGlobalShortcutDiagnosticCode code, int rootIndex,
+           const QString &reason)
 {
     return GhosttyGlobalShortcutDiagnostic{
         .code = code,
@@ -302,11 +296,11 @@ QString sessionHandleFromResults(const QVariantMap &results)
 Q_DECLARE_METATYPE(PortalShortcut)
 Q_DECLARE_METATYPE(PortalShortcutList)
 
-std::optional<QString> ghosttyXdgShortcutFromTrigger(
-    const GhosttyKeybindTrigger &trigger)
+std::optional<QString>
+ghosttyXdgShortcutFromTrigger(const GhosttyKeybindTrigger &trigger)
 {
-    constexpr quint8 knownModifiers = GhosttyKeybindShift
-        | GhosttyKeybindCtrl | GhosttyKeybindAlt | GhosttyKeybindSuper;
+    constexpr quint8 knownModifiers = GhosttyKeybindShift | GhosttyKeybindCtrl
+        | GhosttyKeybindAlt | GhosttyKeybindSuper;
     if ((trigger.modifiers & ~knownModifiers) != 0) {
         return std::nullopt;
     }
@@ -319,8 +313,7 @@ std::optional<QString> ghosttyXdgShortcutFromTrigger(
     case GhosttyKeybindKeyKind::Unicode:
         key = unicodeKeysym(trigger.unicodeCodepoint);
         break;
-    case GhosttyKeybindKeyKind::CatchAll:
-        return std::nullopt;
+    case GhosttyKeybindKeyKind::CatchAll: return std::nullopt;
     }
 
     if (!key.has_value() || key->isEmpty()) {
@@ -329,8 +322,8 @@ std::optional<QString> ghosttyXdgShortcutFromTrigger(
     return modifierPrefix(trigger.modifiers) + *key;
 }
 
-GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
-    const GhosttyKeybindConfig &config)
+GhosttyGlobalShortcutRegistry
+buildGhosttyGlobalShortcutRegistry(const GhosttyKeybindConfig &config)
 {
     GhosttyGlobalShortcutRegistry result;
     QMap<QString, Candidate> selected;
@@ -351,7 +344,8 @@ GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
             result.diagnostics.append(diagnostic(
                 GhosttyGlobalShortcutDiagnosticCode::ActionChainUnsupported,
                 static_cast<int>(index),
-                QStringLiteral("the pinned Linux frontend only registers one action")));
+                QStringLiteral(
+                    "the pinned Linux frontend only registers one action")));
             continue;
         }
 
@@ -360,7 +354,8 @@ GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
             result.diagnostics.append(diagnostic(
                 GhosttyGlobalShortcutDiagnosticCode::CatchAllUnsupported,
                 static_cast<int>(index),
-                QStringLiteral("catch-all triggers cannot be represented by XDG")));
+                QStringLiteral(
+                    "catch-all triggers cannot be represented by XDG")));
             continue;
         }
 
@@ -369,17 +364,19 @@ GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
             result.diagnostics.append(diagnostic(
                 GhosttyGlobalShortcutDiagnosticCode::TriggerUnsupported,
                 static_cast<int>(index),
-                QStringLiteral("the trigger has no XDG keysym representation")));
+                QStringLiteral(
+                    "the trigger has no XDG keysym representation")));
             continue;
         }
 
         Candidate candidate{
-            .registration = GhosttyGlobalShortcutRegistration{
-                .id = *preferredTrigger,
-                .preferredTrigger = *preferredTrigger,
-                .description = definition.actions.front(),
-                .action = definition.actions.front(),
-            },
+            .registration =
+                GhosttyGlobalShortcutRegistration{
+                    .id = *preferredTrigger,
+                    .preferredTrigger = *preferredTrigger,
+                    .description = definition.actions.front(),
+                    .action = definition.actions.front(),
+                },
             .trigger = trigger,
             .rootIndex = static_cast<int>(index),
         };
@@ -396,12 +393,13 @@ GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
         result.diagnostics.append(GhosttyGlobalShortcutDiagnostic{
             .code = GhosttyGlobalShortcutDiagnosticCode::Collision,
             .rootBindingIndex = loser.rootIndex,
-            .message = QStringLiteral(
-                "Global keybind %1 was skipped: XDG trigger `%2` collides with "
-                "binding %3; binding %3 wins deterministically")
-                           .arg(loser.rootIndex)
-                           .arg(candidate.registration.id)
-                           .arg(winner.rootIndex),
+            .message =
+                QStringLiteral(
+                    "Global keybind %1 was skipped: XDG trigger `%2` collides with "
+                    "binding %3; binding %3 wins deterministically")
+                    .arg(loser.rootIndex)
+                    .arg(candidate.registration.id)
+                    .arg(winner.rootIndex),
         });
         if (replace) {
             *existing = std::move(candidate);
@@ -416,8 +414,7 @@ GhosttyGlobalShortcutRegistry buildGhosttyGlobalShortcutRegistry(
 }
 
 GhosttyGlobalShortcutPortal::GhosttyGlobalShortcutPortal(
-    const QDBusConnection &connection,
-    QObject *parent)
+    const QDBusConnection &connection, QObject *parent)
     : QObject(parent)
     , m_connection(connection)
 {
@@ -464,8 +461,8 @@ void GhosttyGlobalShortcutPortal::setKeybindConfig(
     if (!operation.isCurrent()) return;
 
     m_registry = buildGhosttyGlobalShortcutRegistry(config);
-    for (const GhosttyGlobalShortcutRegistration &registration
-         : std::as_const(m_registry.registrations)) {
+    for (const GhosttyGlobalShortcutRegistration &registration :
+         std::as_const(m_registry.registrations)) {
         m_actionsById.insert(registration.id, registration.action);
     }
     const QVector<GhosttyGlobalShortcutDiagnostic> diagnostics =
@@ -473,8 +470,7 @@ void GhosttyGlobalShortcutPortal::setKeybindConfig(
     Q_EMIT registryChanged();
     if (!operation.isCurrent()) return;
 
-    for (const GhosttyGlobalShortcutDiagnostic &entry
-         : diagnostics) {
+    for (const GhosttyGlobalShortcutDiagnostic &entry : diagnostics) {
         warn(entry.message);
         if (!operation.isCurrent()) return;
     }
@@ -504,8 +500,8 @@ void GhosttyGlobalShortcutPortal::beginCreateSession()
 {
     const PortalOperation operation{this, m_generation};
     const QString requestToken = newPortalToken();
-    const QString requestPath = subscribeToResponse(
-        RequestKind::CreateSession, requestToken);
+    const QString requestPath =
+        subscribeToResponse(RequestKind::CreateSession, requestToken);
     if (!operation.isCurrent()) return;
     if (requestPath.isEmpty()) {
         closePortalState(true);
@@ -517,8 +513,7 @@ void GhosttyGlobalShortcutPortal::beginCreateSession()
     options.insert(QStringLiteral("session_handle_token"), newPortalToken());
 
     QDBusMessage call = QDBusMessage::createMethodCall(
-        QString::fromLatin1(PortalService),
-        QString::fromLatin1(PortalPath),
+        QString::fromLatin1(PortalService), QString::fromLatin1(PortalPath),
         QString::fromLatin1(GlobalShortcutsInterface),
         QStringLiteral("CreateSession"));
     call << options;
@@ -537,8 +532,8 @@ void GhosttyGlobalShortcutPortal::beginBindShortcuts()
     }
 
     const QString requestToken = newPortalToken();
-    const QString requestPath = subscribeToResponse(
-        RequestKind::BindShortcuts, requestToken);
+    const QString requestPath =
+        subscribeToResponse(RequestKind::BindShortcuts, requestToken);
     if (!operation.isCurrent()) return;
     if (requestPath.isEmpty()) {
         closePortalState(true);
@@ -547,8 +542,8 @@ void GhosttyGlobalShortcutPortal::beginBindShortcuts()
 
     PortalShortcutList shortcuts;
     shortcuts.reserve(m_registry.registrations.size());
-    for (const GhosttyGlobalShortcutRegistration &registration
-         : std::as_const(m_registry.registrations)) {
+    for (const GhosttyGlobalShortcutRegistration &registration :
+         std::as_const(m_registry.registrations)) {
         QVariantMap properties;
         properties.insert(QStringLiteral("description"),
                           registration.description);
@@ -564,71 +559,69 @@ void GhosttyGlobalShortcutPortal::beginBindShortcuts()
     options.insert(QStringLiteral("handle_token"), requestToken);
 
     QDBusMessage call = QDBusMessage::createMethodCall(
-        QString::fromLatin1(PortalService),
-        QString::fromLatin1(PortalPath),
+        QString::fromLatin1(PortalService), QString::fromLatin1(PortalPath),
         QString::fromLatin1(GlobalShortcutsInterface),
         QStringLiteral("BindShortcuts"));
     call << QVariant::fromValue(QDBusObjectPath(m_sessionHandle))
-         << QVariant::fromValue(shortcuts)
-         << QString()
-         << options;
+         << QVariant::fromValue(shortcuts) << QString() << options;
     beginRequest(RequestKind::BindShortcuts, call, requestPath);
 }
 
-void GhosttyGlobalShortcutPortal::beginRequest(
-    RequestKind kind,
-    const QDBusMessage &methodCall,
-    const QString &expectedPath)
+void GhosttyGlobalShortcutPortal::beginRequest(RequestKind kind,
+                                               const QDBusMessage &methodCall,
+                                               const QString &expectedPath)
 {
     const quint64 requestGeneration = m_generation;
     QDBusPendingCall pending = m_connection.asyncCall(methodCall);
     auto *watcher = new QDBusPendingCallWatcher(pending, this);
-    connect(watcher, &QDBusPendingCallWatcher::finished, this,
-            [this, kind, requestGeneration, expectedPath](
-                QDBusPendingCallWatcher *finished) {
-        const PortalOperation operation{this, requestGeneration};
-        const QDBusPendingReply<QDBusObjectPath> reply = *finished;
-        finished->deleteLater();
+    connect(
+        watcher, &QDBusPendingCallWatcher::finished, this,
+        [this, kind, requestGeneration,
+         expectedPath](QDBusPendingCallWatcher *finished) {
+            const PortalOperation operation{this, requestGeneration};
+            const QDBusPendingReply<QDBusObjectPath> reply = *finished;
+            finished->deleteLater();
 
-        auto expected = m_pendingRequests.constFind(expectedPath);
-        if (!operation.isCurrent()
-            || expected == m_pendingRequests.cend()
-            || expected->generation != requestGeneration
-            || expected->kind != kind) {
-            return;
-        }
-        const PendingRequest request = *expected;
+            auto expected = m_pendingRequests.constFind(expectedPath);
+            if (!operation.isCurrent() || expected == m_pendingRequests.cend()
+                || expected->generation != requestGeneration
+                || expected->kind != kind) {
+                return;
+            }
+            const PendingRequest request = *expected;
 
-        if (reply.isError()) {
-            finishPendingRequest(request.canonicalPath);
-            warn(QStringLiteral("XDG global shortcut portal call failed: %1")
-                     .arg(reply.error().message()));
-            if (!operation.isCurrent()) return;
-            closePortalState(true);
-            return;
-        }
+            if (reply.isError()) {
+                finishPendingRequest(request.canonicalPath);
+                warn(
+                    QStringLiteral("XDG global shortcut portal call failed: %1")
+                        .arg(reply.error().message()));
+                if (!operation.isCurrent()) return;
+                closePortalState(true);
+                return;
+            }
 
-        const QString actualPath = reply.value().path();
-        if (actualPath.isEmpty() || actualPath == expectedPath
-            || m_pendingRequests.contains(actualPath)) {
-            return;
-        }
+            const QString actualPath = reply.value().path();
+            if (actualPath.isEmpty() || actualPath == expectedPath
+                || m_pendingRequests.contains(actualPath)) {
+                return;
+            }
 
-        // Modern portals return the predictable path constructed from the
-        // handle token. Older implementations may return a different path;
-        // keep the pre-call subscription and add a compatibility alias.
-        if (!subscribeToResponsePath(actualPath, request)) {
-            warn(QStringLiteral(
-                     "Could not subscribe to portal compatibility response path `%1`")
-                     .arg(actualPath));
-            if (!operation.isCurrent()) return;
-        }
-    });
+            // Modern portals return the predictable path constructed from the
+            // handle token. Older implementations may return a different path;
+            // keep the pre-call subscription and add a compatibility alias.
+            if (!subscribeToResponsePath(actualPath, request)) {
+                warn(
+                    QStringLiteral(
+                        "Could not subscribe to portal compatibility response path `%1`")
+                        .arg(actualPath));
+                if (!operation.isCurrent()) return;
+            }
+        });
 }
 
-QString GhosttyGlobalShortcutPortal::subscribeToResponse(
-    RequestKind kind,
-    const QString &requestToken)
+QString
+GhosttyGlobalShortcutPortal::subscribeToResponse(RequestKind kind,
+                                                 const QString &requestToken)
 {
     QString sender = m_connection.baseService();
     if (sender.startsWith(u':')) {
@@ -642,9 +635,9 @@ QString GhosttyGlobalShortcutPortal::subscribeToResponse(
         return {};
     }
 
-    const QString path = QStringLiteral(
-        "/org/freedesktop/portal/desktop/request/%1/%2")
-                             .arg(sender, requestToken);
+    const QString path =
+        QStringLiteral("/org/freedesktop/portal/desktop/request/%1/%2")
+            .arg(sender, requestToken);
     const PendingRequest request{
         .kind = kind,
         .generation = m_generation,
@@ -660,18 +653,14 @@ QString GhosttyGlobalShortcutPortal::subscribeToResponse(
 }
 
 bool GhosttyGlobalShortcutPortal::subscribeToResponsePath(
-    const QString &path,
-    const PendingRequest &request)
+    const QString &path, const PendingRequest &request)
 {
     // This connection is intentionally installed before asyncCall. Portals are
     // allowed to emit Response immediately, before the method reply arrives.
     const bool connected = m_connection.connect(
-        QString::fromLatin1(PortalService),
-        path,
-        QString::fromLatin1(RequestInterface),
-        QStringLiteral("Response"),
-        this,
-        SLOT(onRequestResponse(uint,QVariantMap,QDBusMessage)));
+        QString::fromLatin1(PortalService), path,
+        QString::fromLatin1(RequestInterface), QStringLiteral("Response"), this,
+        SLOT(onRequestResponse(uint, QVariantMap, QDBusMessage)));
     if (connected) {
         m_pendingRequests.insert(path, request);
     }
@@ -689,20 +678,16 @@ void GhosttyGlobalShortcutPortal::finishPendingRequest(
             continue;
         }
         m_connection.disconnect(
-            QString::fromLatin1(PortalService),
-            path,
-            QString::fromLatin1(RequestInterface),
-            QStringLiteral("Response"),
-            this,
-            SLOT(onRequestResponse(uint,QVariantMap,QDBusMessage)));
+            QString::fromLatin1(PortalService), path,
+            QString::fromLatin1(RequestInterface), QStringLiteral("Response"),
+            this, SLOT(onRequestResponse(uint, QVariantMap, QDBusMessage)));
         m_pendingRequests.remove(path);
     }
 }
 
-void GhosttyGlobalShortcutPortal::onRequestResponse(
-    uint response,
-    const QVariantMap &results,
-    const QDBusMessage &message)
+void GhosttyGlobalShortcutPortal::onRequestResponse(uint response,
+                                                    const QVariantMap &results,
+                                                    const QDBusMessage &message)
 {
     const auto found = m_pendingRequests.constFind(message.path());
     if (found == m_pendingRequests.cend()) {
@@ -743,12 +728,9 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     m_sessionHandle = handle;
 
     m_sessionClosedSubscribed = m_connection.connect(
-        QString::fromLatin1(PortalService),
-        m_sessionHandle,
-        QString::fromLatin1(SessionInterface),
-        QStringLiteral("Closed"),
-        this,
-        SLOT(onSessionClosed(QVariantMap,QDBusMessage)));
+        QString::fromLatin1(PortalService), m_sessionHandle,
+        QString::fromLatin1(SessionInterface), QStringLiteral("Closed"), this,
+        SLOT(onSessionClosed(QVariantMap, QDBusMessage)));
     if (!m_sessionClosedSubscribed) {
         warn(QStringLiteral(
             "Could not subscribe to XDG global shortcut session closure"));
@@ -758,12 +740,11 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
     }
 
     m_activationSubscribed = m_connection.connect(
-        QString::fromLatin1(PortalService),
-        QString::fromLatin1(PortalPath),
+        QString::fromLatin1(PortalService), QString::fromLatin1(PortalPath),
         QString::fromLatin1(GlobalShortcutsInterface),
-        QStringLiteral("Activated"),
-        this,
-        SLOT(onActivated(QDBusObjectPath,QString,qulonglong,QVariantMap,QDBusMessage)));
+        QStringLiteral("Activated"), this,
+        SLOT(onActivated(QDBusObjectPath, QString, qulonglong, QVariantMap,
+                         QDBusMessage)));
     if (!m_activationSubscribed) {
         warn(QStringLiteral(
             "Could not subscribe to XDG global shortcut activations"));
@@ -775,10 +756,8 @@ void GhosttyGlobalShortcutPortal::onRequestResponse(
 }
 
 void GhosttyGlobalShortcutPortal::onActivated(
-    const QDBusObjectPath &sessionHandle,
-    const QString &shortcutId,
-    qulonglong timestamp,
-    const QVariantMap &options,
+    const QDBusObjectPath &sessionHandle, const QString &shortcutId,
+    qulonglong timestamp, const QVariantMap &options,
     const QDBusMessage &message)
 {
     Q_UNUSED(timestamp);
@@ -796,9 +775,8 @@ void GhosttyGlobalShortcutPortal::onActivated(
     Q_EMIT shortcutActivated(ownedAction);
 }
 
-void GhosttyGlobalShortcutPortal::onSessionClosed(
-    const QVariantMap &details,
-    const QDBusMessage &message)
+void GhosttyGlobalShortcutPortal::onSessionClosed(const QVariantMap &details,
+                                                  const QDBusMessage &message)
 {
     Q_UNUSED(details);
     if (!m_sessionClosedSubscribed || message.path() != m_sessionHandle) {
@@ -808,13 +786,10 @@ void GhosttyGlobalShortcutPortal::onSessionClosed(
 
     // The portal already destroyed the session. Disconnect this exact path
     // before clearing it so closePortalState does not send a redundant Close.
-    m_connection.disconnect(
-        QString::fromLatin1(PortalService),
-        m_sessionHandle,
-        QString::fromLatin1(SessionInterface),
-        QStringLiteral("Closed"),
-        this,
-        SLOT(onSessionClosed(QVariantMap,QDBusMessage)));
+    m_connection.disconnect(QString::fromLatin1(PortalService), m_sessionHandle,
+                            QString::fromLatin1(SessionInterface),
+                            QStringLiteral("Closed"), this,
+                            SLOT(onSessionClosed(QVariantMap, QDBusMessage)));
     m_sessionClosedSubscribed = false;
     m_sessionHandle.clear();
     closePortalState(true);
@@ -828,18 +803,13 @@ void GhosttyGlobalShortcutPortal::closePortalState(bool notify)
                                      m_pendingRequests.keyEnd());
     for (const QString &path : requestPaths) {
         m_connection.disconnect(
-            QString::fromLatin1(PortalService),
-            path,
-            QString::fromLatin1(RequestInterface),
-            QStringLiteral("Response"),
-            this,
-            SLOT(onRequestResponse(uint,QVariantMap,QDBusMessage)));
+            QString::fromLatin1(PortalService), path,
+            QString::fromLatin1(RequestInterface), QStringLiteral("Response"),
+            this, SLOT(onRequestResponse(uint, QVariantMap, QDBusMessage)));
         if (m_connection.isConnected()) {
             QDBusMessage closeRequest = QDBusMessage::createMethodCall(
-                QString::fromLatin1(PortalService),
-                path,
-                QString::fromLatin1(RequestInterface),
-                QStringLiteral("Close"));
+                QString::fromLatin1(PortalService), path,
+                QString::fromLatin1(RequestInterface), QStringLiteral("Close"));
             m_connection.call(closeRequest, QDBus::NoBlock);
         }
     }
@@ -847,32 +817,26 @@ void GhosttyGlobalShortcutPortal::closePortalState(bool notify)
 
     if (m_activationSubscribed) {
         m_connection.disconnect(
-            QString::fromLatin1(PortalService),
-            QString::fromLatin1(PortalPath),
+            QString::fromLatin1(PortalService), QString::fromLatin1(PortalPath),
             QString::fromLatin1(GlobalShortcutsInterface),
-            QStringLiteral("Activated"),
-            this,
-            SLOT(onActivated(QDBusObjectPath,QString,qulonglong,QVariantMap,QDBusMessage)));
+            QStringLiteral("Activated"), this,
+            SLOT(onActivated(QDBusObjectPath, QString, qulonglong, QVariantMap,
+                             QDBusMessage)));
         m_activationSubscribed = false;
     }
 
     if (m_sessionClosedSubscribed) {
         m_connection.disconnect(
-            QString::fromLatin1(PortalService),
-            m_sessionHandle,
-            QString::fromLatin1(SessionInterface),
-            QStringLiteral("Closed"),
-            this,
-            SLOT(onSessionClosed(QVariantMap,QDBusMessage)));
+            QString::fromLatin1(PortalService), m_sessionHandle,
+            QString::fromLatin1(SessionInterface), QStringLiteral("Closed"),
+            this, SLOT(onSessionClosed(QVariantMap, QDBusMessage)));
         m_sessionClosedSubscribed = false;
     }
 
     if (!m_sessionHandle.isEmpty() && m_connection.isConnected()) {
         QDBusMessage closeSession = QDBusMessage::createMethodCall(
-            QString::fromLatin1(PortalService),
-            m_sessionHandle,
-            QString::fromLatin1(SessionInterface),
-            QStringLiteral("Close"));
+            QString::fromLatin1(PortalService), m_sessionHandle,
+            QString::fromLatin1(SessionInterface), QStringLiteral("Close"));
         m_connection.call(closeSession, QDBus::NoBlock);
     }
     m_sessionHandle.clear();

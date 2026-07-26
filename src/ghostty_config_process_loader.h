@@ -29,12 +29,12 @@ struct GhosttyConfigProcessLoaderOptions {
 // Creates an exact Ghostty-backed loader. The helper is the small executable
 // linked to the pinned ghostty-internal library; the Qt application never
 // links that unstable API into its own process.
-GhosttyConfigLoader makeGhosttyConfigProcessLoader(
-    GhosttyConfigProcessLoaderOptions options);
+GhosttyConfigLoader
+makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options);
 
 // Candidate paths describe Ghostty's legacy file followed by its preferred
 // file. This returns the XDG root which makes the helper load those files, or
 // a stable error message when they cannot be represented by Ghostty's standard
 // Linux config lookup.
-std::expected<QString, QString> ghosttyConfigXdgHome(
-    const QStringList &candidatePaths);
+std::expected<QString, QString>
+ghosttyConfigXdgHome(const QStringList &candidatePaths);

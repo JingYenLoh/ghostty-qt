@@ -43,6 +43,6 @@ struct TerminalCellMetrics {
 
 // Uses Qt's GUI font database and metrics. Call only on the GUI thread after
 // constructing QGuiApplication. Invalid DPR values are treated as 1.
-[[nodiscard]] TerminalCellMetrics terminalCellMetrics(
-    const TerminalTypography &typography,
-    qreal devicePixelRatio = 1.0);
+[[nodiscard]] TerminalCellMetrics
+terminalCellMetrics(const TerminalTypography &typography,
+                    qreal devicePixelRatio = 1.0);

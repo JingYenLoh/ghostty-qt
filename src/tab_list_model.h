@@ -23,7 +23,8 @@ struct TabListEntry {
     int progress = -1;
     bool readOnly = false;
 
-    friend bool operator==(const TabListEntry &, const TabListEntry &) = default;
+    friend bool operator==(const TabListEntry &,
+                           const TabListEntry &) = default;
 };
 
 class TabListModel final : public QAbstractListModel {

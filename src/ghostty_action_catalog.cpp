@@ -50,8 +50,7 @@ std::optional<quint64> parseUnsignedInteger(QStringView value)
         negative = value.front() == u'-';
         value = value.sliced(1);
     }
-    if (value.isEmpty() || value.front() == u'_'
-        || value.back() == u'_') {
+    if (value.isEmpty() || value.front() == u'_' || value.back() == u'_') {
         return std::nullopt;
     }
 
@@ -84,8 +83,7 @@ std::optional<qint64> parseSignedInteger(QStringView value)
         negative = value.front() == u'-';
         value = value.sliced(1);
     }
-    if (value.isEmpty() || value.front() == u'_'
-        || value.back() == u'_') {
+    if (value.isEmpty() || value.front() == u'_' || value.back() == u'_') {
         return std::nullopt;
     }
 
@@ -167,21 +165,21 @@ std::optional<float> parseFloat32(QStringView value)
     if (index >= value.size()) return std::nullopt;
 
     const QStringView unsignedValue = value.sliced(index);
-    if (unsignedValue.compare(QLatin1StringView("nan"),
-                              Qt::CaseInsensitive) == 0) {
+    if (unsignedValue.compare(QLatin1StringView("nan"), Qt::CaseInsensitive)
+        == 0) {
         // Zig discards the sign when parsing NaN.
         return std::numeric_limits<float>::quiet_NaN();
     }
-    if (unsignedValue.compare(QLatin1StringView("inf"),
-                              Qt::CaseInsensitive) == 0
+    if (unsignedValue.compare(QLatin1StringView("inf"), Qt::CaseInsensitive)
+            == 0
         || unsignedValue.compare(QLatin1StringView("infinity"),
-                                 Qt::CaseInsensitive) == 0) {
+                                 Qt::CaseInsensitive)
+            == 0) {
         const float infinity = std::numeric_limits<float>::infinity();
         return negative ? -infinity : infinity;
     }
 
-    const bool hexadecimal = index + 1 < value.size()
-        && value.at(index) == u'0'
+    const bool hexadecimal = index + 1 < value.size() && value.at(index) == u'0'
         && (value.at(index + 1) == u'x' || value.at(index + 1) == u'X');
     const int mantissaBase = hexadecimal ? 16 : 10;
 
@@ -194,23 +192,22 @@ std::optional<float> parseFloat32(QStringView value)
     }
 
     bool hasMantissaDigit = false;
-    if (!consumeFloatDigits(value, &index, mantissaBase,
-                            &normalized, &hasMantissaDigit)) {
+    if (!consumeFloatDigits(value, &index, mantissaBase, &normalized,
+                            &hasMantissaDigit)) {
         return std::nullopt;
     }
     if (index < value.size() && value.at(index) == u'.') {
         normalized.push_back('.');
         ++index;
-        if (!consumeFloatDigits(value, &index, mantissaBase,
-                                &normalized, &hasMantissaDigit)) {
+        if (!consumeFloatDigits(value, &index, mantissaBase, &normalized,
+                                &hasMantissaDigit)) {
             return std::nullopt;
         }
     }
     if (!hasMantissaDigit) return std::nullopt;
 
     const QChar exponentMarker = hexadecimal ? u'p' : u'e';
-    if (index < value.size()
-        && value.at(index).toLower() == exponentMarker) {
+    if (index < value.size() && value.at(index).toLower() == exponentMarker) {
         normalized.push_back(static_cast<char>(value.at(index).unicode()));
         ++index;
         if (index < value.size()
@@ -219,8 +216,8 @@ std::optional<float> parseFloat32(QStringView value)
             ++index;
         }
         bool hasExponentDigit = false;
-        if (!consumeFloatDigits(value, &index, 10,
-                                &normalized, &hasExponentDigit)
+        if (!consumeFloatDigits(value, &index, 10, &normalized,
+                                &hasExponentDigit)
             || !hasExponentDigit) {
             return std::nullopt;
         }
@@ -265,9 +262,8 @@ bool fitsSignedPointer(float value)
     return value >= minimum && value <= maximum;
 }
 
-GhosttyActionTranslation reject(Error error,
-                                 QStringView actionName,
-                                 OptionalView parameter)
+GhosttyActionTranslation reject(Error error, QStringView actionName,
+                                OptionalView parameter)
 {
     GhosttyActionTranslation result;
     result.error = error;
@@ -279,14 +275,13 @@ GhosttyActionTranslation reject(Error error,
 }
 
 GhosttyActionTranslation accept(WorkspaceAction action,
-                                 WorkspaceActionContext context,
-                                 QStringView actionName,
-                                 OptionalView parameter,
-                                 QString payload = {})
+                                WorkspaceActionContext context,
+                                QStringView actionName, OptionalView parameter,
+                                QString payload = {})
 {
     GhosttyActionTranslation result;
-    result.request = WorkspaceActionRequest{
-        action, context, std::move(payload)};
+    result.request =
+        WorkspaceActionRequest{action, context, std::move(payload)};
     result.error = Error::None;
     result.actionName = actionName.toString();
     if (parameter.has_value()) {
@@ -301,10 +296,9 @@ std::optional<QString> decodeActionUtf8String(QStringView value)
         decodeGhosttyActionString(value.toUtf8());
     if (!decoded.has_value()) return std::nullopt;
 
-    QStringDecoder utf8(
-        QStringDecoder::Utf8,
-        QStringDecoder::Flag::Stateless
-            | QStringDecoder::Flag::ConvertInitialBom);
+    QStringDecoder utf8(QStringDecoder::Utf8,
+                        QStringDecoder::Flag::Stateless
+                            | QStringDecoder::Flag::ConvertInitialBom);
     QString result = utf8(*decoded);
     if (utf8.hasError()) return std::nullopt;
     return result;
@@ -388,10 +382,9 @@ template <std::size_t Size>
 bool containsActionName(QStringView name,
                         const std::array<QLatin1StringView, Size> &names)
 {
-    return std::ranges::any_of(
-        names, [name](QLatin1StringView candidate) {
-            return name == candidate;
-        });
+    return std::ranges::any_of(names, [name](QLatin1StringView candidate) {
+        return name == candidate;
+    });
 }
 
 GhosttyActionScope scopeForActionName(QStringView name)
@@ -403,14 +396,12 @@ GhosttyActionScope scopeForActionName(QStringView name)
 
 } // namespace
 
-GhosttySerializedActionView GhosttyActionCatalog::parseSerializedAction(
-    QStringView serializedAction)
+GhosttySerializedActionView
+GhosttyActionCatalog::parseSerializedAction(QStringView serializedAction)
 {
     const qsizetype colon = serializedAction.indexOf(u':');
     GhosttySerializedActionView result;
-    result.name = colon < 0
-        ? serializedAction
-        : serializedAction.first(colon);
+    result.name = colon < 0 ? serializedAction : serializedAction.first(colon);
     if (colon >= 0) {
         result.parameter = serializedAction.sliced(colon + 1);
     }
@@ -419,9 +410,9 @@ GhosttySerializedActionView GhosttyActionCatalog::parseSerializedAction(
 
 namespace {
 
-GhosttyActionTranslation translateWorkspaceAction(
-    GhosttySerializedActionView parsed,
-    WorkspaceActionContext context)
+GhosttyActionTranslation
+translateWorkspaceAction(GhosttySerializedActionView parsed,
+                         WorkspaceActionContext context)
 {
     const QStringView actionName = parsed.name;
     const OptionalView parameter = parsed.parameter;
@@ -434,8 +425,7 @@ GhosttyActionTranslation translateWorkspaceAction(
     const WorkspaceVoidActionSpec *const voidAction =
         findActionSpec(actionName, kWorkspaceVoidActions);
     if (voidAction == nullptr
-        && !containsActionName(actionName,
-                               kParameterizedWorkspaceActions)) {
+        && !containsActionName(actionName, kParameterizedWorkspaceActions)) {
         return reject(Error::UnsupportedAction, actionName, parameter);
     }
 
@@ -454,8 +444,7 @@ GhosttyActionTranslation translateWorkspaceAction(
         if (!parameter.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
-        const std::optional<quint64> index =
-            parseUnsignedInteger(*parameter);
+        const std::optional<quint64> index = parseUnsignedInteger(*parameter);
         if (!index.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
@@ -463,13 +452,11 @@ GhosttyActionTranslation translateWorkspaceAction(
         // execution layer rejects values above Ghostty's c_int boundary, so
         // qint64::max is an unambiguous rejection sentinel for the upper half
         // of Linux's usize range.
-        context.value = *index > static_cast<quint64>(
-                                      std::numeric_limits<qint64>::max())
+        context.value =
+            *index > static_cast<quint64>(std::numeric_limits<qint64>::max())
             ? std::numeric_limits<qint64>::max()
             : static_cast<qint64>(*index);
-        return accept(WorkspaceAction::ActivateTabByIndex,
-                      context,
-                      actionName,
+        return accept(WorkspaceAction::ActivateTabByIndex, context, actionName,
                       parameter);
     }
 
@@ -482,10 +469,7 @@ GhosttyActionTranslation translateWorkspaceAction(
             return reject(Error::InvalidFormat, actionName, parameter);
         }
         context.value = *offset;
-        return accept(WorkspaceAction::MoveTab,
-                      context,
-                      actionName,
-                      parameter);
+        return accept(WorkspaceAction::MoveTab, context, actionName, parameter);
     }
 
     const bool setsSurfaceTitle =
@@ -503,13 +487,9 @@ GhosttyActionTranslation translateWorkspaceAction(
         if (!title.has_value()) {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
-        return accept(setsSurfaceTitle
-                          ? WorkspaceAction::SetSurfaceTitle
-                          : WorkspaceAction::SetTabTitle,
-                      context,
-                      actionName,
-                      parameter,
-                      std::move(*title));
+        return accept(setsSurfaceTitle ? WorkspaceAction::SetSurfaceTitle
+                                       : WorkspaceAction::SetTabTitle,
+                      context, actionName, parameter, std::move(*title));
     }
 
     if (equals(actionName, QLatin1StringView("close_tab"))) {
@@ -524,47 +504,33 @@ GhosttyActionTranslation translateWorkspaceAction(
         } else {
             return reject(Error::InvalidFormat, actionName, parameter);
         }
-        return accept(WorkspaceAction::CloseTab,
-                      context,
-                      actionName,
+        return accept(WorkspaceAction::CloseTab, context, actionName,
                       parameter);
     }
 
     if (equals(actionName, QLatin1StringView("new_split"))) {
         if (!parameter.has_value()) {
-            return accept(WorkspaceAction::SplitAuto,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitAuto, context, actionName,
                           parameter);
         }
         if (equals(*parameter, QLatin1StringView("left"))) {
-            return accept(WorkspaceAction::SplitLeft,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitLeft, context, actionName,
                           parameter);
         }
         if (equals(*parameter, QLatin1StringView("right"))) {
-            return accept(WorkspaceAction::SplitRight,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitRight, context, actionName,
                           parameter);
         }
         if (equals(*parameter, QLatin1StringView("down"))) {
-            return accept(WorkspaceAction::SplitDown,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitDown, context, actionName,
                           parameter);
         }
         if (equals(*parameter, QLatin1StringView("up"))) {
-            return accept(WorkspaceAction::SplitUp,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitUp, context, actionName,
                           parameter);
         }
         if (equals(*parameter, QLatin1StringView("auto"))) {
-            return accept(WorkspaceAction::SplitAuto,
-                          context,
-                          actionName,
+            return accept(WorkspaceAction::SplitAuto, context, actionName,
                           parameter);
         }
         return reject(Error::InvalidFormat, actionName, parameter);
@@ -599,9 +565,7 @@ GhosttyActionTranslation translateWorkspaceAction(
             return reject(Error::InvalidFormat, actionName, parameter);
         }
         context.amount = static_cast<int>(*amount);
-        return accept(WorkspaceAction::ResizeSplit,
-                      context,
-                      actionName,
+        return accept(WorkspaceAction::ResizeSplit, context, actionName,
                       parameter);
     }
 
@@ -623,28 +587,22 @@ GhosttyActionTranslation translateWorkspaceAction(
         context.value = Qt::Key_Down;
     } else if (equals(*parameter, QLatin1StringView("previous"))) {
         context.value = -1;
-        return accept(WorkspaceAction::NavigatePaneRelative,
-                      context,
-                      actionName,
-                      parameter);
+        return accept(WorkspaceAction::NavigatePaneRelative, context,
+                      actionName, parameter);
     } else if (equals(*parameter, QLatin1StringView("next"))) {
         context.value = 1;
-        return accept(WorkspaceAction::NavigatePaneRelative,
-                      context,
-                      actionName,
-                      parameter);
+        return accept(WorkspaceAction::NavigatePaneRelative, context,
+                      actionName, parameter);
     } else {
         return reject(Error::InvalidFormat, actionName, parameter);
     }
 
-    return accept(WorkspaceAction::NavigatePane,
-                  context,
-                  actionName,
+    return accept(WorkspaceAction::NavigatePane, context, actionName,
                   parameter);
 }
 
-GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
-    GhosttySerializedActionView parsed)
+GhosttyDirectSurfaceActionParseResult
+parseDirectSurfaceActionView(GhosttySerializedActionView parsed)
 {
     if (parsed.name.isEmpty()) {
         return std::unexpected(Error::InvalidFormat);
@@ -653,23 +611,19 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
     std::optional<TerminalFileLocation> fileLocation;
     if (parsed.name == QLatin1StringView("write_screen_file")) {
         fileLocation = TerminalFileLocation::Screen;
-    } else if (parsed.name
-               == QLatin1StringView("write_scrollback_file")) {
+    } else if (parsed.name == QLatin1StringView("write_scrollback_file")) {
         fileLocation = TerminalFileLocation::Scrollback;
-    } else if (parsed.name
-               == QLatin1StringView("write_selection_file")) {
+    } else if (parsed.name == QLatin1StringView("write_selection_file")) {
         fileLocation = TerminalFileLocation::Selection;
     }
     if (fileLocation.has_value()) {
-        if (!parsed.parameter.has_value()
-            || parsed.parameter->isEmpty()) {
+        if (!parsed.parameter.has_value() || parsed.parameter->isEmpty()) {
             return std::unexpected(Error::InvalidFormat);
         }
 
         const qsizetype comma = parsed.parameter->indexOf(u',');
-        const QStringView dispositionName = comma < 0
-            ? *parsed.parameter
-            : parsed.parameter->first(comma);
+        const QStringView dispositionName =
+            comma < 0 ? *parsed.parameter : parsed.parameter->first(comma);
         TerminalFileDisposition disposition;
         if (dispositionName == QLatin1StringView("copy")) {
             disposition = TerminalFileDisposition::Copy;
@@ -682,8 +636,7 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
         }
 
         if (comma >= 0) {
-            const QStringView formatName =
-                parsed.parameter->sliced(comma + 1);
+            const QStringView formatName = parsed.parameter->sliced(comma + 1);
             if (formatName == QLatin1StringView("vt")
                 || formatName == QLatin1StringView("html")) {
                 return std::unexpected(Error::UnsupportedParameter);
@@ -729,8 +682,7 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
         };
     } else if (parsed.name == QLatin1StringView("copy_url_to_clipboard")) {
         action = PaneAction::CopyUrlToClipboard{};
-    } else if (parsed.name
-               == QLatin1StringView("copy_title_to_clipboard")) {
+    } else if (parsed.name == QLatin1StringView("copy_title_to_clipboard")) {
         action = PaneAction::CopyTitleToClipboard{};
     } else if (parsed.name == QLatin1StringView("end_key_sequence")) {
         action = PaneAction::EndKeySequence{};
@@ -745,8 +697,8 @@ GhosttyDirectSurfaceActionParseResult parseDirectSurfaceActionView(
     return std::move(*action);
 }
 
-std::optional<ApplicationAction> parseApplicationActionView(
-    GhosttySerializedActionView parsed)
+std::optional<ApplicationAction>
+parseApplicationActionView(GhosttySerializedActionView parsed)
 {
     if (parsed.parameter.has_value()) return std::nullopt;
 
@@ -755,8 +707,8 @@ std::optional<ApplicationAction> parseApplicationActionView(
     return spec != nullptr ? spec->implementedAction : std::nullopt;
 }
 
-std::optional<WindowNavigationAction> parseWindowNavigationActionView(
-    GhosttySerializedActionView parsed)
+std::optional<WindowNavigationAction>
+parseWindowNavigationActionView(GhosttySerializedActionView parsed)
 {
     if (parsed.name != QLatin1StringView("goto_window")
         || !parsed.parameter.has_value()) {
@@ -771,8 +723,8 @@ std::optional<WindowNavigationAction> parseWindowNavigationActionView(
     return std::nullopt;
 }
 
-std::optional<GhosttyPaneAction> parsePaneActionView(
-    GhosttySerializedActionView parsed)
+std::optional<GhosttyPaneAction>
+parsePaneActionView(GhosttySerializedActionView parsed)
 {
     const QStringView name = parsed.name;
     const OptionalView parameter = parsed.parameter;
@@ -826,8 +778,7 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
     if (name == QLatin1StringView("scroll_page_lines")) {
         if (!parameter.has_value()) return std::nullopt;
         const std::optional<qint64> lines = parseSignedInteger(*parameter);
-        if (!lines.has_value()
-            || *lines < std::numeric_limits<qint16>::min()
+        if (!lines.has_value() || *lines < std::numeric_limits<qint16>::min()
             || *lines > std::numeric_limits<qint16>::max()) {
             return std::nullopt;
         }
@@ -854,8 +805,7 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
             return GhosttyPaneAction{
                 PaneAction::DecreaseFontSize{.points = *points}};
         }
-        return GhosttyPaneAction{
-            PaneAction::SetFontSize{.points = *points}};
+        return GhosttyPaneAction{PaneAction::SetFontSize{.points = *points}};
     }
 
     if (name == QLatin1StringView("reset_font_size")) {
@@ -935,8 +885,7 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
             PaneAction::NavigateSearch{.direction = direction}};
     }
 
-    if (name == QLatin1StringView("csi")
-        || name == QLatin1StringView("esc")
+    if (name == QLatin1StringView("csi") || name == QLatin1StringView("esc")
         || name == QLatin1StringView("text")) {
         // All three fields are []const u8 in Binding.Action, so the colon is
         // required but the byte string after it may be empty. Split only at
@@ -1010,9 +959,9 @@ std::optional<GhosttyPaneAction> parsePaneActionView(
         PaneAction::AdjustSelection{.adjustment = adjustment}};
 }
 
-std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
-    GhosttySerializedActionView parsed,
-    WorkspaceActionContext context)
+std::optional<GhosttyConfiguredAction>
+parseConfiguredActionView(GhosttySerializedActionView parsed,
+                          WorkspaceActionContext context)
 {
     // Application names retain their upstream scope even when this frontend
     // does not implement them. Do not reinterpret an unsupported application
@@ -1031,8 +980,7 @@ std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
         return GhosttyConfiguredAction{*action};
     }
 
-    if (std::optional<GhosttyPaneAction> action =
-            parsePaneActionView(parsed)) {
+    if (std::optional<GhosttyPaneAction> action = parsePaneActionView(parsed)) {
         return GhosttyConfiguredAction{std::move(*action)};
     }
 
@@ -1046,18 +994,17 @@ std::optional<GhosttyConfiguredAction> parseConfiguredActionView(
 
 } // namespace
 
-GhosttyActionTranslation GhosttyActionCatalog::translate(
-    QStringView serializedAction,
-    WorkspaceActionContext context)
+GhosttyActionTranslation
+GhosttyActionCatalog::translate(QStringView serializedAction,
+                                WorkspaceActionContext context)
 {
     return translateWorkspaceAction(parseSerializedAction(serializedAction),
                                     context);
 }
 
 std::optional<GhosttyConfiguredAction>
-GhosttyActionCatalog::parseConfiguredAction(
-    QStringView serializedAction,
-    WorkspaceActionContext context)
+GhosttyActionCatalog::parseConfiguredAction(QStringView serializedAction,
+                                            WorkspaceActionContext context)
 {
     return parseConfiguredActionView(parseSerializedAction(serializedAction),
                                      context);
@@ -1068,8 +1015,8 @@ bool GhosttyActionCatalog::isImplemented(QStringView serializedAction)
     return parseConfiguredAction(serializedAction).has_value();
 }
 
-std::optional<GhosttyPaneAction> GhosttyActionCatalog::parsePaneAction(
-    QStringView serializedAction)
+std::optional<GhosttyPaneAction>
+GhosttyActionCatalog::parsePaneAction(QStringView serializedAction)
 {
     return parsePaneActionView(parseSerializedAction(serializedAction));
 }
@@ -1084,23 +1031,19 @@ GhosttyActionCatalog::parseDirectSurfaceAction(QStringView serializedAction)
 std::optional<ApplicationAction>
 GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
 {
-    return parseApplicationActionView(
-        parseSerializedAction(serializedAction));
+    return parseApplicationActionView(parseSerializedAction(serializedAction));
 }
 
 std::optional<WindowNavigationAction>
-GhosttyActionCatalog::parseWindowNavigationAction(
-    QStringView serializedAction)
+GhosttyActionCatalog::parseWindowNavigationAction(QStringView serializedAction)
 {
     return parseWindowNavigationActionView(
         parseSerializedAction(serializedAction));
 }
 
-GhosttyActionScope GhosttyActionCatalog::scope(
-    QStringView serializedAction)
+GhosttyActionScope GhosttyActionCatalog::scope(QStringView serializedAction)
 {
-    return scopeForActionName(
-        parseSerializedAction(serializedAction).name);
+    return scopeForActionName(parseSerializedAction(serializedAction).name);
 }
 
 GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
@@ -1136,8 +1079,8 @@ QStringList GhosttyCompiledActionChain::serializedActions() const
     return result;
 }
 
-GhosttyCompiledActionChain GhosttyActionCatalog::compileActionChain(
-    const QStringList &actions)
+GhosttyCompiledActionChain
+GhosttyActionCatalog::compileActionChain(const QStringList &actions)
 {
     GhosttyCompiledActionChain result;
     result.entries.reserve(actions.size());
@@ -1147,8 +1090,7 @@ GhosttyCompiledActionChain GhosttyActionCatalog::compileActionChain(
     for (const QString &serialized : actions) {
         const GhosttySerializedActionView parsed =
             parseSerializedAction(serialized);
-        const GhosttyActionScope actionScope =
-            scopeForActionName(parsed.name);
+        const GhosttyActionScope actionScope = scopeForActionName(parsed.name);
         std::optional<GhosttyConfiguredAction> action =
             parseConfiguredActionView(parsed, {});
         result.applicationOnly &=
@@ -1156,14 +1098,9 @@ GhosttyCompiledActionChain GhosttyActionCatalog::compileActionChain(
 
         if (action.has_value()) {
             switch (inputEffect(*action)) {
-            case GhosttyActionInputEffect::None:
-                break;
-            case GhosttyActionInputEffect::Ignore:
-                ignored = true;
-                break;
-            case GhosttyActionInputEffect::ClosingAction:
-                closing = true;
-                break;
+            case GhosttyActionInputEffect::None: break;
+            case GhosttyActionInputEffect::Ignore: ignored = true; break;
+            case GhosttyActionInputEffect::ClosingAction: closing = true; break;
             }
         }
         result.entries.append(GhosttyCompiledAction{
@@ -1173,15 +1110,14 @@ GhosttyCompiledActionChain GhosttyActionCatalog::compileActionChain(
         });
     }
 
-    result.inputEffect = closing
-        ? GhosttyActionInputEffect::ClosingAction
-        : ignored ? GhosttyActionInputEffect::Ignore
-                  : GhosttyActionInputEffect::None;
+    result.inputEffect = closing ? GhosttyActionInputEffect::ClosingAction
+        : ignored                ? GhosttyActionInputEffect::Ignore
+                                 : GhosttyActionInputEffect::None;
     return result;
 }
 
-GhosttyActionInputEffect GhosttyActionCatalog::combinedInputEffect(
-    const QStringList &actions)
+GhosttyActionInputEffect
+GhosttyActionCatalog::combinedInputEffect(const QStringList &actions)
 {
     return compileActionChain(actions).inputEffect;
 }

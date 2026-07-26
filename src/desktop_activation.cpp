@@ -68,10 +68,10 @@ void clearActivationEnvironment()
 
 void applyActivationEnvironment(const DesktopActivationContext &activation)
 {
-    setEnvironmentVariable(
-        XdgActivationTokenEnvironment, activation.xdgActivationToken);
-    setEnvironmentVariable(
-        DesktopStartupIdEnvironment, activation.desktopStartupId);
+    setEnvironmentVariable(XdgActivationTokenEnvironment,
+                           activation.xdgActivationToken);
+    setEnvironmentVariable(DesktopStartupIdEnvironment,
+                           activation.desktopStartupId);
 }
 
 class ScopedActivationProjection final {
@@ -107,14 +107,14 @@ public:
 
 } // namespace
 
-DesktopActivationContext DesktopActivationContext::fromPlatformData(
-    const QVariantMap &platformData)
+DesktopActivationContext
+DesktopActivationContext::fromPlatformData(const QVariantMap &platformData)
 {
     return {
-        .xdgActivationToken = exactString(
-            platformData, QStringLiteral("activation-token")),
-        .desktopStartupId = exactString(
-            platformData, QStringLiteral("desktop-startup-id")),
+        .xdgActivationToken =
+            exactString(platformData, QStringLiteral("activation-token")),
+        .desktopStartupId =
+            exactString(platformData, QStringLiteral("desktop-startup-id")),
     };
 }
 
@@ -124,10 +124,10 @@ DesktopActivationContext DesktopActivationContext::takeFromEnvironment()
     const QMutexLocker lock(&state.mutex);
     Q_ASSERT(state.presentationDepth == 0);
     return {
-        .xdgActivationToken = takeEnvironmentVariable(
-            XdgActivationTokenEnvironment),
-        .desktopStartupId = takeEnvironmentVariable(
-            DesktopStartupIdEnvironment),
+        .xdgActivationToken =
+            takeEnvironmentVariable(XdgActivationTokenEnvironment),
+        .desktopStartupId =
+            takeEnvironmentVariable(DesktopStartupIdEnvironment),
     };
 }
 
@@ -135,12 +135,10 @@ QVariantMap DesktopActivationContext::toPlatformData() const
 {
     QVariantMap result;
     if (!xdgActivationToken.isEmpty()) {
-        result.insert(
-            QStringLiteral("activation-token"), xdgActivationToken);
+        result.insert(QStringLiteral("activation-token"), xdgActivationToken);
     }
     if (!desktopStartupId.isEmpty()) {
-        result.insert(
-            QStringLiteral("desktop-startup-id"), desktopStartupId);
+        result.insert(QStringLiteral("desktop-startup-id"), desktopStartupId);
     }
     return result;
 }

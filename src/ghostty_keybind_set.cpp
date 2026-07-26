@@ -16,9 +16,8 @@ namespace {
 using Disposition = GhosttyKeybindEntryDisposition;
 using Reason = GhosttyKeybindUnsupportedReason;
 
-constexpr Qt::KeyboardModifiers RelevantModifiers =
-    Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier
-    | Qt::MetaModifier;
+constexpr Qt::KeyboardModifiers RelevantModifiers = Qt::ShiftModifier
+    | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
 
 struct ParsedFlags {
     bool consumed = true;
@@ -44,8 +43,7 @@ struct PhysicalKey {
     bool keypad = false;
 };
 
-GhosttyKeybindParseRecord record(QStringView input,
-                                 Disposition disposition,
+GhosttyKeybindParseRecord record(QStringView input, Disposition disposition,
                                  Reason reason = Reason::None,
                                  QString detail = {})
 {
@@ -66,8 +64,7 @@ Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
 // key. An '=' followed by '+' or '=' is part of the trigger; the next equals
 // is the delimiter. This covers `=+ctrl=...`, `ctrl+==...`, and keeps the
 // ordinary `ctrl++=...` form unambiguous.
-std::optional<qsizetype> actionDelimiter(QStringView input,
-                                         qsizetype start = 0)
+std::optional<qsizetype> actionDelimiter(QStringView input, qsizetype start = 0)
 {
     for (qsizetype i = std::max<qsizetype>(0, start); i < input.size(); ++i) {
         if (input.at(i) != u'=') {
@@ -145,10 +142,9 @@ std::optional<PhysicalKey> functionKey(QStringView name)
     }
 
     static constexpr std::array<unsigned int, 24> evdevCodes = {
-        KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6,
-        KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12,
-        KEY_F13, KEY_F14, KEY_F15, KEY_F16, KEY_F17, KEY_F18,
-        KEY_F19, KEY_F20, KEY_F21, KEY_F22, KEY_F23, KEY_F24,
+        KEY_F1,  KEY_F2,  KEY_F3,  KEY_F4,  KEY_F5,  KEY_F6,  KEY_F7,  KEY_F8,
+        KEY_F9,  KEY_F10, KEY_F11, KEY_F12, KEY_F13, KEY_F14, KEY_F15, KEY_F16,
+        KEY_F17, KEY_F18, KEY_F19, KEY_F20, KEY_F21, KEY_F22, KEY_F23, KEY_F24,
     };
     return PhysicalKey{
         .qtKey = Qt::Key_F1 + number - 1,
@@ -162,7 +158,8 @@ std::optional<PhysicalKey> functionKey(QStringView name)
 
 std::optional<PhysicalKey> physicalKey(QStringView rawName)
 {
-    const QString name = rawName.contains(u'_') || rawName == rawName.toString().toLower()
+    const QString name =
+        rawName.contains(u'_') || rawName == rawName.toString().toLower()
         ? rawName.toString()
         : w3cToSnake(rawName);
 
@@ -174,13 +171,12 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
         const QChar letter = name.back();
         if (letter >= u'a' && letter <= u'z') {
             static constexpr std::array<unsigned int, 26> evdevCodes = {
-                KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G,
-                KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, KEY_M, KEY_N,
-                KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U,
-                KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z,
+                KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I,
+                KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R,
+                KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z,
             };
-            const std::size_t index = static_cast<std::size_t>(
-                letter.unicode() - u'a');
+            const std::size_t index =
+                static_cast<std::size_t>(letter.unicode() - u'a');
             return PhysicalKey{
                 .qtKey = Qt::Key_A + static_cast<int>(index),
                 .nativeScanCode = xkbKeycode(evdevCodes.at(index)),
@@ -194,8 +190,8 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
                 KEY_0, KEY_1, KEY_2, KEY_3, KEY_4,
                 KEY_5, KEY_6, KEY_7, KEY_8, KEY_9,
             };
-            const std::size_t index = static_cast<std::size_t>(
-                digit.unicode() - u'0');
+            const std::size_t index =
+                static_cast<std::size_t>(digit.unicode() - u'0');
             return PhysicalKey{
                 .qtKey = Qt::Key_0 + static_cast<int>(index),
                 .nativeScanCode = xkbKeycode(evdevCodes.at(index)),
@@ -210,8 +206,10 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
     static const QHash<QString, PhysicalKey> keys = {
         {QStringLiteral("backquote"), key(Qt::Key_QuoteLeft, KEY_GRAVE)},
         {QStringLiteral("backslash"), key(Qt::Key_Backslash, KEY_BACKSLASH)},
-        {QStringLiteral("bracket_left"), key(Qt::Key_BracketLeft, KEY_LEFTBRACE)},
-        {QStringLiteral("bracket_right"), key(Qt::Key_BracketRight, KEY_RIGHTBRACE)},
+        {QStringLiteral("bracket_left"),
+         key(Qt::Key_BracketLeft, KEY_LEFTBRACE)},
+        {QStringLiteral("bracket_right"),
+         key(Qt::Key_BracketRight, KEY_RIGHTBRACE)},
         {QStringLiteral("comma"), key(Qt::Key_Comma, KEY_COMMA)},
         {QStringLiteral("equal"), key(Qt::Key_Equal, KEY_EQUAL)},
         {QStringLiteral("minus"), key(Qt::Key_Minus, KEY_MINUS)},
@@ -251,15 +249,20 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
         {QStringLiteral("up"), key(Qt::Key_Up, KEY_UP)},
         {QStringLiteral("num_lock"), key(Qt::Key_NumLock, KEY_NUMLOCK, true)},
         {QStringLiteral("numpad_add"), key(Qt::Key_Plus, KEY_KPPLUS, true)},
-        {QStringLiteral("numpad_decimal"), key(Qt::Key_Period, KEY_KPDOT, true)},
-        {QStringLiteral("numpad_divide"), key(Qt::Key_Slash, KEY_KPSLASH, true)},
+        {QStringLiteral("numpad_decimal"),
+         key(Qt::Key_Period, KEY_KPDOT, true)},
+        {QStringLiteral("numpad_divide"),
+         key(Qt::Key_Slash, KEY_KPSLASH, true)},
         {QStringLiteral("numpad_enter"), key(Qt::Key_Enter, KEY_KPENTER, true)},
         {QStringLiteral("numpad_equal"), key(Qt::Key_Equal, KEY_KPEQUAL, true)},
-        {QStringLiteral("numpad_multiply"), key(Qt::Key_Asterisk, KEY_KPASTERISK, true)},
-        {QStringLiteral("numpad_subtract"), key(Qt::Key_Minus, KEY_KPMINUS, true)},
+        {QStringLiteral("numpad_multiply"),
+         key(Qt::Key_Asterisk, KEY_KPASTERISK, true)},
+        {QStringLiteral("numpad_subtract"),
+         key(Qt::Key_Minus, KEY_KPMINUS, true)},
         {QStringLiteral("escape"), key(Qt::Key_Escape, KEY_ESC)},
         {QStringLiteral("print_screen"), key(Qt::Key_Print, KEY_SYSRQ)},
-        {QStringLiteral("scroll_lock"), key(Qt::Key_ScrollLock, KEY_SCROLLLOCK)},
+        {QStringLiteral("scroll_lock"),
+         key(Qt::Key_ScrollLock, KEY_SCROLLLOCK)},
         {QStringLiteral("pause"), key(Qt::Key_Pause, KEY_PAUSE)},
         {QStringLiteral("copy"), key(Qt::Key_Copy, KEY_COPY)},
         {QStringLiteral("cut"), key(Qt::Key_Cut, KEY_CUT)},
@@ -273,8 +276,8 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
                 KEY_KP0, KEY_KP1, KEY_KP2, KEY_KP3, KEY_KP4,
                 KEY_KP5, KEY_KP6, KEY_KP7, KEY_KP8, KEY_KP9,
             };
-            const std::size_t index = static_cast<std::size_t>(
-                digit.unicode() - u'0');
+            const std::size_t index =
+                static_cast<std::size_t>(digit.unicode() - u'0');
             return PhysicalKey{
                 .qtKey = Qt::Key_0 + static_cast<int>(index),
                 .nativeScanCode = xkbKeycode(evdevCodes.at(index)),
@@ -284,9 +287,8 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
     }
 
     const auto found = keys.constFind(name);
-    return found == keys.cend()
-        ? std::nullopt
-        : std::optional<PhysicalKey>(*found);
+    return found == keys.cend() ? std::nullopt
+                                : std::optional<PhysicalKey>(*found);
 }
 
 std::expected<ParsedFlags, QString> parseFlags(QStringView input)
@@ -327,8 +329,7 @@ std::expected<ParsedFlags, QString> parseFlags(QStringView input)
             flags.nonLocal = true;
         } else if (prefix == QLatin1StringView("global")) {
             if (seenGlobal) {
-                return std::unexpected(
-                    QStringLiteral("duplicate global flag"));
+                return std::unexpected(QStringLiteral("duplicate global flag"));
             }
             seenGlobal = true;
             flags.nonLocal = true;
@@ -348,8 +349,7 @@ std::expected<ParsedFlags, QString> parseFlags(QStringView input)
 
 std::optional<Qt::KeyboardModifier> modifierFor(QStringView part)
 {
-    if (part == QLatin1StringView("super")
-        || part == QLatin1StringView("cmd")
+    if (part == QLatin1StringView("super") || part == QLatin1StringView("cmd")
         || part == QLatin1StringView("command")) {
         return Qt::MetaModifier;
     }
@@ -357,8 +357,7 @@ std::optional<Qt::KeyboardModifier> modifierFor(QStringView part)
         || part == QLatin1StringView("control")) {
         return Qt::ControlModifier;
     }
-    if (part == QLatin1StringView("alt")
-        || part == QLatin1StringView("opt")
+    if (part == QLatin1StringView("alt") || part == QLatin1StringView("opt")
         || part == QLatin1StringView("option")) {
         return Qt::AltModifier;
     }
@@ -383,8 +382,7 @@ std::optional<char32_t> singleUnicodeScalar(QStringView value)
     }
     const char32_t high = value.front().unicode();
     const char32_t low = value.back().unicode();
-    if (high < 0xd800U || high > 0xdbffU
-        || low < 0xdc00U || low > 0xdfffU) {
+    if (high < 0xd800U || high > 0xdbffU || low < 0xdc00U || low > 0xdfffU) {
         return std::nullopt;
     }
     return 0x10000U + ((high - 0xd800U) << 10U) + (low - 0xdc00U);
@@ -457,9 +455,7 @@ std::expected<ParsedTrigger, QString> parseTrigger(QStringView input)
 QString unicodeFromQtEvent(int qtKey, QStringView text)
 {
     const auto codepoint = singleUnicodeScalar(text);
-    if (codepoint.has_value()
-        && *codepoint >= 0x20U
-        && *codepoint != 0x7fU) {
+    if (codepoint.has_value() && *codepoint >= 0x20U && *codepoint != 0x7fU) {
         return text.toString();
     }
 
@@ -485,17 +481,14 @@ QString unicodeFromQtEvent(int qtKey, QStringView text)
 
 bool couldBeKeypadKey(int qtKey)
 {
-    return (qtKey >= Qt::Key_0 && qtKey <= Qt::Key_9)
-        || qtKey == Qt::Key_Plus || qtKey == Qt::Key_Minus
-        || qtKey == Qt::Key_Period || qtKey == Qt::Key_Slash
-        || qtKey == Qt::Key_Equal || qtKey == Qt::Key_Asterisk;
+    return (qtKey >= Qt::Key_0 && qtKey <= Qt::Key_9) || qtKey == Qt::Key_Plus
+        || qtKey == Qt::Key_Minus || qtKey == Qt::Key_Period
+        || qtKey == Qt::Key_Slash || qtKey == Qt::Key_Equal
+        || qtKey == Qt::Key_Asterisk;
 }
 
-bool physicalMatches(int configured,
-                     quint32 configuredScanCode,
-                     bool configuredKeypad,
-                     int eventKey,
-                     quint32 eventScanCode,
+bool physicalMatches(int configured, quint32 configuredScanCode,
+                     bool configuredKeypad, int eventKey, quint32 eventScanCode,
                      Qt::KeyboardModifiers eventModifiers)
 {
     // A nonzero native code is authoritative. Never fall back to the layout-
@@ -522,22 +515,16 @@ bool physicalMatches(int configured,
     return configured == eventKey;
 }
 
-Qt::KeyboardModifiers withoutTriggeredModifier(
-    int configuredKey,
-    Qt::KeyboardModifiers modifiers)
+Qt::KeyboardModifiers withoutTriggeredModifier(int configuredKey,
+                                               Qt::KeyboardModifiers modifiers)
 {
     switch (configuredKey) {
-    case Qt::Key_Control:
-        return modifiers & ~Qt::ControlModifier;
-    case Qt::Key_Shift:
-        return modifiers & ~Qt::ShiftModifier;
+    case Qt::Key_Control: return modifiers & ~Qt::ControlModifier;
+    case Qt::Key_Shift: return modifiers & ~Qt::ShiftModifier;
     case Qt::Key_Alt:
-    case Qt::Key_AltGr:
-        return modifiers & ~Qt::AltModifier;
-    case Qt::Key_Meta:
-        return modifiers & ~Qt::MetaModifier;
-    default:
-        return modifiers;
+    case Qt::Key_AltGr: return modifiers & ~Qt::AltModifier;
+    case Qt::Key_Meta: return modifiers & ~Qt::MetaModifier;
+    default: return modifiers;
     }
 }
 
@@ -569,9 +556,8 @@ bool isUnicodeScalar(quint32 codepoint)
 
 bool isModifierKey(int key)
 {
-    return key == Qt::Key_Control || key == Qt::Key_Shift
-        || key == Qt::Key_Alt || key == Qt::Key_AltGr
-        || key == Qt::Key_Meta;
+    return key == Qt::Key_Control || key == Qt::Key_Shift || key == Qt::Key_Alt
+        || key == Qt::Key_AltGr || key == Qt::Key_Meta;
 }
 
 } // namespace
@@ -592,14 +578,11 @@ GhosttyKeybindProgram::emptyData()
 
 GhosttyKeybindProgram::GhosttyKeybindProgram()
     : data_(emptyData())
-{
-}
+{}
 
-GhosttyKeybindProgram::GhosttyKeybindProgram(
-    std::shared_ptr<const Data> data)
+GhosttyKeybindProgram::GhosttyKeybindProgram(std::shared_ptr<const Data> data)
     : data_(data != nullptr ? std::move(data) : emptyData())
-{
-}
+{}
 
 qsizetype GhosttyKeybindProgram::size() const noexcept
 {
@@ -617,9 +600,9 @@ bool GhosttyKeybindProgram::isSameGeneration(
     return data_ == other.data_;
 }
 
-template<typename Visitor>
-void GhosttyKeybindProgram::forEachReachableLeaf(
-    const Data &data, Visitor &&visitor)
+template <typename Visitor>
+void GhosttyKeybindProgram::forEachReachableLeaf(const Data &data,
+                                                 Visitor &&visitor)
 {
     struct Frame {
         NodeId node;
@@ -630,14 +613,13 @@ void GhosttyKeybindProgram::forEachReachableLeaf(
         QVector<Frame> stack{{root, 0}};
         while (!stack.isEmpty()) {
             Frame &frame = stack.last();
-            if (frame.node.value
-                    >= static_cast<quint32>(data.nodes.size())) {
+            if (frame.node.value >= static_cast<quint32>(data.nodes.size())) {
                 stack.removeLast();
                 continue;
             }
 
-            const Node &node = data.nodes.at(
-                static_cast<qsizetype>(frame.node.value));
+            const Node &node =
+                data.nodes.at(static_cast<qsizetype>(frame.node.value));
             if (frame.nextEntry >= node.entries.size()) {
                 stack.removeLast();
                 continue;
@@ -673,11 +655,9 @@ GhosttyKeybindState::GhosttyKeybindState() = default;
 
 GhosttyKeybindState::GhosttyKeybindState(GhosttyKeybindProgram program)
     : program_(std::move(program))
-{
-}
+{}
 
-bool GhosttyKeybindState::replaceProgram(
-    GhosttyKeybindProgram program) noexcept
+bool GhosttyKeybindState::replaceProgram(GhosttyKeybindProgram program) noexcept
 {
     if (program_.isSameGeneration(program)) {
         return false;
@@ -688,8 +668,8 @@ bool GhosttyKeybindState::replaceProgram(
     return true;
 }
 
-GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
-    const QStringList &values)
+GhosttyKeybindCompilation
+GhosttyKeybindProgram::compile(const QStringList &values)
 {
     GhosttyKeybindLoadReport report;
     report.records.reserve(values.size());
@@ -712,17 +692,17 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
             continue;
         }
         if (isKeyTableInput(input)) {
-            report.records.append(record(input, Disposition::Unsupported,
-                                         Reason::KeyTable));
+            report.records.append(
+                record(input, Disposition::Unsupported, Reason::KeyTable));
             chainTarget = -1;
             continue;
         }
 
         const auto delimiter = actionDelimiter(input);
         if (!delimiter.has_value()) {
-            report.records.append(record(input, Disposition::Invalid,
-                                         Reason::None,
-                                         QStringLiteral("missing action delimiter")));
+            report.records.append(
+                record(input, Disposition::Invalid, Reason::None,
+                       QStringLiteral("missing action delimiter")));
             chainTarget = -1;
             continue;
         }
@@ -738,9 +718,9 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
         }
         if (left == QLatin1StringView("chain")) {
             if (chainTarget < 0 || chainTarget >= config.root.size()) {
-                report.records.append(record(input, Disposition::Unsupported,
-                                             Reason::OrphanChain,
-                                             QStringLiteral("chain has no adjacent supported binding")));
+                report.records.append(record(
+                    input, Disposition::Unsupported, Reason::OrphanChain,
+                    QStringLiteral("chain has no adjacent supported binding")));
             } else {
                 config.root[chainTarget].actions.append(action);
                 report.records.append(record(input, Disposition::Chained));
@@ -757,8 +737,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
             continue;
         }
         if (flags->nonLocal) {
-            report.records.append(record(input, Disposition::Unsupported,
-                                         Reason::NonLocal));
+            report.records.append(
+                record(input, Disposition::Unsupported, Reason::NonLocal));
             continue;
         }
 
@@ -797,11 +777,10 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
             definition.sequence.append(std::move(trigger));
         }
         if (!valid || definition.sequence.isEmpty()) {
-            report.records.append(record(input, Disposition::Invalid,
-                                         Reason::None,
-                                         error.isEmpty()
-                                             ? QStringLiteral("empty sequence")
-                                             : std::move(error)));
+            report.records.append(
+                record(input, Disposition::Invalid, Reason::None,
+                       error.isEmpty() ? QStringLiteral("empty sequence")
+                                       : std::move(error)));
             continue;
         }
 
@@ -815,8 +794,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
     return result;
 }
 
-GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
-    const GhosttyKeybindSource &source)
+GhosttyKeybindCompilation
+GhosttyKeybindProgram::compile(const GhosttyKeybindSource &source)
 {
     return source.visit([]<typename Source>(const Source &value) {
         if constexpr (std::same_as<Source, std::monostate>) {
@@ -835,8 +814,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
     });
 }
 
-GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
-    const GhosttyKeybindConfig &config)
+GhosttyKeybindCompilation
+GhosttyKeybindProgram::compile(const GhosttyKeybindConfig &config)
 {
     GhosttyKeybindLoadReport report;
     auto data = std::make_shared<Data>();
@@ -862,7 +841,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
     };
 
     const auto installDefinitions = [&newNodes, &report, &sameTrigger](
-                                        const QVector<GhosttyKeybindDefinition> &definitions,
+                                        const QVector<GhosttyKeybindDefinition>
+                                            &definitions,
                                         NodeId root,
                                         const QString &labelPrefix) {
         for (qsizetype definitionIndex = 0;
@@ -875,7 +855,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
             if (definition.sequence.isEmpty() || definition.actions.isEmpty()) {
                 report.records.append(record(
                     label, Disposition::Invalid, Reason::None,
-                    QStringLiteral("binding sequence and actions must be non-empty")));
+                    QStringLiteral(
+                        "binding sequence and actions must be non-empty")));
                 continue;
             }
             if ((definition.flags.all || definition.flags.global)
@@ -913,7 +894,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
                 case GhosttyKeybindKeyKind::Unicode: {
                     if (!isUnicodeScalar(source.unicodeCodepoint)
                         || source.unicodeCodepoint == 0U) {
-                        error = QStringLiteral("invalid Unicode trigger scalar");
+                        error =
+                            QStringLiteral("invalid Unicode trigger scalar");
                         supported = false;
                         break;
                     }
@@ -946,8 +928,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
                 QVector<Entry> &entries =
                     newNodes[static_cast<qsizetype>(node.value)].entries;
                 qsizetype entryIndex = -1;
-                for (qsizetype candidate = 0;
-                     candidate < entries.size(); ++candidate) {
+                for (qsizetype candidate = 0; candidate < entries.size();
+                     ++candidate) {
                     if (sameTrigger(entries.at(candidate).trigger, trigger)) {
                         entryIndex = candidate;
                         break;
@@ -958,9 +940,8 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
                     Entry leaf;
                     leaf.trigger = trigger;
                     leaf.kind = EntryKind::Leaf;
-                    leaf.actionChain =
-                        GhosttyActionCatalog::compileActionChain(
-                            definition.actions);
+                    leaf.actionChain = GhosttyActionCatalog::compileActionChain(
+                        definition.actions);
                     leaf.consumed = definition.flags.consumed;
                     leaf.all = definition.flags.all;
                     leaf.global = definition.flags.global;
@@ -979,8 +960,7 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
                     continue;
                 }
 
-                const NodeId child{
-                    static_cast<quint32>(newNodes.size())};
+                const NodeId child{static_cast<quint32>(newNodes.size())};
                 // Appending a node may reallocate newNodes, so never retain a
                 // reference to its parent's entries across this operation.
                 newNodes.append(Node{});
@@ -1010,31 +990,29 @@ GhosttyKeybindCompilation GhosttyKeybindProgram::compile(
             continue;
         }
         if (newTableRoots.contains(table.name)) {
-            report.records.append(record(
-                table.name, Disposition::Invalid, Reason::None,
-                QStringLiteral("duplicate named key table")));
+            report.records.append(
+                record(table.name, Disposition::Invalid, Reason::None,
+                       QStringLiteral("duplicate named key table")));
             continue;
         }
 
         const NodeId tableRoot{static_cast<quint32>(newNodes.size())};
         newNodes.append(Node{});
         newTableRoots.insert(table.name, tableRoot);
-        installDefinitions(
-            table.bindings, tableRoot,
-            QStringLiteral("table '%1'").arg(table.name));
+        installDefinitions(table.bindings, tableRoot,
+                           QStringLiteral("table '%1'").arg(table.name));
     }
 
-    forEachReachableLeaf(*data, [&data](const Entry &) {
-        ++data->bindingCount;
-    });
+    forEachReachableLeaf(*data,
+                         [&data](const Entry &) { ++data->bindingCount; });
     return {
         .program = GhosttyKeybindProgram(std::move(data)),
         .report = std::move(report),
     };
 }
 
-GhosttyKeybindProgram::PreparedEvent GhosttyKeybindProgram::prepareEvent(
-    const GhosttyKeybindEvent &event)
+GhosttyKeybindProgram::PreparedEvent
+GhosttyKeybindProgram::prepareEvent(const GhosttyKeybindEvent &event)
 {
     return {
         .source = event,
@@ -1043,8 +1021,7 @@ GhosttyKeybindProgram::PreparedEvent GhosttyKeybindProgram::prepareEvent(
     };
 }
 
-void GhosttyKeybindProgram::prepareUnicodeCandidates(
-    PreparedEvent &prepared)
+void GhosttyKeybindProgram::prepareUnicodeCandidates(PreparedEvent &prepared)
 {
     if (prepared.unicodeCandidatesReady) {
         return;
@@ -1077,17 +1054,15 @@ void GhosttyKeybindProgram::prepareUnicodeCandidates(
     }
 }
 
-GhosttyKeybindProgram::Lookup GhosttyKeybindProgram::lookup(
-    NodeId node,
-    PreparedEvent &prepared) const
+GhosttyKeybindProgram::Lookup
+GhosttyKeybindProgram::lookup(NodeId node, PreparedEvent &prepared) const
 {
     if (node.value >= static_cast<quint32>(data_->nodes.size())) {
         return {};
     }
     const GhosttyKeybindEvent &event = prepared.source;
     const QVector<Entry> &entries =
-        data_->nodes.at(
-            static_cast<qsizetype>(node.value)).entries;
+        data_->nodes.at(static_cast<qsizetype>(node.value)).entries;
     const Qt::KeyboardModifiers normalized = prepared.modifiers;
 
     // Ghostty prioritizes physical identity at every trie level.
@@ -1120,8 +1095,8 @@ GhosttyKeybindProgram::Lookup GhosttyKeybindProgram::lookup(
         }
     }
 
-    const auto findCatchAll = [&entries](Qt::KeyboardModifiers modifiers)
-        -> const Entry * {
+    const auto findCatchAll =
+        [&entries](Qt::KeyboardModifiers modifiers) -> const Entry * {
         for (const Entry &entry : entries) {
             if (entry.trigger.keyKind == KeyKind::CatchAll
                 && entry.trigger.modifiers == modifiers) {
@@ -1141,16 +1116,14 @@ GhosttyKeybindProgram::Lookup GhosttyKeybindProgram::lookup(
     return {};
 }
 
-const GhosttyKeybindProgram::Entry *GhosttyKeybindProgram::bareCatchAll(
-    NodeId root) const
+const GhosttyKeybindProgram::Entry *
+GhosttyKeybindProgram::bareCatchAll(NodeId root) const
 {
-    if (root.value
-        >= static_cast<quint32>(data_->nodes.size())) {
+    if (root.value >= static_cast<quint32>(data_->nodes.size())) {
         return nullptr;
     }
     for (const Entry &entry :
-         data_->nodes.at(
-             static_cast<qsizetype>(root.value)).entries) {
+         data_->nodes.at(static_cast<qsizetype>(root.value)).entries) {
         if (entry.trigger.keyKind == KeyKind::CatchAll
             && entry.trigger.modifiers == Qt::NoModifier) {
             return &entry;
@@ -1163,14 +1136,14 @@ bool GhosttyKeybindState::activeCatchAllIgnores() const
 {
     const auto ignores = [](const Entry &entry) {
         return entry.kind == EntryKind::Leaf
-            && std::ranges::any_of(
-                entry.actionChain.entries,
-                [](const GhosttyCompiledAction &compiled) {
-                    const auto *application =
-                        compiled.getIf<ApplicationAction>();
-                    return application != nullptr
-                        && *application == ApplicationAction::Ignore;
-                });
+            && std::ranges::any_of(entry.actionChain.entries,
+                                   [](const GhosttyCompiledAction &compiled) {
+                                       const auto *application =
+                                           compiled.getIf<ApplicationAction>();
+                                       return application != nullptr
+                                           && *application
+                                           == ApplicationAction::Ignore;
+                                   });
     };
 
     for (const ActiveTable &table : activeTables_ | std::views::reverse) {
@@ -1184,10 +1157,9 @@ bool GhosttyKeybindState::activeCatchAllIgnores() const
     return false;
 }
 
-std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
-    int qtKey,
-    Qt::KeyboardModifiers modifiers,
-    QStringView text) const
+std::optional<GhosttyKeybindMatch>
+GhosttyKeybindState::match(int qtKey, Qt::KeyboardModifiers modifiers,
+                           QStringView text) const
 {
     return match(GhosttyKeybindEvent{
         .qtKey = qtKey,
@@ -1196,8 +1168,8 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
     });
 }
 
-std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
-    const GhosttyKeybindEvent &event) const
+std::optional<GhosttyKeybindMatch>
+GhosttyKeybindState::match(const GhosttyKeybindEvent &event) const
 {
     PreparedEvent prepared = GhosttyKeybindProgram::prepareEvent(event);
     const Lookup found = program_.lookup(NodeId{}, prepared);
@@ -1214,8 +1186,8 @@ std::optional<GhosttyKeybindMatch> GhosttyKeybindState::match(
     };
 }
 
-GhosttyKeybindStep GhosttyKeybindState::advance(
-    const GhosttyKeybindEvent &event)
+GhosttyKeybindStep
+GhosttyKeybindState::advance(const GhosttyKeybindEvent &event)
 {
     PreparedEvent prepared = GhosttyKeybindProgram::prepareEvent(event);
     const bool continuing = activeNode_.has_value();
@@ -1226,8 +1198,7 @@ GhosttyKeybindStep GhosttyKeybindState::advance(
     } else {
         for (qsizetype index = activeTables_.size(); index > 0; --index) {
             const qsizetype candidate = index - 1;
-            found = program_.lookup(
-                activeTables_.at(candidate).root, prepared);
+            found = program_.lookup(activeTables_.at(candidate).root, prepared);
             if (found.entry != nullptr) {
                 matchedTable = candidate;
                 break;
@@ -1274,14 +1245,15 @@ GhosttyKeybindStep GhosttyKeybindState::advance(
 
     GhosttyKeybindStep result{
         .kind = GhosttyKeybindStepKind::Binding,
-        .match = {
-            .actionChain = found.entry->actionChain,
-            .consumed = found.entry->consumed,
-            .all = found.entry->all,
-            .global = found.entry->global,
-            .performable = found.entry->performable,
-            .physical = found.physical,
-        },
+        .match =
+            {
+                .actionChain = found.entry->actionChain,
+                .consumed = found.entry->consumed,
+                .all = found.entry->all,
+                .global = found.entry->global,
+                .performable = found.entry->performable,
+                .physical = found.physical,
+            },
         .queuedEvents = queuedEvents_,
         .activeTablesChanged = activeTablesChanged,
     };

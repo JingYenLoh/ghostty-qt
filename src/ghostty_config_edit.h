@@ -20,6 +20,5 @@ prepareGhosttyConfigForEditing(const QStringList &editCandidatePaths);
 // Prepare and launch the selected file through the desktop. An empty opener
 // uses QDesktopServices; injection keeps external launches out of tests.
 [[nodiscard]] std::expected<QString, QString>
-openGhosttyConfigForEditing(
-    const QStringList &editCandidatePaths,
-    GhosttyConfigUrlOpener opener = {});
+openGhosttyConfigForEditing(const QStringList &editCandidatePaths,
+                            GhosttyConfigUrlOpener opener = {});

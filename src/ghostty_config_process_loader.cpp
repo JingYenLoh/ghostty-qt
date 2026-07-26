@@ -58,8 +58,7 @@ QString conciseProcessDetails(const ProcessResult &result)
 
 ProcessResult runHelper(const GhosttyConfigProcessLoaderOptions &options,
                         const QStringList &arguments,
-                        const QString &xdgConfigHome,
-                        int timeoutMilliseconds)
+                        const QString &xdgConfigHome, int timeoutMilliseconds)
 {
     QProcess process;
     QProcessEnvironment environment = options.environment;
@@ -77,8 +76,8 @@ ProcessResult runHelper(const GhosttyConfigProcessLoaderOptions &options,
     };
     const auto stopProcess = [&process, &deadline] {
         process.kill();
-        process.waitForFinished(static_cast<int>(std::clamp<qint64>(
-            deadline.remainingTime(), 0, 1'000)));
+        process.waitForFinished(static_cast<int>(
+            std::clamp<qint64>(deadline.remainingTime(), 0, 1'000)));
     };
     if (!process.waitForStarted(remainingTimeout())) {
         if (process.error() == QProcess::Timedout) {
@@ -122,11 +121,13 @@ GhosttyConfigLoadResult processFailure(const QString &operation,
     switch (result.status) {
     case ProcessResult::Status::StartFailed:
         return std::unexpected(
-            QStringLiteral("Ghostty config helper could not be started during %1")
+            QStringLiteral(
+                "Ghostty config helper could not be started during %1")
                 .arg(operation));
     case ProcessResult::Status::TimedOut:
         return std::unexpected(
-            QStringLiteral("Ghostty config helper timed out during %1 after %2 ms")
+            QStringLiteral(
+                "Ghostty config helper timed out during %1 after %2 ms")
                 .arg(operation)
                 .arg(std::max(1, timeoutMilliseconds)));
     case ProcessResult::Status::DeadlineExpired:
@@ -138,12 +139,12 @@ GhosttyConfigLoadResult processFailure(const QString &operation,
         return std::unexpected(
             QStringLiteral("Ghostty config helper crashed during %1")
                 .arg(operation));
-    case ProcessResult::Status::Completed:
-        break;
+    case ProcessResult::Status::Completed: break;
     }
 
     QString message =
-        QStringLiteral("Ghostty config helper failed during %1 with exit code %2")
+        QStringLiteral(
+            "Ghostty config helper failed during %1 with exit code %2")
             .arg(operation)
             .arg(result.exitCode);
     const QString details = conciseProcessDetails(result);
@@ -174,17 +175,16 @@ void appendProcessDiagnostics(GhosttyConfigSnapshot &snapshot,
     }
 }
 
-const QVector<GhosttyKeybindDefinition> *bindingsForTable(
-    const GhosttyKeybindConfig &config, const QString &name)
+const QVector<GhosttyKeybindDefinition> *
+bindingsForTable(const GhosttyKeybindConfig &config, const QString &name)
 {
-    const auto table = std::ranges::find(
-        config.tables, name, &GhosttyKeybindTable::name);
+    const auto table =
+        std::ranges::find(config.tables, name, &GhosttyKeybindTable::name);
     return table == config.tables.cend() ? nullptr : &table->bindings;
 }
 
-bool isDefaultDefinition(
-    const GhosttyKeybindDefinition &definition,
-    const QVector<GhosttyKeybindDefinition> *defaults)
+bool isDefaultDefinition(const GhosttyKeybindDefinition &definition,
+                         const QVector<GhosttyKeybindDefinition> *defaults)
 {
     if (defaults == nullptr) return false;
     const auto matchingPath = std::ranges::find(
@@ -192,14 +192,14 @@ bool isDefaultDefinition(
     return matchingPath != defaults->cend() && *matchingPath == definition;
 }
 
-void appendConfiguredActionDiagnostics(
-    GhosttyConfigSnapshot &snapshot,
-    const GhosttyKeybindConfig &current,
-    const GhosttyKeybindConfig &defaults)
+void appendConfiguredActionDiagnostics(GhosttyConfigSnapshot &snapshot,
+                                       const GhosttyKeybindConfig &current,
+                                       const GhosttyKeybindConfig &defaults)
 {
     QSet<QString> reportedActions;
     const auto inspect = [&](const GhosttyKeybindDefinition &definition,
-                             const QVector<GhosttyKeybindDefinition> *baseline) {
+                             const QVector<GhosttyKeybindDefinition>
+                                 *baseline) {
         if (isDefaultDefinition(definition, baseline)) return;
         for (const QString &action : definition.actions) {
             if (reportedActions.contains(action)
@@ -209,9 +209,10 @@ void appendConfiguredActionDiagnostics(
             reportedActions.insert(action);
             snapshot.diagnostics.append({
                 .severity = GhosttyConfigDiagnosticSeverity::Warning,
-                .message = QStringLiteral(
-                    "ghostty-qt does not implement configured keybind action '%1'")
-                               .arg(action),
+                .message =
+                    QStringLiteral(
+                        "ghostty-qt does not implement configured keybind action '%1'")
+                        .arg(action),
                 .sourcePath = {},
                 .line = 0,
                 .column = 0,
@@ -230,8 +231,7 @@ void appendConfiguredActionDiagnostics(
     }
 }
 
-void appendExistingSource(QStringList &sources,
-                          QSet<QString> &seen,
+void appendExistingSource(QStringList &sources, QSet<QString> &seen,
                           const QString &path)
 {
     const QString normalized = normalizedAbsolutePath(path);
@@ -271,30 +271,30 @@ void populateSourcePaths(GhosttyConfigSnapshot &snapshot,
 
 } // namespace
 
-std::expected<QString, QString> ghosttyConfigXdgHome(
-    const QStringList &candidatePaths)
+std::expected<QString, QString>
+ghosttyConfigXdgHome(const QStringList &candidatePaths)
 {
     const QString legacyPath =
         candidateNamed(candidatePaths, QString::fromLatin1(LegacyConfigName));
     const QString preferredPath = candidateNamed(
         candidatePaths, QString::fromLatin1(PreferredConfigName));
     if (legacyPath.isEmpty() || preferredPath.isEmpty()) {
-        return std::unexpected(
-            QStringLiteral("Ghostty config candidates must contain both config and config.ghostty"));
+        return std::unexpected(QStringLiteral(
+            "Ghostty config candidates must contain both config and config.ghostty"));
     }
 
     const QString legacyDirectory = QFileInfo(legacyPath).absolutePath();
     const QString preferredDirectory = QFileInfo(preferredPath).absolutePath();
     if (legacyDirectory != preferredDirectory
         || QFileInfo(legacyDirectory).fileName() != QStringLiteral("ghostty")) {
-        return std::unexpected(
-            QStringLiteral("Ghostty config candidates must share one XDG ghostty directory"));
+        return std::unexpected(QStringLiteral(
+            "Ghostty config candidates must share one XDG ghostty directory"));
     }
     return QDir::cleanPath(QFileInfo(legacyDirectory).absolutePath());
 }
 
-GhosttyConfigLoader makeGhosttyConfigProcessLoader(
-    GhosttyConfigProcessLoaderOptions options)
+GhosttyConfigLoader
+makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
 {
     return [options = std::move(options)](
                const QStringList &candidatePaths) -> GhosttyConfigLoadResult {
@@ -331,38 +331,38 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
             return runHelper(options, arguments, *xdgConfigHome,
                              operationTimeout);
         };
-        const auto requireSuccess = [&](const QString &operation,
-                                        ProcessResult result)
-            -> std::expected<ProcessResult, QString> {
+        const auto requireSuccess =
+            [&](const QString &operation,
+                ProcessResult result) -> std::expected<ProcessResult, QString> {
             if (result.status != ProcessResult::Status::Completed
                 || result.exitCode != 0) {
-                auto failure = processFailure(operation, result,
-                                              operationTimeout);
+                auto failure =
+                    processFailure(operation, result, operationTimeout);
                 return std::unexpected(std::move(failure.error()));
             }
             return result;
         };
 
-        auto validation = requireSuccess(
-            QStringLiteral("validation"),
-            run({QStringLiteral("+validate-config")}));
+        auto validation =
+            requireSuccess(QStringLiteral("validation"),
+                           run({QStringLiteral("+validate-config")}));
         if (!validation) return std::unexpected(std::move(validation.error()));
 
-        auto config = requireSuccess(
-            QStringLiteral("config query"),
-            run({QStringLiteral("+show-config-json")}, true));
+        auto config =
+            requireSuccess(QStringLiteral("config query"),
+                           run({QStringLiteral("+show-config-json")}, true));
         if (!config) return std::unexpected(std::move(config.error()));
 
-        auto postValidation = requireSuccess(
-            QStringLiteral("post-query validation"),
-            run({QStringLiteral("+validate-config")}));
+        auto postValidation =
+            requireSuccess(QStringLiteral("post-query validation"),
+                           run({QStringLiteral("+validate-config")}));
         if (!postValidation) {
             return std::unexpected(std::move(postValidation.error()));
         }
 
-        auto verifiedConfig = requireSuccess(
-            QStringLiteral("config consistency query"),
-            run({QStringLiteral("+show-config-json")}, true));
+        auto verifiedConfig =
+            requireSuccess(QStringLiteral("config consistency query"),
+                           run({QStringLiteral("+show-config-json")}, true));
         if (!verifiedConfig) {
             return std::unexpected(std::move(verifiedConfig.error()));
         }
@@ -374,15 +374,16 @@ GhosttyConfigLoader makeGhosttyConfigProcessLoader(
         auto exported = parseGhosttyConfigExportJson(config->standardOutput);
         if (!exported) {
             return std::unexpected(
-                QStringLiteral("Ghostty config query returned malformed data: %1")
+                QStringLiteral(
+                    "Ghostty config query returned malformed data: %1")
                     .arg(exported.error()));
         }
 
         GhosttyKeybindConfig defaultKeybindings =
             std::move(exported->defaultKeybindings);
         GhosttyConfigSnapshot snapshot(std::move(*exported));
-        appendConfiguredActionDiagnostics(
-            snapshot, snapshot.keybindings, defaultKeybindings);
+        appendConfiguredActionDiagnostics(snapshot, snapshot.keybindings,
+                                          defaultKeybindings);
         populateSourcePaths(snapshot, candidatePaths);
 
         // Successful validator output and the first exporter stderr may carry

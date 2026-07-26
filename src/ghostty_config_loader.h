@@ -8,8 +8,7 @@
 #include <expected>
 #include <functional>
 
-using GhosttyConfigLoadResult =
-    std::expected<GhosttyConfigSnapshot, QString>;
+using GhosttyConfigLoadResult = std::expected<GhosttyConfigSnapshot, QString>;
 
 // Candidate paths are ordered in Ghostty load order: earlier files are loaded
 // first and later files override them. The loader owns parsing and Ghostty

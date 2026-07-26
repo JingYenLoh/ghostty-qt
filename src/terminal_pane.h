@@ -55,21 +55,29 @@ class TerminalPane final : public QQuickItem {
     QML_NAMED_ELEMENT(TerminalPane)
     QML_UNCREATABLE("TerminalPane instances are owned by TerminalWorkspace")
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
-    Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY currentDirectoryChanged)
-    Q_PROPERTY(qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
-    Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY activeKeyTablesChanged)
-    Q_PROPERTY(QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
-    Q_PROPERTY(QRectF linkPreviewRect READ linkPreviewRect NOTIFY linkPreviewChanged)
-    Q_PROPERTY(bool searchUiActive READ searchUiActive NOTIFY searchUiActiveChanged)
-    Q_PROPERTY(QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
-    Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY searchMatchLabelChanged)
+    Q_PROPERTY(QString currentDirectory READ currentDirectory NOTIFY
+                   currentDirectoryChanged)
+    Q_PROPERTY(
+        qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
+    Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY
+                   activeKeyTablesChanged)
+    Q_PROPERTY(
+        QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
+    Q_PROPERTY(
+        QRectF linkPreviewRect READ linkPreviewRect NOTIFY linkPreviewChanged)
+    Q_PROPERTY(
+        bool searchUiActive READ searchUiActive NOTIFY searchUiActiveChanged)
+    Q_PROPERTY(
+        QString searchUiText READ searchUiText NOTIFY searchUiTextChanged)
+    Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY
+                   searchMatchLabelChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
-    Q_PROPERTY(bool resizeOverlayVisible READ resizeOverlayVisible
-               NOTIFY resizeOverlayVisibleChanged)
-    Q_PROPERTY(QString resizeOverlayText READ resizeOverlayText
-               NOTIFY resizeOverlayTextChanged)
-    Q_PROPERTY(QRectF resizeOverlayRect READ resizeOverlayRect
-               NOTIFY resizeOverlayRectChanged)
+    Q_PROPERTY(bool resizeOverlayVisible READ resizeOverlayVisible NOTIFY
+                   resizeOverlayVisibleChanged)
+    Q_PROPERTY(QString resizeOverlayText READ resizeOverlayText NOTIFY
+                   resizeOverlayTextChanged)
+    Q_PROPERTY(QRectF resizeOverlayRect READ resizeOverlayRect NOTIFY
+                   resizeOverlayRectChanged)
     Q_PROPERTY(
         bool scrollbarVisible READ scrollbarVisible NOTIFY scrollbarChanged)
     Q_PROPERTY(
@@ -80,13 +88,12 @@ class TerminalPane final : public QQuickItem {
 
 public:
     explicit TerminalPane(
-        const LaunchOptions &options,
-        QQuickItem *parent = nullptr,
+        const LaunchOptions &options, QQuickItem *parent = nullptr,
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate,
-        std::shared_ptr<InitialSessionCoordinator>
-            initialSessionCoordinator = {},
+        std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator =
+            {},
         std::optional<GhosttyKeybindProgram> keybindProgram = std::nullopt);
     ~TerminalPane() override;
 
@@ -142,8 +149,8 @@ public:
     // ApplicationController arms only the first pane of a window that was
     // presented maximized/fullscreen. The actual start remains queued until
     // Qt reports a stable exposed viewport.
-    [[nodiscard]] bool armDeferredSessionStart(
-        std::function<QSizeF()> viewportSizeProvider = {});
+    [[nodiscard]] bool
+    armDeferredSessionStart(std::function<QSizeF()> viewportSizeProvider = {});
     void setWorkspaceActionHandler(
         std::function<bool(WorkspaceActionRequest)> handler);
     // Dependency injection keeps external URL launches out of automated
@@ -209,7 +216,8 @@ protected:
     QSGNode *updatePaintNode(QSGNode *oldNode,
                              UpdatePaintNodeData *updateData) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
-    void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
+    void geometryChange(const QRectF &newGeometry,
+                        const QRectF &oldGeometry) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void inputMethodEvent(QInputMethodEvent *event) override;
@@ -266,8 +274,8 @@ private:
     };
 
     [[nodiscard]] bool updateMetrics();
-    [[nodiscard]] bool updateMetrics(
-        const TerminalTypography &typography, qreal pointSize);
+    [[nodiscard]] bool updateMetrics(const TerminalTypography &typography,
+                                     qreal pointSize);
     void updateTerminalSize();
     void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
     void scheduleResizeOverlay();
@@ -275,8 +283,7 @@ private:
     void showPendingResizeOverlay();
     void hideResizeOverlay();
     void restartResizeOverlayTimer();
-    [[nodiscard]] std::optional<TerminalSessionGeometry>
-    currentSessionGeometry(
+    [[nodiscard]] std::optional<TerminalSessionGeometry> currentSessionGeometry(
         std::optional<QSizeF> viewportSize = std::nullopt) const;
     void watchWindow(QQuickWindow *quickWindow);
     void disconnectDeferredSessionWindowSignals();
@@ -307,21 +314,21 @@ private:
     [[nodiscard]] bool resolveExecutingSequence(
         TerminalSequenceResolution resolution,
         std::optional<TerminalKeyInput> current = std::nullopt);
-    [[nodiscard]] bool performConfiguredAction(
-        const GhosttyConfiguredAction &action);
-    [[nodiscard]] TerminalActionExecutionStart startConfiguredAction(
-        const GhosttyConfiguredAction &action,
-        ConfiguredActionCompletion completion);
-    [[nodiscard]] bool commitConfiguredActionResult(
-        const TerminalActionExecutionResult &result);
+    [[nodiscard]] bool
+    performConfiguredAction(const GhosttyConfiguredAction &action);
+    [[nodiscard]] TerminalActionExecutionStart
+    startConfiguredAction(const GhosttyConfiguredAction &action,
+                          ConfiguredActionCompletion completion);
+    [[nodiscard]] bool
+    commitConfiguredActionResult(const TerminalActionExecutionResult &result);
     [[nodiscard]] quint64 nextTerminalActionRequestId();
     void advanceTerminalActionEpoch();
     void failStaleTerminalActionCompletions();
     void handleTerminalActionResult(const TerminalActionResult &result);
     [[nodiscard]] std::optional<KeyHandling> continueLocalActionChain(
         const std::shared_ptr<PendingLocalActionChain> &chain);
-    [[nodiscard]] KeyHandling finishLocalActionChain(
-        PendingLocalActionChain &chain, bool delayed);
+    [[nodiscard]] KeyHandling
+    finishLocalActionChain(PendingLocalActionChain &chain, bool delayed);
     [[nodiscard]] bool performPaneAction(const GhosttyPaneAction &action);
     [[nodiscard]] bool performWorkspaceAction(WorkspaceActionRequest request);
     int viewportPageRows() const;
@@ -340,8 +347,8 @@ private:
     QPoint cellAt(const QPointF &position) const;
     std::optional<QPoint> hoverCellAt(const QPointF &position) const;
     int normalizedMouseButton(Qt::MouseButton button) const;
-    Qt::KeyboardModifiers effectivePointerModifiers(
-        Qt::KeyboardModifiers modifiers) const;
+    Qt::KeyboardModifiers
+    effectivePointerModifiers(Qt::KeyboardModifiers modifiers) const;
     bool hyperlinkModifiersMatch(Qt::KeyboardModifiers modifiers) const;
     void updateHyperlinkHover(const QPointF &position,
                               Qt::KeyboardModifiers modifiers);
@@ -360,8 +367,7 @@ private:
                                 quint64 *contentRevision = nullptr) const;
     void handleHyperlinkResult(quint64 contentRevision,
                                TerminalHyperlinkState state,
-                               TerminalLinkKind kind,
-                               const QByteArray &uri,
+                               TerminalLinkKind kind, const QByteArray &uri,
                                const QPoint &targetCell,
                                const QVector<QPoint> &matchingCells);
     void handleHyperlinkActivation(quint64 contentRevision,
@@ -372,8 +378,8 @@ private:
     void startSearchUiWithSelection(const QString &text);
     void setSearchUiActive(bool active);
     void handleSearchUpdate(const TerminalSearchUpdate &searchUpdate);
-    void installSearchDecorationsLocked(
-        const TerminalSearchUpdate &searchUpdate);
+    void
+    installSearchDecorationsLocked(const TerminalSearchUpdate &searchUpdate);
     void clearPendingSearchUpdateLocked();
     void clearSearchDecorationsLocked();
     void updateScrollbarState();
@@ -413,8 +419,7 @@ private:
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
     QChronoTimer *resizeOverlayTimer_ = nullptr;
-    std::chrono::steady_clock::time_point
-        resizeOverlayStartupSuppressionEnds_;
+    std::chrono::steady_clock::time_point resizeOverlayStartupSuppressionEnds_;
     std::optional<QSize> resizeOverlayGrid_;
     QString resizeOverlayText_;
     bool resizeOverlayVisible_ = false;

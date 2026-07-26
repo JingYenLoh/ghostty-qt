@@ -38,8 +38,7 @@ public:
     private:
         explicit constexpr Ticket(quint64 value) noexcept
             : value_(value)
-        {
-        }
+        {}
 
         quint64 value_ = 0;
 
@@ -75,8 +74,8 @@ public:
 
     // With no ticket, enqueue a new request. Passing a previously returned
     // ticket polls that same request without changing its FIFO position.
-    [[nodiscard]] RequestResult request(
-        std::optional<Ticket> existingTicket = std::nullopt);
+    [[nodiscard]] RequestResult
+    request(std::optional<Ticket> existingTicket = std::nullopt);
 
     // Commit succeeds only for the current holder. It permanently consumes the
     // application-wide first-session opportunity and resolves every waiter.
@@ -102,8 +101,8 @@ Q_SIGNALS:
 
 private:
     [[nodiscard]] Ticket nextTicketLocked();
-    [[nodiscard]] RequestResult requestLocked(
-        std::optional<Ticket> existingTicket);
+    [[nodiscard]] RequestResult
+    requestLocked(std::optional<Ticket> existingTicket);
     [[nodiscard]] bool remove(Ticket ticket);
     [[nodiscard]] bool markNotificationPendingLocked();
     void queueRequestsChanged(bool needed);

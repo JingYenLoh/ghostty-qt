@@ -16,23 +16,18 @@ namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
 
-template<typename... Visitor>
-struct Overloaded : Visitor... {
+template <typename... Visitor> struct Overloaded : Visitor... {
     using Visitor::operator()...;
 };
 
 std::optional<bool> parseGhosttyBoolean(QStringView value)
 {
-    if (value == QLatin1StringView("true")
-        || value == QLatin1StringView("1")
-        || value == QLatin1StringView("t")
-        || value == QLatin1StringView("T")) {
+    if (value == QLatin1StringView("true") || value == QLatin1StringView("1")
+        || value == QLatin1StringView("t") || value == QLatin1StringView("T")) {
         return true;
     }
-    if (value == QLatin1StringView("false")
-        || value == QLatin1StringView("0")
-        || value == QLatin1StringView("f")
-        || value == QLatin1StringView("F")) {
+    if (value == QLatin1StringView("false") || value == QLatin1StringView("0")
+        || value == QLatin1StringView("f") || value == QLatin1StringView("F")) {
         return false;
     }
     return std::nullopt;
@@ -40,81 +35,77 @@ std::optional<bool> parseGhosttyBoolean(QStringView value)
 
 TerminalColorValue toTerminalColor(const GhosttyTerminalColor &configured)
 {
-    return std::visit(
-        Overloaded{
-            [](const QColor &color) {
-                return TerminalColorValue::fromColor(color);
-            },
-            [](GhosttyCellRelativeColor relative) {
-                switch (relative) {
-                case GhosttyCellRelativeColor::Foreground:
-                    return TerminalColorValue{
-                        .kind = TerminalColorKind::CellForeground,
-                        .color = {},
-                    };
-                case GhosttyCellRelativeColor::Background:
-                    return TerminalColorValue{
-                        .kind = TerminalColorKind::CellBackground,
-                        .color = {},
-                    };
-                }
-                std::unreachable();
-            },
-        },
-        configured);
+    return std::visit(Overloaded{
+                          [](const QColor &color) {
+                              return TerminalColorValue::fromColor(color);
+                          },
+                          [](GhosttyCellRelativeColor relative) {
+                              switch (relative) {
+                              case GhosttyCellRelativeColor::Foreground:
+                                  return TerminalColorValue{
+                                      .kind = TerminalColorKind::CellForeground,
+                                      .color = {},
+                                  };
+                              case GhosttyCellRelativeColor::Background:
+                                  return TerminalColorValue{
+                                      .kind = TerminalColorKind::CellBackground,
+                                      .color = {},
+                                  };
+                              }
+                              std::unreachable();
+                          },
+                      },
+                      configured);
 }
 
-TerminalColorValue toTerminalColor(
-    const std::optional<GhosttyTerminalColor> &configured)
+TerminalColorValue
+toTerminalColor(const std::optional<GhosttyTerminalColor> &configured)
 {
     return configured ? toTerminalColor(*configured) : TerminalColorValue{};
 }
 
-TerminalBoldColor toTerminalBoldColor(
-    const std::optional<GhosttyBoldColor> &configured)
+TerminalBoldColor
+toTerminalBoldColor(const std::optional<GhosttyBoldColor> &configured)
 {
     if (!configured) {
         return {};
     }
-    return std::visit(
-        Overloaded{
-            [](const QColor &color) {
-                return TerminalBoldColor{
-                    .kind = TerminalBoldColorKind::Color,
-                    .color = color,
-                };
-            },
-            [](GhosttyBoldBrightness brightness) {
-                switch (brightness) {
-                case GhosttyBoldBrightness::Bright:
-                    return TerminalBoldColor{
-                        .kind = TerminalBoldColorKind::Bright,
-                        .color = {},
-                    };
-                }
-                std::unreachable();
-            },
-        },
-        *configured);
+    return std::visit(Overloaded{
+                          [](const QColor &color) {
+                              return TerminalBoldColor{
+                                  .kind = TerminalBoldColorKind::Color,
+                                  .color = color,
+                              };
+                          },
+                          [](GhosttyBoldBrightness brightness) {
+                              switch (brightness) {
+                              case GhosttyBoldBrightness::Bright:
+                                  return TerminalBoldColor{
+                                      .kind = TerminalBoldColorKind::Bright,
+                                      .color = {},
+                                  };
+                              }
+                              std::unreachable();
+                          },
+                      },
+                      *configured);
 }
 
-TerminalAppearance toTerminalAppearance(
-    const GhosttyAppearanceConfig &configured)
+TerminalAppearance
+toTerminalAppearance(const GhosttyAppearanceConfig &configured)
 {
     TerminalAppearance result{
         .foregroundColor = configured.foreground,
         .backgroundColor = configured.background,
         .palette = {},
-        .selectionForeground = toTerminalColor(
-            configured.selectionForeground),
-        .selectionBackground = toTerminalColor(
-            configured.selectionBackground),
+        .selectionForeground = toTerminalColor(configured.selectionForeground),
+        .selectionBackground = toTerminalColor(configured.selectionBackground),
         .searchForeground = toTerminalColor(configured.searchForeground),
         .searchBackground = toTerminalColor(configured.searchBackground),
-        .searchSelectedForeground = toTerminalColor(
-            configured.searchSelectedForeground),
-        .searchSelectedBackground = toTerminalColor(
-            configured.searchSelectedBackground),
+        .searchSelectedForeground =
+            toTerminalColor(configured.searchSelectedForeground),
+        .searchSelectedBackground =
+            toTerminalColor(configured.searchSelectedBackground),
         .cursorColor = toTerminalColor(configured.cursorColor),
         .cursorStyle = configured.cursorStyle,
         .cursorBlink = configured.cursorBlink,
@@ -140,8 +131,8 @@ void enforceExplicitCommandLifetime(const LaunchOptions &base,
 
 } // namespace
 
-TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
-    const LaunchOptions &options)
+TerminalSessionRuntimeOptions
+toTerminalSessionRuntimeOptions(const LaunchOptions &options)
 {
     return {
         .appearance = options.appearance,
@@ -161,8 +152,8 @@ LaunchOptions withoutInitialCommand(LaunchOptions options)
     return options;
 }
 
-TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
-    const LaunchOptions &options)
+TerminalSessionLaunchOptions
+toTerminalSessionLaunchOptions(const LaunchOptions &options)
 {
     return {
         .workingDirectory = options.workingDirectory,
@@ -292,12 +283,9 @@ bool shouldUseSingleInstance(const LaunchOptions &options,
 {
     if (options.hasUnforwardedLaunchPayload) return false;
     switch (options.singleInstanceMode) {
-    case SingleInstanceMode::Enabled:
-        return true;
-    case SingleInstanceMode::Disabled:
-        return false;
-    case SingleInstanceMode::Detect:
-        return termProgram.isEmpty();
+    case SingleInstanceMode::Enabled: return true;
+    case SingleInstanceMode::Disabled: return false;
+    case SingleInstanceMode::Detect: return termProgram.isEmpty();
     }
     return false;
 }
@@ -312,26 +300,24 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
         return false;
     }
     switch (mode) {
-    case ConfirmCloseMode::Never:
-        return false;
-    case ConfirmCloseMode::RunningProcesses:
-        return hasActiveProcess;
-    case ConfirmCloseMode::Always:
-        return true;
+    case ConfirmCloseMode::Never: return false;
+    case ConfirmCloseMode::RunningProcesses: return hasActiveProcess;
+    case ConfirmCloseMode::Always: return true;
     }
     return true;
 }
 
-std::expected<LaunchOptions, QString> parseLaunchOptions(
-    const QStringList &arguments)
+std::expected<LaunchOptions, QString>
+parseLaunchOptions(const QStringList &arguments)
 {
     if (arguments.isEmpty()) {
-        return std::unexpected(
-            QStringLiteral("The argument list must include the application name."));
+        return std::unexpected(QStringLiteral(
+            "The argument list must include the application name."));
     }
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("A Qt terminal emulator powered by libghostty."));
+    parser.setApplicationDescription(
+        QStringLiteral("A Qt terminal emulator powered by libghostty."));
 
     const QCommandLineOption workingDirectoryOption(
         QStringLiteral("working-directory"),
@@ -351,7 +337,8 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         QStringLiteral("lines"));
     const QCommandLineOption holdOption(
         QStringLiteral("hold"),
-        QStringLiteral("Keep the terminal open after the child process exits."));
+        QStringLiteral(
+            "Keep the terminal open after the child process exits."));
     const QCommandLineOption singleInstanceOption(
         QStringLiteral("single-instance"),
         QStringLiteral("Use false, true, or detect process uniqueness."),
@@ -394,7 +381,8 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         const QFileInfo directoryInfo(directory);
         if (!directoryInfo.exists() || !directoryInfo.isDir()) {
             return std::unexpected(
-                QStringLiteral("Working directory does not exist or is not a directory: %1")
+                QStringLiteral(
+                    "Working directory does not exist or is not a directory: %1")
                     .arg(directory));
         }
         parsed.workingDirectory = directory;
@@ -421,10 +409,10 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         const double parsedFontSize = QLocale::c().toDouble(value, &ok);
         const float ghosttyFontSize = static_cast<float>(parsedFontSize);
         if (!ok || !std::isfinite(parsedFontSize) || parsedFontSize <= 0.0
-            || !std::isfinite(ghosttyFontSize)
-            || ghosttyFontSize <= 0.0F) {
+            || !std::isfinite(ghosttyFontSize) || ghosttyFontSize <= 0.0F) {
             return std::unexpected(
-                QStringLiteral("Invalid font size '%1': expected a finite number greater than 0.")
+                QStringLiteral(
+                    "Invalid font size '%1': expected a finite number greater than 0.")
                     .arg(value));
         }
         // Ghostty's configuration field is f32. Store that exact value so
@@ -438,9 +426,11 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
         const QString value = parser.value(scrollbackLinesOption);
         bool ok = false;
         const qlonglong scrollbackLines = value.toLongLong(&ok);
-        if (!ok || scrollbackLines < 0 || scrollbackLines > kMaximumScrollbackLines) {
+        if (!ok || scrollbackLines < 0
+            || scrollbackLines > kMaximumScrollbackLines) {
             return std::unexpected(
-                QStringLiteral("Invalid scrollback line count '%1': expected an integer from 0 to %2.")
+                QStringLiteral(
+                    "Invalid scrollback line count '%1': expected an integer from 0 to %2.")
                     .arg(value)
                     .arg(kMaximumScrollbackLines));
         }
@@ -489,11 +479,11 @@ std::expected<LaunchOptions, QString> parseLaunchOptions(
 
     if (parser.isSet(initialWindowOption)) {
         const QString value = parser.value(initialWindowOption);
-        const std::optional<bool> initialWindow =
-            parseGhosttyBoolean(value);
+        const std::optional<bool> initialWindow = parseGhosttyBoolean(value);
         if (!initialWindow.has_value()) {
-            return std::unexpected(QStringLiteral(
-                "Invalid initial-window value '%1': expected true or false.")
+            return std::unexpected(
+                QStringLiteral(
+                    "Invalid initial-window value '%1': expected true or false.")
                     .arg(value));
         }
         parsed.initialWindow = *initialWindow;
@@ -508,10 +498,10 @@ QStringList ghosttyConfigCliFontArguments(const LaunchOptions &options)
     QStringList result;
     const QStringList &families =
         options.typography.face(TerminalFontRole::Regular).families;
-    result.reserve(
-        (options.fontFamilyExplicit
-             ? std::max<qsizetype>(1, families.size()) : 0)
-        + static_cast<qsizetype>(options.fontSizeExplicit));
+    result.reserve((options.fontFamilyExplicit
+                        ? std::max<qsizetype>(1, families.size())
+                        : 0)
+                   + static_cast<qsizetype>(options.fontSizeExplicit));
 
     if (options.fontFamilyExplicit) {
         if (families.isEmpty()) {
@@ -525,9 +515,8 @@ QStringList ghosttyConfigCliFontArguments(const LaunchOptions &options)
     if (options.fontSizeExplicit) {
         result.append(
             QStringLiteral("--font-size=")
-            + QString::number(
-                options.typography.pointSize, 'g',
-                std::numeric_limits<float>::max_digits10));
+            + QString::number(options.typography.pointSize, 'g',
+                              std::numeric_limits<float>::max_digits10));
     }
 
     return result;

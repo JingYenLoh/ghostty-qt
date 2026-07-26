@@ -11,7 +11,6 @@
 // winsize. Invalid or not-yet-laid-out viewports deliberately retain the
 // worker's legacy fallback.
 [[nodiscard]] std::optional<TerminalSessionGeometry>
-terminalSessionGeometryForViewport(
-    qreal width, qreal height,
-    qreal cellWidth, qreal cellHeight,
-    qreal devicePixelRatio) noexcept;
+terminalSessionGeometryForViewport(qreal width, qreal height, qreal cellWidth,
+                                   qreal cellHeight,
+                                   qreal devicePixelRatio) noexcept;

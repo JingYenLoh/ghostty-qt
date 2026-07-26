@@ -29,14 +29,13 @@ class GhosttyApplicationKeybindings final : public QObject {
 
 public:
     explicit GhosttyApplicationKeybindings(
-        const LaunchOptions &options,
-        bool enableGlobalShortcutsPortal = true,
+        const LaunchOptions &options, bool enableGlobalShortcutsPortal = true,
         QObject *parent = nullptr);
     ~GhosttyApplicationKeybindings() override;
 
     void registerWorkspace(TerminalWorkspace *workspace);
-    [[nodiscard]] GhosttyKeybindProgram applyLaunchOptions(
-        const LaunchOptions &options);
+    [[nodiscard]] GhosttyKeybindProgram
+    applyLaunchOptions(const LaunchOptions &options);
     [[nodiscard]] GhosttyKeybindProgram keybindProgram() const noexcept
     {
         return rootState_.program();
@@ -69,30 +68,27 @@ private:
         int replacementStart = 0;
         int replacementLength = 0;
     };
-    using DeferredInput = std::variant<
-        DeferredKeyEvent, DeferredInputMethodEvent,
-        GhosttyCompiledActionChain>;
+    using DeferredInput =
+        std::variant<DeferredKeyEvent, DeferredInputMethodEvent,
+                     GhosttyCompiledActionChain>;
     struct BroadExecution;
 
     void beginConfigurationUpdate() noexcept;
     void endConfigurationUpdate();
-    void dispatchOrDeferBroadActions(
-        GhosttyCompiledActionChain actions);
+    void dispatchOrDeferBroadActions(GhosttyCompiledActionChain actions);
     void drainDeferredInputs();
     QVector<QPointer<TerminalWorkspace>> workspaceSnapshot() const;
-    bool executeApplicationActions(
-        const GhosttyCompiledActionChain &actions);
-    void dispatchCompiledBroadActions(
-        const GhosttyCompiledActionChain &actions);
+    bool executeApplicationActions(const GhosttyCompiledActionChain &actions);
+    void
+    dispatchCompiledBroadActions(const GhosttyCompiledActionChain &actions);
     void continueBroadExecution();
-    void resolveBroadTarget(
-        quint64 generation, qsizetype targetIndex,
-        TerminalActionExecutionResult result,
-        bool deferContinuation = false);
+    void resolveBroadTarget(quint64 generation, qsizetype targetIndex,
+                            TerminalActionExecutionResult result,
+                            bool deferContinuation = false);
     void deferBroadExecutionContinuation(quint64 generation);
     void resumeReadyBroadExecution();
-    [[nodiscard]] static bool broadExecutionHasLostTarget(
-        const BroadExecution &execution);
+    [[nodiscard]] static bool
+    broadExecutionHasLostTarget(const BroadExecution &execution);
 
     GhosttyKeybindState rootState_;
     QVector<QPointer<TerminalWorkspace>> workspaces_;
@@ -102,8 +98,7 @@ private:
     int keyEventDispatchDepth_ = 0;
     bool drainingDeferredInputs_ = false;
     const QKeyEvent *replayingDeferredKeyEvent_ = nullptr;
-    const QInputMethodEvent *replayingDeferredInputMethodEvent_ =
-        nullptr;
+    const QInputMethodEvent *replayingDeferredInputMethodEvent_ = nullptr;
     quint64 nextBroadExecutionGeneration_ = 0;
     std::shared_ptr<BroadExecution> broadExecution_;
     std::unique_ptr<GhosttyGlobalShortcutPortal> portal_;

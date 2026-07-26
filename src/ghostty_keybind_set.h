@@ -63,12 +63,12 @@ class GhosttyKeybindProgram final {
 public:
     GhosttyKeybindProgram();
 
-    [[nodiscard]] static GhosttyKeybindCompilation compile(
-        const QStringList &values);
-    [[nodiscard]] static GhosttyKeybindCompilation compile(
-        const GhosttyKeybindConfig &config);
-    [[nodiscard]] static GhosttyKeybindCompilation compile(
-        const GhosttyKeybindSource &source);
+    [[nodiscard]] static GhosttyKeybindCompilation
+    compile(const QStringList &values);
+    [[nodiscard]] static GhosttyKeybindCompilation
+    compile(const GhosttyKeybindConfig &config);
+    [[nodiscard]] static GhosttyKeybindCompilation
+    compile(const GhosttyKeybindSource &source);
 
     [[nodiscard]] qsizetype size() const noexcept;
     [[nodiscard]] bool isEmpty() const noexcept { return size() == 0; }
@@ -76,8 +76,8 @@ public:
     [[nodiscard]] QStringList serializedActions() const;
     // Every compile operation creates a distinct generation, even when its
     // input is structurally equal to an earlier one.
-    [[nodiscard]] bool isSameGeneration(
-        const GhosttyKeybindProgram &other) const noexcept;
+    [[nodiscard]] bool
+    isSameGeneration(const GhosttyKeybindProgram &other) const noexcept;
 
 private:
     friend class GhosttyKeybindState;
@@ -143,15 +143,14 @@ private:
         bool available = false;
     };
 
-    template<typename Visitor>
+    template <typename Visitor>
     static void forEachReachableLeaf(const Data &data, Visitor &&visitor);
     explicit GhosttyKeybindProgram(std::shared_ptr<const Data> data);
     [[nodiscard]] static std::shared_ptr<const Data> emptyData();
-    [[nodiscard]] static PreparedEvent prepareEvent(
-        const GhosttyKeybindEvent &event);
+    [[nodiscard]] static PreparedEvent
+    prepareEvent(const GhosttyKeybindEvent &event);
     static void prepareUnicodeCandidates(PreparedEvent &event);
-    [[nodiscard]] Lookup lookup(NodeId node,
-                                PreparedEvent &event) const;
+    [[nodiscard]] Lookup lookup(NodeId node, PreparedEvent &event) const;
     [[nodiscard]] const Entry *bareCatchAll(NodeId root) const;
 
     std::shared_ptr<const Data> data_;
@@ -234,23 +233,21 @@ public:
     // modifiers is QKeyEvent::modifiers(), and text is QKeyEvent::text().
     // Physical named triggers are checked before Unicode triggers regardless
     // of config order, as they are in Ghostty.
-    [[nodiscard]] std::optional<GhosttyKeybindMatch> match(
-        int qtKey,
-        Qt::KeyboardModifiers modifiers,
-        QStringView text = {}) const;
+    [[nodiscard]] std::optional<GhosttyKeybindMatch>
+    match(int qtKey, Qt::KeyboardModifiers modifiers,
+          QStringView text = {}) const;
 
     // Prefer this overload for real QKeyEvents. Supplying nativeScanCode makes
     // physical Ghostty triggers layout independent and distinguishes physical
     // locations that share a Qt key (for example digit_1 and numpad_1).
-    [[nodiscard]] std::optional<GhosttyKeybindMatch> match(
-        const GhosttyKeybindEvent &event) const;
+    [[nodiscard]] std::optional<GhosttyKeybindMatch>
+    match(const GhosttyKeybindEvent &event) const;
 
     // Advances the active sequence or performs a newest-table-to-root lookup.
     // Leader sequences have no timeout, matching Ghostty. Invalid
     // non-modifier continuations either request replay or are dropped by the
     // first bare catch_all=ignore entry in the active lookup order.
-    [[nodiscard]] GhosttyKeybindStep advance(
-        const GhosttyKeybindEvent &event);
+    [[nodiscard]] GhosttyKeybindStep advance(const GhosttyKeybindEvent &event);
     void resetSequence() noexcept;
     [[nodiscard]] bool sequenceActive() const noexcept
     {
@@ -281,8 +278,7 @@ public:
     {
         return program_;
     }
-    [[nodiscard]] bool replaceProgram(
-        GhosttyKeybindProgram program) noexcept;
+    [[nodiscard]] bool replaceProgram(GhosttyKeybindProgram program) noexcept;
 
 private:
     using NodeId = GhosttyKeybindProgram::NodeId;

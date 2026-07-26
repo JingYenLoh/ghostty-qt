@@ -8,10 +8,7 @@
 
 class GhosttyLinkMatcher::Impl final {
 public:
-    ~Impl()
-    {
-        ghostty_qt_link_matcher_destroy(matcher);
-    }
+    ~Impl() { ghostty_qt_link_matcher_destroy(matcher); }
 
     GhosttyQtLinkMatcher *matcher = nullptr;
 };
@@ -32,10 +29,9 @@ bool GhosttyLinkMatcher::isValid() const
     return impl_ && impl_->matcher;
 }
 
-GhosttyLinkMatchResult GhosttyLinkMatcher::findNext(
-    QByteArrayView utf8,
-    qsizetype searchOffset,
-    GhosttyLinkMatch *match)
+GhosttyLinkMatchResult GhosttyLinkMatcher::findNext(QByteArrayView utf8,
+                                                    qsizetype searchOffset,
+                                                    GhosttyLinkMatch *match)
 {
     if (!isValid()) {
         return GhosttyLinkMatchResult::Unavailable;
@@ -51,19 +47,16 @@ GhosttyLinkMatchResult GhosttyLinkMatcher::findNext(
 
     GhosttyQtLinkMatch rawMatch{};
     const auto status = ghostty_qt_link_matcher_find_next(
-        impl_->matcher,
-        reinterpret_cast<const std::uint8_t *>(utf8.data()),
+        impl_->matcher, reinterpret_cast<const std::uint8_t *>(utf8.data()),
         static_cast<std::size_t>(utf8.size()),
-        static_cast<std::size_t>(searchOffset),
-        &rawMatch);
+        static_cast<std::size_t>(searchOffset), &rawMatch);
     switch (status) {
     case GHOSTTY_QT_LINK_MATCHER_MATCH:
         if (rawMatch.begin > static_cast<std::size_t>(utf8.size())
             || rawMatch.end > static_cast<std::size_t>(utf8.size())
             || rawMatch.end <= rawMatch.begin
-            || rawMatch.begin
-                > static_cast<std::size_t>(
-                    std::numeric_limits<qsizetype>::max())) {
+            || rawMatch.begin > static_cast<std::size_t>(
+                   std::numeric_limits<qsizetype>::max())) {
             return GhosttyLinkMatchResult::EngineError;
         }
         match->beginByte = static_cast<qsizetype>(rawMatch.begin);
@@ -79,10 +72,9 @@ GhosttyLinkMatchResult GhosttyLinkMatcher::findNext(
     return GhosttyLinkMatchResult::EngineError;
 }
 
-GhosttyLinkMatchResult GhosttyLinkMatcher::matchAt(
-    QByteArrayView utf8,
-    qsizetype byteOffset,
-    GhosttyLinkMatch *match)
+GhosttyLinkMatchResult GhosttyLinkMatcher::matchAt(QByteArrayView utf8,
+                                                   qsizetype byteOffset,
+                                                   GhosttyLinkMatch *match)
 {
     if (!match || byteOffset < 0 || byteOffset >= utf8.size()) {
         return GhosttyLinkMatchResult::InvalidInput;

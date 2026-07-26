@@ -10,8 +10,8 @@
 #include <climits>
 #include <compare>
 #include <expected>
-#include <linux/input-event-codes.h>
 #include <limits>
+#include <linux/input-event-codes.h>
 #include <optional>
 #include <string_view>
 #include <unistd.h>
@@ -19,15 +19,14 @@
 
 namespace {
 
-struct AdapterOwnerToken final {
-};
+struct AdapterOwnerToken final {};
 
 struct ScreenCell final {
     uint16_t x = 0;
     uint32_t y = 0;
 
-    friend constexpr std::strong_ordering operator<=>(
-        const ScreenCell &left, const ScreenCell &right)
+    friend constexpr std::strong_ordering operator<=>(const ScreenCell &left,
+                                                      const ScreenCell &right)
     {
         if (const auto rowOrder = left.y <=> right.y; rowOrder != 0) {
             return rowOrder;
@@ -78,8 +77,7 @@ std::optional<quint16> parseZigPort(std::string_view value)
         negative = value.front() == '-';
         value.remove_prefix(1);
     }
-    if (value.empty() || value.front() == '_'
-        || value.back() == '_') {
+    if (value.empty() || value.front() == '_' || value.back() == '_') {
         return std::nullopt;
     }
 
@@ -143,8 +141,8 @@ QByteArray percentDecode(std::string_view value)
     decoded.reserve(static_cast<qsizetype>(value.size()));
     for (std::size_t index = 0; index < value.size();) {
         if (value[index] == '%' && index + 2 < value.size()) {
-            if (const auto byte = parseZigHexByte(
-                    value[index + 1], value[index + 2])) {
+            if (const auto byte =
+                    parseZigHexByte(value[index + 1], value[index + 2])) {
                 decoded.append(static_cast<char>(*byte));
                 index += 3;
                 continue;
@@ -169,20 +167,19 @@ struct ParsedOsc7Uri {
     std::size_t pathStart = 0;
 };
 
-std::expected<ParsedOsc7Uri, Osc7ParseError> parseOsc7AfterScheme(
-    std::string_view value, std::size_t textStart)
+std::expected<ParsedOsc7Uri, Osc7ParseError>
+parseOsc7AfterScheme(std::string_view value, std::size_t textStart)
 {
     ParsedOsc7Uri result;
     std::size_t pathStart = textStart;
     if (value.substr(textStart).starts_with("//")) {
         const std::size_t authorityStart = textStart + 2;
-        const std::size_t delimiter = value.find_first_of(
-            "/?#", authorityStart);
-        const std::size_t authorityEnd = delimiter == std::string_view::npos
-            ? value.size()
-            : delimiter;
-        const std::string_view authority = value.substr(
-            authorityStart, authorityEnd - authorityStart);
+        const std::size_t delimiter =
+            value.find_first_of("/?#", authorityStart);
+        const std::size_t authorityEnd =
+            delimiter == std::string_view::npos ? value.size() : delimiter;
+        const std::string_view authority =
+            value.substr(authorityStart, authorityEnd - authorityStart);
         pathStart = authorityEnd;
         if (authority.empty()) {
             if (authorityStart >= value.size()
@@ -209,8 +206,8 @@ std::expected<ParsedOsc7Uri, Osc7ParseError> parseOsc7AfterScheme(
                     const std::size_t lastColon = authority.rfind(':');
                     if (lastColon != std::string_view::npos
                         && lastColon >= hostEnd) {
-                        const auto port = parseZigPort(
-                            authority.substr(lastColon + 1));
+                        const auto port =
+                            parseZigPort(authority.substr(lastColon + 1));
                         if (!port) {
                             return std::unexpected(Osc7ParseError::InvalidPort);
                         }
@@ -220,8 +217,8 @@ std::expected<ParsedOsc7Uri, Osc7ParseError> parseOsc7AfterScheme(
                            lastColon != std::string_view::npos
                            && lastColon >= hostStart) {
                     hostEnd = lastColon;
-                    const auto port = parseZigPort(
-                        authority.substr(lastColon + 1));
+                    const auto port =
+                        parseZigPort(authority.substr(lastColon + 1));
                     if (!port) {
                         return std::unexpected(Osc7ParseError::InvalidPort);
                     }
@@ -231,17 +228,16 @@ std::expected<ParsedOsc7Uri, Osc7ParseError> parseOsc7AfterScheme(
                     return std::unexpected(Osc7ParseError::InvalidFormat);
                 }
                 result.hostStart = authorityStart + hostStart;
-                result.host = value.substr(
-                    result.hostStart, hostEnd - hostStart);
+                result.host =
+                    value.substr(result.hostStart, hostEnd - hostStart);
             }
         }
     }
 
     result.pathStart = pathStart;
     const std::size_t delimiter = value.find_first_of("?#", pathStart);
-    const std::size_t pathEnd = delimiter == std::string_view::npos
-        ? value.size()
-        : delimiter;
+    const std::size_t pathEnd =
+        delimiter == std::string_view::npos ? value.size() : delimiter;
     result.path = value.substr(pathStart, pathEnd - pathStart);
     return result;
 }
@@ -257,11 +253,10 @@ std::optional<ParsedOsc7Uri> parseOsc7Uri(std::string_view value,
 
         const std::size_t hostStart = schemeEnd + 3;
         const std::size_t slash = value.find('/', hostStart);
-        const std::size_t hostEnd = slash == std::string_view::npos
-            ? value.size()
-            : slash;
-        const std::string_view macAddress = value.substr(
-            hostStart, hostEnd - hostStart);
+        const std::size_t hostEnd =
+            slash == std::string_view::npos ? value.size() : slash;
+        const std::string_view macAddress =
+            value.substr(hostStart, hostEnd - hostStart);
         if (!isMacAddress(macAddress)) {
             return std::nullopt;
         }
@@ -278,8 +273,7 @@ std::optional<ParsedOsc7Uri> parseOsc7Uri(std::string_view value,
         return std::nullopt;
     }
     const std::string_view host = *parsed->host;
-    if (host.size() == 14
-        && std::count(host.begin(), host.end(), ':') == 4
+    if (host.size() == 14 && std::count(host.begin(), host.end(), ':') == 4
         && parsed->port && *parsed->port <= 99) {
         const std::string_view macAddress = value.substr(
             parsed->hostStart, parsed->pathStart - parsed->hostStart);
@@ -301,9 +295,9 @@ QByteArray machineHostName()
     return QByteArray(buffer.data());
 }
 
-std::optional<QString> validatedOsc7Directory(
-    std::string_view reported,
-    const std::function<QByteArray()> &queryMachineHostName)
+std::optional<QString>
+validatedOsc7Directory(std::string_view reported,
+                       const std::function<QByteArray()> &queryMachineHostName)
 {
     if (reported.empty()) {
         return QStringLiteral("");
@@ -316,9 +310,8 @@ std::optional<QString> validatedOsc7Directory(
     if (!encodedFilePath && !rawKittyPath) {
         return std::nullopt;
     }
-    const std::size_t schemeEnd = encodedFilePath
-        ? filePrefix.size() - 3
-        : kittyPrefix.size() - 3;
+    const std::size_t schemeEnd =
+        encodedFilePath ? filePrefix.size() - 3 : kittyPrefix.size() - 3;
     const auto uri = parseOsc7Uri(reported, schemeEnd);
     if (!uri) {
         return std::nullopt;
@@ -335,9 +328,7 @@ std::optional<QString> validatedOsc7Directory(
 
     if (!rawKittyPath) {
         const QByteArray path = percentDecode(uri->path);
-        return path.isEmpty()
-            ? QStringLiteral("")
-            : QString::fromUtf8(path);
+        return path.isEmpty() ? QStringLiteral("") : QString::fromUtf8(path);
     }
 
     // Ghostty's kitty-shell-cwd variant intentionally treats the URI path as
@@ -367,10 +358,8 @@ GhosttyColorRgb toGhosttyColor(const QColor &color)
 GhosttyTerminalCursorStyle toGhosttyCursorStyle(TerminalCursorStyle style)
 {
     switch (style) {
-    case TerminalCursorStyle::Block:
-        return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK;
-    case TerminalCursorStyle::Bar:
-        return GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
+    case TerminalCursorStyle::Block: return GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK;
+    case TerminalCursorStyle::Bar: return GHOSTTY_TERMINAL_CURSOR_STYLE_BAR;
     case TerminalCursorStyle::Underline:
         return GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE;
     case TerminalCursorStyle::BlockHollow:
@@ -424,18 +413,17 @@ GhosttyColorRgb resolveStyleColor(const GhosttyStyleColor &color,
                                   GhosttyColorRgb fallback)
 {
     switch (color.tag) {
-    case GHOSTTY_STYLE_COLOR_RGB:
-        return color.value.rgb;
+    case GHOSTTY_STYLE_COLOR_RGB: return color.value.rgb;
     case GHOSTTY_STYLE_COLOR_PALETTE:
         return colors.palette[color.value.palette];
-    default:
-        return fallback;
+    default: return fallback;
     }
 }
 
 uint16_t boundedU16(int value)
 {
-    return static_cast<uint16_t>(std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
+    return static_cast<uint16_t>(
+        std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
 }
 
 uint32_t boundedU32(int value)
@@ -443,19 +431,19 @@ uint32_t boundedU32(int value)
     return static_cast<uint32_t>(std::max(value, 1));
 }
 
-GhosttyVtAdapter::Geometry normalizedGeometry(
-    GhosttyVtAdapter::Geometry geometry)
+GhosttyVtAdapter::Geometry
+normalizedGeometry(GhosttyVtAdapter::Geometry geometry)
 {
     geometry.columns = boundedU16(geometry.columns);
     geometry.rows = boundedU16(geometry.rows);
-    geometry.cellWidthPixels = static_cast<int>(
-        boundedU32(geometry.cellWidthPixels));
-    geometry.cellHeightPixels = static_cast<int>(
-        boundedU32(geometry.cellHeightPixels));
-    geometry.surfaceWidthPixels = static_cast<int>(
-        boundedU32(geometry.surfaceWidthPixels));
-    geometry.surfaceHeightPixels = static_cast<int>(
-        boundedU32(geometry.surfaceHeightPixels));
+    geometry.cellWidthPixels =
+        static_cast<int>(boundedU32(geometry.cellWidthPixels));
+    geometry.cellHeightPixels =
+        static_cast<int>(boundedU32(geometry.cellHeightPixels));
+    geometry.surfaceWidthPixels =
+        static_cast<int>(boundedU32(geometry.surfaceWidthPixels));
+    geometry.surfaceHeightPixels =
+        static_cast<int>(boundedU32(geometry.surfaceHeightPixels));
     return geometry;
 }
 
@@ -536,10 +524,8 @@ bool isModifierKey(GhosttyKey key)
     case GHOSTTY_KEY_ALT_LEFT:
     case GHOSTTY_KEY_ALT_RIGHT:
     case GHOSTTY_KEY_META_LEFT:
-    case GHOSTTY_KEY_META_RIGHT:
-        return true;
-    default:
-        return false;
+    case GHOSTTY_KEY_META_RIGHT: return true;
+    default: return false;
     }
 }
 
@@ -714,13 +700,9 @@ public:
          GhosttyTerminalScreen screen)
         : owner_(std::move(owner))
         , screen_(screen)
-    {
-    }
+    {}
 
-    ~Impl()
-    {
-        ghostty_tracked_grid_ref_free(reference_);
-    }
+    ~Impl() { ghostty_tracked_grid_ref_free(reference_); }
 
     Impl(const Impl &) = delete;
     Impl &operator=(const Impl &) = delete;
@@ -746,11 +728,9 @@ public:
         , targetCell_(targetCell)
         , mappedTargetCell_(mappedTargetCell)
         , targetIsSpacerHead_(targetIsSpacerHead)
-    {
-    }
+    {}
 
-    bool byteRangeContainsTarget(
-        qsizetype beginByte, qsizetype endByte) const
+    bool byteRangeContainsTarget(qsizetype beginByte, qsizetype endByte) const
     {
         if (beginByte < 0 || endByte <= beginByte
             || endByte > data_.byteCells.size()) {
@@ -787,8 +767,7 @@ public:
          GhosttyTerminalScreen screen)
         : owner_(std::move(owner))
         , screen_(screen)
-    {
-    }
+    {}
 
     ~Impl()
     {
@@ -823,22 +802,20 @@ public:
         }
     }
 
-    ~Impl()
-    {
-        destroy();
-    }
+    ~Impl() { destroy(); }
 
     bool initialize(const Options &adapterOptions)
     {
-        const quint64 maximum = static_cast<quint64>(
-            std::numeric_limits<size_t>::max());
+        const quint64 maximum =
+            static_cast<quint64>(std::numeric_limits<size_t>::max());
         const GhosttyTerminalOptions options{
             .cols = boundedU16(geometry_.columns),
             .rows = boundedU16(geometry_.rows),
             .max_scrollback = static_cast<size_t>(
                 std::min(adapterOptions.scrollbackBytes, maximum)),
         };
-        if (ghostty_terminal_new(nullptr, &terminal_, options) != GHOSTTY_SUCCESS) {
+        if (ghostty_terminal_new(nullptr, &terminal_, options)
+            != GHOSTTY_SUCCESS) {
             return false;
         }
 
@@ -847,18 +824,24 @@ public:
         }
 
         ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_USERDATA, this);
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-                             reinterpret_cast<const void *>(&Impl::writePtyCallback));
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_BELL,
-                             reinterpret_cast<const void *>(&Impl::bellCallback));
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
-                             reinterpret_cast<const void *>(&Impl::titleCallback));
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
-                             reinterpret_cast<const void *>(&Impl::pwdCallback));
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SIZE,
-                             reinterpret_cast<const void *>(&Impl::sizeCallback));
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
-                             reinterpret_cast<const void *>(&Impl::colorSchemeCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+            reinterpret_cast<const void *>(&Impl::writePtyCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_BELL,
+            reinterpret_cast<const void *>(&Impl::bellCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
+            reinterpret_cast<const void *>(&Impl::titleCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
+            reinterpret_cast<const void *>(&Impl::pwdCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_SIZE,
+            reinterpret_cast<const void *>(&Impl::sizeCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
+            reinterpret_cast<const void *>(&Impl::colorSchemeCallback));
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
             reinterpret_cast<const void *>(&Impl::deviceAttributesCallback));
@@ -867,28 +850,36 @@ public:
             reinterpret_cast<const void *>(&Impl::clipboardWriteCallback));
 
         if (ghostty_render_state_new(nullptr, &renderState_) != GHOSTTY_SUCCESS
-            || ghostty_render_state_row_iterator_new(nullptr, &rowIterator_) != GHOSTTY_SUCCESS
-            || ghostty_render_state_row_cells_new(nullptr, &rowCells_) != GHOSTTY_SUCCESS
+            || ghostty_render_state_row_iterator_new(nullptr, &rowIterator_)
+                != GHOSTTY_SUCCESS
+            || ghostty_render_state_row_cells_new(nullptr, &rowCells_)
+                != GHOSTTY_SUCCESS
             || ghostty_key_encoder_new(nullptr, &keyEncoder_) != GHOSTTY_SUCCESS
             || ghostty_key_event_new(nullptr, &keyEvent_) != GHOSTTY_SUCCESS
-            || ghostty_mouse_encoder_new(nullptr, &mouseEncoder_) != GHOSTTY_SUCCESS
+            || ghostty_mouse_encoder_new(nullptr, &mouseEncoder_)
+                != GHOSTTY_SUCCESS
             || ghostty_mouse_event_new(nullptr, &mouseEvent_) != GHOSTTY_SUCCESS
-            || ghostty_selection_gesture_new(nullptr, &selectionGesture_) != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_new(nullptr, &selectionGesture_)
+                != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_new(
-                   nullptr, &selectionPressEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS)
-                   != GHOSTTY_SUCCESS
+                   nullptr, &selectionPressEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS)
+                != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_new(
-                   nullptr, &selectionDragEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG)
-                   != GHOSTTY_SUCCESS
+                   nullptr, &selectionDragEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG)
+                != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_new(
-                   nullptr, &selectionReleaseEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE)
-                   != GHOSTTY_SUCCESS) {
+                   nullptr, &selectionReleaseEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE)
+                != GHOSTTY_SUCCESS) {
             return false;
         }
 
         synchronizeInputModes();
         const bool deduplicateMotion = true;
-        ghostty_mouse_encoder_setopt(mouseEncoder_, GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL,
+        ghostty_mouse_encoder_setopt(mouseEncoder_,
+                                     GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL,
                                      &deduplicateMotion);
         return true;
     }
@@ -919,8 +910,8 @@ public:
             toGhosttyColor(appearance.foregroundColor);
         const GhosttyColorRgb background =
             toGhosttyColor(appearance.backgroundColor);
-        const GhosttyColorRgb cursor = appearance.cursorColor.kind
-                == TerminalColorKind::Color
+        const GhosttyColorRgb cursor =
+            appearance.cursorColor.kind == TerminalColorKind::Color
             ? toGhosttyColor(appearance.cursorColor.color)
             : GhosttyColorRgb{};
         const GhosttyTerminalCursorStyle cursorStyle =
@@ -935,30 +926,32 @@ public:
         const void *paletteValue = appearance.palette.isEmpty()
             ? nullptr
             : static_cast<const void *>(palette.data());
-        const void *cursorValue = appearance.cursorColor.kind
-                == TerminalColorKind::Color
+        const void *cursorValue =
+            appearance.cursorColor.kind == TerminalColorKind::Color
             ? static_cast<const void *>(&cursor)
             : nullptr;
-        return ghostty_terminal_set(
-                   terminal_, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &foreground)
-                == GHOSTTY_SUCCESS
-            && ghostty_terminal_set(
-                   terminal_, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &background)
-                == GHOSTTY_SUCCESS
+        return ghostty_terminal_set(terminal_,
+                                    GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND,
+                                    &foreground)
+            == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(terminal_,
+                                    GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
+                                    &background)
+            == GHOSTTY_SUCCESS
             && ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, paletteValue)
-                == GHOSTTY_SUCCESS
+            == GHOSTTY_SUCCESS
             && ghostty_terminal_set(
                    terminal_, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, cursorValue)
-                == GHOSTTY_SUCCESS
-            && ghostty_terminal_set(
-                   terminal_, GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE,
-                   &cursorStyle)
-                == GHOSTTY_SUCCESS
-            && ghostty_terminal_set(
-                   terminal_, GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK,
-                   &cursorBlink)
-                == GHOSTTY_SUCCESS;
+            == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(terminal_,
+                                    GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE,
+                                    &cursorStyle)
+            == GHOSTTY_SUCCESS
+            && ghostty_terminal_set(terminal_,
+                                    GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK,
+                                    &cursorBlink)
+            == GHOSTTY_SUCCESS;
     }
 
     void destroy()
@@ -1016,13 +1009,11 @@ public:
     bool resize(const Geometry &geometry)
     {
         const Geometry normalized = normalizedGeometry(geometry);
-        if (ghostty_terminal_resize(terminal_,
-                                   static_cast<uint16_t>(normalized.columns),
-                                   static_cast<uint16_t>(normalized.rows),
-                                   static_cast<uint32_t>(
-                                       normalized.cellWidthPixels),
-                                   static_cast<uint32_t>(
-                                       normalized.cellHeightPixels))
+        if (ghostty_terminal_resize(
+                terminal_, static_cast<uint16_t>(normalized.columns),
+                static_cast<uint16_t>(normalized.rows),
+                static_cast<uint32_t>(normalized.cellWidthPixels),
+                static_cast<uint32_t>(normalized.cellHeightPixels))
             != GHOSTTY_SUCCESS) {
             return false;
         }
@@ -1066,25 +1057,23 @@ public:
     void synchronizeInputModes()
     {
         const std::array<GhosttyMode, 8> modes{
-            GHOSTTY_MODE_X10_MOUSE,
-            GHOSTTY_MODE_NORMAL_MOUSE,
-            GHOSTTY_MODE_BUTTON_MOUSE,
-            GHOSTTY_MODE_ANY_MOUSE,
-            GHOSTTY_MODE_UTF8_MOUSE,
-            GHOSTTY_MODE_SGR_MOUSE,
-            GHOSTTY_MODE_URXVT_MOUSE,
-            GHOSTTY_MODE_SGR_PIXELS_MOUSE,
+            GHOSTTY_MODE_X10_MOUSE,    GHOSTTY_MODE_NORMAL_MOUSE,
+            GHOSTTY_MODE_BUTTON_MOUSE, GHOSTTY_MODE_ANY_MOUSE,
+            GHOSTTY_MODE_UTF8_MOUSE,   GHOSTTY_MODE_SGR_MOUSE,
+            GHOSTTY_MODE_URXVT_MOUSE,  GHOSTTY_MODE_SGR_PIXELS_MOUSE,
         };
         uint32_t fingerprint = 0;
         for (size_t index = 0; index < modes.size(); ++index) {
             bool enabled = false;
-            if (ghostty_terminal_mode_get(terminal_, modes[index], &enabled) == GHOSTTY_SUCCESS
+            if (ghostty_terminal_mode_get(terminal_, modes[index], &enabled)
+                    == GHOSTTY_SUCCESS
                 && enabled) {
                 fingerprint |= uint32_t{1} << static_cast<uint32_t>(index);
             }
         }
         if (!mouseEncoderConfigured_ || fingerprint != mouseModeFingerprint_) {
-            ghostty_mouse_encoder_setopt_from_terminal(mouseEncoder_, terminal_);
+            ghostty_mouse_encoder_setopt_from_terminal(mouseEncoder_,
+                                                       terminal_);
             mouseModeFingerprint_ = fingerprint;
             mouseEncoderConfigured_ = true;
         }
@@ -1094,19 +1083,23 @@ public:
     {
         ghostty_key_encoder_setopt_from_terminal(keyEncoder_, terminal_);
         ghostty_key_event_set_action(
-            keyEvent_, input.pressed
-                ? (input.autoRepeat ? GHOSTTY_KEY_ACTION_REPEAT : GHOSTTY_KEY_ACTION_PRESS)
-                : GHOSTTY_KEY_ACTION_RELEASE);
+            keyEvent_,
+            input.pressed ? (input.autoRepeat ? GHOSTTY_KEY_ACTION_REPEAT
+                                              : GHOSTTY_KEY_ACTION_PRESS)
+                          : GHOSTTY_KEY_ACTION_RELEASE);
 
         GhosttyKey key = mapNativeScanCode(input.nativeScanCode);
         if (key == GHOSTTY_KEY_UNIDENTIFIED) {
             key = mapQtKey(input.key);
         }
-        const auto qtModifiers = static_cast<Qt::KeyboardModifiers>(input.modifiers);
+        const auto qtModifiers =
+            static_cast<Qt::KeyboardModifiers>(input.modifiers);
         if (qtModifiers.testFlag(Qt::KeypadModifier)) {
             if (input.key >= Qt::Key_0 && input.key <= Qt::Key_9) {
-                key = static_cast<GhosttyKey>(GHOSTTY_KEY_NUMPAD_0 + input.key - Qt::Key_0);
-            } else if (input.key == Qt::Key_Enter || input.key == Qt::Key_Return) {
+                key = static_cast<GhosttyKey>(GHOSTTY_KEY_NUMPAD_0 + input.key
+                                              - Qt::Key_0);
+            } else if (input.key == Qt::Key_Enter
+                       || input.key == Qt::Key_Return) {
                 key = GHOSTTY_KEY_NUMPAD_ENTER;
             } else if (input.key == Qt::Key_Plus) {
                 key = GHOSTTY_KEY_NUMPAD_ADD;
@@ -1129,24 +1122,27 @@ public:
         ghostty_key_event_set_mods(keyEvent_, mapQtModifiers(input.modifiers));
         ghostty_key_event_set_consumed_mods(keyEvent_, 0);
         ghostty_key_event_set_composing(keyEvent_, input.composing);
-        ghostty_key_event_set_unshifted_codepoint(keyEvent_, input.unshiftedCodepoint);
+        ghostty_key_event_set_unshifted_codepoint(keyEvent_,
+                                                  input.unshiftedCodepoint);
 
         QByteArray utf8 = input.text.toUtf8();
         if (containsControlText(utf8)) {
             utf8.clear();
         }
-        ghostty_key_event_set_utf8(keyEvent_, utf8.isEmpty() ? nullptr : utf8.constData(),
+        ghostty_key_event_set_utf8(keyEvent_,
+                                   utf8.isEmpty() ? nullptr : utf8.constData(),
                                    static_cast<size_t>(utf8.size()));
 
         QByteArray encoded(128, Qt::Uninitialized);
         size_t written = 0;
         GhosttyResult result = ghostty_key_encoder_encode(
-            keyEncoder_, keyEvent_, encoded.data(), static_cast<size_t>(encoded.size()), &written);
+            keyEncoder_, keyEvent_, encoded.data(),
+            static_cast<size_t>(encoded.size()), &written);
         if (result == GHOSTTY_OUT_OF_SPACE) {
             encoded.resize(static_cast<qsizetype>(written));
             result = ghostty_key_encoder_encode(
-                keyEncoder_, keyEvent_, encoded.data(), static_cast<size_t>(encoded.size()),
-                &written);
+                keyEncoder_, keyEvent_, encoded.data(),
+                static_cast<size_t>(encoded.size()), &written);
         }
         if (result != GHOSTTY_SUCCESS) {
             encoded.clear();
@@ -1168,9 +1164,11 @@ public:
         size.screen_height = boundedU32(geometry_.surfaceHeightPixels);
         size.cell_width = boundedU32(geometry_.cellWidthPixels);
         size.cell_height = boundedU32(geometry_.cellHeightPixels);
-        ghostty_mouse_encoder_setopt(mouseEncoder_, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
-        ghostty_mouse_encoder_setopt(mouseEncoder_, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
-                                     &input.anyButtonPressed);
+        ghostty_mouse_encoder_setopt(mouseEncoder_,
+                                     GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
+        ghostty_mouse_encoder_setopt(
+            mouseEncoder_, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
+            &input.anyButtonPressed);
         GhosttyMouseAction action = GHOSTTY_MOUSE_ACTION_MOTION;
         if (input.action == TerminalMouseInput::Press) {
             action = GHOSTTY_MOUSE_ACTION_PRESS;
@@ -1184,19 +1182,21 @@ public:
         } else {
             ghostty_mouse_event_set_button(mouseEvent_, button);
         }
-        ghostty_mouse_event_set_mods(mouseEvent_, mapQtModifiers(input.modifiers));
-        ghostty_mouse_event_set_position(mouseEvent_, GhosttyMousePosition{input.x, input.y});
+        ghostty_mouse_event_set_mods(mouseEvent_,
+                                     mapQtModifiers(input.modifiers));
+        ghostty_mouse_event_set_position(
+            mouseEvent_, GhosttyMousePosition{input.x, input.y});
 
         QByteArray encoded(128, Qt::Uninitialized);
         size_t written = 0;
         GhosttyResult result = ghostty_mouse_encoder_encode(
-            mouseEncoder_, mouseEvent_, encoded.data(), static_cast<size_t>(encoded.size()),
-            &written);
+            mouseEncoder_, mouseEvent_, encoded.data(),
+            static_cast<size_t>(encoded.size()), &written);
         if (result == GHOSTTY_OUT_OF_SPACE) {
             encoded.resize(static_cast<qsizetype>(written));
             result = ghostty_mouse_encoder_encode(
-                mouseEncoder_, mouseEvent_, encoded.data(), static_cast<size_t>(encoded.size()),
-                &written);
+                mouseEncoder_, mouseEvent_, encoded.data(),
+                static_cast<size_t>(encoded.size()), &written);
         }
         if (result != GHOSTTY_SUCCESS) {
             return {};
@@ -1209,16 +1209,16 @@ public:
     {
         bool tracking = false;
         return ghostty_terminal_get(
-                   terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
-                   &tracking)
-                == GHOSTTY_SUCCESS
+                   terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking)
+            == GHOSTTY_SUCCESS
             && tracking;
     }
 
     QByteArray encodeFocus(bool focused) const
     {
         bool reportFocus = false;
-        if (ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_FOCUS_EVENT, &reportFocus)
+        if (ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_FOCUS_EVENT,
+                                      &reportFocus)
                 != GHOSTTY_SUCCESS
             || !reportFocus) {
             return {};
@@ -1226,7 +1226,8 @@ public:
 
         std::array<char, 16> buffer{};
         size_t written = 0;
-        if (ghostty_focus_encode(focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST,
+        if (ghostty_focus_encode(focused ? GHOSTTY_FOCUS_GAINED
+                                         : GHOSTTY_FOCUS_LOST,
                                  buffer.data(), buffer.size(), &written)
             != GHOSTTY_SUCCESS) {
             return {};
@@ -1237,8 +1238,8 @@ public:
     bool bracketedPasteMode() const
     {
         bool bracketed = false;
-        (void) ghostty_terminal_mode_get(
-            terminal_, GHOSTTY_MODE_BRACKETED_PASTE, &bracketed);
+        (void)ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_BRACKETED_PASTE,
+                                        &bracketed);
         return bracketed;
     }
 
@@ -1250,13 +1251,15 @@ public:
         QByteArray encoded(mutableInput.size() + 32, Qt::Uninitialized);
         size_t written = 0;
         GhosttyResult result = ghostty_paste_encode(
-            mutableInput.data(), static_cast<size_t>(mutableInput.size()), bracketed,
-            encoded.data(), static_cast<size_t>(encoded.size()), &written);
+            mutableInput.data(), static_cast<size_t>(mutableInput.size()),
+            bracketed, encoded.data(), static_cast<size_t>(encoded.size()),
+            &written);
         if (result == GHOSTTY_OUT_OF_SPACE) {
             encoded.resize(static_cast<qsizetype>(written));
             result = ghostty_paste_encode(
-                mutableInput.data(), static_cast<size_t>(mutableInput.size()), bracketed,
-                encoded.data(), static_cast<size_t>(encoded.size()), &written);
+                mutableInput.data(), static_cast<size_t>(mutableInput.size()),
+                bracketed, encoded.data(), static_cast<size_t>(encoded.size()),
+                &written);
         }
         if (result != GHOSTTY_SUCCESS) {
             return {};
@@ -1270,9 +1273,9 @@ public:
         return encodePaste(text.toUtf8(), bracketedPasteMode());
     }
 
-    GhosttyVtAdapter::PreparedPaste preparePaste(
-        const QString &text,
-        const GhosttyVtAdapter::PastePreparationOptions &options) const
+    GhosttyVtAdapter::PreparedPaste
+    preparePaste(const QString &text,
+                 const GhosttyVtAdapter::PastePreparationOptions &options) const
     {
         if (text.isEmpty()) {
             return {
@@ -1291,10 +1294,10 @@ public:
             const bool baselineSafe = ghostty_paste_is_safe(
                 utf8.constData(), static_cast<size_t>(utf8.size()));
             if ((bracketed && containsEndFence)
-                || ((!bracketed || !options.bracketedSafe)
-                    && !baselineSafe)) {
+                || ((!bracketed || !options.bracketedSafe) && !baselineSafe)) {
                 return {
-                    .disposition = GhosttyVtAdapter::PasteDisposition::ConfirmationRequired,
+                    .disposition = GhosttyVtAdapter::PasteDisposition::
+                        ConfirmationRequired,
                     .bytes = {},
                 };
             }
@@ -1347,8 +1350,7 @@ public:
         return QString::fromUtf8(output);
     }
 
-    PlainFileSnapshot snapshotPlainFile(
-        TerminalFileLocation location) const
+    PlainFileSnapshot snapshotPlainFile(TerminalFileLocation location) const
     {
         const auto withoutBytes = [](PlainFileSnapshotStatus status) {
             return PlainFileSnapshot{
@@ -1370,8 +1372,7 @@ public:
             const GhosttyResult selectionResult = ghostty_terminal_get(
                 terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection);
             if (selectionResult == GHOSTTY_NO_VALUE) {
-                return withoutBytes(
-                    PlainFileSnapshotStatus::Unavailable);
+                return withoutBytes(PlainFileSnapshotStatus::Unavailable);
             }
             if (selectionResult != GHOSTTY_SUCCESS) {
                 return withoutBytes(PlainFileSnapshotStatus::Failed);
@@ -1381,14 +1382,14 @@ public:
         }
         case TerminalFileLocation::Scrollback: {
             size_t scrollbackRows = 0;
-            if (ghostty_terminal_get(
-                    terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
-                    &scrollbackRows) != GHOSTTY_SUCCESS) {
+            if (ghostty_terminal_get(terminal_,
+                                     GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+                                     &scrollbackRows)
+                != GHOSTTY_SUCCESS) {
                 return withoutBytes(PlainFileSnapshotStatus::Failed);
             }
             if (scrollbackRows == 0) {
-                return withoutBytes(
-                    PlainFileSnapshotStatus::Unavailable);
+                return withoutBytes(PlainFileSnapshotStatus::Unavailable);
             }
             GhosttyPoint start{};
             start.tag = GHOSTTY_POINT_TAG_SCREEN;
@@ -1402,11 +1403,9 @@ public:
                 .x = 0,
                 .y = 0,
             };
-            if (ghostty_terminal_grid_ref(
-                    terminal_, start, &selection.start)
+            if (ghostty_terminal_grid_ref(terminal_, start, &selection.start)
                     != GHOSTTY_SUCCESS
-                || ghostty_terminal_grid_ref(
-                    terminal_, end, &selection.end)
+                || ghostty_terminal_grid_ref(terminal_, end, &selection.end)
                     != GHOSTTY_SUCCESS) {
                 return withoutBytes(PlainFileSnapshotStatus::Failed);
             }
@@ -1414,12 +1413,12 @@ public:
             // Move from active top to the immediately preceding history row,
             // then ask libghostty for that stored page's real last column.
             // This remains exact while lazy reflow leaves page widths mixed.
-            if (ghostty_terminal_selection_adjust(
-                    terminal_, &selection,
-                    GHOSTTY_SELECTION_ADJUST_UP) != GHOSTTY_SUCCESS
+            if (ghostty_terminal_selection_adjust(terminal_, &selection,
+                                                  GHOSTTY_SELECTION_ADJUST_UP)
+                    != GHOSTTY_SUCCESS
                 || ghostty_terminal_selection_adjust(
-                    terminal_, &selection,
-                    GHOSTTY_SELECTION_ADJUST_END_OF_LINE)
+                       terminal_, &selection,
+                       GHOSTTY_SELECTION_ADJUST_END_OF_LINE)
                     != GHOSTTY_SUCCESS) {
                 return withoutBytes(PlainFileSnapshotStatus::Failed);
             }
@@ -1438,35 +1437,30 @@ public:
         options.extra.screen.size = sizeof(options.extra.screen);
 
         GhosttyFormatter formatter = nullptr;
-        if (ghostty_formatter_terminal_new(
-                nullptr, &formatter, terminal_, options)
+        if (ghostty_formatter_terminal_new(nullptr, &formatter, terminal_,
+                                           options)
             != GHOSTTY_SUCCESS) {
             return withoutBytes(PlainFileSnapshotStatus::Failed);
         }
-        const auto formatterCleanup = qScopeGuard([formatter] {
-            ghostty_formatter_free(formatter);
-        });
+        const auto formatterCleanup =
+            qScopeGuard([formatter] { ghostty_formatter_free(formatter); });
 
         size_t required = 0;
-        GhosttyResult result = ghostty_formatter_format_buf(
-            formatter, nullptr, 0, &required);
-        if ((result != GHOSTTY_OUT_OF_SPACE
-             && result != GHOSTTY_SUCCESS)
+        GhosttyResult result =
+            ghostty_formatter_format_buf(formatter, nullptr, 0, &required);
+        if ((result != GHOSTTY_OUT_OF_SPACE && result != GHOSTTY_SUCCESS)
             || required
-                > static_cast<size_t>(
-                    std::numeric_limits<qsizetype>::max())) {
+                > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
             return withoutBytes(PlainFileSnapshotStatus::Failed);
         }
         if (required == 0) {
             return withoutBytes(PlainFileSnapshotStatus::Ready);
         }
 
-        QByteArray output(
-            static_cast<qsizetype>(required), Qt::Uninitialized);
+        QByteArray output(static_cast<qsizetype>(required), Qt::Uninitialized);
         size_t written = 0;
         result = ghostty_formatter_format_buf(
-            formatter,
-            reinterpret_cast<uint8_t *>(output.data()),
+            formatter, reinterpret_cast<uint8_t *>(output.data()),
             static_cast<size_t>(output.size()), &written);
         if (result != GHOSTTY_SUCCESS
             || written > static_cast<size_t>(output.size())) {
@@ -1483,14 +1477,15 @@ public:
     {
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        return ghostty_terminal_get(
-                   terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection)
+        return ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION,
+                                    &selection)
             == GHOSTTY_SUCCESS;
     }
 
     void clearSelection()
     {
-        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
+        ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION,
+                             nullptr);
     }
 
     void clearSelectionAndResetGesture()
@@ -1501,9 +1496,8 @@ public:
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
     {
-        return pointToGridRefExact(
-            std::clamp(column, 0, geometry_.columns - 1),
-            std::clamp(row, 0, geometry_.rows - 1), out);
+        return pointToGridRefExact(std::clamp(column, 0, geometry_.columns - 1),
+                                   std::clamp(row, 0, geometry_.rows - 1), out);
     }
 
     bool pointToGridRefExact(int column, int row, GhosttyGridRef *out) const
@@ -1511,8 +1505,8 @@ public:
         if (out == nullptr) {
             return false;
         }
-        if (column < 0 || column >= geometry_.columns
-            || row < 0 || row >= geometry_.rows) {
+        if (column < 0 || column >= geometry_.columns || row < 0
+            || row >= geometry_.rows) {
             return false;
         }
         GhosttyPoint point{};
@@ -1521,33 +1515,34 @@ public:
         point.value.coordinate.y = static_cast<uint32_t>(row);
         *out = GhosttyGridRef{};
         out->size = sizeof(*out);
-        return ghostty_terminal_grid_ref(terminal_, point, out) == GHOSTTY_SUCCESS;
+        return ghostty_terminal_grid_ref(terminal_, point, out)
+            == GHOSTTY_SUCCESS;
     }
 
     std::optional<GhosttyTerminalScreen> activeScreen() const
     {
         GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
-        if (ghostty_terminal_get(
-                terminal_, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+                                 &screen)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
         return screen;
     }
 
-    std::optional<QByteArray> hyperlinkUri(
-        const GhosttyGridRef &reference) const
+    std::optional<QByteArray>
+    hyperlinkUri(const GhosttyGridRef &reference) const
     {
         size_t required = 0;
-        GhosttyResult result = ghostty_grid_ref_hyperlink_uri(
-            &reference, nullptr, 0, &required);
+        GhosttyResult result =
+            ghostty_grid_ref_hyperlink_uri(&reference, nullptr, 0, &required);
         if (result == GHOSTTY_SUCCESS && required == 0) {
             return QByteArray{};
         }
         if ((result != GHOSTTY_OUT_OF_SPACE && result != GHOSTTY_SUCCESS)
             || required == 0
-            || required > static_cast<size_t>(
-                   std::numeric_limits<qsizetype>::max())) {
+            || required
+                > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
             return std::nullopt;
         }
 
@@ -1574,8 +1569,8 @@ public:
 
     std::optional<TrackedHyperlink> trackHyperlinkAt(int column, int row) const
     {
-        if (column < 0 || column >= geometry_.columns
-            || row < 0 || row >= geometry_.rows) {
+        if (column < 0 || column >= geometry_.columns || row < 0
+            || row >= geometry_.rows) {
             return std::nullopt;
         }
 
@@ -1584,14 +1579,14 @@ public:
             return std::nullopt;
         }
 
-        auto tracked = std::make_unique<TrackedHyperlink::Impl>(
-            ownerToken_, *screen);
+        auto tracked =
+            std::make_unique<TrackedHyperlink::Impl>(ownerToken_, *screen);
         GhosttyPoint point{};
         point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
         point.value.coordinate.x = static_cast<uint16_t>(column);
         point.value.coordinate.y = static_cast<uint32_t>(row);
-        if (ghostty_terminal_grid_ref_track(
-                terminal_, point, &tracked->reference_)
+        if (ghostty_terminal_grid_ref_track(terminal_, point,
+                                            &tracked->reference_)
                 != GHOSTTY_SUCCESS
             || tracked->reference_ == nullptr) {
             return std::nullopt;
@@ -1599,8 +1594,7 @@ public:
 
         GhosttyGridRef snapshot{};
         snapshot.size = sizeof(snapshot);
-        if (ghostty_tracked_grid_ref_snapshot(
-                tracked->reference_, &snapshot)
+        if (ghostty_tracked_grid_ref_snapshot(tracked->reference_, &snapshot)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
@@ -1612,8 +1606,8 @@ public:
         return TrackedHyperlink(std::move(tracked));
     }
 
-    std::optional<QByteArray> currentTrackedHyperlinkUri(
-        const TrackedHyperlink::Impl &target) const
+    std::optional<QByteArray>
+    currentTrackedHyperlinkUri(const TrackedHyperlink::Impl &target) const
     {
         if (target.reference_ == nullptr
             || target.owner_.get() != ownerToken_.get()) {
@@ -1622,15 +1616,13 @@ public:
 
         GhosttyGridRef snapshot{};
         snapshot.size = sizeof(snapshot);
-        if (ghostty_tracked_grid_ref_snapshot(
-                target.reference_, &snapshot)
+        if (ghostty_tracked_grid_ref_snapshot(target.reference_, &snapshot)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
 
         std::optional<QByteArray> uri = hyperlinkUri(snapshot);
-        if (!uri.has_value() || uri->isEmpty()
-            || *uri != target.uri_) {
+        if (!uri.has_value() || uri->isEmpty() || *uri != target.uri_) {
             return std::nullopt;
         }
         return uri;
@@ -1641,9 +1633,9 @@ public:
         return currentTrackedHyperlinkUri(target).has_value();
     }
 
-    std::optional<HyperlinkMatch> resolveHyperlink(
-        const TrackedHyperlink::Impl &target,
-        const QVector<QPoint> &candidateCells) const
+    std::optional<HyperlinkMatch>
+    resolveHyperlink(const TrackedHyperlink::Impl &target,
+                     const QVector<QPoint> &candidateCells) const
     {
         if (target.reference_ == nullptr
             || target.owner_.get() != ownerToken_.get()) {
@@ -1658,7 +1650,7 @@ public:
         GhosttyPointCoordinate coordinate{};
         if (ghostty_tracked_grid_ref_point(
                 target.reference_, GHOSTTY_POINT_TAG_VIEWPORT, &coordinate)
-            != GHOSTTY_SUCCESS
+                != GHOSTTY_SUCCESS
             || static_cast<int>(coordinate.x) >= geometry_.columns
             || coordinate.y > static_cast<uint32_t>(INT_MAX)
             || static_cast<int>(coordinate.y) >= geometry_.rows) {
@@ -1678,8 +1670,8 @@ public:
         match.targetCell = targetCell;
         match.cells.reserve(candidateCells.size());
         for (const QPoint &candidate : candidateCells) {
-            const std::optional<QByteArray> candidateUri = hyperlinkUriAt(
-                candidate.x(), candidate.y());
+            const std::optional<QByteArray> candidateUri =
+                hyperlinkUriAt(candidate.x(), candidate.y());
             if (candidateUri.has_value() && *candidateUri == match.uri) {
                 match.cells.append(candidate);
             }
@@ -1723,16 +1715,14 @@ public:
             length = 2;
         } else if (codepoint <= 0xffffU) {
             encoded[0] = static_cast<char>(0xe0U | (codepoint >> 12U));
-            encoded[1] = static_cast<char>(
-                0x80U | ((codepoint >> 6U) & 0x3fU));
+            encoded[1] = static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU));
             encoded[2] = static_cast<char>(0x80U | (codepoint & 0x3fU));
             length = 3;
         } else {
             encoded[0] = static_cast<char>(0xf0U | (codepoint >> 18U));
-            encoded[1] = static_cast<char>(
-                0x80U | ((codepoint >> 12U) & 0x3fU));
-            encoded[2] = static_cast<char>(
-                0x80U | ((codepoint >> 6U) & 0x3fU));
+            encoded[1] =
+                static_cast<char>(0x80U | ((codepoint >> 12U) & 0x3fU));
+            encoded[2] = static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3fU));
             encoded[3] = static_cast<char>(0x80U | (codepoint & 0x3fU));
             length = 4;
         }
@@ -1743,8 +1733,8 @@ public:
         return true;
     }
 
-    std::optional<QByteArray> graphemeUtf8(
-        const GhosttyGridRef &reference) const
+    std::optional<QByteArray>
+    graphemeUtf8(const GhosttyGridRef &reference) const
     {
         std::array<uint32_t, 16> storage{};
         size_t length = 0;
@@ -1756,7 +1746,7 @@ public:
         if (result == GHOSTTY_OUT_OF_SPACE) {
             if (length > static_cast<size_t>(maximumLogicalLineBytes)
                 || length > static_cast<size_t>(
-                    std::numeric_limits<qsizetype>::max())) {
+                       std::numeric_limits<qsizetype>::max())) {
                 return std::nullopt;
             }
             dynamic.resize(static_cast<qsizetype>(length));
@@ -1766,15 +1756,14 @@ public:
             codepoints = dynamic.constData();
         }
         if (result != GHOSTTY_SUCCESS
-            || length > static_cast<size_t>(
-                std::numeric_limits<qsizetype>::max())) {
+            || length
+                > static_cast<size_t>(std::numeric_limits<qsizetype>::max())) {
             return std::nullopt;
         }
 
         QByteArray output;
-        output.reserve(static_cast<qsizetype>(
-            std::min<size_t>(length * 4U,
-                             static_cast<size_t>(maximumLogicalLineBytes))));
+        output.reserve(static_cast<qsizetype>(std::min<size_t>(
+            length * 4U, static_cast<size_t>(maximumLogicalLineBytes))));
         for (size_t index = 0; index < length; ++index) {
             if (!appendUtf8Codepoint(&output, codepoints[index])) {
                 return std::nullopt;
@@ -1783,17 +1772,17 @@ public:
         return output;
     }
 
-    std::optional<TextMapData> textMapBetween(
-        ScreenCell start, ScreenCell end,
-        bool includeTrailingEmptyStorage = false) const
+    std::optional<TextMapData>
+    textMapBetween(ScreenCell start, ScreenCell end,
+                   bool includeTrailingEmptyStorage = false) const
     {
         if (end < start) {
             std::swap(start, end);
         }
 
         uint16_t liveColumns = 0;
-        if (ghostty_terminal_get(
-                terminal_, GHOSTTY_TERMINAL_DATA_COLS, &liveColumns)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_COLS,
+                                 &liveColumns)
                 != GHOSTTY_SUCCESS
             || liveColumns == 0) {
             return std::nullopt;
@@ -1820,8 +1809,8 @@ public:
                 return false;
             }
             data.byteCells.resize(oldSize + bytes.size());
-            std::fill(data.byteCells.begin() + oldSize,
-                      data.byteCells.end(), cell);
+            std::fill(data.byteCells.begin() + oldSize, data.byteCells.end(),
+                      cell);
             return true;
         };
         const auto flushBlanks = [&pendingBlanks, &appendMapped]() {
@@ -1837,9 +1826,7 @@ public:
         uint32_t y = start.y;
         for (;;) {
             const int firstColumn = y == start.y ? start.x : 0;
-            const int lastColumn = y == end.y
-                ? end.x
-                : terminalColumns - 1;
+            const int lastColumn = y == end.y ? end.x : terminalColumns - 1;
             if (firstColumn < 0 || lastColumn < firstColumn
                 || lastColumn >= terminalColumns) {
                 return std::nullopt;
@@ -1884,8 +1871,7 @@ public:
                 GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
                 if (ghostty_grid_ref_cell(&reference, &rawCell)
                         != GHOSTTY_SUCCESS
-                    || ghostty_cell_get(
-                           rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+                    || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
                         != GHOSTTY_SUCCESS) {
                     return std::nullopt;
                 }
@@ -1933,8 +1919,8 @@ public:
         return data;
     }
 
-    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(
-        int column, int row) const
+    std::optional<LogicalLineSnapshot> snapshotLogicalLineAt(int column,
+                                                             int row) const
     {
         GhosttyGridRef targetReference{};
         if (!pointToGridRefExact(column, row, &targetReference)) {
@@ -1958,17 +1944,16 @@ public:
         options.semantic_prompt_boundary = true;
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        if (ghostty_terminal_select_line(
-                terminal_, &options, &selection)
+        if (ghostty_terminal_select_line(terminal_, &options, &selection)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
 
         GhosttySelection ordered{};
         ordered.size = sizeof(ordered);
-        if (ghostty_terminal_selection_ordered(
-                terminal_, &selection, GHOSTTY_SELECTION_ORDER_FORWARD,
-                &ordered)
+        if (ghostty_terminal_selection_ordered(terminal_, &selection,
+                                               GHOSTTY_SELECTION_ORDER_FORWARD,
+                                               &ordered)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
@@ -1976,24 +1961,24 @@ public:
         GhosttyPointCoordinate startCoordinate{};
         GhosttyPointCoordinate endCoordinate{};
         GhosttyPointCoordinate targetCoordinate{};
-        if (ghostty_terminal_point_from_grid_ref(
-                terminal_, &ordered.start, GHOSTTY_POINT_TAG_SCREEN,
-                &startCoordinate)
+        if (ghostty_terminal_point_from_grid_ref(terminal_, &ordered.start,
+                                                 GHOSTTY_POINT_TAG_SCREEN,
+                                                 &startCoordinate)
                 != GHOSTTY_SUCCESS
-            || ghostty_terminal_point_from_grid_ref(
-                   terminal_, &ordered.end, GHOSTTY_POINT_TAG_SCREEN,
-                   &endCoordinate)
-                   != GHOSTTY_SUCCESS
-            || ghostty_terminal_point_from_grid_ref(
-                   terminal_, &targetReference, GHOSTTY_POINT_TAG_SCREEN,
-                   &targetCoordinate)
-                   != GHOSTTY_SUCCESS) {
+            || ghostty_terminal_point_from_grid_ref(terminal_, &ordered.end,
+                                                    GHOSTTY_POINT_TAG_SCREEN,
+                                                    &endCoordinate)
+                != GHOSTTY_SUCCESS
+            || ghostty_terminal_point_from_grid_ref(terminal_, &targetReference,
+                                                    GHOSTTY_POINT_TAG_SCREEN,
+                                                    &targetCoordinate)
+                != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
 
-        std::optional<TextMapData> data = textMapBetween(
-            ScreenCell{startCoordinate.x, startCoordinate.y},
-            ScreenCell{endCoordinate.x, endCoordinate.y});
+        std::optional<TextMapData> data =
+            textMapBetween(ScreenCell{startCoordinate.x, startCoordinate.y},
+                           ScreenCell{endCoordinate.x, endCoordinate.y});
         if (!data.has_value()) {
             return std::nullopt;
         }
@@ -2002,14 +1987,12 @@ public:
         GhosttyCellWide targetWide = GHOSTTY_CELL_WIDE_NARROW;
         if (ghostty_grid_ref_cell(&targetReference, &targetCell)
                 != GHOSTTY_SUCCESS
-            || ghostty_cell_get(
-                   targetCell, GHOSTTY_CELL_DATA_WIDE, &targetWide)
+            || ghostty_cell_get(targetCell, GHOSTTY_CELL_DATA_WIDE, &targetWide)
                 != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
         ScreenCell mappedTarget{targetCoordinate.x, targetCoordinate.y};
-        if (targetWide == GHOSTTY_CELL_WIDE_SPACER_TAIL
-            && mappedTarget.x > 0) {
+        if (targetWide == GHOSTTY_CELL_WIDE_SPACER_TAIL && mappedTarget.x > 0) {
             --mappedTarget.x;
         }
 
@@ -2040,17 +2023,16 @@ public:
         point.value.coordinate.x = cell.x;
         point.value.coordinate.y = cell.y;
         return ghostty_terminal_grid_ref_track(terminal_, point, out)
-                == GHOSTTY_SUCCESS
+            == GHOSTTY_SUCCESS
             && *out != nullptr;
     }
 
-    std::optional<TrackedTextRange> trackTextRange(
-        const LogicalLineSnapshot::Impl &line,
-        qsizetype beginByte, qsizetype endByte) const
+    std::optional<TrackedTextRange>
+    trackTextRange(const LogicalLineSnapshot::Impl &line, qsizetype beginByte,
+                   qsizetype endByte) const
     {
-        if (line.owner_.get() != ownerToken_.get()
-            || beginByte < 0 || endByte <= beginByte
-            || endByte > line.data_.text.size()
+        if (line.owner_.get() != ownerToken_.get() || beginByte < 0
+            || endByte <= beginByte || endByte > line.data_.text.size()
             || line.data_.byteCells.size() != line.data_.text.size()) {
             return std::nullopt;
         }
@@ -2064,8 +2046,8 @@ public:
 
         const ScreenCell startCell = line.data_.byteCells.at(beginByte);
         const ScreenCell endCell = line.data_.byteCells.at(endByte - 1);
-        auto tracked = std::make_unique<TrackedTextRange::Impl>(
-            ownerToken_, line.screen_);
+        auto tracked =
+            std::make_unique<TrackedTextRange::Impl>(ownerToken_, line.screen_);
         if (!trackScreenCell(startCell, &tracked->start_)
             || !trackScreenCell(endCell, &tracked->end_)
             || !trackScreenCell(line.targetCell_, &tracked->target_)) {
@@ -2077,14 +2059,14 @@ public:
         if (!covered.has_value() || covered->text.isEmpty()) {
             return std::nullopt;
         }
-        tracked->matchedText_ = line.data_.text.sliced(
-            beginByte, endByte - beginByte);
+        tracked->matchedText_ =
+            line.data_.text.sliced(beginByte, endByte - beginByte);
         tracked->coveredText_ = covered->text;
         return TrackedTextRange(std::move(tracked));
     }
 
-    bool trackedTextRangeEndpointsValid(
-        const TrackedTextRange::Impl &range) const
+    bool
+    trackedTextRangeEndpointsValid(const TrackedTextRange::Impl &range) const
     {
         return range.owner_.get() == ownerToken_.get()
             && range.start_ != nullptr && range.end_ != nullptr
@@ -2094,8 +2076,8 @@ public:
             && ghostty_tracked_grid_ref_has_value(range.target_);
     }
 
-    std::optional<TextMapData> currentTextRangeData(
-        const TrackedTextRange::Impl &range) const
+    std::optional<TextMapData>
+    currentTextRangeData(const TrackedTextRange::Impl &range) const
     {
         if (!trackedTextRangeEndpointsValid(range)) {
             return std::nullopt;
@@ -2107,12 +2089,12 @@ public:
 
         GhosttyPointCoordinate start{};
         GhosttyPointCoordinate end{};
-        if (ghostty_tracked_grid_ref_point(
-                range.start_, GHOSTTY_POINT_TAG_SCREEN, &start)
+        if (ghostty_tracked_grid_ref_point(range.start_,
+                                           GHOSTTY_POINT_TAG_SCREEN, &start)
                 != GHOSTTY_SUCCESS
-            || ghostty_tracked_grid_ref_point(
-                   range.end_, GHOSTTY_POINT_TAG_SCREEN, &end)
-                   != GHOSTTY_SUCCESS) {
+            || ghostty_tracked_grid_ref_point(range.end_,
+                                              GHOSTTY_POINT_TAG_SCREEN, &end)
+                != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
         return textMapBetween(ScreenCell{start.x, start.y},
@@ -2131,14 +2113,12 @@ public:
         if (*screen != range.screen_) {
             return true;
         }
-        const std::optional<TextMapData> current =
-            currentTextRangeData(range);
-        return current.has_value()
-            && current->text == range.coveredText_;
+        const std::optional<TextMapData> current = currentTextRangeData(range);
+        return current.has_value() && current->text == range.coveredText_;
     }
 
-    std::optional<TextRangeMatch> resolveTextRange(
-        const TrackedTextRange::Impl &range) const
+    std::optional<TextRangeMatch>
+    resolveTextRange(const TrackedTextRange::Impl &range) const
     {
         const std::optional<TextMapData> current = currentTextRangeData(range);
         if (!current.has_value() || current->text != range.coveredText_) {
@@ -2155,13 +2135,12 @@ public:
             || targetViewport.y >= static_cast<uint32_t>(geometry_.rows)) {
             return std::nullopt;
         }
-        match.targetCell = QPoint(targetViewport.x,
-                                  static_cast<int>(targetViewport.y));
+        match.targetCell =
+            QPoint(targetViewport.x, static_cast<int>(targetViewport.y));
 
         GhosttyGridRef targetSnapshot{};
         targetSnapshot.size = sizeof(targetSnapshot);
-        if (ghostty_tracked_grid_ref_snapshot(
-                range.target_, &targetSnapshot)
+        if (ghostty_tracked_grid_ref_snapshot(range.target_, &targetSnapshot)
             != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
@@ -2176,25 +2155,25 @@ public:
         lineSelection.size = sizeof(lineSelection);
         GhosttySelection orderedLine{};
         orderedLine.size = sizeof(orderedLine);
-        if (ghostty_terminal_select_line(
-                terminal_, &lineOptions, &lineSelection)
+        if (ghostty_terminal_select_line(terminal_, &lineOptions,
+                                         &lineSelection)
                 != GHOSTTY_SUCCESS
             || ghostty_terminal_selection_ordered(
-                   terminal_, &lineSelection,
-                   GHOSTTY_SELECTION_ORDER_FORWARD, &orderedLine)
-                   != GHOSTTY_SUCCESS) {
+                   terminal_, &lineSelection, GHOSTTY_SELECTION_ORDER_FORWARD,
+                   &orderedLine)
+                != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
         GhosttyPointCoordinate lineStart{};
         GhosttyPointCoordinate lineEnd{};
-        if (ghostty_terminal_point_from_grid_ref(
-                terminal_, &orderedLine.start, GHOSTTY_POINT_TAG_SCREEN,
-                &lineStart)
+        if (ghostty_terminal_point_from_grid_ref(terminal_, &orderedLine.start,
+                                                 GHOSTTY_POINT_TAG_SCREEN,
+                                                 &lineStart)
                 != GHOSTTY_SUCCESS
-            || ghostty_terminal_point_from_grid_ref(
-                   terminal_, &orderedLine.end, GHOSTTY_POINT_TAG_SCREEN,
-                   &lineEnd)
-                   != GHOSTTY_SUCCESS) {
+            || ghostty_terminal_point_from_grid_ref(terminal_, &orderedLine.end,
+                                                    GHOSTTY_POINT_TAG_SCREEN,
+                                                    &lineEnd)
+                != GHOSTTY_SUCCESS) {
             return std::nullopt;
         }
         if (lineEnd.y < lineStart.y) {
@@ -2202,11 +2181,10 @@ public:
         }
         const quint64 logicalRowCount =
             static_cast<quint64>(lineEnd.y) - lineStart.y + 1U;
-        const quint64 logicalColumnCount = static_cast<quint64>(
-            std::max(geometry_.columns, 1));
+        const quint64 logicalColumnCount =
+            static_cast<quint64>(std::max(geometry_.columns, 1));
         if (logicalRowCount > maximumLogicalLineCells
-            || logicalRowCount * logicalColumnCount
-                > maximumLogicalLineCells) {
+            || logicalRowCount * logicalColumnCount > maximumLogicalLineCells) {
             return std::nullopt;
         }
         uint32_t lineY = lineStart.y;
@@ -2215,8 +2193,8 @@ public:
             GhosttyPointCoordinate viewportRow{};
             if (gridRefAtScreen(ScreenCell{0, lineY}, &rowReference)
                 && ghostty_terminal_point_from_grid_ref(
-                       terminal_, &rowReference,
-                       GHOSTTY_POINT_TAG_VIEWPORT, &viewportRow)
+                       terminal_, &rowReference, GHOSTTY_POINT_TAG_VIEWPORT,
+                       &viewportRow)
                     == GHOSTTY_SUCCESS
                 && viewportRow.y < static_cast<uint32_t>(geometry_.rows)) {
                 const int visibleRow = static_cast<int>(viewportRow.y);
@@ -2234,8 +2212,8 @@ public:
         QSet<quint64> visitedScreenCells;
         QSet<quint64> visitedViewportCells;
         for (const ScreenCell &cell : current->byteCells) {
-            const quint64 screenKey = (static_cast<quint64>(cell.y) << 16U)
-                | cell.x;
+            const quint64 screenKey =
+                (static_cast<quint64>(cell.y) << 16U) | cell.x;
             if (visitedScreenCells.contains(screenKey)) {
                 continue;
             }
@@ -2255,17 +2233,15 @@ public:
 
             GhosttyCell rawCell = 0;
             GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
-            if (ghostty_grid_ref_cell(&reference, &rawCell)
-                    != GHOSTTY_SUCCESS
-                || ghostty_cell_get(
-                       rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+            if (ghostty_grid_ref_cell(&reference, &rawCell) != GHOSTTY_SUCCESS
+                || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
                     != GHOSTTY_SUCCESS) {
                 return std::nullopt;
             }
 
             const auto appendViewportCell = [&](int x, int y) {
-                const quint64 key = (static_cast<quint64>(y) << 32U)
-                    | static_cast<quint32>(x);
+                const quint64 key =
+                    (static_cast<quint64>(y) << 32U) | static_cast<quint32>(x);
                 if (!visitedViewportCells.contains(key)) {
                     visitedViewportCells.insert(key);
                     match.cells.append(QPoint(x, y));
@@ -2274,9 +2250,8 @@ public:
             appendViewportCell(viewport.x, static_cast<int>(viewport.y));
             if (wide == GHOSTTY_CELL_WIDE_WIDE
                 && static_cast<int>(viewport.x) + 1 < geometry_.columns) {
-                appendViewportCell(
-                    static_cast<int>(viewport.x) + 1,
-                    static_cast<int>(viewport.y));
+                appendViewportCell(static_cast<int>(viewport.x) + 1,
+                                   static_cast<int>(viewport.y));
             }
         }
 
@@ -2305,8 +2280,9 @@ public:
         return match;
     }
 
-    std::optional<HyperlinkMatch> hyperlinkAt(
-        int column, int row, const QVector<QPoint> &candidateCells) const
+    std::optional<HyperlinkMatch>
+    hyperlinkAt(int column, int row,
+                const QVector<QPoint> &candidateCells) const
     {
         const std::optional<QByteArray> uri = hyperlinkUriAt(column, row);
         if (!uri.has_value() || uri->isEmpty()) {
@@ -2318,8 +2294,8 @@ public:
         match.targetCell = QPoint(column, row);
         match.cells.reserve(candidateCells.size());
         for (const QPoint &candidate : candidateCells) {
-            const std::optional<QByteArray> candidateUri = hyperlinkUriAt(
-                candidate.x(), candidate.y());
+            const std::optional<QByteArray> candidateUri =
+                hyperlinkUriAt(candidate.x(), candidate.y());
             if (candidateUri.has_value() && *candidateUri == match.uri) {
                 match.cells.append(candidate);
             }
@@ -2487,8 +2463,8 @@ public:
             // A single press creates the drag anchor without returning an
             // installed range. Match Ghostty's surface lifecycle by clearing
             // the old range without resetting that new gesture state.
-            return ghostty_terminal_set(
-                       terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr)
+            return ghostty_terminal_set(terminal_,
+                                        GHOSTTY_TERMINAL_OPT_SELECTION, nullptr)
                 == GHOSTTY_SUCCESS;
         }
         return false;
@@ -2537,27 +2513,30 @@ public:
 
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        return ghostty_selection_gesture_event(
-                   selectionGesture_, terminal_, selectionDragEvent_, &selection)
-                == GHOSTTY_SUCCESS
+        return ghostty_selection_gesture_event(selectionGesture_, terminal_,
+                                               selectionDragEvent_, &selection)
+            == GHOSTTY_SUCCESS
             && installSelection(selection);
     }
 
     void endSelection(int column, int row)
     {
         GhosttyGridRef reference{};
-        const void *value = pointToGridRef(column, row, &reference) ? &reference : nullptr;
+        const void *value =
+            pointToGridRef(column, row, &reference) ? &reference : nullptr;
         if (ghostty_selection_gesture_event_set(
-                selectionReleaseEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, value)
+                selectionReleaseEvent_, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF,
+                value)
             == GHOSTTY_SUCCESS) {
-            ghostty_selection_gesture_event(
-                selectionGesture_, terminal_, selectionReleaseEvent_, nullptr);
+            ghostty_selection_gesture_event(selectionGesture_, terminal_,
+                                            selectionReleaseEvent_, nullptr);
         }
     }
 
     bool installSelection(const GhosttySelection &selection)
     {
-        return ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION, &selection)
+        return ghostty_terminal_set(terminal_, GHOSTTY_TERMINAL_OPT_SELECTION,
+                                    &selection)
             == GHOSTTY_SUCCESS;
     }
 
@@ -2565,7 +2544,8 @@ public:
     {
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        const GhosttyResult result = ghostty_terminal_select_all(terminal_, &selection);
+        const GhosttyResult result =
+            ghostty_terminal_select_all(terminal_, &selection);
         if (result != GHOSTTY_SUCCESS) {
             return false;
         }
@@ -2574,17 +2554,19 @@ public:
 
     bool adjustSelection(TerminalSelectionAdjustment adjustment)
     {
-        GhosttySelectionAdjust ghosttyAdjustment = GHOSTTY_SELECTION_ADJUST_LEFT;
+        GhosttySelectionAdjust ghosttyAdjustment =
+            GHOSTTY_SELECTION_ADJUST_LEFT;
         if (!toGhosttySelectionAdjustment(adjustment, &ghosttyAdjustment)) {
             return false;
         }
 
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION,
+                                 &selection)
                 != GHOSTTY_SUCCESS
-            || ghostty_terminal_selection_adjust(
-                   terminal_, &selection, ghosttyAdjustment)
+            || ghostty_terminal_selection_adjust(terminal_, &selection,
+                                                 ghosttyAdjustment)
                 != GHOSTTY_SUCCESS) {
             return false;
         }
@@ -2616,11 +2598,9 @@ public:
         case TerminalViewportRequest::Kind::Delta:
             if (request.delta == 0) return false;
             if (request.delta
-                    < static_cast<qint64>(
-                        std::numeric_limits<intptr_t>::min())
-                || request.delta
-                    > static_cast<qint64>(
-                        std::numeric_limits<intptr_t>::max())) {
+                    < static_cast<qint64>(std::numeric_limits<intptr_t>::min())
+                || request.delta > static_cast<qint64>(
+                       std::numeric_limits<intptr_t>::max())) {
                 return false;
             }
             scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
@@ -2635,8 +2615,8 @@ public:
             selection.size = sizeof(selection);
             GhosttySelection ordered{};
             ordered.size = sizeof(ordered);
-            if (ghostty_terminal_get(
-                    terminal_, GHOSTTY_TERMINAL_DATA_SELECTION, &selection)
+            if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SELECTION,
+                                     &selection)
                     != GHOSTTY_SUCCESS
                 || ghostty_terminal_selection_ordered(
                        terminal_, &selection, GHOSTTY_SELECTION_ORDER_FORWARD,
@@ -2646,8 +2626,9 @@ public:
             }
 
             GhosttyPointCoordinate topLeft{};
-            if (ghostty_terminal_point_from_grid_ref(
-                    terminal_, &ordered.start, GHOSTTY_POINT_TAG_SCREEN, &topLeft)
+            if (ghostty_terminal_point_from_grid_ref(terminal_, &ordered.start,
+                                                     GHOSTTY_POINT_TAG_SCREEN,
+                                                     &topLeft)
                 != GHOSTTY_SUCCESS) {
                 return false;
             }
@@ -2655,8 +2636,7 @@ public:
             scroll.value.row = static_cast<size_t>(topLeft.y);
             break;
         }
-        default:
-            return false;
+        default: return false;
         }
 
         ghostty_terminal_scroll_viewport(terminal_, scroll);
@@ -2681,8 +2661,8 @@ public:
             &totalRows, &columns, &rows, &screen, &scrollbar,
         };
         size_t written = 0;
-        if (ghostty_terminal_get_multi(
-                terminal_, std::size(keys), keys, values, &written)
+        if (ghostty_terminal_get_multi(terminal_, std::size(keys), keys, values,
+                                       &written)
                 != GHOSTTY_SUCCESS
             || written != std::size(keys) || columns == 0 || rows == 0
             || totalRows > static_cast<size_t>(UINT32_MAX)) {
@@ -2691,13 +2671,11 @@ public:
 
         SearchScreen searchScreen = SearchScreen::Primary;
         switch (screen) {
-        case GHOSTTY_TERMINAL_SCREEN_PRIMARY:
-            break;
+        case GHOSTTY_TERMINAL_SCREEN_PRIMARY: break;
         case GHOSTTY_TERMINAL_SCREEN_ALTERNATE:
             searchScreen = SearchScreen::Alternate;
             break;
-        default:
-            return std::nullopt;
+        default: return std::nullopt;
         }
         const quint64 viewportOffset = std::min<quint64>(
             scrollbar.offset, static_cast<quint64>(totalRows));
@@ -2706,15 +2684,14 @@ public:
             .columns = static_cast<int>(columns),
             .rows = static_cast<int>(rows),
             .viewportOffset = viewportOffset,
-            .viewportLength = std::min<quint64>(
-                scrollbar.len,
-                static_cast<quint64>(totalRows) - viewportOffset),
+            .viewportLength = std::min<quint64>(scrollbar.len,
+                                                static_cast<quint64>(totalRows)
+                                                    - viewportOffset),
             .activeScreen = searchScreen,
         };
     }
 
-    std::optional<SearchRowSnapshot> snapshotSearchRow(
-        quint32 screenRow) const
+    std::optional<SearchRowSnapshot> snapshotSearchRow(quint32 screenRow) const
     {
         const std::optional<SearchExtent> extent = searchExtent();
         if (!extent.has_value() || screenRow >= extent->totalRows
@@ -2732,8 +2709,7 @@ public:
         GhosttyRow rawRow = 0;
         bool wrapped = false;
         if (!gridRefAtScreen(start, &rowReference)
-            || ghostty_grid_ref_row(&rowReference, &rawRow)
-                != GHOSTTY_SUCCESS
+            || ghostty_grid_ref_row(&rowReference, &rawRow) != GHOSTTY_SUCCESS
             || ghostty_row_get(rawRow, GHOSTTY_ROW_DATA_WRAP, &wrapped)
                 != GHOSTTY_SUCCESS) {
             return std::nullopt;
@@ -2743,8 +2719,7 @@ public:
         // and emits them if the continuation later contains text. Preserve
         // those cells for a wrapped row; only a hard line ending owns
         // independently trimmable trailing spaces.
-        std::optional<TextMapData> data = textMapBetween(
-            start, end, wrapped);
+        std::optional<TextMapData> data = textMapBetween(start, end, wrapped);
         if (!data.has_value()) {
             return std::nullopt;
         }
@@ -2776,8 +2751,7 @@ public:
         return snapshot;
     }
 
-    QVector<QPoint> visibleCellsForSearchRange(
-        TerminalSearchRange range) const
+    QVector<QPoint> visibleCellsForSearchRange(TerminalSearchRange range) const
     {
         const std::optional<SearchExtent> extent = searchExtent();
         if (!extent.has_value() || extent->columns <= 0
@@ -2793,16 +2767,16 @@ public:
         }
 
         GhosttyTerminalScrollbar scrollbar{};
-        if (ghostty_terminal_get(
-                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+                                 &scrollbar)
                 != GHOSTTY_SUCCESS
             || scrollbar.len == 0) {
             return {};
         }
         const quint64 viewportStart = scrollbar.offset;
-        const quint64 viewportEnd = std::min(
-            static_cast<quint64>(scrollbar.offset + scrollbar.len),
-            static_cast<quint64>(extent->totalRows));
+        const quint64 viewportEnd =
+            std::min(static_cast<quint64>(scrollbar.offset + scrollbar.len),
+                     static_cast<quint64>(extent->totalRows));
         const quint64 firstRow = std::max(
             static_cast<quint64>(range.start.screenRow), viewportStart);
         const quint64 lastRowExclusive = std::min(
@@ -2846,8 +2820,8 @@ public:
         }
 
         GhosttyTerminalScrollbar scrollbar{};
-        if (ghostty_terminal_get(
-                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+                                 &scrollbar)
                 != GHOSTTY_SUCCESS
             || scrollbar.len == 0) {
             return false;
@@ -2873,7 +2847,8 @@ public:
     std::uint64_t compressionActivity() const
     {
         uint64_t activity = 0;
-        if (ghostty_terminal_compression_activity(terminal_, &activity) != GHOSTTY_SUCCESS) {
+        if (ghostty_terminal_compression_activity(terminal_, &activity)
+            != GHOSTTY_SUCCESS) {
             return 0;
         }
         return activity;
@@ -2884,29 +2859,31 @@ public:
         GhosttyTerminalCompressionResult result =
             GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE;
         return ghostty_terminal_compress(
-                   terminal_, GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL, &result)
-                == GHOSTTY_SUCCESS
+                   terminal_, GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
+                   &result)
+            == GHOSTTY_SUCCESS
             && result == GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING;
     }
 
     RenderResult renderFrame(RenderSnapshot *snapshot)
     {
         if (snapshot == nullptr
-            || ghostty_render_state_update(renderState_, terminal_) != GHOSTTY_SUCCESS) {
+            || ghostty_render_state_update(renderState_, terminal_)
+                != GHOSTTY_SUCCESS) {
             return RenderResult::Unavailable;
         }
 
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
         uint16_t columns = 0;
         uint16_t rows = 0;
-        if (ghostty_render_state_get(renderState_, GHOSTTY_RENDER_STATE_DATA_DIRTY,
-                                    &dirty)
+        if (ghostty_render_state_get(renderState_,
+                                     GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty)
                 != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(renderState_, GHOSTTY_RENDER_STATE_DATA_COLS,
-                                        &columns)
+            || ghostty_render_state_get(
+                   renderState_, GHOSTTY_RENDER_STATE_DATA_COLS, &columns)
                 != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(renderState_, GHOSTTY_RENDER_STATE_DATA_ROWS,
-                                        &rows)
+            || ghostty_render_state_get(renderState_,
+                                        GHOSTTY_RENDER_STATE_DATA_ROWS, &rows)
                 != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
@@ -2921,7 +2898,8 @@ public:
 
         GhosttyRenderStateColors colors{};
         colors.size = sizeof(colors);
-        if (ghostty_render_state_colors_get(renderState_, &colors) != GHOSTTY_SUCCESS) {
+        if (ghostty_render_state_colors_get(renderState_, &colors)
+            != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
         metadata.foreground = toQColor(colors.foreground);
@@ -2929,8 +2907,7 @@ public:
         const bool paletteChanged = !std::ranges::equal(
             colors.palette, std::as_const(publishedMetadata_.palette),
             [](const GhosttyColorRgb &current, const QColor &published) {
-                return published.rgb()
-                    == qRgb(current.r, current.g, current.b);
+                return published.rgb() == qRgb(current.r, current.g, current.b);
             });
         if (paletteChanged) {
             metadata.palette.reserve(
@@ -2942,23 +2919,23 @@ public:
             metadata.palette = publishedMetadata_.palette;
         }
         metadata.cursorColorExplicit = colors.cursor_has_value;
-        metadata.cursorColor = colors.cursor_has_value
-            ? toQColor(colors.cursor)
-            : metadata.foreground;
+        metadata.cursorColor = colors.cursor_has_value ? toQColor(colors.cursor)
+                                                       : metadata.foreground;
 
         if (ghostty_render_state_get(renderState_,
-                                    GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
-                                    &metadata.cursorVisible)
+                                     GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
+                                     &metadata.cursorVisible)
                 != GHOSTTY_SUCCESS
-            || ghostty_render_state_get(renderState_,
-                                        GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
-                                        &metadata.cursorBlinking)
+            || ghostty_render_state_get(
+                   renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
+                   &metadata.cursorBlinking)
                 != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
         bool cursorInViewport = false;
         if (ghostty_render_state_get(
-                renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
+                renderState_,
+                GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
                 &cursorInViewport)
             != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
@@ -2975,32 +2952,35 @@ public:
                     &cursorColumn)
                     != GHOSTTY_SUCCESS
                 || ghostty_render_state_get(
-                       renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
-                       &cursorRow)
+                       renderState_,
+                       GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, &cursorRow)
                     != GHOSTTY_SUCCESS
                 || ghostty_render_state_get(
-                       renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
+                       renderState_,
+                       GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
                        &cursorOnWideTail)
                     != GHOSTTY_SUCCESS) {
                 return RenderResult::Retry;
             }
         }
-        if (ghostty_render_state_get(renderState_,
-                                    GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
-                                    &cursorStyle)
+        if (ghostty_render_state_get(
+                renderState_, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
+                &cursorStyle)
             != GHOSTTY_SUCCESS) {
             return RenderResult::Retry;
         }
         metadata.cursorColumn = static_cast<int>(cursorColumn);
         metadata.cursorRow = static_cast<int>(cursorRow);
         metadata.cursorStyle = static_cast<int>(cursorStyle);
-        if (metadata.cursorVisible && cursorOnWideTail && metadata.cursorColumn > 0) {
+        if (metadata.cursorVisible && cursorOnWideTail
+            && metadata.cursorColumn > 0) {
             --metadata.cursorColumn;
             metadata.cursorColumnSpan = 2;
         }
 
         GhosttyTerminalScrollbar scrollbar{};
-        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+                                 &scrollbar)
             == GHOSTTY_SUCCESS) {
             metadata.scrollTotal = scrollbar.total;
             metadata.scrollOffset = scrollbar.offset;
@@ -3015,15 +2995,16 @@ public:
             update.dirtyRows.reserve(metadata.rows);
         }
 
-        const bool inspectCursorCell = metadata.cursorVisible && !cursorOnWideTail
-            && metadata.cursorColumn >= 0 && metadata.cursorColumn < metadata.columns
+        const bool inspectCursorCell = metadata.cursorVisible
+            && !cursorOnWideTail && metadata.cursorColumn >= 0
+            && metadata.cursorColumn < metadata.columns
             && metadata.cursorRow >= 0 && metadata.cursorRow < metadata.rows;
         const bool visitRows = fullFrame
             || dirty == GHOSTTY_RENDER_STATE_DIRTY_PARTIAL || inspectCursorCell;
         if (visitRows) {
             if (ghostty_render_state_get(renderState_,
-                                        GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
-                                        &rowIterator_)
+                                         GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                                         &rowIterator_)
                 != GHOSTTY_SUCCESS) {
                 return RenderResult::Retry;
             }
@@ -3032,15 +3013,15 @@ public:
             while (rowIndex < metadata.rows
                    && ghostty_render_state_row_iterator_next(rowIterator_)) {
                 bool rowDirty = false;
-                if (ghostty_render_state_row_get(rowIterator_,
-                                                GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-                                                &rowDirty)
+                if (ghostty_render_state_row_get(
+                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
+                        &rowDirty)
                     != GHOSTTY_SUCCESS) {
                     return RenderResult::Retry;
                 }
                 const bool copyRow = fullFrame || rowDirty;
-                const bool cursorRowNeedsInspection = inspectCursorCell
-                    && rowIndex == metadata.cursorRow;
+                const bool cursorRowNeedsInspection =
+                    inspectCursorCell && rowIndex == metadata.cursorRow;
                 if (!copyRow && !cursorRowNeedsInspection) {
                     ++rowIndex;
                     continue;
@@ -3050,12 +3031,13 @@ public:
                 rowSelection.size = sizeof(rowSelection);
                 const bool hasSelection = copyRow
                     && ghostty_render_state_row_get(
-                           rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+                           rowIterator_,
+                           GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
                            &rowSelection)
                         == GHOSTTY_SUCCESS;
-                if (ghostty_render_state_row_get(rowIterator_,
-                                                GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
-                                                &rowCells_)
+                if (ghostty_render_state_row_get(
+                        rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                        &rowCells_)
                     != GHOSTTY_SUCCESS) {
                     return RenderResult::Retry;
                 }
@@ -3075,18 +3057,20 @@ public:
                             rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
                             &rawCell)
                             != GHOSTTY_SUCCESS
-                        || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE, &wide)
+                        || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE,
+                                            &wide)
                             != GHOSTTY_SUCCESS
                         || ghostty_cell_get(rawCell,
-                                           GHOSTTY_CELL_DATA_HAS_HYPERLINK,
-                                           &hasHyperlink)
+                                            GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+                                            &hasHyperlink)
                             != GHOSTTY_SUCCESS) {
                         return RenderResult::Retry;
                     }
 
                     if (cursorRowNeedsInspection
                         && columnIndex == metadata.cursorColumn) {
-                        metadata.cursorColumnSpan = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+                        metadata.cursorColumnSpan =
+                            wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
                     }
                     if (!copyRow) {
                         ++columnIndex;
@@ -3105,9 +3089,11 @@ public:
                         .cap = graphemeStorage.size(),
                         .len = 0,
                     };
-                    GhosttyResult graphemeResult = ghostty_render_state_row_cells_get(
-                        rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
-                        &graphemeBuffer);
+                    GhosttyResult graphemeResult =
+                        ghostty_render_state_row_cells_get(
+                            rowCells_,
+                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+                            &graphemeBuffer);
                     QByteArray dynamicGrapheme;
                     if (graphemeResult == GHOSTTY_OUT_OF_SPACE) {
                         dynamicGrapheme.resize(
@@ -3133,8 +3119,8 @@ public:
                     GhosttyStyle style{};
                     style.size = sizeof(style);
                     if (ghostty_render_state_row_cells_get(
-                            rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-                            &style)
+                            rowCells_,
+                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style)
                         != GHOSTTY_SUCCESS) {
                         return RenderResult::Retry;
                     }
@@ -3142,13 +3128,15 @@ public:
                     GhosttyColorRgb background = colors.background;
                     GhosttyColorRgb explicitColor{};
                     if (ghostty_render_state_row_cells_get(
-                            rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+                            rowCells_,
+                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
                             &explicitColor)
                         == GHOSTTY_SUCCESS) {
                         foreground = explicitColor;
                     }
                     if (ghostty_render_state_row_cells_get(
-                            rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
+                            rowCells_,
+                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
                             &explicitColor)
                         == GHOSTTY_SUCCESS) {
                         background = explicitColor;
@@ -3163,7 +3151,8 @@ public:
                         style.underline_color, colors, foreground));
                     switch (style.fg_color.tag) {
                     case GHOSTTY_STYLE_COLOR_PALETTE:
-                        cell.styleForegroundSource = TerminalColorSource::Palette;
+                        cell.styleForegroundSource =
+                            TerminalColorSource::Palette;
                         cell.styleForegroundPaletteIndex =
                             static_cast<int>(style.fg_color.value.palette);
                         break;
@@ -3171,7 +3160,8 @@ public:
                         cell.styleForegroundSource = TerminalColorSource::Rgb;
                         break;
                     default:
-                        cell.styleForegroundSource = TerminalColorSource::Default;
+                        cell.styleForegroundSource =
+                            TerminalColorSource::Default;
                         break;
                     }
                     cell.bold = style.bold;
@@ -3262,35 +3252,35 @@ public:
         update.scrollOffset = metadata.scrollOffset;
         update.scrollLength = metadata.scrollLength;
 
-        const auto setRowsDirty = [this](
-                                      const QVector<TerminalRowUpdate> &rowUpdates,
-                                      bool value) {
-            if (rowUpdates.isEmpty()) {
-                return true;
-            }
-            if (ghostty_render_state_get(renderState_,
-                                        GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
-                                        &rowIterator_)
-                != GHOSTTY_SUCCESS) {
-                return false;
-            }
-            qsizetype target = 0;
-            int rowIndex = 0;
-            while (target < rowUpdates.size()
-                   && ghostty_render_state_row_iterator_next(rowIterator_)) {
-                if (rowIndex == rowUpdates.at(target).row) {
-                    if (ghostty_render_state_row_set(
-                            rowIterator_, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
-                            &value)
-                        != GHOSTTY_SUCCESS) {
-                        return false;
-                    }
-                    ++target;
+        const auto setRowsDirty =
+            [this](const QVector<TerminalRowUpdate> &rowUpdates, bool value) {
+                if (rowUpdates.isEmpty()) {
+                    return true;
                 }
-                ++rowIndex;
-            }
-            return target == rowUpdates.size();
-        };
+                if (ghostty_render_state_get(
+                        renderState_, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+                        &rowIterator_)
+                    != GHOSTTY_SUCCESS) {
+                    return false;
+                }
+                qsizetype target = 0;
+                int rowIndex = 0;
+                while (
+                    target < rowUpdates.size()
+                    && ghostty_render_state_row_iterator_next(rowIterator_)) {
+                    if (rowIndex == rowUpdates.at(target).row) {
+                        if (ghostty_render_state_row_set(
+                                rowIterator_,
+                                GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &value)
+                            != GHOSTTY_SUCCESS) {
+                            return false;
+                        }
+                        ++target;
+                    }
+                    ++rowIndex;
+                }
+                return target == rowUpdates.size();
+            };
 
         const bool clean = false;
         if (!setRowsDirty(update.dirtyRows, clean)) {
@@ -3298,9 +3288,10 @@ public:
             setRowsDirty(update.dirtyRows, dirtyRow);
             return RenderResult::Retry;
         }
-        const GhosttyRenderStateDirty cleanState = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        if (ghostty_render_state_set(renderState_, GHOSTTY_RENDER_STATE_OPTION_DIRTY,
-                                    &cleanState)
+        const GhosttyRenderStateDirty cleanState =
+            GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+        if (ghostty_render_state_set(
+                renderState_, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &cleanState)
             != GHOSTTY_SUCCESS) {
             const bool dirtyRow = true;
             setRowsDirty(update.dirtyRows, dirtyRow);
@@ -3308,7 +3299,8 @@ public:
         }
 
         bool tracking = false;
-        ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking);
+        ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+                             &tracking);
         publishedMetadata_ = std::move(metadata);
         hasPublishedFrame_ = true;
         snapshot->update = std::move(update);
@@ -3322,7 +3314,8 @@ public:
         if (titleDirty_) {
             titleDirty_ = false;
             GhosttyString title{};
-            if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_TITLE, &title)
+            if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_TITLE,
+                                     &title)
                 == GHOSTTY_SUCCESS) {
                 effects.title = title.len == 0
                     ? QStringLiteral("")
@@ -3331,8 +3324,8 @@ public:
                           static_cast<qsizetype>(title.len));
             }
         }
-        if (auto directory = std::exchange(
-                pendingCurrentDirectory_, std::nullopt)) {
+        if (auto directory =
+                std::exchange(pendingCurrentDirectory_, std::nullopt)) {
             effects.currentDirectory = std::move(*directory);
         }
         effects.bell = std::exchange(bellPending_, false);
@@ -3342,16 +3335,16 @@ public:
 private:
     static size_t boundedRow(quint64 row)
     {
-        const quint64 maximum = static_cast<quint64>(
-            std::numeric_limits<size_t>::max());
+        const quint64 maximum =
+            static_cast<quint64>(std::numeric_limits<size_t>::max());
         return static_cast<size_t>(std::min(row, maximum));
     }
 
     bool scrollEndpointIntoView(uint32_t endpointRow)
     {
         GhosttyTerminalScrollbar scrollbar{};
-        if (ghostty_terminal_get(
-                terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar)
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+                                 &scrollbar)
                 != GHOSTTY_SUCCESS
             || scrollbar.len == 0) {
             return false;
@@ -3380,9 +3373,11 @@ private:
                                  const uint8_t *data, size_t length)
     {
         auto *impl = static_cast<Impl *>(userdata);
-        if (impl != nullptr && impl->callbacks_.writePty && data != nullptr && length > 0) {
-            impl->callbacks_.writePty(QByteArray(
-                reinterpret_cast<const char *>(data), static_cast<qsizetype>(length)));
+        if (impl != nullptr && impl->callbacks_.writePty && data != nullptr
+            && length > 0) {
+            impl->callbacks_.writePty(
+                QByteArray(reinterpret_cast<const char *>(data),
+                           static_cast<qsizetype>(length)));
         }
     }
 
@@ -3404,8 +3399,7 @@ private:
     {
         if (auto *impl = static_cast<Impl *>(userdata)) {
             GhosttyString pwd{};
-            if (ghostty_terminal_get(
-                    terminal, GHOSTTY_TERMINAL_DATA_PWD, &pwd)
+            if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_PWD, &pwd)
                 != GHOSTTY_SUCCESS) {
                 return;
             }
@@ -3425,7 +3419,8 @@ private:
         }
     }
 
-    static bool sizeCallback(GhosttyTerminal, void *userdata, GhosttySizeReportSize *size)
+    static bool sizeCallback(GhosttyTerminal, void *userdata,
+                             GhosttySizeReportSize *size)
     {
         auto *impl = static_cast<Impl *>(userdata);
         if (impl == nullptr || size == nullptr) {
@@ -3438,7 +3433,8 @@ private:
         return true;
     }
 
-    static bool colorSchemeCallback(GhosttyTerminal, void *, GhosttyColorScheme *scheme)
+    static bool colorSchemeCallback(GhosttyTerminal, void *,
+                                    GhosttyColorScheme *scheme)
     {
         if (scheme == nullptr) {
             return false;
@@ -3461,8 +3457,9 @@ private:
         return true;
     }
 
-    static GhosttyClipboardWriteResult clipboardWriteCallback(
-        GhosttyTerminal, void *, const GhosttyClipboardWrite *)
+    static GhosttyClipboardWriteResult
+    clipboardWriteCallback(GhosttyTerminal, void *,
+                           const GhosttyClipboardWrite *)
     {
         return GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
     }
@@ -3493,11 +3490,9 @@ private:
     bool mouseEncoderConfigured_ = false;
 };
 
-GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(
-    std::unique_ptr<Impl> impl)
+GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl))
-{
-}
+{}
 
 GhosttyVtAdapter::TrackedHyperlink::TrackedHyperlink(
     TrackedHyperlink &&) noexcept = default;
@@ -3511,8 +3506,7 @@ GhosttyVtAdapter::TrackedHyperlink::~TrackedHyperlink() = default;
 GhosttyVtAdapter::LogicalLineSnapshot::LogicalLineSnapshot(
     std::unique_ptr<Impl> impl)
     : impl_(std::move(impl))
-{
-}
+{}
 
 GhosttyVtAdapter::LogicalLineSnapshot::LogicalLineSnapshot(
     LogicalLineSnapshot &&) noexcept = default;
@@ -3541,35 +3535,33 @@ bool GhosttyVtAdapter::LogicalLineSnapshot::byteRangeContainsTarget(
         && impl_->byteRangeContainsTarget(beginByte, endByte);
 }
 
-GhosttyVtAdapter::TrackedTextRange::TrackedTextRange(
-    std::unique_ptr<Impl> impl)
+GhosttyVtAdapter::TrackedTextRange::TrackedTextRange(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl))
-{
-}
+{}
 
 GhosttyVtAdapter::TrackedTextRange::TrackedTextRange(
     TrackedTextRange &&) noexcept = default;
 
 GhosttyVtAdapter::TrackedTextRange &
-GhosttyVtAdapter::TrackedTextRange::operator=(
-    TrackedTextRange &&) noexcept = default;
+GhosttyVtAdapter::TrackedTextRange::operator=(TrackedTextRange &&) noexcept =
+    default;
 
 GhosttyVtAdapter::TrackedTextRange::~TrackedTextRange() = default;
 
-std::unique_ptr<GhosttyVtAdapter> GhosttyVtAdapter::create(
-    const Options &options, Callbacks callbacks)
+std::unique_ptr<GhosttyVtAdapter>
+GhosttyVtAdapter::create(const Options &options, Callbacks callbacks)
 {
     auto impl = std::make_unique<Impl>(options.geometry, std::move(callbacks));
     if (!impl->initialize(options)) {
         return {};
     }
-    return std::unique_ptr<GhosttyVtAdapter>(new GhosttyVtAdapter(std::move(impl)));
+    return std::unique_ptr<GhosttyVtAdapter>(
+        new GhosttyVtAdapter(std::move(impl)));
 }
 
 GhosttyVtAdapter::GhosttyVtAdapter(std::unique_ptr<Impl> impl)
     : impl_(std::move(impl))
-{
-}
+{}
 
 GhosttyVtAdapter::~GhosttyVtAdapter() = default;
 
@@ -3598,8 +3590,8 @@ void GhosttyVtAdapter::synchronizeInputModes()
     impl_->synchronizeInputModes();
 }
 
-GhosttyVtAdapter::EncodedKey GhosttyVtAdapter::encodeKey(
-    const TerminalKeyInput &input)
+GhosttyVtAdapter::EncodedKey
+GhosttyVtAdapter::encodeKey(const TerminalKeyInput &input)
 {
     return impl_->encodeKey(input);
 }
@@ -3624,8 +3616,9 @@ QByteArray GhosttyVtAdapter::encodePaste(const QString &text) const
     return impl_->encodePaste(text);
 }
 
-GhosttyVtAdapter::PreparedPaste GhosttyVtAdapter::preparePaste(
-    const QString &text, const PastePreparationOptions &options) const
+GhosttyVtAdapter::PreparedPaste
+GhosttyVtAdapter::preparePaste(const QString &text,
+                               const PastePreparationOptions &options) const
 {
     return impl_->preparePaste(text, options);
 }
@@ -3636,8 +3629,7 @@ QString GhosttyVtAdapter::selectedText(bool trim) const
 }
 
 GhosttyVtAdapter::PlainFileSnapshot
-GhosttyVtAdapter::snapshotPlainFile(
-    TerminalFileLocation location) const
+GhosttyVtAdapter::snapshotPlainFile(TerminalFileLocation location) const
 {
     return impl_->snapshotPlainFile(location);
 }
@@ -3723,8 +3715,8 @@ bool GhosttyVtAdapter::scrollSearchRangeIntoView(
 }
 
 std::optional<GhosttyVtAdapter::HyperlinkMatch>
-GhosttyVtAdapter::hyperlinkAt(
-    int column, int row, const QVector<QPoint> &candidateCells) const
+GhosttyVtAdapter::hyperlinkAt(int column, int row,
+                              const QVector<QPoint> &candidateCells) const
 {
     return impl_->hyperlinkAt(column, row, candidateCells);
 }
@@ -3743,9 +3735,8 @@ bool GhosttyVtAdapter::trackedHyperlinkValid(
 }
 
 std::optional<GhosttyVtAdapter::HyperlinkMatch>
-GhosttyVtAdapter::resolveHyperlink(
-    const TrackedHyperlink &target,
-    const QVector<QPoint> &candidateCells) const
+GhosttyVtAdapter::resolveHyperlink(const TrackedHyperlink &target,
+                                   const QVector<QPoint> &candidateCells) const
 {
     if (target.impl_ == nullptr) {
         return std::nullopt;
@@ -3760,9 +3751,8 @@ GhosttyVtAdapter::snapshotLogicalLineAt(int column, int row) const
 }
 
 std::optional<GhosttyVtAdapter::TrackedTextRange>
-GhosttyVtAdapter::trackTextRange(
-    const LogicalLineSnapshot &line,
-    qsizetype beginByte, qsizetype endByte) const
+GhosttyVtAdapter::trackTextRange(const LogicalLineSnapshot &line,
+                                 qsizetype beginByte, qsizetype endByte) const
 {
     if (line.impl_ == nullptr) {
         return std::nullopt;
@@ -3773,8 +3763,7 @@ GhosttyVtAdapter::trackTextRange(
 bool GhosttyVtAdapter::trackedTextRangeValid(
     const TrackedTextRange &range) const
 {
-    return range.impl_ != nullptr
-        && impl_->trackedTextRangeValid(*range.impl_);
+    return range.impl_ != nullptr && impl_->trackedTextRangeValid(*range.impl_);
 }
 
 std::optional<GhosttyVtAdapter::TextRangeMatch>
@@ -3796,7 +3785,8 @@ bool GhosttyVtAdapter::compressScrollback()
     return impl_->compressScrollback();
 }
 
-GhosttyVtAdapter::RenderResult GhosttyVtAdapter::renderFrame(RenderSnapshot *snapshot)
+GhosttyVtAdapter::RenderResult
+GhosttyVtAdapter::renderFrame(RenderSnapshot *snapshot)
 {
     return impl_->renderFrame(snapshot);
 }

@@ -2,9 +2,9 @@
 
 #include <ghostty.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cstdint>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -23,11 +23,8 @@ bool isShowConfigJsonAction(const char *argument)
 
 bool isPublicShowConfigOption(std::string_view argument)
 {
-    return argument == "-h"
-        || argument == "--help"
-        || argument == "--default"
-        || argument == "--changes-only"
-        || argument == "--docs"
+    return argument == "-h" || argument == "--help" || argument == "--default"
+        || argument == "--changes-only" || argument == "--docs"
         || argument == "--no-pager";
 }
 
@@ -62,8 +59,7 @@ int validateEffectiveConfig()
 int showConfigJson(std::span<char *const> arguments)
 {
     for (char *const argument : arguments.subspan(2)) {
-        if (argument != nullptr
-            && isPublicShowConfigOption(argument)) {
+        if (argument != nullptr && isPublicShowConfigOption(argument)) {
             std::fputs(
                 "ghostty-qt-config-helper: +show-config-json takes no options "
                 "from +show-config; pass configuration --key=value arguments\n",
@@ -77,8 +73,8 @@ int showConfigJson(std::span<char *const> arguments)
     // Keep every following config argument byte-for-byte so this query has the
     // same explicit CLI precedence as the terminal surfaces.
     char showConfigAction[] = "+show-config";
-    std::vector<char *> initializationArguments(
-        arguments.begin(), arguments.end());
+    std::vector<char *> initializationArguments(arguments.begin(),
+                                                arguments.end());
     initializationArguments[1] = showConfigAction;
     const int initializationResult = ghostty_init(
         initializationArguments.size(), initializationArguments.data());
@@ -92,21 +88,22 @@ int showConfigJson(std::span<char *const> arguments)
 
     const ghostty_string_s json = ghostty_qt_config_json();
     if (json.ptr == nullptr) {
-        std::fputs("ghostty-qt-config-helper: failed to export structured config\n",
-                   stderr);
+        std::fputs(
+            "ghostty-qt-config-helper: failed to export structured config\n",
+            stderr);
         return 1;
     }
 
     const std::size_t written = std::fwrite(json.ptr, 1, json.len, stdout);
-    const bool writeFailed = written != json.len || std::fputc('\n', stdout) == EOF;
+    const bool writeFailed =
+        written != json.len || std::fputc('\n', stdout) == EOF;
     ghostty_string_free(json);
     return writeFailed ? 74 : 0;
 }
 
 bool isPrivateConfigExport(std::span<char *const> arguments)
 {
-    if (arguments.size() < 2
-        || !isShowConfigJsonAction(arguments[1])) {
+    if (arguments.size() < 2 || !isShowConfigJsonAction(arguments[1])) {
         return false;
     }
     for (char *const rawArgument : arguments.subspan(2)) {
@@ -122,8 +119,8 @@ bool isPrivateConfigExport(std::span<char *const> arguments)
 
 int main(int argc, char **argv)
 {
-    const std::span<char *const> arguments(
-        argv, static_cast<std::size_t>(argc));
+    const std::span<char *const> arguments(argv,
+                                           static_cast<std::size_t>(argc));
     if (isPrivateConfigExport(arguments)) {
         return showConfigJson(arguments);
     }

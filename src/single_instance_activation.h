@@ -22,8 +22,7 @@
 // org.freedesktop.Application endpoint on the user's session bus. It
 // carries only standard presentation context: never command-line payload,
 // general environment state, cwd, or shell text.
-class SingleInstanceActivation final : public QObject,
-                                       protected QDBusContext {
+class SingleInstanceActivation final : public QObject, protected QDBusContext {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
 
@@ -54,21 +53,20 @@ public:
         DesktopActivationContext activation;
     };
 
-    using ActivationHandler = std::move_only_function<
-        bool(DesktopActivationContext)>;
+    using ActivationHandler =
+        std::move_only_function<bool(DesktopActivationContext)>;
 
     static constexpr auto InterfaceName = "org.freedesktop.Application";
 
     [[nodiscard]] static QDBusConnection defaultConnection();
     explicit SingleInstanceActivation(
         QDBusConnection connection = defaultConnection(),
-        QString serviceName = defaultServiceName(),
-        QObject *parent = nullptr);
+        QString serviceName = defaultServiceName(), QObject *parent = nullptr);
     ~SingleInstanceActivation() override;
 
     [[nodiscard]] static QString defaultServiceName();
-    [[nodiscard]] static QString objectPathForApplicationId(
-        QStringView applicationId);
+    [[nodiscard]] static QString
+    objectPathForApplicationId(QStringView applicationId);
     [[nodiscard]] StartResult start(StartOptions options);
     void setActivationHandler(ActivationHandler handler);
     void release();
@@ -77,10 +75,11 @@ public:
 
 public Q_SLOTS:
     Q_SCRIPTABLE void Activate(const QVariantMap &platformData);
-    Q_SCRIPTABLE void Open(
-        const QStringList &uris, const QVariantMap &platformData);
+    Q_SCRIPTABLE void Open(const QStringList &uris,
+                           const QVariantMap &platformData);
     Q_SCRIPTABLE void ActivateAction(const QString &actionName,
-        const QVariantList &parameter, const QVariantMap &platformData);
+                                     const QVariantList &parameter,
+                                     const QVariantMap &platformData);
 
 private:
     enum class ClaimStatus {

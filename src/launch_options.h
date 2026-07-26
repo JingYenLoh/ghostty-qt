@@ -75,8 +75,7 @@ struct LaunchOptions {
     bool windowInheritFontSize = true;
     // Controls whether a new tab is inserted after the selected tab or at the
     // end of the window's stable tab list.
-    WindowNewTabPosition windowNewTabPosition =
-        WindowNewTabPosition::Current;
+    WindowNewTabPosition windowNewTabPosition = WindowNewTabPosition::Current;
     // Controls the frontend tab-bar visibility without affecting terminal
     // session state.
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
@@ -102,8 +101,7 @@ struct LaunchOptions {
     // window either quits on the next event turn, waits for the optional
     // Ghostty duration, or leaves the process alive when disabled.
     bool quitAfterLastWindowClosed = true;
-    std::optional<std::chrono::milliseconds>
-        quitAfterLastWindowClosedDelay;
+    std::optional<std::chrono::milliseconds> quitAfterLastWindowClosedDelay;
     // Whether this process requests a window during initial application
     // activation. Explicit new-window actions remain available when false.
     bool initialWindow = true;
@@ -159,10 +157,10 @@ struct LaunchOptions {
 
 // Explicitly project the broad application/pane configuration onto the
 // smaller value types allowed to cross the session-thread boundary.
-TerminalSessionLaunchOptions toTerminalSessionLaunchOptions(
-    const LaunchOptions &options);
-TerminalSessionRuntimeOptions toTerminalSessionRuntimeOptions(
-    const LaunchOptions &options);
+TerminalSessionLaunchOptions
+toTerminalSessionLaunchOptions(const LaunchOptions &options);
+TerminalSessionRuntimeOptions
+toTerminalSessionRuntimeOptions(const LaunchOptions &options);
 
 // Project one complete, validated, CLI-aware Ghostty snapshot onto a launch
 // request. A byte-valued Ghostty
@@ -195,16 +193,16 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
 
 // The first argument is expected to be the application name, as it is in
 // QCoreApplication::arguments().
-[[nodiscard]] std::expected<LaunchOptions, QString> parseLaunchOptions(
-    const QStringList &arguments);
+[[nodiscard]] std::expected<LaunchOptions, QString>
+parseLaunchOptions(const QStringList &arguments);
 
 // Project the frontend's explicit font overrides back into Ghostty CLI
 // spelling. The config helper receives these after its action so pinned
 // Ghostty performs repeatable-family replacement and styled-face inheritance
 // before exporting the finalized typography.
-[[nodiscard]] QStringList ghosttyConfigCliFontArguments(
-    const LaunchOptions &options);
+[[nodiscard]] QStringList
+ghosttyConfigCliFontArguments(const LaunchOptions &options);
 
 // Pure startup policy used before creating QML or terminal runtime objects.
-[[nodiscard]] bool shouldUseSingleInstance(
-    const LaunchOptions &options, QByteArrayView termProgram);
+[[nodiscard]] bool shouldUseSingleInstance(const LaunchOptions &options,
+                                           QByteArrayView termProgram);

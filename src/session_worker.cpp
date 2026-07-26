@@ -13,9 +13,9 @@
 #include <QProcessEnvironment>
 #include <QSocketNotifier>
 #include <QStringTokenizer>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
-#include <QTemporaryDir>
 
 #include <algorithm>
 #include <array>
@@ -56,10 +56,8 @@ constexpr quint64 kSearchRowsPerCompressionPass = 64;
 QString terminalFileBaseName(TerminalFileLocation location)
 {
     switch (location) {
-    case TerminalFileLocation::Screen:
-        return QStringLiteral("screen.txt");
-    case TerminalFileLocation::Scrollback:
-        return QStringLiteral("history.txt");
+    case TerminalFileLocation::Screen: return QStringLiteral("screen.txt");
+    case TerminalFileLocation::Scrollback: return QStringLiteral("history.txt");
     case TerminalFileLocation::Selection:
         return QStringLiteral("selection.txt");
     }
@@ -68,19 +66,17 @@ QString terminalFileBaseName(TerminalFileLocation location)
 
 bool terminalDirectoryHasPrivateMode(const QString &path)
 {
-    struct stat status {};
+    struct stat status{};
     const QByteArray encodedPath = QFile::encodeName(path);
     return ::stat(encodedPath.constData(), &status) == 0
-        && S_ISDIR(status.st_mode)
-        && (status.st_mode & 0777) == 0700;
+        && S_ISDIR(status.st_mode) && (status.st_mode & 0777) == 0700;
 }
 
 bool terminalFileHasPrivateMode(const QFile &file)
 {
-    struct stat status {};
+    struct stat status{};
     return file.isOpen() && file.handle() >= 0
-        && ::fstat(file.handle(), &status) == 0
-        && S_ISREG(status.st_mode)
+        && ::fstat(file.handle(), &status) == 0 && S_ISREG(status.st_mode)
         && (status.st_mode & 0777) == 0600;
 }
 
@@ -93,8 +89,8 @@ QString appendPath(QString directory, QStringView path)
     return directory;
 }
 
-QString absolutePathFromWorkingDirectory(
-    QString workingDirectory, QStringView relativePath)
+QString absolutePathFromWorkingDirectory(QString workingDirectory,
+                                         QStringView relativePath)
 {
     if (QDir::isRelativePath(workingDirectory)) {
         workingDirectory = appendPath(QDir::currentPath(), workingDirectory);
@@ -125,8 +121,8 @@ QStringList executableCandidates(QStringView name)
     return candidates;
 }
 
-bool hasExecutableCandidate(
-    const QStringList &candidates, const QString &workingDirectory)
+bool hasExecutableCandidate(const QStringList &candidates,
+                            const QString &workingDirectory)
 {
     return std::ranges::any_of(candidates, [&](const QString &candidate) {
         const QString validationPath = QDir::isRelativePath(candidate)
@@ -139,9 +135,8 @@ bool hasExecutableCandidate(
 
 char foldSearchByte(char value)
 {
-    return value >= 'A' && value <= 'Z'
-        ? static_cast<char>(value + ('a' - 'A'))
-        : value;
+    return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A'))
+                                        : value;
 }
 
 QByteArray reversedFoldedSearchNeedle(QByteArrayView needle)
@@ -186,10 +181,8 @@ std::optional<qsizetype> gridCellCount(int columns, int rows)
     return columnCount * rowCount;
 }
 
-void addVisibleSearchCells(
-    QBitArray &destination,
-    TerminalSearchRange range,
-    const GhosttyVtAdapter::SearchExtent &extent)
+void addVisibleSearchCells(QBitArray &destination, TerminalSearchRange range,
+                           const GhosttyVtAdapter::SearchExtent &extent)
 {
     const std::optional<qsizetype> cellCount =
         gridCellCount(extent.columns, extent.rows);
@@ -197,8 +190,7 @@ void addVisibleSearchCells(
         std::swap(range.start, range.end);
     }
     if (!cellCount.has_value() || destination.size() != *cellCount
-        || extent.viewportLength == 0
-        || range.start.column >= extent.columns
+        || extent.viewportLength == 0 || range.start.column >= extent.columns
         || range.end.column >= extent.columns
         || range.start.screenRow >= extent.totalRows
         || range.end.screenRow >= extent.totalRows) {
@@ -207,8 +199,8 @@ void addVisibleSearchCells(
 
     const quint64 viewportStart = extent.viewportOffset;
     const quint64 viewportEnd = viewportStart + extent.viewportLength;
-    const quint64 firstRow = std::max<quint64>(
-        range.start.screenRow, viewportStart);
+    const quint64 firstRow =
+        std::max<quint64>(range.start.screenRow, viewportStart);
     const quint64 lastRowExclusive = std::min<quint64>(
         static_cast<quint64>(range.end.screenRow) + 1U, viewportEnd);
     if (firstRow >= lastRowExclusive) {
@@ -217,9 +209,11 @@ void addVisibleSearchCells(
 
     for (quint64 row = firstRow; row < lastRowExclusive; ++row) {
         const int firstColumn = row == range.start.screenRow
-            ? static_cast<int>(range.start.column) : 0;
+            ? static_cast<int>(range.start.column)
+            : 0;
         const int lastColumn = row == range.end.screenRow
-            ? static_cast<int>(range.end.column) : extent.columns - 1;
+            ? static_cast<int>(range.end.column)
+            : extent.columns - 1;
         const quint64 relativeRow = row - viewportStart;
         if (relativeRow >= static_cast<quint64>(extent.rows)) {
             continue;
@@ -262,12 +256,12 @@ bool sequenceTokenIsNewer(quint64 candidate, quint64 current)
 
 uint16_t boundedU16(int value)
 {
-    return static_cast<uint16_t>(std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
+    return static_cast<uint16_t>(
+        std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
 }
 
-using TrackedTerminalLink = std::variant<
-    GhosttyVtAdapter::TrackedHyperlink,
-    GhosttyVtAdapter::TrackedTextRange>;
+using TrackedTerminalLink = std::variant<GhosttyVtAdapter::TrackedHyperlink,
+                                         GhosttyVtAdapter::TrackedTextRange>;
 
 struct ResolvedTerminalLink {
     TerminalLinkKind kind = TerminalLinkKind::Osc8;
@@ -282,14 +276,15 @@ struct DetectedTerminalLink {
     ResolvedTerminalLink resolved;
 };
 
-std::optional<ResolvedTerminalLink> resolveTrackedTerminalLink(
-    GhosttyVtAdapter &adapter, const TrackedTerminalLink &tracked,
-    const TerminalOsc8Index &viewport)
+std::optional<ResolvedTerminalLink>
+resolveTrackedTerminalLink(GhosttyVtAdapter &adapter,
+                           const TrackedTerminalLink &tracked,
+                           const TerminalOsc8Index &viewport)
 {
-    if (const auto *osc8 = std::get_if<
-            GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
-        const auto match = adapter.resolveHyperlink(
-            *osc8, viewport.candidates());
+    if (const auto *osc8 =
+            std::get_if<GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
+        const auto match =
+            adapter.resolveHyperlink(*osc8, viewport.candidates());
         if (!match.has_value()) {
             return std::nullopt;
         }
@@ -323,20 +318,21 @@ std::optional<ResolvedTerminalLink> resolveTrackedTerminalLink(
     };
 }
 
-bool trackedTerminalLinkValid(
-    GhosttyVtAdapter &adapter, const TrackedTerminalLink &tracked)
+bool trackedTerminalLinkValid(GhosttyVtAdapter &adapter,
+                              const TrackedTerminalLink &tracked)
 {
-    if (const auto *osc8 = std::get_if<
-            GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
+    if (const auto *osc8 =
+            std::get_if<GhosttyVtAdapter::TrackedHyperlink>(&tracked)) {
         return adapter.trackedHyperlinkValid(*osc8);
     }
     return adapter.trackedTextRangeValid(
         std::get<GhosttyVtAdapter::TrackedTextRange>(tracked));
 }
 
-std::optional<DetectedTerminalLink> detectTerminalLinkAt(
-    GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
-    bool linkUrl, const TerminalOsc8Index &viewport, int column, int row)
+std::optional<DetectedTerminalLink>
+detectTerminalLinkAt(GhosttyVtAdapter &adapter, GhosttyLinkMatcher *matcher,
+                     bool linkUrl, const TerminalOsc8Index &viewport,
+                     int column, int row)
 {
     if (!viewport.containsCoordinate(column, row)) {
         return std::nullopt;
@@ -347,8 +343,9 @@ std::optional<DetectedTerminalLink> detectTerminalLinkAt(
     // default matcher just as Surface.linkAtPos does.
     auto trackedOsc8 = adapter.trackHyperlinkAt(column, row);
     if (trackedOsc8.has_value()) {
-        TrackedTerminalLink target(std::in_place_type<
-            GhosttyVtAdapter::TrackedHyperlink>, std::move(*trackedOsc8));
+        TrackedTerminalLink target(
+            std::in_place_type<GhosttyVtAdapter::TrackedHyperlink>,
+            std::move(*trackedOsc8));
         auto resolved = resolveTrackedTerminalLink(adapter, target, viewport);
         if (resolved.has_value()) {
             return DetectedTerminalLink{
@@ -369,13 +366,13 @@ std::optional<DetectedTerminalLink> detectTerminalLinkAt(
     bool foundTargetMatch = false;
     qsizetype searchOffset = 0;
     while (searchOffset < line->text().size()) {
-        const GhosttyLinkMatchResult result = matcher->findNext(
-            line->text(), searchOffset, &byteMatch);
+        const GhosttyLinkMatchResult result =
+            matcher->findNext(line->text(), searchOffset, &byteMatch);
         if (result != GhosttyLinkMatchResult::Match) {
             break;
         }
-        if (line->byteRangeContainsTarget(
-                byteMatch.beginByte, byteMatch.endByte)) {
+        if (line->byteRangeContainsTarget(byteMatch.beginByte,
+                                          byteMatch.endByte)) {
             foundTargetMatch = true;
             break;
         }
@@ -384,13 +381,14 @@ std::optional<DetectedTerminalLink> detectTerminalLinkAt(
     if (!foundTargetMatch) {
         return std::nullopt;
     }
-    auto tracked = adapter.trackTextRange(
-        *line, byteMatch.beginByte, byteMatch.endByte);
+    auto tracked =
+        adapter.trackTextRange(*line, byteMatch.beginByte, byteMatch.endByte);
     if (!tracked.has_value()) {
         return std::nullopt;
     }
-    TrackedTerminalLink target(std::in_place_type<
-        GhosttyVtAdapter::TrackedTextRange>, std::move(*tracked));
+    TrackedTerminalLink target(
+        std::in_place_type<GhosttyVtAdapter::TrackedTextRange>,
+        std::move(*tracked));
     auto resolved = resolveTrackedTerminalLink(adapter, target, viewport);
     if (!resolved.has_value()) {
         return std::nullopt;
@@ -473,8 +471,7 @@ SessionWorker::SessionWorker(QObject *parent)
     : QObject(parent)
     , hyperlinkState_(std::make_unique<HyperlinkState>())
     , searchState_(std::make_unique<SearchState>())
-{
-}
+{}
 
 SessionWorker::~SessionWorker()
 {
@@ -500,9 +497,8 @@ bool SessionWorker::canonicalTextMayStartProcess(const QByteArray &payload)
     return text.has_value() && bytesMayStartProcess(*text);
 }
 
-bool SessionWorker::initialize(
-    const TerminalSessionLaunchOptions &options,
-    InitializationObserver observer)
+bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
+                               InitializationObserver observer)
 {
     if (vt_ != nullptr || running_) {
         if (observer) observer(false);
@@ -515,10 +511,10 @@ bool SessionWorker::initialize(
         // With neither libghostty nor a PTY created yet, the normal resize
         // path is a side-effect-free geometry seed and keeps all bounds in
         // one place.
-        resizeTerminal(
-            geometry.columns, geometry.rows,
-            geometry.cellWidthPixels, geometry.cellHeightPixels,
-            geometry.surfaceWidthPixels, geometry.surfaceHeightPixels);
+        resizeTerminal(geometry.columns, geometry.rows,
+                       geometry.cellWidthPixels, geometry.cellHeightPixels,
+                       geometry.surfaceWidthPixels,
+                       geometry.surfaceHeightPixels);
     }
     shuttingDown_ = false;
     potentialActivityTimer_.invalidate();
@@ -563,12 +559,13 @@ bool SessionWorker::initialize(
     compressionTimer_ = new QTimer(this);
     compressionTimer_->setSingleShot(true);
     compressionTimer_->setInterval(kCompressionIdleMilliseconds);
-    connect(compressionTimer_, &QTimer::timeout,
-            this, &SessionWorker::compressScrollback);
+    connect(compressionTimer_, &QTimer::timeout, this,
+            &SessionWorker::compressScrollback);
 
     if (!createTerminal()) {
         if (observer) observer(false);
-        Q_EMIT errorOccurred(QStringLiteral("Failed to initialize libghostty-vt."));
+        Q_EMIT errorOccurred(
+            QStringLiteral("Failed to initialize libghostty-vt."));
         Q_EMIT sessionExited(127, 0, options_.hold);
         return false;
     }
@@ -584,20 +581,23 @@ bool SessionWorker::initialize(
 bool SessionWorker::createTerminal()
 {
     const GhosttyVtAdapter::Options options{
-        .geometry = {
-            .columns = columns_,
-            .rows = rows_,
-            .cellWidthPixels = cellWidthPixels_,
-            .cellHeightPixels = cellHeightPixels_,
-            .surfaceWidthPixels = surfaceWidthPixels_,
-            .surfaceHeightPixels = surfaceHeightPixels_,
-        },
-        .scrollbackBytes = scrollbackLimitInBytes(
-            options_.scrollbackLimit, columns_),
+        .geometry =
+            {
+                .columns = columns_,
+                .rows = rows_,
+                .cellWidthPixels = cellWidthPixels_,
+                .cellHeightPixels = cellHeightPixels_,
+                .surfaceWidthPixels = surfaceWidthPixels_,
+                .surfaceHeightPixels = surfaceHeightPixels_,
+            },
+        .scrollbackBytes =
+            scrollbackLimitInBytes(options_.scrollbackLimit, columns_),
         .appearance = options_.runtime.appearance,
     };
     GhosttyVtAdapter::Callbacks callbacks;
-    callbacks.writePty = [this](const QByteArray &data) { queuePtyWrite(data); };
+    callbacks.writePty = [this](const QByteArray &data) {
+        queuePtyWrite(data);
+    };
     vt_ = GhosttyVtAdapter::create(options, std::move(callbacks));
     if (vt_ != nullptr) {
         if (!vt_->setSelectionWordChars(options_.runtime.selectionWordChars)
@@ -650,10 +650,10 @@ void SessionWorker::applyRuntimeOptions(
             hyperlinkState_->publishedColumns = 0;
             hyperlinkState_->publishedRows = 0;
             if (requestId != 0) {
-                Q_EMIT hyperlinkResolved(
-                    requestId, terminalContentRevision_,
-                    TerminalHyperlinkState::Invalid,
-                    TerminalLinkKind::Regex, {}, QPoint(-1, -1), {});
+                Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_,
+                                         TerminalHyperlinkState::Invalid,
+                                         TerminalLinkKind::Regex, {},
+                                         QPoint(-1, -1), {});
             }
         }
         if (hyperlinkState_->trackedActivation.has_value()
@@ -680,8 +680,8 @@ void SessionWorker::applyRuntimeOptions(
     }
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {
-            Q_EMIT errorOccurred(
-                QStringLiteral("Failed to apply terminal appearance to libghostty-vt."));
+            Q_EMIT errorOccurred(QStringLiteral(
+                "Failed to apply terminal appearance to libghostty-vt."));
             return;
         }
         scheduleFrame();
@@ -696,15 +696,16 @@ bool SessionWorker::spawnChild()
     QByteArray requestedWorkingDirectoryBytes;
     bool attemptWorkingDirectory = false;
     if (!options_.inheritWorkingDirectory) {
-        requestedWorkingDirectoryBytes = QFile::encodeName(
-            requestedWorkingDirectory);
+        requestedWorkingDirectoryBytes =
+            QFile::encodeName(requestedWorkingDirectory);
         // Pinned Ghostty drops a missing cwd but passes any existing path to
         // the child, where chdir failure is deliberately non-fatal.
         attemptWorkingDirectory = !requestedWorkingDirectory.isEmpty()
             && ::access(requestedWorkingDirectoryBytes.constData(), F_OK) == 0;
         if (attemptWorkingDirectory
             && QFileInfo(requestedWorkingDirectory).isDir()
-            && ::access(requestedWorkingDirectoryBytes.constData(), X_OK) == 0) {
+            && ::access(requestedWorkingDirectoryBytes.constData(), X_OK)
+                == 0) {
             // This expected effective directory is used only for the
             // synchronous executable diagnostic. The child still attempts
             // the exact requested spelling below.
@@ -732,20 +733,20 @@ bool SessionWorker::spawnChild()
     QStringList executablePaths = executableCandidates(requestedExecutable);
     // Preserve the existing synchronous diagnostic, but do not preselect a
     // candidate: the child still attempts the complete ordered list below.
-    bool executableAvailable = hasExecutableCandidate(
-        executablePaths, childWorkingDirectory);
+    bool executableAvailable =
+        hasExecutableCandidate(executablePaths, childWorkingDirectory);
     if (interactiveShell_ && !executableAvailable
         && requestedExecutable != QLatin1StringView("/bin/sh")) {
         requestedExecutable = QStringLiteral("/bin/sh");
         arguments[0] = requestedExecutable;
         executablePaths = executableCandidates(requestedExecutable);
-        executableAvailable = hasExecutableCandidate(
-            executablePaths, childWorkingDirectory);
+        executableAvailable =
+            hasExecutableCandidate(executablePaths, childWorkingDirectory);
     }
     if (requestedExecutable.isEmpty() || !executableAvailable) {
-        Q_EMIT errorOccurred(QStringLiteral("Program is not executable: %1")
-                               .arg(options_.program.value(
-                                   0, requestedExecutable)));
+        Q_EMIT errorOccurred(
+            QStringLiteral("Program is not executable: %1")
+                .arg(options_.program.value(0, requestedExecutable)));
         return false;
     }
 
@@ -775,8 +776,10 @@ bool SessionWorker::spawnChild()
     }
     environment.insert(QStringLiteral("TERM"), QStringLiteral("xterm-ghostty"));
     environment.insert(QStringLiteral("TERMINFO"), *terminfo);
-    environment.insert(QStringLiteral("COLORTERM"), QStringLiteral("truecolor"));
-    environment.insert(QStringLiteral("TERM_PROGRAM"), QStringLiteral("ghostty-qt"));
+    environment.insert(QStringLiteral("COLORTERM"),
+                       QStringLiteral("truecolor"));
+    environment.insert(QStringLiteral("TERM_PROGRAM"),
+                       QStringLiteral("ghostty-qt"));
     environment.insert(QStringLiteral("TERM_PROGRAM_VERSION"),
                        QStringLiteral(GHOSTTY_QT_VERSION));
     if (!options_.inheritWorkingDirectory) {
@@ -800,7 +803,7 @@ bool SessionWorker::spawnChild()
     char *const *const argvData = argv.constData();
     char *const *const envpData = envp.constData();
 
-    struct winsize size {};
+    struct winsize size{};
     size.ws_col = boundedU16(columns_);
     size.ws_row = boundedU16(rows_);
     size.ws_xpixel = boundedU16(surfaceWidthPixels_);
@@ -808,8 +811,9 @@ bool SessionWorker::spawnChild()
 
     std::array<int, 2> childReadyPipe{-1, -1};
     if (::pipe2(childReadyPipe.data(), O_CLOEXEC) < 0) {
-        Q_EMIT errorOccurred(QStringLiteral("Unable to create child-ready pipe: %1")
-                               .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        Q_EMIT errorOccurred(
+            QStringLiteral("Unable to create child-ready pipe: %1")
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
         return false;
     }
 
@@ -818,14 +822,15 @@ bool SessionWorker::spawnChild()
     if (pid < 0) {
         (void)::close(childReadyPipe[0]);
         (void)::close(childReadyPipe[1]);
-        Q_EMIT errorOccurred(QStringLiteral("Unable to create PTY: %1")
-                               .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        Q_EMIT errorOccurred(
+            QStringLiteral("Unable to create PTY: %1")
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
         return false;
     }
 
     if (pid == 0) {
         (void)::close(childReadyPipe[0]);
-        struct sigaction defaultAction {};
+        struct sigaction defaultAction{};
         defaultAction.sa_handler = SIG_DFL;
         if (::sigemptyset(&defaultAction.sa_mask) != 0
             || ::sigaction(SIGHUP, &defaultAction, nullptr) != 0) {
@@ -878,8 +883,7 @@ bool SessionWorker::spawnChild()
     if (received != 1 || ready != 1) {
         (void)::close(ptyFd);
         int status = 0;
-        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-        }
+        while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         Q_EMIT errorOccurred(
             QStringLiteral("Child exited before completing PTY setup"));
         return false;
@@ -905,10 +909,13 @@ bool SessionWorker::spawnChild()
     }
 
     readNotifier_ = new QSocketNotifier(masterFd_, QSocketNotifier::Read, this);
-    connect(readNotifier_, &QSocketNotifier::activated, this, &SessionWorker::readFromPty);
-    writeNotifier_ = new QSocketNotifier(masterFd_, QSocketNotifier::Write, this);
+    connect(readNotifier_, &QSocketNotifier::activated, this,
+            &SessionWorker::readFromPty);
+    writeNotifier_ =
+        new QSocketNotifier(masterFd_, QSocketNotifier::Write, this);
     writeNotifier_->setEnabled(false);
-    connect(writeNotifier_, &QSocketNotifier::activated, this, &SessionWorker::flushPtyWrites);
+    connect(writeNotifier_, &QSocketNotifier::activated, this,
+            &SessionWorker::flushPtyWrites);
 
     childTimer_->start();
     if (!options_.inheritWorkingDirectory) {
@@ -942,7 +949,8 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
             .surfaceHeightPixels = normalized.surfaceHeightPixels,
         };
         if (!vt_->resize(geometry)) {
-            Q_EMIT errorOccurred(QStringLiteral("libghostty rejected the terminal resize."));
+            Q_EMIT errorOccurred(
+                QStringLiteral("libghostty rejected the terminal resize."));
             return;
         }
         markTerminalContentChanged();
@@ -964,7 +972,7 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
     }
 
     if (masterFd_ >= 0) {
-        struct winsize size {};
+        struct winsize size{};
         size.ws_col = boundedU16(columns_);
         size.ws_row = boundedU16(rows_);
         size.ws_xpixel = boundedU16(surfaceWidthPixels_);
@@ -990,16 +998,15 @@ void SessionWorker::drainPty(bool finalDrain)
     qsizetype totalRead = 0;
     bool receivedData = false;
 
-    const qsizetype readLimit = finalDrain
-        ? kMaximumFinalRead
-        : kMaximumReadPerActivation;
+    const qsizetype readLimit =
+        finalDrain ? kMaximumFinalRead : kMaximumReadPerActivation;
     while (totalRead < readLimit) {
         const ssize_t count = ::read(masterFd_, buffer.data(), buffer.size());
         if (count > 0) {
             const auto size = static_cast<size_t>(count);
-            vt_->writeVt(QByteArrayView(
-                reinterpret_cast<const char *>(buffer.data()),
-                static_cast<qsizetype>(size)));
+            vt_->writeVt(
+                QByteArrayView(reinterpret_cast<const char *>(buffer.data()),
+                               static_cast<qsizetype>(size)));
             totalRead += static_cast<qsizetype>(count);
             receivedData = true;
             continue;
@@ -1022,8 +1029,9 @@ void SessionWorker::drainPty(bool finalDrain)
             }
             break;
         }
-        Q_EMIT errorOccurred(QStringLiteral("PTY read failed: %1")
-                               .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        Q_EMIT errorOccurred(
+            QStringLiteral("PTY read failed: %1")
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
         break;
     }
 
@@ -1074,8 +1082,9 @@ void SessionWorker::setReadOnly(bool readOnly)
 void SessionWorker::flushPtyWrites()
 {
     while (masterFd_ >= 0 && !pendingWrites_.isEmpty()) {
-        const ssize_t count = ::write(masterFd_, pendingWrites_.constData(),
-                                      static_cast<size_t>(pendingWrites_.size()));
+        const ssize_t count =
+            ::write(masterFd_, pendingWrites_.constData(),
+                    static_cast<size_t>(pendingWrites_.size()));
         if (count > 0) {
             pendingWrites_.remove(0, static_cast<qsizetype>(count));
             continue;
@@ -1087,8 +1096,9 @@ void SessionWorker::flushPtyWrites()
             break;
         }
         if (count < 0) {
-            Q_EMIT errorOccurred(QStringLiteral("PTY write failed: %1")
-                                   .arg(QString::fromLocal8Bit(std::strerror(errno))));
+            Q_EMIT errorOccurred(
+                QStringLiteral("PTY write failed: %1")
+                    .arg(QString::fromLocal8Bit(std::strerror(errno))));
         }
         pendingWrites_.clear();
         break;
@@ -1164,18 +1174,18 @@ void SessionWorker::resolveSequence(quint64 token,
     if (resolution == TerminalSequenceResolution::Flush
         || resolution == TerminalSequenceResolution::FlushAndSendCurrent) {
         bytes = std::move(stagedSequenceBytes_);
-        potentialActivity = stagedSequencePotentialActivity_
-            && !bytes.isEmpty();
+        potentialActivity =
+            stagedSequencePotentialActivity_ && !bytes.isEmpty();
     }
     if (resolution == TerminalSequenceResolution::FlushAndSendCurrent
         && hasCurrent) {
-        const GhosttyVtAdapter::EncodedKey encodedCurrent =
-            vt_ != nullptr ? vt_->encodeKey(current)
-                           : GhosttyVtAdapter::EncodedKey{};
+        const GhosttyVtAdapter::EncodedKey encodedCurrent = vt_ != nullptr
+            ? vt_->encodeKey(current)
+            : GhosttyVtAdapter::EncodedKey{};
         if (!encodedCurrent.bytes.isEmpty()) {
             bytes.append(encodedCurrent.bytes);
-            potentialActivity = potentialActivity
-                || keyMayStartProcess(current);
+            potentialActivity =
+                potentialActivity || keyMayStartProcess(current);
             currentModifier = encodedCurrent.modifier;
             currentEscape = encodedCurrent.escape;
             currentEncoded = true;
@@ -1371,11 +1381,12 @@ void SessionWorker::paste(const QString &text)
 
     const TerminalClipboardPasteOptions &options =
         options_.runtime.clipboardPaste;
-    const GhosttyVtAdapter::PreparedPaste prepared = vt_->preparePaste(
-        text, {
-            .protection = options.protection,
-            .bracketedSafe = options.bracketedSafe,
-        });
+    const GhosttyVtAdapter::PreparedPaste prepared =
+        vt_->preparePaste(text,
+                          {
+                              .protection = options.protection,
+                              .bracketedSafe = options.bracketedSafe,
+                          });
     if (prepared.disposition
         == GhosttyVtAdapter::PasteDisposition::ConfirmationRequired) {
         do {
@@ -1406,7 +1417,8 @@ void SessionWorker::confirmPaste(quint64 requestId)
     const TerminalClipboardPasteOptions &options =
         options_.runtime.clipboardPaste;
     const GhosttyVtAdapter::PreparedPaste prepared = vt_->preparePaste(
-        text, {
+        text,
+        {
             .protection = options.protection,
             .bracketedSafe = options.bracketedSafe,
             .authorization = GhosttyVtAdapter::PasteAuthorization::Confirmed,
@@ -1421,14 +1433,12 @@ void SessionWorker::cancelPaste(quint64 requestId)
     pendingPastes_.remove(requestId);
 }
 
-void SessionWorker::commitPaste(const QString &text,
-                                const QByteArray &encoded)
+void SessionWorker::commitPaste(const QString &text, const QByteArray &encoded)
 {
     if (encoded.isEmpty()) {
         return;
     }
-    if (!readOnly_
-        && (text.contains(u'\n') || text.contains(u'\r'))) {
+    if (!readOnly_ && (text.contains(u'\n') || text.contains(u'\r'))) {
         notePotentialActivity();
     }
     // Ghostty returns to the active screen before making accepted paste data
@@ -1456,12 +1466,10 @@ void SessionWorker::copySelectionAction(quint64 requestId)
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion = qScopeGuard([this, &result] {
-        Q_EMIT terminalActionFinished(result);
-    });
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
     if (vt_ == nullptr) {
         return;
     }
@@ -1482,8 +1490,7 @@ void SessionWorker::copySelectionAction(quint64 requestId)
     result.effect = TerminalActionEffect::Clipboard;
     result.performed = true;
     result.payload = text;
-    result.clipboardDestination =
-        TerminalClipboardDestination::Standard;
+    result.clipboardDestination = TerminalClipboardDestination::Standard;
     if (options_.runtime.selectionClipboard.clearOnCopy) {
         // Publish the reconciled selection state before the correlated result
         // reaches the GUI and resumes a dependent action-chain entry.
@@ -1491,8 +1498,8 @@ void SessionWorker::copySelectionAction(quint64 requestId)
     }
 }
 
-void SessionWorker::writeTerminalFile(
-    quint64 requestId, const TerminalWriteFileAction &action)
+void SessionWorker::writeTerminalFile(quint64 requestId,
+                                      const TerminalWriteFileAction &action)
 {
     TerminalActionResult result{
         .requestId = requestId,
@@ -1500,12 +1507,10 @@ void SessionWorker::writeTerminalFile(
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion = qScopeGuard([this, &result] {
-        Q_EMIT terminalActionFinished(result);
-    });
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
     if (vt_ == nullptr) {
         return;
     }
@@ -1517,18 +1522,15 @@ void SessionWorker::writeTerminalFile(
     switch (action.location) {
     case TerminalFileLocation::Screen:
     case TerminalFileLocation::Scrollback:
-    case TerminalFileLocation::Selection:
-        break;
+    case TerminalFileLocation::Selection: break;
     default:
-        Q_EMIT errorOccurred(
-            QStringLiteral("Invalid terminal file location"));
+        Q_EMIT errorOccurred(QStringLiteral("Invalid terminal file location"));
         return;
     }
     switch (action.disposition) {
     case TerminalFileDisposition::Copy:
     case TerminalFileDisposition::Paste:
-    case TerminalFileDisposition::Open:
-        break;
+    case TerminalFileDisposition::Open: break;
     default:
         Q_EMIT errorOccurred(
             QStringLiteral("Invalid terminal file disposition"));
@@ -1549,8 +1551,7 @@ void SessionWorker::writeTerminalFile(
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to format terminal contents"));
         return;
-    case GhosttyVtAdapter::PlainFileSnapshotStatus::Ready:
-        break;
+    case GhosttyVtAdapter::PlainFileSnapshotStatus::Ready: break;
     }
 
     QTemporaryDir directory(
@@ -1561,32 +1562,28 @@ void SessionWorker::writeTerminalFile(
                 .arg(directory.errorString()));
         return;
     }
-    if (!QFile::setPermissions(
-            directory.path(),
-            QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                | QFileDevice::ExeOwner)) {
+    if (!QFile::setPermissions(directory.path(),
+                               QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                   | QFileDevice::ExeOwner)) {
         Q_EMIT errorOccurred(
-            QStringLiteral(
-                "Failed to secure terminal file directory '%1'")
+            QStringLiteral("Failed to secure terminal file directory '%1'")
                 .arg(directory.path()));
         return;
     }
     if (!terminalDirectoryHasPrivateMode(directory.path())) {
         Q_EMIT errorOccurred(
-            QStringLiteral(
-                "Terminal file directory '%1' is not private")
+            QStringLiteral("Terminal file directory '%1' is not private")
                 .arg(directory.path()));
         return;
     }
 
-    const QString path = QDir(directory.path()).filePath(
-        terminalFileBaseName(action.location));
+    const QString path =
+        QDir(directory.path()).filePath(terminalFileBaseName(action.location));
     QFile file(path);
     const QFileDevice::Permissions filePermissions =
         QFileDevice::ReadOwner | QFileDevice::WriteOwner;
-    if (!file.open(
-            QIODevice::WriteOnly | QIODevice::NewOnly,
-            filePermissions)) {
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly,
+                   filePermissions)) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to create terminal file '%1': %2")
                 .arg(path, file.errorString()));
@@ -1600,12 +1597,10 @@ void SessionWorker::writeTerminalFile(
     }
     if (!terminalFileHasPrivateMode(file)) {
         Q_EMIT errorOccurred(
-            QStringLiteral("Terminal file '%1' is not private")
-                .arg(path));
+            QStringLiteral("Terminal file '%1' is not private").arg(path));
         return;
     }
-    if (file.write(snapshot.bytes) != snapshot.bytes.size()
-        || !file.flush()) {
+    if (file.write(snapshot.bytes) != snapshot.bytes.size() || !file.flush()) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to write terminal file '%1': %2")
                 .arg(path, file.errorString()));
@@ -1622,8 +1617,7 @@ void SessionWorker::writeTerminalFile(
     const QString canonicalPath = QFileInfo(path).canonicalFilePath();
     if (canonicalPath.isEmpty()) {
         Q_EMIT errorOccurred(
-            QStringLiteral("Failed to resolve terminal file '%1'")
-                .arg(path));
+            QStringLiteral("Failed to resolve terminal file '%1'").arg(path));
         return;
     }
 
@@ -1636,8 +1630,7 @@ void SessionWorker::writeTerminalFile(
     switch (action.disposition) {
     case TerminalFileDisposition::Copy:
         result.effect = TerminalActionEffect::Clipboard;
-        result.clipboardDestination =
-            TerminalClipboardDestination::Standard;
+        result.clipboardDestination = TerminalClipboardDestination::Standard;
         return;
     case TerminalFileDisposition::Paste:
         // This is deliberately raw path input: no bracketed-paste framing,
@@ -1651,8 +1644,8 @@ void SessionWorker::writeTerminalFile(
     }
 }
 
-void SessionWorker::copySelectionTo(
-    TerminalClipboardDestination destination, bool clearAfterCopy)
+void SessionWorker::copySelectionTo(TerminalClipboardDestination destination,
+                                    bool clearAfterCopy)
 {
     if (vt_ == nullptr) {
         return;
@@ -1673,8 +1666,7 @@ void SessionWorker::copySelectionTo(
 void SessionWorker::copySelectionOnSelect()
 {
     switch (options_.runtime.selectionClipboard.copyOnSelect) {
-    case TerminalCopyOnSelectMode::Disabled:
-        return;
+    case TerminalCopyOnSelectMode::Disabled: return;
     case TerminalCopyOnSelectMode::Primary:
         copySelectionTo(TerminalClipboardDestination::Primary, false);
         return;
@@ -1750,8 +1742,7 @@ void SessionWorker::selectAllAction(quint64 requestId)
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
     const auto completion = qScopeGuard([this, &result] {
         Q_EMIT selectAllCompleted(selectionAvailable_);
@@ -1774,14 +1765,12 @@ void SessionWorker::selectAllAction(quint64 requestId)
     result.outcome = TerminalActionOutcome::Success;
     std::optional<TerminalClipboardDestination> destination;
     switch (options_.runtime.selectionClipboard.copyOnSelect) {
-    case TerminalCopyOnSelectMode::Disabled:
-        break;
+    case TerminalCopyOnSelectMode::Disabled: break;
     case TerminalCopyOnSelectMode::Primary:
         destination = TerminalClipboardDestination::Primary;
         break;
     case TerminalCopyOnSelectMode::PrimaryAndClipboard:
-        destination =
-            TerminalClipboardDestination::PrimaryAndStandard;
+        destination = TerminalClipboardDestination::PrimaryAndStandard;
         break;
     }
     if (destination.has_value()) {
@@ -1818,12 +1807,10 @@ void SessionWorker::adjustSelectionAction(
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion = qScopeGuard([this, &result] {
-        Q_EMIT terminalActionFinished(result);
-    });
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
     if (vt_ == nullptr) {
         return;
     }
@@ -1893,12 +1880,10 @@ void SessionWorker::scrollToSelectionAction(quint64 requestId)
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion = qScopeGuard([this, &result] {
-        Q_EMIT terminalActionFinished(result);
-    });
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
     if (vt_ == nullptr) {
         return;
     }
@@ -1929,13 +1914,11 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
     if (generation == 0) {
         return;
     }
-    if (searchState_->generation != 0
-        && generation != searchState_->generation
+    if (searchState_->generation != 0 && generation != searchState_->generation
         && !sequenceTokenIsNewer(generation, searchState_->generation)) {
         return;
     }
-    if (generation != searchState_->generation
-        && searchState_->active
+    if (generation != searchState_->generation && searchState_->active
         && searchState_->dataRevision == searchContentRevision_
         && !needle.isEmpty()
         && searchNeedlesEqual(searchState_->needle, needle)) {
@@ -1993,7 +1976,8 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
     searchState_->visibleCellMask.resize(*cellCount);
     searchState_->selectedCellMask.resize(*cellCount);
     searchState_->nextScreenRow = extent->totalRows == 0
-        ? -1 : static_cast<qint64>(extent->totalRows - 1U);
+        ? -1
+        : static_cast<qint64>(extent->totalRows - 1U);
     searchState_->reversedNeedle = reversedFoldedSearchNeedle(needle);
     searchState_->prefix = searchPrefixTable(searchState_->reversedNeedle);
     publishSearchUpdate();
@@ -2005,8 +1989,8 @@ void SessionWorker::search(quint64 generation, const QByteArray &needle)
     beginSearch(generation, needle);
 }
 
-void SessionWorker::searchSerialized(
-    quint64 generation, const QByteArray &serializedNeedle)
+void SessionWorker::searchSerialized(quint64 generation,
+                                     const QByteArray &serializedNeedle)
 {
     const std::optional<QByteArray> needle =
         decodeGhosttyActionString(serializedNeedle);
@@ -2022,8 +2006,7 @@ void SessionWorker::cancelSearch(quint64 generation)
     if (generation == 0) {
         return;
     }
-    if (searchState_->generation != 0
-        && generation != searchState_->generation
+    if (searchState_->generation != 0 && generation != searchState_->generation
         && !sequenceTokenIsNewer(generation, searchState_->generation)) {
         return;
     }
@@ -2090,8 +2073,7 @@ void SessionWorker::rebuildSearchVisibleCells()
     }
     const std::optional<GhosttyVtAdapter::SearchExtent> extent =
         vt_->searchExtent();
-    if (!extent.has_value()
-        || extent->totalRows != searchState_->totalRows
+    if (!extent.has_value() || extent->totalRows != searchState_->totalRows
         || extent->columns != searchState_->columns
         || extent->rows != searchState_->rows
         || extent->activeScreen != searchState_->activeScreen) {
@@ -2201,8 +2183,8 @@ void SessionWorker::processSearchChunk()
             if (rowsLoaded >= kSearchRowsPerChunk) {
                 break;
             }
-            const quint32 screenRow = static_cast<quint32>(
-                searchState_->nextScreenRow--);
+            const quint32 screenRow =
+                static_cast<quint32>(searchState_->nextScreenRow--);
             std::optional<GhosttyVtAdapter::SearchRowSnapshot> row =
                 vt_->snapshotSearchRow(screenRow);
             ++searchState_->rowsSinceCompressionPass;
@@ -2293,8 +2275,7 @@ void SessionWorker::processSearchChunk()
         searchState_->rowsSinceCompressionPass = 0;
         compressionTimer_->start(0);
     }
-    if (searchState_->complete
-        || !searchState_->lastPublication.isValid()
+    if (searchState_->complete || !searchState_->lastPublication.isValid()
         || searchState_->lastPublication.elapsed()
             >= kSearchPublishIntervalMilliseconds) {
         publishSearchUpdate();
@@ -2302,8 +2283,8 @@ void SessionWorker::processSearchChunk()
     scheduleSearchChunk();
 }
 
-void SessionWorker::navigateSearch(
-    quint64 generation, TerminalSearchDirection direction)
+void SessionWorker::navigateSearch(quint64 generation,
+                                   TerminalSearchDirection direction)
 {
     if (generation == 0 || generation != searchState_->generation
         || !searchState_->active) {
@@ -2319,17 +2300,18 @@ void SessionWorker::navigateSearch(
     const qint64 count = static_cast<qint64>(searchState_->matches.size());
     if (direction == TerminalSearchDirection::Next) {
         searchState_->selectedMatch = searchState_->selectedMatch < 0
-            ? 0 : (searchState_->selectedMatch + 1) % count;
+            ? 0
+            : (searchState_->selectedMatch + 1) % count;
     } else {
         searchState_->selectedMatch = searchState_->selectedMatch < 0
             ? count - 1
             : (searchState_->selectedMatch + count - 1) % count;
     }
 
-    const TerminalSearchRange &range = searchState_->matches.at(
-        searchState_->selectedMatch);
-    const bool viewportChanged = vt_ != nullptr
-        && vt_->scrollSearchRangeIntoView(range);
+    const TerminalSearchRange &range =
+        searchState_->matches.at(searchState_->selectedMatch);
+    const bool viewportChanged =
+        vt_ != nullptr && vt_->scrollSearchRangeIntoView(range);
     if (viewportChanged) {
         markTerminalContentChanged();
         scheduleFrame();
@@ -2346,12 +2328,10 @@ void SessionWorker::searchSelectionAction(quint64 requestId)
         .effect = TerminalActionEffect::None,
         .performed = false,
         .payload = {},
-        .clipboardDestination =
-            TerminalClipboardDestination::Standard,
+        .clipboardDestination = TerminalClipboardDestination::Standard,
     };
-    const auto completion = qScopeGuard([this, &result] {
-        Q_EMIT terminalActionFinished(result);
-    });
+    const auto completion =
+        qScopeGuard([this, &result] { Q_EMIT terminalActionFinished(result); });
     if (vt_ == nullptr) {
         return;
     }
@@ -2373,8 +2353,8 @@ void SessionWorker::searchSelectionAction(quint64 requestId)
     result.payload = text;
 }
 
-void SessionWorker::queryHyperlink(
-    quint64 requestId, quint64 contentRevision, int column, int row)
+void SessionWorker::queryHyperlink(quint64 requestId, quint64 contentRevision,
+                                   int column, int row)
 {
     if (requestId == 0) {
         return;
@@ -2402,8 +2382,8 @@ void SessionWorker::queryHyperlink(
     };
     if (!hyperlinkState_->queryDispatchScheduled) {
         hyperlinkState_->queryDispatchScheduled = true;
-        QTimer::singleShot(
-            0, this, &SessionWorker::processPendingHyperlinkQuery);
+        QTimer::singleShot(0, this,
+                           &SessionWorker::processPendingHyperlinkQuery);
     }
 }
 
@@ -2447,8 +2427,8 @@ void SessionWorker::processPendingHyperlinkQuery()
     QVector<QPoint> matchingCells;
     QVector<int> relevantRows;
     std::optional<DetectedTerminalLink> detected;
-    const bool coordinateIsStale = query.contentRevision
-            != terminalContentRevision_
+    const bool coordinateIsStale =
+        query.contentRevision != terminalContentRevision_
         || !hyperlinkState_->viewport.hasFrame()
         || hyperlinkState_->viewport.contentRevision()
             != terminalContentRevision_;
@@ -2483,8 +2463,9 @@ void SessionWorker::processPendingHyperlinkQuery()
                              kind, uri, targetCell, matchingCells);
 }
 
-void SessionWorker::prepareHyperlinkActivation(
-    quint64 requestId, quint64 contentRevision, int column, int row)
+void SessionWorker::prepareHyperlinkActivation(quint64 requestId,
+                                               quint64 contentRevision,
+                                               int column, int row)
 {
     hyperlinkState_->activationRequestId = requestId;
     hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
@@ -2504,15 +2485,15 @@ void SessionWorker::prepareHyperlinkActivation(
         const QPoint pressedCell(column, row);
         const auto hoverMatch = resolveTrackedTerminalLink(
             *vt_, *hyperlinkState_->trackedHover, hyperlinkState_->viewport);
-        coordinateIsCurrent = hoverMatch.has_value()
-            && hoverMatch->cells.contains(pressedCell);
+        coordinateIsCurrent =
+            hoverMatch.has_value() && hoverMatch->cells.contains(pressedCell);
     }
     if (!coordinateIsCurrent) {
         return;
     }
-    auto detected = detectTerminalLinkAt(
-        *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-        hyperlinkState_->viewport, column, row);
+    auto detected =
+        detectTerminalLinkAt(*vt_, linkMatcher_.get(), options_.runtime.linkUrl,
+                             hyperlinkState_->viewport, column, row);
     if (!detected.has_value()) {
         return;
     }
@@ -2520,20 +2501,18 @@ void SessionWorker::prepareHyperlinkActivation(
     hyperlinkState_->trackedActivation = std::move(detected->tracked);
 }
 
-void SessionWorker::commitHyperlinkActivation(
-    quint64 requestId, int column, int row)
+void SessionWorker::commitHyperlinkActivation(quint64 requestId, int column,
+                                              int row)
 {
     QByteArray uri;
     const TerminalLinkKind kind = hyperlinkState_->activationKind;
-    if (requestId != 0
-        && requestId == hyperlinkState_->activationRequestId
+    if (requestId != 0 && requestId == hyperlinkState_->activationRequestId
         && hyperlinkState_->trackedActivation.has_value() && vt_ != nullptr) {
         const QPoint releaseCell(column, row);
         const auto match = resolveTrackedTerminalLink(
             *vt_, *hyperlinkState_->trackedActivation,
             hyperlinkState_->viewport);
-        bool stillMatches = match.has_value()
-            && match->kind == kind
+        bool stillMatches = match.has_value() && match->kind == kind
             && match->targetCell == releaseCell
             && match->cells.contains(releaseCell);
 
@@ -2544,8 +2523,7 @@ void SessionWorker::commitHyperlinkActivation(
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
                 hyperlinkState_->viewport, column, row);
-            stillMatches = current.has_value()
-                && current->resolved.kind == kind
+            stillMatches = current.has_value() && current->resolved.kind == kind
                 && current->resolved.uri == match->uri
                 && current->resolved.targetCell == releaseCell
                 && current->resolved.cells == match->cells;
@@ -2559,14 +2537,13 @@ void SessionWorker::commitHyperlinkActivation(
         hyperlinkState_->activationKind = TerminalLinkKind::Osc8;
         hyperlinkState_->trackedActivation.reset();
     }
-    Q_EMIT hyperlinkActivationResolved(
-        requestId, terminalContentRevision_, kind, uri);
+    Q_EMIT hyperlinkActivationResolved(requestId, terminalContentRevision_,
+                                       kind, uri);
 }
 
 void SessionWorker::cancelHyperlinkActivation(quint64 requestId)
 {
-    if (requestId == 0
-        || requestId != hyperlinkState_->activationRequestId) {
+    if (requestId == 0 || requestId != hyperlinkState_->activationRequestId) {
         return;
     }
     hyperlinkState_->activationRequestId = 0;
@@ -2603,8 +2580,8 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         if (match->kind == TerminalLinkKind::Regex) {
             const auto current = detectTerminalLinkAt(
                 *vt_, linkMatcher_.get(), options_.runtime.linkUrl,
-                hyperlinkState_->viewport,
-                match->targetCell.x(), match->targetCell.y());
+                hyperlinkState_->viewport, match->targetCell.x(),
+                match->targetCell.y());
             stillMatches = current.has_value()
                 && current->resolved.kind == match->kind
                 && current->resolved.uri == match->uri
@@ -2619,8 +2596,7 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
             matchingCells = match->cells;
             relevantRows = match->relevantRows;
         }
-    } else if (trackedTerminalLinkValid(
-                   *vt_, *hyperlinkState_->trackedHover)) {
+    } else if (trackedTerminalLinkValid(*vt_, *hyperlinkState_->trackedHover)) {
         state = TerminalHyperlinkState::Hidden;
         uri = hyperlinkState_->publishedUri;
     }
@@ -2651,8 +2627,8 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
         hyperlinkState_->activeRequestId = 0;
         hyperlinkState_->trackedHover.reset();
     }
-    Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_, state,
-                             kind, uri, targetCell, matchingCells);
+    Q_EMIT hyperlinkResolved(requestId, terminalContentRevision_, state, kind,
+                             uri, targetCell, matchingCells);
 }
 
 void SessionWorker::noteCompressionActivity()
@@ -2704,25 +2680,20 @@ void SessionWorker::publishFrame()
     TerminalUpdate &update = snapshot.update;
     update.contentRevision = terminalContentRevision_;
     update.resetCursorBlink = cursorBlinkResetPending_;
-    bool hyperlinkMayHaveChanged = update.fullFrame
-        || update.scrollbarChanged || !hyperlinkState_->viewport.hasFrame()
+    bool hyperlinkMayHaveChanged = update.fullFrame || update.scrollbarChanged
+        || !hyperlinkState_->viewport.hasFrame()
         || hyperlinkState_->viewport.columns() != update.columns
         || hyperlinkState_->viewport.rows() != update.rows;
-    if (!hyperlinkMayHaveChanged
-        && hyperlinkState_->activeRequestId != 0) {
+    if (!hyperlinkMayHaveChanged && hyperlinkState_->activeRequestId != 0) {
         for (const TerminalRowUpdate &row : update.dirtyRows) {
             if (hyperlinkState_->publishedRelevantRows.contains(row.row)
                 || row.row == hyperlinkState_->publishedTarget.y()
                 || std::ranges::any_of(
                     std::as_const(hyperlinkState_->publishedCells),
-                    [&row](const QPoint &cell) {
-                        return cell.y() == row.row;
-                    })
-                || std::ranges::any_of(
-                    row.cells,
-                    [](const TerminalCell &cell) {
-                        return cell.hasHyperlink;
-                    })) {
+                    [&row](const QPoint &cell) { return cell.y() == row.row; })
+                || std::ranges::any_of(row.cells, [](const TerminalCell &cell) {
+                       return cell.hasHyperlink;
+                   })) {
                 hyperlinkMayHaveChanged = true;
                 break;
             }
@@ -2739,9 +2710,8 @@ void SessionWorker::publishFrame()
         publishedContentRevision_ = terminalContentRevision_;
         Q_EMIT terminalUpdated(update);
         if (hyperlinkMayHaveChanged) {
-            refreshTrackedHyperlink(
-                hyperlinkState_->publishedState
-                == TerminalHyperlinkState::Hidden);
+            refreshTrackedHyperlink(hyperlinkState_->publishedState
+                                    == TerminalHyperlinkState::Hidden);
         }
         if (searchState_->active) {
             rebuildSearchVisibleCells();
@@ -2755,7 +2725,8 @@ void SessionWorker::processDeferredEffects()
     if (vt_ == nullptr) {
         return;
     }
-    const GhosttyVtAdapter::DeferredEffects effects = vt_->takeDeferredEffects();
+    const GhosttyVtAdapter::DeferredEffects effects =
+        vt_->takeDeferredEffects();
     if (!effects.title.isNull()) {
         Q_EMIT titleChanged(effects.title);
     }
@@ -2773,7 +2744,8 @@ void SessionWorker::checkChild()
         return;
     }
     int status = 0;
-    const pid_t result = ::waitpid(static_cast<pid_t>(childPid_), &status, WNOHANG);
+    const pid_t result =
+        ::waitpid(static_cast<pid_t>(childPid_), &status, WNOHANG);
     if (result == static_cast<pid_t>(childPid_)) {
         handleChildStatus(status);
     } else if (result == 0) {
@@ -2789,12 +2761,14 @@ void SessionWorker::checkChild()
         }
         closePty();
         if (!shuttingDown_) {
-            Q_EMIT errorOccurred(QStringLiteral("The child process was reaped unexpectedly."));
+            Q_EMIT errorOccurred(
+                QStringLiteral("The child process was reaped unexpectedly."));
             Q_EMIT sessionExited(127, 0, options_.hold);
         }
     } else if (result < 0 && errno != EINTR) {
-        Q_EMIT errorOccurred(QStringLiteral("waitpid failed: %1")
-                               .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        Q_EMIT errorOccurred(
+            QStringLiteral("waitpid failed: %1")
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
     }
 }
 
@@ -2811,7 +2785,7 @@ void SessionWorker::updateProcessActivity()
 
     if (potentialActivityTimer_.isValid()
         && potentialActivityTimer_.elapsed()
-               < kPotentialActivityGraceMilliseconds) {
+            < kPotentialActivityGraceMilliseconds) {
         setActiveProcess(true);
         return;
     }
@@ -2933,8 +2907,7 @@ void SessionWorker::shutdown()
         }
         if (!reaped) {
             ::kill(-pid, SIGKILL);
-            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-            }
+            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         }
         drainPty(true);
         childPid_ = -1;

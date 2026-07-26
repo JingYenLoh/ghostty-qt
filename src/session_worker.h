@@ -39,9 +39,8 @@ public:
     // launch failure is reported through the existing signals without
     // changing that result. The optional one-shot observer runs immediately
     // after terminal creation succeeds or fails, before child launch begins.
-    bool initialize(
-        const TerminalSessionLaunchOptions &options,
-        InitializationObserver observer = {});
+    bool initialize(const TerminalSessionLaunchOptions &options,
+                    InitializationObserver observer = {});
 
 public Q_SLOTS:
     // Apply the worker-owned live state: terminal appearance and regex URL
@@ -56,10 +55,8 @@ public Q_SLOTS:
                         int surfaceHeightPixels);
     void sendKey(const TerminalKeyInput &input);
     void stageSequenceKey(quint64 token, const TerminalKeyInput &input);
-    void resolveSequence(quint64 token,
-                         TerminalSequenceResolution resolution,
-                         bool hasCurrent,
-                         const TerminalKeyInput &current);
+    void resolveSequence(quint64 token, TerminalSequenceResolution resolution,
+                         bool hasCurrent, const TerminalKeyInput &current);
     void sendInputMethod(const TerminalInputMethodInput &input);
     void sendCsi(const QByteArray &payload);
     void sendEscape(const QByteArray &payload);
@@ -74,8 +71,8 @@ public Q_SLOTS:
     void cancelPaste(quint64 requestId);
     void copySelection();
     void copySelectionAction(quint64 requestId);
-    void writeTerminalFile(
-        quint64 requestId, const TerminalWriteFileAction &action);
+    void writeTerminalFile(quint64 requestId,
+                           const TerminalWriteFileAction &action);
     void clearSelection();
     void clearSelectionIfMouseTracking();
     void beginSelection(const TerminalSelectionPressInput &input);
@@ -84,25 +81,22 @@ public Q_SLOTS:
     void selectAll();
     void selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
-    void adjustSelectionAction(
-        quint64 requestId, TerminalSelectionAdjustment adjustment);
+    void adjustSelectionAction(quint64 requestId,
+                               TerminalSelectionAdjustment adjustment);
     void scrollViewport(const TerminalViewportRequest &request);
     void scrollToSelectionAction(quint64 requestId);
     void search(quint64 generation, const QByteArray &needle);
     void searchSerialized(quint64 generation,
                           const QByteArray &serializedNeedle);
     void cancelSearch(quint64 generation);
-    void navigateSearch(quint64 generation,
-                        TerminalSearchDirection direction);
+    void navigateSearch(quint64 generation, TerminalSearchDirection direction);
     void searchSelectionAction(quint64 requestId);
-    void queryHyperlink(quint64 requestId, quint64 contentRevision,
-                        int column, int row);
+    void queryHyperlink(quint64 requestId, quint64 contentRevision, int column,
+                        int row);
     void cancelHyperlinkQuery(quint64 requestId);
-    void prepareHyperlinkActivation(quint64 requestId,
-                                    quint64 contentRevision,
+    void prepareHyperlinkActivation(quint64 requestId, quint64 contentRevision,
                                     int column, int row);
-    void commitHyperlinkActivation(quint64 requestId,
-                                   int column, int row);
+    void commitHyperlinkActivation(quint64 requestId, int column, int row);
     void cancelHyperlinkActivation(quint64 requestId);
     void shutdown();
 
@@ -127,12 +121,10 @@ Q_SIGNALS:
     // selection intent without relying on a state-change-only signal.
     void selectAllCompleted(bool selectionAvailable);
     void hyperlinkResolved(quint64 requestId, quint64 contentRevision,
-                           TerminalHyperlinkState state,
-                           TerminalLinkKind kind,
+                           TerminalHyperlinkState state, TerminalLinkKind kind,
                            const QByteArray &uri, const QPoint &targetCell,
                            const QVector<QPoint> &matchingCells);
-    void hyperlinkActivationResolved(quint64 requestId,
-                                     quint64 contentRevision,
+    void hyperlinkActivationResolved(quint64 requestId, quint64 contentRevision,
                                      TerminalLinkKind kind,
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);

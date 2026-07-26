@@ -1,8 +1,8 @@
 #pragma once
 
 #include "application_action.h"
-#include "terminal_write_file_action.h"
 #include "terminal_types.h"
+#include "terminal_write_file_action.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
 
@@ -130,8 +130,7 @@ struct SelectAll {
     bool operator==(const SelectAll &) const = default;
 };
 struct AdjustSelection {
-    TerminalSelectionAdjustment adjustment =
-        TerminalSelectionAdjustment::Left;
+    TerminalSelectionAdjustment adjustment = TerminalSelectionAdjustment::Left;
     bool operator==(const AdjustSelection &) const = default;
 };
 
@@ -214,51 +213,34 @@ struct CloseWindow {
 } // namespace GhosttyPaneActions
 
 using GhosttyPaneAction = std::variant<
-    GhosttyPaneActions::ScrollToTop,
-    GhosttyPaneActions::ScrollToBottom,
-    GhosttyPaneActions::ScrollToSelection,
-    GhosttyPaneActions::ScrollToRow,
-    GhosttyPaneActions::ScrollPageUp,
-    GhosttyPaneActions::ScrollPageDown,
+    GhosttyPaneActions::ScrollToTop, GhosttyPaneActions::ScrollToBottom,
+    GhosttyPaneActions::ScrollToSelection, GhosttyPaneActions::ScrollToRow,
+    GhosttyPaneActions::ScrollPageUp, GhosttyPaneActions::ScrollPageDown,
     GhosttyPaneActions::ScrollPageFractional,
-    GhosttyPaneActions::ScrollPageLines,
-    GhosttyPaneActions::IncreaseFontSize,
-    GhosttyPaneActions::DecreaseFontSize,
-    GhosttyPaneActions::SetFontSize,
-    GhosttyPaneActions::ResetFontSize,
-    GhosttyPaneActions::ActivateKeyTable,
+    GhosttyPaneActions::ScrollPageLines, GhosttyPaneActions::IncreaseFontSize,
+    GhosttyPaneActions::DecreaseFontSize, GhosttyPaneActions::SetFontSize,
+    GhosttyPaneActions::ResetFontSize, GhosttyPaneActions::ActivateKeyTable,
     GhosttyPaneActions::ActivateKeyTableOnce,
     GhosttyPaneActions::DeactivateKeyTable,
-    GhosttyPaneActions::DeactivateAllKeyTables,
-    GhosttyPaneActions::SelectAll,
-    GhosttyPaneActions::AdjustSelection,
-    GhosttyPaneActions::StartSearch,
-    GhosttyPaneActions::EndSearch,
-    GhosttyPaneActions::SearchSelection,
-    GhosttyPaneActions::Search,
-    GhosttyPaneActions::NavigateSearch,
-    GhosttyPaneActions::SendCsi,
-    GhosttyPaneActions::SendEscape,
-    GhosttyPaneActions::SendText,
-    GhosttyPaneActions::ResetTerminal,
+    GhosttyPaneActions::DeactivateAllKeyTables, GhosttyPaneActions::SelectAll,
+    GhosttyPaneActions::AdjustSelection, GhosttyPaneActions::StartSearch,
+    GhosttyPaneActions::EndSearch, GhosttyPaneActions::SearchSelection,
+    GhosttyPaneActions::Search, GhosttyPaneActions::NavigateSearch,
+    GhosttyPaneActions::SendCsi, GhosttyPaneActions::SendEscape,
+    GhosttyPaneActions::SendText, GhosttyPaneActions::ResetTerminal,
     GhosttyPaneActions::ToggleReadOnly,
     GhosttyPaneActions::ToggleMouseReporting,
-    GhosttyPaneActions::CopyToClipboard,
-    GhosttyPaneActions::Paste,
+    GhosttyPaneActions::CopyToClipboard, GhosttyPaneActions::Paste,
     GhosttyPaneActions::CopyUrlToClipboard,
-    GhosttyPaneActions::CopyTitleToClipboard,
-    TerminalWriteFileAction,
-    GhosttyPaneActions::EndKeySequence,
-    GhosttyPaneActions::CloseWindow>;
+    GhosttyPaneActions::CopyTitleToClipboard, TerminalWriteFileAction,
+    GhosttyPaneActions::EndKeySequence, GhosttyPaneActions::CloseWindow>;
 
 using GhosttyDirectSurfaceActionParseResult =
     std::expected<GhosttyPaneAction, GhosttyActionTranslationError>;
 
-using GhosttyConfiguredAction = std::variant<
-    ApplicationAction,
-    WindowNavigationAction,
-    GhosttyPaneAction,
-    WorkspaceActionRequest>;
+using GhosttyConfiguredAction =
+    std::variant<ApplicationAction, WindowNavigationAction, GhosttyPaneAction,
+                 WorkspaceActionRequest>;
 
 // One positional entry is retained for every serialized chain member,
 // including unsupported and malformed actions. Scope is an upstream property
@@ -274,16 +256,13 @@ struct GhosttyCompiledAction {
     template <typename Action>
     [[nodiscard]] const Action *getIf() const noexcept
     {
-        return action.has_value()
-            ? std::get_if<Action>(&*action)
-            : nullptr;
+        return action.has_value() ? std::get_if<Action>(&*action) : nullptr;
     }
 };
 
 struct GhosttyCompiledActionChain {
     QVector<GhosttyCompiledAction> entries;
-    GhosttyActionInputEffect inputEffect =
-        GhosttyActionInputEffect::None;
+    GhosttyActionInputEffect inputEffect = GhosttyActionInputEffect::None;
     bool applicationOnly = true;
 
     bool operator==(const GhosttyCompiledActionChain &) const = default;
@@ -302,36 +281,32 @@ struct GhosttyActionTranslation {
     QString actionName;
     std::optional<QString> parameter;
 
-    [[nodiscard]] bool accepted() const noexcept
-    {
-        return request.has_value();
-    }
+    [[nodiscard]] bool accepted() const noexcept { return request.has_value(); }
 };
 
 class GhosttyActionCatalog final {
 public:
     // Split only at the first colon. Action-specific grammar is validated by
     // translate, parsePaneAction, and isImplemented.
-    [[nodiscard]] static GhosttySerializedActionView parseSerializedAction(
-        QStringView serializedAction);
+    [[nodiscard]] static GhosttySerializedActionView
+    parseSerializedAction(QStringView serializedAction);
 
     // Translate the Ghostty Action.parse wire format into the workspace's
     // typed action vocabulary. Parsing intentionally follows the pinned
     // ghostty/src/input/Binding.zig rules: the first colon separates the
     // parameter, names and enum values are case-sensitive, and void actions
     // reject even an empty parameter.
-    [[nodiscard]] static GhosttyActionTranslation translate(
-        QStringView serializedAction,
-        WorkspaceActionContext context = {});
+    [[nodiscard]] static GhosttyActionTranslation
+    translate(QStringView serializedAction,
+              WorkspaceActionContext context = {});
 
     // Parse one complete executable action into an owning value. This is the
     // preferred execution boundary: callers do not need separate validation,
     // performability, and dispatch parses, and payloads remain valid across
     // synchronous configuration reloads.
     [[nodiscard]] static std::optional<GhosttyConfiguredAction>
-    parseConfiguredAction(
-        QStringView serializedAction,
-        WorkspaceActionContext context = {});
+    parseConfiguredAction(QStringView serializedAction,
+                          WorkspaceActionContext context = {});
 
     // True when the current Qt frontend implements this exact serialized
     // action, including parameter validation. This includes pane-local
@@ -344,8 +319,8 @@ public:
     // non-finite or intrinsically out-of-range fractional values are rejected
     // so execution cannot reach Zig's safety-checked illegal float-to-isize
     // conversion.
-    [[nodiscard]] static std::optional<GhosttyPaneAction> parsePaneAction(
-        QStringView serializedAction);
+    [[nodiscard]] static std::optional<GhosttyPaneAction>
+    parsePaneAction(QStringView serializedAction);
 
     // Preserve precise diagnostics for the frontend-owned clipboard,
     // sequence, and window actions while the older pane parser retains its
@@ -369,31 +344,30 @@ public:
     // intentionally independent of WorkspaceAction: actions such as new_tab
     // are surface-scoped upstream even though Qt ultimately routes them
     // through the workspace model.
-    [[nodiscard]] static GhosttyActionScope scope(
-        QStringView serializedAction);
+    [[nodiscard]] static GhosttyActionScope scope(QStringView serializedAction);
 
     // Input lifecycle policy is derived from typed action identity rather
     // than serialized spellings. ClosingAction includes every close-tab
     // mode, even when the originating pane itself survives.
-    [[nodiscard]] static GhosttyActionInputEffect inputEffect(
-        const GhosttyConfiguredAction &action) noexcept;
+    [[nodiscard]] static GhosttyActionInputEffect
+    inputEffect(const GhosttyConfiguredAction &action) noexcept;
 
     // Compile a complete owning action chain once at keybinding-load time.
     // Positional entries preserve unsupported scopes and the aggregate stores
     // Ghostty's closing-before-ignore input precedence.
-    [[nodiscard]] static GhosttyCompiledActionChain compileActionChain(
-        const QStringList &actions);
+    [[nodiscard]] static GhosttyCompiledActionChain
+    compileActionChain(const QStringList &actions);
 
     // Combine one serialized chain with Ghostty's closing-before-ignore
     // precedence. Unsupported entries have no input effect.
-    [[nodiscard]] static GhosttyActionInputEffect combinedInputEffect(
-        const QStringList &actions);
+    [[nodiscard]] static GhosttyActionInputEffect
+    combinedInputEffect(const QStringList &actions);
 
     // Broad close_surface, close_window, and close_tab:this operations
     // converge on one window close per workspace. Other/right tab modes keep
     // their ordinary per-surface fanout.
-    [[nodiscard]] static bool shouldCoalesceBroadClose(
-        const GhosttyConfiguredAction &action) noexcept;
+    [[nodiscard]] static bool
+    shouldCoalesceBroadClose(const GhosttyConfiguredAction &action) noexcept;
 };
 
 Q_DECLARE_METATYPE(GhosttyActionTranslationError)

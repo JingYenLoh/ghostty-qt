@@ -9,8 +9,7 @@
 
 TabListModel::TabListModel(QObject *parent)
     : QAbstractListModel(parent)
-{
-}
+{}
 
 int TabListModel::rowCount(const QModelIndex &parent) const
 {
@@ -25,28 +24,18 @@ QVariant TabListModel::data(const QModelIndex &index, int role) const
     }
 
     switch (role) {
-    case TabIdRole:
-        return QVariant::fromValue(entry->id.value());
-    case TitleRole:
-        return displayTitle(*entry);
-    case TitleOverrideRole:
-        return entry->titleOverride;
-    case CurrentDirectoryRole:
-        return entry->currentDirectory;
-    case RunningRole:
-        return entry->running;
-    case ZoomedRole:
-        return entry->zoomed;
-    case AttentionRole:
-        return entry->attention;
-    case ProgressRole:
-        return entry->progress;
-    case ReadOnlyRole:
-        return entry->readOnly;
+    case TabIdRole: return QVariant::fromValue(entry->id.value());
+    case TitleRole: return displayTitle(*entry);
+    case TitleOverrideRole: return entry->titleOverride;
+    case CurrentDirectoryRole: return entry->currentDirectory;
+    case RunningRole: return entry->running;
+    case ZoomedRole: return entry->zoomed;
+    case AttentionRole: return entry->attention;
+    case ProgressRole: return entry->progress;
+    case ReadOnlyRole: return entry->readOnly;
     case ActivePaneIdRole:
         return QVariant::fromValue(entry->activePaneId.value());
-    default:
-        return {};
+    default: return {};
     }
 }
 
@@ -90,8 +79,8 @@ int TabListModel::indexOf(TabId id) const
 
 void TabListModel::append(TabListEntry entry)
 {
-    const bool inserted = insert(static_cast<int>(entries_.size()),
-                                 std::move(entry));
+    const bool inserted =
+        insert(static_cast<int>(entries_.size()), std::move(entry));
     Q_ASSERT(inserted);
     Q_UNUSED(inserted);
 }
@@ -171,12 +160,11 @@ bool TabListModel::move(TabId id, int destination)
 
     // beginMoveRows uses the insertion point before removal, whereas
     // QVector::move uses the final row index.
-    const int destinationChild = source < destination
-        ? destination + 1
-        : destination;
+    const int destinationChild =
+        source < destination ? destination + 1 : destination;
     const QPointer<TabListModel> guard(this);
-    const bool started = beginMoveRows(
-        QModelIndex(), source, source, QModelIndex(), destinationChild);
+    const bool started = beginMoveRows(QModelIndex(), source, source,
+                                       QModelIndex(), destinationChild);
     if (guard == nullptr || !started) {
         return false;
     }

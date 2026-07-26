@@ -10,8 +10,8 @@ ApplicationLifetimeController::ApplicationLifetimeController(QObject *parent)
         // Revalidate all state at delivery time. stop()/start() replaces Qt's
         // timer ID, while these guards also make a queued stale delivery inert
         // after a window opens or live configuration disables the policy.
-        if (!quitAfterLastWindowClosed_ || hasOpenWindow_
-            || !sawVisibleWindow_ || quitRequested_) {
+        if (!quitAfterLastWindowClosed_ || hasOpenWindow_ || !sawVisibleWindow_
+            || quitRequested_) {
             return;
         }
         requestQuitNow();
@@ -41,13 +41,11 @@ bool ApplicationLifetimeController::registerWindow(QWindow *window)
     }
 
     registeredWindows_.insert(window);
-    connect(window, &QWindow::visibleChanged, this,
-            [this](bool visible) {
-                if (visible) windowOpened();
-            });
-    connect(window, &QObject::destroyed, this, [this, window] {
-        registeredWindows_.remove(window);
+    connect(window, &QWindow::visibleChanged, this, [this](bool visible) {
+        if (visible) windowOpened();
     });
+    connect(window, &QObject::destroyed, this,
+            [this, window] { registeredWindows_.remove(window); });
     if (window->isVisible()) windowOpened();
     return true;
 }
@@ -83,7 +81,8 @@ void ApplicationLifetimeController::reconcile()
         return;
     }
 
-    quitTimer_.setInterval(quitDelay_.value_or(std::chrono::milliseconds::zero()));
+    quitTimer_.setInterval(
+        quitDelay_.value_or(std::chrono::milliseconds::zero()));
     quitTimer_.start();
 }
 

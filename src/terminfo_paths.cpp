@@ -9,7 +9,8 @@ namespace {
 
 QString normalizedDatabaseDirectory(const QString &directory)
 {
-    const QFileInfo directoryInfo(QDir::cleanPath(QDir(directory).absolutePath()));
+    const QFileInfo directoryInfo(
+        QDir::cleanPath(QDir(directory).absolutePath()));
     if (!directoryInfo.isDir()) {
         return {};
     }
@@ -31,9 +32,9 @@ QString normalizedDatabaseDirectory(const QString &directory)
 
 } // namespace
 
-TerminfoResolution resolveTerminfoDirectory(
-    const QString &executableDirectory,
-    const std::optional<QString> &overrideDirectory)
+TerminfoResolution
+resolveTerminfoDirectory(const QString &executableDirectory,
+                         const std::optional<QString> &overrideDirectory)
 {
     if (overrideDirectory.has_value()) {
         if (overrideDirectory->isEmpty()) {
@@ -41,9 +42,10 @@ TerminfoResolution resolveTerminfoDirectory(
                 QStringLiteral("GHOSTTY_QT_TERMINFO is set but empty."));
         }
 
-        const QString overridePath = QDir::cleanPath(
-            QDir(*overrideDirectory).absolutePath());
-        const QString resolvedOverride = normalizedDatabaseDirectory(overridePath);
+        const QString overridePath =
+            QDir::cleanPath(QDir(*overrideDirectory).absolutePath());
+        const QString resolvedOverride =
+            normalizedDatabaseDirectory(overridePath);
         if (resolvedOverride.isEmpty()) {
             return std::unexpected(
                 QStringLiteral("GHOSTTY_QT_TERMINFO='%1' does not contain a "
@@ -54,9 +56,11 @@ TerminfoResolution resolveTerminfoDirectory(
     }
 
     const QDir executableDir(executableDirectory);
-    const QString installedPath = QDir::cleanPath(executableDir.absoluteFilePath(
-        QStringLiteral(GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR)));
-    const QString installedDatabase = normalizedDatabaseDirectory(installedPath);
+    const QString installedPath =
+        QDir::cleanPath(executableDir.absoluteFilePath(
+            QStringLiteral(GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR)));
+    const QString installedDatabase =
+        normalizedDatabaseDirectory(installedPath);
     if (!installedDatabase.isEmpty()) {
         return installedDatabase;
     }
@@ -70,9 +74,10 @@ TerminfoResolution resolveTerminfoDirectory(
     }
 
     return std::unexpected(
-        QStringLiteral("Unable to locate the xterm-ghostty terminfo database. "
-                       "Checked installed path '%1' and build-tree path '%2'. "
-                       "Set GHOSTTY_QT_TERMINFO to an explicit database directory.")
+        QStringLiteral(
+            "Unable to locate the xterm-ghostty terminfo database. "
+            "Checked installed path '%1' and build-tree path '%2'. "
+            "Set GHOSTTY_QT_TERMINFO to an explicit database directory.")
             .arg(installedPath, buildPath));
 }
 

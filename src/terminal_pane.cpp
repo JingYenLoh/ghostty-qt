@@ -7,8 +7,8 @@
 #include "terminal_geometry.h"
 #include "terminal_pane_render_probe_p.h"
 
-#include <QClipboard>
 #include <QChronoTimer>
+#include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -27,11 +27,11 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QMutexLocker>
+#include <QQuickWindow>
 #include <QSGGeometryNode>
 #include <QSGSimpleRectNode>
 #include <QSGTextNode>
 #include <QSGVertexColorMaterial>
-#include <QQuickWindow>
 #include <QStyleHints>
 #include <QTextCharFormat>
 #include <QTextLayout>
@@ -52,8 +52,7 @@
 
 namespace {
 
-template <typename... Visitor>
-struct Overloaded : Visitor... {
+template <typename... Visitor> struct Overloaded : Visitor... {
     using Visitor::operator()...;
 };
 
@@ -103,8 +102,7 @@ float unfocusedSplitOverlayOpacity(double paneOpacity)
     // Pinned GTK writes the complementary opacity into runtime CSS with two
     // decimals. Preserve that observable composition rather than treating
     // this setting as the rectangle's opacity directly.
-    return static_cast<float>(
-        std::round((1.0 - paneOpacity) * 100.0) / 100.0);
+    return static_cast<float>(std::round((1.0 - paneOpacity) * 100.0) / 100.0);
 }
 
 float clampFontActionValue(float value, float minimum)
@@ -114,8 +112,8 @@ float clampFontActionValue(float value, float minimum)
     return std::fmax(minimum, std::fmin(value, kMaximumActionFontSize));
 }
 
-bool terminalGridMetricsChanged(
-    const TerminalCellMetrics &left, const TerminalCellMetrics &right)
+bool terminalGridMetricsChanged(const TerminalCellMetrics &left,
+                                const TerminalCellMetrics &right)
 {
     return left.cellWidth != right.cellWidth
         || left.cellHeight != right.cellHeight;
@@ -124,8 +122,7 @@ bool terminalGridMetricsChanged(
 TerminalFontRole terminalFontRole(bool bold, bool italic) noexcept
 {
     if (bold) {
-        return italic
-            ? TerminalFontRole::BoldItalic : TerminalFontRole::Bold;
+        return italic ? TerminalFontRole::BoldItalic : TerminalFontRole::Bold;
     }
     return italic ? TerminalFontRole::Italic : TerminalFontRole::Regular;
 }
@@ -146,12 +143,14 @@ QString linkPreviewDisplaySource(const QByteArray &uri)
         const ushort value = character.unicode();
         if (value < 0x20 || (value >= 0x7f && value <= 0x9f)) {
             display += QStringLiteral("\\x");
-            display += QString::number(value, 16).rightJustified(2, u'0').toUpper();
+            display +=
+                QString::number(value, 16).rightJustified(2, u'0').toUpper();
         } else if (value == 0x061c || value == 0x200e || value == 0x200f
                    || (value >= 0x2028 && value <= 0x202e)
                    || (value >= 0x2066 && value <= 0x2069)) {
             display += QStringLiteral("\\u");
-            display += QString::number(value, 16).rightJustified(4, u'0').toUpper();
+            display +=
+                QString::number(value, 16).rightJustified(4, u'0').toUpper();
         } else {
             display += character;
         }
@@ -167,7 +166,8 @@ struct ColoredRect {
     QColor color;
 };
 
-void appendRect(QVector<ColoredRect> &rects, const QRectF &rect, const QColor &color)
+void appendRect(QVector<ColoredRect> &rects, const QRectF &rect,
+                const QColor &color)
 {
     if (!rect.isEmpty() && color.isValid() && color.alpha() > 0) {
         rects.append({rect, color});
@@ -207,17 +207,15 @@ void appendRect(QVector<ColoredRect> &rects, const QRectF &rect, const QColor &c
         physicalPixels(spriteRect.width(), devicePixelRatio);
     const qint64 physicalHeight =
         physicalPixels(spriteRect.height(), devicePixelRatio);
-    const qreal horizontalPadding = logicalPixels(
-        static_cast<double>(physicalWidth / 4), devicePixelRatio);
+    const qreal horizontalPadding =
+        logicalPixels(static_cast<double>(physicalWidth / 4), devicePixelRatio);
     const qreal verticalPadding = logicalPixels(
         static_cast<double>(physicalHeight / 4), devicePixelRatio);
-    return spriteRect.adjusted(
-        -horizontalPadding, -verticalPadding,
-        horizontalPadding, verticalPadding);
+    return spriteRect.adjusted(-horizontalPadding, -verticalPadding,
+                               horizontalPadding, verticalPadding);
 }
 
-[[nodiscard]] QRectF clippedToCanvas(const QRectF &rect,
-                                     const QRectF &canvas)
+[[nodiscard]] QRectF clippedToCanvas(const QRectF &rect, const QRectF &canvas)
 {
     return rect.intersected(canvas);
 }
@@ -243,8 +241,8 @@ QColor withOpacity(QColor color, double opacity)
         return color;
     }
     color.setAlpha(std::clamp(
-        static_cast<int>(std::ceil(std::clamp(opacity, 0.0, 1.0) * 255.0)),
-        0, 255));
+        static_cast<int>(std::ceil(std::clamp(opacity, 0.0, 1.0) * 255.0)), 0,
+        255));
     return color;
 }
 
@@ -256,19 +254,16 @@ QColor resolveRelativeColor(const TerminalColorValue &configured,
     switch (configured.kind) {
     case TerminalColorKind::Color:
         return configured.color.isValid() ? configured.color : fallback;
-    case TerminalColorKind::CellForeground:
-        return cellForeground;
-    case TerminalColorKind::CellBackground:
-        return cellBackground;
-    case TerminalColorKind::Unset:
-        return fallback;
+    case TerminalColorKind::CellForeground: return cellForeground;
+    case TerminalColorKind::CellBackground: return cellBackground;
+    case TerminalColorKind::Unset: return fallback;
     }
     return fallback;
 }
 
 void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
-                    const TerminalAppearance &appearance,
-                    QColor *foreground, QColor *background)
+                    const TerminalAppearance &appearance, QColor *foreground,
+                    QColor *background)
 {
     if (!cell.bold || foreground == nullptr || background == nullptr
         || appearance.boldColor.kind == TerminalBoldColorKind::Unset) {
@@ -290,8 +285,8 @@ void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
         if (cell.styleForegroundPaletteIndex >= 0
             && cell.styleForegroundPaletteIndex < 8
             && frame.palette.size() > cell.styleForegroundPaletteIndex + 8) {
-            const QColor bright = frame.palette.at(
-                cell.styleForegroundPaletteIndex + 8);
+            const QColor bright =
+                frame.palette.at(cell.styleForegroundPaletteIndex + 8);
             if (bright.isValid()) {
                 *styleForeground = bright;
             }
@@ -322,173 +317,144 @@ void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
     const qint64 physicalHeight = physicalPixels(cellRect.height(), dpr);
     const qint64 physicalPosition = physicalPixels(position, dpr);
     const qint64 physicalThickness = physicalPixels(thickness, dpr);
-    if (physicalWidth <= 0 || physicalHeight <= 0
-        || physicalThickness <= 0) {
+    if (physicalWidth <= 0 || physicalHeight <= 0 || physicalThickness <= 0) {
         return;
     }
 
     const qint64 physicalPadding = physicalHeight / 4;
-    const qint64 physicalCanvasBottom = std::min(
-        static_cast<qint64>(std::numeric_limits<quint32>::max()),
-        physicalHeight + physicalPadding);
+    const qint64 physicalCanvasBottom =
+        std::min(static_cast<qint64>(std::numeric_limits<quint32>::max()),
+                 physicalHeight + physicalPadding);
     const QRectF canvas = paddedSpriteCanvas(cellRect, dpr);
-    const auto saturatingSubtract =
-        [](qint64 left, qint64 right) {
-            return left > right ? left - right : qint64{0};
-        };
-    const auto localRect =
-        [&](double x, double y, double width, double height) {
-            return QRectF(
-                cellRect.left() + logicalPixels(x, dpr),
-                cellRect.top() + logicalPixels(y, dpr),
-                logicalPixels(width, dpr),
-                logicalPixels(height, dpr));
-        };
+    const auto saturatingSubtract = [](qint64 left, qint64 right) {
+        return left > right ? left - right : qint64{0};
+    };
+    const auto localRect = [&](double x, double y, double width,
+                               double height) {
+        return QRectF(cellRect.left() + logicalPixels(x, dpr),
+                      cellRect.top() + logicalPixels(y, dpr),
+                      logicalPixels(width, dpr), logicalPixels(height, dpr));
+    };
     const auto appendLine = [&](const QRectF &rect) {
         appendClippedRect(rects, rect, canvas, color, geometry);
     };
-    const qint64 singlePosition = std::min(
-        physicalPosition,
-        saturatingSubtract(physicalCanvasBottom, physicalThickness));
+    const qint64 singlePosition =
+        std::min(physicalPosition,
+                 saturatingSubtract(physicalCanvasBottom, physicalThickness));
 
     switch (style) {
-    case TerminalUnderlineStyle::None:
-        break;
+    case TerminalUnderlineStyle::None: break;
     case TerminalUnderlineStyle::Single:
-        appendLine(localRect(
-            0.0, static_cast<double>(singlePosition),
-            static_cast<double>(physicalWidth),
-            static_cast<double>(physicalThickness)));
+        appendLine(localRect(0.0, static_cast<double>(singlePosition),
+                             static_cast<double>(physicalWidth),
+                             static_cast<double>(physicalThickness)));
         break;
     case TerminalUnderlineStyle::Double: {
         const qint64 twiceThickness =
-            std::min(
-                std::numeric_limits<qint64>::max(),
-                physicalThickness
-                    > std::numeric_limits<qint64>::max() / 2
-                    ? std::numeric_limits<qint64>::max()
-                    : physicalThickness * 2);
-        const qint64 middle = std::min(
-            physicalPosition,
-            saturatingSubtract(physicalCanvasBottom, twiceThickness));
-        const qint64 first =
-            saturatingSubtract(middle, physicalThickness);
-        const qint64 second = middle
-                > std::numeric_limits<qint64>::max() - physicalThickness
+            std::min(std::numeric_limits<qint64>::max(),
+                     physicalThickness > std::numeric_limits<qint64>::max() / 2
+                         ? std::numeric_limits<qint64>::max()
+                         : physicalThickness * 2);
+        const qint64 middle =
+            std::min(physicalPosition,
+                     saturatingSubtract(physicalCanvasBottom, twiceThickness));
+        const qint64 first = saturatingSubtract(middle, physicalThickness);
+        const qint64 second =
+            middle > std::numeric_limits<qint64>::max() - physicalThickness
             ? std::numeric_limits<qint64>::max()
             : middle + physicalThickness;
-        appendLine(localRect(
-            0.0, static_cast<double>(first),
-            static_cast<double>(physicalWidth),
-            static_cast<double>(physicalThickness)));
-        appendLine(localRect(
-            0.0, static_cast<double>(second),
-            static_cast<double>(physicalWidth),
-            static_cast<double>(physicalThickness)));
+        appendLine(localRect(0.0, static_cast<double>(first),
+                             static_cast<double>(physicalWidth),
+                             static_cast<double>(physicalThickness)));
+        appendLine(localRect(0.0, static_cast<double>(second),
+                             static_cast<double>(physicalWidth),
+                             static_cast<double>(physicalThickness)));
         break;
     }
     case TerminalUnderlineStyle::Curly: {
         const double width = static_cast<double>(physicalWidth);
-        const double lineThickness =
-            static_cast<double>(physicalThickness);
+        const double lineThickness = static_cast<double>(physicalThickness);
         const double amplitude = width / std::numbers::pi;
-        const double top = std::min(
-            static_cast<double>(physicalPosition),
-            static_cast<double>(physicalCanvasBottom)
-                - amplitude - lineThickness);
+        const double top = std::min(static_cast<double>(physicalPosition),
+                                    static_cast<double>(physicalCanvasBottom)
+                                        - amplitude - lineThickness);
         const double bottom = top + amplitude;
         const double center = width / 2.0;
         constexpr double curvature = 0.4;
-        const auto cubic = [](double start, double control1,
-                              double control2, double end, double t) {
+        const auto cubic = [](double start, double control1, double control2,
+                              double end, double t) {
             const double inverse = 1.0 - t;
             return inverse * inverse * inverse * start
                 + 3.0 * inverse * inverse * t * control1
-                + 3.0 * inverse * t * t * control2
-                + t * t * t * end;
+                + 3.0 * inverse * t * t * control2 + t * t * t * end;
         };
-        const auto firstHalfY =
-            [&](double x) {
-                const double target = x / center;
-                double t = target;
-                for (int iteration = 0; iteration < 6; ++iteration) {
-                    const double inverse = 1.0 - t;
-                    const double candidate = cubic(
-                        0.0, curvature, 1.0 - curvature, 1.0, t);
-                    const double derivative =
-                        3.0 * inverse * inverse * curvature
-                        + 6.0 * inverse * t * (1.0 - 2.0 * curvature)
-                        + 3.0 * t * t * curvature;
-                    t = std::clamp(
-                        t - (candidate - target) / derivative,
-                        0.0, 1.0);
-                }
-                return cubic(bottom, bottom, top, top, t);
-            };
+        const auto firstHalfY = [&](double x) {
+            const double target = x / center;
+            double t = target;
+            for (int iteration = 0; iteration < 6; ++iteration) {
+                const double inverse = 1.0 - t;
+                const double candidate =
+                    cubic(0.0, curvature, 1.0 - curvature, 1.0, t);
+                const double derivative = 3.0 * inverse * inverse * curvature
+                    + 6.0 * inverse * t * (1.0 - 2.0 * curvature)
+                    + 3.0 * t * t * curvature;
+                t = std::clamp(t - (candidate - target) / derivative, 0.0, 1.0);
+            }
+            return cubic(bottom, bottom, top, top, t);
+        };
 
         // The pinned sprite is one cubic cycle per cell. Sampling at physical
         // pixel centers keeps that wavelength independent of line thickness,
         // and disjoint one-pixel columns apply opacity only once.
         for (qint64 x = 0; x < physicalWidth; ++x) {
             const double centerX = static_cast<double>(x) + 0.5;
-            const double firstHalfX = std::min(
-                centerX, width - centerX);
+            const double firstHalfX = std::min(centerX, width - centerX);
             const double centerY = firstHalfY(firstHalfX);
-            appendLine(localRect(
-                static_cast<double>(x),
-                centerY - lineThickness / 2.0,
-                1.0, lineThickness));
+            appendLine(localRect(static_cast<double>(x),
+                                 centerY - lineThickness / 2.0, 1.0,
+                                 lineThickness));
         }
         break;
     }
     case TerminalUnderlineStyle::Dotted: {
         const double width = static_cast<double>(physicalWidth);
-        const double lineThickness =
-            static_cast<double>(physicalThickness);
+        const double lineThickness = static_cast<double>(physicalThickness);
         const double radius = std::numbers::sqrt2 / 2.0 * lineThickness;
         const double centerY = std::min(
-            static_cast<double>(physicalPosition)
-                + 0.5 * lineThickness,
-            static_cast<double>(physicalCanvasBottom)
-                - std::ceil(radius));
-        const qint64 dotCount = static_cast<qint64>(std::max(
-            std::min({
-                std::ceil(width / (4.0 * radius)),
-                std::floor(width / (3.0 * radius)),
-                std::floor(width / (2.0 * radius + 1.0)),
-            }),
-            1.0));
+            static_cast<double>(physicalPosition) + 0.5 * lineThickness,
+            static_cast<double>(physicalCanvasBottom) - std::ceil(radius));
+        const qint64 dotCount = static_cast<qint64>(
+            std::max(std::min({
+                         std::ceil(width / (4.0 * radius)),
+                         std::floor(width / (3.0 * radius)),
+                         std::floor(width / (2.0 * radius + 1.0)),
+                     }),
+                     1.0));
         const double stride = width / static_cast<double>(dotCount);
         for (qint64 dot = 0; dot < dotCount; ++dot) {
-            const double centerX =
-                (static_cast<double>(dot) + 0.5) * stride;
+            const double centerX = (static_cast<double>(dot) + 0.5) * stride;
             const qint64 firstY = std::max<qint64>(
                 -physicalPadding,
-                static_cast<qint64>(
-                    std::floor(centerY - radius)));
+                static_cast<qint64>(std::floor(centerY - radius)));
             const qint64 pastLastY = std::min<qint64>(
                 physicalCanvasBottom,
-                static_cast<qint64>(
-                    std::ceil(centerY + radius)));
+                static_cast<qint64>(std::ceil(centerY + radius)));
             for (qint64 y = firstY; y < pastLastY; ++y) {
-                const double distanceY =
-                    static_cast<double>(y) + 0.5 - centerY;
+                const double distanceY = static_cast<double>(y) + 0.5 - centerY;
                 const double remaining =
                     radius * radius - distanceY * distanceY;
                 if (remaining < 0.0) {
                     continue;
                 }
                 const double halfWidth = std::sqrt(remaining);
-                const qint64 firstX = static_cast<qint64>(
-                    std::ceil(centerX - halfWidth - 0.5));
-                const qint64 lastX = static_cast<qint64>(
-                    std::floor(centerX + halfWidth - 0.5));
+                const qint64 firstX =
+                    static_cast<qint64>(std::ceil(centerX - halfWidth - 0.5));
+                const qint64 lastX =
+                    static_cast<qint64>(std::floor(centerX + halfWidth - 0.5));
                 if (lastX >= firstX) {
                     appendLine(localRect(
-                        static_cast<double>(firstX),
-                        static_cast<double>(y),
-                        static_cast<double>(lastX - firstX + 1),
-                        1.0));
+                        static_cast<double>(firstX), static_cast<double>(y),
+                        static_cast<double>(lastX - firstX + 1), 1.0));
                 }
             }
         }
@@ -498,11 +464,10 @@ void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
         const qint64 dashWidth = physicalWidth / 3 + 1;
         const qint64 dashCount = physicalWidth / dashWidth + 1;
         for (qint64 index = 0; index < dashCount; index += 2) {
-            appendLine(localRect(
-                static_cast<double>(index * dashWidth),
-                static_cast<double>(singlePosition),
-                static_cast<double>(dashWidth),
-                static_cast<double>(physicalThickness)));
+            appendLine(localRect(static_cast<double>(index * dashWidth),
+                                 static_cast<double>(singlePosition),
+                                 static_cast<double>(dashWidth),
+                                 static_cast<double>(physicalThickness)));
         }
         break;
     }
@@ -528,9 +493,9 @@ QSGNode *createRectNode(const QVector<ColoredRect> &rects,
         return group;
     }
 
-    auto *geometry = new QSGGeometry(
-        QSGGeometry::defaultAttributes_ColoredPoint2D(),
-        static_cast<int>(rects.size()) * 6);
+    auto *geometry =
+        new QSGGeometry(QSGGeometry::defaultAttributes_ColoredPoint2D(),
+                        static_cast<int>(rects.size()) * 6);
     geometry->setDrawingMode(QSGGeometry::DrawTriangles);
     geometry->setVertexDataPattern(QSGGeometry::StaticPattern);
     QSGGeometry::ColoredPoint2D *vertices =
@@ -682,18 +647,17 @@ public:
         appendChildNode(afterMain);
         appendChildNode(unfocusedSplitOverlay);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        rootSerial = nextRenderNodeSerial.fetch_add(
-            1, std::memory_order_relaxed);
-        unfocusedSplitOverlaySerial = nextRenderNodeSerial.fetch_add(
-            1, std::memory_order_relaxed);
+        rootSerial =
+            nextRenderNodeSerial.fetch_add(1, std::memory_order_relaxed);
+        unfocusedSplitOverlaySerial =
+            nextRenderNodeSerial.fetch_add(1, std::memory_order_relaxed);
 #endif
     }
 
     void setUnfocusedSplitOverlay(const QRectF &rect, QColor color) const
     {
         QRectF effectiveRect = rect;
-        if (effectiveRect.isEmpty() || !color.isValid()
-            || color.alpha() == 0) {
+        if (effectiveRect.isEmpty() || !color.isValid() || color.alpha() == 0) {
             effectiveRect = {};
             color = Qt::transparent;
         }
@@ -726,8 +690,8 @@ public:
 
     void resetTextRows(
         int rowCount,
-        const std::array<QFont,
-                         terminalEnumIndex(TerminalFontRole::Count)> &newFonts)
+        const std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
+            &newFonts)
     {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
@@ -808,27 +772,22 @@ void publishInitialGeometryProbe(
     renderProbes[pane].initialGeometry = geometry;
 }
 
-void publishRenderProbe(const TerminalPane *pane,
-                        const TerminalSceneNode &root,
-                        const TerminalCellMetrics &metrics,
-                        const std::array<quint64,
-                            terminalEnumIndex(TerminalFontRole::Count)>
-                            &fontRoleCellCounts,
-                        const QVector<QRectF> &underlineRects,
-                        const QVector<QRectF> &strikethroughRects,
-                        const QVector<QRectF> &overlineRects,
-                        const QVector<QRectF> &cursorRects)
+void publishRenderProbe(
+    const TerminalPane *pane, const TerminalSceneNode &root,
+    const TerminalCellMetrics &metrics,
+    const std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
+        &fontRoleCellCounts,
+    const QVector<QRectF> &underlineRects,
+    const QVector<QRectF> &strikethroughRects,
+    const QVector<QRectF> &overlineRects, const QVector<QRectF> &cursorRects)
 {
     QMutexLocker locker(&renderProbeMutex);
     TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
     ++snapshot.paintSerial;
     snapshot.rootSerial = root.rootSerial;
-    snapshot.unfocusedSplitOverlaySerial =
-        root.unfocusedSplitOverlaySerial;
-    snapshot.unfocusedSplitOverlayRect =
-        root.unfocusedSplitOverlay->rect();
-    snapshot.unfocusedSplitOverlayColor =
-        root.unfocusedSplitOverlay->color();
+    snapshot.unfocusedSplitOverlaySerial = root.unfocusedSplitOverlaySerial;
+    snapshot.unfocusedSplitOverlayRect = root.unfocusedSplitOverlay->rect();
+    snapshot.unfocusedSplitOverlayColor = root.unfocusedSplitOverlay->color();
     snapshot.rowNodeSerials = root.rowNodeSerials;
     snapshot.rowBuildCounts = root.rowBuildCounts;
     snapshot.metrics = metrics;
@@ -847,12 +806,14 @@ Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
 }
 
 Qt::KeyboardModifiers modifiersAfterKeyEvent(const QKeyEvent *event,
-                                              bool pressed)
+                                             bool pressed)
 {
     Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
     const auto apply = [pressed, &modifiers](Qt::KeyboardModifier modifier) {
-        if (pressed) modifiers |= modifier;
-        else modifiers &= ~modifier;
+        if (pressed)
+            modifiers |= modifier;
+        else
+            modifiers &= ~modifier;
     };
     switch (event->key()) {
     case Qt::Key_Control: apply(Qt::ControlModifier); break;
@@ -903,8 +864,8 @@ uint32_t unshiftedCodepoint(int key)
 quint64 keyEventIdentity(const QKeyEvent *event)
 {
     const quint64 physical = static_cast<quint64>(event->nativeScanCode());
-    const quint64 logical = static_cast<quint64>(
-        static_cast<quint32>(event->key()));
+    const quint64 logical =
+        static_cast<quint64>(static_cast<quint32>(event->key()));
     // Press/release logical keys can differ as modifiers change (notably
     // Backtab versus Tab). A native location is the stable identity.
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
@@ -912,10 +873,9 @@ quint64 keyEventIdentity(const QKeyEvent *event)
 
 quint64 keyEventIdentity(const KeyEventSnapshot &event)
 {
-    const quint64 physical =
-        static_cast<quint64>(event.nativeScanCode);
-    const quint64 logical = static_cast<quint64>(
-        static_cast<quint32>(event.key));
+    const quint64 physical = static_cast<quint64>(event.nativeScanCode);
+    const quint64 logical =
+        static_cast<quint64>(static_cast<quint32>(event.key));
     return physical != 0 ? (quint64{1} << 63U) | physical : logical;
 }
 
@@ -954,8 +914,8 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
 } // namespace
 
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(
-    const TerminalPane *pane)
+TerminalPaneRenderProbeSnapshot
+terminalPaneRenderProbe(const TerminalPane *pane)
 {
     QMutexLocker locker(&renderProbeMutex);
     return renderProbes.value(pane);
@@ -963,8 +923,7 @@ TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(
 #endif
 
 TerminalPane::TerminalPane(
-    const LaunchOptions &options,
-    QQuickItem *parent,
+    const LaunchOptions &options, QQuickItem *parent,
     std::optional<TerminalSessionGeometry> initialGeometry,
     TerminalSessionStartMode startMode,
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
@@ -973,14 +932,13 @@ TerminalPane::TerminalPane(
     , options_(options)
     , appearance_(options.appearance)
     , splitAppearance_(options.splitAppearance)
-    , keybinds_(keybindProgram.has_value()
-                    ? std::move(*keybindProgram)
-                    : GhosttyKeybindProgram::compile(
-                          options.keybindSource).program)
+    , keybinds_(
+          keybindProgram.has_value()
+              ? std::move(*keybindProgram)
+              : GhosttyKeybindProgram::compile(options.keybindSource).program)
     , defaultFontPointSize_(options.typography.pointSize)
-    , resizeOverlayStartupSuppressionEnds_(
-          std::chrono::steady_clock::now()
-          + kResizeOverlayStartupSuppression)
+    , resizeOverlayStartupSuppressionEnds_(std::chrono::steady_clock::now()
+                                           + kResizeOverlayStartupSuppression)
     , sessionStartMode_(startMode)
 {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
@@ -996,20 +954,17 @@ TerminalPane::TerminalPane(
     metrics_ = terminalCellMetrics(
         options.typography,
         window() != nullptr ? window()->devicePixelRatio() : 1.0);
-    itemWindowConnection_ = connect(
-        this, &QQuickItem::windowChanged,
-        this, &TerminalPane::watchWindow);
+    itemWindowConnection_ = connect(this, &QQuickItem::windowChanged, this,
+                                    &TerminalPane::watchWindow);
     watchWindow(window());
-    urlOpener_ = [](const QUrl &url) {
-        return QDesktopServices::openUrl(url);
-    };
+    urlOpener_ = [](const QUrl &url) { return QDesktopServices::openUrl(url); };
 
     frame_.foreground = options.appearance.foregroundColor;
     frame_.background = options.appearance.backgroundColor;
     frame_.palette = options.appearance.palette;
-    frame_.cursorColor = options.appearance.cursorColor.kind
-            == TerminalColorKind::Color
-        && options.appearance.cursorColor.color.isValid()
+    frame_.cursorColor =
+        options.appearance.cursorColor.kind == TerminalColorKind::Color
+            && options.appearance.cursorColor.color.isValid()
         ? options.appearance.cursorColor.color
         : options.appearance.foregroundColor;
     cursorTimer_ = new QTimer(this);
@@ -1020,111 +975,108 @@ TerminalPane::TerminalPane(
     });
     resizeOverlayTimer_ = new QChronoTimer(this);
     resizeOverlayTimer_->setSingleShot(true);
-    connect(resizeOverlayTimer_, &QChronoTimer::timeout,
-            this, &TerminalPane::hideResizeOverlay);
+    connect(resizeOverlayTimer_, &QChronoTimer::timeout, this,
+            &TerminalPane::hideResizeOverlay);
 
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
     sessionOptions.initialGeometry = std::move(initialGeometry);
-    controller_ = new TerminalController(
-        sessionOptions, this, std::move(initialSessionCoordinator));
+    controller_ = new TerminalController(sessionOptions, this,
+                                         std::move(initialSessionCoordinator));
     controller_->setMouseReportingEnabled(options.mouseReporting);
-    connect(controller_, &TerminalController::terminalUpdated, this,
-            [this](const TerminalUpdate &terminalUpdate) {
-                const QPointer<TerminalPane> guard(this);
-                bool applied = false;
-                {
-                    QMutexLocker locker(&renderMutex_);
-                    if (hasFrame_ || terminalUpdate.fullFrame) {
-                        applied = applyTerminalUpdate(frame_, terminalUpdate);
-                        hasFrame_ = hasFrame_ || applied;
-                        if (applied) {
-                            markTextRowsChangedLocked(terminalUpdate);
-                        }
-                        if (applied && frame_.rows > 0
-                            && (!terminalResizePending_
-                                || frame_.rows == terminalRows_)) {
-                            terminalRows_ = frame_.rows;
-                            terminalResizePending_ = false;
-                        }
-                        if (applied) {
-                            const bool pendingMatchesFrame =
-                                pendingSearchUpdate_
+    connect(
+        controller_, &TerminalController::terminalUpdated, this,
+        [this](const TerminalUpdate &terminalUpdate) {
+            const QPointer<TerminalPane> guard(this);
+            bool applied = false;
+            {
+                QMutexLocker locker(&renderMutex_);
+                if (hasFrame_ || terminalUpdate.fullFrame) {
+                    applied = applyTerminalUpdate(frame_, terminalUpdate);
+                    hasFrame_ = hasFrame_ || applied;
+                    if (applied) {
+                        markTextRowsChangedLocked(terminalUpdate);
+                    }
+                    if (applied && frame_.rows > 0
+                        && (!terminalResizePending_
+                            || frame_.rows == terminalRows_)) {
+                        terminalRows_ = frame_.rows;
+                        terminalResizePending_ = false;
+                    }
+                    if (applied) {
+                        const bool pendingMatchesFrame = pendingSearchUpdate_
+                            && pendingSearchUpdate_->contentRevision
+                                == frame_.contentRevision
+                            && pendingSearchUpdate_->columns == frame_.columns
+                            && pendingSearchUpdate_->rows == frame_.rows;
+                        if (pendingMatchesFrame) {
+                            installSearchDecorationsLocked(
+                                *pendingSearchUpdate_);
+                            clearPendingSearchUpdateLocked();
+                        } else {
+                            if (pendingSearchUpdate_
                                 && pendingSearchUpdate_->contentRevision
-                                    == frame_.contentRevision
-                                && pendingSearchUpdate_->columns == frame_.columns
-                                && pendingSearchUpdate_->rows == frame_.rows;
-                            if (pendingMatchesFrame) {
-                                installSearchDecorationsLocked(
-                                    *pendingSearchUpdate_);
+                                    <= frame_.contentRevision) {
                                 clearPendingSearchUpdateLocked();
-                            } else {
-                                if (pendingSearchUpdate_
-                                    && pendingSearchUpdate_->contentRevision
-                                        <= frame_.contentRevision) {
-                                    clearPendingSearchUpdateLocked();
-                                }
-                                if (searchDecorationRevision_
-                                        != frame_.contentRevision
-                                    || searchDecorationColumns_ != frame_.columns
-                                    || searchDecorationRows_ != frame_.rows) {
-                                    clearSearchDecorationsLocked();
-                                }
+                            }
+                            if (searchDecorationRevision_
+                                    != frame_.contentRevision
+                                || searchDecorationColumns_ != frame_.columns
+                                || searchDecorationRows_ != frame_.rows) {
+                                clearSearchDecorationsLocked();
                             }
                         }
                     }
                 }
-                if (applied) {
-                    if (terminalUpdate.fullFrame
-                        || terminalUpdate.scrollbarChanged) {
-                        pendingScrollbarRow_.reset();
-                    }
-                    updateScrollbarState();
-                    if (guard == nullptr) return;
-                    if (hyperlinkQueryRejected_ && options_.linkUrl
-                        && (terminalUpdate.fullFrame
-                            || terminalUpdate.scrollbarChanged
-                            || std::any_of(
-                                terminalUpdate.dirtyRows.cbegin(),
-                                terminalUpdate.dirtyRows.cend(),
-                                [this](const TerminalRowUpdate &row) {
-                                    return row.row == hoverCell_.y();
-                                }))) {
-                        // A rejected regex query has no worker-owned lease to
-                        // refresh. Retry only when the stationary pointer's
-                        // row (or its viewport mapping) changed.
-                        hyperlinkQueryRejected_ = false;
-                        hyperlinkQueryCell_ = QPoint(-1, -1);
-                    }
-                    // A worker-owned tracked reference decides whether the
-                    // logical target actually moved or disappeared. Merely
-                    // advancing the broad terminal revision must not flicker
-                    // a stable hover or cancel a press gesture.
-                    recomputeHyperlinkHover();
-                    syncCursorBlink(terminalUpdate.resetCursorBlink);
+            }
+            if (applied) {
+                if (terminalUpdate.fullFrame
+                    || terminalUpdate.scrollbarChanged) {
+                    pendingScrollbarRow_.reset();
                 }
-            });
+                updateScrollbarState();
+                if (guard == nullptr) return;
+                if (hyperlinkQueryRejected_ && options_.linkUrl
+                    && (terminalUpdate.fullFrame
+                        || terminalUpdate.scrollbarChanged
+                        || std::any_of(terminalUpdate.dirtyRows.cbegin(),
+                                       terminalUpdate.dirtyRows.cend(),
+                                       [this](const TerminalRowUpdate &row) {
+                                           return row.row == hoverCell_.y();
+                                       }))) {
+                    // A rejected regex query has no worker-owned lease to
+                    // refresh. Retry only when the stationary pointer's
+                    // row (or its viewport mapping) changed.
+                    hyperlinkQueryRejected_ = false;
+                    hyperlinkQueryCell_ = QPoint(-1, -1);
+                }
+                // A worker-owned tracked reference decides whether the
+                // logical target actually moved or disappeared. Merely
+                // advancing the broad terminal revision must not flicker
+                // a stable hover or cancel a press gesture.
+                recomputeHyperlinkHover();
+                syncCursorBlink(terminalUpdate.resetCursorBlink);
+            }
+        });
     connect(controller_, &TerminalController::searchUpdated, this,
             &TerminalPane::handleSearchUpdate);
-    connect(controller_,
-            &TerminalController::unsafePasteConfirmationRequested,
+    connect(controller_, &TerminalController::unsafePasteConfirmationRequested,
             this, [this](quint64 requestId, const QString &text) {
                 Q_EMIT unsafePasteRequested(requestId, text, this);
             });
-    connect(controller_, &TerminalController::terminalActionReady,
-            this, &TerminalPane::handleTerminalActionResult,
-            Qt::QueuedConnection);
+    connect(controller_, &TerminalController::terminalActionReady, this,
+            &TerminalPane::handleTerminalActionResult, Qt::QueuedConnection);
     connect(controller_, &TerminalController::hyperlinkResolved, this,
             &TerminalPane::handleHyperlinkResult);
-    connect(controller_, &TerminalController::hyperlinkActivationResolved,
-            this, &TerminalPane::handleHyperlinkActivation);
+    connect(controller_, &TerminalController::hyperlinkActivationResolved, this,
+            &TerminalPane::handleHyperlinkActivation);
     connect(controller_, &TerminalController::titleChanged, this, [this] {
         if (!surfaceTitleOverride_.has_value()) {
             Q_EMIT titleChanged();
         }
     });
-    connect(controller_, &TerminalController::launchProgramChanged,
-            this, [this] {
+    connect(controller_, &TerminalController::launchProgramChanged, this,
+            [this] {
                 if (!surfaceTitleOverride_.has_value()
                     && !controller_->hasTitle()) {
                     Q_EMIT titleChanged();
@@ -1143,20 +1095,19 @@ TerminalPane::TerminalPane(
         }
         bellPlayer->ring(features, audioPath, audioVolume);
     });
-    connect(controller_, &TerminalController::currentDirectoryChanged,
-            this, &TerminalPane::currentDirectoryChanged);
+    connect(controller_, &TerminalController::currentDirectoryChanged, this,
+            &TerminalPane::currentDirectoryChanged);
     connect(controller_, &TerminalController::terminalMouseTrackingChanged,
-            this,
-            [this] {
+            this, [this] {
                 clearHyperlinkHover();
                 recomputeHyperlinkHover();
             });
-    connect(controller_, &TerminalController::runningChanged,
-            this, &TerminalPane::processStateChanged);
-    connect(controller_, &TerminalController::activeProcessChanged,
-            this, &TerminalPane::processStateChanged);
-    connect(controller_, &TerminalController::readOnlyChanged,
-            this, &TerminalPane::readOnlyChanged);
+    connect(controller_, &TerminalController::runningChanged, this,
+            &TerminalPane::processStateChanged);
+    connect(controller_, &TerminalController::activeProcessChanged, this,
+            &TerminalPane::processStateChanged);
+    connect(controller_, &TerminalController::readOnlyChanged, this,
+            &TerminalPane::readOnlyChanged);
     connect(controller_, &TerminalController::errorOccurred, this,
             [this](const QString &message) {
                 {
@@ -1195,8 +1146,10 @@ TerminalPane::TerminalPane(
                     hasError = !statusMessage_.isEmpty();
                     if (statusMessage_.isEmpty()) {
                         statusMessage_ = signalNumber > 0
-                            ? QStringLiteral("Process ended after signal %1").arg(signalNumber)
-                            : QStringLiteral("Process exited with status %1").arg(exitCode);
+                            ? QStringLiteral("Process ended after signal %1")
+                                  .arg(signalNumber)
+                            : QStringLiteral("Process exited with status %1")
+                                  .arg(exitCode);
                     }
                 }
                 failStaleTerminalActionCompletions();
@@ -1205,12 +1158,13 @@ TerminalPane::TerminalPane(
                 Q_EMIT sessionEnded(this, exitCode, signalNumber);
                 if (guard == nullptr) return;
                 if (!hold && !hasError) {
-                    QTimer::singleShot(0, this, [this] { Q_EMIT requestClose(); });
+                    QTimer::singleShot(0, this,
+                                       [this] { Q_EMIT requestClose(); });
                 }
             });
 
     if (sessionStartMode_ == TerminalSessionStartMode::Immediate) {
-        (void) controller_->startSession();
+        (void)controller_->startSession();
     }
 }
 
@@ -1235,7 +1189,7 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
         switch (event->type()) {
         case QEvent::DevicePixelRatioChange:
             deferredSessionStartCandidate_.reset();
-            (void) updateMetrics();
+            (void)updateMetrics();
             updateTerminalSize();
             scheduleDeferredSessionStart();
             update();
@@ -1247,8 +1201,7 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
             deferredSessionStartCandidate_.reset();
             scheduleDeferredSessionStart();
             break;
-        default:
-            break;
+        default: break;
         }
     }
     return QQuickItem::eventFilter(watched, event);
@@ -1270,13 +1223,11 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
     deferredSessionCandidateFrame_ = 0;
     if (quickWindow != nullptr) {
         quickWindow->installEventFilter(this);
-        windowActiveConnection_ = connect(
-            quickWindow, &QWindow::activeChanged,
-            this, [this] { update(); });
+        windowActiveConnection_ = connect(quickWindow, &QWindow::activeChanged,
+                                          this, [this] { update(); });
         windowScreenConnection_ = connect(
-            quickWindow, &QWindow::screenChanged,
-            this, [this](QScreen *) {
-                (void) updateMetrics();
+            quickWindow, &QWindow::screenChanged, this, [this](QScreen *) {
+                (void)updateMetrics();
                 updateTerminalSize();
                 deferredSessionStartCandidate_.reset();
                 scheduleDeferredSessionStart();
@@ -1284,21 +1235,20 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
             });
         if (sessionStartMode_ == TerminalSessionStartMode::Deferred
             && (controller_ == nullptr || !controller_->sessionStarted())) {
-            windowVisibilityConnection_ = connect(
-                quickWindow, &QWindow::visibilityChanged,
-                this, [this](QWindow::Visibility) {
-                    deferredSessionStartCandidate_.reset();
-                    scheduleDeferredSessionStart();
-                });
-            windowStateConnection_ = connect(
-                quickWindow, &QWindow::windowStateChanged,
-                this, [this](Qt::WindowState) {
-                    deferredSessionStartCandidate_.reset();
-                    scheduleDeferredSessionStart();
-                });
-            windowFrameSwappedConnection_ = connect(
-                quickWindow, &QQuickWindow::frameSwapped,
-                this, [this] {
+            windowVisibilityConnection_ =
+                connect(quickWindow, &QWindow::visibilityChanged, this,
+                        [this](QWindow::Visibility) {
+                            deferredSessionStartCandidate_.reset();
+                            scheduleDeferredSessionStart();
+                        });
+            windowStateConnection_ =
+                connect(quickWindow, &QWindow::windowStateChanged, this,
+                        [this](Qt::WindowState) {
+                            deferredSessionStartCandidate_.reset();
+                            scheduleDeferredSessionStart();
+                        });
+            windowFrameSwappedConnection_ =
+                connect(quickWindow, &QQuickWindow::frameSwapped, this, [this] {
                     if (!deferredSessionStartArmed_) return;
                     ++deferredSessionPresentedFrame_;
                     scheduleDeferredSessionStart();
@@ -1306,13 +1256,13 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         }
         // Geometry may have settled before a previously detached pane entered
         // this scene, so refresh even when its logical size did not change.
-        (void) updateMetrics();
+        (void)updateMetrics();
         updateTerminalSize();
     } else {
         // Detaching restores the logical one-to-one fallback used for an
         // off-scene pane. The next attachment will rebuild at that screen's
         // physical scale before publishing PTY geometry.
-        (void) updateMetrics();
+        (void)updateMetrics();
     }
     scheduleDeferredSessionStart();
     update();
@@ -1408,7 +1358,7 @@ void TerminalPane::tryDeferredSessionStart()
     // The hidden normal geometry may differ from the compositor-assigned
     // viewport. Record the committed grid without presenting it as a resize.
     noteTerminalGridSize(*geometry);
-    (void) controller_->startSession(geometry);
+    (void)controller_->startSession(geometry);
 }
 
 QString TerminalPane::title() const
@@ -1425,35 +1375,23 @@ QString TerminalPane::title() const
 
 QRectF TerminalPane::resizeOverlayRect() const
 {
-    const qreal centerX = std::max(
-        0.0, (width() - kResizeOverlayWidth) / 2.0);
+    const qreal centerX = std::max(0.0, (width() - kResizeOverlayWidth) / 2.0);
     const qreal right = std::max(0.0, width() - kResizeOverlayWidth);
-    const qreal centerY = std::max(
-        0.0, (height() - kResizeOverlayHeight) / 2.0);
+    const qreal centerY =
+        std::max(0.0, (height() - kResizeOverlayHeight) / 2.0);
     const qreal bottom = std::max(0.0, height() - kResizeOverlayHeight);
 
     QPointF position;
     switch (options_.resizeOverlay.position) {
-    case ResizeOverlayPosition::Center:
-        position = {centerX, centerY};
-        break;
-    case ResizeOverlayPosition::TopLeft:
-        break;
-    case ResizeOverlayPosition::TopCenter:
-        position.setX(centerX);
-        break;
-    case ResizeOverlayPosition::TopRight:
-        position.setX(right);
-        break;
-    case ResizeOverlayPosition::BottomLeft:
-        position.setY(bottom);
-        break;
+    case ResizeOverlayPosition::Center: position = {centerX, centerY}; break;
+    case ResizeOverlayPosition::TopLeft: break;
+    case ResizeOverlayPosition::TopCenter: position.setX(centerX); break;
+    case ResizeOverlayPosition::TopRight: position.setX(right); break;
+    case ResizeOverlayPosition::BottomLeft: position.setY(bottom); break;
     case ResizeOverlayPosition::BottomCenter:
         position = {centerX, bottom};
         break;
-    case ResizeOverlayPosition::BottomRight:
-        position = {right, bottom};
-        break;
+    case ResizeOverlayPosition::BottomRight: position = {right, bottom}; break;
     }
     return {position, QSizeF(kResizeOverlayWidth, kResizeOverlayHeight)};
 }
@@ -1660,8 +1598,7 @@ LaunchOptions TerminalPane::tabLaunchOptions(const LaunchOptions &base) const
     return withoutInitialCommand(std::move(result));
 }
 
-LaunchOptions TerminalPane::windowLaunchOptions(
-    const LaunchOptions &base) const
+LaunchOptions TerminalPane::windowLaunchOptions(const LaunchOptions &base) const
 {
     LaunchOptions result = base;
     const QString directory = currentDirectory();
@@ -1680,13 +1617,11 @@ LaunchOptions TerminalPane::windowLaunchOptions(
 void TerminalPane::applyRuntimeOptions(const LaunchOptions &options)
 {
     applyRuntimeOptions(
-        options,
-        GhosttyKeybindProgram::compile(options.keybindSource).program);
+        options, GhosttyKeybindProgram::compile(options.keybindSource).program);
 }
 
-void TerminalPane::applyRuntimeOptions(
-    const LaunchOptions &options,
-    GhosttyKeybindProgram keybindProgram)
+void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
+                                       GhosttyKeybindProgram keybindProgram)
 {
     const RevisionCounter::Value revision = runtimeOptionsRevision_.advance();
     const QPointer<TerminalPane> guard(this);
@@ -1694,8 +1629,7 @@ void TerminalPane::applyRuntimeOptions(
     const auto keyEventDeferralGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDeferral();
     });
-    const auto stillCurrentUpdate =
-        [guard, revision, keybindProgram] {
+    const auto stillCurrentUpdate = [guard, revision, keybindProgram] {
         return guard != nullptr
             && guard->runtimeOptionsRevision_.isCurrent(revision)
             && guard->keybindProgram().isSameGeneration(keybindProgram);
@@ -1763,12 +1697,11 @@ void TerminalPane::applyRuntimeOptions(
     defaultFontPointSize_ = updated.typography.pointSize;
     const qreal reloadedFontSize = manuallyZoomed_
         ? previousPointSize
-        : static_cast<qreal>(
-            clampFontActionValue(
-                static_cast<float>(updated.typography.pointSize),
-                kMinimumActionFontSize));
-    const bool metricsChanged = updateMetrics(
-        updated.typography, reloadedFontSize);
+        : static_cast<qreal>(clampFontActionValue(
+              static_cast<float>(updated.typography.pointSize),
+              kMinimumActionFontSize));
+    const bool metricsChanged =
+        updateMetrics(updated.typography, reloadedFontSize);
     bool terminalGeometryChanged = false;
     bool pointSizeChanged = false;
     {
@@ -1782,9 +1715,9 @@ void TerminalPane::applyRuntimeOptions(
             frame_.foreground = updated.appearance.foregroundColor;
             frame_.background = updated.appearance.backgroundColor;
             frame_.palette = updated.appearance.palette;
-            frame_.cursorColor = updated.appearance.cursorColor.kind
-                    == TerminalColorKind::Color
-                && updated.appearance.cursorColor.color.isValid()
+            frame_.cursorColor =
+                updated.appearance.cursorColor.kind == TerminalColorKind::Color
+                    && updated.appearance.cursorColor.color.isValid()
                 ? updated.appearance.cursorColor.color
                 : updated.appearance.foregroundColor;
         }
@@ -1805,7 +1738,7 @@ void TerminalPane::applyRuntimeOptions(
     if (keybindGenerationChanged) {
         previousSequenceToken = std::exchange(activeSequenceToken_, 0);
         keyTablesChanged = keybinds_.hasActiveTables();
-        (void) keybinds_.replaceProgram(keybindProgram);
+        (void)keybinds_.replaceProgram(keybindProgram);
     }
 
     // The pane snapshot and matcher are now authoritative. Queue the worker
@@ -1823,8 +1756,8 @@ void TerminalPane::applyRuntimeOptions(
     // installed a newer generation. A newly staged token safely supersedes
     // this one and makes the old resolution a no-op.
     if (previousSequenceToken != 0) {
-        guard->controller_->resolveSequence(
-            previousSequenceToken, TerminalSequenceResolution::Drop);
+        guard->controller_->resolveSequence(previousSequenceToken,
+                                            TerminalSequenceResolution::Drop);
         if (guard == nullptr) return;
     }
     if (!stillCurrentUpdate()) return;
@@ -1977,8 +1910,7 @@ void TerminalPane::startSearchUiWithSelection(const QString &text)
         searchUiText_ = text;
         if (textChanged) {
             Q_EMIT searchUiTextChanged();
-            if (guard == nullptr || !searchUiActive_
-                || searchUiText_ != text) {
+            if (guard == nullptr || !searchUiActive_ || searchUiText_ != text) {
                 return;
             }
         }
@@ -2029,8 +1961,8 @@ void TerminalPane::endSearchUi()
 void TerminalPane::navigateSearch(int direction)
 {
     controller_->navigateSearch(direction < 0
-        ? TerminalSearchDirection::Previous
-        : TerminalSearchDirection::Next);
+                                    ? TerminalSearchDirection::Previous
+                                    : TerminalSearchDirection::Next);
 }
 
 void TerminalPane::clearSearchDecorationsLocked()
@@ -2062,8 +1994,8 @@ void TerminalPane::installSearchDecorationsLocked(
 
     const qsizetype columnCount = searchUpdate.columns;
     const qsizetype maskSize = searchUpdate.visibleCellMask.size();
-    const bool masksEmpty = maskSize == 0
-        && searchUpdate.selectedCellMask.isEmpty();
+    const bool masksEmpty =
+        maskSize == 0 && searchUpdate.selectedCellMask.isEmpty();
     const bool masksMatchGrid = maskSize > 0
         && maskSize == searchUpdate.selectedCellMask.size()
         && maskSize % columnCount == 0
@@ -2075,14 +2007,14 @@ void TerminalPane::installSearchDecorationsLocked(
     searchSelectedCellMask_ = searchUpdate.selectedCellMask;
 }
 
-void TerminalPane::handleSearchUpdate(
-    const TerminalSearchUpdate &searchUpdate)
+void TerminalPane::handleSearchUpdate(const TerminalSearchUpdate &searchUpdate)
 {
     searchEngineActive_ = searchUpdate.active;
     const QString nextLabel = searchUpdate.active
         ? QStringLiteral("%1/%2")
               .arg(searchUpdate.selectedMatch >= 0
-                       ? searchUpdate.selectedMatch + 1 : 0)
+                       ? searchUpdate.selectedMatch + 1
+                       : 0)
               .arg(searchUpdate.totalMatches)
         : QStringLiteral("0/0");
     if (searchMatchLabel_ != nextLabel) {
@@ -2112,9 +2044,8 @@ void TerminalPane::handleSearchUpdate(
 
 QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
-    auto *root = oldNode != nullptr
-        ? static_cast<TerminalSceneNode *>(oldNode)
-        : new TerminalSceneNode;
+    auto *root = oldNode != nullptr ? static_cast<TerminalSceneNode *>(oldNode)
+                                    : new TerminalSceneNode;
     root->clearTransientNodes();
 
     TerminalFrame frame;
@@ -2163,17 +2094,18 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         searchSelectedCellMask.size() == frame.cells.size();
 
     const QRectF viewport = boundingRect();
-    const QSGRendererInterface *rendererInterface = window() != nullptr
-        ? window()->rendererInterface() : nullptr;
-    const qreal devicePixelRatio = window() != nullptr
-        ? window()->devicePixelRatio() : 1.0;
-    const qreal underlinePosition = std::min(
-        metrics.underlinePosition, metrics.underlineMaximumPosition);
-    const qreal overlinePosition = std::max(
-        metrics.overlinePosition, metrics.overlineMinimumPosition);
+    const QSGRendererInterface *rendererInterface =
+        window() != nullptr ? window()->rendererInterface() : nullptr;
+    const qreal devicePixelRatio =
+        window() != nullptr ? window()->devicePixelRatio() : 1.0;
+    const qreal underlinePosition =
+        std::min(metrics.underlinePosition, metrics.underlineMaximumPosition);
+    const qreal overlinePosition =
+        std::max(metrics.overlinePosition, metrics.overlineMinimumPosition);
     const bool softwareRenderer = rendererInterface == nullptr
         || rendererInterface->graphicsApi() == QSGRendererInterface::Software;
-    const QColor background = hasFrame ? frame.background : QColor(QStringLiteral("#1e222a"));
+    const QColor background =
+        hasFrame ? frame.background : QColor(QStringLiteral("#1e222a"));
     QVector<ColoredRect> baseBackgrounds;
     QVector<ColoredRect> backgrounds;
     QVector<ColoredRect> cursorBackgrounds;
@@ -2205,8 +2137,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QSGTextNode *overlayText = nullptr;
     const auto ensureOverlayText = [&] {
         if (overlayText == nullptr) {
-            overlayText = createTextNode(
-                window(), viewport, QColor(QStringLiteral("#eceff4")));
+            overlayText = createTextNode(window(), viewport,
+                                         QColor(QStringLiteral("#eceff4")));
         }
         return overlayText;
     };
@@ -2215,25 +2147,25 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         root->clearMainText();
         QSGTextNode *startingText = createTextNode(
             window(), viewport, QColor(QStringLiteral("#88909d")));
-        appendTextLayout(startingText, QStringLiteral("Starting terminal…"), baseFont,
-                         QColor(QStringLiteral("#88909d")), QPointF(12.0, 12.0),
-                         baseline, std::max<qreal>(1.0, viewport.width() - 24.0));
+        appendTextLayout(startingText, QStringLiteral("Starting terminal…"),
+                         baseFont, QColor(QStringLiteral("#88909d")),
+                         QPointF(12.0, 12.0), baseline,
+                         std::max<qreal>(1.0, viewport.width() - 24.0));
         if (startingText != nullptr) {
             root->mainTextRows->appendChildNode(startingText);
         }
     } else {
-        const int visibleRows = std::min(frame.rows,
-            static_cast<int>(std::ceil(height() / cellHeight)));
-        const int visibleColumns = std::min(frame.columns,
-            static_cast<int>(std::ceil(width() / cellWidth)));
+        const int visibleRows = std::min(
+            frame.rows, static_cast<int>(std::ceil(height() / cellHeight)));
+        const int visibleColumns = std::min(
+            frame.columns, static_cast<int>(std::ceil(width() / cellWidth)));
         const bool focused = hasActiveFocus();
         const bool cursorActive = frame.cursorVisible
             && (!focused || !frame.cursorBlinking || cursorBlinkOn_)
             && frame.cursorColumn >= 0 && frame.cursorColumn < visibleColumns
             && frame.cursorRow >= 0 && frame.cursorRow < visibleRows;
         const int cursorStyle = focused ? frame.cursorStyle : 3;
-        const bool blockCursorActive = cursorActive
-            && cursorStyle == 1;
+        const bool blockCursorActive = cursorActive && cursorStyle == 1;
         QColor cursorCellForeground = frame.foreground;
         QColor cursorCellBackground = frame.background;
         const qsizetype cursorCellIndex = cursorActive
@@ -2245,13 +2177,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             const TerminalCell &cursorCell = frame.cells.at(cursorCellIndex);
             cursorCellForeground = cursorCell.foreground;
             cursorCellBackground = cursorCell.background;
-            applyBoldColor(cursorCell, frame, appearance,
-                           &cursorCellForeground, &cursorCellBackground);
+            applyBoldColor(cursorCell, frame, appearance, &cursorCellForeground,
+                           &cursorCellBackground);
         }
         QColor blockCursorTextColor = resolveRelativeColor(
-            appearance.cursorTextColor,
-            cursorCellForeground, cursorCellBackground,
-            frame.background);
+            appearance.cursorTextColor, cursorCellForeground,
+            cursorCellBackground, frame.background);
         blockCursorTextColor.setAlpha(255);
 
         TerminalTextRenderState textState;
@@ -2269,7 +2200,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         textState.searchSelectedCells = searchSelectedCellMask;
         textState.devicePixelRatio = devicePixelRatio;
         textState.graphicsApi = rendererInterface != nullptr
-            ? static_cast<int>(rendererInterface->graphicsApi()) : -1;
+            ? static_cast<int>(rendererInterface->graphicsApi())
+            : -1;
         textState.frameColumns = frame.columns;
         textState.frameRows = frame.rows;
         textState.visibleColumns = visibleColumns;
@@ -2300,8 +2232,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
         for (int row = 0; row < visibleRows; ++row) {
             const qreal top = static_cast<qreal>(row) * cellHeight;
-            const quint64 rowEpoch = row < textRowEpochs.size()
-                ? textRowEpochs.at(row) : 0;
+            const quint64 rowEpoch =
+                row < textRowEpochs.size() ? textRowEpochs.at(row) : 0;
             const bool cursorChangedThisRow = blockCursorTextChanged
                 && ((previousBlockCursorTextState.active
                      && previousBlockCursorTextState.row == row)
@@ -2316,8 +2248,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                        frame.foreground)
                 : nullptr;
             for (int column = 0; column < visibleColumns; ++column) {
-                const qsizetype index = static_cast<qsizetype>(row)
-                    * frame.columns + column;
+                const qsizetype index =
+                    static_cast<qsizetype>(row) * frame.columns + column;
                 if (index >= frame.cells.size()) {
                     continue;
                 }
@@ -2327,8 +2259,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     * static_cast<qreal>(std::max(1, cell.columnSpan));
                 QColor styledForeground = cell.foreground;
                 QColor styledBackground = cell.background;
-                applyBoldColor(cell, frame, appearance,
-                               &styledForeground, &styledBackground);
+                applyBoldColor(cell, frame, appearance, &styledForeground,
+                               &styledBackground);
 
                 bool candidateSearchMatch = candidateMaskMatchesFrame
                     && searchCandidateCellMask.testBit(index);
@@ -2349,53 +2281,48 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 QColor cellBackground = styledBackground;
                 if (cell.selected) {
                     cellBackground = resolveRelativeColor(
-                        appearance.selectionBackground,
-                        styledForeground, styledBackground,
-                        frame.foreground);
+                        appearance.selectionBackground, styledForeground,
+                        styledBackground, frame.foreground);
                 } else if (selectedSearchMatch) {
                     cellBackground = resolveRelativeColor(
-                        appearance.searchSelectedBackground,
-                        styledForeground, styledBackground,
-                        frame.foreground);
+                        appearance.searchSelectedBackground, styledForeground,
+                        styledBackground, frame.foreground);
                 } else if (candidateSearchMatch) {
                     cellBackground = resolveRelativeColor(
-                        appearance.searchBackground,
-                        styledForeground, styledBackground,
-                        frame.foreground);
+                        appearance.searchBackground, styledForeground,
+                        styledBackground, frame.foreground);
                 }
                 if (cellBackground != background) {
                     // Background is grid-cell state, even when the glyph in
                     // this cell spans multiple columns. Drawing one column at
                     // a time keeps adjacent/spacer backgrounds non-overlapping
                     // so they can be safely color-batched.
-                    appendRect(backgrounds, QRectF(left, top, cellWidth, cellHeight),
+                    appendRect(backgrounds,
+                               QRectF(left, top, cellWidth, cellHeight),
                                cellBackground);
                 }
 
                 QColor foreground = styledForeground;
                 if (cell.selected) {
                     foreground = resolveRelativeColor(
-                        appearance.selectionForeground,
-                        styledForeground, styledBackground,
-                        frame.background);
+                        appearance.selectionForeground, styledForeground,
+                        styledBackground, frame.background);
                 } else if (selectedSearchMatch) {
                     foreground = resolveRelativeColor(
-                        appearance.searchSelectedForeground,
-                        styledForeground, styledBackground,
-                        frame.background);
+                        appearance.searchSelectedForeground, styledForeground,
+                        styledBackground, frame.background);
                 } else if (candidateSearchMatch) {
                     foreground = resolveRelativeColor(
-                        appearance.searchForeground,
-                        styledForeground, styledBackground,
-                        frame.background);
+                        appearance.searchForeground, styledForeground,
+                        styledBackground, frame.background);
                 }
                 const bool insideBlockCursor = blockCursorActive
-                    && row == frame.cursorRow
-                    && column >= frame.cursorColumn
+                    && row == frame.cursorRow && column >= frame.cursorColumn
                     && column < frame.cursorColumn
-                        + std::max(1, frame.cursorColumnSpan);
+                            + std::max(1, frame.cursorColumnSpan);
                 if (cell.faint && !insideBlockCursor) {
-                    foreground = withOpacity(foreground, appearance.faintOpacity);
+                    foreground =
+                        withOpacity(foreground, appearance.faintOpacity);
                 }
                 // Ghostty applies the block-cursor text uniform last to all
                 // foreground primitives in every column covered by a wide
@@ -2405,18 +2332,17 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     foreground = blockCursorTextColor;
                 }
 
-                if (!cell.invisible && !cell.text.isEmpty()
-                    && !cell.spacer) {
+                if (!cell.invisible && !cell.text.isEmpty() && !cell.spacer) {
                     const std::size_t fontIndex = terminalEnumIndex(
                         terminalFontRole(cell.bold, cell.italic));
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
                     ++fontRoleCellCounts[fontIndex];
 #endif
                     if (rowText != nullptr) {
-                        appendTextLayout(
-                            rowText, cell.text, root->fonts[fontIndex],
-                            foreground, QPointF(left, top), baseline,
-                            drawWidth);
+                        appendTextLayout(rowText, cell.text,
+                                         root->fonts[fontIndex], foreground,
+                                         QPointF(left, top), baseline,
+                                         drawWidth);
                     }
                 }
 
@@ -2426,12 +2352,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
                 QColor underlineColor = insideBlockCursor
                     ? blockCursorTextColor
-                    : (cell.underlineUsesForeground
-                        ? foreground : cell.underlineColor);
+                    : (cell.underlineUsesForeground ? foreground
+                                                    : cell.underlineColor);
                 if (!insideBlockCursor && !cell.underlineUsesForeground
                     && cell.faint) {
-                    underlineColor = withOpacity(underlineColor,
-                                                  appearance.faintOpacity);
+                    underlineColor =
+                        withOpacity(underlineColor, appearance.faintOpacity);
                 }
                 TerminalUnderlineStyle underlineStyle = cell.underlineStyle;
                 if (index <= std::numeric_limits<int>::max()
@@ -2440,36 +2366,33 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     // Ghostty renders a hovered link as single-underlined,
                     // except an existing single underline becomes double so
                     // the hover remains visually distinguishable.
-                    underlineStyle = cell.underlineStyle
-                            == TerminalUnderlineStyle::Single
+                    underlineStyle =
+                        cell.underlineStyle == TerminalUnderlineStyle::Single
                         ? TerminalUnderlineStyle::Double
                         : TerminalUnderlineStyle::Single;
                 }
                 appendUnderline(decorationsBeforeText,
                                 QRectF(left, top, drawWidth, cellHeight),
                                 metrics.underlinePosition,
-                                metrics.underlineThickness,
-                                underlineStyle, underlineColor,
-                                devicePixelRatio,
+                                metrics.underlineThickness, underlineStyle,
+                                underlineColor, devicePixelRatio,
                                 underlineProbe);
                 const QRectF decorationCanvas = paddedSpriteCanvas(
-                    QRectF(left, top, drawWidth, cellHeight),
-                    devicePixelRatio);
+                    QRectF(left, top, drawWidth, cellHeight), devicePixelRatio);
                 if (cell.strikeThrough) {
-                    const QRectF rect(
-                        left, top + metrics.strikethroughPosition,
-                        drawWidth, metrics.strikethroughThickness);
-                    appendClippedRect(
-                        decorationsAfterText, rect, decorationCanvas,
-                        foreground, strikethroughProbe);
+                    const QRectF rect(left, top + metrics.strikethroughPosition,
+                                      drawWidth,
+                                      metrics.strikethroughThickness);
+                    appendClippedRect(decorationsAfterText, rect,
+                                      decorationCanvas, foreground,
+                                      strikethroughProbe);
                 }
                 if (cell.overline) {
-                    const QRectF rect(
-                        left, top + overlinePosition,
-                        drawWidth, metrics.overlineThickness);
-                    appendClippedRect(
-                        decorationsBeforeText, rect, decorationCanvas,
-                        foreground, overlineProbe);
+                    const QRectF rect(left, top + overlinePosition, drawWidth,
+                                      metrics.overlineThickness);
+                    appendClippedRect(decorationsBeforeText, rect,
+                                      decorationCanvas, foreground,
+                                      overlineProbe);
                 }
             }
             if (rebuildRowText) {
@@ -2479,112 +2402,98 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         root->blockCursorTextState = blockCursorTextState;
 
         if (cursorActive) {
-            const qreal left = static_cast<qreal>(frame.cursorColumn) * cellWidth;
+            const qreal left =
+                static_cast<qreal>(frame.cursorColumn) * cellWidth;
             const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
             const qreal cursorWidth = cellWidth
                 * static_cast<qreal>(std::max(1, frame.cursorColumnSpan));
             const qreal cursorTop = top + metrics.cursorTop;
-            const QRectF cursorRect(
-                left, cursorTop, cursorWidth, metrics.cursorHeight);
+            const QRectF cursorRect(left, cursorTop, cursorWidth,
+                                    metrics.cursorHeight);
             const QRectF cursorCanvas =
                 paddedSpriteCanvas(cursorRect, devicePixelRatio);
-            const QRectF underlineCursorCell(
-                left, top, cursorWidth, cellHeight);
+            const QRectF underlineCursorCell(left, top, cursorWidth,
+                                             cellHeight);
             const QRectF underlineCursorCanvas =
-                paddedSpriteCanvas(
-                    underlineCursorCell, devicePixelRatio);
+                paddedSpriteCanvas(underlineCursorCell, devicePixelRatio);
             QColor cursorColor = frame.cursorColor;
             if (!frame.cursorColorExplicit) {
                 cursorColor = resolveRelativeColor(
-                    appearance.cursorColor,
-                    cursorCellForeground, cursorCellBackground,
-                    frame.foreground);
+                    appearance.cursorColor, cursorCellForeground,
+                    cursorCellBackground, frame.foreground);
             }
-            cursorColor = withOpacity(
-                cursorColor, focused ? appearance.cursorOpacity : 1.0);
-            const auto appendCursorRect =
-                [&](QVector<ColoredRect> &rects, const QRectF &rect,
-                    const QRectF &canvas) {
-                    appendClippedRect(
-                        rects, rect, canvas, cursorColor, cursorProbe);
-                };
+            cursorColor = withOpacity(cursorColor,
+                                      focused ? appearance.cursorOpacity : 1.0);
+            const auto appendCursorRect = [&](QVector<ColoredRect> &rects,
+                                              const QRectF &rect,
+                                              const QRectF &canvas) {
+                appendClippedRect(rects, rect, canvas, cursorColor,
+                                  cursorProbe);
+            };
             switch (cursorStyle) {
             case 0:
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(left + metrics.cursorBarLeft, cursorTop,
-                           metrics.cursorThickness,
-                           metrics.cursorHeight),
-                    cursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(left + metrics.cursorBarLeft, cursorTop,
+                                        metrics.cursorThickness,
+                                        metrics.cursorHeight),
+                                 cursorCanvas);
                 break;
             case 2:
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(left,
-                           top + underlinePosition,
-                           cursorWidth, metrics.cursorThickness),
-                    underlineCursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(left, top + underlinePosition,
+                                        cursorWidth, metrics.cursorThickness),
+                                 underlineCursorCanvas);
                 break;
             case 3: {
                 const qreal thickness = metrics.cursorThickness;
-                const qreal innerWidth = std::max(
-                    qreal{0.0}, cursorWidth - 2.0 * thickness);
+                const qreal innerWidth =
+                    std::max(qreal{0.0}, cursorWidth - 2.0 * thickness);
                 const qreal innerHeight = std::max(
-                    qreal{0.0},
-                    metrics.cursorHeight - 2.0 * thickness);
+                    qreal{0.0}, metrics.cursorHeight - 2.0 * thickness);
                 if (innerWidth <= 0.0 || innerHeight <= 0.0) {
-                    appendCursorRect(
-                        cursorDecorations, cursorRect, cursorCanvas);
+                    appendCursorRect(cursorDecorations, cursorRect,
+                                     cursorCanvas);
                     break;
                 }
 
-                const QRectF inner(
-                    left + thickness, cursorTop + thickness,
-                    innerWidth, innerHeight);
+                const QRectF inner(left + thickness, cursorTop + thickness,
+                                   innerWidth, innerHeight);
                 // These four rectangles form an exact, non-overlapping
                 // partition of outer minus inner. In particular, fractional
                 // cursor opacity is applied once at the corners.
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(
-                        cursorRect.left(), cursorRect.top(),
-                        cursorRect.width(),
-                        inner.top() - cursorRect.top()),
-                    cursorCanvas);
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(
-                        cursorRect.left(), inner.bottom(),
-                        cursorRect.width(),
-                        cursorRect.bottom() - inner.bottom()),
-                    cursorCanvas);
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(
-                        cursorRect.left(), inner.top(),
-                        inner.left() - cursorRect.left(),
-                        inner.height()),
-                    cursorCanvas);
-                appendCursorRect(
-                    cursorDecorations,
-                    QRectF(
-                        inner.right(), inner.top(),
-                        cursorRect.right() - inner.right(),
-                        inner.height()),
-                    cursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(cursorRect.left(), cursorRect.top(),
+                                        cursorRect.width(),
+                                        inner.top() - cursorRect.top()),
+                                 cursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(cursorRect.left(), inner.bottom(),
+                                        cursorRect.width(),
+                                        cursorRect.bottom() - inner.bottom()),
+                                 cursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(cursorRect.left(), inner.top(),
+                                        inner.left() - cursorRect.left(),
+                                        inner.height()),
+                                 cursorCanvas);
+                appendCursorRect(cursorDecorations,
+                                 QRectF(inner.right(), inner.top(),
+                                        cursorRect.right() - inner.right(),
+                                        inner.height()),
+                                 cursorCanvas);
                 break;
             }
             default:
                 // Appended after cell backgrounds so a wide block cursor is
                 // not overwritten by the spacer cell's background.
-                appendCursorRect(
-                    cursorBackgrounds, cursorRect, cursorCanvas);
+                appendCursorRect(cursorBackgrounds, cursorRect, cursorCanvas);
                 break;
             }
         }
 
         if (!preedit.isEmpty()) {
-            const qreal left = static_cast<qreal>(frame.cursorColumn) * cellWidth;
+            const qreal left =
+                static_cast<qreal>(frame.cursorColumn) * cellWidth;
             const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
             const qreal preeditWidth = std::max(
                 cellWidth, QFontMetricsF(baseFont).horizontalAdvance(preedit));
@@ -2592,16 +2501,13 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                        QRectF(left, top, preeditWidth, cellHeight),
                        QColor(QStringLiteral("#3b4252")));
             appendTextLayout(ensureOverlayText(), preedit, baseFont,
-                             QColor(QStringLiteral("#eceff4")), QPointF(left, top),
-                             baseline, preeditWidth);
+                             QColor(QStringLiteral("#eceff4")),
+                             QPointF(left, top), baseline, preeditWidth);
             appendUnderline(
-                overlayDecorations,
-                QRectF(left, top, preeditWidth, cellHeight),
-                metrics.underlinePosition,
-                metrics.underlineThickness,
+                overlayDecorations, QRectF(left, top, preeditWidth, cellHeight),
+                metrics.underlinePosition, metrics.underlineThickness,
                 TerminalUnderlineStyle::Single,
-                QColor(QStringLiteral("#eceff4")),
-                devicePixelRatio,
+                QColor(QStringLiteral("#eceff4")), devicePixelRatio,
                 underlineProbe);
         }
 
@@ -2626,8 +2532,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             previewForeground.setAlpha(255);
             QColor previewOutline = previewForeground;
             previewOutline.setAlpha(100);
-            appendRect(overlayBackgrounds, linkPreviewRect,
-                       previewBackground);
+            appendRect(overlayBackgrounds, linkPreviewRect, previewBackground);
 
             constexpr qreal outlineWidth = 1.0;
             appendRect(overlayDecorations,
@@ -2652,14 +2557,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             const QFontMetricsF fontMetrics(baseFont);
             appendTextLayout(
                 ensureOverlayText(), linkPreview, baseFont, previewForeground,
-                QPointF(linkPreviewRect.left()
-                            + kLinkPreviewHorizontalPadding,
-                        linkPreviewRect.top()
-                            + kLinkPreviewVerticalPadding),
+                QPointF(linkPreviewRect.left() + kLinkPreviewHorizontalPadding,
+                        linkPreviewRect.top() + kLinkPreviewVerticalPadding),
                 std::ceil(fontMetrics.ascent()),
-                std::max<qreal>(
-                    1.0, linkPreviewRect.width()
-                        - 2.0 * kLinkPreviewHorizontalPadding));
+                std::max<qreal>(1.0,
+                                linkPreviewRect.width()
+                                    - 2.0 * kLinkPreviewHorizontalPadding));
         }
     }
 
@@ -2672,10 +2575,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     if (QSGNode *node = createRectNode(cursorBackgrounds, softwareRenderer)) {
         root->beforeMain->appendChildNode(node);
     }
-    if (QSGNode *node = createRectNode(decorationsBeforeText, softwareRenderer)) {
+    if (QSGNode *node =
+            createRectNode(decorationsBeforeText, softwareRenderer)) {
         root->beforeMain->appendChildNode(node);
     }
-    if (QSGNode *node = createRectNode(decorationsAfterText, softwareRenderer)) {
+    if (QSGNode *node =
+            createRectNode(decorationsAfterText, softwareRenderer)) {
         root->afterMain->appendChildNode(node);
     }
     if (QSGNode *node = createRectNode(cursorDecorations, softwareRenderer)) {
@@ -2692,8 +2597,8 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
 
     QColor unfocusedSplitColor;
-    const bool surfaceFocused = hasActiveFocus()
-        && window() != nullptr && window()->isActive();
+    const bool surfaceFocused =
+        hasActiveFocus() && window() != nullptr && window()->isActive();
     if (split_ && !surfaceFocused && !searchUiActive_) {
         unfocusedSplitColor = splitAppearance.unfocusedFill.has_value()
                 && splitAppearance.unfocusedFill->isValid()
@@ -2701,20 +2606,19 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             : appearance.backgroundColor;
         if (unfocusedSplitColor.isValid()) {
             unfocusedSplitColor.setAlphaF(
-                unfocusedSplitOverlayOpacity(
-                    splitAppearance.unfocusedOpacity));
+                unfocusedSplitOverlayOpacity(splitAppearance.unfocusedOpacity));
         }
     }
     root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    publishRenderProbe(
-        this, *root, metrics, fontRoleCellCounts, underlineRects,
-        strikethroughRects, overlineRects, cursorRects);
+    publishRenderProbe(this, *root, metrics, fontRoleCellCounts, underlineRects,
+                       strikethroughRects, overlineRects, cursorRects);
 #endif
     return root;
 }
 
-void TerminalPane::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+void TerminalPane::geometryChange(const QRectF &newGeometry,
+                                  const QRectF &oldGeometry)
 {
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     QQuickItem::geometryChange(newGeometry, oldGeometry);
@@ -2734,14 +2638,13 @@ bool TerminalPane::updateMetrics()
     return updateMetrics(options_.typography, fontPointSize());
 }
 
-bool TerminalPane::updateMetrics(
-    const TerminalTypography &typography, qreal pointSize)
+bool TerminalPane::updateMetrics(const TerminalTypography &typography,
+                                 qreal pointSize)
 {
     TerminalTypography effective = typography;
     effective.pointSize = pointSize;
     const TerminalCellMetrics next = terminalCellMetrics(
-        effective,
-        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+        effective, window() != nullptr ? window()->devicePixelRatio() : 1.0);
 
     QMutexLocker locker(&renderMutex_);
     if (metrics_ == next) {
@@ -2773,8 +2676,8 @@ void TerminalPane::syncCursorBlink(bool resetPhase)
     bool shouldBlink = false;
     {
         QMutexLocker locker(&renderMutex_);
-        shouldBlink = hasFrame_ && frame_.cursorVisible
-            && frame_.cursorBlinking;
+        shouldBlink =
+            hasFrame_ && frame_.cursorVisible && frame_.cursorBlinking;
     }
     shouldBlink = shouldBlink && hasActiveFocus();
 
@@ -2817,13 +2720,12 @@ void TerminalPane::updateTerminalSize()
     }
     noteTerminalGridSize(*geometry);
     controller_->resizeTerminal(
-        geometry->columns, geometry->rows,
-        geometry->cellWidthPixels, geometry->cellHeightPixels,
-        geometry->surfaceWidthPixels, geometry->surfaceHeightPixels);
+        geometry->columns, geometry->rows, geometry->cellWidthPixels,
+        geometry->cellHeightPixels, geometry->surfaceWidthPixels,
+        geometry->surfaceHeightPixels);
 }
 
-void TerminalPane::noteTerminalGridSize(
-    const TerminalSessionGeometry &geometry)
+void TerminalPane::noteTerminalGridSize(const TerminalSessionGeometry &geometry)
 {
     const QSize grid(geometry.columns, geometry.rows);
     const bool firstGrid = !resizeOverlayGrid_.has_value();
@@ -2849,8 +2751,7 @@ void TerminalPane::noteTerminalGridSize(
 void TerminalPane::scheduleResizeOverlay()
 {
     if (options_.resizeOverlay.mode == ResizeOverlayMode::Never
-        || resizeOverlayShuttingDown_
-        || resizeOverlayUpdateScheduled_
+        || resizeOverlayShuttingDown_ || resizeOverlayUpdateScheduled_
         || !resizeOverlayGrid_.has_value()) {
         return;
     }
@@ -2877,15 +2778,14 @@ void TerminalPane::cancelPendingResizeOverlay()
 void TerminalPane::showPendingResizeOverlay()
 {
     if (options_.resizeOverlay.mode == ResizeOverlayMode::Never
-        || resizeOverlayShuttingDown_
-        || controller_ == nullptr || !controller_->sessionStarted()
-        || !resizeOverlayGrid_.has_value()) {
+        || resizeOverlayShuttingDown_ || controller_ == nullptr
+        || !controller_->sessionStarted() || !resizeOverlayGrid_.has_value()) {
         return;
     }
 
     const QString text = QStringLiteral("%1 x %2")
-        .arg(resizeOverlayGrid_->width())
-        .arg(resizeOverlayGrid_->height());
+                             .arg(resizeOverlayGrid_->width())
+                             .arg(resizeOverlayGrid_->height());
     if (resizeOverlayText_ != text) {
         resizeOverlayText_ = text;
         Q_EMIT resizeOverlayTextChanged();
@@ -2914,15 +2814,13 @@ void TerminalPane::restartResizeOverlayTimer()
     if (resizeOverlayTimer_ == nullptr) {
         return;
     }
-    resizeOverlayTimer_->setInterval(
-        std::max(options_.resizeOverlay.duration,
-                 kMinimumResizeOverlayDuration));
+    resizeOverlayTimer_->setInterval(std::max(options_.resizeOverlay.duration,
+                                              kMinimumResizeOverlayDuration));
     resizeOverlayTimer_->start();
 }
 
 std::optional<TerminalSessionGeometry>
-TerminalPane::currentSessionGeometry(
-    std::optional<QSizeF> viewportSize) const
+TerminalPane::currentSessionGeometry(std::optional<QSizeF> viewportSize) const
 {
     qreal cellWidth = 0.0;
     qreal cellHeight = 0.0;
@@ -2932,18 +2830,17 @@ TerminalPane::currentSessionGeometry(
         cellHeight = metrics_.cellHeight;
     }
     const QSizeF viewport = viewportSize.value_or(size());
-    if (viewport.width() <= 0.0 || viewport.height() <= 0.0
-        || cellWidth <= 0.0 || cellHeight <= 0.0
-        || !std::isfinite(viewport.width())
-        || !std::isfinite(viewport.height())
-        || !std::isfinite(cellWidth) || !std::isfinite(cellHeight)) {
+    if (viewport.width() <= 0.0 || viewport.height() <= 0.0 || cellWidth <= 0.0
+        || cellHeight <= 0.0 || !std::isfinite(viewport.width())
+        || !std::isfinite(viewport.height()) || !std::isfinite(cellWidth)
+        || !std::isfinite(cellHeight)) {
         return std::nullopt;
     }
     const qreal devicePixelRatio =
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
-    return terminalSessionGeometryForViewport(
-        viewport.width(), viewport.height(), cellWidth, cellHeight,
-        devicePixelRatio);
+    return terminalSessionGeometryForViewport(viewport.width(),
+                                              viewport.height(), cellWidth,
+                                              cellHeight, devicePixelRatio);
 }
 
 void TerminalPane::beginKeyEventDeferral() noexcept
@@ -2976,8 +2873,7 @@ void TerminalPane::endKeyEventDispatch()
 
 bool TerminalPane::deferKeyEventIfNeeded(const QKeyEvent &event)
 {
-    const bool isCurrentReplay =
-        replayingDeferredKeyEvent_ == &event;
+    const bool isCurrentReplay = replayingDeferredKeyEvent_ == &event;
     if (keyEventDeferralDepth_ == 0
         && (!drainingDeferredKeyEvents_ || isCurrentReplay)) {
         return false;
@@ -3006,8 +2902,7 @@ void TerminalPane::drainDeferredKeyEvents()
     drainingDeferredKeyEvents_ = true;
     while (guard != nullptr && guard->keyEventDeferralDepth_ == 0
            && !guard->deferredInputs_.empty()) {
-        DeferredPaneInput input =
-            std::move(guard->deferredInputs_.front());
+        DeferredPaneInput input = std::move(guard->deferredInputs_.front());
         guard->deferredInputs_.pop_front();
         if (const auto *key = std::get_if<DeferredKeyInput>(&input)) {
             QKeyEvent replay = key->event.replay();
@@ -3119,14 +3014,18 @@ TerminalPane::handleShortcut(QKeyEvent *event,
         return handleConfiguredShortcut(event, guard, pointerActivityEpoch);
     }
 
-    const Qt::KeyboardModifiers modifiers = normalizedModifiers(event->modifiers());
+    const Qt::KeyboardModifiers modifiers =
+        normalizedModifiers(event->modifiers());
     const bool control = modifiers.testFlag(Qt::ControlModifier);
     const bool shift = modifiers.testFlag(Qt::ShiftModifier);
     const int key = event->key();
 
-    if (control && shift && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
+    if (control && shift
+        && modifiers == (Qt::ControlModifier | Qt::ShiftModifier)) {
         switch (key) {
-        case Qt::Key_C: copySelection(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_C:
+            copySelection();
+            return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_V: {
             const QString text = QGuiApplication::clipboard()->text();
             if (!text.isEmpty()) {
@@ -3137,16 +3036,24 @@ TerminalPane::handleShortcut(QKeyEvent *event,
         case Qt::Key_N:
             Q_EMIT applicationActionRequested(ApplicationAction::NewWindow);
             return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_T: Q_EMIT requestNewTab(); return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_O: Q_EMIT requestSplit(WorkspaceAction::SplitRight); return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_E: Q_EMIT requestSplit(WorkspaceAction::SplitDown); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_T:
+            Q_EMIT requestNewTab();
+            return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_O:
+            Q_EMIT requestSplit(WorkspaceAction::SplitRight);
+            return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_E:
+            Q_EMIT requestSplit(WorkspaceAction::SplitDown);
+            return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_W:
             Q_EMIT requestCloseTab(CloseTabMode::This);
             return KeyHandling::ConsumePressAndRelease;
         case Qt::Key_Q:
             Q_EMIT applicationActionRequested(ApplicationAction::Quit);
             return KeyHandling::ConsumePressAndRelease;
-        case Qt::Key_F: startSearchUi(); return KeyHandling::ConsumePressAndRelease;
+        case Qt::Key_F:
+            startSearchUi();
+            return KeyHandling::ConsumePressAndRelease;
         default: break;
         }
     }
@@ -3190,8 +3097,8 @@ TerminalPane::handleShortcut(QKeyEvent *event,
         return KeyHandling::ConsumePressAndRelease;
     }
     if (modifiers == (Qt::ControlModifier | Qt::AltModifier)
-        && (key == Qt::Key_Left || key == Qt::Key_Right
-            || key == Qt::Key_Up || key == Qt::Key_Down)) {
+        && (key == Qt::Key_Left || key == Qt::Key_Right || key == Qt::Key_Up
+            || key == Qt::Key_Down)) {
         Q_EMIT requestNavigate(key);
         return KeyHandling::ConsumePressAndRelease;
     }
@@ -3212,15 +3119,13 @@ bool TerminalPane::resolveActiveSequence(
     TerminalSequenceResolution resolution,
     std::optional<TerminalKeyInput> current)
 {
-    return resolveSequenceToken(
-        std::exchange(activeSequenceToken_, 0), resolution,
-        std::move(current));
+    return resolveSequenceToken(std::exchange(activeSequenceToken_, 0),
+                                resolution, std::move(current));
 }
 
-bool TerminalPane::resolveSequenceToken(
-    quint64 token,
-    TerminalSequenceResolution resolution,
-    std::optional<TerminalKeyInput> current)
+bool TerminalPane::resolveSequenceToken(quint64 token,
+                                        TerminalSequenceResolution resolution,
+                                        std::optional<TerminalKeyInput> current)
 {
     if (token == 0) return false;
 
@@ -3291,15 +3196,13 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
         || step.kind == GhosttyKeybindStepKind::IgnoredSequence
         || step.kind == GhosttyKeybindStepKind::Binding;
     if (completesSequence) beginKeyEventDeferral();
-    const auto keyEventDeferralGuard = qScopeGuard(
-        [guard, completesSequence] {
-            if (completesSequence && guard != nullptr) {
-                guard->endKeyEventDeferral();
-            }
-        });
-    const quint64 matchedSequenceToken = completesSequence
-        ? std::exchange(activeSequenceToken_, 0)
-        : 0;
+    const auto keyEventDeferralGuard = qScopeGuard([guard, completesSequence] {
+        if (completesSequence && guard != nullptr) {
+            guard->endKeyEventDeferral();
+        }
+    });
+    const quint64 matchedSequenceToken =
+        completesSequence ? std::exchange(activeSequenceToken_, 0) : 0;
 
     if (step.activeTablesChanged) {
         Q_EMIT activeKeyTablesChanged();
@@ -3309,8 +3212,7 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
     }
 
     switch (step.kind) {
-    case GhosttyKeybindStepKind::Unmatched:
-        return KeyHandling::PassThrough;
+    case GhosttyKeybindStepKind::Unmatched: return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::Leader:
         Q_UNREACHABLE_RETURN(KeyHandling::PassThrough);
     case GhosttyKeybindStepKind::InvalidSequence:
@@ -3326,11 +3228,10 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
         }
         return KeyHandling::PassThrough;
     case GhosttyKeybindStepKind::IgnoredSequence:
-        (void) resolveSequenceToken(
-            matchedSequenceToken, TerminalSequenceResolution::Drop);
+        (void)resolveSequenceToken(matchedSequenceToken,
+                                   TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePress;
-    case GhosttyKeybindStepKind::Binding:
-        break;
+    case GhosttyKeybindStepKind::Binding: break;
     }
 
     // `global:` implies `all:` at runtime even though Ghostty retains the raw
@@ -3344,8 +3245,8 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
         const KeyHandling handling = effect == GhosttyActionInputEffect::Ignore
             ? KeyHandling::ConsumePress
             : KeyHandling::ConsumePressAndRelease;
-        (void) resolveSequenceToken(
-            matchedSequenceToken, TerminalSequenceResolution::Drop);
+        (void)resolveSequenceToken(matchedSequenceToken,
+                                   TerminalSequenceResolution::Drop);
         if (guard == nullptr) return handling;
         // Emit last: a close action may synchronously destroy the originating
         // workspace, and therefore this pane, through an approval observer.
@@ -3368,8 +3269,7 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
             .startingAction = false,
             .earlyResult = std::nullopt,
         });
-    const std::optional<KeyHandling> handling =
-        continueLocalActionChain(chain);
+    const std::optional<KeyHandling> handling = continueLocalActionChain(chain);
     // A pending worker action retains an additional key-event deferral
     // beyond this stack frame. Accept only the press for now; final release
     // handling is decided from the completed aggregate performed state.
@@ -3383,13 +3283,12 @@ std::optional<QByteArray> TerminalPane::hoveredUrlForCopy() const
     QMutexLocker locker(&renderMutex_);
     const int index = hoverCell_.y() * frame_.columns + hoverCell_.x();
     const bool hoveredCellIsLinked = hoverCell_.x() >= 0
-        && hoverCell_.x() < frame_.columns
-        && hoverCell_.y() >= 0 && hoverCell_.y() < frame_.rows
+        && hoverCell_.x() < frame_.columns && hoverCell_.y() >= 0
+        && hoverCell_.y() < frame_.rows
         && hoveredHyperlinkColumns_ == frame_.columns
         && hoveredHyperlinkRows_ == frame_.rows
         && hoveredHyperlinkCellIndexes_.contains(index);
-    if (hoveredHyperlinkUri_.isEmpty()
-        || hoveredHyperlinkCell_ != hoverCell_
+    if (hoveredHyperlinkUri_.isEmpty() || hoveredHyperlinkCell_ != hoverCell_
         || !hoveredCellIsLinked) {
         return std::nullopt;
     }
@@ -3402,22 +3301,18 @@ int TerminalPane::viewportPageRows() const
     return std::max(1, terminalRows_);
 }
 
-std::optional<TerminalPane::KeyHandling>
-TerminalPane::continueLocalActionChain(
+std::optional<TerminalPane::KeyHandling> TerminalPane::continueLocalActionChain(
     const std::shared_ptr<PendingLocalActionChain> &chain)
 {
     const QPointer<TerminalPane> guard(this);
     executingSequenceTokens_.append(chain->sequenceToken);
     bool sequenceAttached = true;
-    const auto sequenceGuard = qScopeGuard(
-        [guard, chain, &sequenceAttached] {
+    const auto sequenceGuard = qScopeGuard([guard, chain, &sequenceAttached] {
         if (!sequenceAttached) return;
-        if (guard == nullptr
-            || guard->executingSequenceTokens_.isEmpty()) {
+        if (guard == nullptr || guard->executingSequenceTokens_.isEmpty()) {
             return;
         }
-        chain->sequenceToken =
-            guard->executingSequenceTokens_.takeLast();
+        chain->sequenceToken = guard->executingSequenceTokens_.takeLast();
     });
 
     while (chain->nextEntry < chain->chain.entries.size()) {
@@ -3438,7 +3333,7 @@ TerminalPane::continueLocalActionChain(
                     guard->commitConfiguredActionResult(result);
                 if (guard == nullptr) return;
                 chain->performed = performed || chain->performed;
-                (void) guard->continueLocalActionChain(chain);
+                (void)guard->continueLocalActionChain(chain);
             });
         chain->startingAction = false;
         if (guard == nullptr) {
@@ -3451,8 +3346,7 @@ TerminalPane::continueLocalActionChain(
                 std::move(*chain->earlyResult);
             chain->earlyResult.reset();
             chain->performed =
-                commitConfiguredActionResult(result)
-                || chain->performed;
+                commitConfiguredActionResult(result) || chain->performed;
             if (guard == nullptr) {
                 return KeyHandling::ConsumePressAndRelease;
             }
@@ -3466,8 +3360,7 @@ TerminalPane::continueLocalActionChain(
             return std::nullopt;
         }
         chain->performed =
-            commitConfiguredActionResult(start.result)
-            || chain->performed;
+            commitConfiguredActionResult(start.result) || chain->performed;
         if (guard == nullptr) {
             return KeyHandling::ConsumePressAndRelease;
         }
@@ -3486,13 +3379,10 @@ TerminalPane::continueLocalActionChain(
 
     const bool matchingReleaseDeferred = std::ranges::any_of(
         deferredInputs_, [chain](const DeferredPaneInput &input) {
-            const auto *event =
-                std::get_if<DeferredKeyInput>(&input);
-            return event != nullptr
-                && event->focusEpoch == chain->keyFocusEpoch
+            const auto *event = std::get_if<DeferredKeyInput>(&input);
+            return event != nullptr && event->focusEpoch == chain->keyFocusEpoch
                 && !event->event.pressed
-                && keyEventIdentity(event->event)
-                    == chain->keyIdentity;
+                && keyEventIdentity(event->event) == chain->keyIdentity;
         });
     if (handling == KeyHandling::ConsumePressAndRelease
         && (chain->keyFocusEpoch == keyFocusEpoch_
@@ -3504,8 +3394,9 @@ TerminalPane::continueLocalActionChain(
     return std::nullopt;
 }
 
-TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
-    PendingLocalActionChain &chain, bool delayed)
+TerminalPane::KeyHandling
+TerminalPane::finishLocalActionChain(PendingLocalActionChain &chain,
+                                     bool delayed)
 {
     const auto resolve = [this, &chain](TerminalSequenceResolution resolution,
                                         bool withCurrent = false) {
@@ -3515,26 +3406,24 @@ TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
         }
         return resolveSequenceToken(
             std::exchange(chain.sequenceToken, 0), resolution,
-            withCurrent
-                ? std::optional<TerminalKeyInput>(chain.currentInput)
-                : std::nullopt);
+            withCurrent ? std::optional<TerminalKeyInput>(chain.currentInput)
+                        : std::nullopt);
     };
 
     // Ghostty executes the complete chain, then applies this precedence to
     // the aggregate performed state.
-    if (chain.performed && chain.chain.inputEffect
-            == GhosttyActionInputEffect::ClosingAction) {
-        (void) resolve(TerminalSequenceResolution::Drop);
+    if (chain.performed
+        && chain.chain.inputEffect == GhosttyActionInputEffect::ClosingAction) {
+        (void)resolve(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePressAndRelease;
     }
-    if (chain.performed && chain.chain.inputEffect
-            == GhosttyActionInputEffect::Ignore) {
-        (void) resolve(TerminalSequenceResolution::Drop);
+    if (chain.performed
+        && chain.chain.inputEffect == GhosttyActionInputEffect::Ignore) {
+        (void)resolve(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePress;
     }
     if (chain.performable && !chain.performed) {
-        if (resolve(
-                TerminalSequenceResolution::FlushAndSendCurrent, true)) {
+        if (resolve(TerminalSequenceResolution::FlushAndSendCurrent, true)) {
             return KeyHandling::ConsumePress;
         }
         if (delayed) {
@@ -3545,7 +3434,7 @@ TerminalPane::KeyHandling TerminalPane::finishLocalActionChain(
         return KeyHandling::PassThrough;
     }
     if (chain.consumed) {
-        (void) resolve(TerminalSequenceResolution::Drop);
+        (void)resolve(TerminalSequenceResolution::Drop);
         return KeyHandling::ConsumePressAndRelease;
     }
     if (resolve(TerminalSequenceResolution::FlushAndSendCurrent, true)) {
@@ -3572,37 +3461,35 @@ bool TerminalPane::executeConfiguredAction(
     TerminalActionExecutionStart start = startConfiguredAction(
         action, [guard](TerminalActionExecutionResult result) {
             if (guard != nullptr) {
-                (void) guard->commitConfiguredActionResult(result);
+                (void)guard->commitConfiguredActionResult(result);
             }
         });
     if (guard == nullptr) {
         return start.result.performed;
     }
-    return start.pending
-        ? start.result.performed
-        : commitConfiguredActionResult(start.result);
+    return start.pending ? start.result.performed
+                         : commitConfiguredActionResult(start.result);
 }
 
 TerminalActionExecutionStart
-TerminalPane::startConfiguredAction(
-    const GhosttyConfiguredAction &action,
-    ConfiguredActionCompletion completion)
+TerminalPane::startConfiguredAction(const GhosttyConfiguredAction &action,
+                                    ConfiguredActionCompletion completion)
 {
     const auto startTerminalAction =
-        [this, &completion](auto &&request)
-            -> TerminalActionExecutionStart {
+        [this, &completion](auto &&request) -> TerminalActionExecutionStart {
         if (!terminalActionsAccepted_) {
             return {};
         }
         const quint64 requestId = nextTerminalActionRequestId();
         pendingTerminalActionCompletions_.insert(
-            requestId, {
+            requestId,
+            {
                 .completion = std::move(completion),
                 .epoch = terminalActionEpoch_,
             });
         const QPointer<TerminalPane> guard(this);
-        const bool accepted = std::invoke(
-            std::forward<decltype(request)>(request), requestId);
+        const bool accepted =
+            std::invoke(std::forward<decltype(request)>(request), requestId);
         if (guard == nullptr) {
             return {};
         }
@@ -3615,70 +3502,63 @@ TerminalPane::startConfiguredAction(
             // Preserve the immediate API contract for direct programmatic
             // dispatch. Correlated local and broad chains consume the
             // worker's authoritative performed value.
-            .result = {
-                .performed = true,
-                .terminalAction = std::nullopt,
-            },
+            .result =
+                {
+                    .performed = true,
+                    .terminalAction = std::nullopt,
+                },
         };
     };
 
     const auto *paneAction = std::get_if<GhosttyPaneAction>(&action);
     if (paneAction != nullptr) {
         namespace PaneAction = GhosttyPaneActions;
-        if (std::holds_alternative<PaneAction::SelectAll>(
-                *paneAction)) {
-            return startTerminalAction(
-                [this](quint64 requestId) {
-                    return controller_->selectAllAction(requestId);
-                });
+        if (std::holds_alternative<PaneAction::SelectAll>(*paneAction)) {
+            return startTerminalAction([this](quint64 requestId) {
+                return controller_->selectAllAction(requestId);
+            });
         }
-        if (std::holds_alternative<PaneAction::CopyToClipboard>(
-                *paneAction)) {
-            return startTerminalAction(
-                [this](quint64 requestId) {
-                    return controller_->copySelectionAction(requestId);
-                });
+        if (std::holds_alternative<PaneAction::CopyToClipboard>(*paneAction)) {
+            return startTerminalAction([this](quint64 requestId) {
+                return controller_->copySelectionAction(requestId);
+            });
         }
         if (const auto *adjustment =
                 std::get_if<PaneAction::AdjustSelection>(paneAction);
             adjustment != nullptr) {
             return startTerminalAction(
                 [this, value = adjustment->adjustment](quint64 requestId) {
-                    return controller_->adjustSelectionAction(
-                        requestId, value);
+                    return controller_->adjustSelectionAction(requestId, value);
                 });
         }
         if (std::holds_alternative<PaneAction::ScrollToSelection>(
                 *paneAction)) {
-            return startTerminalAction(
-                [this](quint64 requestId) {
-                    return controller_->scrollToSelectionAction(requestId);
-                });
+            return startTerminalAction([this](quint64 requestId) {
+                return controller_->scrollToSelectionAction(requestId);
+            });
         }
-        if (std::holds_alternative<PaneAction::SearchSelection>(
-                *paneAction)) {
-            return startTerminalAction(
-                [this](quint64 requestId) {
-                    return controller_->searchSelectionAction(requestId);
-                });
+        if (std::holds_alternative<PaneAction::SearchSelection>(*paneAction)) {
+            return startTerminalAction([this](quint64 requestId) {
+                return controller_->searchSelectionAction(requestId);
+            });
         }
         if (const auto *fileAction =
                 std::get_if<TerminalWriteFileAction>(paneAction);
             fileAction != nullptr) {
             return startTerminalAction(
                 [this, value = *fileAction](quint64 requestId) {
-                    return controller_->writeTerminalFile(
-                        requestId, value);
+                    return controller_->writeTerminalFile(requestId, value);
                 });
         }
     }
 
     return {
         .pending = false,
-        .result = {
-            .performed = performConfiguredAction(action),
-            .terminalAction = std::nullopt,
-        },
+        .result =
+            {
+                .performed = performConfiguredAction(action),
+                .terminalAction = std::nullopt,
+            },
     };
 }
 
@@ -3697,14 +3577,12 @@ bool TerminalPane::commitConfiguredActionResult(
     }
 
     switch (terminal.effect) {
-    case TerminalActionEffect::None:
-        return true;
+    case TerminalActionEffect::None: return true;
     case TerminalActionEffect::Clipboard: {
         QClipboard *const clipboard = QGuiApplication::clipboard();
         if (clipboard != nullptr) {
-            writeTerminalClipboard(
-                clipboard, terminal.payload,
-                terminal.clipboardDestination);
+            writeTerminalClipboard(clipboard, terminal.payload,
+                                   terminal.clipboardDestination);
         }
         return true;
     }
@@ -3756,13 +3634,11 @@ void TerminalPane::failStaleTerminalActionCompletions()
 
     const QPointer<TerminalPane> guard(this);
     for (quint64 requestId : requestIds) {
-        auto iterator =
-            pendingTerminalActionCompletions_.find(requestId);
+        auto iterator = pendingTerminalActionCompletions_.find(requestId);
         if (iterator == pendingTerminalActionCompletions_.end()) {
             continue;
         }
-        PendingTerminalActionCompletion pending =
-            std::move(iterator.value());
+        PendingTerminalActionCompletion pending = std::move(iterator.value());
         pendingTerminalActionCompletions_.erase(iterator);
         if (pending.completion) {
             TerminalActionResult failed;
@@ -3780,17 +3656,14 @@ void TerminalPane::failStaleTerminalActionCompletions()
 void TerminalPane::handleTerminalActionResult(
     const TerminalActionResult &result)
 {
-    auto iterator =
-        pendingTerminalActionCompletions_.find(result.requestId);
+    auto iterator = pendingTerminalActionCompletions_.find(result.requestId);
     if (iterator == pendingTerminalActionCompletions_.end()) {
         return;
     }
-    PendingTerminalActionCompletion pending =
-        std::move(iterator.value());
+    PendingTerminalActionCompletion pending = std::move(iterator.value());
     pendingTerminalActionCompletions_.erase(iterator);
     if (pending.completion) {
-        const bool current =
-            pending.epoch == terminalActionEpoch_;
+        const bool current = pending.epoch == terminalActionEpoch_;
         TerminalActionResult resolved = result;
         if (!current) {
             resolved = {};
@@ -3832,11 +3705,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
     namespace PaneAction = GhosttyPaneActions;
 
     const auto scroll = [this](TerminalViewportRequest::Kind kind,
-                               qint64 delta = 0,
-                               quint64 row = 0) {
-        controller_->scrollViewport({.kind = kind,
-                                     .delta = delta,
-                                     .row = row});
+                               qint64 delta = 0, quint64 row = 0) {
+        controller_->scrollViewport({.kind = kind, .delta = delta, .row = row});
         return true;
     };
     const auto keyTableChanged = [this](bool changed) {
@@ -3857,9 +3727,7 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                     GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [&scroll](const PaneAction::ScrollToRow &value) {
-                return scroll(TerminalViewportRequest::Kind::Row,
-                              0,
-                              value.row);
+                return scroll(TerminalViewportRequest::Kind::Row, 0, value.row);
             },
             [this, &scroll](const PaneAction::ScrollPageUp &) {
                 return scroll(TerminalViewportRequest::Kind::Delta,
@@ -3870,8 +3738,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                               viewportPageRows());
             },
             [this, &scroll](const PaneAction::ScrollPageFractional &value) {
-                const std::optional<qint64> delta = fractionalPageDelta(
-                    value.fraction, viewportPageRows());
+                const std::optional<qint64> delta =
+                    fractionalPageDelta(value.fraction, viewportPageRows());
                 return delta.has_value()
                     && scroll(TerminalViewportRequest::Kind::Delta, *delta);
             },
@@ -3897,8 +3765,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
             },
             [this](const PaneAction::SetFontSize &value) {
                 manuallyZoomed_ = true;
-                setFontPointSize(clampFontActionValue(
-                    value.points, kMinimumActionFontSize));
+                setFontPointSize(
+                    clampFontActionValue(value.points, kMinimumActionFontSize));
                 return true;
             },
             [this](const PaneAction::ResetFontSize &) {
@@ -3906,21 +3774,20 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 setFontPointSize(defaultFontPointSize_);
                 return true;
             },
-            [this, &keyTableChanged](
-                const PaneAction::ActivateKeyTable &value) {
+            [this,
+             &keyTableChanged](const PaneAction::ActivateKeyTable &value) {
                 return keyTableChanged(keybinds_.activateTable(value.name));
             },
-            [this, &keyTableChanged](
-                const PaneAction::ActivateKeyTableOnce &value) {
+            [this,
+             &keyTableChanged](const PaneAction::ActivateKeyTableOnce &value) {
                 return keyTableChanged(
                     keybinds_.activateTable(value.name, true));
             },
-            [this, &keyTableChanged](
-                const PaneAction::DeactivateKeyTable &) {
+            [this, &keyTableChanged](const PaneAction::DeactivateKeyTable &) {
                 return keyTableChanged(keybinds_.deactivateTable());
             },
-            [this, &keyTableChanged](
-                const PaneAction::DeactivateAllKeyTables &) {
+            [this,
+             &keyTableChanged](const PaneAction::DeactivateAllKeyTables &) {
                 return keyTableChanged(keybinds_.deactivateAllTables());
             },
             [this](const PaneAction::SelectAll &) {
@@ -3936,8 +3803,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 return true;
             },
             [this](const PaneAction::EndSearch &) {
-                const bool performed = searchEngineActive_
-                    || controller_->searchExpected();
+                const bool performed =
+                    searchEngineActive_ || controller_->searchExpected();
                 // Always clean up stale UI even when the backend had no
                 // active search and the action reports not performed.
                 endSearchUi();
@@ -3948,8 +3815,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                     GhosttyConfiguredAction{GhosttyPaneAction{value}});
             },
             [this](const PaneAction::Search &value) {
-                const bool hadSearch = searchEngineActive_
-                    || controller_->searchExpected();
+                const bool hadSearch =
+                    searchEngineActive_ || controller_->searchExpected();
                 controller_->searchSerialized(value.serializedNeedle);
                 return !value.serializedNeedle.isEmpty() || hadSearch;
             },
@@ -3998,8 +3865,8 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                     value.source == PaneAction::PasteSource::Clipboard
                     ? TerminalClipboardSource::Standard
                     : TerminalClipboardSource::Primary;
-                const std::optional<QString> text = readTerminalClipboard(
-                    QGuiApplication::clipboard(), source);
+                const std::optional<QString> text =
+                    readTerminalClipboard(QGuiApplication::clipboard(), source);
                 if (!text.has_value()) return false;
                 if (!text->isEmpty()) pasteText(*text);
                 return true;
@@ -4019,16 +3886,15 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 if (!title || title->isEmpty() || clipboard == nullptr) {
                     return false;
                 }
-                writeTerminalClipboard(
-                    clipboard, *title,
-                    TerminalClipboardDestination::Standard);
+                writeTerminalClipboard(clipboard, *title,
+                                       TerminalClipboardDestination::Standard);
                 return true;
             },
             [this](const PaneAction::EndKeySequence &) {
                 if (executingSequenceTokens_.isEmpty()) {
                     keybinds_.resetSequence();
                 }
-                (void) resolveExecutingSequence(
+                (void)resolveExecutingSequence(
                     TerminalSequenceResolution::Flush);
                 return true;
             },
@@ -4043,13 +3909,12 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
 bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
 {
     if (request.action == WorkspaceAction::SplitAuto) {
-        const qreal devicePixelRatio = window() != nullptr
-            ? window()->devicePixelRatio()
-            : 1.0;
-        const int surfaceWidth = std::max(
-            1, qRound(width() * devicePixelRatio));
-        const int surfaceHeight = std::max(
-            1, qRound(height() * devicePixelRatio));
+        const qreal devicePixelRatio =
+            window() != nullptr ? window()->devicePixelRatio() : 1.0;
+        const int surfaceWidth =
+            std::max(1, qRound(width() * devicePixelRatio));
+        const int surfaceHeight =
+            std::max(1, qRound(height() * devicePixelRatio));
         request.action = surfaceWidth > surfaceHeight
             ? WorkspaceAction::SplitRight
             : WorkspaceAction::SplitDown;
@@ -4059,15 +3924,11 @@ bool TerminalPane::performWorkspaceAction(WorkspaceActionRequest request)
         return (*workspaceActionHandler)(request);
     }
     switch (request.action) {
-    case WorkspaceAction::NewTab:
-        Q_EMIT requestNewTab();
-        return true;
+    case WorkspaceAction::NewTab: Q_EMIT requestNewTab(); return true;
     case WorkspaceAction::CloseTab:
         Q_EMIT requestCloseTab(request.context.closeTabMode);
         return true;
-    case WorkspaceAction::ClosePane:
-        Q_EMIT requestClose();
-        return true;
+    case WorkspaceAction::ClosePane: Q_EMIT requestClose(); return true;
     case WorkspaceAction::SplitLeft:
     case WorkspaceAction::SplitRight:
     case WorkspaceAction::SplitUp:
@@ -4132,8 +3993,7 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
                 return;
             }
         }
-        if (keyEventDeferralDepth_ != 0
-            || drainingDeferredKeyEvents_) {
+        if (keyEventDeferralDepth_ != 0 || drainingDeferredKeyEvents_) {
             deferredInputs_.emplace_back(input);
         } else {
             const QPointer<TerminalPane> guard(this);
@@ -4158,8 +4018,7 @@ QVariant TerminalPane::inputMethodQuery(Qt::InputMethodQuery query) const
         return QRectF(
             static_cast<qreal>(frame_.cursorColumn) * metrics_.cellWidth,
             static_cast<qreal>(frame_.cursorRow) * metrics_.cellHeight,
-            metrics_.cellWidth
-                * static_cast<qreal>(frame_.cursorColumnSpan),
+            metrics_.cellWidth * static_cast<qreal>(frame_.cursorColumnSpan),
             metrics_.cellHeight);
     }
     return QQuickItem::inputMethodQuery(query);
@@ -4200,15 +4059,14 @@ void TerminalPane::mousePressEvent(QMouseEvent *event)
                 hyperlinkPressKind_ = TerminalLinkKind::Osc8;
                 hyperlinkPressUri_.clear();
             }
-            hyperlinkPressRequestId_ =
-                controller_->prepareHyperlinkActivation(
-                    hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
-                    contentRevision);
+            hyperlinkPressRequestId_ = controller_->prepareHyperlinkActivation(
+                hyperlinkPressCell_.x(), hyperlinkPressCell_.y(),
+                contentRevision);
         }
     }
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier);
+    const bool report =
+        controller_->mouseTracking() && !modifiers.testFlag(Qt::ShiftModifier);
     if (report) {
         // Ghostty resets a local selection gesture whenever a reported
         // button event takes over. In particular, disabling reporting before
@@ -4363,8 +4221,7 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
             >= QGuiApplication::styleHints()->startDragDistance()) {
         if (!hyperlinkPressDragged_) {
             hyperlinkPressDragged_ = true;
-            controller_->cancelHyperlinkActivation(
-                hyperlinkPressRequestId_);
+            controller_->cancelHyperlinkActivation(hyperlinkPressRequestId_);
             hyperlinkPressRequestId_ = 0;
         }
     }
@@ -4379,8 +4236,7 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
     // hover motion remains reportable.
     const bool shiftBypassesCapture = event->buttons() != Qt::NoButton
         && modifiers.testFlag(Qt::ShiftModifier);
-    const bool report = controller_->mouseTracking()
-        && !shiftBypassesCapture;
+    const bool report = controller_->mouseTracking() && !shiftBypassesCapture;
     if (report) {
         sendMouse(event->position(), TerminalMouseInput::Motion, Qt::NoButton,
                   event->buttons(), modifiers);
@@ -4407,15 +4263,14 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
             >= QGuiApplication::styleHints()->startDragDistance()) {
         if (!hyperlinkPressDragged_) {
             hyperlinkPressDragged_ = true;
-            controller_->cancelHyperlinkActivation(
-                hyperlinkPressRequestId_);
+            controller_->cancelHyperlinkActivation(hyperlinkPressRequestId_);
             hyperlinkPressRequestId_ = 0;
         }
     }
     updateHyperlinkHover(event->position(), event->modifiers());
     const Qt::KeyboardModifiers modifiers = hoverModifiers_;
-    const bool report = controller_->mouseTracking()
-        && !modifiers.testFlag(Qt::ShiftModifier);
+    const bool report =
+        controller_->mouseTracking() && !modifiers.testFlag(Qt::ShiftModifier);
     if (event->button() == Qt::LeftButton && selecting_) {
         const QPoint cell = cellAt(event->position());
         controller_->endSelection(cell.x(), cell.y());
@@ -4424,21 +4279,20 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     const bool activateHyperlink = event->button() == Qt::LeftButton
         && hyperlinkPressArmed_ && !hyperlinkPressDragged_
         && hyperlinkModifiersMatch(hoverModifiers_)
-        && hyperlinkPressRequestId_ != 0
-        && hoverCell_.x() >= 0 && hoverCell_.y() >= 0;
+        && hyperlinkPressRequestId_ != 0 && hoverCell_.x() >= 0
+        && hoverCell_.y() >= 0;
     if (activateHyperlink) {
         pendingActivationKind_ = hyperlinkPressKind_;
         pendingActivationUri_ = hyperlinkPressUri_;
         pendingActivationRequestId_ = hyperlinkPressRequestId_;
-        controller_->commitHyperlinkActivation(
-            hyperlinkPressRequestId_, hoverCell_.x(), hoverCell_.y());
+        controller_->commitHyperlinkActivation(hyperlinkPressRequestId_,
+                                               hoverCell_.x(), hoverCell_.y());
     } else if (report) {
-        sendMouse(event->position(), TerminalMouseInput::Release, event->button(),
-                  event->buttons(), modifiers);
+        sendMouse(event->position(), TerminalMouseInput::Release,
+                  event->button(), event->buttons(), modifiers);
     }
     if (!activateHyperlink) {
-        controller_->cancelHyperlinkActivation(
-            hyperlinkPressRequestId_);
+        controller_->cancelHyperlinkActivation(hyperlinkPressRequestId_);
     }
     hyperlinkPressArmed_ = false;
     hyperlinkPressDragged_ = false;
@@ -4586,22 +4440,30 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
-void TerminalPane::sendMouse(const QPointF &position, TerminalMouseInput::Action action,
+void TerminalPane::sendMouse(const QPointF &position,
+                             TerminalMouseInput::Action action,
                              Qt::MouseButton button, Qt::MouseButtons buttons,
                              Qt::KeyboardModifiers modifiers)
 {
-    const qreal devicePixelRatio = window() != nullptr ? window()->devicePixelRatio() : 1.0;
+    const qreal devicePixelRatio =
+        window() != nullptr ? window()->devicePixelRatio() : 1.0;
     TerminalMouseInput input;
     input.action = action;
     Qt::MouseButton effectiveButton = button;
-    if (action == TerminalMouseInput::Motion && effectiveButton == Qt::NoButton) {
+    if (action == TerminalMouseInput::Motion
+        && effectiveButton == Qt::NoButton) {
         // Button-event tracking (DECSET 1002) requires the identity of the
         // held button on motion, not only a generic "some button" flag.
-        if (buttons.testFlag(Qt::LeftButton)) effectiveButton = Qt::LeftButton;
-        else if (buttons.testFlag(Qt::MiddleButton)) effectiveButton = Qt::MiddleButton;
-        else if (buttons.testFlag(Qt::RightButton)) effectiveButton = Qt::RightButton;
-        else if (buttons.testFlag(Qt::BackButton)) effectiveButton = Qt::BackButton;
-        else if (buttons.testFlag(Qt::ForwardButton)) effectiveButton = Qt::ForwardButton;
+        if (buttons.testFlag(Qt::LeftButton))
+            effectiveButton = Qt::LeftButton;
+        else if (buttons.testFlag(Qt::MiddleButton))
+            effectiveButton = Qt::MiddleButton;
+        else if (buttons.testFlag(Qt::RightButton))
+            effectiveButton = Qt::RightButton;
+        else if (buttons.testFlag(Qt::BackButton))
+            effectiveButton = Qt::BackButton;
+        else if (buttons.testFlag(Qt::ForwardButton))
+            effectiveButton = Qt::ForwardButton;
     }
     input.button = normalizedMouseButton(effectiveButton);
     input.modifiers = static_cast<int>(modifiers);
@@ -4625,8 +4487,8 @@ int TerminalPane::normalizedMouseButton(Qt::MouseButton button) const
     }
 }
 
-Qt::KeyboardModifiers TerminalPane::effectivePointerModifiers(
-    Qt::KeyboardModifiers modifiers) const
+Qt::KeyboardModifiers
+TerminalPane::effectivePointerModifiers(Qt::KeyboardModifiers modifiers) const
 {
     return normalizedModifiers(modifiers) | keyboardModifiers_;
 }
@@ -4647,27 +4509,26 @@ bool TerminalPane::hyperlinkModifiersMatch(
     return modifiers == Qt::ControlModifier;
 }
 
-std::optional<QPoint> TerminalPane::hoverCellAt(
-    const QPointF &position) const
+std::optional<QPoint> TerminalPane::hoverCellAt(const QPointF &position) const
 {
     QMutexLocker locker(&renderMutex_);
     if (!hasFrame_ || frame_.columns <= 0 || frame_.rows <= 0
         || position.x() < 0.0 || position.y() < 0.0) {
         return std::nullopt;
     }
-    const int column = static_cast<int>(
-        std::floor(position.x() / metrics_.cellWidth));
-    const int row = static_cast<int>(
-        std::floor(position.y() / metrics_.cellHeight));
-    if (column < 0 || column >= frame_.columns
-        || row < 0 || row >= frame_.rows) {
+    const int column =
+        static_cast<int>(std::floor(position.x() / metrics_.cellWidth));
+    const int row =
+        static_cast<int>(std::floor(position.y() / metrics_.cellHeight));
+    if (column < 0 || column >= frame_.columns || row < 0
+        || row >= frame_.rows) {
         return std::nullopt;
     }
     return QPoint(column, row);
 }
 
-void TerminalPane::updateHyperlinkHover(
-    const QPointF &position, Qt::KeyboardModifiers modifiers)
+void TerminalPane::updateHyperlinkHover(const QPointF &position,
+                                        Qt::KeyboardModifiers modifiers)
 {
     hoverInside_ = true;
     hoverPosition_ = position;
@@ -4700,8 +4561,7 @@ void TerminalPane::updateHyperlinkHover(
     if (nextCell != hoverCell_) {
         if (hyperlinkPressArmed_) {
             hyperlinkPressDragged_ = true;
-            controller_->cancelHyperlinkActivation(
-                hyperlinkPressRequestId_);
+            controller_->cancelHyperlinkActivation(hyperlinkPressRequestId_);
             hyperlinkPressRequestId_ = 0;
         }
         bool remainsOnResolvedLink = false;
@@ -4709,13 +4569,12 @@ void TerminalPane::updateHyperlinkHover(
             QMutexLocker locker(&renderMutex_);
             const int index = nextCell.y() * frame_.columns + nextCell.x();
             remainsOnResolvedLink = nextCell.x() >= 0
-                && nextCell.x() < frame_.columns
-                && nextCell.y() >= 0 && nextCell.y() < frame_.rows
+                && nextCell.x() < frame_.columns && nextCell.y() >= 0
+                && nextCell.y() < frame_.rows
                 && hoveredHyperlinkColumns_ == frame_.columns
                 && hoveredHyperlinkRows_ == frame_.rows
                 && hoveredHyperlinkCellIndexes_.contains(index)
-                && hyperlinkLeaseActive_
-                && !hyperlinkPressDragged_
+                && hyperlinkLeaseActive_ && !hyperlinkPressDragged_
                 && hyperlinkModifiersMatch(hoverModifiers_);
         }
         hoverCell_ = nextCell;
@@ -4737,8 +4596,7 @@ void TerminalPane::recomputeHyperlinkHover()
     }
 }
 
-void TerminalPane::updateHyperlinkModifiers(
-    Qt::KeyboardModifiers modifiers)
+void TerminalPane::updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers)
 {
     keyboardModifiers_ = normalizedModifiers(modifiers);
     hoverModifiers_ = keyboardModifiers_;
@@ -4752,8 +4610,7 @@ void TerminalPane::updateHyperlinkModifiers(
 
 void TerminalPane::refreshHyperlinkHover()
 {
-    if (!hoverInside_
-        || hoverCell_.x() < 0 || hoverCell_.y() < 0
+    if (!hoverInside_ || hoverCell_.x() < 0 || hoverCell_.y() < 0
         || hyperlinkPressDragged_
         || !hyperlinkModifiersMatch(hoverModifiers_)) {
         return;
@@ -4776,11 +4633,11 @@ void TerminalPane::refreshHyperlinkHover()
             return;
         }
         contentRevision = frame_.contentRevision;
-        const int targetIndex = hoverCell_.y() * frame_.columns
-            + hoverCell_.x();
-        targetMayHaveLink = options_.linkUrl || (targetIndex >= 0
-            && targetIndex < frame_.cells.size()
-            && frame_.cells.at(targetIndex).hasHyperlink);
+        const int targetIndex =
+            hoverCell_.y() * frame_.columns + hoverCell_.x();
+        targetMayHaveLink = options_.linkUrl
+            || (targetIndex >= 0 && targetIndex < frame_.cells.size()
+                && frame_.cells.at(targetIndex).hasHyperlink);
     }
 
     if (!targetMayHaveLink) {
@@ -4797,8 +4654,8 @@ void TerminalPane::refreshHyperlinkHover()
 
 void TerminalPane::refreshLinkPreview()
 {
-    const bool modeAllowsPreview = options_.linkPreviews
-            == LinkPreviewMode::Always
+    const bool modeAllowsPreview =
+        options_.linkPreviews == LinkPreviewMode::Always
         || (options_.linkPreviews == LinkPreviewMode::Osc8
             && hoveredLinkKind_ == TerminalLinkKind::Osc8);
     const bool visible = modeAllowsPreview && hyperlinkLeaseActive_
@@ -4816,21 +4673,22 @@ void TerminalPane::refreshLinkPreview()
             font = metrics_.font(TerminalFontRole::Regular);
         }
         const QFontMetricsF metrics(font);
-        const qreal maximumTextWidth = std::max<qreal>(
-            1.0, width() - 2.0 * kLinkPreviewHorizontalPadding);
-        text = metrics.elidedText(
-            linkPreviewDisplaySource(hoveredHyperlinkUri_),
-            Qt::ElideMiddle, maximumTextWidth);
+        const qreal maximumTextWidth =
+            std::max<qreal>(1.0, width() - 2.0 * kLinkPreviewHorizontalPadding);
+        text =
+            metrics.elidedText(linkPreviewDisplaySource(hoveredHyperlinkUri_),
+                               Qt::ElideMiddle, maximumTextWidth);
         if (!text.isEmpty()) {
-            const qreal previewWidth = std::min(
-                width(), std::ceil(metrics.horizontalAdvance(text))
-                    + 2.0 * kLinkPreviewHorizontalPadding);
-            const qreal previewHeight = std::min(
-                height(), std::ceil(metrics.height())
-                    + 2.0 * kLinkPreviewVerticalPadding);
-            guardRect = QRectF(
-                0.0, std::max(0.0, height() - previewHeight),
-                previewWidth, previewHeight);
+            const qreal previewWidth =
+                std::min(width(),
+                         std::ceil(metrics.horizontalAdvance(text))
+                             + 2.0 * kLinkPreviewHorizontalPadding);
+            const qreal previewHeight =
+                std::min(height(),
+                         std::ceil(metrics.height())
+                             + 2.0 * kLinkPreviewVerticalPadding);
+            guardRect = QRectF(0.0, std::max(0.0, height() - previewHeight),
+                               previewWidth, previewHeight);
             pointerCaptured = guardRect.contains(hoverPosition_);
             previewRect = guardRect;
             if (pointerCaptured) {
@@ -4842,8 +4700,7 @@ void TerminalPane::refreshLinkPreview()
     bool changed = false;
     {
         QMutexLocker locker(&renderMutex_);
-        changed = linkPreviewText_ != text
-            || linkPreviewRect_ != previewRect;
+        changed = linkPreviewText_ != text || linkPreviewRect_ != previewRect;
         linkPreviewText_ = std::move(text);
         linkPreviewRect_ = previewRect;
         linkPreviewGuardRect_ = guardRect;
@@ -4855,14 +4712,14 @@ void TerminalPane::refreshLinkPreview()
     }
 }
 
-void TerminalPane::reconcileReleasedLinkPreview(
-    bool wasPointerCaptured, bool forceRequery)
+void TerminalPane::reconcileReleasedLinkPreview(bool wasPointerCaptured,
+                                                bool forceRequery)
 {
     if (!wasPointerCaptured || linkPreviewPointerCaptured_ || !hoverInside_) {
         return;
     }
-    const QPoint physicalCell = hoverCellAt(hoverPosition_)
-        .value_or(QPoint(-1, -1));
+    const QPoint physicalCell =
+        hoverCellAt(hoverPosition_).value_or(QPoint(-1, -1));
     if (!forceRequery && physicalCell == hoverCell_) {
         return;
     }
@@ -4890,8 +4747,8 @@ void TerminalPane::clearHyperlinkDecoration()
         hoveredHyperlinkCellIndexes_.clear();
         hoveredHyperlinkColumns_ = 0;
         hoveredHyperlinkRows_ = 0;
-        previewChanged = !linkPreviewText_.isEmpty()
-            || !linkPreviewRect_.isEmpty();
+        previewChanged =
+            !linkPreviewText_.isEmpty() || !linkPreviewRect_.isEmpty();
         linkPreviewText_.clear();
         linkPreviewRect_ = {};
         linkPreviewGuardRect_ = {};
@@ -4929,19 +4786,18 @@ void TerminalPane::cancelHyperlinkPress()
 
 void TerminalPane::cancelPendingHyperlinkActivation()
 {
-    controller_->cancelHyperlinkActivation(
-        pendingActivationRequestId_);
+    controller_->cancelHyperlinkActivation(pendingActivationRequestId_);
     pendingActivationRequestId_ = 0;
     pendingActivationKind_ = TerminalLinkKind::Osc8;
     pendingActivationUri_.clear();
 }
 
-bool TerminalPane::hyperlinkCellCandidate(
-    const QPoint &cell, quint64 *contentRevision) const
+bool TerminalPane::hyperlinkCellCandidate(const QPoint &cell,
+                                          quint64 *contentRevision) const
 {
     QMutexLocker locker(&renderMutex_);
-    if (!hasFrame_ || cell.x() < 0 || cell.x() >= frame_.columns
-        || cell.y() < 0 || cell.y() >= frame_.rows) {
+    if (!hasFrame_ || cell.x() < 0 || cell.x() >= frame_.columns || cell.y() < 0
+        || cell.y() >= frame_.rows) {
         return false;
     }
     const int index = cell.y() * frame_.columns + cell.x();
@@ -4961,10 +4817,12 @@ bool TerminalPane::hyperlinkCellCandidate(
     return true;
 }
 
-void TerminalPane::handleHyperlinkResult(
-    quint64 contentRevision, TerminalHyperlinkState state,
-    TerminalLinkKind kind, const QByteArray &uri, const QPoint &targetCell,
-    const QVector<QPoint> &matchingCells)
+void TerminalPane::handleHyperlinkResult(quint64 contentRevision,
+                                         TerminalHyperlinkState state,
+                                         TerminalLinkKind kind,
+                                         const QByteArray &uri,
+                                         const QPoint &targetCell,
+                                         const QVector<QPoint> &matchingCells)
 {
     if (!hyperlinkQueryPending_ && !hyperlinkLeaseActive_) {
         return;
@@ -4982,8 +4840,8 @@ void TerminalPane::handleHyperlinkResult(
         columns = frame_.columns;
         rows = frame_.rows;
     }
-    if (hyperlinkQueryCell_ != hoverCell_
-        || !hoverInside_ || !hyperlinkModifiersMatch(hoverModifiers_)) {
+    if (hyperlinkQueryCell_ != hoverCell_ || !hoverInside_
+        || !hyperlinkModifiersMatch(hoverModifiers_)) {
         clearHyperlinkHover();
         return;
     }
@@ -5033,13 +4891,13 @@ void TerminalPane::handleHyperlinkResult(
 
     QSet<int> indexes;
     for (const QPoint &cell : matchingCells) {
-        if (cell.x() >= 0 && cell.x() < columns
-            && cell.y() >= 0 && cell.y() < rows) {
+        if (cell.x() >= 0 && cell.x() < columns && cell.y() >= 0
+            && cell.y() < rows) {
             indexes.insert(cell.y() * columns + cell.x());
         }
     }
-    if (targetCell.x() >= 0 && targetCell.x() < columns
-        && targetCell.y() >= 0 && targetCell.y() < rows) {
+    if (targetCell.x() >= 0 && targetCell.x() < columns && targetCell.y() >= 0
+        && targetCell.y() < rows) {
         indexes.insert(targetCell.y() * columns + targetCell.x());
     }
     const int hoverIndex = hoverCell_.y() * columns + hoverCell_.x();
@@ -5069,8 +4927,8 @@ void TerminalPane::handleHyperlinkResult(
     update();
 }
 
-QUrl TerminalPane::hyperlinkUrl(
-    const QByteArray &uri, TerminalLinkKind kind) const
+QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri,
+                                TerminalLinkKind kind) const
 {
     if (uri.isEmpty() || uri.contains('\0')) {
         return {};
@@ -5080,8 +4938,8 @@ QUrl TerminalPane::hyperlinkUrl(
         if (!QDir::isAbsolutePath(value)) {
             const QString directory = controller_->currentDirectory();
             if (!directory.isEmpty()) {
-                const QString resolved = QDir::cleanPath(
-                    QDir(directory).absoluteFilePath(value));
+                const QString resolved =
+                    QDir::cleanPath(QDir(directory).absoluteFilePath(value));
                 if (QFileInfo::exists(resolved)) {
                     return QUrl::fromLocalFile(resolved);
                 }
@@ -5094,17 +4952,16 @@ QUrl TerminalPane::hyperlinkUrl(
     return url.isValid() && !url.isEmpty() ? url : QUrl{};
 }
 
-void TerminalPane::handleHyperlinkActivation(
-    quint64 contentRevision, TerminalLinkKind kind, const QByteArray &uri)
+void TerminalPane::handleHyperlinkActivation(quint64 contentRevision,
+                                             TerminalLinkKind kind,
+                                             const QByteArray &uri)
 {
     static_cast<void>(contentRevision);
-    const quint64 requestId =
-        std::exchange(pendingActivationRequestId_, 0);
-    const TerminalLinkKind expectedKind = std::exchange(
-        pendingActivationKind_, TerminalLinkKind::Osc8);
+    const quint64 requestId = std::exchange(pendingActivationRequestId_, 0);
+    const TerminalLinkKind expectedKind =
+        std::exchange(pendingActivationKind_, TerminalLinkKind::Osc8);
     const QByteArray expectedUri = std::exchange(pendingActivationUri_, {});
-    if (requestId == 0 || uri.isEmpty()
-        || kind != expectedKind
+    if (requestId == 0 || uri.isEmpty() || kind != expectedKind
         || (!expectedUri.isEmpty() && uri != expectedUri) || !urlOpener_) {
         return;
     }
@@ -5119,13 +4976,12 @@ QPoint TerminalPane::cellAt(const QPointF &position) const
     QMutexLocker locker(&renderMutex_);
     const int columns = hasFrame_ ? frame_.columns : 80;
     const int rows = hasFrame_ ? frame_.rows : 24;
-    return QPoint(
-        std::clamp(static_cast<int>(
-                       std::floor(position.x() / metrics_.cellWidth)), 0,
-                   std::max(0, columns - 1)),
-        std::clamp(static_cast<int>(
-                       std::floor(position.y() / metrics_.cellHeight)), 0,
-                   std::max(0, rows - 1)));
+    return QPoint(std::clamp(static_cast<int>(
+                                 std::floor(position.x() / metrics_.cellWidth)),
+                             0, std::max(0, columns - 1)),
+                  std::clamp(static_cast<int>(std::floor(
+                                 position.y() / metrics_.cellHeight)),
+                             0, std::max(0, rows - 1)));
 }
 
 void TerminalPane::focusInEvent(QFocusEvent *event)
@@ -5201,8 +5057,8 @@ void TerminalPane::setFontPointSize(qreal points)
         QMutexLocker locker(&renderMutex_);
         previous = metrics_;
     }
-    if (qFuzzyCompare(
-            previous.font(TerminalFontRole::Regular).pointSizeF(), points)
+    if (qFuzzyCompare(previous.font(TerminalFontRole::Regular).pointSizeF(),
+                      points)
         || !updateMetrics(options_.typography, points)) {
         return;
     }
@@ -5222,18 +5078,18 @@ void TerminalPane::setFontPointSize(qreal points)
 
 void TerminalPane::zoomIn()
 {
-    (void) performPaneAction(GhosttyPaneAction{
+    (void)performPaneAction(GhosttyPaneAction{
         GhosttyPaneActions::IncreaseFontSize{.points = 1.0F}});
 }
 
 void TerminalPane::zoomOut()
 {
-    (void) performPaneAction(GhosttyPaneAction{
+    (void)performPaneAction(GhosttyPaneAction{
         GhosttyPaneActions::DecreaseFontSize{.points = 1.0F}});
 }
 
 void TerminalPane::resetZoom()
 {
-    (void) performPaneAction(
+    (void)performPaneAction(
         GhosttyPaneAction{GhosttyPaneActions::ResetFontSize{}});
 }

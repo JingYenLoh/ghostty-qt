@@ -51,14 +51,13 @@ public:
 
     [[nodiscard]] bool hasFrame() const noexcept
     {
-        return columns_ > 0 && rows_ > 0
-            && linkedColumnsByRow_.size() == rows_;
+        return columns_ > 0 && rows_ > 0 && linkedColumnsByRow_.size() == rows_;
     }
 
     [[nodiscard]] bool containsCoordinate(int column, int row) const noexcept
     {
-        return hasFrame() && column >= 0 && column < columns_
-            && row >= 0 && row < rows_;
+        return hasFrame() && column >= 0 && column < columns_ && row >= 0
+            && row < rows_;
     }
 
     [[nodiscard]] int columns() const noexcept { return columns_; }
@@ -90,8 +89,8 @@ public:
     }
 
 private:
-    [[nodiscard]] static bool matches(
-        const QVector<int> &linkedColumns, const TerminalRowUpdate &row)
+    [[nodiscard]] static bool matches(const QVector<int> &linkedColumns,
+                                      const TerminalRowUpdate &row)
     {
         qsizetype linkedIndex = 0;
         for (int column = 0; column < row.cells.size(); ++column) {
@@ -107,8 +106,8 @@ private:
         return linkedIndex == linkedColumns.size();
     }
 
-    static void assign(
-        QVector<int> &linkedColumns, const TerminalRowUpdate &row)
+    static void assign(QVector<int> &linkedColumns,
+                       const TerminalRowUpdate &row)
     {
         linkedColumns.clear();
         for (int column = 0; column < row.cells.size(); ++column) {

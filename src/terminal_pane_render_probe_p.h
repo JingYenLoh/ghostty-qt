@@ -7,8 +7,8 @@
 
 #include <QColor>
 #include <QRectF>
-#include <QtGlobal>
 #include <QVector>
+#include <QtGlobal>
 
 #include <array>
 #include <optional>
@@ -28,10 +28,8 @@ struct TerminalPaneRenderProbeSnapshot {
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
     TerminalCellMetrics metrics;
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
-        renderFonts;
-    std::array<quint64,
-               terminalEnumIndex(TerminalFontRole::Count)>
+    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> renderFonts;
+    std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
         fontRoleCellCounts{};
     QVector<QRectF> underlineRects;
     QVector<QRectF> strikethroughRects;
@@ -39,7 +37,7 @@ struct TerminalPaneRenderProbeSnapshot {
     QVector<QRectF> cursorRects;
 };
 
-[[nodiscard]] TerminalPaneRenderProbeSnapshot terminalPaneRenderProbe(
-    const TerminalPane *pane);
+[[nodiscard]] TerminalPaneRenderProbeSnapshot
+terminalPaneRenderProbe(const TerminalPane *pane);
 
 #endif
