@@ -45,6 +45,22 @@ quint64 nextNonzeroId(quint64 &counter) noexcept
     return counter;
 }
 
+bool isAllowedContextMenuAction(QStringView action)
+{
+    return action == QLatin1StringView("copy_to_clipboard:mixed")
+        || action == QLatin1StringView("paste_from_clipboard")
+        || action == QLatin1StringView("reset")
+        || action == QLatin1StringView("prompt_surface_title")
+        || action == QLatin1StringView("new_split:up")
+        || action == QLatin1StringView("new_split:down")
+        || action == QLatin1StringView("new_split:left")
+        || action == QLatin1StringView("new_split:right")
+        || action == QLatin1StringView("close_surface")
+        || action == QLatin1StringView("prompt_tab_title")
+        || action == QLatin1StringView("new_tab")
+        || action == QLatin1StringView("close_tab:this");
+}
+
 struct AxisWeights {
     [[nodiscard]] std::size_t along(Qt::Orientation orientation) const noexcept
     {
@@ -1947,9 +1963,8 @@ void TerminalWorkspace::removeContextMenuForPane(PaneHandle handle)
 bool TerminalWorkspace::executeContextMenuAction(quint64 requestId,
                                                  const QString &action)
 {
-    if ((action != QStringLiteral("copy_to_clipboard:mixed")
-         && action != QStringLiteral("paste_from_clipboard"))
-        || requestId == 0 || !pendingContextMenu_.has_value()
+    if (!isAllowedContextMenuAction(QStringView(action)) || requestId == 0
+        || !pendingContextMenu_.has_value()
         || pendingContextMenu_->requestId != requestId
         || pendingContextMenu_->pane == nullptr
         || paneForId(pendingContextMenu_->paneId)
@@ -1957,7 +1972,19 @@ bool TerminalWorkspace::executeContextMenuAction(quint64 requestId,
         return false;
     }
 
+    const PaneId paneId = pendingContextMenu_->paneId;
     const QPointer<TerminalPane> target = pendingContextMenu_->pane;
+    pendingContextMenu_.reset();
+
+    // Popup actions are dispatched only after the menu has closed. Restore
+    // the ordinary active-pane focus first so a subsequent modal action (for
+    // example Change Title) opens last and retains focus.
+    const QPointer<TerminalWorkspace> guard(this);
+    focusActivePane();
+    if (guard == nullptr || target == nullptr
+        || guard->paneForId(paneId) != target) {
+        return false;
+    }
     return target->executeConfiguredAction(QStringView(action));
 }
 

@@ -362,7 +362,12 @@ only after process-wide fanout. Nested-reload coverage also verifies that a
 root release waits for its outer press bookkeeping. Pane-publication tests
 reload from QML overlay completion during both new-tab and split construction,
 and destruction tests cover model insertion, tab-title publication, and
-tab-bar visibility callbacks. Workspace tests also cover
+tab-bar visibility callbacks. Context-menu coverage verifies exact fixed-action
+admission, one-shot post-close dispatch to the stable originating pane,
+supersession and removal cancellation, and focus ordering across Reset, Change
+Title, all four directional splits, Close Split, Change Tab Title, New Tab,
+and Close Tab. The application fixture also exercises chrome-adjusted popup
+placement with the real embedded QML. Workspace tests also cover
 owner-delayed lifecycle publication, final-surface and final-tab action-chain
 completion, synchronous host destruction after local/all/global key events,
 direct all-pane fanout unwinding under both normal close and unexpected

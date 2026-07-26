@@ -571,9 +571,20 @@ signals:
   then applies copy-on-select. A stale coordinate may still request the menu
   but cannot select unrelated current content. The GUI retains only the press
   positions and maps results to paste or a workspace-issued stable menu token.
-  One Qt Quick `Menu` per window requests `Popup.Native`, routes only fixed
-  Copy/Paste actions back to the originating pane, cancels when that pane
-  disappears, and restores focus to the current active pane when closed.
+  One Qt Quick `Menu` per window uses `Popup.Item` so its geometry stays in
+  the same Qt scene on Wayland. Immediately before opening, QML maps the
+  retained window-root click point into the `ApplicationWindow` content item,
+  accounting for its header and footer. The menu exposes only Copy, Paste,
+  Reset, a Split submenu containing Change Title, all four directional splits,
+  and Close Split, and a Tab submenu containing Change Tab Title, New Tab, and
+  Close Tab. QML retains the selected fixed action until the popup closes. The
+  workspace then consumes the stable token once, restores focus to the current
+  active pane, revalidates the stored `PaneId` and guarded originating pane,
+  and dispatches the action there. Restoring focus before dispatch ensures a
+  resulting title or close confirmation opens last and retains focus.
+  Dismissal only restores focus; cancellation when the origin disappears or a
+  newer popup supersedes it is inert, and a consumed or stale token cannot
+  dispatch again.
   Ghostty's configurable `mouse-shift-capture` and terminal-controlled
   `XTSHIFTESCAPE` exceptions are not yet represented, so Qt currently applies
   the default Linux Shift escape whenever raw capture is active.

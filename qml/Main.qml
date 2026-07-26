@@ -214,8 +214,9 @@ ApplicationWindow {
         property var closingRequestId: 0
         property point requestPosition: Qt.point(0, 0)
         property bool selectionAvailable: false
+        property string pendingAction: ""
         objectName: "terminalContextMenu"
-        popupType: Popup.Native
+        popupType: Popup.Item
 
         function scheduleOpen(requestId) {
             Qt.callLater(function() {
@@ -223,8 +224,12 @@ ApplicationWindow {
                         || terminalContextMenu.visible
                         || terminalContextMenu.closingRequestId !== 0)
                     return
+                const popupPosition = window.contentItem.mapFromItem(
+                                                null,
+                                                terminalContextMenu.requestPosition)
                 terminalContextMenu.popup(window.contentItem,
-                                          terminalContextMenu.requestPosition)
+                                          popupPosition.x,
+                                          popupPosition.y)
             })
         }
 
@@ -232,6 +237,7 @@ ApplicationWindow {
             terminalContextMenu.requestId = requestId
             terminalContextMenu.requestPosition = position
             terminalContextMenu.selectionAvailable = selectionAvailable
+            terminalContextMenu.pendingAction = ""
             if (!terminalContextMenu.visible
                     && terminalContextMenu.closingRequestId === 0)
                 terminalContextMenu.scheduleOpen(requestId)
@@ -241,6 +247,7 @@ ApplicationWindow {
             if (terminalContextMenu.requestId !== requestId)
                 return
             terminalContextMenu.requestId = 0
+            terminalContextMenu.pendingAction = ""
             if (terminalContextMenu.visible) {
                 if (terminalContextMenu.closingRequestId === 0)
                     terminalContextMenu.closingRequestId = requestId
@@ -252,17 +259,99 @@ ApplicationWindow {
             objectName: "terminalContextMenuCopy"
             text: qsTr("Copy")
             enabled: terminalContextMenu.selectionAvailable
-            onTriggered: workspace.executeContextMenuAction(
-                             terminalContextMenu.requestId,
-                             "copy_to_clipboard:mixed")
+            onTriggered: terminalContextMenu.pendingAction =
+                         "copy_to_clipboard:mixed"
         }
 
         Action {
             objectName: "terminalContextMenuPaste"
             text: qsTr("Paste")
-            onTriggered: workspace.executeContextMenuAction(
-                             terminalContextMenu.requestId,
-                             "paste_from_clipboard")
+            onTriggered: terminalContextMenu.pendingAction =
+                         "paste_from_clipboard"
+        }
+
+        MenuSeparator {
+        }
+
+        Action {
+            objectName: "terminalContextMenuReset"
+            text: qsTr("Reset")
+            onTriggered: terminalContextMenu.pendingAction = "reset"
+        }
+
+        MenuSeparator {
+        }
+
+        Menu {
+            objectName: "terminalContextMenuSplit"
+            title: qsTr("Split")
+
+            Action {
+                objectName: "terminalContextMenuChangeTitle"
+                text: qsTr("Change Title…")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "prompt_surface_title"
+            }
+
+            Action {
+                objectName: "terminalContextMenuSplitUp"
+                text: qsTr("Split Up")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "new_split:up"
+            }
+
+            Action {
+                objectName: "terminalContextMenuSplitDown"
+                text: qsTr("Split Down")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "new_split:down"
+            }
+
+            Action {
+                objectName: "terminalContextMenuSplitLeft"
+                text: qsTr("Split Left")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "new_split:left"
+            }
+
+            Action {
+                objectName: "terminalContextMenuSplitRight"
+                text: qsTr("Split Right")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "new_split:right"
+            }
+
+            Action {
+                objectName: "terminalContextMenuCloseSplit"
+                text: qsTr("Close Split")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "close_surface"
+            }
+        }
+
+        Menu {
+            objectName: "terminalContextMenuTab"
+            title: qsTr("Tab")
+
+            Action {
+                objectName: "terminalContextMenuChangeTabTitle"
+                text: qsTr("Change Tab Title…")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "prompt_tab_title"
+            }
+
+            Action {
+                objectName: "terminalContextMenuNewTab"
+                text: qsTr("New Tab")
+                onTriggered: terminalContextMenu.pendingAction = "new_tab"
+            }
+
+            Action {
+                objectName: "terminalContextMenuCloseTab"
+                text: qsTr("Close Tab")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "close_tab:this"
+            }
         }
 
         onClosed: {
@@ -270,12 +359,19 @@ ApplicationWindow {
             const finishedRequestId = cancelledClose
                                       ? closingRequestId
                                       : requestId
+            const selectedAction = cancelledClose ? "" : pendingAction
             closingRequestId = 0
-            if (!cancelledClose)
+            if (!cancelledClose) {
                 requestId = 0
+                pendingAction = ""
+            }
             if (finishedRequestId !== 0) {
                 Qt.callLater(function() {
-                    workspace.finishContextMenu(finishedRequestId)
+                    if (selectedAction.length !== 0)
+                        workspace.executeContextMenuAction(finishedRequestId,
+                                                           selectedAction)
+                    else
+                        workspace.finishContextMenu(finishedRequestId)
                 })
             }
             if (requestId !== 0)

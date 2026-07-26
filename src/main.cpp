@@ -17,6 +17,8 @@
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
+#include <QMetaEnum>
+#include <QMetaProperty>
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -584,6 +586,119 @@ bool installTitlePromptTestHook(QObject *rootObject,
                     QCoreApplication::exit(1);
                 }
             });
+    };
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
+
+bool installContextMenuPositionTestHook(QQuickWindow *window,
+                                        TerminalWorkspace *workspace)
+{
+    QObject *const menu =
+        window->findChild<QObject *>(QStringLiteral("terminalContextMenu"));
+    QQuickItem *const windowContentRoot = window->contentItem();
+    auto *const applicationContentItem =
+        window->property("contentItem").value<QQuickItem *>();
+    if (menu == nullptr || windowContentRoot == nullptr
+        || applicationContentItem == nullptr) {
+        qCritical()
+            << "Context-menu-position test hook could not find the QML controls";
+        return false;
+    }
+
+    const int popupTypeIndex = menu->metaObject()->indexOfProperty("popupType");
+    if (popupTypeIndex < 0) {
+        qCritical()
+            << "Context-menu-position test hook could not inspect the popup type";
+        return false;
+    }
+    const QMetaProperty popupTypeProperty =
+        menu->metaObject()->property(popupTypeIndex);
+    const QMetaEnum popupTypes = popupTypeProperty.enumerator();
+    const int itemPopupType = popupTypes.keyToValue("Item");
+    if (!popupTypes.isValid() || itemPopupType < 0
+        || menu->property("popupType").toInt() != itemPopupType) {
+        qCritical() << "Context-menu-position test hook requires an item popup";
+        return false;
+    }
+
+    const QPointF rootPosition(260.0, 240.0);
+    const auto exercise = [window, workspace, menu, windowContentRoot,
+                           applicationContentItem, rootPosition] {
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        if (pane == nullptr) {
+            qCritical()
+                << "Context-menu-position test hook could not find a terminal pane";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        auto *const timer = new QTimer(workspace);
+        timer->setSingleShot(true);
+        const auto attempts = std::make_shared<int>(0);
+        QObject::connect(
+            timer, &QTimer::timeout, workspace,
+            [window, menu, windowContentRoot, applicationContentItem,
+             rootPosition, timer, attempts] {
+                if (!menu->property("visible").toBool()) {
+                    if (++*attempts < 50) {
+                        timer->start(10);
+                        return;
+                    }
+                    qCritical()
+                        << "Context-menu-position test hook did not observe an open menu";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+
+                auto *const actualParent =
+                    menu->property("parent").value<QQuickItem *>();
+                const QPointF contentOrigin = applicationContentItem->mapToItem(
+                    windowContentRoot, QPointF());
+                const QPointF expected = actualParent != nullptr
+                    ? actualParent->mapFromItem(windowContentRoot, rootPosition)
+                    : QPointF();
+                const QPointF actual(menu->property("x").toReal(),
+                                     menu->property("y").toReal());
+                constexpr qreal tolerance = 0.5;
+                const bool valid = actualParent == applicationContentItem
+                    && actualParent->window() == window
+                    && contentOrigin.y() > tolerance
+                    && std::abs(expected.x() - actual.x()) < tolerance
+                    && std::abs(expected.y() - actual.y()) < tolerance
+                    && std::abs(rootPosition.y() - actual.y()) > tolerance;
+                if (!valid) {
+                    qCritical().nospace()
+                        << "Context-menu-position test hook mismatch: root="
+                        << rootPosition << ", content-origin=" << contentOrigin
+                        << ", expected=" << expected << ", actual=" << actual
+                        << ", content-parent="
+                        << (actualParent == applicationContentItem);
+                    QCoreApplication::exit(1);
+                    return;
+                }
+
+                if (!QMetaObject::invokeMethod(menu, "close")) {
+                    qCritical()
+                        << "Context-menu-position test hook could not close the menu";
+                    QCoreApplication::exit(1);
+                    return;
+                }
+                QTimer::singleShot(0, QCoreApplication::instance(),
+                                   [] { QCoreApplication::quit(); });
+            });
+
+        Q_EMIT pane->contextMenuRequested(rootPosition, false);
+        timer->start(0);
     };
     if (workspace->tabCount() > 0) {
         QTimer::singleShot(0, workspace, exercise);
@@ -1628,6 +1743,14 @@ int main(int argc, char *argv[])
         if (!initialWindow
             || !installTitlePromptTestHook(applicationWindow, workspace,
                                            TitlePromptTestTarget::Surface)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_CONTEXT_MENU_POSITION")
+        == 1) {
+        if (!initialWindow
+            || !installContextMenuPositionTestHook(applicationWindow,
+                                                   workspace)) {
             return 1;
         }
     }

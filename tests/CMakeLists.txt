@@ -815,6 +815,21 @@ set_tests_properties(application-surface-title-prompt PROPERTIES
 )
 
 add_test(
+    NAME application-context-menu-position
+    COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
+)
+set(_ghostty_qt_context_menu_position_config_home
+    "${CMAKE_CURRENT_BINARY_DIR}/application-context-menu-position-config")
+file(MAKE_DIRECTORY "${_ghostty_qt_context_menu_position_config_home}")
+set_tests_properties(application-context-menu-position PROPERTIES
+    TIMEOUT 5
+    ENVIRONMENT
+        "GHOSTTY_QT_ALLOW_NON_WAYLAND=1;GHOSTTY_QT_TEST_CONTEXT_MENU_POSITION=1;QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_FATAL_WARNINGS=1;XDG_CONFIG_HOME=${_ghostty_qt_context_menu_position_config_home}"
+    FAIL_REGULAR_EXPRESSION
+        "Binding loop detected;QQmlApplicationEngine failed"
+)
+
+add_test(
     NAME application-fullscreen-action
     COMMAND $<TARGET_FILE:ghostty-qt> --hold -- /bin/true
 )

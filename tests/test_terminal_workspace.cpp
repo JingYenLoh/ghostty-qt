@@ -425,6 +425,8 @@ private Q_SLOTS:
     void unexpectedDirectObserverDestructionStopsChainSafely();
     void synchronousObserversMayDestroyWorkspace();
     void contextMenuRequestsUseStablePaneTargets();
+    void contextMenuRoutesSurfaceAndSplitActions();
+    void contextMenuRoutesTabActions();
     void applicationQuitEscalatesCloseLifecycle();
     void closingOnlyPaneRemovesTab();
     void closeSurfaceUsesStableOriginsAndAdjacentFocus();
@@ -1633,23 +1635,35 @@ void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
         firstRequestId, QStringLiteral("copy_to_clipboard:mixed")));
     QCOMPARE(firstCopies.count(), 1);
     QCOMPARE(secondCopies.count(), 0);
+    QVERIFY(!workspace.executeContextMenuAction(
+        firstRequestId, QStringLiteral("paste_from_clipboard")));
 
     workspace.finishContextMenu(firstRequestId + 1);
+    Q_EMIT first.pane->contextMenuRequested(windowPosition, false);
+    QCOMPARE(requests.count(), 2);
+    const quint64 pasteRequestId =
+        requests.constLast().constFirst().toULongLong();
     QVERIFY(workspace.executeContextMenuAction(
-        firstRequestId, QStringLiteral("paste_from_clipboard")));
+        pasteRequestId, QStringLiteral("paste_from_clipboard")));
     QCOMPARE(firstPastes.count(), 1);
     QCOMPARE(firstPastes.constFirst().constFirst().toString(), pasteText);
     QCOMPARE(secondPastes.count(), 0);
 
+    Q_EMIT first.pane->contextMenuRequested(windowPosition, false);
+    QCOMPARE(requests.count(), 3);
+    const quint64 dismissalRequestId =
+        requests.constLast().constFirst().toULongLong();
     QQuickItem focusSink(window.contentItem());
     focusSink.forceActiveFocus();
     QCOMPARE(window.activeFocusItem(), &focusSink);
     QVERIFY(second.pane != nullptr);
-    workspace.finishContextMenu(firstRequestId);
+    workspace.finishContextMenu(dismissalRequestId + 1);
+    QCOMPARE(window.activeFocusItem(), &focusSink);
+    workspace.finishContextMenu(dismissalRequestId);
     QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), second.pane.data(),
                               1000);
     QVERIFY(!workspace.executeContextMenuAction(
-        firstRequestId, QStringLiteral("copy_to_clipboard:mixed")));
+        dismissalRequestId, QStringLiteral("copy_to_clipboard:mixed")));
 
     // A synchronous cancellation observer may publish a still-newer menu.
     // That nested request wins; the outer superseding request must not
@@ -1657,7 +1671,7 @@ void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
     const QPointF supersededPosition(210.0, 110.0);
     const QPointF nestedPosition(220.0, 120.0);
     Q_EMIT first.pane->contextMenuRequested(supersededPosition, false);
-    QCOMPARE(requests.count(), 2);
+    QCOMPARE(requests.count(), 4);
     connect(
         &workspace, &TerminalWorkspace::contextMenuCancelled, &workspace,
         [pane = first.pane, nestedPosition] {
@@ -1668,7 +1682,7 @@ void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
         Qt::SingleShotConnection);
     Q_EMIT second.pane->contextMenuRequested(QPointF(230.0, 130.0), false);
     QCOMPARE(cancellations.count(), 1);
-    QCOMPARE(requests.count(), 3);
+    QCOMPARE(requests.count(), 5);
     QCOMPARE(requests.constLast().at(1).toPointF(), nestedPosition);
     const quint64 nestedRequestId =
         requests.constLast().constFirst().toULongLong();
@@ -1679,7 +1693,7 @@ void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
     workspace.finishContextMenu(nestedRequestId);
 
     Q_EMIT first.pane->contextMenuRequested(windowPosition, false);
-    QCOMPARE(requests.count(), 4);
+    QCOMPARE(requests.count(), 6);
     QCOMPARE(requests.constLast().at(2).toBool(), false);
     const quint64 removalRequestId =
         requests.constLast().constFirst().toULongLong();
@@ -1700,10 +1714,295 @@ void TerminalWorkspaceTest::contextMenuRequestsUseStablePaneTargets()
     QCOMPARE(cancellations.count(), 2);
     QCOMPARE(cancellations.constLast().constFirst().toULongLong(),
              removalRequestId);
-    QCOMPARE(requests.count(), 4);
+    QCOMPARE(requests.count(), 6);
     QVERIFY(!workspace.executeContextMenuAction(
         removalRequestId, QStringLiteral("paste_from_clipboard")));
     QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+}
+
+void TerminalWorkspaceTest::contextMenuRoutesSurfaceAndSplitActions()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    const CurrentTabProbe second = splitRightProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(second.pane != nullptr);
+    TerminalController *const firstController =
+        first.pane->findChild<TerminalController *>();
+    TerminalController *const secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+
+    QSignalSpy firstResets(firstController,
+                           &TerminalController::resetTerminalRequested);
+    QSignalSpy secondResets(secondController,
+                            &TerminalController::resetTerminalRequested);
+    QSignalSpy requests(&workspace, &TerminalWorkspace::contextMenuRequested);
+    QSignalSpy cancellations(&workspace,
+                             &TerminalWorkspace::contextMenuCancelled);
+    QSignalSpy titlePrompts(&workspace,
+                            &TerminalWorkspace::titlePromptRequested);
+    const auto requestForFirst = [&] {
+        const int priorCount = requests.count();
+        Q_EMIT first.pane->contextMenuRequested(QPointF(130.0, 90.0), false);
+        if (requests.count() != priorCount + 1) return quint64{0};
+        return requests.constLast().constFirst().toULongLong();
+    };
+
+    const quint64 resetRequestId = requestForFirst();
+    QVERIFY(resetRequestId != 0);
+    const std::array<QString, 5> rejectedActions{
+        QStringLiteral("new_split"),
+        QStringLiteral("new_split:auto"),
+        QStringLiteral("reset:"),
+        QStringLiteral("set_surface_title:menu"),
+        QStringLiteral("close_window"),
+    };
+    for (const QString &action : rejectedActions) {
+        QVERIFY(!workspace.executeContextMenuAction(resetRequestId, action));
+    }
+    QVERIFY(workspace.executeContextMenuAction(resetRequestId,
+                                               QStringLiteral("reset")));
+    QCOMPARE(firstResets.count(), 1);
+    QCOMPARE(secondResets.count(), 0);
+    QVERIFY(!workspace.executeContextMenuAction(resetRequestId,
+                                                QStringLiteral("reset")));
+
+    QQuickItem focusSink(window.contentItem());
+    focusSink.forceActiveFocus();
+    QCOMPARE(window.activeFocusItem(), &focusSink);
+    bool activePaneFocusedWhenPrompted = false;
+    connect(&workspace, &TerminalWorkspace::titlePromptRequested, &workspace,
+            [&window, &second, &activePaneFocusedWhenPrompted] {
+                activePaneFocusedWhenPrompted =
+                    window.activeFocusItem() == second.pane.data();
+            });
+
+    const quint64 titleRequestId = requestForFirst();
+    QVERIFY(titleRequestId != 0);
+    QVERIFY(workspace.executeContextMenuAction(
+        titleRequestId, QStringLiteral("prompt_surface_title")));
+    QCOMPARE(titlePrompts.count(), 1);
+    QVERIFY(activePaneFocusedWhenPrompted);
+    const quint64 titlePromptId =
+        titlePrompts.constFirst().constFirst().toULongLong();
+    const QString title = QStringLiteral("context-menu-origin");
+    workspace.confirmTitlePrompt(titlePromptId, title);
+    QCOMPARE(first.pane->surfaceTitleOverride(), std::optional<QString>{title});
+    QVERIFY(!second.pane->surfaceTitleOverride().has_value());
+
+    focusSink.forceActiveFocus();
+    QCOMPARE(window.activeFocusItem(), &focusSink);
+    workspace.finishContextMenu(titleRequestId);
+    QCOMPARE(window.activeFocusItem(), &focusSink);
+    QVERIFY(!workspace.executeContextMenuAction(titleRequestId,
+                                                QStringLiteral("reset")));
+
+    struct DirectionCase {
+        QString action;
+        QPointF expectedSign;
+    };
+    const std::array<DirectionCase, 4> directions{{
+        {QStringLiteral("new_split:up"), QPointF(0.0, -1.0)},
+        {QStringLiteral("new_split:down"), QPointF(0.0, 1.0)},
+        {QStringLiteral("new_split:left"), QPointF(-1.0, 0.0)},
+        {QStringLiteral("new_split:right"), QPointF(1.0, 0.0)},
+    }};
+    for (const DirectionCase &direction : directions) {
+        const QList<TerminalPane *> panesBefore =
+            workspace.findChildren<TerminalPane *>();
+        const quint64 requestId = requestForFirst();
+        QVERIFY(requestId != 0);
+        QVERIFY(
+            workspace.executeContextMenuAction(requestId, direction.action));
+        QCOMPARE(workspace.findChildren<TerminalPane *>().size(),
+                 panesBefore.size() + 1);
+
+        TerminalPane *addedPane = nullptr;
+        for (TerminalPane *pane : workspace.findChildren<TerminalPane *>()) {
+            if (!panesBefore.contains(pane)) {
+                QVERIFY(addedPane == nullptr);
+                addedPane = pane;
+            }
+        }
+        QVERIFY(addedPane != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            addedPane->width() > 0.0 && addedPane->height() > 0.0
+                && first.pane->width() > 0.0 && first.pane->height() > 0.0,
+            1000);
+        const QPointF sourceCenter = first.pane->mapToItem(
+            &workspace,
+            QPointF(first.pane->width() / 2.0, first.pane->height() / 2.0));
+        const QPointF addedCenter = addedPane->mapToItem(
+            &workspace,
+            QPointF(addedPane->width() / 2.0, addedPane->height() / 2.0));
+        if (!qFuzzyIsNull(direction.expectedSign.x())) {
+            QVERIFY((addedCenter.x() - sourceCenter.x())
+                        * direction.expectedSign.x()
+                    > 0.0);
+        } else {
+            QVERIFY((addedCenter.y() - sourceCenter.y())
+                        * direction.expectedSign.y()
+                    > 0.0);
+        }
+        QVERIFY(!workspace.executeContextMenuAction(requestId,
+                                                    QStringLiteral("reset")));
+    }
+
+    const int paneCountBeforeClose =
+        workspace.findChildren<TerminalPane *>().size();
+    const quint64 closeRequestId = requestForFirst();
+    QVERIFY(closeRequestId != 0);
+    QPointer<TerminalPane> removedPane(first.pane);
+    QVERIFY(workspace.executeContextMenuAction(
+        closeRequestId, QStringLiteral("close_surface")));
+    QCOMPARE(cancellations.count(), 0);
+    QVERIFY(!workspace.executeContextMenuAction(
+        closeRequestId, QStringLiteral("close_surface")));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.findChildren<TerminalPane *>().size(),
+                              paneCountBeforeClose - 1, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    QVERIFY(second.pane != nullptr);
+}
+
+void TerminalWorkspaceTest::contextMenuRoutesTabActions()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:first menu seed")));
+
+    QSignalSpy requests(&workspace, &TerminalWorkspace::contextMenuRequested);
+    QSignalSpy cancellations(&workspace,
+                             &TerminalWorkspace::contextMenuCancelled);
+    QSignalSpy titlePrompts(&workspace,
+                            &TerminalWorkspace::titlePromptRequested);
+    const auto requestForFirst = [&] {
+        const int priorCount = requests.count();
+        Q_EMIT first.pane->contextMenuRequested(QPointF(150.0, 100.0), false);
+        if (requests.count() != priorCount + 1) return quint64{0};
+        return requests.constLast().constFirst().toULongLong();
+    };
+
+    const quint64 titleRequestId = requestForFirst();
+    QVERIFY(titleRequestId != 0);
+    const std::array<QString, 6> rejectedActions{
+        QStringLiteral("prompt_tab_title:"), QStringLiteral("new_tab:"),
+        QStringLiteral("close_tab"),         QStringLiteral("close_tab:"),
+        QStringLiteral("close_tab:other"),   QStringLiteral("close_tab:right"),
+    };
+    for (const QString &action : rejectedActions) {
+        QVERIFY(!workspace.executeContextMenuAction(titleRequestId, action));
+    }
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.tabId != first.tabId);
+    QCOMPARE(window.activeFocusItem(), second.pane.data());
+
+    bool activePaneFocusedWhenPrompted = false;
+    connect(&workspace, &TerminalWorkspace::titlePromptRequested, &workspace,
+            [&window, &second, &activePaneFocusedWhenPrompted] {
+                activePaneFocusedWhenPrompted =
+                    window.activeFocusItem() == second.pane.data();
+            });
+    QVERIFY(workspace.executeContextMenuAction(
+        titleRequestId, QStringLiteral("prompt_tab_title")));
+    QCOMPARE(titlePrompts.count(), 1);
+    QVERIFY(activePaneFocusedWhenPrompted);
+    QCOMPARE(titlePrompts.constFirst().at(1).toString(),
+             QStringLiteral("Change Tab Title"));
+    QCOMPARE(titlePrompts.constFirst().at(2).toString(),
+             QStringLiteral("first menu seed"));
+    const quint64 titlePromptId =
+        titlePrompts.constFirst().constFirst().toULongLong();
+    const QString renamed = QStringLiteral("context-menu tab origin");
+    workspace.confirmTitlePrompt(titlePromptId, renamed);
+    const int firstIndex = workspace.tabModel()->indexOf(first.tabId);
+    const int secondIndex = workspace.tabModel()->indexOf(second.tabId);
+    QVERIFY(firstIndex >= 0);
+    QVERIFY(secondIndex >= 0);
+    QCOMPARE(workspace.tabModel()->entryAt(firstIndex)->titleOverride, renamed);
+    QVERIFY(
+        workspace.tabModel()->entryAt(secondIndex)->titleOverride.isEmpty());
+    QVERIFY(!workspace.executeContextMenuAction(
+        titleRequestId, QStringLiteral("prompt_tab_title")));
+
+    QVERIFY(first.pane->executeConfiguredAction(
+        QStringLiteral("increase_font_size:1")));
+    QVERIFY(second.pane->executeConfiguredAction(
+        QStringLiteral("increase_font_size:3")));
+    const qreal firstFontSize = first.pane->fontPointSize();
+    const qreal secondFontSize = second.pane->fontPointSize();
+    QVERIFY(firstFontSize != secondFontSize);
+    workspace.setCurrentIndex(workspace.tabModel()->indexOf(second.tabId));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             second.tabId);
+
+    const int tabCountBeforeNew = workspace.tabCount();
+    const quint64 newRequestId = requestForFirst();
+    QVERIFY(newRequestId != 0);
+    QVERIFY(workspace.executeContextMenuAction(newRequestId,
+                                               QStringLiteral("new_tab")));
+    QCOMPARE(workspace.tabCount(), tabCountBeforeNew + 1);
+    const CurrentTabProbe created = currentTabProbe(workspace);
+    QVERIFY(created.pane != nullptr);
+    QVERIFY(created.tabId != first.tabId);
+    QVERIFY(created.tabId != second.tabId);
+    QCOMPARE(created.pane->fontPointSize(), firstFontSize);
+    QVERIFY(created.pane->fontPointSize() != secondFontSize);
+    QVERIFY(!workspace.executeContextMenuAction(newRequestId,
+                                                QStringLiteral("new_tab")));
+
+    const int tabCountBeforeClose = workspace.tabCount();
+    const quint64 closeRequestId = requestForFirst();
+    QVERIFY(closeRequestId != 0);
+    QPointer<TerminalPane> removedPane(first.pane);
+    QVERIFY(workspace.executeContextMenuAction(
+        closeRequestId, QStringLiteral("close_tab:this")));
+    QCOMPARE(cancellations.count(), 0);
+    QVERIFY(!workspace.executeContextMenuAction(
+        closeRequestId, QStringLiteral("close_tab:this")));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), tabCountBeforeClose - 1,
+                              1000);
+    QTRY_VERIFY_WITH_TIMEOUT(removedPane.isNull(), 1000);
+    const QVector<TabId> remainingIds = tabIds(workspace);
+    QVERIFY(!remainingIds.contains(first.tabId));
+    QVERIFY(remainingIds.contains(second.tabId));
+    QVERIFY(remainingIds.contains(created.tabId));
+    QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
+             created.tabId);
+    QVERIFY(second.pane != nullptr);
 }
 
 void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()
