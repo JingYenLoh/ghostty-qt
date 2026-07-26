@@ -70,6 +70,12 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const GhosttyConfigValues &values = parsed->values;
 
     QCOMPARE(values.term, QByteArrayLiteral("ghostty-qt-test"));
+    QCOMPARE(values.linuxCgroup.mode, LinuxCgroupMode::Always);
+    QCOMPARE(values.linuxCgroup.memoryLimitBytes,
+             std::optional<quint64>(std::numeric_limits<quint64>::max()));
+    QCOMPARE(values.linuxCgroup.processesLimit,
+             std::optional<quint64>(quint64{0}));
+    QVERIFY(values.linuxCgroup.hardFail);
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
     const TerminalTypography &typography = values.typography;
@@ -353,6 +359,12 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("mouse-scroll-multiplier"),
                           mouseScrollMultiplier(0.01, 0.01));
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("linux-cgroup-memory-limit"),
+                          QJsonValue::Null);
+    lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("linux-cgroup-processes-limit"),
+                          QJsonValue::Null);
 
     const auto low = parseGhosttyConfigExportJson(json(lowValues));
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
@@ -363,6 +375,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(low->values.bellAudioVolume, -2.0);
     QCOMPARE(low->values.mouseScrollMultiplier.precision, 0.01);
     QCOMPARE(low->values.mouseScrollMultiplier.discrete, 0.01);
+    QVERIFY(!low->values.linuxCgroup.memoryLimitBytes.has_value());
+    QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
 
     QJsonObject onlyRequiredNull = object();
     onlyRequiredNull =
@@ -591,6 +605,17 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         [](const GhosttyConfigValues &values) {
             return values.singleInstanceMode;
         });
+    verifyMappings(
+        QLatin1StringView("linux-cgroup"),
+        std::to_array<std::pair<QLatin1StringView, LinuxCgroupMode>>({
+            {QLatin1StringView("never"), LinuxCgroupMode::Never},
+            {QLatin1StringView("always"), LinuxCgroupMode::Always},
+            {QLatin1StringView("single-instance"),
+             LinuxCgroupMode::SingleInstance},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.linuxCgroup.mode;
+        });
 }
 
 void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
@@ -778,6 +803,25 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("term"), QJsonArray{256})
         << QStringLiteral(
                "values.term[0] must be an unsigned integer in range");
+    QTest::newRow("missing-linux-cgroup")
+        << withoutValue(object(), QStringLiteral("linux-cgroup"))
+        << QStringLiteral("values is missing field 'linux-cgroup'");
+    QTest::newRow("missing-linux-cgroup-memory-limit")
+        << withoutValue(object(), QStringLiteral("linux-cgroup-memory-limit"))
+        << QStringLiteral(
+               "values is missing field 'linux-cgroup-memory-limit'");
+    QTest::newRow("missing-linux-cgroup-processes-limit")
+        << withoutValue(object(),
+                        QStringLiteral("linux-cgroup-processes-limit"))
+        << QStringLiteral(
+               "values is missing field 'linux-cgroup-processes-limit'");
+    QTest::newRow("missing-linux-cgroup-hard-fail")
+        << withoutValue(object(), QStringLiteral("linux-cgroup-hard-fail"))
+        << QStringLiteral("values is missing field 'linux-cgroup-hard-fail'");
+    QTest::newRow("linux-cgroup-hard-fail-type")
+        << withValue(object(), QStringLiteral("linux-cgroup-hard-fail"),
+                     QStringLiteral("true"))
+        << QStringLiteral("values.linux-cgroup-hard-fail must be a boolean");
     QTest::newRow("missing-field")
         << withoutValue(object(), QStringLiteral("font-size"))
         << QStringLiteral("values is missing field 'font-size'");
@@ -1293,6 +1337,22 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("scrollback-limit"),
                      QStringLiteral("18446744073709551616"))
         << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("linux-cgroup-memory-number")
+        << withValue(object(), QStringLiteral("linux-cgroup-memory-limit"), 1)
+        << QStringLiteral("values.linux-cgroup-memory-limit must be a string");
+    QTest::newRow("linux-cgroup-memory-leading-zero")
+        << withValue(object(), QStringLiteral("linux-cgroup-memory-limit"),
+                     QStringLiteral("01"))
+        << QStringLiteral("canonical unsigned decimal string");
+    QTest::newRow("linux-cgroup-processes-overflow")
+        << withValue(object(), QStringLiteral("linux-cgroup-processes-limit"),
+                     QStringLiteral("18446744073709551616"))
+        << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("linux-cgroup-processes-boolean")
+        << withValue(object(), QStringLiteral("linux-cgroup-processes-limit"),
+                     true)
+        << QStringLiteral(
+               "values.linux-cgroup-processes-limit must be a string");
     QTest::newRow("delay-negative")
         << withValue(object(),
                      QStringLiteral("quit-after-last-window-closed-delay"), -1)
@@ -1336,6 +1396,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("resize-overlay"),
              QStringLiteral("resize-overlay-position"),
              QStringLiteral("gtk-single-instance"),
+             QStringLiteral("linux-cgroup"),
          }) {
         const QByteArray row = QStringLiteral("enum-%1").arg(enumName).toUtf8();
         QTest::newRow(row.constData())

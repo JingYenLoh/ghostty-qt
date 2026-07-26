@@ -407,7 +407,7 @@ private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
     void typographyReloadReachesLiveAndFuturePanes();
-    void termReloadAffectsOnlyFuturePanes();
+    void launchOnlyReloadAffectsOnlyFuturePanes();
     void inheritedTypographyChangesOnlyPointSize();
     void initializationSurvivesReentrantConfigurationObservers();
     void tabPublicationMayDestroyWorkspace();
@@ -609,11 +609,18 @@ void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
     }
 }
 
-void TerminalWorkspaceTest::termReloadAffectsOnlyFuturePanes()
+void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
     options.term = QByteArrayLiteral("ghostty-qt-initial");
+    options.linuxCgroup = {
+        .mode = LinuxCgroupMode::Never,
+        .memoryLimitBytes = quint64{4096},
+        .processesLimit = quint64{4},
+        .hardFail = false,
+    };
+    options.processUsesSingleInstance = false;
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
@@ -629,16 +636,27 @@ void TerminalWorkspaceTest::termReloadAffectsOnlyFuturePanes()
     QVERIFY(firstController != nullptr);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
+    QVERIFY(!firstController->launchProcessUsesSingleInstance());
     QSignalSpy runtimeOptions(firstController,
                               &TerminalController::runtimeOptionsRequested);
 
     LaunchOptions reloaded = options;
     reloaded.term = QByteArrayLiteral("ghostty-qt-reloaded");
+    reloaded.linuxCgroup = {
+        .mode = LinuxCgroupMode::SingleInstance,
+        .memoryLimitBytes = std::numeric_limits<quint64>::max(),
+        .processesLimit = quint64{0},
+        .hardFail = true,
+    };
     workspace.applyLaunchOptions(reloaded);
     QCOMPARE(workspace.effectiveLaunchOptions().term, reloaded.term);
+    QCOMPARE(workspace.effectiveLaunchOptions().linuxCgroup,
+             reloaded.linuxCgroup);
     QCOMPARE(first.pane->findChild<TerminalController *>(), firstController);
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
     QCOMPARE(runtimeOptions.count(), 0);
 
     workspace.newTab();
@@ -650,6 +668,8 @@ void TerminalWorkspaceTest::termReloadAffectsOnlyFuturePanes()
     QVERIFY(tabController != nullptr);
     QCOMPARE(tabController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
+    QCOMPARE(tabController->launchLinuxCgroup(), reloaded.linuxCgroup);
+    QVERIFY(!tabController->launchProcessUsesSingleInstance());
 
     const CurrentTabProbe split = splitRightProbe(workspace);
     QVERIFY(split.pane != nullptr);
@@ -659,8 +679,11 @@ void TerminalWorkspaceTest::termReloadAffectsOnlyFuturePanes()
     QVERIFY(splitController != nullptr);
     QCOMPARE(splitController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-reloaded"));
+    QCOMPARE(splitController->launchLinuxCgroup(), reloaded.linuxCgroup);
+    QVERIFY(!splitController->launchProcessUsesSingleInstance());
     QCOMPARE(firstController->launchTerm(),
              QByteArrayLiteral("ghostty-qt-initial"));
+    QCOMPARE(firstController->launchLinuxCgroup(), options.linuxCgroup);
 }
 
 void TerminalWorkspaceTest::inheritedTypographyChangesOnlyPointSize()

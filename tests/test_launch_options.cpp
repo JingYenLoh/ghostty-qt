@@ -80,6 +80,12 @@ GhosttyConfigSnapshot completeSnapshot()
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
     values.term = QByteArrayLiteral("ghostty-qt-configured");
+    values.linuxCgroup = {
+        .mode = LinuxCgroupMode::Always,
+        .memoryLimitBytes = std::numeric_limits<quint64>::max(),
+        .processesLimit = quint64{0},
+        .hardFail = true,
+    };
     values.workingDirectoryPath = QStringLiteral("/work/ghostty");
     values.typography = completeTypography();
 
@@ -244,6 +250,11 @@ void LaunchOptionsTest::defaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
+    QCOMPARE(options.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
+    QVERIFY(!options.linuxCgroup.memoryLimitBytes.has_value());
+    QVERIFY(!options.linuxCgroup.processesLimit.has_value());
+    QVERIFY(!options.linuxCgroup.hardFail);
+    QVERIFY(!options.processUsesSingleInstance);
     QCOMPARE(options.workingDirectory, QDir::currentPath());
     QVERIFY(options.inheritWorkingDirectory);
     QVERIFY(!options.workingDirectoryExplicit);
@@ -707,6 +718,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     base.scrollbackLimit = {.value = 25'000,
                             .unit = ScrollbackLimitUnit::Lines};
     base.scrollbackLimitExplicit = true;
+    base.processUsesSingleInstance = true;
 
     const GhosttyConfigSnapshot snapshot = completeSnapshot();
 
@@ -716,6 +728,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     // projection must trust that complete value instead of rebuilding a
     // hybrid from the original frontend flags.
     QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
+    QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
+    QVERIFY(cliResult.processUsesSingleInstance);
     QVERIFY(cliResult.typography == completeTypography());
     QCOMPARE(cliResult.appearance.foregroundColor,
              QColor(QStringLiteral("#112233")));
@@ -1421,6 +1435,13 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 {
     LaunchOptions options;
     options.term = QByteArrayLiteral("ghostty-qt-session");
+    options.linuxCgroup = {
+        .mode = LinuxCgroupMode::SingleInstance,
+        .memoryLimitBytes = quint64{8'589'934'592},
+        .processesLimit = quint64{512},
+        .hardFail = true,
+    };
+    options.processUsesSingleInstance = true;
     options.workingDirectory = QStringLiteral("/session/working-directory");
     options.workingDirectoryExplicit = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
@@ -1467,6 +1488,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.term, options.term);
+    QCOMPARE(launch.linuxCgroup, options.linuxCgroup);
+    QCOMPARE(launch.processUsesSingleInstance,
+             options.processUsesSingleInstance);
     QCOMPARE(launch.inheritWorkingDirectory,
              options.inheritWorkingDirectory);
     QCOMPARE(launch.program, options.program);

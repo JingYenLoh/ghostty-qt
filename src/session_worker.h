@@ -13,6 +13,7 @@
 #include <QString>
 #include <QVector>
 
+#include <expected>
 #include <functional>
 #include <memory>
 
@@ -25,7 +26,11 @@ class SessionWorker final : public QObject {
     Q_OBJECT
 
 public:
+    using LinuxCgroupMover = std::function<std::expected<void, QString>(
+        qint64, const LinuxCgroupConfig &, bool)>;
+
     explicit SessionWorker(QObject *parent = nullptr);
+    SessionWorker(LinuxCgroupMover cgroupMover, QObject *parent);
     ~SessionWorker() override;
 
     // Pure previews used by TerminalController to close the UI/worker race
@@ -179,6 +184,7 @@ private:
     void copySelectionOnSelect();
 
     TerminalSessionLaunchOptions options_;
+    LinuxCgroupMover cgroupMover_;
     std::unique_ptr<GhosttyVtAdapter> vt_;
     std::unique_ptr<GhosttyLinkMatcher> linkMatcher_;
     struct HyperlinkState;

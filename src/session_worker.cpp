@@ -2,10 +2,12 @@
 #include "desktop_activation.h"
 #include "ghostty_link_matcher.h"
 #include "ghostty_vt_adapter.h"
+#include "linux_cgroup.h"
 #include "terminal_osc8_index.h"
 #include "terminfo_paths.h"
 #include "zig_string_escape.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -30,9 +32,11 @@
 #include <variant>
 
 #include <fcntl.h>
+#include <pthread.h>
 #include <pty.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -52,6 +56,54 @@ constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
+
+ssize_t writeWithoutSigpipe(int fd, const void *data, size_t size)
+{
+    sigset_t blocked;
+    sigset_t previous;
+    sigset_t pending;
+    if (::sigemptyset(&blocked) != 0 || ::sigaddset(&blocked, SIGPIPE) != 0) {
+        return -1;
+    }
+    const int blockError = ::pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+    if (blockError != 0) {
+        errno = blockError;
+        return -1;
+    }
+    if (::sigpending(&pending) != 0) {
+        const int pendingError = errno;
+        (void)::pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+        errno = pendingError;
+        return -1;
+    }
+    const int pendingState = ::sigismember(&pending, SIGPIPE);
+    if (pendingState < 0) {
+        const int pendingError = errno;
+        (void)::pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+        errno = pendingError;
+        return -1;
+    }
+
+    ssize_t written = -1;
+    do {
+        written = ::write(fd, data, size);
+    } while (written < 0 && errno == EINTR);
+    const int writeError = written < 0 ? errno : 0;
+
+    if (written < 0 && writeError == EPIPE && pendingState == 0) {
+        const struct timespec noWait{};
+        while (::sigtimedwait(&blocked, nullptr, &noWait) < 0
+               && errno == EINTR) {}
+    }
+
+    const int restoreError = ::pthread_sigmask(SIG_SETMASK, &previous, nullptr);
+    if (written >= 0 && restoreError != 0) {
+        errno = restoreError;
+        return -1;
+    }
+    if (written < 0) errno = writeError;
+    return written;
+}
 
 QString terminalFileBaseName(TerminalFileLocation location)
 {
@@ -468,10 +520,29 @@ struct SessionWorker::SearchState {
 };
 
 SessionWorker::SessionWorker(QObject *parent)
+    : SessionWorker(
+          [](qint64 pid, const LinuxCgroupConfig &config,
+             bool singleInstance) -> std::expected<void, QString> {
+              if (pid <= 0
+                  || static_cast<quint64>(pid)
+                      > std::numeric_limits<quint32>::max()) {
+                  return std::unexpected(
+                      QStringLiteral("The child PID is outside uint32 range"));
+              }
+              return moveProcessToLinuxCgroup(static_cast<quint32>(pid), config,
+                                              singleInstance);
+          },
+          parent)
+{}
+
+SessionWorker::SessionWorker(LinuxCgroupMover cgroupMover, QObject *parent)
     : QObject(parent)
+    , cgroupMover_(std::move(cgroupMover))
     , hyperlinkState_(std::make_unique<HyperlinkState>())
     , searchState_(std::make_unique<SearchState>())
-{}
+{
+    Q_ASSERT(cgroupMover_);
+}
 
 SessionWorker::~SessionWorker()
 {
@@ -819,8 +890,33 @@ bool SessionWorker::spawnChild()
     size.ws_xpixel = boundedU16(surfaceWidthPixels_);
     size.ws_ypixel = boundedU16(surfaceHeightPixels_);
 
+    bool gateChild = linuxCgroupEnabled(options_.linuxCgroup.mode,
+                                        options_.processUsesSingleInstance);
+    std::array<int, 2> cgroupGate{-1, -1};
+    if (gateChild
+        && ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0,
+                        cgroupGate.data())
+            < 0) {
+        const QString message =
+            QStringLiteral("Unable to create cgroup launch gate: %1")
+                .arg(QString::fromLocal8Bit(std::strerror(errno)));
+        if (options_.linuxCgroup.hardFail) {
+            Q_EMIT errorOccurred(message);
+            return false;
+        }
+        qWarning().noquote()
+            << message
+            << QStringLiteral(
+                   "(continuing because linux-cgroup-hard-fail is false)");
+        gateChild = false;
+    }
+
     std::array<int, 2> childReadyPipe{-1, -1};
     if (::pipe2(childReadyPipe.data(), O_CLOEXEC) < 0) {
+        if (gateChild) {
+            (void)::close(cgroupGate[0]);
+            (void)::close(cgroupGate[1]);
+        }
         Q_EMIT errorOccurred(
             QStringLiteral("Unable to create child-ready pipe: %1")
                 .arg(QString::fromLocal8Bit(std::strerror(errno))));
@@ -832,6 +928,10 @@ bool SessionWorker::spawnChild()
     if (pid < 0) {
         (void)::close(childReadyPipe[0]);
         (void)::close(childReadyPipe[1]);
+        if (gateChild) {
+            (void)::close(cgroupGate[0]);
+            (void)::close(cgroupGate[1]);
+        }
         Q_EMIT errorOccurred(
             QStringLiteral("Unable to create PTY: %1")
                 .arg(QString::fromLocal8Bit(std::strerror(errno))));
@@ -840,6 +940,7 @@ bool SessionWorker::spawnChild()
 
     if (pid == 0) {
         (void)::close(childReadyPipe[0]);
+        if (gateChild) (void)::close(cgroupGate[0]);
         struct sigaction defaultAction{};
         defaultAction.sa_handler = SIG_DFL;
         if (::sigemptyset(&defaultAction.sa_mask) != 0
@@ -857,6 +958,17 @@ bool SessionWorker::spawnChild()
         } while (written < 0 && errno == EINTR);
         (void)::close(childReadyPipe[1]);
         if (written != 1) _exit(126);
+
+        if (gateChild) {
+            char launchDecision = 0;
+            ssize_t decisionBytes = -1;
+            do {
+                decisionBytes = ::read(cgroupGate[1], &launchDecision,
+                                       sizeof(launchDecision));
+            } while (decisionBytes < 0 && errno == EINTR);
+            (void)::close(cgroupGate[1]);
+            if (decisionBytes != 1 || launchDecision != 1) _exit(127);
+        }
 
         if (attemptWorkingDirectory) {
             // Ghostty treats the directory as a hint. An existing file,
@@ -884,6 +996,7 @@ bool SessionWorker::spawnChild()
     }
 
     (void)::close(childReadyPipe[1]);
+    if (gateChild) (void)::close(cgroupGate[1]);
     char ready = 0;
     ssize_t received = -1;
     do {
@@ -891,12 +1004,53 @@ bool SessionWorker::spawnChild()
     } while (received < 0 && errno == EINTR);
     (void)::close(childReadyPipe[0]);
     if (received != 1 || ready != 1) {
+        if (gateChild) (void)::close(cgroupGate[0]);
         (void)::close(ptyFd);
         int status = 0;
         while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         Q_EMIT errorOccurred(
             QStringLiteral("Child exited before completing PTY setup"));
         return false;
+    }
+
+    if (gateChild) {
+        const std::expected<void, QString> moved =
+            cgroupMover_(static_cast<qint64>(pid), options_.linuxCgroup,
+                         options_.processUsesSingleInstance);
+        const bool permitLaunch =
+            moved.has_value() || !options_.linuxCgroup.hardFail;
+        if (!moved.has_value()) {
+            const QString message =
+                QStringLiteral(
+                    "Could not isolate terminal child in a transient systemd scope: %1")
+                    .arg(moved.error());
+            if (options_.linuxCgroup.hardFail) {
+                Q_EMIT errorOccurred(message);
+            } else {
+                qWarning().noquote()
+                    << message
+                    << QStringLiteral(
+                           "(continuing because linux-cgroup-hard-fail is false)");
+            }
+        }
+
+        const char decision = permitLaunch ? 1 : 0;
+        const ssize_t sent =
+            writeWithoutSigpipe(cgroupGate[0], &decision, sizeof(decision));
+        const int sendError = sent < 0 ? errno : EIO;
+        (void)::close(cgroupGate[0]);
+
+        if (sent != 1 || !permitLaunch) {
+            if (sent != 1) {
+                Q_EMIT errorOccurred(
+                    QStringLiteral("Unable to release cgroup launch gate: %1")
+                        .arg(QString::fromLocal8Bit(std::strerror(sendError))));
+            }
+            (void)::close(ptyFd);
+            int status = 0;
+            while (::waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+            return false;
+        }
     }
 
     masterFd_ = ptyFd;

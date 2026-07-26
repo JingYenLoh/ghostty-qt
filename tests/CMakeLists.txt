@@ -189,6 +189,23 @@ add_test(NAME single-instance-activation
     COMMAND test-single-instance-activation)
 set_tests_properties(single-instance-activation PROPERTIES TIMEOUT 25)
 
+qt_add_executable(test-linux-cgroup
+    test_linux_cgroup.cpp
+    private_session_bus.h
+)
+target_include_directories(test-linux-cgroup PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-linux-cgroup PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+    ghostty-qt-linux-cgroup
+)
+add_test(NAME linux-cgroup COMMAND test-linux-cgroup)
+set_tests_properties(linux-cgroup PROPERTIES TIMEOUT 15)
+
 qt_add_executable(test-application-controller
     test_application_controller.cpp
     ../src/application_action.h
@@ -244,6 +261,7 @@ target_link_libraries(test-application-controller PRIVATE
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
     ghostty-qt-desktop-activation
+    ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-terminal-bell
@@ -335,6 +353,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Test
     ghostty-qt-action-pipeline
     ghostty-qt-desktop-activation
+    ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-vt-adapter
@@ -381,6 +400,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Test
     ghostty-qt-action-pipeline
     ghostty-qt-desktop-activation
+    ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-terminal-bell
@@ -444,6 +464,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
     ghostty-qt-desktop-activation
+    ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-terminal-bell

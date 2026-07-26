@@ -33,6 +33,10 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("term"),
+    QLatin1StringView("linux-cgroup"),
+    QLatin1StringView("linux-cgroup-memory-limit"),
+    QLatin1StringView("linux-cgroup-processes-limit"),
+    QLatin1StringView("linux-cgroup-hard-fail"),
     QLatin1StringView("working-directory"),
     QLatin1StringView("font-family"),
     QLatin1StringView("font-family-bold"),
@@ -502,6 +506,15 @@ ParseResult<quint64> readDecimalUint64(const QJsonValue &value,
             QStringLiteral("%1 exceeds the uint64 range").arg(context));
     }
     return result;
+}
+
+ParseResult<std::optional<quint64>>
+readOptionalDecimalUint64(const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::optional<quint64>{};
+    auto parsed = readDecimalUint64(value, context);
+    if (!parsed) return std::unexpected(std::move(parsed.error()));
+    return std::optional<quint64>{*parsed};
 }
 
 int hexDigit(QChar value)
@@ -996,6 +1009,8 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
              {QLatin1StringView("quit-after-last-window-closed"),
               &result.quitAfterLastWindowClosed},
              {QLatin1StringView("initial-window"), &result.initialWindow},
+             {QLatin1StringView("linux-cgroup-hard-fail"),
+              &result.linuxCgroup.hardFail},
          })) {
         if (auto parsed = assignBoolean(name, *destination); !parsed) {
             return std::unexpected(std::move(parsed.error()));
@@ -1108,6 +1123,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("true"), SingleInstanceMode::Enabled},
             {QLatin1StringView("detect"), SingleInstanceMode::Detect},
         });
+    constexpr auto LinuxCgroupModes =
+        std::to_array<std::pair<QLatin1StringView, LinuxCgroupMode>>({
+            {QLatin1StringView("never"), LinuxCgroupMode::Never},
+            {QLatin1StringView("always"), LinuxCgroupMode::Always},
+            {QLatin1StringView("single-instance"),
+             LinuxCgroupMode::SingleInstance},
+        });
 
     const auto assignEnum = [&](QLatin1StringView name, auto &destination,
                                 const auto &allowed) -> ParseResult<void> {
@@ -1180,6 +1202,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                        result.singleInstanceMode, SingleInstanceModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("linux-cgroup"),
+                                 result.linuxCgroup.mode, LinuxCgroupModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
 
     if (auto parsed = assign(QLatin1StringView("window-width"),
                              result.windowWidth, readUint32);
@@ -1249,6 +1275,16 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     }
     if (auto parsed = assign(QLatin1StringView("scrollback-limit"),
                              result.scrollbackLimitBytes, readDecimalUint64);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("linux-cgroup-memory-limit"),
+                             result.linuxCgroup.memoryLimitBytes,
+                             readOptionalDecimalUint64);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("linux-cgroup-processes-limit"),
+                             result.linuxCgroup.processesLimit,
+                             readOptionalDecimalUint64);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
 

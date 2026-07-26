@@ -1,5 +1,6 @@
 #pragma once
 
+#include "linux_cgroup_config.h"
 #include "terminal_appearance.h"
 
 #include <QByteArray>
@@ -118,6 +119,11 @@ normalizedTerminalSessionGeometry(TerminalSessionGeometry geometry) noexcept
 // composed here so initialization and reload use the same representation.
 struct TerminalSessionLaunchOptions {
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Linux resource isolation is fixed when this pane is constructed. The
+    // process role is resolved once during application startup; config reloads
+    // can change the policy for future panes without changing that role.
+    LinuxCgroupConfig linuxCgroup;
+    bool processUsesSingleInstance = false;
     QString workingDirectory;
     bool inheritWorkingDirectory = false;
     QStringList program;

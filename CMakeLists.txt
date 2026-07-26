@@ -480,6 +480,22 @@ target_compile_options(ghostty-qt-desktop-activation PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-linux-cgroup STATIC
+    src/linux_cgroup.cpp
+    src/linux_cgroup.h
+    src/linux_cgroup_config.h
+)
+target_include_directories(ghostty-qt-linux-cgroup PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-linux-cgroup PUBLIC
+    Qt6::Core
+    Qt6::DBus
+)
+target_compile_options(ghostty-qt-linux-cgroup PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
 add_library(ghostty-qt-frontend-config STATIC
     src/frontend_config.cpp
     src/frontend_config.h
@@ -654,6 +670,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-config-export
     ghostty-qt-desktop-activation
     ghostty-qt-frontend-config
+    ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-terminal-bell

@@ -1716,6 +1716,12 @@ int main(int argc, char *argv[])
             break;
         }
     }
+    // Cgroup single-instance policy follows the process role that startup
+    // arbitration actually established. Keep this invariant fixed across
+    // later frontend and shared-config reloads.
+    const bool processUsesSingleInstance = activationEndpoint != nullptr;
+    effectiveApplicationOptions.processUsesSingleInstance =
+        processUsesSingleInstance;
 
     // The engine and process controller both outlive every QML root. Their
     // declaration order tears down the controller, portal, windows, and pane
@@ -1747,7 +1753,9 @@ int main(int argc, char *argv[])
 
 #if GHOSTTY_QT_CONFIG_ENABLED
     const auto applyCurrentOptions = [&] {
-        applicationController.applyLaunchOptions(resolveCurrentOptions());
+        LaunchOptions resolved = resolveCurrentOptions();
+        resolved.processUsesSingleInstance = processUsesSingleInstance;
+        applicationController.applyLaunchOptions(resolved);
     };
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &applicationController,
@@ -1763,7 +1771,9 @@ int main(int argc, char *argv[])
                      &configService, &GhosttyConfigService::requestReload);
 #else
     const auto applyCurrentOptions = [&] {
-        applicationController.applyLaunchOptions(resolveCurrentOptions());
+        LaunchOptions resolved = resolveCurrentOptions();
+        resolved.processUsesSingleInstance = processUsesSingleInstance;
+        applicationController.applyLaunchOptions(resolved);
     };
 #endif
     QObject::connect(&frontendConfigService, &FrontendConfigService::changed,

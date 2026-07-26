@@ -76,6 +76,14 @@ public:
     {
         return launchOptions_.term;
     }
+    [[nodiscard]] const LinuxCgroupConfig &launchLinuxCgroup() const
+    {
+        return launchOptions_.linuxCgroup;
+    }
+    [[nodiscard]] bool launchProcessUsesSingleInstance() const
+    {
+        return launchOptions_.processUsesSingleInstance;
+    }
     [[nodiscard]] const std::optional<TerminalSessionGeometry> &
     launchGeometry() const
     {

@@ -266,7 +266,8 @@ The five focused config tests have distinct boundaries:
   missing optional includes, generation-safe asynchronous reload, and last-good
   snapshot behavior with an injected loader.
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
-  of process execution, including finalized non-empty byte-valued `term`, exact
+  of process execution, including finalized non-empty byte-valued `term`, the
+  exact cgroup enum/boolean and nullable canonical-decimal uint64 limits,
   typography role lists, tagged style and metric alternatives, fields and
   types, the full unsigned scrollback range, nullable values, and malformed
   keybinding trees.
@@ -274,8 +275,8 @@ The five focused config tests have distinct boundaries:
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
   surface-inheritance booleans, default/custom/empty and non-UTF-8 `term`
-  finalization, exact font CLI forwarding and role finalization, Ghostty's
-  effective
+  finalization, default/custom/empty Linux cgroup settings and maximum-width
+  limits, exact font CLI forwarding and role finalization, Ghostty's effective
   `clear`/`unbind` result, and structured sequences, chains, catch-all triggers,
   flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
@@ -287,6 +288,15 @@ The five focused config tests have distinct boundaries:
   lifecycle and mode repair, missing/unexecutable-helper failure, the
   config-off boundary, and moved-prefix main-to-helper discovery. Every fixture
   lives under the repository-local `./tmp` or build tree.
+
+`linux-cgroup` registers a virtual systemd manager on an isolated private
+session bus. It validates the exact `StartTransientUnit` wire and typed
+properties, never/always/single-instance gating, method/reply failures, cgroup
+path parsing, and 25 ms/250 ms membership polling against a temporary fake
+`/proc` tree. It never contacts or mutates the developer's real user manager.
+The worker tests separately inject the scope mover to prove that the child
+cannot execute before successful placement, soft failure releases it, hard
+failure prevents exec and reaps it, and disabled policy never calls the mover.
 
 The app lifecycle test also uses an isolated config home, so it never reads a
 developer's real Ghostty configuration.
@@ -311,7 +321,8 @@ C++ stack frame per configured key.
 
 Session and pane tests cover payload-specific typed execution without
 keypress-time reparsing, byte staging, invalid-sequence replay, table reset,
-reload cancellation, full/fractional/line/absolute viewport movement,
+launch-only TERM/cgroup snapshot reload, pre-exec cgroup gating, soft/hard
+scope failures, full/fractional/line/absolute viewport movement,
 selection-target scrolling, default and configured discrete wheel movement,
 precision pixel scrolling, fractional/reversing accumulation, identical local
 and DEC-captured row counts, worker-rechecked fractional-capture selection

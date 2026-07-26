@@ -104,6 +104,9 @@ the host-language comparison and remaining engineering risks.
   domains support watched-file reload and resolve into one typed applied slice
   that includes four-role font selection, font size, and physical-pixel cell,
   decoration, and cursor metric modifiers.
+- Per-pane transient systemd scopes with Ghostty's exact Linux cgroup mode,
+  soft/hard failure policy, `MemoryHigh`, and `TasksMax` settings. A pre-exec
+  gate prevents the terminal child from racing resource isolation.
 - Transparent pre-Qt delegation of the pinned `+edit-config`,
   `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
   `+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
@@ -120,6 +123,10 @@ the host-language comparison and remaining engineering risks.
 ## Requirements
 
 - Linux with a Wayland session and the Qt Wayland platform plugin.
+- Cgroup isolation additionally needs a user systemd manager on the session
+  D-Bus. Its membership check follows the first `/proc/<pid>/cgroup` entry,
+  with a unified hierarchy as the primary verified environment; the default
+  soft-failure policy lets the terminal continue when isolation is unavailable.
 - Qt 6.8 or newer with Core, D-Bus, Gui, Multimedia, Qml, Quick, Quick
   Controls 2, Widgets, and Qt Test development components.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
@@ -299,6 +306,10 @@ The current compatibility slice applies these keys:
 | `split-preserve-zoom` | Ghostty's canonical `no-navigation` default clears split zoom after a successful `goto_split`. Canonical `navigation` instead transfers the zoomed presentation to the newly focused pane for successful previous/next or spatial navigation. Reload affects subsequent navigation immediately. A direction with no target changes neither focus nor zoom; direct activation of another pane and structural changes such as creating a split retain their existing unzoom behavior. |
 | `tab-inherit-working-directory` | Defaults to `true`. A new tab uses the action-target pane, or the current tab's active pane for the QML button, and inherits its latest accepted local OSC 7 directory. `false` or a cleared/unavailable report uses the newest `working-directory`. Reload changes future tab creation only; existing sessions are never moved. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
 | `term` | Sets `TERM` for each pane's child from Ghostty's finalized non-empty raw bytes. It defaults to `xterm-ghostty`, and an empty setting finalizes back to that default. Each pane snapshots the value at construction; reload affects panes created afterward, while already constructed panes—including deferred panes without a child yet—retain their snapshot. `TERMINFO` continues to point at ghostty-qt's private database and `COLORTERM=truecolor` remains fixed. |
+| `linux-cgroup` | Supports `never`, `always`, and the Linux default `single-instance`. Enabled panes place their child PID in `app-ghostty-surface-transient-<pid>.scope` through the user systemd manager before allowing `exec`; the child and all descendants then inherit that scope. `single-instance` follows ghostty-qt's actual primary D-Bus role fixed at startup, not `gtk-single-instance` or a later frontend reload. A reachable user systemd manager and session D-Bus are required; membership verification uses the first `/proc/<pid>/cgroup` entry. Reload affects only panes constructed afterward. |
+| `linux-cgroup-hard-fail` | Defaults to `false`. Pre-fork gate allocation, scope creation, or the 250 ms `/proc/<pid>/cgroup` membership check then logs a warning and continues the launch. With `true`, any such failure aborts the pane launch; an already gated child is rejected with status 127. Post-fork gate/protocol failures are always fatal because the frontend cannot safely decide that the child was released. |
+| `linux-cgroup-memory-limit` | An unset value adds no memory limit. Every configured `u64`, including zero and the maximum value, is preserved exactly and sent as systemd `MemoryHigh`; this is a soft pressure threshold rather than an immediate kill limit. The scope always also requests `ManagedOOMMemoryPressure=kill`, matching pinned Ghostty. |
+| `linux-cgroup-processes-limit` | An unset value adds no process limit. Every configured `u64`, including zero and the maximum value, is preserved exactly and sent as systemd `TasksMax`, the hard task limit for that pane's process tree. |
 | `window-inherit-working-directory` | Defaults to `true`. A pane-originated new window inherits that exact pane's latest accepted local OSC 7 directory; an application/global action uses the focused or most recently active live pane, and a stale or zero-window source uses the newest `working-directory`. `false` always uses that application fallback. Reload affects future windows only. The shared unset desktop fallback and non-UTF-8 path transport limitations keep the policy partial. |
 | `window-inherit-font-size` | Defaults to `true`. New tabs and pane-originated windows inherit only the source pane's actual point size, including manual zoom; their font family still comes from current configuration. An application/global new-window action uses the focused or most recently active pane. `false` uses the newest effective `font-size`, including explicit CLI precedence. The child starts unadjusted and therefore follows later font-size reloads. |
 | `window-new-tab-position` | Supports Ghostty's exact `current` and `end` values and defaults to `current`. `current` inserts after the tab selected immediately before creation, or appends when no tab is selected; `end` always appends. The new tab becomes selected. Placement is independent of the action-target pane retained for directory and font inheritance, and reload affects future tabs only. |

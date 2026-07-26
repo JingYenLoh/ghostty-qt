@@ -158,6 +158,8 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
 {
     return {
         .term = options.term,
+        .linuxCgroup = options.linuxCgroup,
+        .processUsesSingleInstance = options.processUsesSingleInstance,
         .workingDirectory = options.workingDirectory,
         .inheritWorkingDirectory = options.inheritWorkingDirectory,
         .program = options.program,
@@ -175,6 +177,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     const GhosttyConfigValues &config = snapshot.values;
 
     result.term = config.term;
+    result.linuxCgroup = config.linuxCgroup;
     if (!base.workingDirectoryExplicit) {
         result.inheritWorkingDirectory = !config.workingDirectoryPath;
         if (config.workingDirectoryPath) {

@@ -4,11 +4,13 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
-#include <QTest>
 #include <QTemporaryDir>
+#include <QTest>
+#include <QThread>
 #include <QTimer>
 
 #include <linux/input-event-codes.h>
@@ -229,6 +231,10 @@ private Q_SLOTS:
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
     void usesConfiguredTerminalEnvironment();
+    void cgroupGateMovesChildBeforeExec();
+    void cgroupSoftFailureContinuesLaunch();
+    void cgroupHardFailurePreventsExec();
+    void disabledCgroupSkipsScopeMove();
     void stripsDesktopActivationFromChildEnvironment();
     void fallsBackFromUnavailableWorkingDirectory_data();
     void fallsBackFromUnavailableWorkingDirectory();
@@ -1040,6 +1046,196 @@ void SessionWorkerTest::usesConfiguredTerminalEnvironment()
              qPrintable(contents));
     QVERIFY2(contents.contains(QStringLiteral("program=ghostty-qt")),
              qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::cgroupGateMovesChildBeforeExec()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/cgroup-gate-success-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString childMarker =
+        directory.filePath(QStringLiteral("child-executed"));
+
+    int moveCalls = 0;
+    qint64 movedPid = -1;
+    LinuxCgroupConfig observedConfig;
+    bool markerAbsentDuringMove = false;
+    SessionWorker worker(
+        [&](qint64 pid, const LinuxCgroupConfig &config,
+            bool singleInstance) -> std::expected<void, QString> {
+            ++moveCalls;
+            movedPid = pid;
+            observedConfig = config;
+            QThread::msleep(100);
+            markerAbsentDuringMove = !QFileInfo::exists(childMarker);
+            if (!singleInstance) {
+                return std::unexpected(
+                    QStringLiteral("single-instance role was lost"));
+            }
+            return {};
+        },
+        nullptr);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.linuxCgroup = {
+        .mode = LinuxCgroupMode::Always,
+        .memoryLimitBytes = quint64{4096},
+        .processesLimit = quint64{7},
+        .hardFail = true,
+    };
+    options.processUsesSingleInstance = true;
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("touch")),
+        childMarker,
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(startedSpy.count(), 1);
+    QCOMPARE(moveCalls, 1);
+    QVERIFY(movedPid > 0);
+    QCOMPARE(observedConfig, options.linuxCgroup);
+    QVERIFY(markerAbsentDuringMove);
+    QVERIFY(QFileInfo::exists(childMarker));
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::cgroupSoftFailureContinuesLaunch()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/cgroup-gate-soft-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString childMarker =
+        directory.filePath(QStringLiteral("child-executed"));
+
+    int moveCalls = 0;
+    SessionWorker worker(
+        [&](qint64, const LinuxCgroupConfig &,
+            bool) -> std::expected<void, QString> {
+            ++moveCalls;
+            QThread::msleep(100);
+            return std::unexpected(QStringLiteral("synthetic soft failure"));
+        },
+        nullptr);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.linuxCgroup.mode = LinuxCgroupMode::Always;
+    options.linuxCgroup.hardFail = false;
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("touch")),
+        childMarker,
+    };
+    options.hold = true;
+    QTest::ignoreMessage(
+        QtWarningMsg,
+        "Could not isolate terminal child in a transient systemd scope: "
+        "synthetic soft failure (continuing because "
+        "linux-cgroup-hard-fail is false)");
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(moveCalls, 1);
+    QCOMPARE(startedSpy.count(), 1);
+    QVERIFY(QFileInfo::exists(childMarker));
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::cgroupHardFailurePreventsExec()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/cgroup-gate-hard-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString childMarker =
+        directory.filePath(QStringLiteral("child-executed"));
+
+    int moveCalls = 0;
+    SessionWorker worker(
+        [&](qint64, const LinuxCgroupConfig &,
+            bool) -> std::expected<void, QString> {
+            ++moveCalls;
+            QThread::msleep(100);
+            return std::unexpected(QStringLiteral("synthetic hard failure"));
+        },
+        nullptr);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.linuxCgroup.mode = LinuxCgroupMode::Always;
+    options.linuxCgroup.hardFail = true;
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("touch")),
+        childMarker,
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QCOMPARE(moveCalls, 1);
+    QCOMPARE(startedSpy.count(), 0);
+    QCOMPARE(exitSpy.count(), 1);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
+        QStringLiteral("synthetic hard failure")));
+    QVERIFY(!QFileInfo::exists(childMarker));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::disabledCgroupSkipsScopeMove()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(
+        QDir::current().filePath(QStringLiteral("tmp/cgroup-disabled-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString childMarker =
+        directory.filePath(QStringLiteral("child-executed"));
+
+    int moveCalls = 0;
+    SessionWorker worker(
+        [&](qint64, const LinuxCgroupConfig &,
+            bool) -> std::expected<void, QString> {
+            ++moveCalls;
+            return std::unexpected(
+                QStringLiteral("disabled policy invoked the mover"));
+        },
+        nullptr);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.linuxCgroup.mode = LinuxCgroupMode::Never;
+    options.processUsesSingleInstance = true;
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStandardPaths::findExecutable(QStringLiteral("touch")),
+        childMarker,
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(moveCalls, 0);
+    QVERIFY(QFileInfo::exists(childMarker));
+    QVERIFY(errorSpy.isEmpty());
     worker.shutdown();
 }
 

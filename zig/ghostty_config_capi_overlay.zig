@@ -95,6 +95,14 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.beginArray();
     for (config.term) |byte| try json.write(byte);
     try json.endArray();
+    try json.objectField("linux-cgroup");
+    try json.write(@tagName(config.@"linux-cgroup"));
+    try json.objectField("linux-cgroup-memory-limit");
+    try writeOptionalDecimalUint64(json, config.@"linux-cgroup-memory-limit");
+    try json.objectField("linux-cgroup-processes-limit");
+    try writeOptionalDecimalUint64(json, config.@"linux-cgroup-processes-limit");
+    try json.objectField("linux-cgroup-hard-fail");
+    try json.write(config.@"linux-cgroup-hard-fail");
     try json.objectField("working-directory");
     try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
     inline for (.{
@@ -283,6 +291,17 @@ fn writeValues(json: *std.json.Stringify, config: *const Config) !void {
     try json.objectField("gtk-single-instance");
     try json.write(@tagName(config.@"gtk-single-instance"));
     try json.endObject();
+}
+
+fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {
+    if (value) |number| {
+        // Qt's JSON representation is double-valued. Use canonical decimal
+        // text so every u64, including maxInt(u64), crosses schema v1 exactly.
+        var buffer: [32]u8 = undefined;
+        try json.write(try std.fmt.bufPrint(&buffer, "{d}", .{number}));
+    } else {
+        try json.write(null);
+    }
 }
 
 fn writeKeybinds(json: *std.json.Stringify, keybinds: *const Config.Keybinds) !void {

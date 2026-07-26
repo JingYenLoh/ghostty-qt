@@ -670,16 +670,24 @@
           "scope": "qt_mapping"
         },
         "linux-cgroup": {
-          "scope": "linux"
+          "status": "supported",
+          "scope": "linux",
+          "note": "The exact never, always, and single-instance policies create one transient systemd scope per pane before exec. single-instance uses ghostty-qt's fixed startup-resolved primary role rather than the unused GTK configuration key; reload affects only panes constructed afterward."
         },
         "linux-cgroup-hard-fail": {
-          "scope": "linux"
+          "status": "supported",
+          "scope": "linux",
+          "note": "A false value logs scope setup or membership failures and releases the gated child; true prevents exec and reports a launch failure with exit status 127."
         },
         "linux-cgroup-memory-limit": {
-          "scope": "linux"
+          "status": "supported",
+          "scope": "linux",
+          "note": "The complete nullable uint64 range is transported exactly and forwarded unchanged as the transient scope's MemoryHigh property."
         },
         "linux-cgroup-processes-limit": {
-          "scope": "linux"
+          "status": "supported",
+          "scope": "linux",
+          "note": "The complete nullable uint64 range is transported exactly and forwarded unchanged as the transient scope's TasksMax property."
         },
         "macos-applescript": {
           "status": "not_applicable",

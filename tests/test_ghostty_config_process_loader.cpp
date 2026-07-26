@@ -227,6 +227,7 @@ private Q_SLOTS:
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
+    void realHelperExportsLinuxCgroup();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -968,6 +969,54 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()
     QVERIFY(!result->values.quitAfterLastWindowClosedDelay.has_value());
     QCOMPARE(result->values.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!result->defaultKeybindings.root.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsLinuxCgroup()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("linux-cgroup = always\n"
+                          "linux-cgroup-memory-limit = 18446744073709551615\n"
+                          "linux-cgroup-processes-limit = 0\n"
+                          "linux-cgroup-hard-fail = true\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.linuxCgroup.mode, LinuxCgroupMode::Always);
+    QCOMPARE(result->values.linuxCgroup.memoryLimitBytes,
+             std::optional<quint64>(std::numeric_limits<quint64>::max()));
+    QCOMPARE(result->values.linuxCgroup.processesLimit,
+             std::optional<quint64>(quint64{0}));
+    QVERIFY(result->values.linuxCgroup.hardFail);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("linux-cgroup =\n"
+                          "linux-cgroup-memory-limit =\n"
+                          "linux-cgroup-processes-limit =\n"
+                          "linux-cgroup-hard-fail =\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
+    QVERIFY(!result->values.linuxCgroup.memoryLimitBytes.has_value());
+    QVERIFY(!result->values.linuxCgroup.processesLimit.has_value());
+    QVERIFY(!result->values.linuxCgroup.hardFail);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
+    QVERIFY(!result->values.linuxCgroup.memoryLimitBytes.has_value());
+    QVERIFY(!result->values.linuxCgroup.processesLimit.has_value());
+    QVERIFY(!result->values.linuxCgroup.hardFail);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

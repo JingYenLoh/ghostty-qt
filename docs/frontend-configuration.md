@@ -36,7 +36,10 @@ The two files do not provide competing spellings for the same setting. In
 particular, frontend `single-instance` owns Qt process arbitration;
 Ghostty's `gtk-single-instance` does not participate. An explicit
 `--single-instance=false|true|detect` command-line value has the highest
-precedence.
+precedence. The shared `linux-cgroup=single-instance` policy consumes the
+actual primary role established by that startup arbitration. Reloading this
+frontend key cannot reclassify the running process; a fresh process samples the
+new value.
 
 ## Grammar
 

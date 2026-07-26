@@ -21,6 +21,11 @@ struct LaunchOptions {
     // Finalized terminal identity for future children. This launch-only value
     // never mutates the environment of an already-running pane.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Finalized shared Linux cgroup settings for future terminal children.
+    LinuxCgroupConfig linuxCgroup;
+    // Startup arbitration fixes this process fact once. Reloading the
+    // frontend's single-instance preference cannot reclassify a live process.
+    bool processUsesSingleInstance = false;
     QString workingDirectory;
     // `inherit` preserves the process cwd and its logical PWD spelling. A
     // concrete CLI, config, or OSC-derived directory clears this bit.

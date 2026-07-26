@@ -75,11 +75,12 @@ projection: a workspace supplies it explicitly only while constructing its
 first pane. Before session start, the controller folds the newest runtime
 values into that pending launch state. Later live reloads cross the queued
 controller/worker boundary as `TerminalSessionRuntimeOptions`, which is limited
-to appearance and URL matching. Terminal identity, working directory, program,
-hold, and the existing terminal's scrollback allocation are launch-only by
-construction. A pane snapshots those values when constructed, so even a
-deferred pane that has not spawned its child retains its original identity
-across reload; panes constructed afterward use the newest workspace snapshot.
+to appearance and URL matching. Terminal identity, Linux cgroup policy and
+limits, working directory, program, hold, and the existing terminal's
+scrollback allocation are launch-only by construction. A pane snapshots those
+values when constructed, so even a deferred pane that has not spawned its child
+retains its original identity and resource policy across reload; panes
+constructed afterward use the newest workspace snapshot.
 A separate launch bit distinguishes process-cwd inheritance from a concrete
 CLI, config, or OSC-derived directory; this prevents a display path from
 silently turning `inherit` into a `chdir` and `PWD` rewrite.
@@ -280,6 +281,32 @@ pane shutdowns first so grace periods overlap. A close-on-exec readiness pipe
 holds parent-side publication until the `forkpty` child has reset its inherited
 `SIGHUP` disposition, so an immediate close cannot enter an application signal
 handler in the child before `exec`.
+
+When the finalized Linux cgroup policy applies, a second close-on-exec
+parent/child gate extends that boundary. The child publishes PTY readiness and
+then performs only a blocking syscall read; it cannot `chdir` or `exec` until
+the worker thread has attempted placement through the user systemd manager and
+either verified the expected scope leaf through `/proc/<pid>/cgroup` or applied
+the configured soft-failure fallback. The exact transient unit is
+`app-ghostty-surface-transient-<pid>.scope`, requested with mode `fail`,
+optional `MemoryHigh` and `TasksMax` uint64 properties, always
+`ManagedOOMMemoryPressure=kill`, and the child PID. Membership is sampled every
+25 ms for at most 250 ms. A soft failure releases the child with a warning; a
+hard failure sends a rejection byte, reaps the child before returning, and
+reports status 127. Failure to allocate the gate before `forkpty` follows the
+same soft/hard policy; a post-fork socket/protocol failure cannot safely release
+the child and is always fatal. The child side invokes no Qt or D-Bus code after
+`forkpty`.
+
+`linux-cgroup=single-instance` consumes a process fact established by startup
+name arbitration: it is true only for the retained primary activation endpoint.
+That fact remains fixed when either configuration domain reloads, while the
+cgroup mode and limits continue to update future pane snapshots. Scope cleanup
+requires no `StopUnit`; systemd owns the transient scope until the pane's last
+descendant exits. The `/proc` parser intentionally follows pinned Ghostty's
+first-entry contract; a unified cgroup-v2 hierarchy is the primary verified
+environment, while a legacy first entry with the expected scope leaf is also
+accepted.
 
 Process lifetime is application-owned rather than a side effect of QML window
 destruction. Qt's implicit `quitOnLastWindowClosed` behavior is disabled.
@@ -1116,16 +1143,19 @@ still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
 The current typed compatibility slice covers launch and window geometry,
-working-directory and inheritance policy, application lifetime, typography and
-terminal appearance, scrollback, selection/clipboard/mouse/link behavior,
-resize-overlay presentation, included config files, and the finalized
-keybinding sets. The README and machine-checked parity ledger describe the
-individual keys. One strict schema-v1 document carries the whole slice,
-including nullable values such as `quit-after-last-window-closed-delay`; there
-is no version fallback, separate defaults merge, or partially populated
-snapshot. Canonical enum tags, optional include markers, working-directory
-inheritance, and nullable color alternatives are decoded only at this
-boundary. The four font styles remain tagged `automatic`, `disabled`, or
+working-directory and inheritance policy, Linux cgroup resource isolation,
+application lifetime, typography and terminal appearance, scrollback,
+selection/clipboard/mouse/link behavior, resize-overlay presentation, included
+config files, and the finalized keybinding sets. The README and machine-checked
+parity ledger describe the individual keys. One strict schema-v1 document
+carries the whole slice, including nullable values such as
+`quit-after-last-window-closed-delay` and both cgroup limits; there is no
+version fallback, separate defaults merge, or partially populated snapshot.
+Optional cgroup uint64 limits cross JSON as null or canonical decimal strings
+so the complete range remains exact despite Qt JSON's double representation.
+Canonical enum tags, optional include markers, working-directory inheritance,
+and nullable color alternatives are decoded only at this boundary. The four
+font styles remain tagged `automatic`, `disabled`, or
 `named` values, and each optional metric modifier remains either null or a
 tagged `absolute` pixel/`percentage` multiplier value. The fixed-size palette
 cannot carry fewer or more than 256 colors. Appearance then crosses worker
@@ -1807,7 +1837,8 @@ configuration-specific desktop entry and direct D-Bus service, their distinct
 fallback/zero-window commands, exact service identity, actual install-prefix
 or configured-absolute executable path, DESTDIR exclusion from embedded paths,
 absence of unresolved placeholders, and the config-on/off helper boundary.
-Systemd, icon, AppStream, and distribution packaging remain separate work.
+Systemd notification integration, icon, AppStream, and distribution packaging
+remain separate work; per-pane transient systemd cgroups are implemented.
 
 Qt's `emit` macro is disabled with `QT_NO_KEYWORDS` because the public Ghostty C
 API legitimately contains struct fields named `emit`.
@@ -1887,7 +1918,8 @@ The default CTest suite has focused layers for each ownership boundary:
   paste fence bytes, staged sequence ordering and stage-time VT modes, final
   output draining, the configured `TERM` together with the fixed private
   `TERMINFO`/`COLORTERM` contract, byte-exact terminal-control action writes,
-  reset cache
+  injected cgroup placement before child exec, soft fallback, hard rejection,
+  disabled-policy bypass, reset cache
   synchronization, correlated terminal-action outcomes and effects, process
   exit, explicit-program activity, and an interactive shell's idle/job/idle
   foreground transitions. Read-only cases cover ordered
@@ -1954,6 +1986,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-global-shortcut-portal` verifies XDG trigger conversion, registry
   eligibility and collisions, response-before-reply races, activation routing,
   reload cleanup, and stale callback rejection on a private D-Bus daemon.
+- `linux-cgroup` uses the same private-bus harness with a virtual systemd
+  manager to verify the exact `StartTransientUnit` signature and properties,
+  enablement policy, reply and method failures, `/proc` parsing, and bounded
+  membership polling without touching the host user manager.
 - `ghostty-config-service` verifies standard paths, typed file/directory and
   optional-include watches, atomic replacement, debounce, queued snapshot
   transport, and retention of the last good value.
@@ -1963,8 +1999,9 @@ The default CTest suite has focused layers for each ownership boundary:
   handling, and last-good retention. `application-tabs-location` verifies the
   real QML toolbar moves to the configured edge without a binding loop.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
-  frontend projection, including finalized non-empty byte-valued `term`, exact
-  shapes, four role-family lists, tagged
+  frontend projection, including finalized non-empty byte-valued `term`, the
+  cgroup enum/boolean and exact nullable uint64 limits, exact shapes, four
+  role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, the fixed 256-color palette, the full unsigned scrollback
@@ -1975,6 +2012,7 @@ The default CTest suite has focused layers for each ownership boundary:
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact trailing font CLI arguments and role finalization,
   default/custom/empty and non-UTF-8 `term` finalization,
+  default/custom/empty cgroup policy and full-width limits,
   nullable/capped application-lifetime duration export, and nullable X11
   divider-color canonicalization.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and

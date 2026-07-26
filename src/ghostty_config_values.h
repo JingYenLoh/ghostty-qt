@@ -193,6 +193,9 @@ struct SplitAppearance {
 struct GhosttyConfigValues {
     // Ghostty finalizes an empty source value back to this non-empty default.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Linux transient-scope policy remains launch-only: config reloads affect
+    // panes constructed afterward, never an already-running process tree.
+    LinuxCgroupConfig linuxCgroup;
     // nullopt is Ghostty's semantic `inherit`; a value is an already-finalized
     // concrete path whose lexical spelling must be preserved.
     std::optional<QString> workingDirectoryPath;

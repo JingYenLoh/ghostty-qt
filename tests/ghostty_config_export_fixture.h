@@ -172,6 +172,11 @@ inline QJsonObject values()
 
     return {
         {QStringLiteral("term"), bytes(QByteArrayLiteral("ghostty-qt-test"))},
+        {QStringLiteral("linux-cgroup"), QStringLiteral("always")},
+        {QStringLiteral("linux-cgroup-memory-limit"),
+         QStringLiteral("18446744073709551615")},
+        {QStringLiteral("linux-cgroup-processes-limit"), QStringLiteral("0")},
+        {QStringLiteral("linux-cgroup-hard-fail"), true},
         {QStringLiteral("working-directory"), QStringLiteral("/work/ghostty")},
         {QStringLiteral("font-family"),
          QJsonArray{QStringLiteral("Mono One"), QStringLiteral("Emoji")}},
