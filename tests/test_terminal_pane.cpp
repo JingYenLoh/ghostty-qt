@@ -3245,9 +3245,11 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QVERIFY(firstPress.controlModifier);
     QVERIFY(firstPress.extendExistingSelection);
     QVERIFY(firstPress.rectangular);
+    QCOMPARE(pane->cursor().shape(), Qt::CrossCursor);
 
     sendMouse(QEvent::MouseMove, dragPosition, Qt::NoButton, Qt::LeftButton,
-              Qt::AltModifier, pressTimestampMilliseconds + 1);
+              Qt::ControlModifier | Qt::AltModifier,
+              pressTimestampMilliseconds + 1);
     QCOMPARE(drags.count(), 1);
     const TerminalSelectionDragInput drag =
         qvariant_cast<TerminalSelectionDragInput>(
@@ -3257,10 +3259,25 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QCOMPARE(drag.surfaceX, dragPosition.x() * devicePixelRatio);
     QCOMPARE(drag.surfaceY, dragPosition.y() * devicePixelRatio);
     QVERIFY(drag.rectangular);
+    QCOMPARE(pane->cursor().shape(), Qt::CrossCursor);
 
     sendMouse(QEvent::MouseButtonRelease, dragPosition, Qt::LeftButton,
-              Qt::NoButton, Qt::AltModifier, pressTimestampMilliseconds + 2);
+              Qt::NoButton, Qt::ControlModifier | Qt::AltModifier,
+              pressTimestampMilliseconds + 2);
     QCOMPARE(releases.count(), 1);
+    QCOMPARE(pane->cursor().shape(), Qt::CrossCursor);
+
+    // Releasing either rectangle modifier must synchronously clear the
+    // crosshair, without waiting for a hover move or hyperlink query.
+    QKeyEvent altRelease(QEvent::KeyRelease, Qt::Key_Alt,
+                         Qt::ControlModifier | Qt::AltModifier);
+    QCoreApplication::sendEvent(pane, &altRelease);
+    QVERIFY(altRelease.isAccepted());
+    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
+                             Qt::ControlModifier);
+    QCoreApplication::sendEvent(pane, &controlRelease);
+    QVERIFY(controlRelease.isAccepted());
 
     // Qt sends the physical second press through mousePressEvent and follows
     // it with an informational MouseButtonDblClick event. Only the former may
@@ -3275,6 +3292,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QVERIFY(!secondPress.controlModifier);
     QVERIFY(!secondPress.extendExistingSelection);
     QVERIFY(!secondPress.rectangular);
+    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
     sendMouse(QEvent::MouseButtonDblClick, pressPosition, Qt::LeftButton,
               Qt::LeftButton, Qt::MetaModifier,
               pressTimestampMilliseconds + 100);
@@ -3289,18 +3307,27 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     // Zero is Qt's unavailable timestamp sentinel in synthetic/unsupported
     // input. Forward it explicitly as untimed rather than inventing an epoch.
     sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
-              Qt::LeftButton, Qt::NoModifier, 0);
+              Qt::LeftButton, Qt::AltModifier, 0);
     QCOMPARE(presses.count(), 3);
     const TerminalSelectionPressInput untimedPress =
         qvariant_cast<TerminalSelectionPressInput>(
             presses.constLast().constFirst());
     QVERIFY(!untimedPress.timestampValid);
     QCOMPARE(untimedPress.timestampNanoseconds, quint64{0});
-    sendMouse(QEvent::MouseButtonRelease, pressPosition, Qt::LeftButton,
-              Qt::NoButton, Qt::NoModifier, 0);
+    QVERIFY(!untimedPress.rectangular);
+    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    sendMouse(QEvent::MouseMove, dragPosition, Qt::NoButton, Qt::LeftButton,
+              Qt::AltModifier, 0);
+    QCOMPARE(drags.count(), 2);
+    const TerminalSelectionDragInput altOnlyDrag =
+        qvariant_cast<TerminalSelectionDragInput>(
+            drags.constLast().constFirst());
+    QVERIFY(!altOnlyDrag.rectangular);
+    sendMouse(QEvent::MouseButtonRelease, dragPosition, Qt::LeftButton,
+              Qt::NoButton, Qt::AltModifier, 0);
 
     sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
-              Qt::LeftButton, Qt::NoModifier,
+              Qt::LeftButton, Qt::ControlModifier,
               std::numeric_limits<quint64>::max());
     QCOMPARE(presses.count(), 4);
     const TerminalSelectionPressInput overflowingPress =
@@ -3308,6 +3335,8 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
             presses.constLast().constFirst());
     QVERIFY(!overflowingPress.timestampValid);
     QCOMPARE(overflowingPress.timestampNanoseconds, quint64{0});
+    QVERIFY(!overflowingPress.rectangular);
+    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
 
     delete pane;
 }
@@ -3672,9 +3701,8 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
         sendMouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton,
                   Qt::NoButton, Qt::ShiftModifier);
     };
-    const auto sendHover = [&] {
-        QHoverEvent event(QEvent::HoverMove, start, moved, moved,
-                          Qt::ShiftModifier);
+    const auto sendHover = [&](Qt::KeyboardModifiers modifiers) {
+        QHoverEvent event(QEvent::HoverMove, start, moved, moved, modifiers);
         QCoreApplication::sendEvent(&pane, &event);
         QVERIFY(event.isAccepted());
     };
@@ -3747,12 +3775,22 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
         // one discrete wheel notch remains three button-four reports. Local
         // hyperlink eligibility is covered separately below.
         const qsizetype mouseBeforeHover = mouse.size();
-        sendHover();
+        sendHover(Qt::ShiftModifier);
         QCOMPARE(mouse.size(), mouseBeforeHover + 1);
         const TerminalMouseInput hover =
             qvariant_cast<TerminalMouseInput>(mouse.constLast().constFirst());
         QCOMPARE(hover.action, TerminalMouseInput::Motion);
         QVERIFY(hover.modifiers & Qt::ShiftModifier);
+
+        // Pointer shape follows Ghostty's raw DEC state rather than the
+        // frontend reporting toggle or shift-capture policy. Ctrl+Alt alone
+        // remains the captured arrow; adding Shift exposes the crosshair.
+        sendHover(Qt::ControlModifier | Qt::AltModifier);
+        QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+        sendHover(Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
+        QCOMPARE(pane.cursor().shape(), Qt::CrossCursor);
+        sendHover(Qt::ShiftModifier);
+        QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
 
         const qsizetype mouseBeforeWheel = mouse.size();
         QVERIFY(
@@ -3793,6 +3831,12 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
     // click used the Shift escape even while reporting is disabled.
     disabled.mouseShiftCapture = MouseShiftCapture::Always;
     pane.applyRuntimeOptions(disabled);
+    sendHover(Qt::ControlModifier | Qt::AltModifier);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    sendHover(Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
+    QCOMPARE(pane.cursor().shape(), Qt::CrossCursor);
+    sendHover(Qt::NoModifier);
+    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
     const qsizetype rightBeforeAlways = rightClicks.size();
     sendMouse(QEvent::MouseButtonPress, start, Qt::RightButton, Qt::RightButton,
               Qt::ControlModifier | Qt::ShiftModifier);

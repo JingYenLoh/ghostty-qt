@@ -636,9 +636,14 @@ signals:
   immediate drag; the inclusive boundary and missing or reversed timestamps
   traverse the ordinary press path. The drag retains libghostty's tracked
   anchor and selection behavior and does not replace the prior press time, so
-  later delayed extensions still measure from that retained press. `Alt` on
-  the delayed press selects rectangle mode for that immediate drag. Resetting
-  the gesture also discards the mirrored timestamp. A valid drag that returns
+  later delayed extensions still measure from that retained press. Linux
+  `Ctrl+Alt` on a drag, or `Shift+Ctrl+Alt` on the delayed press, selects
+  rectangle mode. The pointer arbiter places the matching crosshair below
+  typing concealment and an accepted hyperlink pointer. It uses raw DEC state:
+  `Ctrl+Alt` is sufficient normally, while raw mouse tracking additionally
+  requires Shift, independently of the frontend reporting toggle and
+  shift-capture policy. Resetting the gesture also discards the mirrored
+  timestamp. A valid drag that returns
   no range clears the installed selection, while an anchor belonging to an
   inactive screen leaves that screen's independent selection untouched.
   Hyperlink commit checks libghostty's release-stable dragged state as well,

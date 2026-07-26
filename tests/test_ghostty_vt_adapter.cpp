@@ -2060,7 +2060,7 @@ void GhosttyVtAdapterTest::extendsSelectionOnDelayedShiftPress()
     QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 5, 0)));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("e"));
 
-    // Alt on the delayed press applies rectangle mode to the immediate drag.
+    // The pane maps Linux Ctrl+Alt to rectangle mode on the delayed press.
     establishCellSelection(5'000 * nanosecondsPerMillisecond);
     QVERIFY(shiftPress(4, 1, 5'101 * nanosecondsPerMillisecond, true));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("bcd\nvwx"));

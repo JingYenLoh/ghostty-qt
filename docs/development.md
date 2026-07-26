@@ -329,10 +329,10 @@ conversion, inclusive consecutive-time and original-anchor Euclidean-distance
 thresholds, triple-count clamping, single/word/line and Ctrl semantic-output
 behavior, duplicate Qt double-click suppression, ordinary-release history
 retention, strict-after-interval Shift extension with retained anchor,
-behavior, and press time, conservative missing/reversed-time fallback, Alt
-rectangle mode, valid-anchor collapse versus inactive-screen preservation,
-dragged-link suppression, distinct button/motion/wheel reporting side effects,
-word-drag
+behavior, and press time, conservative missing/reversed-time fallback, Linux
+Ctrl+Alt rectangle mode, valid-anchor collapse versus inactive-screen
+preservation, raw-DEC-aware crosshair transitions, dragged-link suppression,
+distinct button/motion/wheel reporting side effects, word-drag
 behavior, live interval/boundary reload during an active pane, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI

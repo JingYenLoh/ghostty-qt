@@ -389,8 +389,8 @@ struct TerminalSelectionPressInput {
     // repeat-click interval. The pane resolves mouse-shift-capture before
     // setting this semantic candidate; the worker owns the timing decision.
     bool extendExistingSelection = false;
-    // Alt on the extension press selects a rectangular range immediately,
-    // just as Alt on a later drag does.
+    // Linux Ctrl+Alt on the extension press selects a rectangular range
+    // immediately, just as the same modifiers on a later drag do.
     bool rectangular = false;
 
     friend bool operator==(const TerminalSelectionPressInput &,

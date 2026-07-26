@@ -805,6 +805,15 @@ Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
     return modifiers & ~(Qt::KeypadModifier | Qt::GroupSwitchModifier);
 }
 
+bool isRectangleSelectionState(Qt::KeyboardModifiers modifiers)
+{
+    modifiers = normalizedModifiers(modifiers);
+    // Pinned Ghostty uses Ctrl+Alt on non-Darwin platforms. This frontend is
+    // Linux-only, so keep the platform rule explicit here.
+    return modifiers.testFlag(Qt::ControlModifier)
+        && modifiers.testFlag(Qt::AltModifier);
+}
+
 Qt::KeyboardModifiers modifiersAfterKeyEvent(const QKeyEvent *event,
                                              bool pressed)
 {
@@ -4162,7 +4171,7 @@ void TerminalPane::beginLocalSelection(const QMouseEvent &event,
         .controlModifier = modifiers.testFlag(Qt::ControlModifier),
         .extendExistingSelection = modifiers.testFlag(Qt::ShiftModifier)
             && shiftBypassesMouseCapture(modifiers),
-        .rectangular = modifiers.testFlag(Qt::AltModifier),
+        .rectangular = isRectangleSelectionState(modifiers),
     };
     selecting_ = true;
     controller_->beginSelection(input);
@@ -4197,6 +4206,13 @@ void TerminalPane::syncPointerCursor()
         setCursor(Qt::BlankCursor);
     } else if (hyperlinkLeaseActive_ && !hoveredHyperlinkUri_.isEmpty()) {
         setCursor(Qt::PointingHandCursor);
+    } else if (isRectangleSelectionState(hoverModifiers_)
+               && (!controller_->terminalMouseTracking()
+                   || hoverModifiers_.testFlag(Qt::ShiftModifier))) {
+        // Pinned Ghostty uses raw DEC state for pointer shape. Under capture,
+        // Shift is required to show the rectangle-select crosshair even when
+        // the configured policy would retain Shift in application input.
+        setCursor(Qt::CrossCursor);
     } else {
         unsetCursor();
     }
@@ -4287,7 +4303,7 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
             .row = cell.y(),
             .surfaceX = event->position().x() * devicePixelRatio,
             .surfaceY = event->position().y() * devicePixelRatio,
-            .rectangular = modifiers.testFlag(Qt::AltModifier),
+            .rectangular = isRectangleSelectionState(modifiers),
         });
     }
     event->accept();
@@ -4586,6 +4602,7 @@ void TerminalPane::updateHyperlinkHover(const QPointF &position,
     hoverInside_ = true;
     hoverPosition_ = position;
     hoverModifiers_ = effectivePointerModifiers(modifiers);
+    syncPointerCursor();
     if (!hyperlinkModifiersMatch(hoverModifiers_)) {
         cancelHyperlinkPress();
         clearHyperlinkHover();
@@ -4653,6 +4670,7 @@ void TerminalPane::updateHyperlinkModifiers(Qt::KeyboardModifiers modifiers)
 {
     keyboardModifiers_ = normalizedModifiers(modifiers);
     hoverModifiers_ = keyboardModifiers_;
+    syncPointerCursor();
     if (!hyperlinkModifiersMatch(hoverModifiers_)) {
         cancelHyperlinkPress();
         clearHyperlinkHover();
