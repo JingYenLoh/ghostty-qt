@@ -1038,6 +1038,7 @@ public:
         // resets the modes mirrored by the input encoders. Keep every piece
         // of adapter-side state synchronized with that single mutation.
         ghostty_selection_gesture_reset(selectionGesture_, terminal_);
+        lastSelectionPressTimestampNanoseconds_.reset();
         ghostty_mouse_encoder_reset(mouseEncoder_);
         mouseEncoderConfigured_ = false;
         synchronizeInputModes();
@@ -1492,6 +1493,7 @@ public:
     {
         clearSelection();
         ghostty_selection_gesture_reset(selectionGesture_, terminal_);
+        lastSelectionPressTimestampNanoseconds_.reset();
     }
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
@@ -2420,14 +2422,42 @@ public:
         }
 
         const bool hadSelection = hasSelection();
+        const quint64 repeatIntervalNanoseconds =
+            static_cast<quint64>(clickRepeatIntervalMilliseconds_) * 1'000'000;
+        uint8_t retainedClickCount = 0;
+        if (input.extendExistingSelection && hadSelection
+            && input.timestampValid
+            && lastSelectionPressTimestampNanoseconds_.has_value()
+            && input.timestampNanoseconds
+                > *lastSelectionPressTimestampNanoseconds_
+            && input.timestampNanoseconds
+                    - *lastSelectionPressTimestampNanoseconds_
+                > repeatIntervalNanoseconds
+            && ghostty_selection_gesture_get(
+                   selectionGesture_, terminal_,
+                   GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT,
+                   &retainedClickCount)
+                == GHOSTTY_SUCCESS
+            && retainedClickCount > 0) {
+            // Ghostty treats a delayed released-Shift press as motion of the
+            // retained gesture, preserving its anchor, behavior, count, and
+            // timestamp. A drag with no value is still consumed by this
+            // branch; it must not fall through and create a new press.
+            return updateSelection({
+                .column = input.column,
+                .row = input.row,
+                .surfaceX = input.surfaceX,
+                .surfaceY = input.surfaceY,
+                .rectangular = input.rectangular,
+            });
+        }
+
         const GhosttySurfacePosition position{
             .x = input.surfaceX,
             .y = input.surfaceY,
         };
         const double repeatDistance =
             static_cast<double>(geometry_.cellWidthPixels);
-        const quint64 repeatIntervalNanoseconds =
-            static_cast<quint64>(clickRepeatIntervalMilliseconds_) * 1'000'000;
         const GhosttySelectionGestureBehaviors behaviors{
             .single_click = GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
             .double_click = GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD,
@@ -2471,6 +2501,19 @@ public:
         selection.size = sizeof(selection);
         const GhosttyResult result = ghostty_selection_gesture_event(
             selectionGesture_, terminal_, selectionPressEvent_, &selection);
+        if (result == GHOSTTY_SUCCESS || result == GHOSTTY_NO_VALUE) {
+            if (input.timestampValid) {
+                lastSelectionPressTimestampNanoseconds_ =
+                    input.timestampNanoseconds;
+            } else {
+                lastSelectionPressTimestampNanoseconds_.reset();
+            }
+        } else {
+            // The gesture may have failed after partially mutating its
+            // implementation. Never compare a later Shift press with stale
+            // frontend timing in that uncertain state.
+            lastSelectionPressTimestampNanoseconds_.reset();
+        }
         if (result == GHOSTTY_SUCCESS) {
             return installSelection(selection);
         }
@@ -2494,6 +2537,16 @@ public:
     bool updateSelection(const TerminalSelectionDragInput &input)
     {
         if (!std::isfinite(input.surfaceX) || !std::isfinite(input.surfaceY)) {
+            return false;
+        }
+
+        GhosttyGridRef anchor{};
+        if (ghostty_selection_gesture_get(selectionGesture_, terminal_,
+                                          GHOSTTY_SELECTION_GESTURE_DATA_ANCHOR,
+                                          &anchor)
+            != GHOSTTY_SUCCESS) {
+            // Ghostty preserves the installed selection when the tracked
+            // press belongs to an inactive or replaced screen.
             return false;
         }
 
@@ -2534,10 +2587,20 @@ public:
 
         GhosttySelection selection{};
         selection.size = sizeof(selection);
-        return ghostty_selection_gesture_event(selectionGesture_, terminal_,
-                                               selectionDragEvent_, &selection)
-            == GHOSTTY_SUCCESS
-            && installSelection(selection);
+        const GhosttyResult result = ghostty_selection_gesture_event(
+            selectionGesture_, terminal_, selectionDragEvent_, &selection);
+        if (result == GHOSTTY_SUCCESS) {
+            return installSelection(selection);
+        }
+        if (result == GHOSTTY_NO_VALUE) {
+            // A valid gesture that has not crossed its selection threshold
+            // collapses the installed range. The anchor check above
+            // distinguishes this from an invalid-screen no-op.
+            return ghostty_terminal_set(terminal_,
+                                        GHOSTTY_TERMINAL_OPT_SELECTION, nullptr)
+                == GHOSTTY_SUCCESS;
+        }
+        return false;
     }
 
     void endSelection(int column, int row)
@@ -2552,6 +2615,16 @@ public:
             ghostty_selection_gesture_event(selectionGesture_, terminal_,
                                             selectionReleaseEvent_, nullptr);
         }
+    }
+
+    bool selectionGestureDragged() const
+    {
+        bool dragged = false;
+        return ghostty_selection_gesture_get(
+                   selectionGesture_, terminal_,
+                   GHOSTTY_SELECTION_GESTURE_DATA_DRAGGED, &dragged)
+            == GHOSTTY_SUCCESS
+            && dragged;
     }
 
     bool installSelection(const GhosttySelection &selection)
@@ -3566,6 +3639,7 @@ private:
     GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
     QVector<uint32_t> selectionWordChars_;
     quint32 clickRepeatIntervalMilliseconds_ = 500;
+    std::optional<quint64> lastSelectionPressTimestampNanoseconds_;
     TerminalFrame publishedMetadata_;
     bool hasPublishedFrame_ = false;
     bool titleDirty_ = false;
@@ -3758,6 +3832,11 @@ bool GhosttyVtAdapter::updateSelection(const TerminalSelectionDragInput &input)
 void GhosttyVtAdapter::endSelection(int column, int row)
 {
     impl_->endSelection(column, row);
+}
+
+bool GhosttyVtAdapter::selectionGestureDragged() const
+{
+    return impl_->selectionGestureDragged();
 }
 
 bool GhosttyVtAdapter::selectionContains(int column, int row) const

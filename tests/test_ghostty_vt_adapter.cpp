@@ -22,7 +22,8 @@ constexpr quint64 nanosecondsPerMillisecond = 1'000'000;
 TerminalSelectionPressInput
 selectionPress(const GhosttyVtAdapter::Geometry &geometry, int column, int row,
                std::optional<quint64> timestampNanoseconds = std::nullopt,
-               bool controlModifier = false)
+               bool controlModifier = false,
+               bool extendExistingSelection = false, bool rectangular = false)
 {
     return {
         .column = column,
@@ -34,6 +35,8 @@ selectionPress(const GhosttyVtAdapter::Geometry &geometry, int column, int row,
         .timestampNanoseconds = timestampNanoseconds.value_or(0),
         .timestampValid = timestampNanoseconds.has_value(),
         .controlModifier = controlModifier,
+        .extendExistingSelection = extendExistingSelection,
+        .rectangular = rectangular,
     };
 }
 
@@ -149,6 +152,7 @@ private Q_SLOTS:
     void formatsSelectionWithConfigurableTrimming();
     void selectsCellsWordsAndQueriesSelectionContainment();
     void classifiesRepeatedSelectionPresses();
+    void extendsSelectionOnDelayedShiftPress();
     void appliesConfiguredWordBoundariesToPressAndDrag();
     void snapshotsPlainWriteFileRanges();
     void snapshotsPlainWriteFileFormattingAndAlternateScreen();
@@ -1983,6 +1987,115 @@ void GhosttyVtAdapterTest::classifiesRepeatedSelectionPresses()
         selectionPress(semanticOptions.geometry, 1, 0,
                        8'002 * nanosecondsPerMillisecond, true)));
     QCOMPARE(semantic->selectedText(), QStringLiteral("out-a\nout-b"));
+}
+
+void GhosttyVtAdapterTest::extendsSelectionOnDelayedShiftPress()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 6;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("abcdef\r\n"
+                                       "uvwxyz"));
+    QVERIFY(adapter->setClickRepeatIntervalMilliseconds(100));
+
+    const auto establishCellSelection = [&adapter, &options](
+                                            quint64 timestampNanoseconds) {
+        adapter->clearSelectionAndResetGesture();
+        QVERIFY(!adapter->beginSelection(
+            selectionPress(options.geometry, 1, 0, timestampNanoseconds)));
+        QVERIFY(
+            adapter->updateSelection(selectionDrag(options.geometry, 3, 0)));
+        adapter->endSelection(3, 0);
+        QCOMPARE(adapter->selectedText(false), QStringLiteral("bc"));
+    };
+    const auto shiftPress =
+        [&adapter, &options](int column, int row,
+                             std::optional<quint64> timestampNanoseconds,
+                             bool rectangular = false) {
+            return adapter->beginSelection(
+                selectionPress(options.geometry, column, row,
+                               timestampNanoseconds, false, true, rectangular));
+        };
+
+    constexpr quint64 first = 1'000 * nanosecondsPerMillisecond;
+    constexpr quint64 interval = 100 * nanosecondsPerMillisecond;
+
+    // The repeat boundary is inclusive, so an exact-boundary Shift press
+    // follows the ordinary press path. This distant press becomes a new
+    // anchor and clears the old installed range.
+    establishCellSelection(first);
+    QVERIFY(shiftPress(4, 0, first + interval));
+    QVERIFY(!adapter->hasSelection());
+
+    // One nanosecond later, the same press is a drag from the retained anchor.
+    establishCellSelection(first);
+    QVERIFY(shiftPress(4, 0, first + interval + 1));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("bcd"));
+    QVERIFY(adapter->selectionGestureDragged());
+
+    // Extension does not replace the original press timestamp or anchor.
+    // This second extension remains delayed relative to the original press
+    // even though it closely follows the first extension.
+    QVERIFY(shiftPress(5, 0, first + interval + 2));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("bcde"));
+
+    // Without comparable monotonic time, conservatively use an ordinary
+    // press. Both an untimed press and a reversed timestamp re-anchor.
+    establishCellSelection(2'000 * nanosecondsPerMillisecond);
+    QVERIFY(shiftPress(4, 0, std::nullopt));
+    QVERIFY(!adapter->hasSelection());
+
+    establishCellSelection(3'000 * nanosecondsPerMillisecond);
+    QVERIFY(shiftPress(4, 0, 2'999 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    // A gesture alone is insufficient: if the installed selection was
+    // cleared without resetting repeat history, delayed Shift starts a new
+    // ordinary gesture at the clicked cell.
+    establishCellSelection(4'000 * nanosecondsPerMillisecond);
+    adapter->clearSelection();
+    QVERIFY(!shiftPress(4, 0, 4'101 * nanosecondsPerMillisecond));
+    QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 5, 0)));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("e"));
+
+    // Alt on the delayed press applies rectangle mode to the immediate drag.
+    establishCellSelection(5'000 * nanosecondsPerMillisecond);
+    QVERIFY(shiftPress(4, 1, 5'101 * nanosecondsPerMillisecond, true));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("bcd\nvwx"));
+
+    // A valid same-anchor drag has no range and therefore collapses the old
+    // installed selection rather than leaving stale highlighted text.
+    establishCellSelection(6'000 * nanosecondsPerMillisecond);
+    QVERIFY(shiftPress(1, 0, 6'101 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    // Every ordinary press replaces the mirrored time. Although this Shift
+    // press is delayed relative to the first click, it remains inside the
+    // interval measured from the intervening double-click press.
+    establishCellSelection(7'000 * nanosecondsPerMillisecond);
+    QVERIFY(adapter->beginSelection(selectionPress(
+        options.geometry, 1, 0, 7'080 * nanosecondsPerMillisecond)));
+    adapter->endSelection(1, 0);
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("abcdef"));
+    QVERIFY(shiftPress(4, 0, 7'150 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
+
+    // An anchor on an inactive screen is different: Ghostty consumes the
+    // extension without clearing that screen's independent selection or
+    // falling through to a new press.
+    establishCellSelection(8'000 * nanosecondsPerMillisecond);
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h\033[Halternate"));
+    QVERIFY(adapter->selectCell(0, 0));
+    QVERIFY(!shiftPress(4, 0, 8'101 * nanosecondsPerMillisecond));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("a"));
+
+    // A gesture reset also discards the mirrored frontend timestamp, so a
+    // later candidate cannot resurrect the old tracked anchor.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!shiftPress(5, 1, 6'000 * nanosecondsPerMillisecond));
+    QVERIFY(!adapter->hasSelection());
 }
 
 void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()

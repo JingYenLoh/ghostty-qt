@@ -39,8 +39,10 @@ defaults, respectively, for every implemented capture-routing path, but cannot
 observe a later terminal override. Captured wheel and buttonless DEC-motion
 reporting intentionally remain outside the routing decision, while buttonless
 `Ctrl+Shift` hover still consults it for local link eligibility. The parity
-ledger keeps `mouse-shift-capture` partial until the public state query and the
-separate delayed Shift-click selection behavior are both implemented.
+ledger keeps `mouse-shift-capture` partial solely until the public state query
+is available. The separate delayed Shift-click extension of an existing
+selection is implemented locally through the public selection-gesture API and
+does not require an upstream change.
 
 ### Why ghostty-qt does not inspect PTY bytes
 
@@ -125,11 +127,8 @@ Once the query is present in an official, publicly reachable Ghostty commit:
    `Ctrl+Shift` link hover/activation across the full configuration and
    terminal-state matrix, while verifying that wheel/fractional scroll and
    buttonless DEC-motion reporting remain unaffected.
-6. Implement and test Ghostty's separate delayed Shift-click extension of an
-   existing selection; this behavior also consults the resolved capture
-   policy but does not depend on the upstream query API.
-7. Promote `mouse-shift-capture` to supported in
-   `docs/ghostty-parity.json` only after both gaps are closed.
+6. Promote `mouse-shift-capture` to supported in
+   `docs/ghostty-parity.json`.
 
 ## Semantic prompt viewport navigation
 

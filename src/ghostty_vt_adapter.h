@@ -272,6 +272,7 @@ public:
     bool beginSelection(const TerminalSelectionPressInput &input);
     bool updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
+    bool selectionGestureDragged() const;
     bool selectionContains(int column, int row) const;
     bool selectCell(int column, int row);
     bool selectWord(int column, int row);

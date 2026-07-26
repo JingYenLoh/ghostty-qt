@@ -4160,6 +4160,9 @@ void TerminalPane::beginLocalSelection(const QMouseEvent &event,
             : 0,
         .timestampValid = timestampValid,
         .controlModifier = modifiers.testFlag(Qt::ControlModifier),
+        .extendExistingSelection = modifiers.testFlag(Qt::ShiftModifier)
+            && shiftBypassesMouseCapture(modifiers),
+        .rectangular = modifiers.testFlag(Qt::AltModifier),
     };
     selecting_ = true;
     controller_->beginSelection(input);

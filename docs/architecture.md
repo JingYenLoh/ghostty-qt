@@ -629,6 +629,20 @@ signals:
   does neither, while reported wheels and worker-rechecked captured fractional
   scrolling clear selection without resetting history. Live interval reload
   is sampled by the next press and does not reclassify an installed selection.
+  When the effective shift-capture policy releases a Shift-left press and an
+  installed selection plus gesture history exist, the adapter compares its
+  typed timestamp with the mirrored prior ordinary-press timestamp. Only a
+  comparable forward difference strictly greater than the live interval is an
+  immediate drag; the inclusive boundary and missing or reversed timestamps
+  traverse the ordinary press path. The drag retains libghostty's tracked
+  anchor and selection behavior and does not replace the prior press time, so
+  later delayed extensions still measure from that retained press. `Alt` on
+  the delayed press selects rectangle mode for that immediate drag. Resetting
+  the gesture also discards the mirrored timestamp. A valid drag that returns
+  no range clears the installed selection, while an anchor belonging to an
+  inactive screen leaves that screen's independent selection untouched.
+  Hyperlink commit checks libghostty's release-stable dragged state as well,
+  covering an immediate Shift extension that produced no GUI motion event.
 - Vertical wheel input is normalized once on the GUI thread before choosing
   local or captured routing. A non-null Qt pixel delta is precision input;
   otherwise the angle delta remains fractional in 120-unit wheel ticks.

@@ -2614,7 +2614,10 @@ void SessionWorker::commitHyperlinkActivation(quint64 requestId, int column,
                 && current->resolved.targetCell == releaseCell
                 && current->resolved.cells == match->cells;
         }
-        if (stillMatches) {
+        // A delayed Shift-click extends through the worker without a GUI
+        // motion event. Consult libghostty's release-stable gesture state so
+        // that selection drag cannot also commit the armed link.
+        if (stillMatches && !vt_->selectionGestureDragged()) {
             uri = match->uri;
         }
     }

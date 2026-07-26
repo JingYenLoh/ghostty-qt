@@ -3228,7 +3228,9 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
         };
 
     sendMouse(QEvent::MouseButtonPress, pressPosition, Qt::LeftButton,
-              Qt::LeftButton, Qt::ControlModifier, pressTimestampMilliseconds);
+              Qt::LeftButton,
+              Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier,
+              pressTimestampMilliseconds);
     QCOMPARE(presses.count(), 1);
     const TerminalSelectionPressInput firstPress =
         qvariant_cast<TerminalSelectionPressInput>(
@@ -3241,6 +3243,8 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
              pressTimestampMilliseconds * quint64{1'000'000});
     QVERIFY(firstPress.timestampValid);
     QVERIFY(firstPress.controlModifier);
+    QVERIFY(firstPress.extendExistingSelection);
+    QVERIFY(firstPress.rectangular);
 
     sendMouse(QEvent::MouseMove, dragPosition, Qt::NoButton, Qt::LeftButton,
               Qt::AltModifier, pressTimestampMilliseconds + 1);
@@ -3269,6 +3273,8 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
         qvariant_cast<TerminalSelectionPressInput>(
             presses.constLast().constFirst());
     QVERIFY(!secondPress.controlModifier);
+    QVERIFY(!secondPress.extendExistingSelection);
+    QVERIFY(!secondPress.rectangular);
     sendMouse(QEvent::MouseButtonDblClick, pressPosition, Qt::LeftButton,
               Qt::LeftButton, Qt::MetaModifier,
               pressTimestampMilliseconds + 100);
@@ -3603,6 +3609,7 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
 {
     qRegisterMetaType<TerminalMouseInput>();
     qRegisterMetaType<TerminalRightClickInput>();
+    qRegisterMetaType<TerminalSelectionPressInput>();
 
     LaunchOptions options;
     options.workingDirectory = QDir::currentPath();
@@ -3709,6 +3716,10 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
             QCOMPARE(selectionBegin.size(), beginBefore + 1);
             QCOMPARE(selectionUpdate.size(), updateBefore + 1);
             QCOMPARE(selectionEnd.size(), endBefore + 1);
+            const TerminalSelectionPressInput input =
+                qvariant_cast<TerminalSelectionPressInput>(
+                    selectionBegin.constLast().constFirst());
+            QVERIFY(input.extendExistingSelection);
         }
 
         const qsizetype mouseBeforeMiddle = mouse.size();
@@ -3757,21 +3768,31 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
         }
     }
 
-    // The independent frontend reporting gate still wins over an Always
-    // capture policy. Raw DEC state remains authoritative only for deciding
-    // whether a local right click had used the Shift escape.
+    // The independent frontend reporting gate makes every policy local, but
+    // Ghostty still consults mouse-shift-capture before deciding whether that
+    // local Shift press may extend an existing selection.
     LaunchOptions disabled = options;
     disabled.mouseReporting = false;
+    for (const PolicyCase policy : cases) {
+        disabled.mouseShiftCapture = policy.mode;
+        pane.applyRuntimeOptions(disabled);
+        QVERIFY(controller->terminalMouseTracking());
+        QVERIFY(!controller->mouseTracking());
+        const qsizetype mouseBeforeDisabled = mouse.size();
+        const qsizetype beginBeforeDisabled = selectionBegin.size();
+        sendShiftGesture();
+        QCOMPARE(mouse.size(), mouseBeforeDisabled);
+        QCOMPARE(selectionBegin.size(), beginBeforeDisabled + 1);
+        const TerminalSelectionPressInput input =
+            qvariant_cast<TerminalSelectionPressInput>(
+                selectionBegin.constLast().constFirst());
+        QCOMPARE(input.extendExistingSelection, !policy.captures);
+    }
+
+    // Raw DEC state remains authoritative for deciding whether a local right
+    // click used the Shift escape even while reporting is disabled.
     disabled.mouseShiftCapture = MouseShiftCapture::Always;
     pane.applyRuntimeOptions(disabled);
-    QVERIFY(controller->terminalMouseTracking());
-    QVERIFY(!controller->mouseTracking());
-    const qsizetype mouseBeforeDisabled = mouse.size();
-    const qsizetype beginBeforeDisabled = selectionBegin.size();
-    sendShiftGesture();
-    QCOMPARE(mouse.size(), mouseBeforeDisabled);
-    QCOMPARE(selectionBegin.size(), beginBeforeDisabled + 1);
-
     const qsizetype rightBeforeAlways = rightClicks.size();
     sendMouse(QEvent::MouseButtonPress, start, Qt::RightButton, Qt::RightButton,
               Qt::ControlModifier | Qt::ShiftModifier);

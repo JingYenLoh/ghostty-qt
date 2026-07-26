@@ -125,7 +125,8 @@ bool writeExecutableScript(const QString &path, QByteArrayView contents)
 TerminalSelectionPressInput
 selectionPress(int column, int row,
                std::optional<quint64> timestampNanoseconds = std::nullopt,
-               bool controlModifier = false)
+               bool controlModifier = false,
+               bool extendExistingSelection = false, bool rectangular = false)
 {
     return {
         .column = column,
@@ -135,6 +136,8 @@ selectionPress(int column, int row,
         .timestampNanoseconds = timestampNanoseconds.value_or(0),
         .timestampValid = timestampNanoseconds.has_value(),
         .controlModifier = controlModifier,
+        .extendExistingSelection = extendExistingSelection,
+        .rectangular = rectangular,
     };
 }
 
@@ -245,6 +248,7 @@ private Q_SLOTS:
     void appliesReloadedAppearanceToExistingTerminal();
     void appliesReloadedWordBoundariesToExistingGesture();
     void appliesClickRepeatIntervalAtLaunchAndReload();
+    void extendsSelectionUsingReloadedClickInterval();
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
@@ -2730,6 +2734,86 @@ void SessionWorkerTest::appliesClickRepeatIntervalAtLaunchAndReload()
     QCOMPARE(clipboardSpy.count(), 2);
     QCOMPARE(clipboardSpy.constLast().at(0).toString(),
              QStringLiteral("alpha beta"));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::extendsSelectionUsingReloadedClickInterval()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalClipboardDestination>();
+    SessionWorker worker;
+    worker.resizeTerminal(12, 3, 8, 16, 96, 48);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy activationSpy(&worker,
+                             &SessionWorker::hyperlinkActivationResolved);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf '\\033]8;;https://example.com\\007alpha beta"
+                       "\\033]8;;\\007'; sleep 5"),
+    };
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    options.runtime.clickRepeatIntervalMilliseconds = 200;
+    worker.initialize(options);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alpha beta")), 5000);
+
+    constexpr quint64 firstTimestamp = 1'000'000'000;
+    worker.beginSelection(selectionPress(1, 0, firstTimestamp));
+    worker.updateSelection(selectionDrag(3, 0));
+    worker.endSelection(3, 0);
+    QVERIFY(spyContainsBool(selectionSpy, true));
+    const qsizetype availabilityCount = selectionSpy.size();
+
+    // This 150 ms Shift press would still be an ordinary press under the
+    // launch-time interval. The live 100 ms reload makes it a delayed drag
+    // from the retained cell-one anchor instead.
+    options.runtime.clickRepeatIntervalMilliseconds = 100;
+    worker.applyRuntimeOptions(options.runtime);
+    worker.beginSelection(
+        selectionPress(5, 0, firstTimestamp + 150'000'000, false, true));
+    QCOMPARE(selectionSpy.size(), availabilityCount);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.size(), 1);
+    QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
+             QStringLiteral("lpha"));
+    worker.endSelection(5, 0);
+
+    // Re-anchor with a double click so the current gesture has word behavior
+    // and has not been dragged. A delayed Shift press on the armed link
+    // extends by whole words and the release-stable drag state prevents that
+    // same press from also opening the link.
+    constexpr quint64 wordTimestamp = 2'000'000'000;
+    worker.beginSelection(selectionPress(1, 0, wordTimestamp));
+    worker.endSelection(1, 0);
+    worker.beginSelection(selectionPress(1, 0, wordTimestamp + 1'000'000));
+    worker.endSelection(1, 0);
+    const TerminalFrame frame = accumulatedFrame(updateSpy);
+    worker.prepareHyperlinkActivation(77, frame.contentRevision, 8, 0);
+    worker.beginSelection(
+        selectionPress(8, 0, wordTimestamp + 150'000'000, false, true));
+    worker.endSelection(8, 0);
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.size(), 2);
+    QCOMPARE(clipboardSpy.constLast().at(0).toString(),
+             QStringLiteral("alpha beta"));
+    worker.commitHyperlinkActivation(77, 8, 0);
+    QCOMPARE(activationSpy.size(), 1);
+    QCOMPARE(activationSpy.constFirst().at(0).toULongLong(), quint64{77});
+    QVERIFY(activationSpy.constFirst().at(3).toByteArray().isEmpty());
+
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 
