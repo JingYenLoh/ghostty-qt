@@ -354,6 +354,46 @@ ApplicationWindow {
             }
         }
 
+        Menu {
+            objectName: "terminalContextMenuWindow"
+            title: qsTr("Window")
+
+            Action {
+                objectName: "terminalContextMenuNewWindow"
+                text: qsTr("New Window")
+                onTriggered: terminalContextMenu.pendingAction = "new_window"
+            }
+
+            Action {
+                objectName: "terminalContextMenuCloseWindow"
+                text: qsTr("Close Window")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "close_window"
+            }
+        }
+
+        MenuSeparator {
+        }
+
+        Menu {
+            objectName: "terminalContextMenuConfig"
+            title: qsTr("Config")
+
+            Action {
+                objectName: "terminalContextMenuOpenConfig"
+                text: qsTr("Open Configuration")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "open_config"
+            }
+
+            Action {
+                objectName: "terminalContextMenuReloadConfig"
+                text: qsTr("Reload Configuration")
+                onTriggered: terminalContextMenu.pendingAction =
+                             "reload_config"
+            }
+        }
+
         onClosed: {
             const cancelledClose = closingRequestId !== 0
             const finishedRequestId = cancelledClose

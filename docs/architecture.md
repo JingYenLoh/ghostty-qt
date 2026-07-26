@@ -576,12 +576,16 @@ signals:
   retained window-root click point into the `ApplicationWindow` content item,
   accounting for its header and footer. The menu exposes only Copy, Paste,
   Reset, a Split submenu containing Change Title, all four directional splits,
-  and Close Split, and a Tab submenu containing Change Tab Title, New Tab, and
-  Close Tab. QML retains the selected fixed action until the popup closes. The
-  workspace then consumes the stable token once, restores focus to the current
-  active pane, revalidates the stored `PaneId` and guarded originating pane,
-  and dispatches the action there. Restoring focus before dispatch ensures a
-  resulting title or close confirmation opens last and retains focus.
+  and Close Split, a Tab submenu containing Change Tab Title, New Tab, and
+  Close Tab, a Window submenu containing New Window and Close Window, and a
+  Config submenu containing Open Configuration and Reload Configuration. QML
+  retains the selected fixed action until the popup closes. The workspace then
+  consumes the stable token once, restores focus to the current active pane,
+  revalidates the stored `PaneId` and guarded originating pane, and dispatches
+  the action there. Window-local dispatch therefore retains the originating
+  pane's host while New Window and both configuration actions cross the
+  established application-controller path. Restoring focus before dispatch
+  ensures a resulting title or close confirmation opens last and retains focus.
   Dismissal only restores focus; cancellation when the origin disappears or a
   newer popup supersedes it is inert, and a consumed or stale token cannot
   dispatch again.

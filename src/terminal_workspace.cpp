@@ -58,7 +58,11 @@ bool isAllowedContextMenuAction(QStringView action)
         || action == QLatin1StringView("close_surface")
         || action == QLatin1StringView("prompt_tab_title")
         || action == QLatin1StringView("new_tab")
-        || action == QLatin1StringView("close_tab:this");
+        || action == QLatin1StringView("close_tab:this")
+        || action == QLatin1StringView("new_window")
+        || action == QLatin1StringView("close_window")
+        || action == QLatin1StringView("open_config")
+        || action == QLatin1StringView("reload_config");
 }
 
 struct AxisWeights {

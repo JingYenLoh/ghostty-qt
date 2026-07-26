@@ -366,8 +366,10 @@ tab-bar visibility callbacks. Context-menu coverage verifies exact fixed-action
 admission, one-shot post-close dispatch to the stable originating pane,
 supersession and removal cancellation, and focus ordering across Reset, Change
 Title, all four directional splits, Close Split, Change Tab Title, New Tab,
-and Close Tab. The application fixture also exercises chrome-adjusted popup
-placement with the real embedded QML. Workspace tests also cover
+Close Tab, New Window, Close Window, Open Configuration, and Reload
+Configuration. The application fixture also exercises chrome-adjusted popup
+placement and fixed submenu action staging with the real embedded QML.
+Workspace tests also cover
 owner-delayed lifecycle publication, final-surface and final-tab action-chain
 completion, synchronous host destruction after local/all/global key events,
 direct all-pane fanout unwinding under both normal close and unexpected

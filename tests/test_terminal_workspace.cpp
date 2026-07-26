@@ -427,6 +427,7 @@ private Q_SLOTS:
     void contextMenuRequestsUseStablePaneTargets();
     void contextMenuRoutesSurfaceAndSplitActions();
     void contextMenuRoutesTabActions();
+    void contextMenuRoutesWindowAndConfigActions();
     void applicationQuitEscalatesCloseLifecycle();
     void closingOnlyPaneRemovesTab();
     void closeSurfaceUsesStableOriginsAndAdjacentFocus();
@@ -1770,7 +1771,7 @@ void TerminalWorkspaceTest::contextMenuRoutesSurfaceAndSplitActions()
         QStringLiteral("new_split:auto"),
         QStringLiteral("reset:"),
         QStringLiteral("set_surface_title:menu"),
-        QStringLiteral("close_window"),
+        QStringLiteral("clear_screen"),
     };
     for (const QString &action : rejectedActions) {
         QVERIFY(!workspace.executeContextMenuAction(resetRequestId, action));
@@ -2003,6 +2004,95 @@ void TerminalWorkspaceTest::contextMenuRoutesTabActions()
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()),
              created.tabId);
     QVERIFY(second.pane != nullptr);
+}
+
+void TerminalWorkspaceTest::contextMenuRoutesWindowAndConfigActions()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    TerminalWorkspace workspace(window.contentItem());
+    workspace.setSize(window.size());
+    window.show();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    const CurrentTabProbe second = currentTabProbe(workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.tabId != first.tabId);
+    QCOMPARE(window.activeFocusItem(), second.pane.data());
+
+    QSignalSpy requests(&workspace, &TerminalWorkspace::contextMenuRequested);
+    QSignalSpy cancellations(&workspace,
+                             &TerminalWorkspace::contextMenuCancelled);
+    QSignalSpy applicationActions(
+        &workspace, &TerminalWorkspace::applicationActionRequested);
+    QSignalSpy windowClose(&workspace, &TerminalWorkspace::windowCloseApproved);
+    const auto requestForFirst = [&] {
+        const int priorCount = requests.count();
+        Q_EMIT first.pane->contextMenuRequested(QPointF(170.0, 120.0), false);
+        if (requests.count() != priorCount + 1) return quint64{0};
+        return requests.constLast().constFirst().toULongLong();
+    };
+
+    const quint64 firstRequestId = requestForFirst();
+    QVERIFY(firstRequestId != 0);
+    const std::array<QString, 10> rejectedActions{
+        QStringLiteral("new_window:"),    QStringLiteral("new_window:now"),
+        QStringLiteral("close_window:"),  QStringLiteral("close_window:now"),
+        QStringLiteral("open_config:"),   QStringLiteral("open_config:now"),
+        QStringLiteral("reload_config:"), QStringLiteral("reload_config:soft"),
+        QStringLiteral("quit"),           QStringLiteral("close_all_windows"),
+    };
+    for (const QString &action : rejectedActions) {
+        QVERIFY(!workspace.executeContextMenuAction(firstRequestId, action));
+    }
+
+    struct ApplicationCase {
+        QString action;
+        ApplicationAction expected;
+    };
+    const std::array<ApplicationCase, 3> applicationCases{{
+        {QStringLiteral("new_window"), ApplicationAction::NewWindow},
+        {QStringLiteral("open_config"), ApplicationAction::OpenConfig},
+        {QStringLiteral("reload_config"), ApplicationAction::ReloadConfig},
+    }};
+    for (const ApplicationCase &testCase : applicationCases) {
+        const quint64 requestId =
+            applicationActions.isEmpty() ? firstRequestId : requestForFirst();
+        const int priorActionCount = applicationActions.count();
+        QVERIFY(requestId != 0);
+        QVERIFY(workspace.executeContextMenuAction(requestId, testCase.action));
+        QCOMPARE(applicationActions.count(), priorActionCount + 1);
+        QCOMPARE(qvariant_cast<ApplicationAction>(
+                     applicationActions.constLast().at(0)),
+                 testCase.expected);
+        QCOMPARE(qvariant_cast<PaneId>(applicationActions.constLast().at(1)),
+                 first.paneId);
+        QCOMPARE(window.activeFocusItem(), second.pane.data());
+        QVERIFY(
+            !workspace.executeContextMenuAction(requestId, testCase.action));
+    }
+
+    const quint64 closeRequestId = requestForFirst();
+    QVERIFY(closeRequestId != 0);
+    QVERIFY(workspace.executeContextMenuAction(closeRequestId,
+                                               QStringLiteral("close_window")));
+    QCOMPARE(windowClose.count(), 0);
+    QCOMPARE(cancellations.count(), 0);
+    QVERIFY(!workspace.executeContextMenuAction(
+        closeRequestId, QStringLiteral("close_window")));
+    QTRY_COMPARE_WITH_TIMEOUT(windowClose.count(), 1, 1000);
+    QCOMPARE(applicationActions.count(), 3);
 }
 
 void TerminalWorkspaceTest::applicationQuitEscalatesCloseLifecycle()

@@ -713,6 +713,116 @@ bool installContextMenuPositionTestHook(QQuickWindow *window,
     return true;
 }
 
+bool installContextMenuActionTestHook(QQuickWindow *window,
+                                      TerminalWorkspace *workspace,
+                                      ApplicationController *controller)
+{
+    QObject *const menu =
+        window->findChild<QObject *>(QStringLiteral("terminalContextMenu"));
+    if (menu == nullptr || controller == nullptr) {
+        qCritical()
+            << "Context-menu-action test hook could not find the QML controls";
+        return false;
+    }
+
+    struct TestState {
+        bool actionTriggered = false;
+        bool triggerReturned = false;
+        bool reloadDispatched = false;
+    };
+    const auto state = std::make_shared<TestState>();
+    QObject::connect(
+        controller, &ApplicationController::configReloadRequested, workspace,
+        [menu, state] {
+            state->reloadDispatched = true;
+            if (!state->actionTriggered || !state->triggerReturned
+                || menu->property("visible").toBool()
+                || menu->property("requestId").toULongLong() != 0
+                || !menu->property("pendingAction").toString().isEmpty()) {
+                qCritical()
+                    << "Context-menu-action test hook dispatched before the QML menu closed";
+                QCoreApplication::exit(1);
+                return;
+            }
+            QTimer::singleShot(0, QCoreApplication::instance(),
+                               [] { QCoreApplication::quit(); });
+        });
+
+    const QPointF rootPosition(260.0, 240.0);
+    const auto exercise = [window, workspace, menu, state, rootPosition] {
+        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
+        if (pane == nullptr) {
+            qCritical()
+                << "Context-menu-action test hook could not find a terminal pane";
+            QCoreApplication::exit(1);
+            return;
+        }
+
+        auto *const timer = new QTimer(workspace);
+        timer->setSingleShot(true);
+        const auto attempts = std::make_shared<int>(0);
+        QObject::connect(
+            timer, &QTimer::timeout, workspace,
+            [window, menu, state, timer, attempts] {
+                if (!state->actionTriggered) {
+                    if (!menu->property("visible").toBool()) {
+                        if (++*attempts < 50) {
+                            timer->start(10);
+                            return;
+                        }
+                        qCritical()
+                            << "Context-menu-action test hook did not observe an open menu";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+
+                    QObject *const reloadAction = window->findChild<QObject *>(
+                        QStringLiteral("terminalContextMenuReloadConfig"));
+                    state->actionTriggered = true;
+                    const bool invoked = reloadAction != nullptr
+                        && QMetaObject::invokeMethod(reloadAction, "trigger",
+                                                     Q_ARG(QObject *, nullptr));
+                    if (!invoked || menu->property("visible").toBool()
+                        || menu->property("requestId").toULongLong() != 0
+                        || !menu->property("pendingAction").toString().isEmpty()
+                        || state->reloadDispatched) {
+                        qCritical()
+                            << "Context-menu-action test hook could not trigger the QML action";
+                        QCoreApplication::exit(1);
+                        return;
+                    }
+
+                    // A real Menu action closes its root popup synchronously.
+                    // QML must defer workspace dispatch until after this
+                    // trigger has returned and onClosed has cleared its state.
+                    state->triggerReturned = true;
+                    return;
+                }
+            });
+
+        QTimer::singleShot(2000, workspace, [state] {
+            if (!state->reloadDispatched) {
+                qCritical()
+                    << "Context-menu-action test hook did not observe the deferred action";
+                QCoreApplication::exit(1);
+            }
+        });
+        Q_EMIT pane->contextMenuRequested(rootPosition, false);
+        timer->start(0);
+    };
+    if (workspace->tabCount() > 0) {
+        QTimer::singleShot(0, workspace, exercise);
+    } else {
+        QObject::connect(
+            workspace, &TerminalWorkspace::tabTitlesChanged, workspace,
+            [workspace, exercise] {
+                QTimer::singleShot(0, workspace, exercise);
+            },
+            Qt::SingleShotConnection);
+    }
+    return true;
+}
+
 bool installFullscreenActionTestHook(QQuickWindow *window,
                                      TerminalWorkspace *workspace)
 {
@@ -1751,6 +1861,14 @@ int main(int argc, char *argv[])
         if (!initialWindow
             || !installContextMenuPositionTestHook(applicationWindow,
                                                    workspace)) {
+            return 1;
+        }
+    }
+    if (qEnvironmentVariableIntValue("GHOSTTY_QT_TEST_CONTEXT_MENU_ACTION")
+        == 1) {
+        if (!initialWindow
+            || !installContextMenuActionTestHook(applicationWindow, workspace,
+                                                 &applicationController)) {
             return 1;
         }
     }
