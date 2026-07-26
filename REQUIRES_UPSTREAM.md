@@ -130,6 +130,118 @@ Once the query is present in an official, publicly reachable Ghostty commit:
 6. Promote `mouse-shift-capture` to supported in
    `docs/ghostty-parity.json`.
 
+## Terminal mouse-shape state query
+
+**Status:** Ghostty's initial I-beam, DEC-tracking arrow, Shift override, and
+rectangle/link/hidden cursor priorities are implemented; arbitrary
+application-requested OSC 22 shapes are blocked on an upstream public query.
+
+Full Ghostty owns one terminal mouse shape. It starts as `text`, enabling DEC
+mouse modes 9, 1000, 1002, or 1003 changes it to `default`, disabling those
+modes changes it back to `text`, and RIS restores `text`. A recognized
+`OSC 22;<name>` request can replace that state with any of Ghostty's 34
+W3C-derived shapes. Unknown or empty names leave the prior shape unchanged.
+
+Public `libghostty-vt` exposes only whether any DEC mouse mode is active.
+Its private `Terminal.mouse_shape` receives recognized OSC 22 values, but
+`GhosttyTerminalData` has no mouse-shape member and the public OSC command-data
+API does not expose the parsed name. The similarly named enum and action in
+`ghostty.h` belong to Ghostty's full application-runtime API, not the
+`ghostty/vt.h` embedding API used here. This was last verified against official
+upstream commit `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-26.
+
+There is an additional contract gap: the standalone VT stream handler stores
+OSC 22 values but does not mirror full Ghostty's mouse-mode and RIS shape
+transitions. Exposing that field without aligning those transitions would
+still return the wrong effective state. The existing public mouse-tracking
+query also collapses the individual DEC mode bits to an any-mode boolean.
+Full Ghostty instead updates one current mouse-event state on each individual
+mode transition, so resetting one of multiple overlapping mode bits can select
+`text` even while the public any-mode result remains true. That ordering edge
+cannot be reconstructed from the current query.
+
+ghostty-qt therefore derives the publicly distinguishable baseline: an I-beam
+without raw DEC tracking, an arrow with raw tracking, and an I-beam while
+Shift is held under raw tracking. This is exact for the ordinary
+non-overlapping tracking path but cannot recover the transition-order edge
+above. The existing pane arbiter places
+typing concealment, an accepted hyperlink hand, and rectangle-selection
+crosshair above that baseline. It intentionally uses raw terminal state rather
+than the independent frontend `mouse-reporting` or `mouse-shift-capture`
+policies.
+
+### Why ghostty-qt does not inspect PTY bytes
+
+Mirroring OSC 22 outside libghostty-vt would require a second streaming escape
+parser. It would have to reproduce fragmented OSC input, BEL versus ST
+termination, cancellation and malformed-input behavior, every canonical name
+and alias, unknown-name retention, DEC-mode side effects, and RIS ordering.
+That duplicate state could silently diverge whenever Ghostty's parser or shape
+catalog changes.
+
+A local Ghostty source patch would expose the private field but violates this
+repository's official-submodule policy. The base-state implementation is
+therefore preferable to claiming partial OSC 22 support through byte
+inspection.
+
+### Required upstream contract
+
+Official libghostty-vt needs an append-only typed query for the current
+effective terminal mouse shape. A minimal compatible design would:
+
+- define a public C enum containing Ghostty's complete mouse-shape catalog;
+- append a `GHOSTTY_TERMINAL_DATA_MOUSE_SHAPE` member whose output type is that
+  enum and support it through both `ghostty_terminal_get` and
+  `ghostty_terminal_get_multi`;
+- report `text` for a new terminal;
+- expose the latest recognized OSC 22 request after
+  `ghostty_terminal_vt_write` returns, including fragmented input;
+- retain the previous value for empty, unknown, malformed, or cancelled
+  requests;
+- align the standalone VT handler with full Ghostty by applying `default` on
+  DEC mouse-mode enable, `text` on disable, and `text` on RIS;
+- preserve the latest individual transition semantics when multiple DEC mouse
+  mode bits overlap rather than deriving shape from an any-mode reduction;
+- preserve the existing public enum ordinals and ABI layouts; and
+- keep pointer presentation policy, hyperlink state, and keyboard modifiers
+  outside the terminal query.
+
+The query must expose terminal state rather than a Qt or GTK cursor name.
+Frontend runtimes remain responsible for choosing the closest native cursor
+where their toolkit cannot represent a W3C shape exactly.
+
+### Upstream acceptance evidence
+
+Public C API tests should verify:
+
+- initial `text`;
+- every canonical OSC 22 name and every supported xterm/foot alias;
+- fragmented OSC input matching a single complete write;
+- BEL and ST terminators;
+- empty, unknown, malformed, and cancelled requests preserving prior state;
+- later valid requests replacing earlier ones;
+- each supported DEC mouse mode changing the shape to `default` and its reset
+  changing the shape to `text`, including ordering around a custom shape;
+- RIS restoring `text`; and
+- identical typed results from the single and multi-data getters.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once the query and matching state transitions are present in an official,
+publicly reachable Ghostty commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Add a project-owned mouse-shape enum to the adapter snapshot and refresh it
+   after terminal writes and resets alongside DEC mouse-tracking state.
+3. Publish changes through a dedicated worker/controller signal; mouse shape
+   is input presentation state, not render-cell metadata.
+4. Map every shape to the closest Qt cursor while documenting unavoidable
+   collapses such as vertical text and directional resize variants.
+5. Keep blank, accepted-link, and modifier-driven rectangle/base transitions
+   above the terminal-requested shape according to pinned Surface behavior.
+6. Add adapter and pane tests for the complete upstream matrix before
+   declaring OSC 22 pointer shapes supported.
+
 ## Semantic prompt viewport navigation
 
 **Status:** blocked on an upstream public API.

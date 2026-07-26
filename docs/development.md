@@ -320,7 +320,8 @@ DEC-motion reporting exclusion,
 typing-hide defaults and reload, terminal-bound key and IME eligibility,
 invalid-sequence and asynchronous `performable` fallback, stale
 pointer-activity-epoch suppression, physical-pixel movement filtering, reveal
-interactions, blank/hyperlink/default cursor priority, focus-follow defaults
+interactions, blank/hyperlink/rectangle/base cursor priority, raw DEC
+arrow-to-Shift-I-beam transitions, focus-follow defaults
 and live reload, inactive-window gating, same-position/sub-pixel focus
 suppression, and destructive focus-publication observers, finalized default
 and custom ASCII/NUL/non-BMP word boundaries, worker-owned timestamp,

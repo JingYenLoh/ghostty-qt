@@ -642,7 +642,9 @@ signals:
   typing concealment and an accepted hyperlink pointer. It uses raw DEC state:
   `Ctrl+Alt` is sufficient normally, while raw mouse tracking additionally
   requires Shift, independently of the frontend reporting toggle and
-  shift-capture policy. Resetting the gesture also discards the mirrored
+  shift-capture policy. Below the crosshair, the same raw state selects an
+  arrow normally or Ghostty's I-beam while Shift is held; without raw tracking,
+  the I-beam is the base shape. Resetting the gesture also discards the mirrored
   timestamp. A valid drag that returns
   no range clears the installed selection, while an anchor belonging to an
   inactive screen leaves that screen's independent selection untouched.
@@ -684,10 +686,16 @@ signals:
   so real high-resolution movement still accumulates to that threshold.
   Pointer leave, button press/release, wheel input, focus in/out, and live
   disabling reveal immediately and advance the activity epoch even when the
-  cursor is already visible. One pane-local
-  cursor arbiter then applies the strict priority blank-while-typing,
-  resolved-hyperlink hand, inherited/default cursor. Hiding never cancels a
-  hyperlink lease, so revealing restores a still-valid link cursor.
+  cursor is already visible. One pane-local cursor arbiter then applies the
+  strict priority blank-while-typing, resolved-hyperlink hand, rectangle
+  crosshair, and raw-state-derived arrow/I-beam. Hiding never cancels a
+  hyperlink lease, so revealing restores a still-valid link cursor. Public
+  `libghostty-vt` does not expose its internally parsed OSC 22 mouse shape, so
+  arbitrary application-requested W3C shapes remain an upstream-blocked
+  extension rather than a parallel Qt escape parser. Its any-mode tracking
+  boolean also loses full Ghostty's latest individual transition when multiple
+  DEC mouse modes overlap; the same upstream effective-shape query is required
+  for that uncommon ordering edge.
 - `focus-follows-mouse` reuses that accepted physical-motion decision for
   hover and button-drag events. When enabled, an accepted move focuses the
   pane only if it does not already have active focus and its `QQuickWindow` is
@@ -1978,7 +1986,8 @@ The default CTest suite has focused layers for each ownership boundary:
   terminal-bound text and IME commit eligibility, sequence and asynchronous
   `performable` fallback, stale pointer-epoch suppression, physical-pixel
   motion filtering, pointer/focus/config reveal interactions,
-  blank/hyperlink/default cursor priority, live focus-follow reload, inactive
+  blank/link/rectangle/base cursor priority, raw DEC arrow and Shift-I-beam
+  transitions, live focus-follow reload, inactive
   host gating, same-position/sub-pixel focus suppression, and destructive
   focus-publication observers. The same path covers live
   `link-url` enable/disable,

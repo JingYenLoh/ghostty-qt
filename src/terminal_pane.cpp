@@ -1174,6 +1174,7 @@ TerminalPane::TerminalPane(
                 }
             });
 
+    syncPointerCursor();
     if (sessionStartMode_ == TerminalSessionStartMode::Immediate) {
         (void)controller_->startSession();
     }
@@ -4213,8 +4214,13 @@ void TerminalPane::syncPointerCursor()
         // Shift is required to show the rectangle-select crosshair even when
         // the configured policy would retain Shift in application input.
         setCursor(Qt::CrossCursor);
+    } else if (controller_->terminalMouseTracking()
+               && !hoverModifiers_.testFlag(Qt::ShiftModifier)) {
+        // DEC mouse tracking uses the ordinary pointer. Shift temporarily
+        // restores Ghostty's text pointer while the user takes local control.
+        setCursor(Qt::ArrowCursor);
     } else {
-        unsetCursor();
+        setCursor(Qt::IBeamCursor);
     }
 }
 

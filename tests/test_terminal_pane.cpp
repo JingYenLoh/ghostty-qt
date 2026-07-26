@@ -3203,6 +3203,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     pane->setSize(window.size());
     auto *controller = pane->findChild<TerminalController *>();
     QVERIFY(controller != nullptr);
+    QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
     QSignalSpy presses(controller,
                        &TerminalController::beginSelectionRequested);
     QSignalSpy drags(controller, &TerminalController::updateSelectionRequested);
@@ -3273,7 +3274,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
                          Qt::ControlModifier | Qt::AltModifier);
     QCoreApplication::sendEvent(pane, &altRelease);
     QVERIFY(altRelease.isAccepted());
-    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
     QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control,
                              Qt::ControlModifier);
     QCoreApplication::sendEvent(pane, &controlRelease);
@@ -3292,7 +3293,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QVERIFY(!secondPress.controlModifier);
     QVERIFY(!secondPress.extendExistingSelection);
     QVERIFY(!secondPress.rectangular);
-    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
     sendMouse(QEvent::MouseButtonDblClick, pressPosition, Qt::LeftButton,
               Qt::LeftButton, Qt::MetaModifier,
               pressTimestampMilliseconds + 100);
@@ -3315,7 +3316,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QVERIFY(!untimedPress.timestampValid);
     QCOMPARE(untimedPress.timestampNanoseconds, quint64{0});
     QVERIFY(!untimedPress.rectangular);
-    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
     sendMouse(QEvent::MouseMove, dragPosition, Qt::NoButton, Qt::LeftButton,
               Qt::AltModifier, 0);
     QCOMPARE(drags.count(), 2);
@@ -3336,7 +3337,7 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QVERIFY(!overflowingPress.timestampValid);
     QCOMPARE(overflowingPress.timestampNanoseconds, quint64{0});
     QVERIFY(!overflowingPress.rectangular);
-    QCOMPARE(pane->cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
 
     delete pane;
 }
@@ -3790,7 +3791,7 @@ void TerminalPaneTest::appliesMouseShiftCaptureAcrossPointerRoutes()
         sendHover(Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier);
         QCOMPARE(pane.cursor().shape(), Qt::CrossCursor);
         sendHover(Qt::ShiftModifier);
-        QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+        QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 
         const qsizetype mouseBeforeWheel = mouse.size();
         QVERIFY(
@@ -4492,7 +4493,7 @@ void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
     pressPerformable();
     QCOMPARE(copies.count(), 1);
     QCOMPARE(forwarded.count(), 0);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
     const quint64 firstRequestId =
         copies.constFirst().constFirst().toULongLong();
     QVERIFY(firstRequestId != 0);
@@ -4503,7 +4504,7 @@ void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
     QHoverEvent reveal(QEvent::HoverMove, secondPosition, secondPosition,
                        firstPosition, Qt::NoModifier);
     QCoreApplication::sendEvent(&pane, &reveal);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 
     QKeyEvent firstRelease(QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
                            QStringLiteral("x"));
@@ -4526,7 +4527,7 @@ void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
     completeUnavailable(secondRequestId);
     QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), beforeSecondFallback + 1,
                               1000);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 
     QKeyEvent secondRelease(QEvent::KeyRelease, Qt::Key_X, Qt::AltModifier,
                             QStringLiteral("x"));
@@ -4548,11 +4549,11 @@ void TerminalPaneTest::asyncFallbackDoesNotHideAfterPointerActivity()
     QVERIFY(preEnableRequestId != 0);
     QVERIFY(preEnableRequestId != secondRequestId);
     pane.applyRuntimeOptions(options);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
     completeUnavailable(preEnableRequestId);
     QTRY_COMPARE_WITH_TIMEOUT(forwarded.count(), beforePreEnableFallback + 1,
                               1000);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 }
 
 void TerminalPaneTest::restoresHyperlinkPointerAfterTyping()
@@ -4642,7 +4643,7 @@ void TerminalPaneTest::restoresHyperlinkPointerAfterTyping()
         linkPosition + QPointF(2.0, 0.0), linkPosition + QPointF(1.0, 0.0),
         Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &revealWithoutLink);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 }
 
 void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()
@@ -8198,7 +8199,7 @@ void TerminalPaneTest::interactsWithRegexLinksAndReloadsLinkUrl()
 
     const int queriesBeforeDisable = queries.count();
     pane->applyRuntimeOptions(options);
-    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::ArrowCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane->cursor().shape(), Qt::IBeamCursor, 1000);
     QVERIFY(!pane->executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
     QTest::qWait(50);
@@ -8692,7 +8693,7 @@ void TerminalPaneTest::restoresOsc8HoverAcrossViewportScroll()
     QCOMPARE(queries.count(), queryCount);
     QVERIFY(!pane.executeConfiguredAction(
         QStringLiteral("copy_url_to_clipboard")));
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
     QCOMPARE(pane.linkPreviewText(), QString());
     QVERIFY(pane.linkPreviewRect().isEmpty());
 
@@ -8844,7 +8845,7 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     pane.applyRuntimeOptions(disabledCapture);
     QVERIFY(controller->terminalMouseTracking());
     QVERIFY(!controller->mouseTracking());
-    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::ArrowCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::IBeamCursor, 1000);
     const qsizetype disabledQueriesBeforeNever = hyperlinkQueries.size();
     disabledCapture.mouseShiftCapture = MouseShiftCapture::Never;
     pane.applyRuntimeOptions(disabledCapture);
@@ -8989,7 +8990,7 @@ void TerminalPaneTest::letsShiftBypassMouseCaptureForHyperlinks()
     captureReload.mouseReporting = true;
     captureReload.mouseShiftCapture = MouseShiftCapture::Always;
     pane.applyRuntimeOptions(captureReload);
-    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::ArrowCursor, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(pane.cursor().shape(), Qt::IBeamCursor, 1000);
     QVERIFY(
         !pane.executeConfiguredAction(QStringLiteral("copy_url_to_clipboard")));
 
@@ -9386,11 +9387,11 @@ void TerminalPaneTest::disabledMouseHideWinsSameProgramRuntimeReentry()
     pane.applyRuntimeOptions(disabled, program);
 
     QVERIFY(nested);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
     QKeyEvent remainsVisible(QEvent::KeyPress, Qt::Key_B, Qt::NoModifier,
                              QStringLiteral("b"));
     QCoreApplication::sendEvent(&pane, &remainsVisible);
-    QCOMPARE(pane.cursor().shape(), Qt::ArrowCursor);
+    QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
 }
 
 void TerminalPaneTest::keyTableResetNotifiesBeforeLaterReentry()
