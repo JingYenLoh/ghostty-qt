@@ -288,6 +288,7 @@ inline QJsonObject values()
         {QStringLiteral("faint-opacity"), 0.375},
         {QStringLiteral("scrollback-limit"),
          QStringLiteral("18446744073709551615")},
+        {QStringLiteral("scrollback-compression"), false},
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
         {QStringLiteral("bell-features"),
          bellFeatures(true, true, false, false, true)},

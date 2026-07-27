@@ -16,6 +16,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 
 class QSocketNotifier;
 class QTimer;
@@ -52,9 +53,9 @@ public:
                     InitializationObserver observer = {});
 
 public Q_SLOTS:
-    // Apply the worker-owned live state: terminal appearance and regex URL
-    // matching. Font, keybindings, previews, and future-pane scrollback remain
-    // owned by TerminalPane.
+    // Apply the worker-owned live state: terminal appearance, regex URL
+    // matching, and scrollback compression. Font, keybindings, previews, and
+    // future-pane scrollback capacity remain owned by TerminalPane.
     void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
     // Ordered with input on the worker event queue so bytes submitted before
     // and after a toggle cannot cross the policy boundary.
@@ -167,6 +168,8 @@ private:
     void queueInputWrite(const QByteArray &data);
     void sendRawAction(const QByteArray &data);
     void scheduleFrame();
+    void scheduleCompression(int delayMilliseconds);
+    void scheduleRestoredPageCompression();
     void noteCompressionActivity();
     void syncMouseEncoder();
     void syncSelectionAvailability();
@@ -241,5 +244,7 @@ private:
     quint64 terminalContentRevision_ = 1;
     quint64 searchContentRevision_ = 1;
     quint64 publishedContentRevision_ = 0;
-    uint64_t compressionActivity_ = 0;
+    std::optional<uint64_t> compressionActivity_;
+    bool compressionTraversalPending_ = false;
+    bool compressionReplayPending_ = false;
 };

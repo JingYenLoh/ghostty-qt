@@ -49,7 +49,8 @@ constexpr qsizetype kReadBufferSize = 64 * 1024;
 constexpr qsizetype kMaximumReadPerActivation = 1024 * 1024;
 constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
 constexpr int kFrameCoalesceMilliseconds = 8;
-constexpr int kCompressionIdleMilliseconds = 500;
+constexpr int kCompressionIdleMilliseconds = 250;
+constexpr int kCompressionStepMilliseconds = 1;
 constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
@@ -681,6 +682,8 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     connect(childTimer_, &QTimer::timeout, this, &SessionWorker::checkChild);
 
     compressionTimer_ = new QTimer(this);
+    compressionTimer_->setObjectName(
+        QStringLiteral("scrollbackCompressionTimer"));
     compressionTimer_->setSingleShot(true);
     compressionTimer_->setInterval(kCompressionIdleMilliseconds);
     connect(compressionTimer_, &QTimer::timeout, this,
@@ -731,6 +734,8 @@ bool SessionWorker::createTerminal()
             return false;
         }
         compressionActivity_ = vt_->compressionActivity();
+        compressionTraversalPending_ = false;
+        compressionReplayPending_ = false;
     }
     return vt_ != nullptr;
 }
@@ -738,6 +743,7 @@ bool SessionWorker::createTerminal()
 void SessionWorker::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
+    const bool compressionWasEnabled = options_.runtime.scrollbackCompression;
     const bool appearanceChanged =
         options_.runtime.appearance != options.appearance;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
@@ -757,6 +763,25 @@ void SessionWorker::applyRuntimeOptions(
         || vt_->setClickRepeatIntervalMilliseconds(
             options.clickRepeatIntervalMilliseconds);
     options_.runtime = options;
+
+    if (compressionWasEnabled && !options_.runtime.scrollbackCompression) {
+        if (compressionTimer_ != nullptr) {
+            compressionTimer_->stop();
+        }
+        compressionTraversalPending_ = false;
+        compressionReplayPending_ = false;
+    } else if (!compressionWasEnabled
+               && options_.runtime.scrollbackCompression) {
+        // Match Ghostty's null activity marker on re-enable: pages made
+        // resident while compression was disabled must be reconsidered even
+        // when no subsequent terminal mutation changes the activity token.
+        compressionActivity_.reset();
+        noteCompressionActivity();
+        // The PageList-owned incremental cursor can survive a disabled
+        // interval. Force one fresh traversal after it next completes so
+        // reads performed while disabled cannot remain behind that cursor.
+        compressionReplayPending_ = true;
+    }
 
     if (linkUrlChanged && !options_.runtime.linkUrl) {
         if (hyperlinkState_->trackedHover.has_value()
@@ -1868,6 +1893,7 @@ void SessionWorker::copySelectionAction(quint64 requestId)
 
     const QString text = vt_->selectedText(
         options_.runtime.selectionClipboard.trimTrailingSpaces);
+    scheduleRestoredPageCompression();
     if (text.isNull()) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to format terminal selection"));
@@ -1927,9 +1953,10 @@ void SessionWorker::writeTerminalFile(quint64 requestId,
 
     const GhosttyVtAdapter::PlainFileSnapshot snapshot =
         vt_->snapshotPlainFile(action.location);
-    // Formatting can restore compressed scrollback pages. Give the existing
-    // idle compressor a chance to reclaim them after this worker operation.
-    noteCompressionActivity();
+    // Formatting restores compressed pages without changing Ghostty's
+    // activity token. Schedule a bounded follow-up pass directly so the live
+    // policy can reclaim them.
+    scheduleRestoredPageCompression();
     switch (snapshot.status) {
     case GhosttyVtAdapter::PlainFileSnapshotStatus::Unavailable:
         result.outcome = TerminalActionOutcome::Unavailable;
@@ -2041,6 +2068,7 @@ void SessionWorker::copySelectionTo(TerminalClipboardDestination destination,
 
     const QString text = vt_->selectedText(
         options_.runtime.selectionClipboard.trimTrailingSpaces);
+    scheduleRestoredPageCompression();
     if (text.isNull()) {
         return;
     }
@@ -2096,6 +2124,7 @@ void SessionWorker::updateSelection(const TerminalSelectionDragInput &input)
             publishSearchUpdate();
         }
         syncSelectionAvailability();
+        noteCompressionActivity();
         scheduleFrame();
     }
 }
@@ -2164,6 +2193,7 @@ void SessionWorker::selectAllAction(quint64 requestId)
     if (destination.has_value()) {
         const QString text = vt_->selectedText(
             options_.runtime.selectionClipboard.trimTrailingSpaces);
+        scheduleRestoredPageCompression();
         if (!text.isNull()) {
             result.effect = TerminalActionEffect::Clipboard;
             result.payload = text;
@@ -2182,6 +2212,7 @@ void SessionWorker::adjustSelection(TerminalSelectionAdjustment adjustment)
             publishSearchUpdate();
         }
         syncSelectionAvailability();
+        noteCompressionActivity();
         scheduleFrame();
     }
 }
@@ -2218,6 +2249,7 @@ void SessionWorker::adjustSelectionAction(
         publishSearchUpdate();
     }
     syncSelectionAvailability();
+    noteCompressionActivity();
     scheduleFrame();
     result.outcome = TerminalActionOutcome::Success;
     result.performed = true;
@@ -2256,6 +2288,7 @@ void SessionWorker::scrollViewport(const TerminalViewportRequest &request)
             rebuildSearchVisibleCells();
             publishSearchUpdate();
         }
+        noteCompressionActivity();
         scheduleFrame();
     }
 }
@@ -2292,6 +2325,7 @@ void SessionWorker::scrollToSelectionAction(quint64 requestId)
         rebuildSearchVisibleCells();
         publishSearchUpdate();
     }
+    noteCompressionActivity();
     scheduleFrame();
     result.outcome = TerminalActionOutcome::Success;
     result.performed = true;
@@ -2325,7 +2359,7 @@ void SessionWorker::beginSearch(quint64 generation, const QByteArray &needle)
         // Public screen-coordinate cell reads restore compressed pages. Start
         // an incremental verification pass when a query is replaced so those
         // cold pages do not remain resident indefinitely.
-        compressionTimer_->start(0);
+        scheduleRestoredPageCompression();
     }
     *searchState_ = SearchState{};
     searchState_->chunkScheduled = chunkScheduled;
@@ -2402,7 +2436,7 @@ void SessionWorker::cancelSearch(quint64 generation)
     if ((searchState_->rowsSinceCompressionPass > 0
          || searchState_->currentRow.has_value())
         && compressionTimer_ != nullptr) {
-        compressionTimer_->start(0);
+        scheduleRestoredPageCompression();
     }
     *searchState_ = SearchState{};
     searchState_->chunkScheduled = chunkScheduled;
@@ -2661,7 +2695,7 @@ void SessionWorker::processSearchChunk()
         // read restores the page, so interleave the library's bounded
         // compression traversal to cap residency and recover cold history.
         searchState_->rowsSinceCompressionPass = 0;
-        compressionTimer_->start(0);
+        scheduleRestoredPageCompression();
     }
     if (searchState_->complete || !searchState_->lastPublication.isValid()
         || searchState_->lastPublication.elapsed()
@@ -2702,6 +2736,7 @@ void SessionWorker::navigateSearch(quint64 generation,
         vt_ != nullptr && vt_->scrollSearchRangeIntoView(range);
     if (viewportChanged) {
         markTerminalContentChanged();
+        noteCompressionActivity();
         scheduleFrame();
     }
     rebuildSearchVisibleCells();
@@ -2729,6 +2764,7 @@ void SessionWorker::searchSelectionAction(quint64 requestId)
     }
 
     const QString text = vt_->selectedText(false);
+    scheduleRestoredPageCompression();
     if (text.isNull()) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to format terminal selection"));
@@ -3022,15 +3058,45 @@ void SessionWorker::refreshTrackedHyperlink(bool force)
                              uri, targetCell, matchingCells);
 }
 
+void SessionWorker::scheduleCompression(int delayMilliseconds)
+{
+    if (!options_.runtime.scrollbackCompression || vt_ == nullptr
+        || compressionTimer_ == nullptr) {
+        return;
+    }
+    compressionTimer_->start(delayMilliseconds);
+}
+
+void SessionWorker::scheduleRestoredPageCompression()
+{
+    // A frontend read must not pull an existing terminal-activity idle
+    // deadline forward. The armed pass will reclaim the restored pages; only
+    // an otherwise idle scheduler needs a new incremental deadline.
+    if (!options_.runtime.scrollbackCompression || vt_ == nullptr
+        || compressionTimer_ == nullptr) {
+        return;
+    }
+    if (compressionTraversalPending_) {
+        // A read can restore a page already inspected by libghostty's current
+        // verification traversal without changing the activity token. The
+        // current traversal may therefore report complete with that page
+        // resident; remember to start one fresh pass afterward.
+        compressionReplayPending_ = true;
+    }
+    if (compressionTimer_->isActive()) return;
+    scheduleCompression(kCompressionStepMilliseconds);
+}
+
 void SessionWorker::noteCompressionActivity()
 {
     if (vt_ == nullptr || compressionTimer_ == nullptr) {
         return;
     }
     const uint64_t activity = vt_->compressionActivity();
-    if (activity != compressionActivity_) {
+    if (!compressionActivity_.has_value()
+        || activity != *compressionActivity_) {
         compressionActivity_ = activity;
-        compressionTimer_->start();
+        scheduleCompression(kCompressionIdleMilliseconds);
     }
 }
 
@@ -3043,11 +3109,20 @@ void SessionWorker::syncMouseEncoder()
 
 void SessionWorker::compressScrollback()
 {
-    if (vt_ == nullptr || compressionTimer_ == nullptr) {
+    if (!options_.runtime.scrollbackCompression || vt_ == nullptr
+        || compressionTimer_ == nullptr) {
+        compressionTraversalPending_ = false;
+        compressionReplayPending_ = false;
         return;
     }
-    if (vt_->compressScrollback()) {
-        compressionTimer_->start(0);
+    compressionTraversalPending_ = vt_->compressScrollback();
+    if (compressionTraversalPending_) {
+        scheduleCompression(kCompressionStepMilliseconds);
+        return;
+    }
+    if (compressionReplayPending_) {
+        compressionReplayPending_ = false;
+        scheduleCompression(kCompressionStepMilliseconds);
     }
 }
 
@@ -3322,6 +3397,8 @@ void SessionWorker::shutdown()
     if (compressionTimer_ != nullptr) {
         compressionTimer_->stop();
     }
+    compressionTraversalPending_ = false;
+    compressionReplayPending_ = false;
 
     if (childPid_ > 0) {
         const pid_t pid = static_cast<pid_t>(childPid_);

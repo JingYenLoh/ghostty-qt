@@ -264,6 +264,7 @@ private Q_SLOTS:
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
+    void appliesLiveScrollbackCompressionPolicy();
     void appliesReloadedWordBoundariesToExistingGesture();
     void appliesClickRepeatIntervalAtLaunchAndReload();
     void extendsSelectionUsingReloadedClickInterval();
@@ -3447,6 +3448,162 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesLiveScrollbackCompressionPolicy()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    qRegisterMetaType<TerminalSearchUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy searchSpy(&worker, &SessionWorker::searchUpdated);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("i=0; while [ $i -lt 1000 ]; do "
+                       "printf 'compression-row-%03d\\r\\n' \"$i\"; "
+                       "i=$((i + 1)); done; "
+                       "printf 'compression-ready'; sleep 30"),
+    };
+    options.hold = true;
+    options.runtime.scrollbackCompression = false;
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("compression-ready")), 5000);
+
+    QTimer *compressionTimer =
+        worker.findChild<QTimer *>(QStringLiteral("scrollbackCompressionTimer"),
+                                   Qt::FindDirectChildrenOnly);
+    QVERIFY(compressionTimer != nullptr);
+    QVERIFY(compressionTimer->isSingleShot());
+    QCOMPARE(compressionTimer->interval(), 250);
+    QVERIFY(!compressionTimer->isActive());
+
+    // Mutations while disabled must not leak through the ordinary activity
+    // scheduler.
+    worker.resizeTerminal(81, 24, 8, 16, 648, 384);
+    QVERIFY(!compressionTimer->isActive());
+
+    // Search owns three direct scheduling paths because its public row reads
+    // restore compressed pages without changing the activity token. Query
+    // progress, replacement, and cancellation must all honor the same gate.
+    worker.search(1, QByteArrayLiteral("compression-row"));
+    for (int chunk = 0; chunk < 20; ++chunk) {
+        QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                          Qt::DirectConnection));
+        QVERIFY(!compressionTimer->isActive());
+    }
+    worker.search(2, QByteArrayLiteral("row"));
+    QVERIFY(!compressionTimer->isActive());
+    QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                      Qt::DirectConnection));
+    worker.cancelSearch(3);
+    QVERIFY(!compressionTimer->isActive());
+
+    TerminalSessionRuntimeOptions runtime = options.runtime;
+    runtime.scrollbackCompression = true;
+    worker.applyRuntimeOptions(runtime);
+    QVERIFY(compressionTimer->isActive());
+    QVERIFY(compressionTimer->remainingTime() > 0);
+    QCOMPARE(compressionTimer->interval(), 250);
+
+    // Restored-page recovery must not shorten an already-armed activity idle
+    // deadline. The existing pass will see the pages when it runs.
+    worker.search(4, QByteArrayLiteral("compression-row"));
+    for (int chunk = 0; chunk < 20; ++chunk) {
+        QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                          Qt::DirectConnection));
+    }
+    worker.cancelSearch(5);
+    QVERIFY(compressionTimer->isActive());
+    QCOMPARE(compressionTimer->interval(), 250);
+
+    // Disabling cancels an already-armed idle pass. A timeout already queued
+    // by Qt is harmless because the callback rechecks the live policy.
+    runtime.scrollbackCompression = false;
+    worker.applyRuntimeOptions(runtime);
+    QVERIFY(!compressionTimer->isActive());
+    QVERIFY(QMetaObject::invokeMethod(&worker, "compressScrollback",
+                                      Qt::DirectConnection));
+    QVERIFY(!compressionTimer->isActive());
+
+    // Re-enabling deliberately forgets the cached activity token so resident
+    // pages are reconsidered even without another terminal mutation.
+    runtime.scrollbackCompression = true;
+    worker.applyRuntimeOptions(runtime);
+    QVERIFY(compressionTimer->isActive());
+    QVERIFY(compressionTimer->remainingTime() > 0);
+
+    // Drive the public incremental bridge to completion without waiting on
+    // wall-clock timers, then prove that restored history remains readable.
+    // Enough rows were emitted above to span multiple Ghostty pages.
+    compressionTimer->stop();
+    int compressionPasses = 0;
+    for (; compressionPasses < 4096; ++compressionPasses) {
+        QVERIFY(QMetaObject::invokeMethod(&worker, "compressScrollback",
+                                          Qt::DirectConnection));
+        if (!compressionTimer->isActive()) {
+            break;
+        }
+        QCOMPARE(compressionTimer->interval(), 1);
+        compressionTimer->stop();
+    }
+    QVERIFY(compressionPasses > 0);
+    QVERIFY(compressionPasses < 4096);
+
+    // Begin another metadata traversal over the now-compressed pages, then
+    // restore history before its continuation. The worker must latch a fresh
+    // replay instead of letting an already-inspected page escape the current
+    // verification cursor.
+    QVERIFY(QMetaObject::invokeMethod(&worker, "compressScrollback",
+                                      Qt::DirectConnection));
+    QVERIFY(compressionTimer->isActive());
+    QCOMPARE(compressionTimer->interval(), 1);
+    compressionTimer->stop();
+
+    worker.search(6, QByteArrayLiteral("compression-row"));
+    for (int chunk = 0; chunk < 1024; ++chunk) {
+        const std::optional<TerminalSearchUpdate> update =
+            latestSearchUpdate(searchSpy, 6);
+        if (update.has_value() && update->complete) {
+            break;
+        }
+        QVERIFY(QMetaObject::invokeMethod(&worker, "processSearchChunk",
+                                          Qt::DirectConnection));
+    }
+    const std::optional<TerminalSearchUpdate> compressedSearch =
+        latestSearchUpdate(searchSpy, 6);
+    QVERIFY(compressedSearch.has_value());
+    QVERIFY(compressedSearch->complete);
+    QCOMPARE(compressedSearch->totalMatches, quint64(1000));
+    QVERIFY(compressionTimer->isActive());
+    QCOMPARE(compressionTimer->interval(), 1);
+
+    int recoveryPasses = 0;
+    for (; recoveryPasses < 4096; ++recoveryPasses) {
+        compressionTimer->stop();
+        QVERIFY(QMetaObject::invokeMethod(&worker, "compressScrollback",
+                                          Qt::DirectConnection));
+        if (!compressionTimer->isActive()) {
+            break;
+        }
+        QCOMPARE(compressionTimer->interval(), 1);
+    }
+    QVERIFY(recoveryPasses > 0);
+    QVERIFY(recoveryPasses < 4096);
+
+    runtime.scrollbackCompression = false;
+    worker.applyRuntimeOptions(runtime);
+    QVERIFY(!compressionTimer->isActive());
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

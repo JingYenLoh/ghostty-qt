@@ -56,6 +56,9 @@ struct LaunchOptions {
     TerminalAppearance appearance;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
+    // Compression is a live session policy. Disabling it leaves existing
+    // compressed pages intact while preventing further background work.
+    bool scrollbackCompression = true;
     // Qt presents Ghostty's viewport state as an overlay control. The policy
     // affects only that frontend affordance; scrolling remains available when
     // the control is hidden.

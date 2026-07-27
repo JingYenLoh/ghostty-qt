@@ -224,6 +224,7 @@ private Q_SLOTS:
     void realHelperExportsEnvironment();
     void realHelperExportsCommands();
     void realHelperExportsAbnormalCommandExitRuntime();
+    void realHelperExportsScrollbackCompression();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -1355,6 +1356,48 @@ void GhosttyConfigProcessLoaderTest::
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
              std::numeric_limits<quint32>::max());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsScrollbackCompression()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.scrollbackCompression);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("scrollback-compression = false\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.scrollbackCompression);
+
+    result = queryRealConfigExport(
+        helperPath, fixture, {QStringLiteral("--scrollback-compression=true")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.scrollbackCompression);
+
+    result = queryRealConfigExport(
+        helperPath, fixture, {QStringLiteral("--scrollback-compression=")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.scrollbackCompression);
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("scrollback-compression = false\n"
+                          "scrollback-compression =\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.scrollbackCompression);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

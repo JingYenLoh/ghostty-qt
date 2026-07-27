@@ -252,6 +252,8 @@ fn writeValues(
     try json.objectField("scrollback-limit");
     var scrollback_buf: [32]u8 = undefined;
     try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
+    try json.objectField("scrollback-compression");
+    try json.write(config.@"scrollback-compression");
     try json.objectField("scrollbar");
     try json.write(@tagName(config.scrollbar));
     try json.objectField("bell-features");

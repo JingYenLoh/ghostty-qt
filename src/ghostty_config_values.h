@@ -231,6 +231,7 @@ struct GhosttyConfigValues {
     ResizeOverlayOptions resizeOverlay;
 
     quint64 scrollbackLimitBytes = 0;
+    bool scrollbackCompression = true;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
     BellFeatures bellFeatures;
     std::optional<GhosttyConfigPath> bellAudioPath;

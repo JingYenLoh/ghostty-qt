@@ -978,9 +978,22 @@ Resize starts in `TerminalPane`: font metrics and item geometry determine rows,
 columns, cell pixels, and surface pixels. The worker resizes both Ghostty's
 terminal and the kernel PTY with `TIOCSWINSZ`.
 
-After output becomes idle, the worker runs libghostty's bounded incremental
-scrollback compression until the current pass completes. Compression and all
-other terminal access remain serialized on the pane's worker thread.
+With `scrollback-compression=true`, the worker waits for Ghostty's 250 ms idle
+period and then runs libghostty's bounded incremental scrollback compressor,
+leaving 1 ms between pending steps. Compression and all other terminal access
+remain serialized on the pane's worker thread. Every scheduling path crosses
+one live-policy gate, including progressive search and frontend formatting
+reads that can restore compressed pages without changing Ghostty's activity
+token. A restored-page read that arrives during an incremental traversal
+latches one fresh replay after that traversal completes, so a page already
+passed by libghostty's verification cursor cannot remain resident. Viewport
+movements instead feed the token-based idle scheduler.
+
+Disabling compression stops an armed timer and makes an already-delivered
+timeout harmless, but does not decompress existing pages or alter the logical
+history allocation. Re-enabling clears the worker's optional cached activity
+token before applying the ordinary idle delay, so resident history is
+reconsidered even if the terminal has not mutated since the reload.
 
 ## Session and environment
 
@@ -1412,6 +1425,9 @@ The pinned terminal allocation limit is byte-valued. Ghostty's
 `max(256, columns * 16)` bytes per requested row, using the initial terminal
 width and saturating arithmetic; it is a capacity estimate, not an exact row
 guarantee because Ghostty pages also store styles and grapheme metadata.
+`scrollback-compression` is independent of that capacity: its exact finalized
+Boolean is worker-owned live state, while a reloaded capacity still applies
+only to panes created afterward.
 
 ## Keybinding compatibility boundary
 
@@ -1419,7 +1435,8 @@ The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the finalized non-empty raw-byte child terminal identity,
 the finalized ordered raw-byte child-environment override map, the exact
-scrollbar policy, all five finalized
+default-true scrollback-compression Boolean, the exact scrollbar policy, all
+five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
 required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact

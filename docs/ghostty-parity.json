@@ -791,10 +791,14 @@
         "quick-terminal-space-behavior": {
           "scope": "wayland"
         },
-    "scrollback-limit": {
-      "status": "partial",
-      "note": "Ghostty's byte-valued config limit is preserved for pane creation, but libghostty-vt cannot resize the history allocation of an existing pane during live reload."
-    },
+        "scrollback-compression": {
+          "status": "supported",
+          "note": "The exact default-true Boolean applies live. Enabled panes schedule libghostty's bounded incremental compressor after Ghostty's 250 ms idle delay and continue pending passes 1 ms apart. Disable stops future work without eagerly decompressing pages or changing logical history capacity; re-enable clears the cached activity marker so unchanged resident history is reconsidered. Viewport movement and frontend reads that restore compressed pages feed the same gated scheduler."
+        },
+        "scrollback-limit": {
+          "status": "partial",
+          "note": "Ghostty's byte-valued config limit is preserved for pane creation, but libghostty-vt cannot resize the history allocation of an existing pane during live reload."
+        },
         "scrollbar": {
           "status": "supported",
           "scope": "qt_mapping",

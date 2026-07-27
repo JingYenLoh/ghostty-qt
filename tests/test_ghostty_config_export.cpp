@@ -258,6 +258,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.resizeOverlay.duration, std::chrono::milliseconds{1250});
 
     QCOMPARE(values.scrollbackLimitBytes, std::numeric_limits<quint64>::max());
+    QVERIFY(!values.scrollbackCompression);
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
     QVERIFY(values.bellFeatures.system);
     QVERIFY(values.bellFeatures.audio);
@@ -1114,6 +1115,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
+    QTest::newRow("missing-scrollback-compression")
+        << withoutValue(object(), QStringLiteral("scrollback-compression"))
+        << QStringLiteral("values is missing field 'scrollback-compression'");
     QTest::newRow("missing-bell-features")
         << withoutValue(object(), QStringLiteral("bell-features"))
         << QStringLiteral("values is missing field 'bell-features'");
@@ -1570,6 +1574,10 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("scrollback-limit"),
                      QStringLiteral("18446744073709551616"))
         << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("scrollback-compression-type")
+        << withValue(object(), QStringLiteral("scrollback-compression"),
+                     QStringLiteral("true"))
+        << QStringLiteral("values.scrollback-compression must be a boolean");
     QTest::newRow("linux-cgroup-memory-number")
         << withValue(object(), QStringLiteral("linux-cgroup-memory-limit"), 1)
         << QStringLiteral("values.linux-cgroup-memory-limit must be a string");

@@ -92,6 +92,9 @@ struct TerminalSessionRuntimeOptions {
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
+    // Existing compressed pages remain valid when this live policy is
+    // disabled; the worker gates only future compression scheduling.
+    bool scrollbackCompression = true;
     // Linux classifies a nonzero child exit observed at or before this live
     // threshold as abnormal. Zero remains meaningful for a sub-millisecond
     // failure and therefore is not a disabled sentinel.

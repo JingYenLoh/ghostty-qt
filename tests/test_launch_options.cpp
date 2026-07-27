@@ -159,6 +159,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
 
     values.scrollbackLimitBytes = 50'000'000;
+    values.scrollbackCompression = false;
     values.bellAudioPath = GhosttyConfigPath{
         .path = QStringLiteral("/work/bell.oga"),
         .optional = true,
@@ -326,6 +327,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
+    QVERIFY(options.scrollbackCompression);
     QCOMPARE(options.scrollbar, ScrollbarPolicy::System);
     QVERIFY(!options.bellFeatures.system);
     QVERIFY(!options.bellFeatures.audio);
@@ -810,6 +812,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.appearance.faintOpacity, 0.375);
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
+    QVERIFY(!cliResult.scrollbackCompression);
     QCOMPARE(cliResult.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!cliResult.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(cliResult.selectionClipboard.copyOnSelect,
@@ -1502,6 +1505,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .value = 42'000,
         .unit = ScrollbackLimitUnit::Bytes,
     };
+    options.scrollbackCompression = false;
     options.hold = true;
     options.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
     options.appearance.palette = {QColor(QStringLiteral("#abcdef"))};
@@ -1539,6 +1543,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
+    QCOMPARE(runtime.scrollbackCompression, options.scrollbackCompression);
     QCOMPARE(runtime.abnormalCommandExitRuntimeMilliseconds,
              options.abnormalCommandExitRuntimeMilliseconds);
     QVERIFY(runtime.waitAfterCommand);
@@ -1639,6 +1644,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              launch.hold);
     QVERIFY(toTerminalSessionRuntimeOptions(abnormalRuntimeChanged) != runtime);
 
+    LaunchOptions scrollbackCompressionChanged = options;
+    scrollbackCompressionChanged.scrollbackCompression = true;
+    QVERIFY(toTerminalSessionRuntimeOptions(scrollbackCompressionChanged)
+            != runtime);
+
     LaunchOptions environmentChanged = options;
     environmentChanged.environment = {{
         .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1661,6 +1671,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.environment.clear();
     options.program.clear();
     options.scrollbackLimit = {};
+    options.scrollbackCompression = true;
     options.hold = false;
     options.appearance = {};
     options.selectionClipboard = {};
@@ -1692,6 +1703,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
                  },
              }));
     QCOMPARE(launch.scrollbackLimit.value, quint64(42'000));
+    QVERIFY(!launch.runtime.scrollbackCompression);
     QCOMPARE(launch.runtime.appearance.foregroundColor,
              QColor(QStringLiteral("#123456")));
     const TerminalSelectionClipboardOptions expectedClipboard{

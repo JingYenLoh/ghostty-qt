@@ -143,6 +143,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
+        .scrollbackCompression = options.scrollbackCompression,
         .abnormalCommandExitRuntimeMilliseconds =
             options.abnormalCommandExitRuntimeMilliseconds,
         .waitAfterCommand = options.waitAfterCommand,
@@ -249,6 +250,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
             .unit = ScrollbackLimitUnit::Bytes,
         };
     }
+    result.scrollbackCompression = config.scrollbackCompression;
     result.scrollbar = config.scrollbar;
     result.bellFeatures = config.bellFeatures;
     result.bellAudioPath = config.bellAudioPath;
