@@ -178,6 +178,14 @@ public:
         Retry,
     };
 
+    enum class SemanticPromptState : quint8 {
+        // The terminal state could not be queried. This is distinct from an
+        // ordinary terminal that has not received shell integration markers.
+        Unavailable,
+        Away,
+        AtPrompt,
+    };
+
     struct DeferredEffects {
         // A null QString means that the effect did not occur. An empty,
         // non-null QString remains a valid title or working directory value.
@@ -334,6 +342,13 @@ public:
     std::optional<TextRangeMatch>
     resolveTextRange(const TrackedTextRange &range) const;
 
+    // Mirror Ghostty's cursor-at-prompt policy using the public C surface:
+    // alternate screens are always Away; a semantic prompt/continuation row
+    // is AtPrompt; otherwise the stored cursor cell decides. Public
+    // libghostty-vt does not expose the live cursor semantic mode or whether
+    // shell integration has ever been observed, so Away also covers a
+    // terminal without semantic prompt integration.
+    SemanticPromptState semanticPromptState() const;
     std::uint64_t compressionActivity() const;
     bool compressScrollback();
     RenderResult renderFrame(RenderSnapshot *snapshot);

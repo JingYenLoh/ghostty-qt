@@ -38,6 +38,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("wait-after-command"),
     QLatin1StringView("abnormal-command-exit-runtime"),
     QLatin1StringView("env"),
+    QLatin1StringView("shell-integration"),
+    QLatin1StringView("shell-integration-features"),
     QLatin1StringView("linux-cgroup"),
     QLatin1StringView("linux-cgroup-memory-limit"),
     QLatin1StringView("linux-cgroup-processes-limit"),
@@ -188,6 +190,15 @@ constexpr auto EnvironmentEntryFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("key"),
     QLatin1StringView("value"),
 });
+constexpr auto ShellIntegrationFeatureFields =
+    std::to_array<QLatin1StringView>({
+        QLatin1StringView("cursor"),
+        QLatin1StringView("sudo"),
+        QLatin1StringView("title"),
+        QLatin1StringView("ssh-env"),
+        QLatin1StringView("ssh-terminfo"),
+        QLatin1StringView("path"),
+    });
 constexpr auto ShellCommandFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("kind"),
     QLatin1StringView("value"),
@@ -311,6 +322,31 @@ ParseResult<BellFeatures> readBellFeatures(const QJsonValue &value,
              {QLatin1StringView("attention"), &result.attention},
              {QLatin1StringView("title"), &result.title},
              {QLatin1StringView("border"), &result.border},
+         })) {
+        auto parsed =
+            readBoolean(object->value(name), childContext(context, name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        *destination = *parsed;
+    }
+    return result;
+}
+
+ParseResult<GhosttyShellIntegrationFeatures>
+readShellIntegrationFeatures(const QJsonValue &value, const QString &context)
+{
+    auto object =
+        readExactObject(value, context, ShellIntegrationFeatureFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    GhosttyShellIntegrationFeatures result;
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, bool *>>({
+             {QLatin1StringView("cursor"), &result.cursor},
+             {QLatin1StringView("sudo"), &result.sudo},
+             {QLatin1StringView("title"), &result.title},
+             {QLatin1StringView("ssh-env"), &result.sshEnvironment},
+             {QLatin1StringView("ssh-terminfo"), &result.sshTerminfo},
+             {QLatin1StringView("path"), &result.path},
          })) {
         auto parsed =
             readBoolean(object->value(name), childContext(context, name));
@@ -1319,6 +1355,16 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("single-instance"),
              LinuxCgroupMode::SingleInstance},
         });
+    constexpr auto ShellIntegrationModes = std::to_array<
+        std::pair<QLatin1StringView, GhosttyShellIntegrationMode>>({
+        {QLatin1StringView("none"), GhosttyShellIntegrationMode::None},
+        {QLatin1StringView("detect"), GhosttyShellIntegrationMode::Detect},
+        {QLatin1StringView("bash"), GhosttyShellIntegrationMode::Bash},
+        {QLatin1StringView("elvish"), GhosttyShellIntegrationMode::Elvish},
+        {QLatin1StringView("fish"), GhosttyShellIntegrationMode::Fish},
+        {QLatin1StringView("nushell"), GhosttyShellIntegrationMode::Nushell},
+        {QLatin1StringView("zsh"), GhosttyShellIntegrationMode::Zsh},
+    });
 
     const auto assignEnum = [&](QLatin1StringView name, auto &destination,
                                 const auto &allowed) -> ParseResult<void> {
@@ -1393,6 +1439,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("linux-cgroup"),
                                  result.linuxCgroup.mode, LinuxCgroupModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed =
+            assignEnum(QLatin1StringView("shell-integration"),
+                       result.shellIntegration, ShellIntegrationModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
 
@@ -1478,6 +1529,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed = assign(QLatin1StringView("linux-cgroup-processes-limit"),
                              result.linuxCgroup.processesLimit,
                              readOptionalDecimalUint64);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("shell-integration-features"),
+                             result.shellIntegrationFeatures,
+                             readShellIntegrationFeatures);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
 

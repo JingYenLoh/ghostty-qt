@@ -270,12 +270,22 @@ a stale request ID cannot rename a replacement pane, model row, or current tab.
 Close policy tracks the live child separately from active foreground work. For
 an interactive shell, `tcgetpgrp` detects jobs in a separate foreground process
 group, with a short conservative latch around command submission; an explicitly
-launched program is active for its whole lifetime. `always` protects any live
-child, and neither mode prompts after exit. The current fallback cannot detect
-long-running shell builtins because they remain in the shell's own process
-group; exact `confirm-close-surface=true` behavior requires Ghostty semantic
-prompt state plus installed shell integration and remains a tracked parity
-item. Pending dialogs are re-evaluated when state changes. Destruction sends
+launched program is active for its whole lifetime. The launch transformer
+retains whether a shell integration was successfully installed, so startup
+remains active until that shell emits its first prompt. The worker queries
+libghostty's public active-screen row/cell semantic metadata after each PTY
+batch and on its process timer, sampling and latching `AtPrompt` even while the
+foreground-group or submission latch has active precedence. `AtPrompt` clears
+activity after that precedence ends, while `Away` protects same-process-group
+shell builtins and alternate-screen work until the next prompt.
+`Unavailable` also remains active once integration is expected or a prompt has
+been observed, so a transient public-query failure cannot approve a pending
+close. A shell for which integration was not installed retains the historical
+process-group/latch fallback. The public API does not expose Ghostty's private
+live cursor semantic mode or a terminal-owned integration-seen bit. `always`
+protects any live child, and neither mode prompts after exit. Pending dialogs
+are re-evaluated when state changes.
+Destruction sends
 `SIGHUP` to the child's process group, allows a two-second grace period, and
 uses `SIGKILL` if the group does not exit; workspace/tab teardown starts all
 pane shutdowns first so grace periods overlap. A close-on-exec readiness pipe
@@ -1845,6 +1855,28 @@ the main executable and resolves the library from a relative private
 `${CMAKE_INSTALL_LIBDIR}/ghostty-qt` directory; disabling the option omits this
 configuration path entirely.
 
+The same isolated helper accepts a second project-private, size-bounded JSON
+transaction for shell launch preparation. Qt supplies one byte-exact
+shell/direct command, the complete inherited and frontend-injected environment,
+the finalized integration mode and features, effective cursor blinking, and
+the relocatable resource root. The overlay calls pinned
+`shell_integration.setupFeatures` and `shell_integration.setup`, then returns
+the transformed command, complete environment, and detected shell without
+allowing a Ghostty allocation or private handle into the Qt process. The worker
+applies finalized user `env` overrides and concrete `PWD` only afterward.
+Helper, resource, detection, or setup failure is non-fatal and retains the
+original launch.
+
+CMake stages the pinned `src/shell-integration` tree into each build directory,
+applies one zero-fuzz downstream patch that changes only the executable used by
+the five SSH wrappers, and validates the complete expected resource set. The
+submodule remains pristine. Installation places the tree under
+`${CMAKE_INSTALL_DATADIR}/ghostty-qt/shell-integration`; runtime lookup is
+relative to the executable or the authoritative
+`GHOSTTY_QT_SHELL_INTEGRATION_RESOURCES` diagnostic/development override.
+Because Qt supplies the executable and override paths as `QString`, those
+filesystem paths must be representable by its UTF-8 Unix filename conversion.
+
 The main executable and helper share one constexpr catalog containing every
 pinned action spelling and a separate frontend-support decision. This preserves
 Ghostty's distinction between a known-but-unsupported action, an invalid
@@ -1879,8 +1911,9 @@ child arguments and streams, TERM/SendEnv options, destination resolution,
 built-in terminfo upload and fallback, standard XDG-state cache, and
 `128 + signal` child-status mapping. The companion `+ssh-cache` action owns the
 same cache's list/query/add/remove/prune/clear grammar and on-disk behavior.
-Both are explicit pre-Qt CLI actions; automatic shell-function injection
-remains a separate shell-integration parity item.
+Both remain explicit pre-Qt CLI actions, and the automatically staged Bash,
+Elvish, Fish, Nushell, and Zsh functions reach them through
+`GHOSTTY_BIN_DIR/ghostty-qt`.
 
 The pinned `+edit-config` implementation then performs its own intentional
 second replacement. It loads standard configuration first, creating the
@@ -2011,7 +2044,9 @@ The default CTest suite has focused layers for each ownership boundary:
   configured `TERM`, initial private
   `TERMINFO`/`COLORTERM` values, byte-exact finalized environment overrides,
   concrete-directory `PWD` precedence, inherited fallback, and parent-`PATH`
-  executable lookup, plus byte-exact terminal-control action writes,
+  executable lookup, pinned shell-feature setup before finalized env,
+  positional-program forced-mode downgrade, semantic prompt/builtin and
+  alternate-screen activity transitions, plus byte-exact terminal-control action writes,
   injected cgroup placement before child exec, soft fallback, hard rejection,
   disabled-policy bypass, reset cache
   synchronization, correlated terminal-action outcomes and effects, process
@@ -2095,7 +2130,8 @@ The default CTest suite has focused layers for each ownership boundary:
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including tagged nullable command objects and their raw
   bytes, finalized non-empty byte-valued `term`, the ordered raw-byte `env`
-  pairs and their closed validity rules, the cgroup enum/boolean and exact
+  pairs and their closed validity rules, shell-integration mode and exact
+  feature object, the cgroup enum/boolean and exact
   nullable uint64 limits, exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
@@ -2109,10 +2145,16 @@ The default CTest suite has focused layers for each ownership boundary:
   ordinary/initial shell and direct command export plus wait finalization,
   default/custom/empty and non-UTF-8 `term` finalization, repeated `env`
   replacement, configured-map removal/reset, include precedence, and raw-byte
-  environment transport,
+  environment transport, default/forced/reset shell-integration policy and
+  feature finalization,
   default/custom/empty cgroup policy and full-width limits,
   nullable/capped application-lifetime duration export, and nullable X11
   divider-color canonicalization.
+- `shell-integration-resources` checks the staged pinned file inventory and
+  every zero-fuzz SSH executable rewrite. `ghostty-shell-integration` verifies
+  the strict byte-exact private protocol, limits and invalid inputs, relocatable
+  resource discovery, deterministic features with automatic injection
+  disabled, and a real forced-shell transformation through the pinned helper.
 - `ghostty-config-helper-smoke` runs `+validate-config` through the helper and
   exact pinned Ghostty parser built for the application.
 - `ghostty-cli-delegation` verifies the shared raw-argument classifier; same-PID

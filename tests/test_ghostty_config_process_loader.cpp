@@ -221,6 +221,7 @@ private Q_SLOTS:
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
+    void realHelperExportsShellIntegration();
     void realHelperExportsEnvironment();
     void realHelperExportsCommands();
     void realHelperExportsAbnormalCommandExitRuntime();
@@ -1038,6 +1039,77 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsLinuxCgroup()
     QVERIFY(!result->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!result->values.linuxCgroup.processesLimit.has_value());
     QVERIFY(!result->values.linuxCgroup.hardFail);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsShellIntegration()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.shellIntegration,
+             GhosttyShellIntegrationMode::Detect);
+    QCOMPARE(result->values.shellIntegrationFeatures,
+             GhosttyShellIntegrationFeatures{});
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "shell-integration = zsh\n"
+            "shell-integration-features = "
+            "no-cursor,sudo,no-title,ssh-env,ssh-terminfo,no-path\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.shellIntegration, GhosttyShellIntegrationMode::Zsh);
+    const GhosttyShellIntegrationFeatures configured{
+        .cursor = false,
+        .sudo = true,
+        .title = false,
+        .sshEnvironment = true,
+        .sshTerminfo = true,
+        .path = false,
+    };
+    QCOMPARE(result->values.shellIntegrationFeatures, configured);
+
+    result = queryRealConfigExport(
+        helperPath, fixture,
+        {
+            QStringLiteral("--shell-integration=fish"),
+            QStringLiteral("--shell-integration-features=false"),
+        });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.shellIntegration,
+             GhosttyShellIntegrationMode::Fish);
+    QCOMPARE(result->values.shellIntegrationFeatures,
+             (GhosttyShellIntegrationFeatures{
+                 .cursor = false,
+                 .sudo = false,
+                 .title = false,
+                 .sshEnvironment = false,
+                 .sshTerminfo = false,
+                 .path = false,
+             }));
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("shell-integration = bash\n"
+                          "shell-integration =\n"
+                          "shell-integration-features = false\n"
+                          "shell-integration-features =\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.shellIntegration,
+             GhosttyShellIntegrationMode::Detect);
+    QCOMPARE(result->values.shellIntegrationFeatures,
+             GhosttyShellIntegrationFeatures{});
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsEnvironment()

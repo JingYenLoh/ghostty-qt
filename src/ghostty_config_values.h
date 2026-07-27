@@ -205,6 +205,9 @@ struct GhosttyConfigValues {
     // The helper has already applied repeat/reset/remove/overwrite and include
     // precedence. Preserve the finalized raw key/value bytes unchanged.
     TerminalEnvironment environment;
+    GhosttyShellIntegrationMode shellIntegration =
+        GhosttyShellIntegrationMode::Detect;
+    GhosttyShellIntegrationFeatures shellIntegrationFeatures;
     // Linux transient-scope policy remains launch-only: config reloads affect
     // panes constructed afterward, never an already-running process tree.
     LinuxCgroupConfig linuxCgroup;

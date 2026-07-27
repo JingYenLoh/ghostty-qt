@@ -228,6 +228,7 @@ class SessionWorkerTest : public QObject {
 private Q_SLOTS:
     void runsCommandThroughPty();
     void runsTaggedShellAndDirectCommands();
+    void appliesPinnedShellIntegrationLaunchOrdering();
     void classifiesAbnormalCommandExitBoundaries();
     void appliesLiveAbnormalExitPolicy();
     void waitsForEncodedKeyUsingLiveExitPolicy();
@@ -284,6 +285,8 @@ private Q_SLOTS:
     void retainsRegexHoverAcrossViewportScrolling();
     void revalidatesRegexActivationAcrossUnrelatedOutput();
     void explicitProgramIsActiveForItsLifetime();
+    void integratedShellStartupRemainsActiveUntilPrompt();
+    void semanticPromptsTrackSameProcessShellActivity();
     void interactiveShellTracksForegroundJobs();
 };
 
@@ -1833,6 +1836,99 @@ void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory_data()
     QTest::addColumn<bool>("existingNonDirectory");
     QTest::newRow("missing") << false;
     QTest::newRow("existing-non-directory") << true;
+}
+
+void SessionWorkerTest::appliesPinnedShellIntegrationLaunchOrdering()
+{
+#if !GHOSTTY_QT_TEST_SHELL_INTEGRATION_ENABLED
+    QSKIP("The pinned shell transformer is disabled with Ghostty config");
+#else
+    {
+        SessionWorker worker;
+        QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.command = TerminalCommand::shell(
+            QByteArrayLiteral(
+                "printf 'features=<%s> program=<%s> resources=<%s>\\n' "
+                "\"$GHOSTTY_SHELL_FEATURES\" \"$TERM_PROGRAM\" "
+                "\"${GHOSTTY_RESOURCES_DIR:+set}\""),
+            true);
+        options.environment = {{
+            .key = QByteArrayLiteral("TERM_PROGRAM"),
+            .value = QByteArrayLiteral("configured-after-integration"),
+        }};
+        options.shellIntegration = GhosttyShellIntegrationMode::None;
+        options.shellIntegrationFeatures = {
+            .cursor = true,
+            .sudo = true,
+            .title = false,
+            .sshEnvironment = false,
+            .sshTerminfo = false,
+            .path = false,
+        };
+        options.shellIntegrationAvailable = true;
+        options.runtime.appearance.cursorBlink = false;
+        options.hold = true;
+
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(
+                updates,
+                QStringLiteral(
+                    "features=<cursor:steady,sudo> "
+                    "program=<configured-after-integration> resources=<set>")),
+            5000);
+        QVERIFY2(errors.isEmpty(),
+                 errors.isEmpty()
+                     ? ""
+                     : qPrintable(errors.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    // A frontend positional program has Ghostty `-e` semantics: a configured
+    // forced shell becomes detection, so arbitrary programs do not inherit
+    // shell-specific launch mutations.
+    ScopedEnvironmentVariable zdotdir(QByteArrayLiteral("ZDOTDIR"),
+                                      QByteArrayLiteral("/original/zsh"));
+    ScopedEnvironmentVariable preserved(
+        QByteArrayLiteral("GHOSTTY_ZSH_ZDOTDIR"), QByteArrayLiteral("absent"));
+    qunsetenv("GHOSTTY_ZSH_ZDOTDIR");
+
+    SessionWorker worker;
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'zdotdir=<%s> preserved=<%s>\\n' "
+                       "\"$ZDOTDIR\" \"${GHOSTTY_ZSH_ZDOTDIR-unset}\""),
+    };
+    options.shellIntegration = GhosttyShellIntegrationMode::Zsh;
+    options.shellIntegrationAvailable = true;
+    options.hold = true;
+
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(
+            updates,
+            QStringLiteral("zdotdir=</original/zsh> preserved=<unset>")),
+        5000);
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
+    worker.shutdown();
+#endif
 }
 
 void SessionWorkerTest::fallsBackFromUnavailableWorkingDirectory()
@@ -4857,6 +4953,163 @@ void SessionWorkerTest::explicitProgramIsActiveForItsLifetime()
     worker.shutdown();
 }
 
+void SessionWorkerTest::integratedShellStartupRemainsActiveUntilPrompt()
+{
+#if !GHOSTTY_QT_TEST_SHELL_INTEGRATION_ENABLED
+    QSKIP("The pinned shell transformer is disabled with Ghostty config");
+#else
+    const QString bash = QStandardPaths::findExecutable(QStringLiteral("bash"));
+    if (bash.isEmpty()) {
+        QSKIP("bash is unavailable");
+    }
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString startupFile =
+        temporary.filePath(QStringLiteral("delayed-startup.bash"));
+    QVERIFY(writeExecutableScript(
+        startupFile,
+        QByteArrayLiteral(
+            "IFS= read -r -t 1 _ghostty_qt_delay || :\n"
+            "printf '\\033]133;A\\aintegrated-prompt \\033]133;B\\a'\n")));
+
+    SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.command = TerminalCommand::shell(QFile::encodeName(bash), true);
+    // The helper first installs Ghostty's Bash integration and reports that
+    // semantic prompts are expected. The finalized env override then supplies
+    // a deterministic same-process startup hook whose first prompt is delayed
+    // beyond the ordinary input grace period.
+    options.environment = {{
+        .key = QByteArrayLiteral("ENV"),
+        .value = QFile::encodeName(startupFile),
+    }};
+    options.shellIntegration = GhosttyShellIntegrationMode::Bash;
+    options.shellIntegrationAvailable = true;
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1'000);
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTest::qWait(450);
+    QVERIFY(!activitySpy.isEmpty());
+    QVERIFY(activitySpy.constLast().constFirst().toBool());
+    QVERIFY(exitSpy.isEmpty());
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("integrated-prompt")), 2'000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1'000);
+
+    worker.sendRawText(QByteArrayLiteral("exit\n"));
+    QTRY_VERIFY_WITH_TIMEOUT(!exitSpy.isEmpty(), 2'000);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+#endif
+}
+
+void SessionWorkerTest::semanticPromptsTrackSameProcessShellActivity()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy activitySpy(&worker, &SessionWorker::activeProcessChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    // Every phase runs in the original /bin/sh process group. Newlines from
+    // the test advance the script's builtin reads, avoiding wall-clock races
+    // while covering activity that tcgetpgrp alone cannot distinguish.
+    const QByteArray script =
+        QByteArrayLiteral("printf '\\033]133;A\\afirst-prompt \\033]133;B\\a'; "
+                          "IFS= read -r phase; "
+                          "printf '\\033]133;C\\a\\r\\nbuiltin-running\\r\\n'; "
+                          "IFS= read -r phase; "
+                          "printf '\\033]133;D;0\\a\\033]133;A\\asecond-prompt "
+                          "\\033]133;B\\a'; "
+                          "IFS= read -r phase; "
+                          "printf '\\033[?1049halternate-running'; "
+                          "IFS= read -r phase; "
+                          "printf '\\033[?1049l'; "
+                          "IFS= read -r phase");
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.command = TerminalCommand::shell(script, true);
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1000);
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("first-prompt")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1000);
+    QVERIFY(exitSpy.isEmpty());
+
+    activitySpy.clear();
+    worker.sendRawText(QByteArrayLiteral("\n"));
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("builtin-running")), 1000);
+    // The input activity grace period is 250 ms. Remaining active beyond it
+    // proves the latched semantic Away state, rather than the grace timer,
+    // protects same-process-group shell work.
+    QTest::qWait(400);
+    QVERIFY(!activitySpy.isEmpty());
+    QVERIFY(activitySpy.constLast().constFirst().toBool());
+    QVERIFY(exitSpy.isEmpty());
+
+    activitySpy.clear();
+    worker.sendRawText(QByteArrayLiteral("\n"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("second-prompt")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1000);
+    QVERIFY(exitSpy.isEmpty());
+
+    activitySpy.clear();
+    worker.sendRawText(QByteArrayLiteral("\n"));
+    QVERIFY(spyContainsBool(activitySpy, true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alternate-running")), 1000);
+    QTest::qWait(400);
+    QVERIFY(!activitySpy.isEmpty());
+    QVERIFY(activitySpy.constLast().constFirst().toBool());
+    QVERIFY(exitSpy.isEmpty());
+
+    activitySpy.clear();
+    worker.sendRawText(QByteArrayLiteral("\n"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !activitySpy.isEmpty()
+            && !activitySpy.constLast().constFirst().toBool(),
+        1000);
+    QVERIFY(exitSpy.isEmpty());
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
 void SessionWorkerTest::interactiveShellTracksForegroundJobs()
 {
     const bool shellWasSet = qEnvironmentVariableIsSet("SHELL");
@@ -4889,6 +5142,8 @@ void SessionWorkerTest::interactiveShellTracksForegroundJobs()
     worker.initialize(options);
     QTRY_VERIFY_WITH_TIMEOUT(startedSpy.count() > 0, 1000);
 
+    // This shell deliberately emits no OSC 133 markers, retaining coverage
+    // for the tcgetpgrp and short input-grace fallback path.
     // Give the shell time to take the foreground group and settle at its
     // prompt. Its live child alone is not close-confirmation-worthy.
     QTRY_VERIFY_WITH_TIMEOUT(

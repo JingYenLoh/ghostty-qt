@@ -1,6 +1,7 @@
 foreach(required_variable
-        BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_TERMINFO_DIR PROBE
-        CONFIG_HELPER_NAME CONFIG)
+        BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_TERMINFO_DIR
+        INSTALL_SHELL_INTEGRATION_DIR SHELL_INTEGRATION_VALIDATE_SCRIPT
+        PROBE CONFIG_HELPER_NAME CONFIG)
     if(NOT DEFINED ${required_variable})
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -31,6 +32,22 @@ get_filename_component(probe_name "${PROBE}" NAME)
 file(RENAME "${original_prefix}" "${relocated_prefix}" RESULT rename_result)
 if(rename_result)
     message(FATAL_ERROR "Unable to relocate staged prefix: ${rename_result}")
+endif()
+
+set(relocated_shell_integration
+    "${relocated_prefix}/${INSTALL_SHELL_INTEGRATION_DIR}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSHELL_INTEGRATION_DIR=${relocated_shell_integration}"
+        -P "${SHELL_INTEGRATION_VALIDATE_SCRIPT}"
+    RESULT_VARIABLE shell_integration_result
+    OUTPUT_VARIABLE shell_integration_output
+    ERROR_VARIABLE shell_integration_error)
+if(NOT shell_integration_result EQUAL 0)
+    message(FATAL_ERROR
+        "Relocated shell integration is invalid "
+        "(${shell_integration_result})\n"
+        "${shell_integration_output}\n${shell_integration_error}")
 endif()
 
 if(CONFIG_HELPER_NAME)

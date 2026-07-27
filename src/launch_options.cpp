@@ -164,6 +164,9 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
     return {
         .term = options.term,
         .environment = options.environment,
+        .shellIntegration = options.shellIntegration,
+        .shellIntegrationFeatures = options.shellIntegrationFeatures,
+        .shellIntegrationAvailable = options.shellIntegrationAvailable,
         .linuxCgroup = options.linuxCgroup,
         .processUsesSingleInstance = options.processUsesSingleInstance,
         .workingDirectory = options.workingDirectory,
@@ -196,6 +199,9 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         config.abnormalCommandExitRuntimeMilliseconds;
     result.waitAfterCommand = config.waitAfterCommand;
     result.environment = config.environment;
+    result.shellIntegration = config.shellIntegration;
+    result.shellIntegrationFeatures = config.shellIntegrationFeatures;
+    result.shellIntegrationAvailable = true;
     result.linuxCgroup = config.linuxCgroup;
     if (!base.workingDirectoryExplicit) {
         result.inheritWorkingDirectory = !config.workingDirectoryPath;

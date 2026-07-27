@@ -232,6 +232,15 @@ private:
     bool running_ = false;
     bool waitingForExitKey_ = false;
     bool interactiveShell_ = false;
+    // A public terminal query cannot distinguish "no integration" from every
+    // unannotated cell. Latch the first definitive prompt before allowing
+    // semantic Away state to classify same-process-group shell work.
+    bool semanticPromptObserved_ = false;
+    // The isolated launch transformer reports whether it successfully
+    // installed one of Ghostty's shell integrations. Until that shell emits
+    // its first prompt, an Away/Unavailable query represents startup work,
+    // not an idle unintegrated shell.
+    bool semanticPromptExpected_ = false;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;

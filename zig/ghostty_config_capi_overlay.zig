@@ -8,6 +8,7 @@
 const std = @import("std");
 const inputpkg = @import("../input.zig");
 const Metrics = @import("../font/Metrics.zig");
+const shell_integration = @import("../termio/shell_integration.zig");
 const state = &@import("../global.zig").state;
 const String = @import("../main_c.zig").String;
 
@@ -51,6 +52,282 @@ export fn ghostty_qt_config_json() String {
         std.log.err("error exporting structured config as JSON err={}", .{err});
         return .empty;
     };
+}
+
+/// Apply Ghostty's pinned shell-integration command and environment setup to
+/// one frontend-provided launch request. This remains a project-private helper
+/// protocol: the Qt process sends and receives owned JSON through the isolated
+/// config helper, and no Ghostty-internal allocation crosses that process
+/// boundary.
+export fn ghostty_qt_shell_integration_json(
+    request_ptr: [*]const u8,
+    request_len: usize,
+) String {
+    return shellIntegrationJson(request_ptr[0..request_len]) catch |err| {
+        std.log.err("error preparing shell integration as JSON err={}", .{err});
+        return .empty;
+    };
+}
+
+const ShellIntegrationJsonCommand = struct {
+    kind: []const u8,
+    value: ?[]const u8 = null,
+    argv: ?[]const []const u8 = null,
+    @"default-shell": bool,
+};
+
+const ShellIntegrationJsonEnvironment = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+const ShellIntegrationJsonFeatures = struct {
+    cursor: bool,
+    sudo: bool,
+    title: bool,
+    @"ssh-env": bool,
+    @"ssh-terminfo": bool,
+    path: bool,
+};
+
+const ShellIntegrationJsonRequest = struct {
+    version: u8,
+    @"resource-dir": ?[]const u8,
+    command: ShellIntegrationJsonCommand,
+    environment: []const ShellIntegrationJsonEnvironment,
+    mode: []const u8,
+    features: ShellIntegrationJsonFeatures,
+    @"cursor-blink": bool,
+};
+
+fn decodeBase64(alloc: std.mem.Allocator, encoded: []const u8) ![]u8 {
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = try decoder.calcSizeForSlice(encoded);
+    const decoded = try alloc.alloc(u8, decoded_len);
+    try decoder.decode(decoded, encoded);
+    return decoded;
+}
+
+fn decodeBase64Z(alloc: std.mem.Allocator, encoded: []const u8) ![:0]u8 {
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = try decoder.calcSizeForSlice(encoded);
+    const decoded = try alloc.allocSentinel(u8, decoded_len, 0);
+    try decoder.decode(decoded[0..decoded_len], encoded);
+    if (std.mem.indexOfScalar(u8, decoded, 0) != null)
+        return error.EmbeddedNul;
+    return decoded;
+}
+
+fn shellIntegrationMode(
+    mode: []const u8,
+) !?shell_integration.Shell {
+    if (std.mem.eql(u8, mode, "detect")) return null;
+    inline for (@typeInfo(shell_integration.Shell).@"enum".fields) |field| {
+        if (std.mem.eql(u8, mode, field.name))
+            return @field(shell_integration.Shell, field.name);
+    }
+    return error.InvalidShellIntegrationMode;
+}
+
+fn shellIntegrationCommand(
+    alloc: std.mem.Allocator,
+    command: ShellIntegrationJsonCommand,
+) !Config.Command {
+    if (std.mem.eql(u8, command.kind, "shell")) {
+        if (command.argv != null) return error.InvalidShellCommand;
+        const encoded = command.value orelse return error.InvalidShellCommand;
+        return .{ .shell = try decodeBase64Z(alloc, encoded) };
+    }
+    if (std.mem.eql(u8, command.kind, "direct")) {
+        if (command.value != null) return error.InvalidDirectCommand;
+        const encoded = command.argv orelse return error.InvalidDirectCommand;
+        if (encoded.len == 0) return error.InvalidDirectCommand;
+
+        const result = try alloc.alloc([:0]const u8, encoded.len);
+        for (encoded, 0..) |argument, index|
+            result[index] = try decodeBase64Z(alloc, argument);
+        return .{ .direct = result };
+    }
+    return error.InvalidCommandKind;
+}
+
+fn writeBase64(
+    json: *std.json.Stringify,
+    alloc: std.mem.Allocator,
+    value: []const u8,
+) !void {
+    const encoder = std.base64.standard.Encoder;
+    const encoded = try alloc.alloc(u8, encoder.calcSize(value.len));
+    defer alloc.free(encoded);
+    try json.write(encoder.encode(encoded, value));
+}
+
+fn writeShellIntegrationCommand(
+    json: *std.json.Stringify,
+    alloc: std.mem.Allocator,
+    command: Config.Command,
+    default_shell: bool,
+) !void {
+    try json.beginObject();
+    try json.objectField("kind");
+    switch (command) {
+        .shell => |value| {
+            try json.write("shell");
+            try json.objectField("value");
+            try writeBase64(json, alloc, value);
+        },
+        .direct => |arguments| {
+            try json.write("direct");
+            try json.objectField("argv");
+            try json.beginArray();
+            for (arguments) |argument|
+                try writeBase64(json, alloc, argument);
+            try json.endArray();
+        },
+    }
+    try json.objectField("default-shell");
+    try json.write(default_shell);
+    try json.endObject();
+}
+
+const ShellIntegrationEnvironmentEntry = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+fn shellIntegrationEnvironmentLessThan(
+    _: void,
+    lhs: ShellIntegrationEnvironmentEntry,
+    rhs: ShellIntegrationEnvironmentEntry,
+) bool {
+    return std.mem.lessThan(u8, lhs.key, rhs.key);
+}
+
+fn writeShellIntegrationEnvironment(
+    json: *std.json.Stringify,
+    alloc: std.mem.Allocator,
+    environment: *const std.process.EnvMap,
+) !void {
+    var entries: std.ArrayList(ShellIntegrationEnvironmentEntry) = .empty;
+    defer entries.deinit(alloc);
+    var iterator = environment.iterator();
+    while (iterator.next()) |entry| {
+        try entries.append(alloc, .{
+            .key = entry.key_ptr.*,
+            .value = entry.value_ptr.*,
+        });
+    }
+    std.mem.sortUnstable(
+        ShellIntegrationEnvironmentEntry,
+        entries.items,
+        {},
+        shellIntegrationEnvironmentLessThan,
+    );
+
+    try json.beginArray();
+    for (entries.items) |entry| {
+        try json.beginObject();
+        try json.objectField("key");
+        try writeBase64(json, alloc, entry.key);
+        try json.objectField("value");
+        try writeBase64(json, alloc, entry.value);
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn shellIntegrationJson(request_json: []const u8) !String {
+    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const request = try std.json.parseFromSliceLeaky(
+        ShellIntegrationJsonRequest,
+        alloc,
+        request_json,
+        .{ .allocate = .alloc_if_needed },
+    );
+    if (request.version != 1) return error.UnsupportedSchemaVersion;
+
+    var environment = std.process.EnvMap.init(alloc);
+    defer environment.deinit();
+    for (request.environment) |entry| {
+        const key = try decodeBase64(alloc, entry.key);
+        const value = try decodeBase64(alloc, entry.value);
+        if (key.len == 0 or std.mem.indexOfAny(u8, key, "=\x00") != null)
+            return error.InvalidEnvironmentKey;
+        if (std.mem.indexOfScalar(u8, value, 0) != null)
+            return error.InvalidEnvironmentValue;
+        if (environment.get(key) != null)
+            return error.DuplicateEnvironmentKey;
+        try environment.put(key, value);
+    }
+
+    const original_command =
+        try shellIntegrationCommand(alloc, request.command);
+    var command = original_command;
+    const features: Config.ShellIntegrationFeatures = .{
+        .cursor = request.features.cursor,
+        .sudo = request.features.sudo,
+        .title = request.features.title,
+        .@"ssh-env" = request.features.@"ssh-env",
+        .@"ssh-terminfo" = request.features.@"ssh-terminfo",
+        .path = request.features.path,
+    };
+    try shell_integration.setupFeatures(
+        &environment,
+        features,
+        request.@"cursor-blink",
+    );
+
+    var integrated_shell: ?shell_integration.Shell = null;
+    if (!std.mem.eql(u8, request.mode, "none")) {
+        const force_shell = try shellIntegrationMode(request.mode);
+        if (request.@"resource-dir") |encoded_resource_dir| {
+            const resource_dir =
+                try decodeBase64(alloc, encoded_resource_dir);
+            if (resource_dir.len == 0 or resource_dir[0] != '/' or std.mem.indexOfScalar(u8, resource_dir, 0) != null) {
+                return error.InvalidResourceDirectory;
+            }
+            if (try shell_integration.setup(
+                alloc,
+                resource_dir,
+                original_command,
+                &environment,
+                force_shell,
+            )) |integration| {
+                integrated_shell = integration.shell;
+                command = integration.command;
+            }
+        }
+    } else if (request.@"resource-dir" != null) {
+        // Validate the mode even though no setup is attempted.
+        return error.UnexpectedResourceDirectory;
+    }
+
+    var output: std.Io.Writer.Allocating = .init(state.alloc);
+    errdefer output.deinit();
+    var json: std.json.Stringify = .{ .writer = &output.writer };
+    try json.beginObject();
+    try json.objectField("version");
+    try json.write(@as(u8, 1));
+    try json.objectField("command");
+    try writeShellIntegrationCommand(
+        &json,
+        alloc,
+        command,
+        request.command.@"default-shell",
+    );
+    try json.objectField("environment");
+    try writeShellIntegrationEnvironment(&json, alloc, &environment);
+    try json.objectField("shell");
+    if (integrated_shell) |shell| {
+        try json.write(@tagName(shell));
+    } else {
+        try json.write(null);
+    }
+    try json.endObject();
+    return .fromSlice(try output.toOwnedSlice());
 }
 
 fn configJson() !String {
@@ -142,6 +419,22 @@ fn writeValues(
     // millisecond count. Every u32 crosses JSON's binary64 number boundary
     // losslessly, so no unit conversion or decimal-string encoding is needed.
     try json.write(config.@"abnormal-command-exit-runtime");
+    try json.objectField("shell-integration");
+    try json.write(@tagName(config.@"shell-integration"));
+    try json.objectField("shell-integration-features");
+    try json.beginObject();
+    inline for (.{
+        "cursor",
+        "sudo",
+        "title",
+        "ssh-env",
+        "ssh-terminfo",
+        "path",
+    }) |feature| {
+        try json.objectField(feature);
+        try json.write(@field(config.@"shell-integration-features", feature));
+    }
+    try json.endObject();
     try json.objectField("env");
     try writeEnvironment(json, &config.env);
     try json.objectField("linux-cgroup");

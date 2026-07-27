@@ -99,6 +99,15 @@ GhosttyConfigSnapshot completeSnapshot()
             .value = QByteArray::fromHex("ff8061"),
         },
     };
+    values.shellIntegration = GhosttyShellIntegrationMode::Nushell;
+    values.shellIntegrationFeatures = {
+        .cursor = false,
+        .sudo = true,
+        .title = false,
+        .sshEnvironment = true,
+        .sshTerminfo = true,
+        .path = false,
+    };
     values.linuxCgroup = {
         .mode = LinuxCgroupMode::Always,
         .memoryLimitBytes = std::numeric_limits<quint64>::max(),
@@ -276,6 +285,14 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.abnormalCommandExitRuntimeMilliseconds, quint32{250});
     QVERIFY(!options.waitAfterCommand);
     QVERIFY(options.environment.isEmpty());
+    QCOMPARE(options.shellIntegration, GhosttyShellIntegrationMode::None);
+    QVERIFY(options.shellIntegrationFeatures.cursor);
+    QVERIFY(!options.shellIntegrationFeatures.sudo);
+    QVERIFY(options.shellIntegrationFeatures.title);
+    QVERIFY(!options.shellIntegrationFeatures.sshEnvironment);
+    QVERIFY(!options.shellIntegrationFeatures.sshTerminfo);
+    QVERIFY(options.shellIntegrationFeatures.path);
+    QVERIFY(!options.shellIntegrationAvailable);
     QCOMPARE(options.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
     QVERIFY(!options.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!options.linuxCgroup.processesLimit.has_value());
@@ -764,6 +781,10 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.abnormalCommandExitRuntimeMilliseconds, quint32{731});
     QVERIFY(cliResult.waitAfterCommand);
     QCOMPARE(cliResult.environment, snapshot.values.environment);
+    QCOMPARE(cliResult.shellIntegration, snapshot.values.shellIntegration);
+    QCOMPARE(cliResult.shellIntegrationFeatures,
+             snapshot.values.shellIntegrationFeatures);
+    QVERIFY(cliResult.shellIntegrationAvailable);
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
     QVERIFY(cliResult.processUsesSingleInstance);
     QVERIFY(cliResult.typography == completeTypography());
@@ -1482,6 +1503,16 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
             .value = QByteArray::fromHex("fe817f"),
         },
     };
+    options.shellIntegration = GhosttyShellIntegrationMode::Zsh;
+    options.shellIntegrationFeatures = {
+        .cursor = false,
+        .sudo = true,
+        .title = false,
+        .sshEnvironment = true,
+        .sshTerminfo = false,
+        .path = false,
+    };
+    options.shellIntegrationAvailable = true;
     options.linuxCgroup = {
         .mode = LinuxCgroupMode::SingleInstance,
         .memoryLimitBytes = quint64{8'589'934'592},
@@ -1550,6 +1581,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.term, options.term);
     QCOMPARE(launch.environment, options.environment);
+    QCOMPARE(launch.shellIntegration, options.shellIntegration);
+    QCOMPARE(launch.shellIntegrationFeatures, options.shellIntegrationFeatures);
+    QVERIFY(launch.shellIntegrationAvailable);
     QCOMPARE(launch.linuxCgroup, options.linuxCgroup);
     QCOMPARE(launch.processUsesSingleInstance,
              options.processUsesSingleInstance);
@@ -1657,6 +1691,27 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(environmentChanged != options);
     QVERIFY(toTerminalSessionLaunchOptions(environmentChanged) != launch);
     QCOMPARE(toTerminalSessionRuntimeOptions(environmentChanged), runtime);
+
+    LaunchOptions shellIntegrationChanged = options;
+    shellIntegrationChanged.shellIntegration =
+        GhosttyShellIntegrationMode::Bash;
+    QVERIFY(toTerminalSessionLaunchOptions(shellIntegrationChanged) != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(shellIntegrationChanged), runtime);
+
+    LaunchOptions shellIntegrationFeaturesChanged = options;
+    shellIntegrationFeaturesChanged.shellIntegrationFeatures.cursor = true;
+    QVERIFY(toTerminalSessionLaunchOptions(shellIntegrationFeaturesChanged)
+            != launch);
+    QCOMPARE(toTerminalSessionRuntimeOptions(shellIntegrationFeaturesChanged),
+             runtime);
+
+    LaunchOptions shellIntegrationAvailabilityChanged = options;
+    shellIntegrationAvailabilityChanged.shellIntegrationAvailable = false;
+    QVERIFY(toTerminalSessionLaunchOptions(shellIntegrationAvailabilityChanged)
+            != launch);
+    QCOMPARE(
+        toTerminalSessionRuntimeOptions(shellIntegrationAvailabilityChanged),
+        runtime);
 
     LaunchOptions inheritedDirectory = options;
     inheritedDirectory.inheritWorkingDirectory = true;

@@ -36,6 +36,29 @@ struct TerminalEnvironmentEntry {
 
 using TerminalEnvironment = QVector<TerminalEnvironmentEntry>;
 
+enum class GhosttyShellIntegrationMode : quint8 {
+    None,
+    Detect,
+    Bash,
+    Elvish,
+    Fish,
+    Nushell,
+    Zsh,
+};
+
+// This mirrors the pinned Ghostty config bitset. It is launch policy: shell
+// scripts consume the serialized feature set from the child environment.
+struct GhosttyShellIntegrationFeatures {
+    bool cursor = true;
+    bool sudo = false;
+    bool title = true;
+    bool sshEnvironment = false;
+    bool sshTerminfo = false;
+    bool path = true;
+
+    bool operator==(const GhosttyShellIntegrationFeatures &) const = default;
+};
+
 enum class TerminalCopyOnSelectMode : quint8 {
     Disabled,
     Primary,
@@ -143,6 +166,13 @@ struct TerminalSessionLaunchOptions {
     // frontend-injected values immediately before exec. A concrete
     // working-directory-derived PWD is the pinned runtime's later exception.
     TerminalEnvironment environment;
+    GhosttyShellIntegrationMode shellIntegration =
+        GhosttyShellIntegrationMode::None;
+    GhosttyShellIntegrationFeatures shellIntegrationFeatures;
+    // Generic worker callers and config-disabled builds have no pinned
+    // launcher helper. A finalized Ghostty snapshot sets this bit even for
+    // `shell-integration = none`, because feature serialization still occurs.
+    bool shellIntegrationAvailable = false;
     // Linux resource isolation is fixed when this pane is constructed. The
     // process role is resolved once during application startup; config reloads
     // can change the policy for future panes without changing that role.

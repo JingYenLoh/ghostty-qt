@@ -87,6 +87,13 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.initialCommand->defaultShell);
     QVERIFY(values.waitAfterCommand);
     QCOMPARE(values.abnormalCommandExitRuntimeMilliseconds, quint32{731});
+    QCOMPARE(values.shellIntegration, GhosttyShellIntegrationMode::Fish);
+    QVERIFY(!values.shellIntegrationFeatures.cursor);
+    QVERIFY(values.shellIntegrationFeatures.sudo);
+    QVERIFY(!values.shellIntegrationFeatures.title);
+    QVERIFY(values.shellIntegrationFeatures.sshEnvironment);
+    QVERIFY(values.shellIntegrationFeatures.sshTerminfo);
+    QVERIFY(!values.shellIntegrationFeatures.path);
     QCOMPARE(values.environment.size(), qsizetype{3});
     QCOMPARE(values.environment.at(0).key,
              QByteArrayLiteral("GHOSTTY_QT_TEST"));
@@ -499,6 +506,22 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }
     };
 
+    verifyMappings(
+        QLatin1StringView("shell-integration"),
+        std::to_array<
+            std::pair<QLatin1StringView, GhosttyShellIntegrationMode>>({
+            {QLatin1StringView("none"), GhosttyShellIntegrationMode::None},
+            {QLatin1StringView("detect"), GhosttyShellIntegrationMode::Detect},
+            {QLatin1StringView("bash"), GhosttyShellIntegrationMode::Bash},
+            {QLatin1StringView("elvish"), GhosttyShellIntegrationMode::Elvish},
+            {QLatin1StringView("fish"), GhosttyShellIntegrationMode::Fish},
+            {QLatin1StringView("nushell"),
+             GhosttyShellIntegrationMode::Nushell},
+            {QLatin1StringView("zsh"), GhosttyShellIntegrationMode::Zsh},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.shellIntegration;
+        });
     verifyMappings(
         QLatin1StringView("window-new-tab-position"),
         std::to_array<std::pair<QLatin1StringView, WindowNewTabPosition>>({
@@ -997,6 +1020,54 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-env")
         << withoutValue(object(), QStringLiteral("env"))
         << QStringLiteral("values is missing field 'env'");
+    QTest::newRow("missing-shell-integration")
+        << withoutValue(object(), QStringLiteral("shell-integration"))
+        << QStringLiteral("values is missing field 'shell-integration'");
+    QTest::newRow("missing-shell-integration-features")
+        << withoutValue(object(), QStringLiteral("shell-integration-features"))
+        << QStringLiteral(
+               "values is missing field 'shell-integration-features'");
+    QTest::newRow("shell-integration-features-type")
+        << withValue(object(), QStringLiteral("shell-integration-features"),
+                     true)
+        << QStringLiteral(
+               "values.shell-integration-features must be an object");
+    QTest::newRow("shell-integration-features-missing-field")
+        << withValue(object(), QStringLiteral("shell-integration-features"),
+                     QJsonObject{
+                         {QStringLiteral("sudo"), true},
+                         {QStringLiteral("title"), false},
+                         {QStringLiteral("ssh-env"), true},
+                         {QStringLiteral("ssh-terminfo"), true},
+                         {QStringLiteral("path"), false},
+                     })
+        << QStringLiteral(
+               "values.shell-integration-features is missing field 'cursor'");
+    QTest::newRow("shell-integration-features-extra-field")
+        << withValue(object(), QStringLiteral("shell-integration-features"),
+                     QJsonObject{
+                         {QStringLiteral("cursor"), false},
+                         {QStringLiteral("sudo"), true},
+                         {QStringLiteral("title"), false},
+                         {QStringLiteral("ssh-env"), true},
+                         {QStringLiteral("ssh-terminfo"), true},
+                         {QStringLiteral("path"), false},
+                         {QStringLiteral("future"), true},
+                     })
+        << QStringLiteral(
+               "values.shell-integration-features has unexpected field 'future'");
+    QTest::newRow("shell-integration-features-field-type")
+        << withValue(object(), QStringLiteral("shell-integration-features"),
+                     QJsonObject{
+                         {QStringLiteral("cursor"), false},
+                         {QStringLiteral("sudo"), true},
+                         {QStringLiteral("title"), false},
+                         {QStringLiteral("ssh-env"), QStringLiteral("true")},
+                         {QStringLiteral("ssh-terminfo"), true},
+                         {QStringLiteral("path"), false},
+                     })
+        << QStringLiteral(
+               "values.shell-integration-features.ssh-env must be a boolean");
     QTest::newRow("env-type")
         << withValue(object(), QStringLiteral("env"), true)
         << QStringLiteral("values.env must be an array");
@@ -1639,6 +1710,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("resize-overlay-position"),
              QStringLiteral("gtk-single-instance"),
              QStringLiteral("linux-cgroup"),
+             QStringLiteral("shell-integration"),
          }) {
         const QByteArray row = QStringLiteral("enum-%1").arg(enumName).toUtf8();
         QTest::newRow(row.constData())

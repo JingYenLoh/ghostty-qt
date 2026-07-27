@@ -2,6 +2,7 @@
 
 #include <ghostty.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -11,14 +12,24 @@
 #include <vector>
 
 extern "C" ghostty_string_s ghostty_qt_config_json();
+extern "C" ghostty_string_s
+ghostty_qt_shell_integration_json(const std::uint8_t *request,
+                                  std::size_t requestLength);
 
 namespace {
 
 constexpr auto kShowConfigJsonAction = "+show-config-json";
+constexpr auto kShellIntegrationJsonAction = "+shell-integration-json";
+constexpr std::size_t kMaximumShellIntegrationRequestBytes = 4U * 1024U * 1024U;
 
 bool isShowConfigJsonAction(const char *argument)
 {
     return std::strcmp(argument, kShowConfigJsonAction) == 0;
+}
+
+bool isShellIntegrationJsonAction(const char *argument)
+{
+    return std::strcmp(argument, kShellIntegrationJsonAction) == 0;
 }
 
 bool isPublicShowConfigOption(std::string_view argument)
@@ -101,6 +112,76 @@ int showConfigJson(std::span<char *const> arguments)
     return writeFailed ? 74 : 0;
 }
 
+int prepareShellIntegrationJson(std::span<char *const> arguments)
+{
+    if (arguments.size() != 2) {
+        std::fputs("ghostty-qt-config-helper: +shell-integration-json takes no "
+                   "arguments; pass one JSON request on standard input\n",
+                   stderr);
+        return 64;
+    }
+
+    // This private action only needs Ghostty's allocator and module runtime.
+    // Initialize through a recognized public action without asking Ghostty to
+    // dispatch it; the request itself carries already-finalized configuration.
+    char showConfigAction[] = "+show-config";
+    std::vector<char *> initializationArguments(arguments.begin(),
+                                                arguments.end());
+    initializationArguments[1] = showConfigAction;
+    const int initializationResult = ghostty_init(
+        initializationArguments.size(), initializationArguments.data());
+    if (initializationResult != 0) {
+        return initializationResult;
+    }
+
+    std::vector<std::uint8_t> request;
+    request.reserve(64U * 1024U);
+    std::array<std::uint8_t, 64U * 1024U> buffer{};
+    for (;;) {
+        const std::size_t count =
+            std::fread(buffer.data(), 1, buffer.size(), stdin);
+        if (count > kMaximumShellIntegrationRequestBytes - request.size()) {
+            std::fputs(
+                "ghostty-qt-config-helper: shell-integration request exceeds "
+                "the 4 MiB protocol limit\n",
+                stderr);
+            return 65;
+        }
+        request.insert(request.end(), buffer.begin(),
+                       buffer.begin() + static_cast<std::ptrdiff_t>(count));
+        if (count == buffer.size()) continue;
+        if (std::ferror(stdin) != 0) {
+            std::fputs(
+                "ghostty-qt-config-helper: failed to read shell-integration "
+                "request\n",
+                stderr);
+            return 74;
+        }
+        break;
+    }
+    if (request.empty()) {
+        std::fputs(
+            "ghostty-qt-config-helper: shell-integration request is empty\n",
+            stderr);
+        return 65;
+    }
+
+    const ghostty_string_s json =
+        ghostty_qt_shell_integration_json(request.data(), request.size());
+    if (json.ptr == nullptr) {
+        std::fputs(
+            "ghostty-qt-config-helper: failed to prepare shell integration\n",
+            stderr);
+        return 65;
+    }
+
+    const std::size_t written = std::fwrite(json.ptr, 1, json.len, stdout);
+    const bool writeFailed =
+        written != json.len || std::fputc('\n', stdout) == EOF;
+    ghostty_string_free(json);
+    return writeFailed ? 74 : 0;
+}
+
 bool isPrivateConfigExport(std::span<char *const> arguments)
 {
     if (arguments.size() < 2 || !isShowConfigJsonAction(arguments[1])) {
@@ -115,6 +196,11 @@ bool isPrivateConfigExport(std::span<char *const> arguments)
     return true;
 }
 
+bool isPrivateShellIntegration(std::span<char *const> arguments)
+{
+    return arguments.size() >= 2 && isShellIntegrationJsonAction(arguments[1]);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -123,6 +209,9 @@ int main(int argc, char **argv)
                                            static_cast<std::size_t>(argc));
     if (isPrivateConfigExport(arguments)) {
         return showConfigJson(arguments);
+    }
+    if (isPrivateShellIntegration(arguments)) {
+        return prepareShellIntegrationJson(arguments);
     }
 
     const GhosttyCliActionSelection selection =

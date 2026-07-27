@@ -1,0 +1,45 @@
+diff --git a/bash/ghostty.bash b/bash/ghostty.bash
+--- a/bash/ghostty.bash
++++ b/bash/ghostty.bash
+@@ -120 +120 @@ fi
+-# Wrap `ssh` with `ghostty +ssh` and translate the shell-integration
++# Wrap `ssh` with `ghostty-qt +ssh` and translate the shell-integration
+@@ -127 +127 @@ if [[ "$GHOSTTY_SHELL_FEATURES" == *ssh-* ]]; then
+-    "$GHOSTTY_BIN_DIR/ghostty" +ssh "${flags[@]}" -- "$@"
++    "$GHOSTTY_BIN_DIR/ghostty-qt" +ssh "${flags[@]}" -- "$@"
+diff --git a/elvish/lib/ghostty-integration.elv b/elvish/lib/ghostty-integration.elv
+--- a/elvish/lib/ghostty-integration.elv
++++ b/elvish/lib/ghostty-integration.elv
+@@ -82 +82 @@ fn sudo-integration {|@args|
+-  # Wrap `ssh` with `ghostty +ssh` and translate the shell-integration
++  # Wrap `ssh` with `ghostty-qt +ssh` and translate the shell-integration
+@@ -85 +85 @@ fn sudo-integration {|@args|
+-    var ghostty = $E:GHOSTTY_BIN_DIR/"ghostty"
++    var ghostty = $E:GHOSTTY_BIN_DIR/"ghostty-qt"
+diff --git a/fish/vendor_conf.d/ghostty-shell-integration.fish b/fish/vendor_conf.d/ghostty-shell-integration.fish
+--- a/fish/vendor_conf.d/ghostty-shell-integration.fish
++++ b/fish/vendor_conf.d/ghostty-shell-integration.fish
+@@ -125 +125 @@ function __ghostty_deferred_setup --on-event fish_prompt --on-event fish_posterr
+-    # Wrap `ssh` with `ghostty +ssh` and translate the shell-integration
++    # Wrap `ssh` with `ghostty-qt +ssh` and translate the shell-integration
+@@ -133 +133 @@ function __ghostty_deferred_setup --on-event fish_prompt --on-event fish_posterr
+-            "$GHOSTTY_BIN_DIR/ghostty" +ssh $flags -- $argv
++            "$GHOSTTY_BIN_DIR/ghostty-qt" +ssh $flags -- $argv
+diff --git a/nushell/vendor/autoload/ghostty.nu b/nushell/vendor/autoload/ghostty.nu
+--- a/nushell/vendor/autoload/ghostty.nu
++++ b/nushell/vendor/autoload/ghostty.nu
+@@ -7 +7 @@ export module ghostty {
+-  # Wrap `ssh` with `ghostty +ssh` and translate the shell-integration
++  # Wrap `ssh` with `ghostty-qt +ssh` and translate the shell-integration
+@@ -16 +16 @@ export module ghostty {
+-    let ghostty = ($env.GHOSTTY_BIN_DIR? | default "") | path join "ghostty"
++    let ghostty = ($env.GHOSTTY_BIN_DIR? | default "") | path join "ghostty-qt"
+diff --git a/zsh/ghostty-integration b/zsh/ghostty-integration
+--- a/zsh/ghostty-integration
++++ b/zsh/ghostty-integration
+@@ -316 +316 @@ _entrypoint() {
+-    # Wrap `ssh` with `ghostty +ssh` and translate the shell-integration
++    # Wrap `ssh` with `ghostty-qt +ssh` and translate the shell-integration
+@@ -323 +323 @@ _entrypoint() {
+-        "$GHOSTTY_BIN_DIR/ghostty" +ssh $flags -- "$@"
++        "$GHOSTTY_BIN_DIR/ghostty-qt" +ssh $flags -- "$@"

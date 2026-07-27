@@ -1548,6 +1548,77 @@ public:
         return screen;
     }
 
+    GhosttyVtAdapter::SemanticPromptState semanticPromptState() const
+    {
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        uint16_t cursorX = 0;
+        uint16_t cursorY = 0;
+        const GhosttyTerminalData keys[] = {
+            GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+            GHOSTTY_TERMINAL_DATA_CURSOR_X,
+            GHOSTTY_TERMINAL_DATA_CURSOR_Y,
+        };
+        void *values[] = {
+            &screen,
+            &cursorX,
+            &cursorY,
+        };
+        size_t written = 0;
+        if (ghostty_terminal_get_multi(terminal_, std::size(keys), keys, values,
+                                       &written)
+                != GHOSTTY_SUCCESS
+            || written != std::size(keys)) {
+            return SemanticPromptState::Unavailable;
+        }
+        if (screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE) {
+            return SemanticPromptState::Away;
+        }
+        if (screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY) {
+            return SemanticPromptState::Unavailable;
+        }
+
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_ACTIVE;
+        point.value.coordinate.x = cursorX;
+        point.value.coordinate.y = cursorY;
+        GhosttyGridRef reference{};
+        reference.size = sizeof(reference);
+        GhosttyRow row = 0;
+        GhosttyCell cell = 0;
+        if (ghostty_terminal_grid_ref(terminal_, point, &reference)
+                != GHOSTTY_SUCCESS
+            || ghostty_grid_ref_row(&reference, &row) != GHOSTTY_SUCCESS
+            || ghostty_grid_ref_cell(&reference, &cell) != GHOSTTY_SUCCESS) {
+            return SemanticPromptState::Unavailable;
+        }
+
+        GhosttyRowSemanticPrompt rowSemantic = GHOSTTY_ROW_SEMANTIC_NONE;
+        if (ghostty_row_get(row, GHOSTTY_ROW_DATA_SEMANTIC_PROMPT, &rowSemantic)
+            != GHOSTTY_SUCCESS) {
+            return SemanticPromptState::Unavailable;
+        }
+        switch (rowSemantic) {
+        case GHOSTTY_ROW_SEMANTIC_PROMPT:
+        case GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION:
+            return SemanticPromptState::AtPrompt;
+        case GHOSTTY_ROW_SEMANTIC_NONE: break;
+        default: return SemanticPromptState::Unavailable;
+        }
+
+        GhosttyCellSemanticContent cellSemantic = GHOSTTY_CELL_SEMANTIC_OUTPUT;
+        if (ghostty_cell_get(cell, GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
+                             &cellSemantic)
+            != GHOSTTY_SUCCESS) {
+            return SemanticPromptState::Unavailable;
+        }
+        switch (cellSemantic) {
+        case GHOSTTY_CELL_SEMANTIC_INPUT:
+        case GHOSTTY_CELL_SEMANTIC_PROMPT: return SemanticPromptState::AtPrompt;
+        case GHOSTTY_CELL_SEMANTIC_OUTPUT: return SemanticPromptState::Away;
+        default: return SemanticPromptState::Unavailable;
+        }
+    }
+
     std::optional<QByteArray>
     hyperlinkUri(const GhosttyGridRef &reference) const
     {
@@ -3979,6 +4050,12 @@ GhosttyVtAdapter::resolveTextRange(const TrackedTextRange &range) const
         return std::nullopt;
     }
     return impl_->resolveTextRange(*range.impl_);
+}
+
+GhosttyVtAdapter::SemanticPromptState
+GhosttyVtAdapter::semanticPromptState() const
+{
+    return impl_->semanticPromptState();
 }
 
 std::uint64_t GhosttyVtAdapter::compressionActivity() const

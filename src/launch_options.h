@@ -34,6 +34,12 @@ struct LaunchOptions {
     bool waitAfterCommand = false;
     // Finalized raw environment overrides for future terminal children.
     TerminalEnvironment environment;
+    // Automatic shell integration is resolved once for each future pane. A
+    // reload changes newly launched shells without rewriting a live process.
+    GhosttyShellIntegrationMode shellIntegration =
+        GhosttyShellIntegrationMode::None;
+    GhosttyShellIntegrationFeatures shellIntegrationFeatures;
+    bool shellIntegrationAvailable = false;
     // Finalized shared Linux cgroup settings for future terminal children.
     LinuxCgroupConfig linuxCgroup;
     // Startup arbitration fixes this process fact once. Reloading the

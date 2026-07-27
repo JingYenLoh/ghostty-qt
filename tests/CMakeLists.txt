@@ -11,6 +11,38 @@ if(Git_FOUND AND GHOSTTY_QT_CLANG_FORMAT_EXECUTABLE)
     )
 endif()
 
+add_test(NAME shell-integration-resources
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSHELL_INTEGRATION_DIR=${GHOSTTY_QT_SHELL_INTEGRATION_STAGE_DIR}"
+        -P "${GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT}")
+set_tests_properties(shell-integration-resources PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-ghostty-shell-integration
+    test_ghostty_shell_integration.cpp
+)
+target_include_directories(test-ghostty-shell-integration PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_compile_definitions(test-ghostty-shell-integration PRIVATE
+    GHOSTTY_QT_TEST_INSTALL_RESOURCES_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR}"
+)
+target_link_libraries(test-ghostty-shell-integration PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-shell-integration
+)
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    target_compile_definitions(test-ghostty-shell-integration PRIVATE
+        GHOSTTY_QT_TEST_REAL_HELPER="$<TARGET_FILE:ghostty-qt-config-helper>"
+        GHOSTTY_QT_TEST_RESOURCES="${CMAKE_BINARY_DIR}"
+    )
+    add_dependencies(test-ghostty-shell-integration
+        ghostty-qt-config-helper)
+endif()
+add_test(NAME ghostty-shell-integration
+    COMMAND test-ghostty-shell-integration)
+set_tests_properties(ghostty-shell-integration PROPERTIES TIMEOUT 20)
+
 qt_add_executable(test-frontend-config
     test_frontend_config.cpp
 )
@@ -264,6 +296,7 @@ target_link_libraries(test-application-controller PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-shell-integration
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -346,6 +379,7 @@ target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_D
 target_compile_definitions(test-session-worker PRIVATE
     GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
     GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
+    GHOSTTY_QT_TEST_SHELL_INTEGRATION_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
 )
 target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
@@ -356,6 +390,7 @@ target_link_libraries(test-session-worker PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-shell-integration
     ghostty-qt-vt-adapter
     util
 )
@@ -363,6 +398,11 @@ add_dependencies(test-session-worker
     ghostty-qt-terminfo
     pty-geometry-probe
 )
+if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    add_dependencies(test-session-worker
+        ghostty-qt-config-helper
+    )
+endif()
 add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
@@ -403,6 +443,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-shell-integration
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -467,6 +508,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-shell-integration
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -997,7 +1039,8 @@ set_tests_properties(launch-options ghostty-smoke session-worker PROPERTIES
 )
 set_tests_properties(session-worker PROPERTIES
     TIMEOUT 30
-    ENVIRONMENT "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR}"
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};GHOSTTY_QT_SHELL_INTEGRATION_RESOURCES=${CMAKE_BINARY_DIR}"
 )
 
 add_test(
@@ -1036,6 +1079,8 @@ if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
             "-DSTAGE_DIR=${CMAKE_CURRENT_BINARY_DIR}/terminfo-relocation-stage"
             "-DINSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
             "-DINSTALL_TERMINFO_DIR=${GHOSTTY_QT_INSTALL_TERMINFO_DIR}"
+            "-DINSTALL_SHELL_INTEGRATION_DIR=${GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR}"
+            "-DSHELL_INTEGRATION_VALIDATE_SCRIPT=${GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT}"
             "-DPROBE=$<TARGET_FILE:test-terminfo-path-probe>"
             "-DCONFIG_HELPER_NAME=${_ghostty_qt_relocation_config_helper_name}"
             "-DCONFIG=$<CONFIG>"

@@ -185,6 +185,21 @@ inline QJsonObject mouseScrollMultiplier(double precision = 1.0,
     };
 }
 
+inline QJsonObject
+shellIntegrationFeatures(bool cursor = false, bool sudo = true,
+                         bool title = false, bool sshEnvironment = true,
+                         bool sshTerminfo = true, bool path = false)
+{
+    return {
+        {QStringLiteral("cursor"), cursor},
+        {QStringLiteral("sudo"), sudo},
+        {QStringLiteral("title"), title},
+        {QStringLiteral("ssh-env"), sshEnvironment},
+        {QStringLiteral("ssh-terminfo"), sshTerminfo},
+        {QStringLiteral("path"), path},
+    };
+}
+
 inline QJsonObject values()
 {
     QJsonArray palette;
@@ -203,6 +218,9 @@ inline QJsonObject values()
                         bytes(QByteArrayView{})})},
         {QStringLiteral("wait-after-command"), true},
         {QStringLiteral("abnormal-command-exit-runtime"), 731},
+        {QStringLiteral("shell-integration"), QStringLiteral("fish")},
+        {QStringLiteral("shell-integration-features"),
+         shellIntegrationFeatures()},
         {QStringLiteral("env"),
          QJsonArray{
              environmentEntry(QByteArrayLiteral("GHOSTTY_QT_TEST"),

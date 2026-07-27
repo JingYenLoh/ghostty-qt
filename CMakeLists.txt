@@ -52,6 +52,46 @@ if(NOT EXISTS "${GHOSTTY_SOURCE_DIR}/CMakeLists.txt")
         "Initialize the pinned ghostty submodule first.")
 endif()
 
+# Keep Ghostty's compatibility-heavy shell resources byte-for-byte except for
+# the executable name used by their optional SSH wrappers. The downstream
+# patch is deliberately applied to a build-tree copy with zero fuzz so a pin
+# update cannot silently change the integration contract.
+find_program(GHOSTTY_QT_PATCH_EXECUTABLE NAMES patch REQUIRED)
+set(GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_DIR
+    "${GHOSTTY_SOURCE_DIR}/src/shell-integration")
+set(GHOSTTY_QT_SHELL_INTEGRATION_STAGE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/shell-integration")
+set(GHOSTTY_QT_SHELL_INTEGRATION_PATCH
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/ghostty-shell-integration-ghostty-qt.patch")
+set(GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateGhosttyShellIntegration.cmake")
+set(GHOSTTY_QT_INSTALL_RESOURCES_DIR
+    "${CMAKE_INSTALL_DATADIR}/ghostty-qt")
+set(GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR
+    "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}/shell-integration")
+file(GLOB_RECURSE GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_FILES
+    CONFIGURE_DEPENDS
+    LIST_DIRECTORIES FALSE
+    "${GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_DIR}/*")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${GHOSTTY_QT_SHELL_INTEGRATION_PATCH}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageGhosttyShellIntegration.cmake"
+    "${GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT}"
+    ${GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_FILES})
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_DIR}"
+        "-DSTAGE_DIR=${GHOSTTY_QT_SHELL_INTEGRATION_STAGE_DIR}"
+        "-DPATCH_EXECUTABLE=${GHOSTTY_QT_PATCH_EXECUTABLE}"
+        "-DPATCH_FILE=${GHOSTTY_QT_SHELL_INTEGRATION_PATCH}"
+        "-DVALIDATE_SCRIPT=${GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageGhosttyShellIntegration.cmake"
+    RESULT_VARIABLE GHOSTTY_QT_SHELL_INTEGRATION_STAGE_RESULT)
+if(NOT GHOSTTY_QT_SHELL_INTEGRATION_STAGE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "Unable to stage the pinned Ghostty shell-integration resources")
+endif()
+
 find_package(Git QUIET)
 if(Git_FOUND AND EXISTS "${GHOSTTY_SOURCE_DIR}/.git")
     execute_process(
@@ -244,6 +284,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/Metrics.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/termio/shell_integration.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminfo/ghostty.zig"
         COMMENT "Building pinned Ghostty configuration parser"
         USES_TERMINAL
@@ -415,6 +456,15 @@ cmake_path(ABSOLUTE_PATH _ghostty_qt_install_bindir
     BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
     NORMALIZE
     OUTPUT_VARIABLE _ghostty_qt_install_bindir_absolute)
+set(_ghostty_qt_install_resources_dir
+    "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}")
+cmake_path(ABSOLUTE_PATH _ghostty_qt_install_resources_dir
+    BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
+    NORMALIZE
+    OUTPUT_VARIABLE _ghostty_qt_install_resources_dir_absolute)
+cmake_path(RELATIVE_PATH _ghostty_qt_install_resources_dir_absolute
+    BASE_DIRECTORY "${_ghostty_qt_install_bindir_absolute}"
+    OUTPUT_VARIABLE GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR)
 set(_ghostty_qt_install_terminfo_dir "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
 cmake_path(ABSOLUTE_PATH _ghostty_qt_install_terminfo_dir
     BASE_DIRECTORY "${CMAKE_INSTALL_PREFIX}"
@@ -452,6 +502,24 @@ target_include_directories(ghostty-qt-runtime-paths PUBLIC
 target_link_libraries(ghostty-qt-runtime-paths PUBLIC Qt6::Core)
 target_compile_definitions(ghostty-qt-runtime-paths PRIVATE
     GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_TERMINFO_RELATIVE_DIR}"
+)
+
+add_library(ghostty-qt-shell-integration STATIC
+    src/ghostty_shell_integration.cpp
+    src/ghostty_shell_integration.h
+)
+target_include_directories(ghostty-qt-shell-integration PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-shell-integration PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+target_compile_definitions(ghostty-qt-shell-integration PRIVATE
+    GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR}"
+)
+target_compile_options(ghostty-qt-shell-integration PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
 add_library(ghostty-qt-cli-delegation STATIC
@@ -676,6 +744,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-shell-integration
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -788,6 +857,8 @@ install(SCRIPT
     "${_ghostty_qt_desktop_build_dir}/$<CONFIG>/PatchInstalledDesktopMetadata.cmake")
 install(DIRECTORY "${GHOSTTY_QT_TERMINFO_DIR}/"
     DESTINATION "${GHOSTTY_QT_INSTALL_TERMINFO_DIR}")
+install(DIRECTORY "${GHOSTTY_QT_SHELL_INTEGRATION_STAGE_DIR}/"
+    DESTINATION "${GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR}")
 
 if(GHOSTTY_QT_BUILD_TESTS)
     enable_testing()

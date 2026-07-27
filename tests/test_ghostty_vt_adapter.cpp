@@ -132,6 +132,7 @@ private Q_SLOTS:
     void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
+    void queriesSemanticPromptStateFromPublicTerminalData();
     void encodesUsingTerminalModes();
     void preparesPasteUsingExactSafetyPolicy();
     void clearsSelectionWithoutCancellingGesture();
@@ -352,6 +353,48 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()
+{
+    using State = GhosttyVtAdapter::SemanticPromptState;
+
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 12;
+    options.geometry.rows = 4;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    // An unmarked terminal is queryable but is not at a semantic prompt.
+    QCOMPARE(adapter->semanticPromptState(), State::Away);
+
+    adapter->writeVt(QByteArrayLiteral("\033]133;A\a$ \033]133;B\acmd"));
+    QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
+
+    // Starting output on the prompt row remains at a prompt, matching
+    // Terminal.cursorIsAtPrompt's row-first rule.
+    adapter->writeVt(QByteArrayLiteral("\033]133;C\a"));
+    QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
+    adapter->writeVt(QByteArrayLiteral("\r\noutput"));
+    QCOMPARE(adapter->semanticPromptState(), State::Away);
+
+    // A continuation marker is sufficient even before text is printed.
+    adapter->writeVt(QByteArrayLiteral("\r\n\033]133;P;k=c\a"));
+    QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
+
+    // The public fallback reads the stored cell under the cursor. Exercise it
+    // on an input cell in a row with no prompt marker.
+    adapter->writeVt(QByteArrayLiteral("\r\n\033]133;B\ax\b"));
+    QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
+
+    // Semantic markers never make the alternate screen a shell prompt.
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h\033]133;A\a$ "));
+    QCOMPARE(adapter->semanticPromptState(), State::Away);
+    adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
+    QCOMPARE(adapter->semanticPromptState(), State::AtPrompt);
+
+    adapter->reset();
+    QCOMPARE(adapter->semanticPromptState(), State::Away);
 }
 
 void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()

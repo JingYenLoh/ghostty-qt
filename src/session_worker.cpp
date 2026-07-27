@@ -1,12 +1,14 @@
 #include "session_worker.h"
 #include "desktop_activation.h"
 #include "ghostty_link_matcher.h"
+#include "ghostty_shell_integration.h"
 #include "ghostty_vt_adapter.h"
 #include "linux_cgroup.h"
 #include "terminal_osc8_index.h"
 #include "terminfo_paths.h"
 #include "zig_string_escape.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -80,24 +82,65 @@ int openChildExitFd(pid_t pid)
     return -1;
 }
 
-bool environmentEntryHasKey(const QByteArray &entry, const QByteArray &key)
-{
-    return entry.size() > key.size() && entry.at(key.size()) == '='
-        && entry.startsWith(key);
-}
-
-void setEnvironmentEntry(QVector<QByteArray> &environment,
+void setEnvironmentEntry(TerminalEnvironment &environment,
                          const QByteArray &key, const QByteArray &value)
 {
-    environment.removeIf([&key](const QByteArray &entry) {
-        return environmentEntryHasKey(entry, key);
+    environment.removeIf([&key](const TerminalEnvironmentEntry &entry) {
+        return entry.key == key;
     });
-    QByteArray serialized;
-    serialized.reserve(key.size() + value.size() + 1);
-    serialized.append(key);
-    serialized.append('=');
-    serialized.append(value);
-    environment.push_back(std::move(serialized));
+    environment.push_back({
+        .key = key,
+        .value = value,
+    });
+}
+
+void removeEnvironmentEntry(TerminalEnvironment &environment,
+                            const QByteArray &key)
+{
+    environment.removeIf([&key](const TerminalEnvironmentEntry &entry) {
+        return entry.key == key;
+    });
+}
+
+std::optional<QByteArray>
+environmentValue(const TerminalEnvironment &environment, const QByteArray &key)
+{
+    const auto entry =
+        std::ranges::find(environment, key, &TerminalEnvironmentEntry::key);
+    if (entry == environment.cend()) return std::nullopt;
+    return entry->value;
+}
+
+TerminalEnvironment inheritedTerminalEnvironment()
+{
+    const QStringList inherited = sanitizedChildEnvironment().toStringList();
+    TerminalEnvironment result;
+    result.reserve(inherited.size());
+    for (const QString &serialized : inherited) {
+        const QByteArray bytes = serialized.toLocal8Bit();
+        const qsizetype separator = bytes.indexOf('=');
+        if (separator <= 0) continue;
+        setEnvironmentEntry(result, bytes.first(separator),
+                            bytes.sliced(separator + 1));
+    }
+    return result;
+}
+
+void appendExecutableDirectory(TerminalEnvironment &environment,
+                               const QByteArray &directory)
+{
+    const std::optional<QByteArray> current =
+        environmentValue(environment, QByteArrayLiteral("PATH"));
+    if (current.has_value()) {
+        const QList<QByteArray> entries = current->split(':');
+        if (entries.contains(directory)) return;
+        QByteArray extended = *current;
+        if (!extended.isEmpty()) extended.append(':');
+        extended.append(directory);
+        setEnvironmentEntry(environment, QByteArrayLiteral("PATH"), extended);
+        return;
+    }
+    setEnvironmentEntry(environment, QByteArrayLiteral("PATH"), directory);
 }
 
 ssize_t writeWithoutSigpipe(int fd, const void *data, size_t size)
@@ -641,6 +684,8 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     }
     shuttingDown_ = false;
     waitingForExitKey_ = false;
+    semanticPromptObserved_ = false;
+    semanticPromptExpected_ = false;
     childRuntimeTimer_.invalidate();
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
@@ -862,77 +907,30 @@ bool SessionWorker::spawnChild()
         }
     }
 
-    QVector<QByteArray> argumentStorage;
+    TerminalCommand launchCommand;
     bool legacyInteractiveFallback = false;
     if (!options_.program.isEmpty()) {
-        argumentStorage.reserve(options_.program.size());
+        QVector<QByteArray> arguments;
+        arguments.reserve(options_.program.size());
         for (const QString &argument : options_.program) {
-            argumentStorage.push_back(argument.toLocal8Bit());
+            arguments.push_back(argument.toLocal8Bit());
         }
+        launchCommand = TerminalCommand::direct(std::move(arguments));
         interactiveShell_ = false;
     } else if (options_.command.has_value()) {
-        const TerminalCommand &command = *options_.command;
-        interactiveShell_ = command.defaultShell;
-        switch (command.kind) {
-        case TerminalCommandKind::Shell:
-            argumentStorage = {
-                QByteArrayLiteral("/bin/sh"),
-                QByteArrayLiteral("-c"),
-                command.shellCommand,
-            };
-            break;
-        case TerminalCommandKind::Direct:
-            argumentStorage = command.directArguments;
-            break;
-        }
+        launchCommand = *options_.command;
+        interactiveShell_ = launchCommand.defaultShell;
     } else {
         // Generic callers without a finalized Ghostty snapshot retain the
         // frontend's historical interactive-shell fallback. Config projection
         // materializes Ghostty's distinct shell-form `sh` fallback.
         QByteArray executable = qgetenv("SHELL");
         if (executable.isEmpty()) executable = QByteArrayLiteral("/bin/sh");
-        argumentStorage = {executable, QByteArrayLiteral("-i")};
+        launchCommand =
+            TerminalCommand::direct({executable, QByteArrayLiteral("-i")});
         interactiveShell_ = true;
         legacyInteractiveFallback = true;
     }
-
-    if (argumentStorage.isEmpty()) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Configured direct command has no argv entries."));
-        return false;
-    }
-    for (qsizetype index = 0; index < argumentStorage.size(); ++index) {
-        if (argumentStorage.at(index).contains('\0')) {
-            Q_EMIT errorOccurred(
-                QStringLiteral(
-                    "Command argument %1 contains a NUL byte and cannot be passed to execve.")
-                    .arg(index));
-            return false;
-        }
-    }
-
-    QByteArray requestedExecutable = argumentStorage.constFirst();
-    QVector<QByteArray> executablePaths =
-        executableCandidates(requestedExecutable);
-    // Do not preselect a candidate: the child attempts the complete ordered
-    // list below. The availability probe exists only for the frontend's
-    // legacy invalid-SHELL fallback.
-    const bool executableAvailable = hasExecutableCandidate(
-        executablePaths, QFile::encodeName(childWorkingDirectory));
-    if (legacyInteractiveFallback && !executableAvailable
-        && requestedExecutable != QByteArrayLiteral("/bin/sh")) {
-        requestedExecutable = QByteArrayLiteral("/bin/sh");
-        argumentStorage[0] = requestedExecutable;
-        executablePaths = executableCandidates(requestedExecutable);
-    }
-
-    QVector<QByteArray> executableStorage = std::move(executablePaths);
-    QVector<char *> argv;
-    argv.reserve(argumentStorage.size() + 1);
-    for (QByteArray &argument : argumentStorage) {
-        argv.push_back(argument.data());
-    }
-    argv.push_back(nullptr);
 
     const TerminfoResolution terminfo = resolveRuntimeTerminfoDirectory();
     if (!terminfo) {
@@ -972,39 +970,175 @@ bool SessionWorker::spawnChild()
             }
         }
     }
-    const QStringList environmentList =
-        sanitizedChildEnvironment().toStringList();
-    QVector<QByteArray> environmentStorage;
-    environmentStorage.reserve(environmentList.size()
-                               + options_.environment.size() + 6);
-    for (const QString &entry : environmentList) {
-        environmentStorage.push_back(entry.toLocal8Bit());
-    }
+
+    TerminalEnvironment childEnvironment = inheritedTerminalEnvironment();
     // Apply frontend-injected entries directly to the byte representation so
     // Ghostty's raw finalized TERM does not cross QString. Configured env
     // entries then replace these and inherited values byte-for-byte, matching
     // pinned Ghostty's late env_override merge.
-    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERM"),
+    setEnvironmentEntry(childEnvironment, QByteArrayLiteral("TERM"),
                         options_.term);
-    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERMINFO"),
+    setEnvironmentEntry(childEnvironment, QByteArrayLiteral("TERMINFO"),
                         terminfo->toLocal8Bit());
-    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("COLORTERM"),
+    setEnvironmentEntry(childEnvironment, QByteArrayLiteral("COLORTERM"),
                         QByteArrayLiteral("truecolor"));
-    setEnvironmentEntry(environmentStorage, QByteArrayLiteral("TERM_PROGRAM"),
+    setEnvironmentEntry(childEnvironment, QByteArrayLiteral("TERM_PROGRAM"),
                         QByteArrayLiteral("ghostty-qt"));
-    setEnvironmentEntry(environmentStorage,
+    setEnvironmentEntry(childEnvironment,
                         QByteArrayLiteral("TERM_PROGRAM_VERSION"),
                         QByteArrayLiteral(GHOSTTY_QT_VERSION));
+    removeEnvironmentEntry(childEnvironment, QByteArrayLiteral("VTE_VERSION"));
+
+    if (options_.shellIntegrationAvailable) {
+        const QByteArray executableDirectory =
+            QFile::encodeName(QCoreApplication::applicationDirPath());
+        setEnvironmentEntry(childEnvironment,
+                            QByteArrayLiteral("GHOSTTY_BIN_DIR"),
+                            executableDirectory);
+        appendExecutableDirectory(childEnvironment, executableDirectory);
+
+        QByteArray resourceDirectory;
+        const std::expected<QString, QString> resources =
+            resolveRuntimeShellIntegrationResourceDirectory();
+        if (resources.has_value()) {
+            resourceDirectory = QFile::encodeName(*resources);
+            setEnvironmentEntry(childEnvironment,
+                                QByteArrayLiteral("GHOSTTY_RESOURCES_DIR"),
+                                resourceDirectory);
+        } else {
+            qWarning().noquote()
+                << "Ghostty shell-integration resources are unavailable:"
+                << resources.error();
+        }
+
+        // Ghostty's `-e` finalization downgrades every non-none forced mode to
+        // detection so an explicit program cannot accidentally receive, for
+        // example, ZDOTDIR intended for a configured zsh. The Qt positional
+        // program is held outside the config helper, so reproduce that rule
+        // at this boundary.
+        const GhosttyShellIntegrationMode integrationMode =
+            !options_.program.isEmpty()
+                && options_.shellIntegration
+                    != GhosttyShellIntegrationMode::None
+            ? GhosttyShellIntegrationMode::Detect
+            : options_.shellIntegration;
+        const GhosttyShellIntegrationRequest request{
+            .command = launchCommand,
+            .environment = childEnvironment,
+            .mode = integrationMode,
+            .features = options_.shellIntegrationFeatures,
+            .cursorBlink =
+                options_.runtime.appearance.cursorBlink.value_or(true),
+            .resourceDirectory = resourceDirectory,
+        };
+        const QString applicationDirectory =
+            QCoreApplication::applicationDirPath();
+        QString helperPath =
+            QDir(applicationDirectory)
+                .filePath(QStringLiteral("ghostty-qt-config-helper"));
+        // CTest executables live one directory below the application and its
+        // helper. This fallback is harmless for installations (where the
+        // sibling exists) and gives worker-level integration tests the exact
+        // production helper rather than a protocol fake.
+        if (!QFileInfo::exists(helperPath)) {
+            helperPath =
+                QDir(applicationDirectory)
+                    .filePath(QStringLiteral("../ghostty-qt-config-helper"));
+        }
+        const std::expected<GhosttyShellIntegrationResult, QString> prepared =
+            prepareGhosttyShellIntegration(
+                {
+                    .helperPath = helperPath,
+                    .environment = QProcessEnvironment::systemEnvironment(),
+                    .timeoutMilliseconds = 2'000,
+                },
+                request);
+        if (prepared.has_value()) {
+            semanticPromptExpected_ =
+                interactiveShell_ && prepared->shell.has_value();
+            launchCommand = prepared->command;
+            childEnvironment = prepared->environment;
+        } else {
+            // Integration is an enhancement, never a reason to strand a pane
+            // at startup. Retain the unmodified command/environment while
+            // making the helper boundary failure visible to developers.
+            qWarning().noquote()
+                << "Ghostty shell integration could not be prepared:"
+                << prepared.error();
+        }
+    }
+
     for (const TerminalEnvironmentEntry &entry : options_.environment) {
-        setEnvironmentEntry(environmentStorage, entry.key, entry.value);
+        setEnvironmentEntry(childEnvironment, entry.key, entry.value);
     }
     if (!options_.inheritWorkingDirectory) {
         // Pinned Ghostty applies concrete cwd-derived PWD after env overrides,
         // retaining the requested logical spelling even when chdir falls back.
-        setEnvironmentEntry(environmentStorage, QByteArrayLiteral("PWD"),
+        setEnvironmentEntry(childEnvironment, QByteArrayLiteral("PWD"),
                             requestedWorkingDirectory.toLocal8Bit());
     }
 
+    QVector<QByteArray> argumentStorage;
+    switch (launchCommand.kind) {
+    case TerminalCommandKind::Shell:
+        argumentStorage = {
+            QByteArrayLiteral("/bin/sh"),
+            QByteArrayLiteral("-c"),
+            launchCommand.shellCommand,
+        };
+        break;
+    case TerminalCommandKind::Direct:
+        argumentStorage = launchCommand.directArguments;
+        break;
+    }
+    if (argumentStorage.isEmpty()) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Configured direct command has no argv entries."));
+        return false;
+    }
+    for (qsizetype index = 0; index < argumentStorage.size(); ++index) {
+        if (argumentStorage.at(index).contains('\0')) {
+            Q_EMIT errorOccurred(
+                QStringLiteral(
+                    "Command argument %1 contains a NUL byte and cannot be passed to execve.")
+                    .arg(index));
+            return false;
+        }
+    }
+
+    QByteArray requestedExecutable = argumentStorage.constFirst();
+    QVector<QByteArray> executablePaths =
+        executableCandidates(requestedExecutable);
+    // Do not preselect a candidate: the child attempts the complete ordered
+    // list below. The availability probe exists only for the frontend's
+    // legacy invalid-SHELL fallback.
+    const bool executableAvailable = hasExecutableCandidate(
+        executablePaths, QFile::encodeName(childWorkingDirectory));
+    if (legacyInteractiveFallback && !executableAvailable
+        && requestedExecutable != QByteArrayLiteral("/bin/sh")) {
+        requestedExecutable = QByteArrayLiteral("/bin/sh");
+        argumentStorage[0] = requestedExecutable;
+        executablePaths = executableCandidates(requestedExecutable);
+    }
+
+    QVector<QByteArray> executableStorage = std::move(executablePaths);
+    QVector<char *> argv;
+    argv.reserve(argumentStorage.size() + 1);
+    for (QByteArray &argument : argumentStorage) {
+        argv.push_back(argument.data());
+    }
+    argv.push_back(nullptr);
+
+    QVector<QByteArray> environmentStorage;
+    environmentStorage.reserve(childEnvironment.size());
+    for (const TerminalEnvironmentEntry &entry : childEnvironment) {
+        QByteArray serialized;
+        serialized.reserve(entry.key.size() + entry.value.size() + 1);
+        serialized.append(entry.key);
+        serialized.append('=');
+        serialized.append(entry.value);
+        environmentStorage.push_back(std::move(serialized));
+    }
     QVector<char *> envp;
     envp.reserve(environmentStorage.size() + 1);
     for (QByteArray &entry : environmentStorage) {
@@ -1350,6 +1484,11 @@ void SessionWorker::drainPty(bool finalDrain)
         syncSelectionAvailability();
         processDeferredEffects();
         noteCompressionActivity();
+        // OSC 133 prompt markers can classify shell builtins that never
+        // create a new foreground process group. Re-evaluate immediately
+        // after the complete output batch so a returned prompt clears the
+        // close-confirmation state without waiting for the polling timer.
+        updateProcessActivity();
         if (!cursorBlinkResetTimer_.isValid()
             || cursorBlinkResetTimer_.elapsed()
                 > kCursorBlinkResetThrottleMilliseconds) {
@@ -3250,6 +3389,34 @@ void SessionWorker::updateProcessActivity()
         return;
     }
 
+    GhosttyVtAdapter::SemanticPromptState semanticState =
+        GhosttyVtAdapter::SemanticPromptState::Unavailable;
+    if (vt_ != nullptr) {
+        semanticState = vt_->semanticPromptState();
+        // Sample before every conservative early return. In particular, a
+        // prompt reached inside the submission grace window must remain
+        // latched if same-process-group work starts before the next poll.
+        if (semanticState == GhosttyVtAdapter::SemanticPromptState::AtPrompt) {
+            semanticPromptObserved_ = true;
+        }
+    }
+
+    // forkpty makes the shell the session and process-group leader. While the
+    // shell is reading at its prompt it owns the PTY foreground group; a job
+    // launched by the shell temporarily replaces it with another group.
+    // Treat query failures conservatively so an unusual PTY state cannot make
+    // us silently discard active work.
+    const pid_t foregroundGroup = masterFd_ >= 0 ? ::tcgetpgrp(masterFd_) : -1;
+    if (foregroundGroup < 0
+        || foregroundGroup != static_cast<pid_t>(childPid_)) {
+        setActiveProcess(true);
+        return;
+    }
+
+    // Preserve the conservative submission window even if OSC 133 C leaves
+    // the current row's prompt marker in place until output advances. A
+    // definitive returned prompt will clear activity on the first poll after
+    // this short race-bridging interval.
     if (potentialActivityTimer_.isValid()
         && potentialActivityTimer_.elapsed()
             < kPotentialActivityGraceMilliseconds) {
@@ -3258,14 +3425,20 @@ void SessionWorker::updateProcessActivity()
     }
     potentialActivityTimer_.invalidate();
 
-    // forkpty makes the shell the session and process-group leader. While the
-    // shell is reading at its prompt it owns the PTY foreground group; a job
-    // launched by the shell temporarily replaces it with another group.
-    // Treat query failures conservatively so an unusual PTY state cannot make
-    // us silently discard active work.
-    const pid_t foregroundGroup = masterFd_ >= 0 ? ::tcgetpgrp(masterFd_) : -1;
-    setActiveProcess(foregroundGroup < 0
-                     || foregroundGroup != static_cast<pid_t>(childPid_));
+    switch (semanticState) {
+    case GhosttyVtAdapter::SemanticPromptState::AtPrompt:
+        setActiveProcess(false);
+        return;
+    case GhosttyVtAdapter::SemanticPromptState::Away:
+    case GhosttyVtAdapter::SemanticPromptState::Unavailable:
+        if (semanticPromptExpected_ || semanticPromptObserved_) {
+            setActiveProcess(true);
+            return;
+        }
+        break;
+    }
+
+    setActiveProcess(false);
 }
 
 void SessionWorker::notePotentialActivity()
@@ -3424,6 +3597,8 @@ void SessionWorker::shutdown()
         childPid_ = -1;
     }
     running_ = false;
+    semanticPromptObserved_ = false;
+    semanticPromptExpected_ = false;
     potentialActivityTimer_.invalidate();
     setActiveProcess(false);
     closePty();

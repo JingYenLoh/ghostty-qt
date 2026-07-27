@@ -374,7 +374,7 @@
     },
     "confirm-close-surface": {
       "status": "partial",
-      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups plus a command-submission latch detect external jobs, but long-running shell builtins remain indistinguishable from an idle shell until Ghostty semantic prompt metadata and shell integration are wired."
+      "note": "false, true, and always map to live workspace close policy. Linux PTY foreground groups and a command-submission latch cover ordinary jobs and pre-output races. Successful shell injection protects startup until its first OSC 133 prompt; public libghostty row/cell semantic metadata then distinguishes same-process-group shell builtins, alternate-screen work, and a returned prompt, while query failure remains active after integration is expected or observed. Status remains partial because the public API does not expose Ghostty's private live cursor semantic mode or a terminal-owned integration-seen bit; shells without installed integration retain the foreground/latch fallback."
     },
     "copy-on-select": {
       "status": "partial",
@@ -583,6 +583,16 @@
     "selection-word-chars": {
       "status": "supported",
       "note": "The strict config projection carries Ghostty's finalized numeric Unicode-scalar array, including its mandatory U+0000 boundary, without reparsing the source string in Qt. Existing panes replace the value live, and the session worker supplies the newest ASCII or non-BMP boundaries to libghostty's selection-gesture press and drag events; reload alone does not reshape an installed selection."
+    },
+    "shell-integration": {
+      "status": "supported",
+      "scope": "linux",
+      "note": "All finalized none, detect, bash, elvish, fish, nushell, and zsh modes apply to future panes through a bounded private helper transaction that invokes the pinned Ghostty launcher implementation. Pristine pinned resources are staged in the build tree, patched with zero fuzz only so SSH wrappers call ghostty-qt, validated, installed relocatably, and located at runtime. Ghostty transforms the command and pre-override environment; finalized env and concrete PWD retain their later precedence. Frontend positional programs reproduce Ghostty -e semantics by changing forced modes to detection, and any helper/resource failure keeps the original child launch usable with a warning."
+    },
+    "shell-integration-features": {
+      "status": "supported",
+      "scope": "linux",
+      "note": "All cursor, sudo, title, ssh-env, ssh-terminfo, and path flags cross the strict config schema and use pinned Ghostty's deterministic GHOSTTY_SHELL_FEATURES serialization, including cursor blink versus steady. Serialization still runs when automatic injection is none so manually loaded scripts retain their configured behavior. The five staged SSH wrappers call the existing pinned +ssh delegation through GHOSTTY_BIN_DIR/ghostty-qt."
     },
     "split-divider-color": {
       "status": "supported",
@@ -1345,7 +1355,7 @@
         },
         "ssh": {
           "status": "supported",
-          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. This supports explicit +ssh invocation; automatic shell-function injection remains separately tracked by shell-integration and shell-integration-features."
+          "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. Automatic Bash, Elvish, Fish, Nushell, and Zsh wrappers invoke this same action through the staged shell-integration resources."
         },
         "ssh-cache": {
           "status": "supported",
