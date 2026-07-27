@@ -32,6 +32,7 @@ namespace {
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
+constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
 constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
@@ -387,6 +388,15 @@ void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
                             &TerminalWorkspace::searchOverlayComponentChanged);
 }
 
+void TerminalWorkspace::setAbnormalExitOverlayComponent(
+    QQmlComponent *component)
+{
+    setPaneOverlayComponent(
+        abnormalExitOverlay_, component, kAbnormalExitOverlayProperty,
+        "terminal abnormal-exit overlay",
+        &TerminalWorkspace::abnormalExitOverlayComponentChanged);
+}
+
 void TerminalWorkspace::setReadOnlyOverlayComponent(QQmlComponent *component)
 {
     setPaneOverlayComponent(
@@ -483,6 +493,12 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
     const QPointer<TerminalPane> paneGuard(pane);
     if (!attachPaneOverlay(searchOverlay_.component, paneGuard,
                            kSearchOverlayProperty, "terminal search overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    if (!attachPaneOverlay(abnormalExitOverlay_.component, paneGuard,
+                           kAbnormalExitOverlayProperty,
+                           "terminal abnormal-exit overlay")
         || guard == nullptr) {
         return false;
     }

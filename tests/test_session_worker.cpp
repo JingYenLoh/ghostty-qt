@@ -16,6 +16,8 @@
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
+#include <csignal>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -226,11 +228,13 @@ class SessionWorkerTest : public QObject {
 private Q_SLOTS:
     void runsCommandThroughPty();
     void runsTaggedShellAndDirectCommands();
+    void classifiesAbnormalCommandExitBoundaries();
+    void appliesLiveAbnormalExitPolicy();
     void waitsForEncodedKeyUsingLiveExitPolicy();
     void preservesStagedSequenceWhileWaitingAfterCommand();
     void writesPersistentTerminalFiles();
     void skipsUnavailableTerminalFiles();
-    void reportsTerminalInitializationSeparatelyFromChildSpawn();
+    void reportsTerminalInitializationSeparatelyFromChildExec();
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
     void injectsRawTerminalIdentity();
@@ -367,11 +371,154 @@ void SessionWorkerTest::runsTaggedShellAndDirectCommands()
     }
 }
 
+void SessionWorkerTest::classifiesAbnormalCommandExitBoundaries()
+{
+    QVERIFY(!SessionWorker::isAbnormalCommandExit(0, 0, 0, 0));
+    QVERIFY(SessionWorker::isAbnormalCommandExit(1, 0, 0, 0));
+    QVERIFY(SessionWorker::isAbnormalCommandExit(7, 0, 250, 250));
+    QVERIFY(!SessionWorker::isAbnormalCommandExit(7, 0, 251, 250));
+    QVERIFY(SessionWorker::isAbnormalCommandExit(143, 15, 250, 250));
+    QVERIFY(!SessionWorker::isAbnormalCommandExit(0, 0, 250, 250));
+    QVERIFY(SessionWorker::isAbnormalCommandExit(
+        1, 0, std::numeric_limits<quint32>::max(),
+        std::numeric_limits<quint32>::max()));
+}
+
+void SessionWorkerTest::appliesLiveAbnormalExitPolicy()
+{
+    TerminalKeyInput text;
+    text.key = Qt::Key_A;
+    text.text = QStringLiteral("a");
+    text.pressed = true;
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy dismissed(&worker, &SessionWorker::exitKeyDismissed);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("sleep 0.15; exit 9"),
+        };
+        options.runtime.abnormalCommandExitRuntimeMilliseconds = 0;
+        QVERIFY(worker.initialize(options));
+
+        // The threshold is live surface state. Its newest value at observed
+        // child exit, rather than the launch snapshot, controls retention.
+        TerminalSessionRuntimeOptions reloaded = options.runtime;
+        reloaded.abnormalCommandExitRuntimeMilliseconds =
+            std::numeric_limits<quint32>::max();
+        worker.applyRuntimeOptions(reloaded);
+
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QCOMPARE(exited.constFirst().at(0).toInt(), 9);
+        QVERIFY(!exited.constFirst().at(2).toBool());
+        QVERIFY(exited.constFirst().at(3).toBool());
+        QVERIFY(exited.constFirst().at(4).toULongLong() >= 100);
+        QVERIFY(exited.constFirst().at(5).toBool());
+
+        worker.sendKey(text);
+        QCOMPARE(dismissed.count(), 1);
+        worker.sendKey(text);
+        QCOMPARE(dismissed.count(), 1);
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy dismissed(&worker, &SessionWorker::exitKeyDismissed);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("sleep 0.05; exit 7"),
+        };
+        options.runtime.abnormalCommandExitRuntimeMilliseconds = 0;
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QVERIFY(exited.constFirst().at(4).toULongLong() > 0);
+        QVERIFY(!exited.constFirst().at(3).toBool());
+        QVERIFY(!exited.constFirst().at(5).toBool());
+        worker.sendKey(text);
+        QCOMPARE(dismissed.count(), 0);
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {QStringLiteral("/bin/true")};
+        options.runtime.abnormalCommandExitRuntimeMilliseconds =
+            std::numeric_limits<quint32>::max();
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QCOMPARE(exited.constFirst().at(0).toInt(), 0);
+        QVERIFY(!exited.constFirst().at(3).toBool());
+        QVERIFY(!exited.constFirst().at(5).toBool());
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+        QSignalSpy dismissed(&worker, &SessionWorker::exitKeyDismissed);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("exit 17"),
+        };
+        options.hold = true;
+        options.runtime.abnormalCommandExitRuntimeMilliseconds =
+            std::numeric_limits<quint32>::max();
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QVERIFY(exited.constFirst().at(2).toBool());
+        QVERIFY(!exited.constFirst().at(3).toBool());
+        QVERIFY(exited.constFirst().at(5).toBool());
+        worker.sendKey(text);
+        QCOMPARE(dismissed.count(), 0);
+        worker.shutdown();
+    }
+
+    {
+        SessionWorker worker;
+        QSignalSpy exited(&worker, &SessionWorker::sessionExited);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("kill -TERM $$"),
+        };
+        options.runtime.abnormalCommandExitRuntimeMilliseconds =
+            std::numeric_limits<quint32>::max();
+        QVERIFY(worker.initialize(options));
+        QTRY_COMPARE_WITH_TIMEOUT(exited.count(), 1, 5000);
+        QCOMPARE(exited.constFirst().at(1).toInt(), SIGTERM);
+        QVERIFY(exited.constFirst().at(3).toBool());
+        QVERIFY(exited.constFirst().at(5).toBool());
+        worker.shutdown();
+    }
+}
+
 void SessionWorkerTest::waitsForEncodedKeyUsingLiveExitPolicy()
 {
     SessionWorker worker;
     QSignalSpy exited(&worker, &SessionWorker::sessionExited);
-    QSignalSpy dismissed(&worker, &SessionWorker::waitAfterCommandDismissed);
+    QSignalSpy dismissed(&worker, &SessionWorker::exitKeyDismissed);
     QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -423,7 +570,7 @@ void SessionWorkerTest::preservesStagedSequenceWhileWaitingAfterCommand()
 {
     SessionWorker worker;
     QSignalSpy exited(&worker, &SessionWorker::sessionExited);
-    QSignalSpy dismissed(&worker, &SessionWorker::waitAfterCommandDismissed);
+    QSignalSpy dismissed(&worker, &SessionWorker::exitKeyDismissed);
     QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
 
     TerminalSessionLaunchOptions options;
@@ -1011,9 +1158,10 @@ void SessionWorkerTest::skipsUnavailableTerminalFiles()
     worker.shutdown();
 }
 
-void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildSpawn()
+void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildExec()
 {
     SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -1025,10 +1173,12 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildSpawn()
         QStringLiteral("/ghostty-qt-test/nonexistent-child"),
     };
     options.hold = true;
+    options.runtime.abnormalCommandExitRuntimeMilliseconds =
+        std::numeric_limits<quint32>::max();
 
     // Worker initialization is accepted as soon as libghostty-vt exists. A
-    // later child-spawn failure is reported independently and does not turn the
-    // accepted initialization into a false result.
+    // later child-side exec failure is an observed process exit and does not
+    // turn the accepted terminal initialization into a false result.
     std::optional<bool> initializationResult;
     int errorsAtInitialization = -1;
     QVERIFY(worker.initialize(
@@ -1038,23 +1188,25 @@ void SessionWorkerTest::reportsTerminalInitializationSeparatelyFromChildSpawn()
         }));
     QCOMPARE(initializationResult, std::optional(true));
     QCOMPARE(errorsAtInitialization, 0);
-    QCOMPARE(errorSpy.count(), 1);
-    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
-        QStringLiteral("Program is not executable")));
-    QCOMPARE(exitSpy.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QVERIFY(errorSpy.isEmpty());
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
     QCOMPARE(exitSpy.constFirst().at(1).toInt(), 0);
     QVERIFY(exitSpy.constFirst().at(2).toBool());
+    QVERIFY(!exitSpy.constFirst().at(3).toBool());
+    QVERIFY(exitSpy.constFirst().at(5).toBool());
 
     // The existing terminal makes a repeated attempt ineligible. It must not
-    // replay either the child diagnostic or the synthetic exit notification.
+    // replay either process-start or exit notification.
     initializationResult.reset();
     QVERIFY(!worker.initialize(
         options, [&](bool initialized) {
             initializationResult = initialized;
         }));
     QCOMPARE(initializationResult, std::optional(false));
-    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.isEmpty());
+    QCOMPARE(startedSpy.count(), 1);
     QCOMPARE(exitSpy.count(), 1);
 
     worker.shutdown();

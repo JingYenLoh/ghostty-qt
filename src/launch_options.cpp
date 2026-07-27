@@ -143,6 +143,8 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
+        .abnormalCommandExitRuntimeMilliseconds =
+            options.abnormalCommandExitRuntimeMilliseconds,
         .waitAfterCommand = options.waitAfterCommand,
     };
 }
@@ -189,6 +191,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.ordinaryCommand = config.ordinaryCommand.value_or(
         TerminalCommand::shell(QByteArrayLiteral("sh"), true));
     result.initialCommand = config.initialCommand;
+    result.abnormalCommandExitRuntimeMilliseconds =
+        config.abnormalCommandExitRuntimeMilliseconds;
     result.waitAfterCommand = config.waitAfterCommand;
     result.environment = config.environment;
     result.linuxCgroup = config.linuxCgroup;

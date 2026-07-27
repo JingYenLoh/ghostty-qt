@@ -440,6 +440,7 @@ private Q_SLOTS:
     void terminalControlSubmissionPromptsBeforeWorkerRoundTrip();
     void readOnlyBlocksUiActivityLatchAndProtectsClose();
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
+    void abnormalExitOverlayPresentsHeldFailureAndCloses();
     void overlayComponentsShareOneLifecycle();
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
@@ -2449,6 +2450,13 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
     options.program = {QStringLiteral("/bin/true")};
+    // Splits and later tabs intentionally drop the frontend-only initial
+    // program and hold. Keep their ordinary command alive so this topology
+    // test cannot race Linux pidfd exit delivery.
+    options.ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("30"),
+    });
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
     TerminalWorkspace::setDefaultLaunchOptions(options);
@@ -2532,6 +2540,7 @@ void TerminalWorkspaceTest::closeSurfaceUsesStableOriginsAndAdjacentFocus()
                               third.pane.data(), 1000);
     QTRY_VERIFY_WITH_TIMEOUT(firstPane.isNull(), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(splitDividerItems(&workspace).size(), 0, 1000);
+    QVERIFY(third.pane);
     QCOMPARE(third.pane->position(), workspace.boundingRect().topLeft());
     QCOMPARE(third.pane->size(), workspace.boundingRect().size());
 
@@ -3165,6 +3174,74 @@ void TerminalWorkspaceTest::readOnlyStateIsPaneLocalAndBroadFanoutIsStable()
     QTRY_COMPARE_WITH_TIMEOUT(quit.count(), 1, 1000);
 }
 
+void TerminalWorkspaceTest::abnormalExitOverlayPresentsHeldFailureAndCloses()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/ghostty-qt-test/nonexistent-child"),
+    };
+    options.hold = true;
+    options.abnormalCommandExitRuntimeMilliseconds =
+        std::numeric_limits<quint32>::max();
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/AbnormalExitOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    window.show();
+    TerminalWorkspace workspace;
+    workspace.setParentItem(window.contentItem());
+    workspace.setSize(window.size());
+    workspace.setAbnormalExitOverlayComponent(&overlayComponent);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->running(), 1000);
+
+    QQuickItem *const overlay = pane->findChild<QQuickItem *>(
+        QStringLiteral("terminalAbnormalExitOverlay"),
+        Qt::FindDirectChildrenOnly);
+    QVERIFY(overlay != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(overlay->isVisible(), 1000);
+    QCOMPARE(overlay->parentItem(), pane);
+    QCOMPARE(overlay->x(), 0.0);
+    QCOMPARE(overlay->width(), pane->width());
+    QCOMPARE(overlay->y() + overlay->height(), pane->height());
+
+    QQuickItem *const message = overlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalAbnormalExitMessage"));
+    QVERIFY(message != nullptr);
+    const QString messageText = message->property("text").toString();
+    QVERIFY(messageText.startsWith(QStringLiteral("Command failed after ")));
+    QVERIFY(messageText.endsWith(QStringLiteral(" ms (exit status 127).")));
+
+    QQuickItem *const closeButton = overlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalAbnormalExitCloseButton"));
+    QVERIFY(closeButton != nullptr);
+    QCOMPARE(closeButton->focusPolicy(), Qt::TabFocus);
+    closeButton->forceActiveFocus(Qt::TabFocusReason);
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), closeButton, 1000);
+
+    QPointer<TerminalPane> closedPane(pane);
+    QVERIFY(
+        QMetaObject::invokeMethod(closeButton, "click", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(closedPane.isNull(), 1000);
+    QCOMPARE(workspace.tabCount(), 0);
+}
+
 void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
@@ -3190,6 +3267,12 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
             &TerminalWorkspace::setSearchOverlayComponent,
             &TerminalWorkspace::searchOverlayComponent,
             &TerminalWorkspace::searchOverlayComponentChanged,
+        },
+        OverlayCase{
+            "abnormalExit",
+            &TerminalWorkspace::setAbnormalExitOverlayComponent,
+            &TerminalWorkspace::abnormalExitOverlayComponent,
+            &TerminalWorkspace::abnormalExitOverlayComponentChanged,
         },
         OverlayCase{
             "readOnly",
@@ -5369,7 +5452,17 @@ void TerminalWorkspaceTest::
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
     LaunchOptions options = baseOptions();
-    options.program = {QStringLiteral("/bin/true")};
+    options.program = {
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"),
+    };
+    // Derived panes drop the one-shot program and hold. Give them a persistent
+    // ordinary command so every screen export completes in one live action
+    // epoch now that pidfd reports /bin/true exits without polling latency.
+    options.ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("30"),
+    });
     options.hold = true;
     options.confirmCloseMode = ConfirmCloseMode::Never;
     TerminalWorkspace::setDefaultLaunchOptions(options);
@@ -5865,7 +5958,7 @@ void TerminalWorkspaceTest::
 
     // A held surface survives its child exit, but crossing that lifecycle
     // boundary expires the result already retained by BroadExecution.
-    Q_EMIT controllers[0]->sessionExited(0, 0, true, false);
+    Q_EMIT controllers[0]->sessionExited(0, 0, true, false, 500, false);
     QVERIFY(!panes[0]->searchUiActive());
     QCOMPARE(staleActive.count(), 0);
     QCOMPARE(staleText.count(), 0);

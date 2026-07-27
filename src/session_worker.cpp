@@ -38,6 +38,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -56,6 +57,27 @@ constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
+
+int openChildExitFd(pid_t pid)
+{
+#ifdef SYS_pidfd_open
+    long result = -1;
+    do {
+        result = ::syscall(SYS_pidfd_open, pid, 0);
+    } while (result < 0 && errno == EINTR);
+    if (result >= 0 && result <= std::numeric_limits<int>::max()) {
+        return static_cast<int>(result);
+    }
+    if (result >= 0) {
+        (void)::close(static_cast<int>(result));
+        errno = EMFILE;
+    }
+#else
+    Q_UNUSED(pid);
+    errno = ENOSYS;
+#endif
+    return -1;
+}
 
 bool environmentEntryHasKey(const QByteArray &entry, const QByteArray &key)
 {
@@ -589,6 +611,14 @@ bool SessionWorker::canonicalTextMayStartProcess(const QByteArray &payload)
     return text.has_value() && bytesMayStartProcess(*text);
 }
 
+bool SessionWorker::isAbnormalCommandExit(
+    int exitCode, int signalNumber, quint64 runtimeMilliseconds,
+    quint32 thresholdMilliseconds) noexcept
+{
+    return (exitCode != 0 || signalNumber != 0)
+        && runtimeMilliseconds <= thresholdMilliseconds;
+}
+
 bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                                InitializationObserver observer)
 {
@@ -609,7 +639,8 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
                        geometry.surfaceHeightPixels);
     }
     shuttingDown_ = false;
-    waitingAfterCommand_ = false;
+    waitingForExitKey_ = false;
+    childRuntimeTimer_.invalidate();
     potentialActivityTimer_.invalidate();
     cursorBlinkResetTimer_.invalidate();
     cursorBlinkResetPending_ = false;
@@ -659,14 +690,14 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
         if (observer) observer(false);
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to initialize libghostty-vt."));
-        Q_EMIT sessionExited(127, 0, options_.hold, false);
+        Q_EMIT sessionExited(127, 0, options_.hold, false, 0, false);
         return false;
     }
 
     if (observer) observer(true);
     publishFrame();
     if (!spawnChild()) {
-        Q_EMIT sessionExited(127, 0, options_.hold, false);
+        Q_EMIT sessionExited(127, 0, options_.hold, false, 0, false);
     }
     return true;
 }
@@ -799,9 +830,9 @@ bool SessionWorker::spawnChild()
             && QFileInfo(requestedWorkingDirectory).isDir()
             && ::access(requestedWorkingDirectoryBytes.constData(), X_OK)
                 == 0) {
-            // This expected effective directory is used only for the
-            // synchronous executable diagnostic. The child still attempts
-            // the exact requested spelling below.
+            // This expected effective directory is used only to decide
+            // whether the legacy SHELL fallback should apply. The child still
+            // attempts the exact requested spelling below.
             childWorkingDirectory = requestedWorkingDirectory;
         }
     }
@@ -858,23 +889,16 @@ bool SessionWorker::spawnChild()
     QByteArray requestedExecutable = argumentStorage.constFirst();
     QVector<QByteArray> executablePaths =
         executableCandidates(requestedExecutable);
-    // Preserve the existing synchronous diagnostic, but do not preselect a
-    // candidate: the child still attempts the complete ordered list below.
-    bool executableAvailable = hasExecutableCandidate(
+    // Do not preselect a candidate: the child attempts the complete ordered
+    // list below. The availability probe exists only for the frontend's
+    // legacy invalid-SHELL fallback.
+    const bool executableAvailable = hasExecutableCandidate(
         executablePaths, QFile::encodeName(childWorkingDirectory));
     if (legacyInteractiveFallback && !executableAvailable
         && requestedExecutable != QByteArrayLiteral("/bin/sh")) {
         requestedExecutable = QByteArrayLiteral("/bin/sh");
         argumentStorage[0] = requestedExecutable;
         executablePaths = executableCandidates(requestedExecutable);
-        executableAvailable = hasExecutableCandidate(
-            executablePaths, QFile::encodeName(childWorkingDirectory));
-    }
-    if (requestedExecutable.isEmpty() || !executableAvailable) {
-        Q_EMIT errorOccurred(
-            QStringLiteral("Program is not executable: %1")
-                .arg(QString::fromLocal8Bit(requestedExecutable)));
-        return false;
     }
 
     QVector<QByteArray> executableStorage = std::move(executablePaths);
@@ -1137,6 +1161,17 @@ bool SessionWorker::spawnChild()
     masterFd_ = ptyFd;
     childPid_ = static_cast<qint64>(pid);
     running_ = true;
+    childExitFd_ = openChildExitFd(pid);
+    if (childExitFd_ >= 0) {
+        childExitNotifier_ =
+            new QSocketNotifier(childExitFd_, QSocketNotifier::Read, this);
+        connect(childExitNotifier_, &QSocketNotifier::activated, this,
+                &SessionWorker::checkChild);
+    }
+    // Match Ghostty's runtime provenance: begin after the parent has a
+    // watchable, successfully launched child. pidfd readiness minimizes the
+    // observation latency; the existing timer remains the kernel fallback.
+    childRuntimeTimer_.start();
     setActiveProcess(!interactiveShell_);
     if (interactiveShell_) {
         // Until the shell reaches its first prompt, err on the side of
@@ -1368,9 +1403,9 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
     if (encoded.bytes.isEmpty()) {
         return;
     }
-    if (waitingAfterCommand_ && input.pressed) {
-        waitingAfterCommand_ = false;
-        Q_EMIT waitAfterCommandDismissed();
+    if (waitingForExitKey_ && input.pressed) {
+        waitingForExitKey_ = false;
+        Q_EMIT exitKeyDismissed();
         return;
     }
     if (masterFd_ < 0) {
@@ -1449,9 +1484,9 @@ void SessionWorker::resolveSequence(quint64 token,
     stagedSequenceBytes_.clear();
     stagedSequencePotentialActivity_ = false;
 
-    if (!bytes.isEmpty() && waitingAfterCommand_) {
-        waitingAfterCommand_ = false;
-        Q_EMIT waitAfterCommandDismissed();
+    if (!bytes.isEmpty() && waitingForExitKey_) {
+        waitingForExitKey_ = false;
+        Q_EMIT exitKeyDismissed();
         return;
     }
 
@@ -1491,9 +1526,9 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     if (encoded.bytes.isEmpty()) {
         return;
     }
-    if (waitingAfterCommand_) {
-        waitingAfterCommand_ = false;
-        Q_EMIT waitAfterCommandDismissed();
+    if (waitingForExitKey_) {
+        waitingForExitKey_ = false;
+        Q_EMIT exitKeyDismissed();
         return;
     }
     if (masterFd_ < 0) {
@@ -3115,11 +3150,12 @@ void SessionWorker::checkChild()
         if (childTimer_ != nullptr) {
             childTimer_->stop();
         }
+        childRuntimeTimer_.invalidate();
         closePty();
         if (!shuttingDown_) {
             Q_EMIT errorOccurred(
                 QStringLiteral("The child process was reaped unexpectedly."));
-            Q_EMIT sessionExited(127, 0, options_.hold, false);
+            Q_EMIT sessionExited(127, 0, options_.hold, false, 0, false);
         }
     } else if (result < 0 && errno != EINTR) {
         Q_EMIT errorOccurred(
@@ -3177,6 +3213,28 @@ void SessionWorker::setActiveProcess(bool active)
 
 void SessionWorker::handleChildStatus(int status)
 {
+    // Match Ghostty's process watcher: freeze the exit observation before
+    // draining or rendering final PTY output. That post-exit work must not
+    // inflate the command runtime across the abnormal-exit threshold.
+    int exitCode = 0;
+    int signalNumber = 0;
+    if (WIFEXITED(status)) {
+        exitCode = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        signalNumber = WTERMSIG(status);
+        exitCode = 128 + signalNumber;
+    }
+
+    quint64 runtimeMilliseconds = 0;
+    if (childRuntimeTimer_.isValid()) {
+        runtimeMilliseconds = static_cast<quint64>(
+            std::max<qint64>(0, childRuntimeTimer_.elapsed()));
+    }
+    childRuntimeTimer_.invalidate();
+    const bool abnormal = isAbnormalCommandExit(
+        exitCode, signalNumber, runtimeMilliseconds,
+        options_.runtime.abnormalCommandExitRuntimeMilliseconds);
+
     // A process may exit before Qt delivers the final readability event. Drain
     // the PTY and publish synchronously so short-lived commands cannot lose
     // their last screen update when the master descriptor is closed below.
@@ -3193,29 +3251,34 @@ void SessionWorker::handleChildStatus(int status)
     if (childTimer_ != nullptr) {
         childTimer_->stop();
     }
-    waitingAfterCommand_ =
-        !shuttingDown_ && !options_.hold && options_.runtime.waitAfterCommand;
+    waitingForExitKey_ = !shuttingDown_ && !options_.hold
+        && (options_.runtime.waitAfterCommand || abnormal);
     closePty();
 
-    int exitCode = 0;
-    int signalNumber = 0;
-    if (WIFEXITED(status)) {
-        exitCode = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-        signalNumber = WTERMSIG(status);
-        exitCode = 128 + signalNumber;
-    }
     if (!shuttingDown_) {
-        if (waitingAfterCommand_ && vt_ != nullptr) {
+        if (waitingForExitKey_ && vt_ != nullptr) {
             vt_->normalizeKeyboardAfterCommandExit();
         }
         Q_EMIT sessionExited(exitCode, signalNumber, options_.hold,
-                             waitingAfterCommand_);
+                             waitingForExitKey_, runtimeMilliseconds, abnormal);
+    }
+}
+
+void SessionWorker::closeChildExitWatcher()
+{
+    if (childExitNotifier_ != nullptr) {
+        delete childExitNotifier_;
+        childExitNotifier_ = nullptr;
+    }
+    if (childExitFd_ >= 0) {
+        (void)::close(childExitFd_);
+        childExitFd_ = -1;
     }
 }
 
 void SessionWorker::closePty()
 {
+    closeChildExitWatcher();
     if (readNotifier_ != nullptr) {
         delete readNotifier_;
         readNotifier_ = nullptr;
@@ -3235,7 +3298,7 @@ void SessionWorker::closePty()
     // resolves to encoded bytes, so retain that sequence across this one
     // lifecycle boundary. Drop/binding resolutions still consume it without
     // dismissing; every other close path clears it normally.
-    if (!waitingAfterCommand_) {
+    if (!waitingForExitKey_) {
         stagedSequenceBytes_.clear();
         activeSequenceToken_ = 0;
         stagedSequencePotentialActivity_ = false;
@@ -3248,7 +3311,8 @@ void SessionWorker::shutdown()
         return;
     }
     shuttingDown_ = true;
-    waitingAfterCommand_ = false;
+    waitingForExitKey_ = false;
+    childRuntimeTimer_.invalidate();
     if (frameTimer_ != nullptr) {
         frameTimer_->stop();
     }

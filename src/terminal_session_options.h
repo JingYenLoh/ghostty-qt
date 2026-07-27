@@ -92,6 +92,10 @@ struct TerminalSessionRuntimeOptions {
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
+    // Linux classifies a nonzero child exit observed at or before this live
+    // threshold as abnormal. Zero remains meaningful for a sub-millisecond
+    // failure and therefore is not a disabled sentinel.
+    quint32 abnormalCommandExitRuntimeMilliseconds = 250;
     // A child that exits while this live policy is enabled remains readable
     // until a terminal-encoded key dismisses it.
     bool waitAfterCommand = false;

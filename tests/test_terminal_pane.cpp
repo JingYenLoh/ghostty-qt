@@ -380,6 +380,8 @@ class TerminalPaneTest : public QObject {
 private Q_SLOTS:
     void presentsScrollbarFromRetainedMetadata();
     void routesWaitAfterCommandDismissalSeparatelyFromHold();
+    void presentsAbnormalExitUntilExplicitDismissal();
+    void presentsChildExecFailureEndToEnd();
     void movesScrollbarWithClampedAbsoluteRows();
     void reloadsScrollbarPolicyAndHandlesHugeCounts();
     void latchesClearsAndReloadsBellFeedback();
@@ -481,7 +483,7 @@ void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
         QSignalSpy closed(&pane, &TerminalPane::requestClose);
         QSignalSpy ended(&pane, &TerminalPane::sessionEnded);
 
-        Q_EMIT controller->sessionExited(0, 0, false, true);
+        Q_EMIT controller->sessionExited(0, 0, false, true, 500, false);
         QCOMPARE(ended.count(), 1);
         QCoreApplication::processEvents();
         QCOMPARE(closed.count(), 0);
@@ -494,9 +496,9 @@ void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
         QCoreApplication::processEvents();
         QCOMPARE(closed.count(), 0);
 
-        Q_EMIT controller->waitAfterCommandDismissed();
+        Q_EMIT controller->exitKeyDismissed();
         QCOMPARE(closed.count(), 1);
-        Q_EMIT controller->waitAfterCommandDismissed();
+        Q_EMIT controller->exitKeyDismissed();
         QCOMPARE(closed.count(), 1);
     }
 
@@ -507,8 +509,8 @@ void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
         QVERIFY(controller != nullptr);
         QSignalSpy closed(&pane, &TerminalPane::requestClose);
 
-        Q_EMIT controller->sessionExited(0, 0, true, false);
-        Q_EMIT controller->waitAfterCommandDismissed();
+        Q_EMIT controller->sessionExited(0, 0, true, false, 500, false);
+        Q_EMIT controller->exitKeyDismissed();
         QCoreApplication::processEvents();
         QCOMPARE(closed.count(), 0);
     }
@@ -520,9 +522,89 @@ void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
         QVERIFY(controller != nullptr);
         QSignalSpy closed(&pane, &TerminalPane::requestClose);
 
-        Q_EMIT controller->sessionExited(0, 0, false, false);
+        Q_EMIT controller->sessionExited(0, 0, false, false, 500, false);
         QTRY_COMPARE_WITH_TIMEOUT(closed.count(), 1, 1000);
     }
+}
+
+void TerminalPaneTest::presentsAbnormalExitUntilExplicitDismissal()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+
+    {
+        TerminalPane pane(options, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Deferred);
+        auto *controller = pane.findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy abnormalChanged(&pane, &TerminalPane::abnormalExitChanged);
+        QSignalSpy closed(&pane, &TerminalPane::requestClose);
+        QSignalSpy ended(&pane, &TerminalPane::sessionEnded);
+
+        Q_EMIT controller->sessionExited(7, 0, false, true, 73, true);
+        QCOMPARE(ended.count(), 1);
+        QCOMPARE(abnormalChanged.count(), 1);
+        QVERIFY(pane.abnormalExitVisible());
+        QCOMPARE(pane.abnormalExitText(),
+                 QStringLiteral("Command failed after 73 ms (exit status 7)."));
+        QCoreApplication::processEvents();
+        QCOMPARE(closed.count(), 0);
+
+        pane.dismissAbnormalExit();
+        QCOMPARE(closed.count(), 1);
+        // A workspace close confirmation may retain the pane. Keep the banner
+        // available so the explicit request can be retried.
+        QVERIFY(pane.abnormalExitVisible());
+    }
+
+    {
+        TerminalPane pane(options, nullptr, std::nullopt,
+                          TerminalSessionStartMode::Deferred);
+        auto *controller = pane.findChild<TerminalController *>();
+        QVERIFY(controller != nullptr);
+        QSignalSpy closed(&pane, &TerminalPane::requestClose);
+
+        Q_EMIT controller->sessionExited(143, 15, true, false, 11, true);
+        QVERIFY(pane.abnormalExitVisible());
+        QCOMPARE(pane.abnormalExitText(),
+                 QStringLiteral("Command failed after 11 ms (signal 15)."));
+
+        // The local --hold policy remains indefinite and does not become
+        // key-dismissible merely because the outcome is abnormal.
+        Q_EMIT controller->exitKeyDismissed();
+        QCOMPARE(closed.count(), 0);
+        pane.dismissAbnormalExit();
+        QCOMPARE(closed.count(), 1);
+    }
+}
+
+void TerminalPaneTest::presentsChildExecFailureEndToEnd()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/ghostty-qt-test/nonexistent-child"),
+    };
+    options.abnormalCommandExitRuntimeMilliseconds =
+        std::numeric_limits<quint32>::max();
+
+    TerminalPane pane(options);
+    QSignalSpy abnormalChanged(&pane, &TerminalPane::abnormalExitChanged);
+    QSignalSpy closed(&pane, &TerminalPane::requestClose);
+    QSignalSpy ended(&pane, &TerminalPane::sessionEnded);
+
+    QTRY_COMPARE_WITH_TIMEOUT(ended.count(), 1, 5000);
+    QCOMPARE(ended.constFirst().at(1).toInt(), 127);
+    QCOMPARE(ended.constFirst().at(2).toInt(), 0);
+    QCOMPARE(abnormalChanged.count(), 1);
+    QVERIFY(pane.abnormalExitVisible());
+    QVERIFY(pane.abnormalExitText().startsWith(
+        QStringLiteral("Command failed after ")));
+    QCoreApplication::processEvents();
+    QCOMPARE(closed.count(), 0);
+
+    pane.dismissAbnormalExit();
+    QCOMPARE(closed.count(), 1);
 }
 
 void TerminalPaneTest::presentsScrollbarFromRetainedMetadata()
@@ -2272,6 +2354,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.mouseShiftCapture = MouseShiftCapture::Never;
     reloaded.linkUrl = false;
+    reloaded.abnormalCommandExitRuntimeMilliseconds = 731;
     reloaded.waitAfterCommand = true;
     pane.applyRuntimeOptions(reloaded);
     QCOMPARE(pane.fontPointSize(), 14.0);
@@ -2291,6 +2374,8 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.mouseShiftCapture, reloaded.mouseShiftCapture);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
+    QCOMPARE(splitOptions.abnormalCommandExitRuntimeMilliseconds,
+             reloaded.abnormalCommandExitRuntimeMilliseconds);
     QCOMPARE(splitOptions.waitAfterCommand, reloaded.waitAfterCommand);
     QCOMPARE(splitOptions.splitInheritWorkingDirectory,
              reloaded.splitInheritWorkingDirectory);
@@ -7151,7 +7236,7 @@ void TerminalPaneTest::dropsPreExitSearchSelectionEffectOnSessionExit()
 
     // A held terminal remains alive after the child exits, allowing us to
     // observe whether stale selection-derived UI work is resurrected.
-    Q_EMIT controller->sessionExited(0, 0, true, false);
+    Q_EMIT controller->sessionExited(0, 0, true, false, 500, false);
     QVERIFY(!pane.searchUiActive());
 
     if (!resultQueuedBeforeExit) {

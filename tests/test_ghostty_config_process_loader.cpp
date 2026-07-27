@@ -223,6 +223,7 @@ private Q_SLOTS:
     void realHelperExportsLinuxCgroup();
     void realHelperExportsEnvironment();
     void realHelperExportsCommands();
+    void realHelperExportsAbnormalCommandExitRuntime();
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
@@ -1289,6 +1290,71 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsCommands()
     QVERIFY(result->values.ordinaryCommand->defaultShell);
     QVERIFY(!result->values.initialCommand.has_value());
     QVERIFY(!result->values.waitAfterCommand);
+}
+
+void GhosttyConfigProcessLoaderTest::
+    realHelperExportsAbnormalCommandExitRuntime()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{250});
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("abnormal-command-exit-runtime = 1234\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{1'234});
+
+    result = queryRealConfigExport(
+        helperPath, fixture,
+        {QStringLiteral("--abnormal-command-exit-runtime=987")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{987});
+
+    result = queryRealConfigExport(
+        helperPath, fixture,
+        {QStringLiteral("--abnormal-command-exit-runtime=")});
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{250});
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("abnormal-command-exit-runtime = 1234\n"
+                          "abnormal-command-exit-runtime =\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{250});
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("abnormal-command-exit-runtime = 0\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds, quint32{0});
+
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("abnormal-command-exit-runtime = 4294967295\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.abnormalCommandExitRuntimeMilliseconds,
+             std::numeric_limits<quint32>::max());
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBellFeatures()

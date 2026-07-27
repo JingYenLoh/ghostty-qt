@@ -189,8 +189,9 @@ Q_SIGNALS:
     void readOnlyChanged(bool readOnly);
     void launchProgramChanged();
     void sessionExited(int exitCode, int signalNumber, bool hold,
-                       bool waitForKey);
-    void waitAfterCommandDismissed();
+                       bool waitForKey, quint64 runtimeMilliseconds,
+                       bool abnormal);
+    void exitKeyDismissed();
     void errorOccurred(const QString &message);
     void bell();
     void hyperlinkResolved(quint64 contentRevision,

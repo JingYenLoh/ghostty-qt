@@ -26,6 +26,9 @@ struct LaunchOptions {
     // whose terminal initialization reaches the coordinator first.
     std::optional<TerminalCommand> ordinaryCommand;
     std::optional<TerminalCommand> initialCommand;
+    // Live Linux threshold for retaining and presenting a quickly failed
+    // child. The worker samples the newest value when it observes the exit.
+    quint32 abnormalCommandExitRuntimeMilliseconds = 250;
     // Shared live wait policy. The CLI --hold bit below remains a distinct
     // initial-session override.
     bool waitAfterCommand = false;

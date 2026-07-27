@@ -36,6 +36,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("command"),
     QLatin1StringView("initial-command"),
     QLatin1StringView("wait-after-command"),
+    QLatin1StringView("abnormal-command-exit-runtime"),
     QLatin1StringView("env"),
     QLatin1StringView("linux-cgroup"),
     QLatin1StringView("linux-cgroup-memory-limit"),
@@ -1034,6 +1035,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                     result.waitAfterCommand);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("abnormal-command-exit-runtime");
+        auto parsed =
+            readUnsignedInteger<quint32>(fieldValue(name), context(name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.abnormalCommandExitRuntimeMilliseconds = *parsed;
     }
     if (auto parsed = assign(QLatin1StringView("env"), result.environment,
                              readEnvironment);

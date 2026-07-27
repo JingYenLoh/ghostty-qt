@@ -337,12 +337,12 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
             &TerminalController::errorOccurred, Qt::QueuedConnection);
     connect(worker, &SessionWorker::bell, this, &TerminalController::bell,
             Qt::QueuedConnection);
-    connect(worker, &SessionWorker::waitAfterCommandDismissed, this,
-            &TerminalController::waitAfterCommandDismissed,
-            Qt::QueuedConnection);
+    connect(worker, &SessionWorker::exitKeyDismissed, this,
+            &TerminalController::exitKeyDismissed, Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::sessionExited, this,
-        [this](int exitCode, int signalNumber, bool hold, bool waitForKey) {
+        [this](int exitCode, int signalNumber, bool hold, bool waitForKey,
+               quint64 runtimeMilliseconds, bool abnormal) {
             if (closing_) return;
             // Invalidate queued search progress and selection-derived
             // queries before observers clear their UI. The held terminal
@@ -363,7 +363,8 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                 Q_EMIT runningChanged(false);
                 if (guard == nullptr) return;
             }
-            Q_EMIT sessionExited(exitCode, signalNumber, hold, waitForKey);
+            Q_EMIT sessionExited(exitCode, signalNumber, hold, waitForKey,
+                                 runtimeMilliseconds, abnormal);
         },
         Qt::QueuedConnection);
 }

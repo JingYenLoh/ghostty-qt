@@ -137,6 +137,11 @@ fn writeValues(
     try writeOptionalCommand(json, config.@"initial-command", false);
     try json.objectField("wait-after-command");
     try json.write(config.@"wait-after-command");
+    try json.objectField("abnormal-command-exit-runtime");
+    // Unlike Config.Duration fields, this value is already an exact u32
+    // millisecond count. Every u32 crosses JSON's binary64 number boundary
+    // losslessly, so no unit conversion or decimal-string encoding is needed.
+    try json.write(config.@"abnormal-command-exit-runtime");
     try json.objectField("env");
     try writeEnvironment(json, &config.env);
     try json.objectField("linux-cgroup");

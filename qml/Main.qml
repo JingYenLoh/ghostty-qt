@@ -77,6 +77,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: terminalAbnormalExitOverlayFactory
+        AbnormalExitOverlay {}
+    }
+
+    Component {
         id: terminalReadOnlyOverlayFactory
         ReadOnlyOverlay {}
     }
@@ -200,6 +205,7 @@ ApplicationWindow {
             id: workspace
             anchors.fill: parent
             searchOverlayComponent: terminalSearchOverlayFactory
+            abnormalExitOverlayComponent: terminalAbnormalExitOverlayFactory
             readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
             resizeOverlayComponent: terminalResizeOverlayFactory
             scrollbarComponent: terminalScrollBarFactory

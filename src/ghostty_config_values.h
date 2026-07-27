@@ -199,6 +199,9 @@ struct GhosttyConfigValues {
     std::optional<TerminalCommand> ordinaryCommand;
     std::optional<TerminalCommand> initialCommand;
     bool waitAfterCommand = false;
+    // Ghostty stores this threshold as an exact u32 millisecond count rather
+    // than Config.Duration. It remains live policy for a running surface.
+    quint32 abnormalCommandExitRuntimeMilliseconds = 250;
     // The helper has already applied repeat/reset/remove/overwrite and include
     // precedence. Preserve the finalized raw key/value bytes unchanged.
     TerminalEnvironment environment;

@@ -650,6 +650,7 @@ qt_add_qml_module(ghostty-qt
     URI GhosttyQt
     VERSION 1.0
     QML_FILES
+        qml/AbnormalExitOverlay.qml
         qml/BellBorderOverlay.qml
         qml/Main.qml
         qml/ReadOnlyOverlay.qml

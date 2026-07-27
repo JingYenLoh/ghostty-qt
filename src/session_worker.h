@@ -38,6 +38,10 @@ public:
     // still decodes and writes only on the worker thread.
     static bool canonicalBytesMayStartProcess(const QByteArray &payload);
     static bool canonicalTextMayStartProcess(const QByteArray &payload);
+    [[nodiscard]] static bool
+    isAbnormalCommandExit(int exitCode, int signalNumber,
+                          quint64 runtimeMilliseconds,
+                          quint32 thresholdMilliseconds) noexcept;
     using InitializationObserver = std::move_only_function<void(bool)>;
 
     // True means libghostty-vt was created for this worker. A later child
@@ -136,11 +140,12 @@ Q_SIGNALS:
                                      const QByteArray &uri);
     void searchUpdated(const TerminalSearchUpdate &update);
     void sessionExited(int exitCode, int signalNumber, bool hold,
-                       bool waitForKey);
-    // Emitted once after an exited wait-after-command surface receives a key
-    // that libghostty actually encoded. Modifier-only and consumed bindings
-    // never reach this boundary.
-    void waitAfterCommandDismissed();
+                       bool waitForKey, quint64 runtimeMilliseconds,
+                       bool abnormal);
+    // Emitted once after an exited dismissible surface receives a key that
+    // libghostty actually encoded. Modifier-only and consumed bindings never
+    // reach this boundary.
+    void exitKeyDismissed();
     void errorOccurred(const QString &message);
 
 private Q_SLOTS:
@@ -156,6 +161,7 @@ private:
     bool createTerminal();
     bool spawnChild();
     void destroyTerminal();
+    void closeChildExitWatcher();
     void closePty();
     void queuePtyWrite(const QByteArray &data);
     void queueInputWrite(const QByteArray &data);
@@ -201,6 +207,8 @@ private:
     qint64 childPid_ = -1;
     QSocketNotifier *readNotifier_ = nullptr;
     QSocketNotifier *writeNotifier_ = nullptr;
+    int childExitFd_ = -1;
+    QSocketNotifier *childExitNotifier_ = nullptr;
     QTimer *childTimer_ = nullptr;
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
@@ -219,11 +227,12 @@ private:
     int surfaceWidthPixels_ = 640;
     int surfaceHeightPixels_ = 384;
     bool running_ = false;
-    bool waitingAfterCommand_ = false;
+    bool waitingForExitKey_ = false;
     bool interactiveShell_ = false;
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
+    QElapsedTimer childRuntimeTimer_;
     QElapsedTimer potentialActivityTimer_;
     QElapsedTimer cursorBlinkResetTimer_;
     bool cursorBlinkResetPending_ = false;

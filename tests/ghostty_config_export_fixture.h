@@ -202,6 +202,7 @@ inline QJsonObject values()
                         bytes(QByteArray::fromHex("80ff")),
                         bytes(QByteArrayView{})})},
         {QStringLiteral("wait-after-command"), true},
+        {QStringLiteral("abnormal-command-exit-runtime"), 731},
         {QStringLiteral("env"),
          QJsonArray{
              environmentEntry(QByteArrayLiteral("GHOSTTY_QT_TEST"),

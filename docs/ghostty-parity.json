@@ -258,8 +258,9 @@
       ],
       "overrides": {
         "abnormal-command-exit-runtime": {
-          "status": "planned",
-          "note": "The Linux runtime-threshold classification for fast nonzero exits and its dedicated abnormal-exit presentation remain unimplemented. This is independent of the supported command and wait-after-command paths."
+          "status": "supported",
+          "scope": "linux",
+          "note": "The exact finalized u32 millisecond threshold defaults to 250 and applies live. A nonzero or signaled child observed at or before the inclusive threshold remains open with a bottom Qt failure banner and Close action; pidfd readiness minimizes Linux exit-observation latency with the existing poller as fallback, and the clock is frozen before final PTY drain/render work. Child-side lookup and execve failures participate as 126/127. Terminal-encoded input dismisses non-held abnormal exits independently of wait-after-command, while the frontend-only initial --hold remains indefinite."
         },
         "adjust-box-thickness": {
           "status": "planned",

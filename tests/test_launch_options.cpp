@@ -87,6 +87,7 @@ GhosttyConfigSnapshot completeSnapshot()
         QByteArray::fromHex("ff80617267"),
         QByteArray{},
     });
+    values.abnormalCommandExitRuntimeMilliseconds = 731;
     values.waitAfterCommand = true;
     values.environment = {
         {
@@ -271,6 +272,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
     QVERIFY(!options.ordinaryCommand.has_value());
     QVERIFY(!options.initialCommand.has_value());
+    QCOMPARE(options.abnormalCommandExitRuntimeMilliseconds, quint32{250});
     QVERIFY(!options.waitAfterCommand);
     QVERIFY(options.environment.isEmpty());
     QCOMPARE(options.linuxCgroup.mode, LinuxCgroupMode::SingleInstance);
@@ -757,6 +759,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
     QVERIFY(cliResult.ordinaryCommand == snapshot.values.ordinaryCommand);
     QVERIFY(cliResult.initialCommand == snapshot.values.initialCommand);
+    QCOMPARE(cliResult.abnormalCommandExitRuntimeMilliseconds, quint32{731});
     QVERIFY(cliResult.waitAfterCommand);
     QCOMPARE(cliResult.environment, snapshot.values.environment);
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
@@ -1491,6 +1494,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         QByteArrayLiteral("/bin/initial"),
         QByteArray{},
     });
+    options.abnormalCommandExitRuntimeMilliseconds =
+        std::numeric_limits<quint32>::max();
     options.waitAfterCommand = true;
     options.program = {QStringLiteral("/bin/program"), QStringLiteral("arg")};
     options.scrollbackLimit = {
@@ -1534,6 +1539,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
+    QCOMPARE(runtime.abnormalCommandExitRuntimeMilliseconds,
+             options.abnormalCommandExitRuntimeMilliseconds);
     QVERIFY(runtime.waitAfterCommand);
     QCOMPARE(launch.workingDirectory, options.workingDirectory);
     QCOMPARE(launch.term, options.term);
@@ -1626,6 +1633,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(toTerminalSessionLaunchOptions(waitChanged).hold, launch.hold);
     QVERIFY(toTerminalSessionRuntimeOptions(waitChanged) != runtime);
 
+    LaunchOptions abnormalRuntimeChanged = options;
+    abnormalRuntimeChanged.abnormalCommandExitRuntimeMilliseconds = 0;
+    QCOMPARE(toTerminalSessionLaunchOptions(abnormalRuntimeChanged).hold,
+             launch.hold);
+    QVERIFY(toTerminalSessionRuntimeOptions(abnormalRuntimeChanged) != runtime);
+
     LaunchOptions environmentChanged = options;
     environmentChanged.environment = {{
         .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1643,6 +1656,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.workingDirectory.clear();
     options.ordinaryCommand.reset();
     options.initialCommand.reset();
+    options.abnormalCommandExitRuntimeMilliseconds = 0;
     options.waitAfterCommand = false;
     options.environment.clear();
     options.program.clear();
@@ -1663,6 +1677,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.command->shellCommand,
              QByteArray::fromHex("7072696e74662027ff27"));
     QVERIFY(launch.command->defaultShell);
+    QCOMPARE(launch.runtime.abnormalCommandExitRuntimeMilliseconds,
+             std::numeric_limits<quint32>::max());
     QVERIFY(launch.runtime.waitAfterCommand);
     QCOMPARE(launch.environment,
              TerminalEnvironment({

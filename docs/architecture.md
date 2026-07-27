@@ -1002,14 +1002,26 @@ default shell from `SHELL` or the passwd database; the worker retains
 Ghostty's shell-form `sh` fallback for a missing finalized value. Embedded NUL
 is rejected at the structured boundary because `execve` cannot represent it.
 
-`wait-after-command` is a live runtime policy rather than a launch snapshot.
-The worker samples its newest value at child exit. A waiting pane closes only
-after libghostty encodes a pressed key or nonempty IME commit to bytes;
+`abnormal-command-exit-runtime` and `wait-after-command` are live runtime
+policies rather than launch snapshots. After a successful child launch, the
+worker starts a monotonic clock and watches the Linux process through `pidfd`
+readiness when available, retaining the existing child poller as a kernel or
+sandbox fallback. At observed exit it freezes the clock before draining or
+rendering final PTY output, truncates elapsed time to whole milliseconds, and
+samples the newest threshold. A nonzero or signaled Linux exit is abnormal
+when that runtime is less than or equal to the configured `u32` value; a quick
+successful exit is never abnormal. Child-side lookup and `execve` failures
+therefore participate with status `126`/`127`, while parent-side validation or
+setup failures that prevent a watchable child do not. The abnormal path remains
+visible independently of `wait-after-command` and exposes a bottom Qt failure
+banner with an explicit Close action.
+
+A normal exit remains only when the newest `wait-after-command` value is true.
+Both a waited normal exit and a non-held abnormal exit close only after
+libghostty encodes a pressed key or nonempty IME commit to bytes;
 modifier-only input, consumed bindings, and unresolved or dropped sequence
-chains remain inert. `--hold` is a distinct, initial-only launch override and
-does not become dismissible through this path. Ghostty's separate
-`abnormal-command-exit-runtime` fast-nonzero-exit classification remains
-planned.
+chains remain inert. `--hold` is a distinct, initial-only launch override: it
+may present an abnormal result, but terminal input never makes it dismissible.
 A new tab retains the exact action-target pane; an empty-context QML request
 uses the current tab's recorded active pane. When
 `tab-inherit-working-directory` is true, that source's latest nonempty reported

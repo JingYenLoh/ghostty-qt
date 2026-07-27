@@ -1066,6 +1066,13 @@ void ApplicationControllerTest::
 {
     WindowFactoryHarness harness;
     LaunchOptions options = baseOptions(QDir::currentPath());
+    // This barrier test must remain within one live terminal-action epoch;
+    // prompt pidfd delivery must not let the fixture's usual /bin/true child
+    // expire the retained result while processEvents() drains the reload.
+    options.program = {
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"),
+    };
     GhosttyKeybindConfig config;
     config.root = {
         GhosttyKeybindDefinition{

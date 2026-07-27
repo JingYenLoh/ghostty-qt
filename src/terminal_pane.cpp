@@ -1128,7 +1128,8 @@ TerminalPane::TerminalPane(
                 update();
             });
     connect(controller_, &TerminalController::sessionExited, this,
-            [this](int exitCode, int signalNumber, bool hold, bool waitForKey) {
+            [this](int exitCode, int signalNumber, bool hold, bool waitForKey,
+                   quint64 runtimeMilliseconds, bool abnormal) {
                 const QPointer<TerminalPane> guard(this);
                 // Advance before any destruction-capable UI notification.
                 // Results already queued to this pane, or retained by a
@@ -1152,7 +1153,29 @@ TerminalPane::TerminalPane(
                     clearSearchDecorationsLocked();
                 }
                 bool hasError = false;
-                waitingAfterCommand_ = waitForKey;
+                waitingForExitKey_ = waitForKey;
+                const QString abnormalText = abnormal
+                    ? (signalNumber > 0
+                           ? QStringLiteral(
+                                 "Command failed after %1 ms (signal %2).")
+                                 .arg(static_cast<qulonglong>(
+                                     runtimeMilliseconds))
+                                 .arg(signalNumber)
+                           : QStringLiteral(
+                                 "Command failed after %1 ms (exit status %2).")
+                                 .arg(static_cast<qulonglong>(
+                                     runtimeMilliseconds))
+                                 .arg(exitCode))
+                    : QString{};
+                const bool abnormalStateChanged =
+                    abnormalExitVisible_ != abnormal
+                    || abnormalExitText_ != abnormalText;
+                abnormalExitVisible_ = abnormal;
+                abnormalExitText_ = abnormalText;
+                if (abnormalStateChanged) {
+                    Q_EMIT abnormalExitChanged();
+                    if (guard == nullptr) return;
+                }
                 {
                     QMutexLocker locker(&renderMutex_);
                     hasError = !statusMessage_.isEmpty();
@@ -1174,17 +1197,16 @@ TerminalPane::TerminalPane(
                 update();
                 Q_EMIT sessionEnded(this, exitCode, signalNumber);
                 if (guard == nullptr) return;
-                if (!hold && !waitForKey && !hasError) {
+                if (!hold && !waitForKey && !abnormal && !hasError) {
                     QTimer::singleShot(0, this,
                                        [this] { Q_EMIT requestClose(); });
                 }
             });
-    connect(controller_, &TerminalController::waitAfterCommandDismissed, this,
-            [this] {
-                if (!waitingAfterCommand_) return;
-                waitingAfterCommand_ = false;
-                Q_EMIT requestClose();
-            });
+    connect(controller_, &TerminalController::exitKeyDismissed, this, [this] {
+        if (!waitingForExitKey_) return;
+        waitingForExitKey_ = false;
+        Q_EMIT requestClose();
+    });
 
     syncPointerCursor();
     if (sessionStartMode_ == TerminalSessionStartMode::Immediate) {
@@ -1586,6 +1608,12 @@ bool TerminalPane::isReadOnly() const
     return controller_->readOnly();
 }
 
+void TerminalPane::dismissAbnormalExit()
+{
+    if (!abnormalExitVisible_) return;
+    Q_EMIT requestClose();
+}
+
 LaunchOptions TerminalPane::splitLaunchOptions(const LaunchOptions &base) const
 {
     LaunchOptions result = base;
@@ -1680,6 +1708,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
+    updated.abnormalCommandExitRuntimeMilliseconds =
+        options.abnormalCommandExitRuntimeMilliseconds;
     updated.waitAfterCommand = options.waitAfterCommand;
     updated.resizeOverlay = options.resizeOverlay;
     updated.keybindSource = options.keybindSource;

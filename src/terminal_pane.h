@@ -72,6 +72,10 @@ class TerminalPane final : public QQuickItem {
     Q_PROPERTY(QString searchMatchLabel READ searchMatchLabel NOTIFY
                    searchMatchLabelChanged)
     Q_PROPERTY(bool readOnly READ isReadOnly NOTIFY readOnlyChanged)
+    Q_PROPERTY(bool abnormalExitVisible READ abnormalExitVisible NOTIFY
+                   abnormalExitChanged)
+    Q_PROPERTY(QString abnormalExitText READ abnormalExitText NOTIFY
+                   abnormalExitChanged)
     Q_PROPERTY(bool resizeOverlayVisible READ resizeOverlayVisible NOTIFY
                    resizeOverlayVisibleChanged)
     Q_PROPERTY(QString resizeOverlayText READ resizeOverlayText NOTIFY
@@ -117,6 +121,8 @@ public:
     bool isRunning() const;
     bool hasActiveProcess() const;
     bool isReadOnly() const;
+    bool abnormalExitVisible() const { return abnormalExitVisible_; }
+    QString abnormalExitText() const { return abnormalExitText_; }
     bool resizeOverlayVisible() const { return resizeOverlayVisible_; }
     QString resizeOverlayText() const { return resizeOverlayText_; }
     QRectF resizeOverlayRect() const;
@@ -174,6 +180,7 @@ public:
     Q_INVOKABLE void endSearchUi();
     Q_INVOKABLE void navigateSearch(int direction);
     Q_INVOKABLE void scrollbarMoveTo(qreal position);
+    Q_INVOKABLE void dismissAbnormalExit();
     // Process-wide `all:`/`global:` dispatch reuses the same exact pane action
     // implementation as a focused local binding.
     bool executeConfiguredAction(QStringView action);
@@ -192,6 +199,7 @@ Q_SIGNALS:
     void searchUiFocusRequested();
     void processStateChanged();
     void readOnlyChanged(bool readOnly);
+    void abnormalExitChanged();
     void resizeOverlayVisibleChanged();
     void resizeOverlayTextChanged();
     void resizeOverlayRectChanged();
@@ -438,9 +446,11 @@ private:
     std::shared_ptr<TerminalBellPlayer> bellPlayer_ =
         std::make_shared<TerminalBellPlayer>();
     bool bellRinging_ = false;
-    // Set only for Ghostty wait-after-command exits. CLI --hold remains an
-    // indefinite frontend hold and therefore never enters key dismissal.
-    bool waitingAfterCommand_ = false;
+    // Set for normal wait-after-command and abnormal quick exits. CLI --hold
+    // remains an indefinite frontend hold and never enters key dismissal.
+    bool waitingForExitKey_ = false;
+    bool abnormalExitVisible_ = false;
+    QString abnormalExitText_;
     QMetaObject::Connection itemWindowConnection_;
     QMetaObject::Connection windowActiveConnection_;
     QMetaObject::Connection windowScreenConnection_;

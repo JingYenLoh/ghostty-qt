@@ -86,6 +86,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.initialCommand->shellCommand.isEmpty());
     QVERIFY(!values.initialCommand->defaultShell);
     QVERIFY(values.waitAfterCommand);
+    QCOMPARE(values.abnormalCommandExitRuntimeMilliseconds, quint32{731});
     QCOMPARE(values.environment.size(), qsizetype{3});
     QCOMPARE(values.environment.at(0).key,
              QByteArrayLiteral("GHOSTTY_QT_TEST"));
@@ -464,6 +465,9 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     highValues =
         withValue(std::move(highValues),
                   QStringLiteral("click-repeat-interval"), 4294967295.0);
+    highValues = withValue(std::move(highValues),
+                           QStringLiteral("abnormal-command-exit-runtime"),
+                           4294967295.0);
     const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
@@ -472,6 +476,14 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
     QCOMPARE(high->values.clickRepeatIntervalMilliseconds,
              std::numeric_limits<quint32>::max());
+    QCOMPARE(high->values.abnormalCommandExitRuntimeMilliseconds,
+             std::numeric_limits<quint32>::max());
+
+    const auto zeroRuntime = parseGhosttyConfigExportJson(json(withValue(
+        object(), QStringLiteral("abnormal-command-exit-runtime"), 0)));
+    QVERIFY2(zeroRuntime.has_value(), qPrintable(errorMessage(zeroRuntime)));
+    QCOMPARE(zeroRuntime->values.abnormalCommandExitRuntimeMilliseconds,
+             quint32{0});
 }
 
 void GhosttyConfigExportTest::parsesEveryEnumSpelling()
@@ -853,6 +865,11 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-wait-after-command")
         << withoutValue(object(), QStringLiteral("wait-after-command"))
         << QStringLiteral("values is missing field 'wait-after-command'");
+    QTest::newRow("missing-abnormal-command-exit-runtime")
+        << withoutValue(object(),
+                        QStringLiteral("abnormal-command-exit-runtime"))
+        << QStringLiteral(
+               "values is missing field 'abnormal-command-exit-runtime'");
     QTest::newRow("command-type")
         << withValue(object(), QStringLiteral("command"),
                      QStringLiteral("/bin/sh"))
@@ -956,6 +973,26 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("wait-after-command"),
                      QStringLiteral("true"))
         << QStringLiteral("values.wait-after-command must be a boolean");
+    QTest::newRow("abnormal-command-exit-runtime-type")
+        << withValue(object(), QStringLiteral("abnormal-command-exit-runtime"),
+                     QStringLiteral("250"))
+        << QStringLiteral(
+               "values.abnormal-command-exit-runtime must be an unsigned integer");
+    QTest::newRow("abnormal-command-exit-runtime-negative")
+        << withValue(object(), QStringLiteral("abnormal-command-exit-runtime"),
+                     -1)
+        << QStringLiteral(
+               "values.abnormal-command-exit-runtime must be an unsigned integer");
+    QTest::newRow("abnormal-command-exit-runtime-fractional")
+        << withValue(object(), QStringLiteral("abnormal-command-exit-runtime"),
+                     0.5)
+        << QStringLiteral(
+               "values.abnormal-command-exit-runtime must be an unsigned integer");
+    QTest::newRow("abnormal-command-exit-runtime-overflow")
+        << withValue(object(), QStringLiteral("abnormal-command-exit-runtime"),
+                     4294967296.0)
+        << QStringLiteral(
+               "values.abnormal-command-exit-runtime must be an unsigned integer");
     QTest::newRow("missing-env")
         << withoutValue(object(), QStringLiteral("env"))
         << QStringLiteral("values is missing field 'env'");
