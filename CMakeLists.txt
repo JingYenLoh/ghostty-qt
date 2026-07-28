@@ -285,6 +285,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/font/Metrics.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
             "${GHOSTTY_SOURCE_DIR}/src/termio/shell_integration.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/terminal/color.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminfo/ghostty.zig"
         COMMENT "Building pinned Ghostty configuration parser"
         USES_TERMINAL

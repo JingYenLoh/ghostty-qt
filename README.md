@@ -357,7 +357,9 @@ The current compatibility slice applies these keys:
 | `unfocused-split-opacity` | Sets the retained content opacity of unfocused panes in a split, clamped to Ghostty's `0.15`–`1.0` range. The Qt renderer composites the complementary fill alpha and updates existing panes live. |
 | `unfocused-split-fill` | Sets the optional fixed RGB dimming fill. Unset resolves live to the configured `background`, independently of terminal OSC 11 overrides. Search suppresses dimming for its pane. |
 | `split-divider-color` | Applies Ghostty's optional fixed RGB color live to existing and future split dividers. Unset preserves the Qt frontend's ordinary two-pixel gap color. |
-| `palette` | Applies Ghostty's complete 256-color default palette. Terminal OSC 4 overrides survive a config reload; OSC 104 resets an entry to the newest configured default. |
+| `palette` | Applies Ghostty's complete effective 256-color default palette, including explicit entries retained by palette generation. Terminal OSC 4 overrides survive a config reload; OSC 104 resets an entry to the newest configured or generated default. |
+| `palette-generate` | Mirrors Ghostty's `termio.DerivedConfig` gate in the private finalized-config helper: generation runs only when this setting is enabled and at least one `palette` entry was explicitly supplied by the finalized theme/config sources. Indices 0–15 and every explicitly assigned extended entry are preserved. The remaining cube uses the configured background, ANSI indices 1–6, and foreground as its CIELAB anchors; the grayscale ramp interpolates between the configured background and foreground. The effective 256-entry result then crosses the schema boundary and reloads live without replacing the pane. |
+| `palette-harmonious` | Affects generated light-theme palettes only. The default `false` orientation keeps the extended cube and ramp dark-to-light; `true` retains the configured light-background-to-dark-foreground orientation. It is a no-op for dark themes, disabled generation, and the empty-explicit-mask generation gate. Reload applies live. |
 | `selection-foreground`, `selection-background` | Apply fixed colors or Ghostty's cell foreground/background aliases. Unset values retain Ghostty's default terminal-foreground/terminal-background selection pairing. |
 | `search-foreground`, `search-background` | Apply fixed or cell-relative colors to search candidates. The defaults are black on `#FFE082`, matching Ghostty. |
 | `search-selected-foreground`, `search-selected-background` | Apply fixed or cell-relative colors to the selected search result. The defaults are black on `#F2A57E`, matching Ghostty. Normal terminal selection still has render priority. |
@@ -870,16 +872,14 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   the configured desktop services.
 - Terminal-initiated clipboard writes are denied. User-initiated copy and paste
   are supported; styled HTML/VT clipboard formats are not yet emitted.
-- The first appearance slice covers the full palette, selection, cursor,
-  bold, faint, split appearance, and the documented typography settings.
-  Dynamic light/dark theme switching, Ghostty's embedded fallback resolver,
-  palette
-  generation/harmonization, and the rest of Ghostty's appearance model remain
-  planned. Ghostty applies palette generation later in `termio.DerivedConfig`,
-  using the explicit-entry mask together with foreground, background, and the
-  harmonious flag. The current project-private export carries the finalized
-  base palette but not that derived state, so `palette-generate` and
-  `palette-harmonious` cannot yet be reproduced exactly.
+- The first appearance slice covers the full palette, including Ghostty's
+  exact generation and harmonious-orientation rules, selection, cursor, bold,
+  faint, split appearance, and the documented typography settings. The private
+  finalized-config helper performs palette derivation while Ghostty's
+  explicit-entry mask is still available, then exports only the effective
+  256-color result. Dynamic light/dark theme switching remains separate and is
+  not implemented; Ghostty's embedded fallback resolver and the rest of its
+  appearance model remain planned.
 - Automated startup testing uses Qt's software scene-graph backend. The GPU/RHI
   renderer still needs interactive visual qualification on real Wayland
   compositors and driver combinations.

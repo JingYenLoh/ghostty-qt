@@ -219,6 +219,7 @@ private Q_SLOTS:
     void realHelperRejectsInvalidConfigurationArgumentsDeterministically();
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
+    void realHelperGeneratesEffectivePalette();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
     void realHelperExportsShellIntegration();
@@ -940,6 +941,117 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QVERIFY(!result->values.selectionClipboard.clearOnTyping);
     QVERIFY(result->values.selectionClipboard.clearOnCopy);
     QCOMPARE(result->values.middleClickAction, MiddleClickAction::Ignore);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    const std::array<QColor, 256> canonical = result->values.appearance.palette;
+
+    // Ghostty deliberately leaves its canonical palette alone until at least
+    // one palette entry is explicit, even when generation is enabled and the
+    // configured special colors would otherwise produce a different result.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #f0f0f0\n"
+                                               "foreground = #101010\n"
+                                               "palette-generate = true\n"
+                                               "palette-harmonious = true\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.appearance.palette == canonical);
+
+    // Harmonious is also inert when generation itself is disabled. The
+    // explicit base entry is still finalized normally.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #f0f0f0\n"
+                                               "foreground = #101010\n"
+                                               "palette = 1=#112233\n"
+                                               "palette-harmonious = true\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.appearance.palette.at(1),
+             QColor(QStringLiteral("#112233")));
+    QCOMPARE(result->values.appearance.palette.at(16), canonical.at(16));
+    QCOMPARE(result->values.appearance.palette.at(231), canonical.at(231));
+
+    // An explicit entry triggers generation. Base16 and every explicit
+    // extended entry remain untouched. The cube anchors include configured
+    // background, ANSI indices 1-6, and foreground; the grayscale ramp uses
+    // the configured background and foreground.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #010203\n"
+                                               "foreground = #f0e0d0\n"
+                                               "palette = 1=#112233\n"
+                                               "palette = 20=#abcdef\n"
+                                               "palette = 240=#654321\n"
+                                               "palette-generate = true\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.appearance.palette.at(1),
+             QColor(QStringLiteral("#112233")));
+    QCOMPARE(result->values.appearance.palette.at(16),
+             QColor(QStringLiteral("#010203")));
+    QCOMPARE(result->values.appearance.palette.at(20),
+             QColor(QStringLiteral("#abcdef")));
+    QVERIFY(result->values.appearance.palette.at(21) != canonical.at(21));
+    QCOMPARE(result->values.appearance.palette.at(231),
+             QColor(QStringLiteral("#f0e0d0")));
+    QCOMPARE(result->values.appearance.palette.at(240),
+             QColor(QStringLiteral("#654321")));
+    const std::array<QColor, 256> darkGenerated =
+        result->values.appearance.palette;
+
+    // Harmonious changes only the orientation of a light theme.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #010203\n"
+                                               "foreground = #f0e0d0\n"
+                                               "palette = 1=#112233\n"
+                                               "palette = 20=#abcdef\n"
+                                               "palette = 240=#654321\n"
+                                               "palette-generate = true\n"
+                                               "palette-harmonious = true\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.appearance.palette == darkGenerated);
+
+    // A light theme is normalized to the traditional dark-to-light index
+    // order unless harmonious requests the configured light-to-dark order.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #f0f0f0\n"
+                                               "foreground = #101010\n"
+                                               "palette = 1=#112233\n"
+                                               "palette-generate = true\n"
+                                               "palette-harmonious = false\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.appearance.palette.at(16),
+             QColor(QStringLiteral("#101010")));
+    QCOMPARE(result->values.appearance.palette.at(231),
+             QColor(QStringLiteral("#f0f0f0")));
+
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background = #f0f0f0\n"
+                                               "foreground = #101010\n"
+                                               "palette = 1=#112233\n"
+                                               "palette-generate = true\n"
+                                               "palette-harmonious = true\n"));
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.appearance.palette.at(16),
+             QColor(QStringLiteral("#f0f0f0")));
+    QCOMPARE(result->values.appearance.palette.at(231),
+             QColor(QStringLiteral("#101010")));
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsApplicationLifetime()

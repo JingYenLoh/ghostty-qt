@@ -135,6 +135,8 @@ using GhosttyBoldColor = std::variant<QColor, GhosttyBoldBrightness>;
 struct GhosttyAppearanceConfig {
     QColor foreground;
     QColor background;
+    // Effective defaults after Ghostty applies palette generation and
+    // harmonious light-theme orientation in the config helper.
     std::array<QColor, 256> palette;
 
     std::optional<GhosttyTerminalColor> selectionForeground;

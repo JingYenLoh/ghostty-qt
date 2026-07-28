@@ -520,15 +520,15 @@
     },
     "palette": {
       "status": "supported",
-      "note": "All 256 canonical defaults are applied. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured defaults."
+      "note": "All 256 effective defaults are applied, including explicit entries retained by generation. Config reload preserves terminal OSC 4 overrides, and OSC 104 resets entries to the newest configured or generated defaults."
     },
     "palette-generate": {
-      "status": "planned",
-      "note": "Ghostty applies generation later in termio.DerivedConfig using the explicit-entry mask plus foreground and background; the schema-v1 frontend projection carries the finalized base palette but not that derived state."
+      "status": "supported",
+      "note": "The private finalized-config helper mirrors Ghostty's termio.DerivedConfig gate before exporting the effective 256-entry palette: generation runs only when enabled and the finalized explicit-entry mask is nonempty. Indices 0-15 and every explicitly assigned extended entry remain unchanged. The remaining CIELAB cube uses the configured background, ANSI indices 1-6, and foreground as anchors, while the grayscale ramp interpolates from configured background to foreground. The ordinary appearance path applies the result live without replacing panes, preserves terminal OSC 4 overrides, and makes OSC 104 reveal the newest generated defaults."
     },
     "palette-harmonious": {
-      "status": "planned",
-      "note": "Ghostty applies harmonization later in termio.DerivedConfig; the schema-v1 frontend projection does not carry the derived palette or explicit-entry mask required for exact behavior."
+      "status": "supported",
+      "note": "The helper passes the finalized value into Ghostty's exact generator. For generated light-theme palettes, false orients the extended cube and ramp dark-to-light while true retains the configured light-background-to-dark-foreground orientation. It has no effect for dark themes, disabled generation, or the empty-explicit-mask gate, and reload applies through the live palette path. Dynamic light/dark theme selection remains a separate unimplemented feature."
     },
     "quit-after-last-window-closed": {
       "status": "supported",

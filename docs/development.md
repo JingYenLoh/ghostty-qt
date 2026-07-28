@@ -191,8 +191,9 @@ child identity, the finalized ordered raw-byte `env` override map, the
 finalized binary-safe `enquiry-response`, finalized working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
 and the canonical `current`/`end` new-tab position plus the
-`always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
-palette, the canonical `navigation`/`no-navigation` split-preserve-zoom policy,
+`always`/`auto`/`never` tab-bar visibility policy, the complete effective
+256-entry palette after Ghostty's exact generation gate and derivation, the
+canonical `navigation`/`no-navigation` split-preserve-zoom policy,
 four ordered regular/bold/italic/bold-italic family lists and their tagged
 automatic/disabled/named styles, the f32 font size, eleven nullable tagged
 absolute-pixel/percentage metric modifiers, selection colors, cursor
@@ -540,12 +541,19 @@ for missing and existing non-directory launch paths.
 `ghostty-global-shortcut-portal`
 uses pure registry tests plus a private
 D-Bus daemon to exercise response races, reload, cleanup, and activation.
-The same boundary does not expose the post-derivation palette and explicit-entry
-mask that `termio.DerivedConfig` needs for exact
-`palette-generate`/`palette-harmonious` behavior. Also,
-the public terminal option for cursor blink is boolean rather than Ghostty's
-configuration tri-state. The parity ledger keeps those limitations planned and
-partial, respectively.
+Palette derivation happens inside the private helper before this boundary,
+while Ghostty's finalized explicit-entry mask is still available. It mirrors
+`termio.DerivedConfig`: `palette-generate` requires a nonempty mask, configured
+indices remain untouched, and `palette-harmonious` changes orientation only
+for generated light-theme palettes. The exported palette is therefore already
+effective, and the ordinary live appearance path preserves terminal OSC 4
+overrides while OSC 104 reveals its newest defaults. Dynamic light/dark theme
+selection remains separate and unimplemented. Real-helper regression coverage
+includes disabled generation, the nonempty-mask gate, preservation of explicit
+base and extended entries, the dark-theme harmonious no-op, and both
+light-theme orientations. The remaining public terminal option limitation here
+is cursor blink: it is boolean rather than Ghostty's configuration tri-state,
+so the parity ledger keeps that key partial.
 
 ## Ghostty parity manifest
 

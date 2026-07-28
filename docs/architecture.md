@@ -1316,13 +1316,23 @@ Canonical enum tags, optional include markers, working-directory inheritance,
 and nullable color alternatives are decoded only at this boundary. The four
 font styles remain tagged `automatic`, `disabled`, or
 `named` values, and each optional metric modifier remains either null or a
-tagged `absolute` pixel/`percentage` multiplier value. The fixed-size palette
-cannot carry fewer or more than 256 colors. Appearance then crosses worker
-threads as a value-only `TerminalAppearance`: terminal foreground/background,
-all 256 palette defaults, selection and candidate/selected search colors,
-cursor color/style/blink/opacity/text, bold-color, and faint-opacity. Fixed
-colors and Ghostty's cell-foreground and cell-background aliases remain
-distinct until the renderer has the target cell.
+tagged `absolute` pixel/`percentage` multiplier value. Before the fixed-size
+palette crosses this boundary, the helper mirrors `termio.DerivedConfig` while
+Ghostty's finalized explicit-entry mask is still available. Generation runs
+only when `palette-generate` is enabled and that mask is nonempty; it preserves
+indices 0–15 and every explicitly assigned extended entry, and uses the
+configured background, ANSI indices 1–6, and foreground as the remaining
+cube's CIELAB anchors. The grayscale ramp interpolates from configured
+background to foreground, and `palette-harmonious` controls light-theme
+orientation through Ghostty's pinned `generate256Color` routine. The schema
+therefore carries the effective result and cannot carry fewer or more than 256
+colors. Appearance then crosses worker threads as a value-only
+`TerminalAppearance`: terminal
+foreground/background, all 256 effective palette defaults, selection and
+candidate/selected search colors, cursor color/style/blink/opacity/text,
+bold-color, and faint-opacity. Fixed colors and Ghostty's cell-foreground and
+cell-background aliases remain distinct until the renderer has the target
+cell.
 
 The same schema carries `click-repeat-interval` as Ghostty's finalized
 unsigned whole-millisecond value, including the Linux 500 ms default, and
@@ -1463,16 +1473,18 @@ consulted only when a later tab or split is constructed. Building split options
 from the newest workspace base also prevents a nested split from retaining an
 older configured fallback.
 
-Two parser/API boundaries remain explicit. A null `cursor-style-blink` maps to
+One parser/API boundary remains explicit. A null `cursor-style-blink` maps to
 Ghostty's initial blinking default, but the public `libghostty-vt` setter takes
 only a boolean; it cannot represent the upstream tri-state in which explicit
-true/false ignores DEC mode 12. Ghostty applies palette generation and
-harmonization later in `termio.DerivedConfig`; the private projection carries
-the finalized base palette but not that derived palette or its explicit-entry
-mask. Therefore `palette-generate` and `palette-harmonious` remain planned
-rather than being approximated. Static themes can contribute canonical
-appearance values through the pinned parser, while dynamic light/dark theme
-selection is not implemented.
+true/false ignores DEC mode 12. Palette generation has no analogous loss: the
+private helper applies Ghostty's exact `termio.DerivedConfig` gate and
+generation routine before exporting the effective palette. For a light theme,
+`palette-harmonious=false` orients the generated cube and ramp dark-to-light,
+while `true` retains the configured light-background-to-dark-foreground
+orientation; dark themes are unchanged. Static themes can contribute
+canonical appearance values and explicit palette entries through the pinned
+parser, while dynamic light/dark theme selection remains a separate
+unimplemented feature.
 
 Because the pinned terminal API cannot resize an existing scrollback
 allocation, the byte-valued Ghostty limit applies when a pane is created; a
@@ -2342,9 +2354,10 @@ in a real Wayland session.
   there is no ligature shaping across terminal cells, color-emoji pipeline, or
   Kitty graphics/inline-image renderer.
 - Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
-  precedence over DEC mode 12, and the text config dump cannot expose the
-  post-generation palette mask. Those cases remain explicitly partial/planned
-  in the parity ledger.
+  precedence over DEC mode 12, so that case remains explicitly partial in the
+  parity ledger. Palette generation does not depend on the text config dump:
+  the private structured helper derives the effective palette while Ghostty's
+  internal explicit-entry mask is available.
 - Configuration beyond the documented typed slice, unsupported keybinding
   actions, user-defined `link` rules, payload-bearing desktop/process
   activation, saved sessions, and full production packaging remain future

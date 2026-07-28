@@ -9,6 +9,7 @@ const std = @import("std");
 const inputpkg = @import("../input.zig");
 const Metrics = @import("../font/Metrics.zig");
 const shell_integration = @import("../termio/shell_integration.zig");
+const terminal_color = @import("../terminal/color.zig");
 const state = &@import("../global.zig").state;
 const String = @import("../main_c.zig").String;
 
@@ -397,6 +398,24 @@ fn commandUsesDefaultShell(config: *const Config) bool {
     return !configured;
 }
 
+/// Match termio.DerivedConfig's palette materialization before the effective
+/// appearance crosses the helper boundary. Generation is deliberately skipped
+/// for the untouched default palette even when palette-generate is enabled.
+fn effectivePalette(config: *const Config) terminal_color.Palette {
+    if (config.@"palette-generate" and
+        config.palette.mask.findFirstSet() != null)
+    {
+        return terminal_color.generate256Color(
+            config.palette.value,
+            config.palette.mask,
+            config.background.toTerminalRGB(),
+            config.foreground.toTerminalRGB(),
+            config.@"palette-harmonious",
+        );
+    }
+    return config.palette.value;
+}
+
 fn writeValues(
     json: *std.json.Stringify,
     config: *const Config,
@@ -518,7 +537,7 @@ fn writeValues(
     try json.write(@tagName(config.fullscreen));
     try json.objectField("palette");
     try json.beginArray();
-    for (config.palette.value) |color| try writeRgb(json, color);
+    for (effectivePalette(config)) |color| try writeRgb(json, color);
     try json.endArray();
     try json.objectField("selection-foreground");
     try writeOptionalTerminalColor(json, config.@"selection-foreground");
