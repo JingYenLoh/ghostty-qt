@@ -1,6 +1,7 @@
 #pragma once
 
 #include "terminal_appearance.h"
+#include "terminal_session_options.h"
 #include "terminal_types.h"
 #include "terminal_write_file_action.h"
 
@@ -160,6 +161,8 @@ public:
         // libghostty's max_scrollback initialization option is byte-valued.
         quint64 scrollbackBytes = 10'000'000;
         TerminalAppearance appearance;
+        TerminalClipboardAccess clipboardWriteAccess =
+            TerminalClipboardAccess::Allow;
     };
 
     struct Callbacks {
@@ -192,6 +195,7 @@ public:
         QString title;
         QString currentDirectory;
         bool bell = false;
+        QVector<TerminalClipboardWriteRequest> clipboardWrites;
     };
 
     struct HyperlinkMatch {
@@ -253,6 +257,7 @@ public:
 
     bool resize(const Geometry &geometry);
     bool setAppearance(const TerminalAppearance &appearance);
+    void setClipboardWriteAccess(TerminalClipboardAccess access);
     void writeVt(QByteArrayView data);
     void reset();
     void synchronizeInputModes();

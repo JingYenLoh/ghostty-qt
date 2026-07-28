@@ -257,6 +257,7 @@ private Q_SLOTS:
     void continuesPathLookupAfterMissingInterpreter();
     void usesPinnedDefaultPathWhenUnset();
     void drainsLargeFinalOutputBeforeClosingPty();
+    void routesTerminalClipboardWritesUsingLivePolicy();
     void sendsBracketedPasteThroughPty();
     void protectsPasteWithCorrelatedWorkerConfirmation();
     void sendsTerminalControlActionsThroughPty();
@@ -858,12 +859,11 @@ void SessionWorkerTest::runsCommandThroughPty()
     TerminalSessionLaunchOptions options;
     options.workingDirectory = QDir::tempPath();
     options.program = {
-        QStringLiteral("/bin/sh"),
-        QStringLiteral("-c"),
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
         QStringLiteral(
             "stty raw -echo; "
             "printf '\\033[c'; "
-            "response=$(dd bs=1 count=9 2>/dev/null); "
+            "response=$(dd bs=1 count=12 2>/dev/null); "
             "stty sane; "
             "printf 'device-response:'; "
             "printf '%s' \"$response\" | od -An -tx1 | tr -d ' \\n'; "
@@ -881,7 +881,7 @@ void SessionWorkerTest::runsCommandThroughPty()
     const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(
-                 QStringLiteral("device-response:1b5b3f36323b323263")),
+                 QStringLiteral("device-response:1b5b3f36323b32323b353263")),
              qPrintable(finalContents));
     QVERIFY2(finalContents.contains(QStringLiteral("ghostty-qt-final")),
              qPrintable(finalContents));
@@ -2828,6 +2828,78 @@ void SessionWorkerTest::drainsLargeFinalOutputBeforeClosingPty()
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::routesTerminalClipboardWritesUsingLivePolicy()
+{
+    qRegisterMetaType<TerminalClipboardWriteRequest>();
+
+    SessionWorker worker;
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy writes(&worker, &SessionWorker::terminalClipboardWriteRequested);
+    QSignalSpy started(&worker, &SessionWorker::started);
+    QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("IFS= read -r line; "
+                       "printf '\\033]52;c;YXNr\\007ask-done\\n'; "
+                       "IFS= read -r line; "
+                       "printf '\\033]52;c;ZGVueQ==\\007deny-done\\n'; "
+                       "IFS= read -r line; "
+                       "printf '\\033]52;p;YWxsb3c=\\007allow-done\\n'; "
+                       "exec /bin/sleep 30"),
+    };
+    options.runtime.clipboardWrite = TerminalClipboardAccess::Ask;
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 1000);
+
+    const TerminalKeyInput enter{
+        .key = Qt::Key_Return,
+        .text = QStringLiteral("\r"),
+        .pressed = true,
+    };
+    worker.sendKey(enter);
+    QTRY_COMPARE_WITH_TIMEOUT(writes.count(), 1, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("ask-done")), 3000);
+    TerminalClipboardWriteRequest request =
+        qvariant_cast<TerminalClipboardWriteRequest>(
+            writes.constFirst().constFirst());
+    QVERIFY(request.confirmationRequired);
+    QCOMPARE(request.write.location, TerminalClipboardLocation::Standard);
+    QCOMPARE(request.write.contents.constFirst().data,
+             QByteArrayLiteral("ask"));
+
+    TerminalSessionRuntimeOptions runtime = options.runtime;
+    runtime.clipboardWrite = TerminalClipboardAccess::Deny;
+    worker.applyRuntimeOptions(runtime);
+    worker.sendKey(enter);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("deny-done")), 3000);
+    QCOMPARE(writes.count(), 1);
+
+    runtime.clipboardWrite = TerminalClipboardAccess::Allow;
+    worker.applyRuntimeOptions(runtime);
+    worker.sendKey(enter);
+    QTRY_COMPARE_WITH_TIMEOUT(writes.count(), 2, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("allow-done")), 3000);
+    request = qvariant_cast<TerminalClipboardWriteRequest>(
+        writes.constLast().constFirst());
+    QVERIFY(!request.confirmationRequired);
+    QCOMPARE(request.write.location, TerminalClipboardLocation::Primary);
+    QCOMPARE(request.write.contents.constFirst().data,
+             QByteArrayLiteral("allow"));
+
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

@@ -207,7 +207,8 @@ four-state `mouse-shift-capture` value, the exact `mouse-hide-while-typing`
 and `focus-follows-mouse` booleans, the finalized
 whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's
-mandatory U+0000 boundary, the exact five-state `right-click-action`, the raw
+mandatory U+0000 boundary, the exact live `ask`/`allow`/`deny`
+`clipboard-write` policy, the exact five-state `right-click-action`, the raw
 false/true/detect `gtk-single-instance` mode as an unused schema-v1
 compatibility field, the boolean `initial-window` startup decision, and the exact
 boolean/nullable-millisecond application lifetime policy. The
@@ -474,6 +475,14 @@ players, live next-BEL reload, and safe completion after a destructive bell
 observer. Automated tests do not claim that an offscreen environment emitted
 sound; real Wayland system-bell and media-backend playback remain manual smoke
 boundaries.
+Terminal clipboard-write coverage injects libghostty-normalized clear,
+single-format, and binary multi-MIME requests; verifies ask/allow/deny live
+policy and DA1 feature 52; and checks ordered atomic GUI commits, Linux
+standard-versus-selection routing, FIFO confirmation, remembered per-split
+decisions, reload reset, and stale-pane removal. The implementation separately
+bounds the retained workspace queue at 64 requests / 64 MiB. Clipboard-read
+remains an upstream boundary because the public terminal API intentionally
+ignores OSC 52 read requests.
 Per-pane read-only coverage exercises local and stable broad toggles, active-pane
 model and input-transparent badge publication, suppressed keyboard/IME/mouse,
 paste, and raw-action writes, live terminal replies and focus bookkeeping,

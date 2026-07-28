@@ -17,6 +17,7 @@
 #include <QImage>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QPointer>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -448,6 +449,7 @@ private Q_SLOTS:
     void bellBorderOverlayIsPaneLocalAndInputTransparent();
     void readOnlyNaturalExitPromptsExactlyOnce();
     void queuesAndCorrelatesUnsafePasteConfirmations();
+    void ordersAndConfirmsTerminalClipboardWrites();
     void performableTabChangeRequiresDifferentTarget();
     void relativeTabActionsUseCurrentSelectionAndBroadFanout();
     void alwaysModePromptsForIdleShell();
@@ -4152,6 +4154,262 @@ void TerminalWorkspaceTest::queuesAndCorrelatesUnsafePasteConfirmations()
     workspace.cancelPaste(closingConfirmationId);
     QCOMPARE(firstConfirmed.count(), confirmations);
     QCOMPARE(firstCancelled.count(), cancellations);
+}
+
+void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
+{
+    ShellEnvironment shell;
+    LaunchOptions options = baseOptions();
+    options.clipboardWrite = TerminalClipboardAccess::Ask;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 1000);
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    clipboard->setText(QStringLiteral("unchanged"), QClipboard::Clipboard);
+
+    QSignalSpy confirmations(
+        &workspace,
+        &TerminalWorkspace::terminalClipboardWriteConfirmationRequested);
+    QSignalSpy resolved(
+        &workspace,
+        &TerminalWorkspace::terminalClipboardWriteConfirmationResolved);
+    QSignalSpy runtimeUpdates(controller,
+                              &TerminalController::runtimeOptionsRequested);
+
+    const QByteArray firstBytes("first\0tail", 10);
+    const TerminalClipboardWriteRequest first{
+        .write =
+            {
+                .location = TerminalClipboardLocation::Standard,
+                .contents = {{
+                    .mime = QByteArrayLiteral("text/plain"),
+                    .data = firstBytes,
+                }},
+            },
+        .confirmationRequired = true,
+    };
+    const TerminalClipboardWriteRequest later{
+        .write =
+            {
+                .location = TerminalClipboardLocation::Standard,
+                .contents = {{
+                    .mime = QByteArrayLiteral("text/plain"),
+                    .data = QByteArrayLiteral("later"),
+                }},
+            },
+        .confirmationRequired = false,
+    };
+
+    // A later allow-mode request remains behind an ask-mode request captured
+    // before a config transition. The immutable binary payload is used for
+    // the commit; the escaped preview is presentation-only.
+    Q_EMIT pane->terminalClipboardWriteRequested(first, pane);
+    Q_EMIT pane->terminalClipboardWriteRequested(later, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), 1, 1000);
+    const quint64 firstConfirmationId =
+        confirmations.constFirst().at(0).toULongLong();
+    QVERIFY(firstConfirmationId != 0);
+    QVERIFY(confirmations.constFirst().at(1).toString().contains(
+        QStringLiteral("␀")));
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("unchanged"));
+
+    workspace.confirmClipboardWrite(firstConfirmationId + 1, false);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("unchanged"));
+    workspace.confirmClipboardWrite(firstConfirmationId, true);
+    QCOMPARE(clipboard->mimeData(QClipboard::Clipboard)
+                 ->data(QStringLiteral("text/plain")),
+             firstBytes);
+    QCOMPARE(resolved.count(), 1);
+    QVERIFY(!runtimeUpdates.isEmpty());
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardWrite,
+             TerminalClipboardAccess::Allow);
+
+    QTRY_COMPARE_WITH_TIMEOUT(clipboard->mimeData(QClipboard::Clipboard)
+                                  ->data(QStringLiteral("text/plain")),
+                              QByteArrayLiteral("later"), 1000);
+
+    // Reloading the configured Ask value replaces a remembered per-split
+    // decision, exactly as the confirmation dialog promises.
+    pane->applyRuntimeOptions(options);
+    QVERIFY(!runtimeUpdates.isEmpty());
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardWrite,
+             TerminalClipboardAccess::Ask);
+
+    Q_EMIT pane->terminalClipboardWriteRequested(first, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), 2, 1000);
+    const quint64 deniedConfirmationId =
+        confirmations.constLast().at(0).toULongLong();
+    workspace.cancelClipboardWrite(deniedConfirmationId, true);
+    QCOMPARE(clipboard->mimeData(QClipboard::Clipboard)
+                 ->data(QStringLiteral("text/plain")),
+             QByteArrayLiteral("later"));
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardWrite,
+             TerminalClipboardAccess::Deny);
+
+    pane->applyRuntimeOptions(options);
+    QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
+                 runtimeUpdates.constLast().constFirst())
+                 .clipboardWrite,
+             TerminalClipboardAccess::Ask);
+
+    // Every representation is installed in one QMimeData ownership
+    // transition and retains arbitrary bytes.
+    const TerminalClipboardWriteRequest multiple{
+        .write =
+            {
+                .location = TerminalClipboardLocation::Standard,
+                .contents =
+                    {
+                        {
+                            .mime = QByteArrayLiteral("text/plain"),
+                            .data = QByteArrayLiteral("visible"),
+                        },
+                        {
+                            .mime =
+                                QByteArrayLiteral("application/x-ghostty-qt"),
+                            .data = QByteArray("bin\0ary", 7),
+                        },
+                    },
+            },
+        .confirmationRequired = false,
+    };
+    Q_EMIT pane->terminalClipboardWriteRequested(multiple, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        clipboard->mimeData(QClipboard::Clipboard)
+            ->data(QStringLiteral("application/x-ghostty-qt")),
+        QByteArray("bin\0ary", 7), 1000);
+    QCOMPARE(clipboard->mimeData(QClipboard::Clipboard)
+                 ->data(QStringLiteral("text/plain")),
+             QByteArrayLiteral("visible"));
+
+    const TerminalClipboardWriteRequest clear{
+        .write =
+            {
+                .location = TerminalClipboardLocation::Standard,
+                .contents = {},
+            },
+        .confirmationRequired = false,
+    };
+    Q_EMIT pane->terminalClipboardWriteRequested(clear, pane);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        [clipboard] {
+            const QMimeData *const data =
+                clipboard->mimeData(QClipboard::Clipboard);
+            return data == nullptr
+                || !data->hasFormat(QStringLiteral("text/plain"));
+        }(),
+        1000);
+
+    // Authorization previews remain bounded and cannot use control,
+    // directional-format, or line-separator characters to disguise content.
+    TerminalClipboardWriteRequest hostileText = first;
+    hostileText.write.contents[0].data =
+        QByteArrayLiteral("safe\t") + QByteArray::fromHex("e280aee280a8");
+    const int beforeTextPreview = confirmations.count();
+    Q_EMIT pane->terminalClipboardWriteRequested(hostileText, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), beforeTextPreview + 1,
+                              1000);
+    const QList<QVariant> textPreview = confirmations.constLast();
+    QVERIFY(textPreview.at(1).toString().contains(QStringLiteral("\\u{0009}")));
+    QVERIFY(textPreview.at(1).toString().contains(QStringLiteral("\\u{202e}")));
+    QVERIFY(textPreview.at(1).toString().contains(QStringLiteral("\\u{2028}")));
+    workspace.cancelClipboardWrite(textPreview.at(0).toULongLong(), false);
+
+    QByteArray hostileMime(4'096, 'm');
+    hostileMime[0] = 'x';
+    hostileMime[1] = '\n';
+    hostileMime[2] = '\033';
+    hostileMime[3] = static_cast<char>(0x85);
+    const TerminalClipboardWriteRequest hostileFormat{
+        .write =
+            {
+                .location = TerminalClipboardLocation::Standard,
+                .contents = {{
+                    .mime = hostileMime,
+                    .data = QByteArrayLiteral("opaque"),
+                }},
+            },
+        .confirmationRequired = true,
+    };
+    const int beforeFormatPreview = confirmations.count();
+    Q_EMIT pane->terminalClipboardWriteRequested(hostileFormat, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), beforeFormatPreview + 1,
+                              1000);
+    const QList<QVariant> formatPreview = confirmations.constLast();
+    const QString formatPreviewText = formatPreview.at(1).toString();
+    QVERIFY(formatPreviewText.size() < 512);
+    QVERIFY(formatPreviewText.contains(QStringLiteral("␊")));
+    QVERIFY(formatPreviewText.contains(QStringLiteral("␛")));
+    QVERIFY(formatPreviewText.contains(QStringLiteral("\\u{0085}")));
+    QVERIFY(formatPreviewText.contains(QStringLiteral("…")));
+    workspace.cancelClipboardWrite(formatPreview.at(0).toULongLong(), false);
+
+    // Session exit invalidates both the visible decision and a later queued
+    // write. A stale response cannot mutate the clipboard afterward.
+    clipboard->setText(QStringLiteral("stable"), QClipboard::Clipboard);
+    Q_EMIT pane->terminalClipboardWriteRequested(first, pane);
+    Q_EMIT pane->terminalClipboardWriteRequested(later, pane);
+    const int expectedSessionExitConfirmations = beforeFormatPreview + 2;
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(),
+                              expectedSessionExitConfirmations, 1000);
+    const quint64 staleConfirmationId =
+        confirmations.constLast().at(0).toULongLong();
+    Q_EMIT pane->sessionEnded(pane, 0, 0);
+    QCOMPARE(resolved.constLast().constFirst().toULongLong(),
+             staleConfirmationId);
+    workspace.confirmClipboardWrite(staleConfirmationId, false);
+    QTest::qWait(20);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard), QStringLiteral("stable"));
+
+    // Remembering a decision publishes a synchronous runtime update. If an
+    // observer removes the source pane during that update, its still-live
+    // deleteLater pointer must not authorize the already-popped request.
+    clipboard->setText(QStringLiteral("reentrant-stable"),
+                       QClipboard::Clipboard);
+    const TabId tabId = workspace.tabModel()->idAt(0);
+    const PaneId paneId = workspace.tabModel()->entryAt(0)->activePaneId;
+    const int beforeReentrantPreview = confirmations.count();
+    Q_EMIT pane->terminalClipboardWriteRequested(first, pane);
+    QTRY_COMPARE_WITH_TIMEOUT(confirmations.count(), beforeReentrantPreview + 1,
+                              1000);
+    const quint64 reentrantConfirmationId =
+        confirmations.constLast().at(0).toULongLong();
+    bool removedDuringRuntimeUpdate = false;
+    const QMetaObject::Connection destructiveObserver =
+        connect(controller, &TerminalController::runtimeOptionsRequested,
+                &workspace, [&](const TerminalSessionRuntimeOptions &) {
+                    if (removedDuringRuntimeUpdate) return;
+                    removedDuringRuntimeUpdate = workspace.dispatchAction({
+                        WorkspaceAction::ClosePane,
+                        {tabId, paneId, 0},
+                    });
+                });
+    workspace.confirmClipboardWrite(reentrantConfirmationId, true);
+    disconnect(destructiveObserver);
+    QVERIFY(removedDuringRuntimeUpdate);
+    QCOMPARE(workspace.tabCount(), 0);
+    QCOMPARE(clipboard->text(QClipboard::Clipboard),
+             QStringLiteral("reentrant-stable"));
+    QCOMPARE(resolved.constLast().constFirst().toULongLong(),
+             reentrantConfirmationId);
 }
 
 void TerminalWorkspaceTest::performableTabChangeRequiresDifferentTarget()

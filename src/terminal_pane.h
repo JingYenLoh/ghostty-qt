@@ -173,6 +173,10 @@ public:
     void pasteText(const QString &text);
     void confirmPaste(quint64 requestId);
     void cancelPaste(quint64 requestId);
+    // `clipboard-write = ask` can remember a decision for this pane. The
+    // pane-local mutation lasts until a configuration reload replaces it,
+    // matching Ghostty's per-split behavior.
+    void rememberTerminalClipboardAccess(TerminalClipboardAccess access);
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -220,6 +224,8 @@ Q_SIGNALS:
                               bool selectionAvailable);
     void unsafePasteRequested(quint64 requestId, const QString &text,
                               TerminalPane *pane);
+    void terminalClipboardWriteRequested(
+        const TerminalClipboardWriteRequest &request, TerminalPane *pane);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 
 protected:

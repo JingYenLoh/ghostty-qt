@@ -9,6 +9,8 @@
 #include <array>
 #include <climits>
 #include <compare>
+#include <cstddef>
+#include <cstring>
 #include <expected>
 #include <limits>
 #include <linux/input-event-codes.h>
@@ -44,6 +46,9 @@ struct TextMapData final {
 
 constexpr quint64 maximumLogicalLineCells = 131'072;
 constexpr qsizetype maximumLogicalLineBytes = 4 * 1024 * 1024;
+constexpr size_t maximumClipboardRepresentations = 256;
+constexpr qsizetype maximumPendingClipboardWrites = 64;
+constexpr quint64 maximumPendingClipboardBytes = 64 * 1024 * 1024;
 
 bool isMacAddress(std::string_view value)
 {
@@ -806,6 +811,7 @@ public:
 
     bool initialize(const Options &adapterOptions)
     {
+        clipboardWriteAccess_ = adapterOptions.clipboardWriteAccess;
         const quint64 maximum =
             static_cast<quint64>(std::numeric_limits<size_t>::max());
         const GhosttyTerminalOptions options{
@@ -952,6 +958,11 @@ public:
                                     GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK,
                                     &cursorBlink)
             == GHOSTTY_SUCCESS;
+    }
+
+    void setClipboardWriteAccess(TerminalClipboardAccess access)
+    {
+        clipboardWriteAccess_ = access;
     }
 
     void destroy()
@@ -3574,6 +3585,9 @@ public:
             effects.currentDirectory = std::move(*directory);
         }
         effects.bell = std::exchange(bellPending_, false);
+        effects.clipboardWrites = std::move(pendingClipboardWrites_);
+        pendingClipboardWrites_.clear();
+        pendingClipboardBytes_ = 0;
         return effects;
     }
 
@@ -3688,25 +3702,135 @@ private:
         return true;
     }
 
-    static bool deviceAttributesCallback(GhosttyTerminal, void *,
+    static bool deviceAttributesCallback(GhosttyTerminal, void *userdata,
                                          GhosttyDeviceAttributes *attributes)
     {
-        if (attributes == nullptr) {
+        auto *impl = static_cast<Impl *>(userdata);
+        if (impl == nullptr || attributes == nullptr) {
             return false;
         }
         *attributes = GhosttyDeviceAttributes{};
         attributes->primary.conformance_level = GHOSTTY_DA_CONFORMANCE_VT220;
         attributes->primary.features[0] = GHOSTTY_DA_FEATURE_ANSI_COLOR;
         attributes->primary.num_features = 1;
+        if (impl->clipboardWriteAccess_ != TerminalClipboardAccess::Deny) {
+            attributes->primary.features[1] = GHOSTTY_DA_FEATURE_CLIPBOARD;
+            attributes->primary.num_features = 2;
+        }
         attributes->secondary.device_type = GHOSTTY_DA_DEVICE_TYPE_VT220;
         return true;
     }
 
-    static GhosttyClipboardWriteResult
-    clipboardWriteCallback(GhosttyTerminal, void *,
-                           const GhosttyClipboardWrite *)
+    GhosttyClipboardWriteResult
+    clipboardWrite(const GhosttyClipboardWrite *write) noexcept
     {
-        return GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
+        if (clipboardWriteAccess_ == TerminalClipboardAccess::Deny) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
+        }
+        if (write == nullptr) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+
+        constexpr size_t minimumWriteSize =
+            offsetof(GhosttyClipboardWrite, contents_len) + sizeof(size_t);
+        if (write->size < minimumWriteSize) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+        if (write->contents_len > maximumClipboardRepresentations) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+        if (write->contents_len != 0 && write->contents == nullptr) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+        }
+
+        TerminalClipboardWriteRequest request;
+        switch (write->location) {
+        case GHOSTTY_CLIPBOARD_LOCATION_STANDARD:
+            request.write.location = TerminalClipboardLocation::Standard;
+            break;
+        case GHOSTTY_CLIPBOARD_LOCATION_SELECTION:
+            request.write.location = TerminalClipboardLocation::Selection;
+            break;
+        case GHOSTTY_CLIPBOARD_LOCATION_PRIMARY:
+            request.write.location = TerminalClipboardLocation::Primary;
+            break;
+        default: return GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
+        }
+        // A clear request carries no MIME or data bytes. Bound the request
+        // count independently so a clear flood cannot create an unbounded
+        // deferred-effect vector before the worker drains this VT batch.
+        if (pendingClipboardWrites_.size() >= maximumPendingClipboardWrites) {
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY;
+        }
+        request.confirmationRequired =
+            clipboardWriteAccess_ == TerminalClipboardAccess::Ask;
+
+        quint64 requestBytes = 0;
+        const auto accountBytes = [&requestBytes](size_t length) {
+            if (length > maximumPendingClipboardBytes
+                || requestBytes > maximumPendingClipboardBytes
+                        - static_cast<quint64>(length)) {
+                return false;
+            }
+            requestBytes += static_cast<quint64>(length);
+            return true;
+        };
+
+        try {
+            request.write.contents.reserve(
+                static_cast<qsizetype>(write->contents_len));
+            for (size_t index = 0; index < write->contents_len; ++index) {
+                const GhosttyClipboardContent &content = write->contents[index];
+                if (content.mime.len == 0 || content.mime.ptr == nullptr
+                    || content.mime.len
+                        > static_cast<size_t>(QByteArray::maxSize())
+                    || (content.data.len != 0 && content.data.ptr == nullptr)
+                    || content.data.len
+                        > static_cast<size_t>(QByteArray::maxSize())) {
+                    return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+                }
+                if (!accountBytes(content.mime.len)
+                    || !accountBytes(content.data.len)) {
+                    return GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY;
+                }
+                if (std::memchr(content.mime.ptr, '\0', content.mime.len)
+                    != nullptr) {
+                    return GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA;
+                }
+
+                request.write.contents.append({
+                    .mime = QByteArray(
+                        reinterpret_cast<const char *>(content.mime.ptr),
+                        static_cast<qsizetype>(content.mime.len)),
+                    .data = content.data.len == 0
+                        ? QByteArray{}
+                        : QByteArray(
+                              reinterpret_cast<const char *>(content.data.ptr),
+                              static_cast<qsizetype>(content.data.len)),
+                });
+            }
+
+            if (pendingClipboardBytes_
+                > maximumPendingClipboardBytes - requestBytes) {
+                return GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY;
+            }
+            pendingClipboardWrites_.append(std::move(request));
+            pendingClipboardBytes_ += requestBytes;
+        } catch (...) {
+            // No C callback may propagate an allocation failure through the
+            // libghostty ABI. Treat transient local memory pressure as busy.
+            return GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY;
+        }
+        return GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
+    }
+
+    static GhosttyClipboardWriteResult
+    clipboardWriteCallback(GhosttyTerminal, void *userdata,
+                           const GhosttyClipboardWrite *write)
+    {
+        auto *impl = static_cast<Impl *>(userdata);
+        return impl != nullptr ? impl->clipboardWrite(write)
+                               : GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
     }
 
     Geometry geometry_;
@@ -3732,6 +3856,10 @@ private:
     bool titleDirty_ = false;
     std::optional<QString> pendingCurrentDirectory_;
     bool bellPending_ = false;
+    TerminalClipboardAccess clipboardWriteAccess_ =
+        TerminalClipboardAccess::Allow;
+    QVector<TerminalClipboardWriteRequest> pendingClipboardWrites_;
+    quint64 pendingClipboardBytes_ = 0;
     uint32_t mouseModeFingerprint_ = 0;
     bool mouseEncoderConfigured_ = false;
     bool normalizeKeyboardAfterCommandExit_ = false;
@@ -3820,6 +3948,11 @@ bool GhosttyVtAdapter::resize(const Geometry &geometry)
 bool GhosttyVtAdapter::setAppearance(const TerminalAppearance &appearance)
 {
     return impl_->setAppearance(appearance);
+}
+
+void GhosttyVtAdapter::setClipboardWriteAccess(TerminalClipboardAccess access)
+{
+    impl_->setClipboardWriteAccess(access);
 }
 
 void GhosttyVtAdapter::writeVt(QByteArrayView data)

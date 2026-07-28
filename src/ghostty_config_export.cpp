@@ -105,6 +105,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("bell-audio-volume"),
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
+    QLatin1StringView("clipboard-write"),
     QLatin1StringView("clipboard-paste-protection"),
     QLatin1StringView("clipboard-paste-bracketed-safe"),
     QLatin1StringView("copy-on-select"),
@@ -1291,6 +1292,12 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("clipboard"),
              TerminalCopyOnSelectMode::PrimaryAndClipboard},
         });
+    constexpr auto ClipboardAccessModes =
+        std::to_array<std::pair<QLatin1StringView, TerminalClipboardAccess>>({
+            {QLatin1StringView("ask"), TerminalClipboardAccess::Ask},
+            {QLatin1StringView("allow"), TerminalClipboardAccess::Allow},
+            {QLatin1StringView("deny"), TerminalClipboardAccess::Deny},
+        });
     constexpr auto MiddleClickActions =
         std::to_array<std::pair<QLatin1StringView, MiddleClickAction>>({
             {QLatin1StringView("primary-paste"),
@@ -1400,6 +1407,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed = assignEnum(QLatin1StringView("copy-on-select"),
                                  result.selectionClipboard.copyOnSelect,
                                  CopyOnSelectModes);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("clipboard-write"),
+                                 result.clipboardWrite, ClipboardAccessModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignEnum(QLatin1StringView("right-click-action"),

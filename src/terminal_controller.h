@@ -204,6 +204,8 @@ Q_SIGNALS:
     void searchUpdated(const TerminalSearchUpdate &update);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);
+    void terminalClipboardWriteRequested(
+        const TerminalClipboardWriteRequest &request);
     void terminalActionReady(const TerminalActionResult &result);
     void rightClickResolved(const TerminalRightClickResult &result);
 

@@ -231,6 +231,7 @@ private Q_SLOTS:
     void realHelperExportsFocusFollowsMouse();
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
+    void realHelperExportsClipboardWrite();
     void realHelperExportsRightClickAction();
     void realHelperExportsMouseShiftCapture();
     void realHelperFinalizesMouseScrollMultiplier();
@@ -1673,6 +1674,37 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsClickRepeatInterval()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.clickRepeatIntervalMilliseconds, quint32{500});
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsClipboardWrite()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+
+    for (const auto &[spelling, expected] :
+         std::to_array<std::pair<QByteArray, TerminalClipboardAccess>>({
+             {QByteArrayLiteral("ask"), TerminalClipboardAccess::Ask},
+             {QByteArrayLiteral("allow"), TerminalClipboardAccess::Allow},
+             {QByteArrayLiteral("deny"), TerminalClipboardAccess::Deny},
+         })) {
+        ConfigFixture::writeFile(fixture.preferredPath,
+                                 QByteArrayLiteral("clipboard-write = ")
+                                     + spelling + '\n');
+        const auto result = queryRealConfigExport(helperPath, fixture);
+        QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+        QCOMPARE(result->values.clipboardWrite, expected);
+    }
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    const auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.clipboardWrite, TerminalClipboardAccess::Allow);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsRightClickAction()

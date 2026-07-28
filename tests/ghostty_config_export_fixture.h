@@ -315,6 +315,7 @@ inline QJsonObject values()
         {QStringLiteral("bell-audio-volume"), 0.625},
         {QStringLiteral("confirm-close-surface"), QStringLiteral("always")},
         {QStringLiteral("clipboard-trim-trailing-spaces"), false},
+        {QStringLiteral("clipboard-write"), QStringLiteral("ask")},
         {QStringLiteral("clipboard-paste-protection"), false},
         {QStringLiteral("clipboard-paste-bracketed-safe"), true},
         {QStringLiteral("copy-on-select"), QStringLiteral("clipboard")},

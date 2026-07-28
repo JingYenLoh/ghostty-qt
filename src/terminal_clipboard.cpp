@@ -5,6 +5,8 @@
 #include <QMimeData>
 #include <QThread>
 
+#include <memory>
+
 namespace {
 
 void assertGuiThread()
@@ -15,6 +17,37 @@ void assertGuiThread()
 }
 
 } // namespace
+
+bool writeTerminalClipboard(QClipboard *clipboard,
+                            const TerminalClipboardWrite &write)
+{
+    assertGuiThread();
+    if (clipboard == nullptr || !validTerminalClipboardWritePayload(write)) {
+        return false;
+    }
+
+    const std::optional<TerminalClipboardSource> target =
+        terminalClipboardWriteTarget(write.location,
+                                     clipboard->supportsSelection());
+    if (!target.has_value()) {
+        return false;
+    }
+    const QClipboard::Mode mode = *target == TerminalClipboardSource::Primary
+        ? QClipboard::Selection
+        : QClipboard::Clipboard;
+
+    if (write.contents.isEmpty()) {
+        clipboard->clear(mode);
+        return true;
+    }
+
+    auto mimeData = std::make_unique<QMimeData>();
+    for (const TerminalClipboardMimeRepresentation &content : write.contents) {
+        mimeData->setData(QString::fromLatin1(content.mime), content.data);
+    }
+    clipboard->setMimeData(mimeData.release(), mode);
+    return true;
+}
 
 void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
                             TerminalClipboardDestination destination)

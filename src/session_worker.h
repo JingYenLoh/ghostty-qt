@@ -118,6 +118,11 @@ Q_SIGNALS:
     void mouseTrackingChanged(bool enabled);
     void clipboardTextReady(const QString &text,
                             TerminalClipboardDestination destination);
+    // Terminal-originated writes are already deep-copied and policy-tagged by
+    // the adapter. Preserve their callback order across the queued GUI
+    // boundary; the workspace owns confirmation and the actual clipboard.
+    void terminalClipboardWriteRequested(
+        const TerminalClipboardWriteRequest &request);
     void terminalActionFinished(const TerminalActionResult &result);
     void unsafePasteConfirmationRequested(quint64 requestId,
                                           const QString &text);

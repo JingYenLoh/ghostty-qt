@@ -765,6 +765,7 @@ bool SessionWorker::createTerminal()
         .scrollbackBytes =
             scrollbackLimitInBytes(options_.scrollbackLimit, columns_),
         .appearance = options_.runtime.appearance,
+        .clipboardWriteAccess = options_.runtime.clipboardWrite,
     };
     GhosttyVtAdapter::Callbacks callbacks;
     callbacks.writePty = [this](const QByteArray &data) {
@@ -807,6 +808,9 @@ void SessionWorker::applyRuntimeOptions(
         || !clickRepeatIntervalChanged
         || vt_->setClickRepeatIntervalMilliseconds(
             options.clickRepeatIntervalMilliseconds);
+    if (vt_ != nullptr) {
+        vt_->setClipboardWriteAccess(options.clipboardWrite);
+    }
     options_.runtime = options;
 
     if (compressionWasEnabled && !options_.runtime.scrollbackCompression) {
@@ -3340,6 +3344,10 @@ void SessionWorker::processDeferredEffects()
     }
     if (effects.bell) {
         Q_EMIT bell();
+    }
+    for (const TerminalClipboardWriteRequest &request :
+         effects.clipboardWrites) {
+        Q_EMIT terminalClipboardWriteRequested(request);
     }
 }
 

@@ -97,6 +97,12 @@ struct TerminalClipboardPasteOptions {
     bool operator==(const TerminalClipboardPasteOptions &) const = default;
 };
 
+enum class TerminalClipboardAccess : quint8 {
+    Ask,
+    Allow,
+    Deny,
+};
+
 enum class RightClickAction {
     ContextMenu,
     Paste,
@@ -112,6 +118,9 @@ struct TerminalSessionRuntimeOptions {
     TerminalSelectionClipboardOptions selectionClipboard;
     QVector<quint32> selectionWordChars;
     quint32 clickRepeatIntervalMilliseconds = 500;
+    // Terminal-originated clipboard writes are resolved by the worker using
+    // the newest policy before a normalized request crosses to the GUI.
+    TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;

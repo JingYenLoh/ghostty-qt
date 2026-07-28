@@ -185,6 +185,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .protection = false,
         .bracketedSafe = true,
     };
+    values.clipboardWrite = TerminalClipboardAccess::Ask;
     values.rightClickAction = RightClickAction::CopyOrPaste;
     values.middleClickAction = MiddleClickAction::Ignore;
     values.mouseReporting = false;
@@ -367,6 +368,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.selectionClipboard.clearOnCopy);
     QVERIFY(options.clipboardPaste.protection);
     QVERIFY(options.clipboardPaste.bracketedSafe);
+    QCOMPARE(options.clipboardWrite, TerminalClipboardAccess::Allow);
     QCOMPARE(options.splitAppearance.unfocusedOpacity, 0.7);
     QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
     QVERIFY(!options.splitAppearance.dividerColor.has_value());
@@ -842,6 +844,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
+    QCOMPARE(cliResult.clipboardWrite, TerminalClipboardAccess::Ask);
     QCOMPARE(cliResult.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.mouseReporting);
@@ -1553,6 +1556,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .protection = false,
         .bracketedSafe = true,
     };
+    options.clipboardWrite = TerminalClipboardAccess::Deny;
     options.rightClickAction = RightClickAction::CopyOrPaste;
     options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
@@ -1572,6 +1576,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clickRepeatIntervalMilliseconds,
              options.clickRepeatIntervalMilliseconds);
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
+    QCOMPARE(runtime.clipboardWrite, options.clipboardWrite);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(runtime.scrollbackCompression, options.scrollbackCompression);
@@ -1731,6 +1736,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.appearance = {};
     options.selectionClipboard = {};
     options.clipboardPaste = {};
+    options.clipboardWrite = TerminalClipboardAccess::Allow;
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
@@ -1773,6 +1779,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .bracketedSafe = true,
     };
     QCOMPARE(launch.runtime.clipboardPaste, expectedPaste);
+    QCOMPARE(launch.runtime.clipboardWrite, TerminalClipboardAccess::Deny);
     QVERIFY(!launch.runtime.linkUrl);
 }
 

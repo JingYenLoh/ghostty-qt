@@ -1073,6 +1073,10 @@ TerminalPane::TerminalPane(
             this, [this](quint64 requestId, const QString &text) {
                 Q_EMIT unsafePasteRequested(requestId, text, this);
             });
+    connect(controller_, &TerminalController::terminalClipboardWriteRequested,
+            this, [this](const TerminalClipboardWriteRequest &request) {
+                Q_EMIT terminalClipboardWriteRequested(request, this);
+            });
     connect(controller_, &TerminalController::terminalActionReady, this,
             &TerminalPane::handleTerminalActionResult, Qt::QueuedConnection);
     connect(controller_, &TerminalController::hyperlinkResolved, this,
@@ -1698,6 +1702,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.clickRepeatIntervalMilliseconds =
         options.clickRepeatIntervalMilliseconds;
     updated.clipboardPaste = options.clipboardPaste;
+    updated.clipboardWrite = options.clipboardWrite;
     updated.splitAppearance = options.splitAppearance;
     updated.rightClickAction = options.rightClickAction;
     updated.middleClickAction = options.middleClickAction;
@@ -5198,6 +5203,17 @@ void TerminalPane::confirmPaste(quint64 requestId)
 void TerminalPane::cancelPaste(quint64 requestId)
 {
     controller_->cancelPaste(requestId);
+}
+
+void TerminalPane::rememberTerminalClipboardAccess(
+    TerminalClipboardAccess access)
+{
+    if (access == TerminalClipboardAccess::Ask
+        || options_.clipboardWrite == access) {
+        return;
+    }
+    options_.clipboardWrite = access;
+    controller_->applyRuntimeOptions(toTerminalSessionRuntimeOptions(options_));
 }
 
 void TerminalPane::setFontPointSize(qreal points)

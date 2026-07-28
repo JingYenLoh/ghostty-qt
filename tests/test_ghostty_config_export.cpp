@@ -285,6 +285,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QCOMPARE(values.clickRepeatIntervalMilliseconds, quint32{731});
+    QCOMPARE(values.clipboardWrite, TerminalClipboardAccess::Ask);
     QVERIFY(!values.clipboardPaste.protection);
     QVERIFY(values.clipboardPaste.bracketedSafe);
     QCOMPARE(values.rightClickAction, RightClickAction::CopyOrPaste);
@@ -596,6 +597,16 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }),
         [](const GhosttyConfigValues &values) {
             return values.selectionClipboard.copyOnSelect;
+        });
+    verifyMappings(
+        QLatin1StringView("clipboard-write"),
+        std::to_array<std::pair<QLatin1StringView, TerminalClipboardAccess>>({
+            {QLatin1StringView("ask"), TerminalClipboardAccess::Ask},
+            {QLatin1StringView("allow"), TerminalClipboardAccess::Allow},
+            {QLatin1StringView("deny"), TerminalClipboardAccess::Deny},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.clipboardWrite;
         });
     verifyMappings(
         QLatin1StringView("right-click-action"),
@@ -1213,6 +1224,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-click-repeat-interval")
         << withoutValue(object(), QStringLiteral("click-repeat-interval"))
         << QStringLiteral("values is missing field 'click-repeat-interval'");
+    QTest::newRow("missing-clipboard-write")
+        << withoutValue(object(), QStringLiteral("clipboard-write"))
+        << QStringLiteral("values is missing field 'clipboard-write'");
     QTest::newRow("missing-right-click-action")
         << withoutValue(object(), QStringLiteral("right-click-action"))
         << QStringLiteral("values is missing field 'right-click-action'");
@@ -1701,6 +1715,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),
              QStringLiteral("copy-on-select"),
+             QStringLiteral("clipboard-write"),
              QStringLiteral("right-click-action"),
              QStringLiteral("middle-click-action"),
              QStringLiteral("mouse-shift-capture"),

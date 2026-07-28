@@ -360,9 +360,17 @@
       "status": "supported",
       "note": "The live default-true policy is enforced on SessionWorker. Unsafe immutable text is correlated through pane-local request IDs; confirmation re-snapshots mode, and rejected or cancelled requests do not scroll, write, or mark activity."
     },
+    "clipboard-read": {
+      "status": "blocked_upstream",
+      "note": "Public libghostty-vt explicitly ignores OSC 52 clipboard-read requests instead of publishing them through the host callback. Exact Ghostty ask/allow/deny reads therefore require a new public normalized request contract; ghostty-qt does not add a parallel escape parser."
+    },
     "clipboard-trim-trailing-spaces": {
       "status": "supported",
       "note": "The current selection is formatted on the session thread through libghostty's plain formatter with the live trim option and soft-wrap unwrapping."
+    },
+    "clipboard-write": {
+      "status": "supported",
+      "note": "The exact ask, allow, and deny values cross the strict config wire, default to allow, and reload live. Public libghostty-vt normalizes OSC 52 and OSC 1337 into ordered, owned, binary-safe requests; allow commits all MIME representations atomically, deny returns a denied result without queuing an effect or advertising DA1 feature 52, and ask advertises feature 52 but enters one bounded FIFO confirmation at a time. Standard maps only to Qt's standard clipboard, while selection and primary both map only to the available Linux selection clipboard. Stable PaneId validation discards exited or removed sources, the workspace retains at most 64 requests and 64 MiB, and an ask decision may be remembered for only its split until the next config reload."
     },
     "command": {
       "status": "supported",

@@ -791,8 +791,36 @@ signals:
   selection-gesture state keeps the drag anchor stable across output,
   scrolling, resize, and automatic selection clearing. Raw binding actions,
   paste, mouse/focus reports, and replayed sequence leaders bypass
-  clear-on-typing. OSC-driven clipboard writes from terminal applications are
-  denied by the host callback.
+  clear-on-typing.
+- Terminal-originated clipboard writes stay on libghostty's public normalized
+  callback boundary: OSC 52 and OSC 1337 produce the same owned,
+  binary-safe request rather than entering a second escape parser. The worker
+  applies the live `clipboard-write = ask|allow|deny` policy when consuming the
+  sequence; its default is `allow`. `deny` returns a denied callback result and
+  omits DA1 feature 52, while `allow` and `ask` accept the request and advertise
+  feature 52. Borrowed MIME names and payload bytes are deep-copied into the
+  adapter's deferred-effect FIFO before returning to libghostty.
+
+  Only the GUI thread commits the resulting `QMimeData`. All MIME
+  representations transfer in one clipboard-ownership transition, including
+  embedded NUL bytes; an empty representation remains present and an empty
+  representation list clears the destination. Ghostty's standard destination
+  maps only to `QClipboard::Clipboard`; both selection and primary map only to
+  Qt's Linux `QClipboard::Selection`, with no cross-clipboard fallback.
+
+  `ask` enters the workspace FIFO and exposes at most one correlated dialog at
+  a time. The preview is bounded and is never used as the committed data.
+  Stable `PaneId` plus `QPointer` validation removes writes from exited,
+  removed, or replaced panes before they can commit. The pending workspace
+  queue is limited to 64 requests and 64 MiB aggregate; one adapter drain is
+  independently limited to 64 requests, 256 representations per request, and
+  64 MiB aggregate MIME/payload bytes. A confirmed or denied choice can be
+  remembered by changing only that split's runtime policy; the next successful
+  config reload reapplies the configured value. Each accepted request
+  snapshots whether confirmation was required, so later reloads do not
+  reinterpret already queued writes.
+  Clipboard reads remain unsupported: public libghostty explicitly ignores
+  OSC 52 read requests and exposes no normalized host-read callback.
 - `selection-word-chars` crosses the strict config boundary as Ghostty's
   finalized numeric Unicode-scalar vector, including the parser-inserted
   U+0000 boundary. The source UTF-8 string is never reparsed by Qt. The

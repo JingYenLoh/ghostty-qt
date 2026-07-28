@@ -2,11 +2,13 @@
 
 #include "ghostty_action_catalog.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_clipboard.h"
 #include "terminal_geometry.h"
 #include "terminal_pane.h"
 
 #include <QCursor>
 #include <QDebug>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPointer>
@@ -37,6 +39,8 @@ constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
 constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
 constexpr auto kBellBorderProperty = "_ghosttyQtBellBorder";
+constexpr std::size_t kMaximumPendingClipboardWrites = 64;
+constexpr quint64 kMaximumPendingClipboardWriteBytes = 64ULL * 1024 * 1024;
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
 {
@@ -44,6 +48,57 @@ quint64 nextNonzeroId(quint64 &counter) noexcept
         ++counter;
     } while (counter == 0);
     return counter;
+}
+
+std::optional<quint64>
+terminalClipboardWriteByteSize(const TerminalClipboardWrite &write)
+{
+    quint64 total = 0;
+    for (const TerminalClipboardMimeRepresentation &content : write.contents) {
+        const quint64 mimeSize = static_cast<quint64>(content.mime.size());
+        const quint64 dataSize = static_cast<quint64>(content.data.size());
+        if (mimeSize > std::numeric_limits<quint64>::max() - total) {
+            return std::nullopt;
+        }
+        total += mimeSize;
+        if (dataSize > std::numeric_limits<quint64>::max() - total) {
+            return std::nullopt;
+        }
+        total += dataSize;
+    }
+    return total;
+}
+
+QString escapedTerminalClipboardPreview(QStringView value,
+                                        bool preserveNewlines)
+{
+    QString result;
+    result.reserve(value.size());
+    for (const QChar character : value) {
+        const ushort codepoint = character.unicode();
+        if (codepoint == 0) {
+            result.append(QStringLiteral("␀"));
+        } else if (codepoint == 0x1b) {
+            result.append(QStringLiteral("␛"));
+        } else if (character == QLatin1Char('\r')) {
+            result.append(QStringLiteral("␍"));
+        } else if (character == QLatin1Char('\n')) {
+            result.append(preserveNewlines ? QStringLiteral("↵\n")
+                                           : QStringLiteral("␊"));
+        } else {
+            const QChar::Category category = character.category();
+            if (category == QChar::Other_Control
+                || category == QChar::Other_Format
+                || category == QChar::Separator_Line
+                || category == QChar::Separator_Paragraph) {
+                result.append(QStringLiteral("\\u{%1}").arg(codepoint, 4, 16,
+                                                            QLatin1Char('0')));
+            } else {
+                result.append(character);
+            }
+        }
+    }
+    return result;
 }
 
 bool isAllowedContextMenuAction(QStringView action)
@@ -1172,7 +1227,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             [this, paneId] { refreshTab(tabIdForPane(paneId)); });
     connect(pane, &TerminalPane::sessionEnded, this,
             [this, paneId, pane](TerminalPane *, int, int) {
+                const QPointer<TerminalWorkspace> guard(this);
                 removePendingPastesForPane({paneId, pane});
+                if (guard == nullptr) return;
+                removePendingClipboardWritesForPane({paneId, pane});
+                if (guard == nullptr) return;
                 refreshTab(tabIdForPane(paneId));
             });
     connect(pane, &TerminalPane::processStateChanged, this, [this, paneId] {
@@ -1237,6 +1296,11 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                     return;
                 }
                 beginUnsafePaste(requestId, text, paneId);
+            });
+    connect(pane, &TerminalPane::terminalClipboardWriteRequested, this,
+            [this, paneId, pane](const TerminalClipboardWriteRequest &request,
+                                 TerminalPane *) {
+                beginTerminalClipboardWrite(request, {paneId, pane});
             });
     connect(pane, &TerminalPane::contextMenuRequested, this,
             [this, paneId, pane](const QPointF &windowPosition,
@@ -1925,6 +1989,8 @@ void TerminalWorkspace::resolvePendingPaneRemoval(PaneHandle handle)
     if (guard == nullptr) return;
     removePendingPastesForPane(handle);
     if (guard == nullptr) return;
+    removePendingClipboardWritesForPane(handle);
+    if (guard == nullptr) return;
     removeTitlePrompts(TitlePromptTarget{handle.id});
     if (guard == nullptr) return;
     const PendingPaneClose *const pending =
@@ -2426,6 +2492,218 @@ void TerminalWorkspace::confirmPaste(quint64 confirmationId)
 void TerminalWorkspace::cancelPaste(quint64 confirmationId)
 {
     finishPendingPaste(confirmationId, false);
+}
+
+void TerminalWorkspace::beginTerminalClipboardWrite(
+    const TerminalClipboardWriteRequest &request, PaneHandle handle)
+{
+    if (!handle.isValid() || paneForId(handle.id) != handle.pane) {
+        return;
+    }
+
+    const std::optional<quint64> byteSize =
+        terminalClipboardWriteByteSize(request.write);
+    if (!byteSize.has_value()
+        || pendingClipboardWrites_.size() >= kMaximumPendingClipboardWrites
+        || *byteSize > kMaximumPendingClipboardWriteBytes
+        || pendingClipboardWriteBytes_
+            > kMaximumPendingClipboardWriteBytes - *byteSize) {
+        qWarning() << "Dropping terminal clipboard write because the pending "
+                      "queue limit was reached";
+        return;
+    }
+
+    pendingClipboardWriteBytes_ += *byteSize;
+    pendingClipboardWrites_.push_back({
+        .request = request,
+        .paneId = handle.id,
+        .pane = handle.pane,
+        .byteSize = *byteSize,
+    });
+    // Commit an unblocked allow request in the same GUI delivery turn. A
+    // child may exit immediately after OSC 52; deferring through a zero timer
+    // would let session-exit cleanup incorrectly discard the earlier write.
+    drainPendingClipboardWrites();
+}
+
+QString TerminalWorkspace::terminalClipboardWritePreview(
+    const TerminalClipboardWrite &write)
+{
+    if (write.contents.isEmpty()) {
+        return QStringLiteral("(clear this clipboard)");
+    }
+
+    constexpr qsizetype maximumPreviewBytes = 1'024;
+    const auto textContent = std::ranges::find_if(
+        write.contents, [](const TerminalClipboardMimeRepresentation &content) {
+            return content.mime.compare(QByteArrayLiteral("text/plain"),
+                                        Qt::CaseInsensitive)
+                == 0;
+        });
+    if (textContent != write.contents.cend()) {
+        const bool truncated = textContent->data.size() > maximumPreviewBytes;
+        const QString decoded = QString::fromUtf8(
+            textContent->data.constData(),
+            std::min(textContent->data.size(), maximumPreviewBytes));
+        QString preview = escapedTerminalClipboardPreview(decoded, true);
+        if (preview.isEmpty()) {
+            preview = QStringLiteral("(empty text/plain value)");
+        } else if (truncated) {
+            preview.append(QStringLiteral("\n…"));
+        }
+        return preview;
+    }
+
+    constexpr qsizetype maximumFormats = 8;
+    constexpr qsizetype maximumMimeBytes = 128;
+    QStringList formats;
+    const qsizetype count = std::min(write.contents.size(), maximumFormats);
+    formats.reserve(count + 1);
+    for (qsizetype index = 0; index < count; ++index) {
+        const TerminalClipboardMimeRepresentation &content =
+            write.contents.at(index);
+        const bool truncated = content.mime.size() > maximumMimeBytes;
+        QString mime = escapedTerminalClipboardPreview(
+            QString::fromLatin1(
+                content.mime.constData(),
+                std::min(content.mime.size(), maximumMimeBytes)),
+            false);
+        if (truncated) mime.append(QStringLiteral("…"));
+        formats.append(
+            QStringLiteral("%1 (%2 bytes)").arg(mime).arg(content.data.size()));
+    }
+    if (write.contents.size() > maximumFormats) {
+        formats.append(QStringLiteral("…"));
+    }
+    return QStringLiteral("Formats:\n%1").arg(formats.join(QLatin1Char('\n')));
+}
+
+void TerminalWorkspace::schedulePendingClipboardWriteDrain()
+{
+    if (pendingClipboardWrites_.empty() || pendingClipboardWriteDrainScheduled_
+        || activeClipboardWriteConfirmationId_ != 0) {
+        return;
+    }
+    pendingClipboardWriteDrainScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        pendingClipboardWriteDrainScheduled_ = false;
+        drainPendingClipboardWrites();
+    });
+}
+
+void TerminalWorkspace::drainPendingClipboardWrites()
+{
+    if (activeClipboardWriteConfirmationId_ != 0) {
+        return;
+    }
+
+    while (!pendingClipboardWrites_.empty()) {
+        PendingClipboardWrite &pending = pendingClipboardWrites_.front();
+        if (paneForId(pending.paneId) != pending.pane) {
+            pendingClipboardWriteBytes_ -= pending.byteSize;
+            pendingClipboardWrites_.pop_front();
+            continue;
+        }
+
+        if (pending.request.confirmationRequired) {
+            activeClipboardWriteConfirmationId_ =
+                nextNonzeroId(nextClipboardWriteConfirmationId_);
+            Q_EMIT terminalClipboardWriteConfirmationRequested(
+                activeClipboardWriteConfirmationId_,
+                terminalClipboardWritePreview(pending.request.write));
+            return;
+        }
+
+        TerminalClipboardWrite write = std::move(pending.request.write);
+        pendingClipboardWriteBytes_ -= pending.byteSize;
+        pendingClipboardWrites_.pop_front();
+        const QPointer<TerminalWorkspace> guard(this);
+        (void)writeTerminalClipboard(QGuiApplication::clipboard(), write);
+        if (guard == nullptr) return;
+    }
+}
+
+void TerminalWorkspace::confirmClipboardWrite(quint64 confirmationId,
+                                              bool remember)
+{
+    finishTerminalClipboardWrite(confirmationId, true, remember);
+}
+
+void TerminalWorkspace::cancelClipboardWrite(quint64 confirmationId,
+                                             bool remember)
+{
+    finishTerminalClipboardWrite(confirmationId, false, remember);
+}
+
+void TerminalWorkspace::finishTerminalClipboardWrite(quint64 confirmationId,
+                                                     bool confirmed,
+                                                     bool remember)
+{
+    if (confirmationId == 0
+        || confirmationId != activeClipboardWriteConfirmationId_
+        || pendingClipboardWrites_.empty()
+        || !pendingClipboardWrites_.front().request.confirmationRequired) {
+        return;
+    }
+
+    activeClipboardWriteConfirmationId_ = 0;
+    PendingClipboardWrite pending = std::move(pendingClipboardWrites_.front());
+    pendingClipboardWrites_.pop_front();
+    pendingClipboardWriteBytes_ -= pending.byteSize;
+
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> pane =
+        paneForId(pending.paneId) == pending.pane ? pending.pane
+                                                  : QPointer<TerminalPane>{};
+    if (pane != nullptr && remember) {
+        pane->rememberTerminalClipboardAccess(
+            confirmed ? TerminalClipboardAccess::Allow
+                      : TerminalClipboardAccess::Deny);
+        if (guard == nullptr) return;
+    }
+    // Applying a remembered choice emits a synchronous runtime-options
+    // signal. Revalidate the stable identity because an observer can remove
+    // the pane while its deleteLater QPointer is still non-null.
+    if (confirmed && pane != nullptr
+        && paneForId(pending.paneId) == pending.pane) {
+        (void)writeTerminalClipboard(QGuiApplication::clipboard(),
+                                     pending.request.write);
+        if (guard == nullptr) return;
+    }
+
+    Q_EMIT terminalClipboardWriteConfirmationResolved(confirmationId);
+    if (guard != nullptr) schedulePendingClipboardWriteDrain();
+}
+
+void TerminalWorkspace::removePendingClipboardWritesForPane(PaneHandle handle)
+{
+    if (!handle.id.isValid() || pendingClipboardWrites_.empty()) {
+        return;
+    }
+
+    const bool removedActive = activeClipboardWriteConfirmationId_ != 0
+        && pendingClipboardWrites_.front().paneId == handle.id
+        && pendingClipboardWrites_.front().pane == handle.pane;
+    for (auto iterator = pendingClipboardWrites_.begin();
+         iterator != pendingClipboardWrites_.end();) {
+        if (iterator->paneId != handle.id || iterator->pane != handle.pane) {
+            ++iterator;
+            continue;
+        }
+        pendingClipboardWriteBytes_ -= iterator->byteSize;
+        iterator = pendingClipboardWrites_.erase(iterator);
+    }
+
+    if (!removedActive) {
+        schedulePendingClipboardWriteDrain();
+        return;
+    }
+
+    const quint64 confirmationId =
+        std::exchange(activeClipboardWriteConfirmationId_, 0);
+    const QPointer<TerminalWorkspace> guard(this);
+    Q_EMIT terminalClipboardWriteConfirmationResolved(confirmationId);
+    if (guard != nullptr) schedulePendingClipboardWriteDrain();
 }
 
 QString TerminalWorkspace::tabTitlePromptInitialValue(const Tab &tab) const

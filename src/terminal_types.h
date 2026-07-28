@@ -3,6 +3,7 @@
 #include "terminal_actions.h"
 
 #include <QBitArray>
+#include <QByteArray>
 #include <QColor>
 #include <QMetaType>
 #include <QPoint>
@@ -209,6 +210,45 @@ struct TerminalUpdate {
     }
 };
 
+// Terminal-originated clipboard operations are normalized by libghostty
+// before crossing this boundary. Keep every representation owned and
+// binary-safe because the source callback lends its storage only for the
+// callback duration.
+enum class TerminalClipboardLocation : quint8 {
+    Standard,
+    Selection,
+    Primary,
+};
+
+struct TerminalClipboardMimeRepresentation {
+    QByteArray mime;
+    QByteArray data;
+
+    friend bool
+    operator==(const TerminalClipboardMimeRepresentation &,
+               const TerminalClipboardMimeRepresentation &) = default;
+};
+
+struct TerminalClipboardWrite {
+    TerminalClipboardLocation location = TerminalClipboardLocation::Standard;
+    // An empty collection means clear the destination. A representation with
+    // empty data is a distinct, explicit empty value.
+    QVector<TerminalClipboardMimeRepresentation> contents;
+
+    friend bool operator==(const TerminalClipboardWrite &,
+                           const TerminalClipboardWrite &) = default;
+};
+
+struct TerminalClipboardWriteRequest {
+    TerminalClipboardWrite write;
+    // This snapshots the live access policy at the point the escape sequence
+    // was consumed, preserving FIFO behavior across later config reloads.
+    bool confirmationRequired = false;
+
+    friend bool operator==(const TerminalClipboardWriteRequest &,
+                           const TerminalClipboardWriteRequest &) = default;
+};
+
 // Validates the value-only shape shared by every retained view of a render
 // update. Keeping one representability ceiling prevents the GUI frame and
 // worker-side indexes from accepting different viewport dimensions.
@@ -410,6 +450,10 @@ struct TerminalSelectionDragInput {
 
 Q_DECLARE_METATYPE(TerminalFrame)
 Q_DECLARE_METATYPE(TerminalUpdate)
+Q_DECLARE_METATYPE(TerminalClipboardLocation)
+Q_DECLARE_METATYPE(TerminalClipboardMimeRepresentation)
+Q_DECLARE_METATYPE(TerminalClipboardWrite)
+Q_DECLARE_METATYPE(TerminalClipboardWriteRequest)
 Q_DECLARE_METATYPE(TerminalHyperlinkState)
 Q_DECLARE_METATYPE(TerminalLinkKind)
 Q_DECLARE_METATYPE(TerminalSearchDirection)

@@ -476,6 +476,74 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: clipboardWriteDialog
+        property var confirmationId: 0
+        objectName: "clipboardWriteDialog"
+        anchors.centerIn: parent
+        width: Math.max(340, Math.min(600, window.width - 32))
+        modal: true
+        title: "Authorize Clipboard Access"
+        onAccepted: {
+            const acceptedId = confirmationId
+            confirmationId = 0
+            workspace.confirmClipboardWrite(acceptedId,
+                                            rememberClipboardChoice.checked)
+        }
+        onRejected: {
+            const rejectedId = confirmationId
+            confirmationId = 0
+            workspace.cancelClipboardWrite(rejectedId,
+                                           rememberClipboardChoice.checked)
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: "Deny"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                text: "Allow"
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+
+        ColumnLayout {
+            width: clipboardWriteDialog.availableWidth
+
+            Label {
+                Layout.fillWidth: true
+                text: "An application is attempting to write to the clipboard. The content to write is shown below."
+                wrapMode: Text.WordWrap
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 170
+
+                TextArea {
+                    id: clipboardWritePreview
+                    readOnly: true
+                    wrapMode: TextEdit.WrapAnywhere
+                    font.family: "monospace"
+                }
+            }
+
+            CheckBox {
+                id: rememberClipboardChoice
+                objectName: "rememberClipboardChoice"
+                text: "Remember choice for this split"
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: "Reload configuration to show this prompt again."
+                wrapMode: Text.WordWrap
+                opacity: 0.75
+            }
+        }
+    }
+
+    Dialog {
         id: titleDialog
         objectName: "titleDialog"
         property var promptId: 0
@@ -540,6 +608,19 @@ ApplicationWindow {
                 return
             pasteDialog.confirmationId = 0
             pasteDialog.close()
+        }
+        function onTerminalClipboardWriteConfirmationRequested(
+                confirmationId, preview) {
+            clipboardWriteDialog.confirmationId = confirmationId
+            clipboardWritePreview.text = preview
+            rememberClipboardChoice.checked = false
+            clipboardWriteDialog.open()
+        }
+        function onTerminalClipboardWriteConfirmationResolved(confirmationId) {
+            if (clipboardWriteDialog.confirmationId !== confirmationId)
+                return
+            clipboardWriteDialog.confirmationId = 0
+            clipboardWriteDialog.close()
         }
         function onTitlePromptRequested(promptId, heading, initialTitle) {
             titleDialog.promptId = promptId

@@ -570,6 +570,8 @@ fn writeValues(
     try json.write(@tagName(config.@"confirm-close-surface"));
     try json.objectField("clipboard-trim-trailing-spaces");
     try json.write(config.@"clipboard-trim-trailing-spaces");
+    try json.objectField("clipboard-write");
+    try json.write(@tagName(config.@"clipboard-write"));
     try json.objectField("clipboard-paste-protection");
     try json.write(config.@"clipboard-paste-protection");
     try json.objectField("clipboard-paste-bracketed-safe");

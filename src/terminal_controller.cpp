@@ -182,6 +182,7 @@ TerminalController::TerminalController(
     qRegisterMetaType<QVector<QPoint>>();
     qRegisterMetaType<TerminalSessionRuntimeOptions>();
     qRegisterMetaType<TerminalClipboardDestination>();
+    qRegisterMetaType<TerminalClipboardWriteRequest>();
     qRegisterMetaType<TerminalActionResult>();
     qRegisterMetaType<TerminalWriteFileAction>();
 
@@ -321,6 +322,9 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
                                    destination);
         },
         Qt::QueuedConnection);
+    connect(worker, &SessionWorker::terminalClipboardWriteRequested, this,
+            &TerminalController::terminalClipboardWriteRequested,
+            Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::terminalActionFinished, this,
         [this](const TerminalActionResult &result) {

@@ -54,6 +54,7 @@ private Q_SLOTS:
     void rejectsMalformedOsc8UpdatesAtomically();
     void ordersSearchCellsByRowThenColumn();
     void resolvesClipboardRoutingWithoutPlatformAssumptions();
+    void validatesTerminalOriginatedClipboardWrites();
 };
 
 void TerminalTypesTest::appliesFullAndPartialUpdates()
@@ -461,6 +462,58 @@ void TerminalTypesTest::resolvesClipboardRoutingWithoutPlatformAssumptions()
     QCOMPARE(terminalMiddleClickSource(
                  TerminalCopyOnSelectMode::PrimaryAndClipboard, true),
              TerminalClipboardSource::Standard);
+}
+
+void TerminalTypesTest::validatesTerminalOriginatedClipboardWrites()
+{
+    const auto verifyTarget =
+        [](TerminalClipboardLocation location, bool supportsPrimary,
+           std::optional<TerminalClipboardSource> expected) {
+            QCOMPARE(terminalClipboardWriteTarget(location, supportsPrimary),
+                     expected);
+        };
+
+    verifyTarget(TerminalClipboardLocation::Standard, false,
+                 TerminalClipboardSource::Standard);
+    verifyTarget(TerminalClipboardLocation::Standard, true,
+                 TerminalClipboardSource::Standard);
+    for (const TerminalClipboardLocation location : {
+             TerminalClipboardLocation::Selection,
+             TerminalClipboardLocation::Primary,
+         }) {
+        verifyTarget(location, false, std::nullopt);
+        verifyTarget(location, true, TerminalClipboardSource::Primary);
+    }
+
+    TerminalClipboardWrite clear{
+        .location = TerminalClipboardLocation::Standard,
+    };
+    QVERIFY(clear.contents.isEmpty());
+    QVERIFY(validTerminalClipboardWritePayload(clear));
+
+    TerminalClipboardWrite multiple{
+        .location = TerminalClipboardLocation::Standard,
+        .contents =
+            {
+                {
+                    .mime = QByteArrayLiteral("application/octet-stream"),
+                    .data = QByteArray::fromRawData("a\0b", 3),
+                },
+                {
+                    .mime = QByteArrayLiteral("text/plain"),
+                    .data = {},
+                },
+            },
+    };
+    QVERIFY(validTerminalClipboardWritePayload(multiple));
+    QCOMPARE(multiple.contents.at(0).data, QByteArray::fromRawData("a\0b", 3));
+    QVERIFY(multiple.contents.at(1).data.isEmpty());
+    QVERIFY(!multiple.contents.isEmpty());
+
+    multiple.contents[0].mime.clear();
+    QVERIFY(!validTerminalClipboardWritePayload(multiple));
+    multiple.contents[0].mime = QByteArray::fromRawData("text/\0plain", 11);
+    QVERIFY(!validTerminalClipboardWritePayload(multiple));
 }
 
 QTEST_APPLESS_MAIN(TerminalTypesTest)

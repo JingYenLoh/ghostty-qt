@@ -129,6 +129,7 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
@@ -181,7 +182,7 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QCOMPARE(effects.title, QStringLiteral("adapter-title"));
     QCOMPARE(effects.currentDirectory, QStringLiteral("/tmp"));
     QVERIFY(effects.bell);
-    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22c"));
+    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22;52c"));
 
     adapter->writeVt(QByteArrayLiteral(
         "\033]7;file://definitely-remote.invalid/remote/path\007"));
@@ -395,6 +396,130 @@ void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()
 
     adapter->reset();
     QCOMPARE(adapter->semanticPromptState(), State::Away);
+}
+
+void GhosttyVtAdapterTest::normalizesTerminalClipboardWritesAndPolicies()
+{
+    QByteArray ptyWrites;
+    GhosttyVtAdapter::Options options;
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&ptyWrites](const QByteArray &data) {
+            ptyWrites.append(data);
+        }});
+    QVERIFY(adapter != nullptr);
+
+    // The default allow policy advertises OSC 52 and a fragmented sequence
+    // becomes one owned, binary-safe write only after its terminator arrives.
+    adapter->writeVt(QByteArrayLiteral("\033[c"));
+    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22;52c"));
+    ptyWrites.clear();
+    adapter->writeVt(QByteArrayLiteral("\033]52;c;aGVs"));
+    QVERIFY(adapter->takeDeferredEffects().clipboardWrites.isEmpty());
+    adapter->writeVt(QByteArrayLiteral("bG8Ad29ybGQ=\033\\"));
+    auto effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.clipboardWrites.size(), 1);
+    const TerminalClipboardWriteRequest embeddedNul =
+        effects.clipboardWrites.constFirst();
+    QCOMPARE(embeddedNul.write.location, TerminalClipboardLocation::Standard);
+    QVERIFY(!embeddedNul.confirmationRequired);
+    QCOMPARE(embeddedNul.write.contents.size(), 1);
+    QCOMPARE(embeddedNul.write.contents.constFirst().mime,
+             QByteArrayLiteral("text/plain"));
+    QCOMPARE(embeddedNul.write.contents.constFirst().data,
+             QByteArray("hello\0world", 11));
+
+    // The callback's borrowed decode buffer is gone by the next VT write; the
+    // retained value must remain unchanged, while writes preserve wire order
+    // and normalized destinations. Empty OSC 52 data is a clear operation.
+    adapter->writeVt(QByteArrayLiteral("\033]52;s;eA==\033\\"
+                                       "\033]52;p;eQ==\a"
+                                       "\033]52;s;\033\\"
+                                       "\033]52;q;eg==\033\\"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.clipboardWrites.size(), 4);
+    QCOMPARE(effects.clipboardWrites.at(0).write.location,
+             TerminalClipboardLocation::Selection);
+    QCOMPARE(effects.clipboardWrites.at(0).write.contents.constFirst().data,
+             QByteArrayLiteral("x"));
+    QCOMPARE(effects.clipboardWrites.at(1).write.location,
+             TerminalClipboardLocation::Primary);
+    QCOMPARE(effects.clipboardWrites.at(1).write.contents.constFirst().data,
+             QByteArrayLiteral("y"));
+    QCOMPARE(effects.clipboardWrites.at(2).write.location,
+             TerminalClipboardLocation::Selection);
+    QVERIFY(effects.clipboardWrites.at(2).write.contents.isEmpty());
+    QCOMPARE(effects.clipboardWrites.at(3).write.location,
+             TerminalClipboardLocation::Standard);
+    QCOMPARE(effects.clipboardWrites.at(3).write.contents.constFirst().data,
+             QByteArrayLiteral("z"));
+    QCOMPARE(embeddedNul.write.contents.constFirst().data,
+             QByteArray("hello\0world", 11));
+
+    // Read requests and malformed base64 are intentionally silent.
+    adapter->writeVt(QByteArrayLiteral("\033]52;c;?\033\\"
+                                       "\033]52;c;%%%\033\\"));
+    QVERIFY(adapter->takeDeferredEffects().clipboardWrites.isEmpty());
+
+    // iTerm2 Copy shares the same normalized representation.
+    adapter->writeVt(QByteArrayLiteral("\033]1337;Copy=:aVRlcm0=\033\\"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.clipboardWrites.size(), 1);
+    QCOMPARE(effects.clipboardWrites.constFirst().write.location,
+             TerminalClipboardLocation::Standard);
+    QCOMPARE(
+        effects.clipboardWrites.constFirst().write.contents.constFirst().mime,
+        QByteArrayLiteral("text/plain"));
+    QCOMPARE(
+        effects.clipboardWrites.constFirst().write.contents.constFirst().data,
+        QByteArrayLiteral("iTerm"));
+
+    // Ask remains an advertised capability and snapshots confirmation onto
+    // the request. Deny removes the capability and emits no deferred effect;
+    // allowing it again takes effect without reconstructing the terminal.
+    adapter->setClipboardWriteAccess(TerminalClipboardAccess::Ask);
+    adapter->writeVt(QByteArrayLiteral("\033[c\033]52;c;YXNr\033\\"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22;52c"));
+    QCOMPARE(effects.clipboardWrites.size(), 1);
+    QVERIFY(effects.clipboardWrites.constFirst().confirmationRequired);
+    QCOMPARE(
+        effects.clipboardWrites.constFirst().write.contents.constFirst().data,
+        QByteArrayLiteral("ask"));
+
+    ptyWrites.clear();
+    adapter->setClipboardWriteAccess(TerminalClipboardAccess::Deny);
+    adapter->writeVt(QByteArrayLiteral("\033[c\033]52;c;ZGVuaWVk\033\\"));
+    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22c"));
+    QVERIFY(adapter->takeDeferredEffects().clipboardWrites.isEmpty());
+
+    ptyWrites.clear();
+    adapter->setClipboardWriteAccess(TerminalClipboardAccess::Allow);
+    adapter->writeVt(QByteArrayLiteral("\033[c\033]52;c;YWxsb3dlZA==\033\\"));
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(ptyWrites, QByteArrayLiteral("\033[?62;22;52c"));
+    QCOMPARE(effects.clipboardWrites.size(), 1);
+    QVERIFY(!effects.clipboardWrites.constFirst().confirmationRequired);
+    QCOMPARE(
+        effects.clipboardWrites.constFirst().write.contents.constFirst().data,
+        QByteArrayLiteral("allowed"));
+
+    // Byte accounting alone cannot bound clear requests because they carry no
+    // representations. One adapter drain retains at most 64 writes, then a
+    // drain restores capacity for the next request.
+    QByteArray clearFlood;
+    constexpr int retainedClipboardWriteLimit = 64;
+    for (int index = 0; index < retainedClipboardWriteLimit + 1; ++index) {
+        clearFlood.append(QByteArrayLiteral("\033]52;c;\033\\"));
+    }
+    adapter->writeVt(clearFlood);
+    effects = adapter->takeDeferredEffects();
+    QCOMPARE(effects.clipboardWrites.size(), retainedClipboardWriteLimit);
+    for (const TerminalClipboardWriteRequest &request :
+         effects.clipboardWrites) {
+        QVERIFY(request.write.contents.isEmpty());
+    }
+    adapter->writeVt(QByteArrayLiteral("\033]52;c;\033\\"));
+    QCOMPARE(adapter->takeDeferredEffects().clipboardWrites.size(), 1);
 }
 
 void GhosttyVtAdapterTest::validatesDynamicAndMacShapedOsc7Hostnames()

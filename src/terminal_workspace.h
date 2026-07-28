@@ -5,6 +5,7 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "tab_list_model.h"
+#include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
 
@@ -186,6 +187,10 @@ public:
     Q_INVOKABLE void cancelClose(quint64 confirmationId);
     Q_INVOKABLE void confirmPaste(quint64 confirmationId);
     Q_INVOKABLE void cancelPaste(quint64 confirmationId);
+    Q_INVOKABLE void confirmClipboardWrite(quint64 confirmationId,
+                                           bool remember);
+    Q_INVOKABLE void cancelClipboardWrite(quint64 confirmationId,
+                                          bool remember);
     Q_INVOKABLE void confirmTitlePrompt(quint64 promptId, const QString &title);
     Q_INVOKABLE void cancelTitlePrompt(quint64 promptId);
     Q_INVOKABLE bool executeContextMenuAction(quint64 requestId,
@@ -204,6 +209,9 @@ Q_SIGNALS:
     void unsafePasteConfirmationRequested(quint64 confirmationId,
                                           const QString &preview);
     void unsafePasteConfirmationResolved(quint64 confirmationId);
+    void terminalClipboardWriteConfirmationRequested(quint64 confirmationId,
+                                                     const QString &preview);
+    void terminalClipboardWriteConfirmationResolved(quint64 confirmationId);
     void titlePromptRequested(quint64 promptId, const QString &heading,
                               const QString &initialTitle);
     void titlePromptResolved(quint64 promptId);
@@ -264,6 +272,12 @@ private:
     struct PendingPaste {
         QString text;
         QVector<PendingPasteTarget> targets;
+    };
+    struct PendingClipboardWrite {
+        TerminalClipboardWriteRequest request;
+        PaneId paneId;
+        QPointer<TerminalPane> pane;
+        quint64 byteSize = 0;
     };
     struct PendingContextMenu {
         quint64 requestId = 0;
@@ -408,6 +422,16 @@ private:
     void schedulePendingPastePreview();
     void showPendingPastePreview();
     static QString pastePreview(const QString &text);
+    void
+    beginTerminalClipboardWrite(const TerminalClipboardWriteRequest &request,
+                                PaneHandle handle);
+    void finishTerminalClipboardWrite(quint64 confirmationId, bool confirmed,
+                                      bool remember);
+    void removePendingClipboardWritesForPane(PaneHandle handle);
+    void schedulePendingClipboardWriteDrain();
+    void drainPendingClipboardWrites();
+    static QString
+    terminalClipboardWritePreview(const TerminalClipboardWrite &write);
     void beginContextMenu(PaneHandle handle, const QPointF &windowPosition,
                           bool selectionAvailable);
     void removeContextMenuForPane(PaneHandle handle);
@@ -456,6 +480,11 @@ private:
     bool pendingPastePreviewScheduled_ = false;
     quint64 nextPasteConfirmationId_ = 0;
     quint64 activePasteConfirmationId_ = 0;
+    std::deque<PendingClipboardWrite> pendingClipboardWrites_;
+    quint64 pendingClipboardWriteBytes_ = 0;
+    bool pendingClipboardWriteDrainScheduled_ = false;
+    quint64 nextClipboardWriteConfirmationId_ = 0;
+    quint64 activeClipboardWriteConfirmationId_ = 0;
     std::optional<PendingContextMenu> pendingContextMenu_;
     quint64 nextContextMenuId_ = 0;
     std::deque<PendingTitlePrompt> pendingTitlePrompts_;

@@ -34,6 +34,13 @@ the host-language comparison and remaining engineering risks.
   behavior, Ghostty's text/DEC-tracking base pointer shapes, an in-scene Qt
   Quick context menu, and worker-authoritative unsafe-paste review with
   correlated confirmation.
+- Terminal-originated OSC 52 and OSC 1337 clipboard writes normalized by
+  libghostty, including binary multi-MIME payloads and explicit clears committed
+  atomically to Qt's standard or Linux selection clipboard. Ghostty's
+  live-reloaded `clipboard-write = allow|deny|ask` policy defaults to `allow`;
+  `ask` uses a bounded FIFO confirmation flow with an optional per-split
+  remembered decision. Clipboard reads remain unavailable because public
+  libghostty currently ignores OSC 52 read requests.
 - Plain-text screen, scrollback, and selection file actions, with the resulting
   private temporary artifact copied as a path, pasted into the terminal, or
   opened through the desktop URL handler.

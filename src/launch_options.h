@@ -84,6 +84,8 @@ struct LaunchOptions {
     // Ghostty finalizes the platform click-repeat interval in milliseconds.
     // Preserve the full u32 value so the worker can classify repeated clicks.
     quint32 clickRepeatIntervalMilliseconds = 500;
+    // Live access policy for terminal-originated writes such as OSC 52.
+    TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
     TerminalClipboardPasteOptions clipboardPaste;
     // Split appearance belongs to the Qt pane/workspace renderers and never
     // crosses the terminal session-thread boundary.
