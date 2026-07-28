@@ -118,6 +118,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     Qml
     Quick
     QuickControls2
+    ShaderTools
     Widgets
 )
 find_package(PkgConfig REQUIRED)
@@ -638,6 +639,44 @@ target_compile_options(ghostty-qt-terminal-bell PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+add_library(ghostty-qt-terminal-rendering STATIC
+    src/terminal_backdrop.cpp
+    src/terminal_backdrop.h
+    src/terminal_backdrop_qsg.cpp
+    src/terminal_backdrop_qsg.h
+    src/terminal_rect_batch.cpp
+    src/terminal_rect_batch.h
+)
+target_include_directories(ghostty-qt-terminal-rendering PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
+target_link_libraries(ghostty-qt-terminal-rendering
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Quick
+)
+target_compile_options(ghostty-qt-terminal-rendering PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+qt_add_shaders(
+    ghostty-qt-terminal-rendering
+    ghostty_qt_terminal_backdrop_shaders
+
+    BATCHABLE
+
+    PREFIX
+        "/ghostty-qt/shaders"
+
+    FILES
+        shaders/terminal_backdrop.vert
+        shaders/terminal_backdrop.frag
+
+    OUTPUTS
+        terminal_backdrop.vert.qsb
+        terminal_backdrop.frag.qsb
+)
+
 add_library(ghostty-qt-vt-adapter STATIC
     src/ghostty_vt_adapter.cpp
     src/ghostty_vt_adapter.h
@@ -746,6 +785,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-shell-integration
+    ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util

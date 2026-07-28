@@ -547,8 +547,8 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
 6. `TerminalPane::updatePaintNode()` keeps fixed before-text/main-text/after-text
-   groups followed by one persistent full-pane unfocused-split rectangle. Main
-   terminal text is retained in one public `QSGTextNode` per visible row;
+   groups followed by one persistent full-pane unfocused-split rectangle.
+   Main terminal text is retained in one public `QSGTextNode` per visible row;
    accepted row epochs rebuild only changed rows, while font, geometry,
    appearance, palette, search, and frame-shape changes rebuild the complete
    text layer. Old and new block-cursor rows are rebuilt when its text override
@@ -558,17 +558,21 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    state is absent from the retained text-state key. Existing focus-driven
    block-cursor changes keep their targeted row rebuilds, while search
    decoration changes retain their full text-state invalidation.
-7. Color-batched transient geometry continues to draw cell backgrounds,
-   selections, search results, cursor shapes, text decorations, and
-   scene-graph overlays in the same global painter order. Each nonempty cell in a
-   rebuilt row is shaped with `QTextLayout` and placed at an explicit grid
-   coordinate. This avoids fallback-font and wide-cell advances shifting later
-   cells. Cell values retain foreground provenance, a separate explicit-background
-   bit, and bold, faint, inverse, invisible, underline, strike-through, overline,
-   and text-blink attributes so frontend-only appearance rules do not have to be
-   flattened at the worker boundary. The GUI selects one of four cached regular,
-   bold, italic, and bold-italic Qt faces from those attributes; the worker never
-   owns a font or platform font-database handle.
+7. Nine retained `TerminalRectBatch` layers draw cell backgrounds, selections,
+   search results, cursor shapes, text decorations, and scene-graph overlays
+   in the same painter order. Their two CPU vectors exchange storage instead
+   of copying, identical batches do not dirty the scene graph, RHI geometry
+   grows only when its retained capacity is insufficient, and the software
+   adaptation hides and reuses a pool of `QSGSimpleRectNode`s. Each nonempty
+   cell in a rebuilt row is shaped with `QTextLayout` and placed at an explicit
+   grid coordinate. This avoids fallback-font and wide-cell advances shifting
+   later cells. Cell values retain foreground provenance, a separate
+   explicit-background bit, and bold, faint, inverse, invisible, underline,
+   strike-through, overline, and text-blink attributes so frontend-only
+   appearance rules do not have to be flattened at the worker boundary. The
+   GUI selects one of four cached regular, bold, italic, and bold-italic Qt
+   faces from those attributes; the worker never owns a font or platform
+   font-database handle.
 
 The adapter derives explicit-background provenance from the public
 `GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR` query rather than comparing
@@ -617,18 +621,20 @@ live after intervening output may scroll on the first eligible frame when that
 stale anchor is compared.
 
 Renderer-v1 uses Qt's public scene-graph API throughout: text nodes supply the
-GPU glyph path and one vertex-colored `QSGGeometryNode` per painter layer
-supplies solid primitives on RHI backends. Qt's software adaptation does not
-render that public vertex-color material, so the test/fallback path uses
-`QSGSimpleRectNode` groups for correctness.
+GPU glyph path and one retained vertex-colored `QSGGeometryNode` per painter
+layer supplies solid primitives on RHI backends. Qt's software adaptation does
+not render that public vertex-color material, so the test/fallback path retains
+one reusable `QSGSimpleRectNode` pool per layer for correctness.
 No intermediate raster-image upload sits between the frame and the scene
 graph. Qt's implicitly shared frame snapshot is normally an O(1) reference-count
 operation rather than a deep cell copy. The renderer still scans visible cells
-and rebuilds transient solid geometry on every presented update. During
-ordinary sparse updates, it shapes text and recreates glyph data only for rows
-whose persistent epochs or derived block-cursor text state changed; global
-text-state changes rebuild the complete text layer. Larger compatible text runs
-and retained geometry remain possible CPU-side optimizations.
+on every presented update, but unchanged rectangle batches skip geometry
+updates and all batches reuse their CPU and scene-graph allocation capacity.
+During ordinary sparse updates, the renderer shapes text and recreates glyph
+data only for rows whose persistent epochs or derived block-cursor text state
+changed; global text-state changes rebuild the complete text layer. Larger
+compatible text runs and row-epoch-based rectangle generation remain possible
+CPU-side optimizations.
 
 The renderer resolves configured selection, search, and cursor cell-relative
 aliases against each cell's visual colors, applies Ghostty's bold
@@ -1371,9 +1377,14 @@ candidate/selected search colors, cursor color/style/blink/opacity/text,
 bold-color, faint-opacity, and minimum-contrast. Fixed colors and Ghostty's
 cell-foreground and cell-background aliases remain distinct until the renderer
 has the target cell. Background compositing crosses separately as the
-value-only `TerminalBackgroundOptions`, containing the finalized opacity and
-explicit-cell policy. It is GUI-owned: it never enters `SessionWorker` or
-mutates libghostty terminal state.
+value-only `TerminalBackgroundOptions`, containing the finalized opacity,
+explicit-cell policy, and background-image path, multiplier, anchor, fit, and
+repeat values. The nullable image path remains an absolute
+`GhosttyConfigPath`, including required/optional provenance. Backdrop policy is
+GUI-owned: it never enters `SessionWorker` or mutates libghostty terminal
+state. `TerminalPaddingOptions` separately preserves the finalized leading and
+trailing point values for each axis plus the three-state balance and padding
+color policies.
 
 The same schema carries `click-repeat-interval` as Ghostty's finalized
 unsigned whole-millisecond value, including the Linux 500 ms default, and
@@ -1425,7 +1436,15 @@ changing any live window's state. The
 paired window dimensions are likewise future-window creation policy. Their
 cell-to-pixel conversion uses each new window's resolved font size, including
 source-pane inheritance, and runs before workspace initialization constructs
-its first pane. Existing roots retain both their size and minimum hint on reload.
+its first pane. The current explicit padding is added outside the requested
+cell grid and its 10-by-4 minimum. Existing roots retain both their size and
+minimum hint on reload. `window-padding-x` and `window-padding-y` are
+snapshotted per pane: reload affects later windows, tabs, and splits without
+changing existing explicit margins. `window-padding-balance` is live pane
+geometry policy: reload preserves the selected grid but republishes its
+effective padding and padding-excluded terminal pixel extent. The separately
+render-owned `window-padding-color` also updates existing panes without worker
+or geometry mutation.
 
 Each pane derives terminal metrics by projecting the regular Qt face to integer
 physical pixels at its current device-pixel ratio, applying Ghostty's absolute
@@ -1443,17 +1462,30 @@ rebuilds these metrics before publishing geometry or repainting.
 
 During one-shot workspace initialization, the authoritative logical workspace
 viewport, resolved terminal cell metrics, and selected window's device-pixel
-ratio are converted to a complete `TerminalSessionGeometry`. The same
-overflow-safe conversion drives later pane resizes, flooring the cell grid,
-rounding physical extents, bounding rows and columns to the PTY range, and
-rejecting nonfinite or not-yet-laid-out viewports. Only the initial `createNewTab`
-path moves this value through `TerminalPane` into the controller-owned pending
-launch state. `SessionWorker` applies it before both `libghostty-vt`
-construction and `forkpty`, so the first frame, scrollback estimate, and an
-immediately executing child share the authoritative startup geometry.
-Linux exposes PTY pixel extents as 16-bit fields, so only synthetic surfaces
-wider or taller than 65,535 physical pixels saturate at that final kernel
-boundary while libghostty retains the overflow-safe `int` extent.
+ratio are converted to one complete `TerminalSessionGeometry`. Each snapshotted
+padding point value becomes `floor(points * DPR * 96 / 72)` physical pixels on
+Linux. Explicit padding is removed before the cell grid is floored; the
+retained balance mode then redistributes only the residual surface space.
+`false` leaves that remainder at the right and bottom, `equal` centers both
+axes, and `true` centers before capping the top from the explicit horizontal
+padding and cell width and shifting any excess below the grid.
+
+The resulting value carries the full pane surface, four effective physical
+padding values, cell metrics, and rows/columns. One pure conversion drives
+scene-graph origin, hit testing, IME placement, mouse encoding, libghostty,
+selection gestures, and the PTY. Rows and columns exclude padding, while
+`ws_xpixel` and `ws_ypixel` use Ghostty's backend terminal projection and
+therefore report the grid's padding-excluded pixel extent.
+The same overflow-safe conversion drives later pane resizes, bounds rows and
+columns to the PTY range, and rejects nonfinite or not-yet-laid-out viewports.
+Only the initial `createNewTab` path moves this value through `TerminalPane`
+into the controller-owned pending launch state. `SessionWorker` applies it
+before both `libghostty-vt` construction and `forkpty`, so the first frame,
+scrollback estimate, and an immediately executing child share the authoritative
+startup geometry. Linux exposes PTY terminal pixel extents as 16-bit fields, so
+only synthetic grids wider or taller than 65,535 physical pixels saturate at
+that final kernel boundary while libghostty retains the overflow-safe `int`
+extent.
 Ordinary new-tab and split paths have no seed and continue with their own
 layout resize. Pane scene attachment and window screen/scale changes also
 re-emit the unchanged logical viewport so physical geometry cannot remain at a
@@ -1508,6 +1540,69 @@ does not sample content behind the compositor surface. The worker marks the
 five pinned terminal-graphics codepoint ranges so only their glyph bypasses
 correction; their decorations still participate. Block cursor text overrides
 the result, while cursor sprites are corrected after cursor opacity.
+
+The backdrop precedes every grid and padding-extension layer. A configured
+background image is fitted against the complete leaf-pane surface, including
+explicit and residual padding, so every split has its own origin and placement
+rather than sharing one window-wide image. `contain` and `cover` preserve
+aspect ratio using the smaller or larger scale respectively, `stretch` fills
+both axes, and `none` maps one decoded source pixel to one physical device
+pixel. Each of the nine anchors independently chooses the start, midpoint, or
+end offset on each axis; both `center` and `center-center` select the middle.
+Repeat tiles that fitted result in both directions around the same anchor.
+Resizing, moving between DPRs, and changing fit, position, or repeat recompute
+only pane-local texture coordinates.
+
+The image multiplier remains Ghostty's unclamped finalized `f32`, including
+documented values above one. Composition uses the rounded global background
+alpha and the image's straight alpha before producing a premultiplied backdrop.
+For an opaque source pixel the final alpha is
+`min(background-opacity * background-image-opacity, 1)`; transparent pixels
+and uncovered non-repeated regions retain the ordinary global background, and
+a zero global opacity suppresses the complete image/background pass. Explicit
+cell backgrounds, selection, search, inverse, and padding extension draw over
+that pass. Matching Ghostty, minimum contrast deliberately evaluates only the
+cell and global configured-background layers and never samples the image.
+
+PNG/JPEG file inspection, decoding, and extraction of opaque straight-RGB and
+alpha planes run on a bounded two-thread pool, outside the GUI, render, and
+session threads. A process-wide weak cache keys those immutable decoded planes
+by finalized path plus file size and modification time. Identical concurrent
+requests coalesce, and expired weak entries release unused CPU images. Each
+pane still owns its placement, render-thread textures, and composition state.
+Generation and cancellation guards discard stale completions after reload or
+pane destruction. A changed path keeps the prior image visible until a
+successful replacement arrives, an absent path unloads it, and
+open/type/decode failure logs while retaining the prior asset. Like pinned
+Ghostty, a pane does not reread an unchanged finalized path or retry its failed
+source merely because configuration is reloaded; changing away and back
+creates a new request. A bounded 250 ms process-wide failure throttle prevents
+new panes from stampeding the same failing file identity, while a later new
+pane probes current metadata normally. Option-only reload, terminal OSC 11,
+global opacity, and image-opacity changes reuse the decoded planes.
+
+The normal RHI path uploads those two opaque planes to a pane-owned public-QSG
+material. Linear sampling occurs while RGB and alpha are still straight;
+the fragment material then premultiplies, applies Ghostty's image/background
+opacity equation, and uses explicit modulo coordinates for repetition before
+compositing later cell layers. Separating alpha avoids Qt's ordinary
+alpha-bearing texture upload premultiplying before filtering. Qt's software
+scene-graph backend cannot execute that material, so its fallback composes the
+source-pixel centers on the CPU and presents the premultiplied result through a
+simple texture node. That path is deterministic and useful for headless
+integration coverage, but scaled varying-alpha edges and repeated tile seams
+are source-resolution approximations rather than claims of pixel identity
+with Ghostty's shader.
+
+`window-padding-color=background` leaves the backdrop visible in every padding
+region. Both extension modes copy the nearest resolved cell-background layer
+through the retained grid transform: left and right always extend, including
+cell alpha. Ordinary `extend` permits top or bottom extension only when the
+corresponding edge row contains none of a prompt/continuation semantic,
+default-background cell, explicit background equal to the global background,
+or pinned perfect-fit Powerline codepoint. `extend-always` bypasses those
+vertical guards. Color reload changes only these retained background
+primitives; it does not change layout, rows, columns, or PTY state.
 
 Opacity reload is applied to each existing `TerminalPane` and to defaults for
 future tabs and splits. It invalidates retained drawing state only where the
@@ -2160,6 +2255,32 @@ The default CTest suite has focused layers for each ownership boundary:
   rounding/clamping, pinned sparse-map order, cell-height recentering,
   independent centered cursor geometry including over-cell height, and DPR
   projection.
+- `terminal-geometry` verifies point-to-physical padding conversion, explicit
+  padding before grid selection, equal and capped balance modes, projected
+  grid origin, padding-aware hit testing, full-surface versus terminal extents,
+  excessive-padding safety, DPR behavior, and numeric saturation.
+- `terminal-backdrop` exercises all four fit calculations, all nine anchors,
+  device-pixel `none` sizing, transparent source pixels, rounded global alpha,
+  an image multiplier above one, and zero-opacity composition as pure
+  GUI-independent helpers. Software-scene-graph integration can verify the
+  deterministic fallback and retained pane lifecycle, but it cannot execute
+  the two-plane RHI material. The next target covers backend shader creation,
+  linear texture sampling, and modulo seam behavior separately; final Wayland
+  compositor presentation remains an interactive check.
+- `terminal-backdrop-rhi` verifies that both compiled QSB resources are linked
+  into an independent consumer, then attempts OpenGL-RHI checks for
+  straight-alpha filtering, hard modulo seams, and texture reuse across
+  option-only changes and asset-serial replacement. Those semantic checks skip
+  explicitly when Qt's offscreen platform selects its software adaptation, as
+  it does in the managed headless sandbox; a green offscreen result alone must
+  not be mistaken for RHI pixel validation. A separate XCB plus OpenGL-RHI
+  llvmpipe run executes the complete material suite, including
+  fractional-DPR seam and relative/global-opacity samples, with seven passes
+  and no skips.
+- `terminal-rect-batch` verifies that retained hardware geometry grows without
+  shrinking, identical and smaller updates allocate nothing, software
+  rectangle nodes are pooled and hidden rather than deleted, and switching
+  render backends reuses the existing layer objects.
 - `ghostty-smoke` exercises terminal parsing/render-state iteration, CJK wide
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
@@ -2292,8 +2413,9 @@ The default CTest suite has focused layers for each ownership boundary:
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, clamped background opacity and exact cell-opacity boolean,
-  the fixed 256-color palette, the full unsigned scrollback range, and binding
-  trees.
+  the finalized optional image path and all four image policies, two exact
+  padding-point pairs, balance and padding-color enums, the fixed 256-color
+  palette, the full unsigned scrollback range, and binding trees.
 - `ghostty-config-process-loader` verifies the four-process
   validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser
@@ -2416,8 +2538,11 @@ single-start guarantees, immediate child rows/columns/PTY pixels, multiwindow
 creation, inheritance, lifetime, and aggregate quit.
 The offscreen tests validate QML startup, close/recreate shutdown, dialog
 shutdown, scene-graph frame replacement, Qt's requested/created alpha format,
-and the renderer's emitted alpha values in a headless environment. They do not
-validate hardware RHI blending or the desktop compositor's final composition.
+the renderer's emitted alpha values, and pure background-image placement and
+composition in a headless environment. The dedicated XCB/OpenGL-RHI run
+separately validates the public-QSG background material through llvmpipe,
+including straight-alpha filtering and repeat seams. Neither route validates a
+production GPU driver's output or the desktop compositor's final composition.
 `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
 supported runtime configuration; GPU output and visible translucency must also
 be checked interactively in a real Wayland session.
@@ -2426,8 +2551,9 @@ be checked interactively in a real Wayland session.
 
 - Dirty-row value updates keep the thread boundary small for ordinary output,
   and persistent row text nodes keep per-cell `QTextLayout` work local to those
-  rows. Transient solid geometry still scans the visible grid and rebuilds by
-  painter layer; larger compatible text runs and retained geometry remain
+  rows. Solid-layer generation still scans the visible grid, although retained
+  batches skip unchanged uploads and reuse all established capacity. Larger
+  compatible text runs and row-epoch-based solid-geometry generation remain
   future optimizations.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends, but
   there is no ligature shaping across terminal cells, color-emoji pipeline, or
@@ -2436,6 +2562,15 @@ be checked interactively in a real Wayland session.
   and the current public scene-graph path does not expose an exact mapping for
   Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented
   background alpha policy is independent of that color-space choice.
+- Background images use a dedicated two-plane material on RHI backends so
+  straight RGB and alpha are filtered before premultiplication and
+  repeated through Ghostty's explicit modulo coordinates. The software
+  scene-graph fallback cannot run that material: it precomposes source-pixel
+  centers and lets a simple texture node scale or repeat the result. Its
+  varying-alpha edges and tile seams are therefore deliberate approximations.
+  The normal RHI material is covered through an OpenGL-RHI integration run;
+  final production-GPU and Wayland-compositor presentation remains an
+  interactive validation boundary.
 - Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
   precedence over DEC mode 12, so that case remains explicitly partial in the
   parity ledger. Palette generation does not depend on the text config dump:

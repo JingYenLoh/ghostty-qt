@@ -64,8 +64,10 @@ void TerminalController::relayWorkerRequest(
 
 void TerminalController::connectWorkerRequestRelays()
 {
-    relayWorkerRequest(&TerminalController::resizeRequested,
-                       &SessionWorker::resizeTerminal);
+    relayWorkerRequest(
+        &TerminalController::resizeRequested,
+        static_cast<void (SessionWorker::*)(const TerminalSessionGeometry &)>(
+            &SessionWorker::resizeTerminal));
     relayWorkerRequest(&TerminalController::keyRequested,
                        &SessionWorker::sendKey);
     relayWorkerRequest(&TerminalController::sequenceKeyStagingRequested,
@@ -611,27 +613,17 @@ void TerminalController::setSurfaceTitle(QString title)
     Q_EMIT titleChanged(this->title());
 }
 
-void TerminalController::resizeTerminal(int columns, int rows,
-                                        int cellWidthPixels,
-                                        int cellHeightPixels,
-                                        int surfaceWidthPixels,
-                                        int surfaceHeightPixels)
+void TerminalController::resizeTerminal(const TerminalSessionGeometry &geometry)
 {
+    const TerminalSessionGeometry normalized =
+        normalizedTerminalSessionGeometry(geometry);
     if (sessionStartState_ != SessionStartState::Started) {
         if (sessionStartState_ != SessionStartState::Cancelled) {
-            launchOptions_.initialGeometry = normalizedTerminalSessionGeometry({
-                .columns = columns,
-                .rows = rows,
-                .cellWidthPixels = cellWidthPixels,
-                .cellHeightPixels = cellHeightPixels,
-                .surfaceWidthPixels = surfaceWidthPixels,
-                .surfaceHeightPixels = surfaceHeightPixels,
-            });
+            launchOptions_.initialGeometry = normalized;
         }
         return;
     }
-    Q_EMIT resizeRequested(columns, rows, cellWidthPixels, cellHeightPixels,
-                           surfaceWidthPixels, surfaceHeightPixels);
+    Q_EMIT resizeRequested(normalized);
 }
 
 void TerminalController::applyRuntimeOptions(

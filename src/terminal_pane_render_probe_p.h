@@ -22,6 +22,10 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 paintSerial = 0;
     quint64 rootSerial = 0;
     quint64 unfocusedSplitOverlaySerial = 0;
+    quint64 backgroundImageAssetSerial = 0;
+    QRectF backgroundImageRect;
+    QRectF backgroundImageSourceRect;
+    QVector<QRectF> backdropBaseRects;
     QRectF unfocusedSplitOverlayRect;
     QColor unfocusedSplitOverlayColor;
     QVector<quint64> rowNodeSerials;

@@ -333,6 +333,26 @@
     "background-blur": {
       "scope": "wayland"
     },
+    "background-image": {
+      "status": "supported",
+      "note": "The pinned optional Path is exported as a finalized absolute path with required/optional provenance. Each pane asynchronously decodes only PNG or JPEG without EXIF auto-rotation, keeps its prior image until a changed path succeeds, unloads on null, and logs while retaining the prior asset on failure; reload does not reread its unchanged source or retry that pane's failed source. Identical concurrent work coalesces through a weak process-wide cache of file-fingerprinted straight-RGB and alpha planes, with a bounded 250 ms failure throttle, while every split owns independent full-surface placement, textures, and composition state. The public-QSG material preserves straight-alpha filtering and shader-time premultiplication; its embedded QSB resources and semantic output pass an XCB/OpenGL-RHI llvmpipe integration run with no skips. The software scene-graph fallback remains an explicitly documented source-resolution approximation, and final real-Wayland compositor presentation remains interactive validation."
+    },
+    "background-image-fit": {
+      "status": "supported",
+      "note": "Contain, cover, stretch, and none use Ghostty's full-pane fit equations, including padding; contain is the default and none maps one decoded pixel to one physical device pixel. Resize, DPR, and fit reload recompute placement without another decode. Pure geometry plus the two-plane OpenGL-RHI material are covered, including fractional DPR."
+    },
+    "background-image-opacity": {
+      "status": "supported",
+      "note": "The exact finalized f32 defaults to 1 and remains an unclamped relative multiplier, including documented values above one. The two-plane material uses the rounded global-background alpha: opaque source pixels reach min(global opacity times image opacity, 1), transparent pixels reveal the global background, and global opacity zero suppresses the image. Option-only reload updates pane composition without decoding or texture upload, and minimum contrast intentionally ignores image pixels. OpenGL-RHI integration covers the material and retained texture generation; the separately planned alpha-blending modes are not claimed."
+    },
+    "background-image-position": {
+      "status": "supported",
+      "note": "All nine full-pane anchors are implemented, with both center and center-center mapping to the middle. Each split has an independent origin, position reload performs no decode or texture upload, and right/bottom anchors retain negative offsets when a fitted image is larger than the pane. Pure placement and OpenGL-RHI material integration are covered."
+    },
+    "background-image-repeat": {
+      "status": "supported",
+      "note": "The default-false boolean repeats the fitted tile in both axes before and after its pane-local anchor, and reload reuses the existing decoded planes and textures. The public-QSG RHI material uses Ghostty's explicit positive modulo coordinates with clamped linear textures, avoiding an ordinary repeated sampler's cross-seam filtering. Fractional-DPR hard-seam behavior passes OpenGL-RHI integration; the software scene-graph fallback retains its documented repeated-texture seam approximation."
+    },
     "background-opacity": {
       "status": "supported",
       "note": "The finalized f64 defaults to 1, is clamped to [0, 1], and reloads every existing and future split pane without replacing its scene root, session worker, terminal, or PTY. The pane base layer uses Ghostty's rounded 8-bit alpha. Qt requests an alpha-capable native surface before any window and the QML terminal host is transparent, while retained top or bottom chrome and the ordinary interactive split dividers remain opaque. Offscreen coverage verifies the Qt surface format, divider fallback, and emitted alpha values; final hardware/compositor output remains an interactive Wayland check."
@@ -870,7 +890,7 @@
         "window-height": {
           "status": "supported",
           "scope": "qt_mapping",
-          "note": "The finalized u32 cell count participates only when paired with nonzero window-width. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. A normal first pane starts immediately from that viewport. Initially maximized/fullscreen windows keep synchronous pane/controller registration but defer first-session initialization until an exposed compositor-assigned viewport remains stable across two presented frames; inactive first tabs derive current geometry from their logical split tree, pending runtime, read-only, focus, and typed input operations retain controller-owned order until initialization, duplicate readiness events cannot restart the session, and close-before-exposure launches no child or process-derived confirmation. The resulting one-shot geometry initializes libghostty and forkpty before child exec; immediate ioctl probes confirm matching rows, columns, and PTY pixels. Tabs, splits, bare-QML fallback initialization, and normal windows remain immediate and cannot inherit the window seed."
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-width. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes construction-time explicit padding and declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. A normal first pane starts immediately from that viewport. Initially maximized/fullscreen windows keep synchronous pane/controller registration but defer first-session initialization until an exposed compositor-assigned viewport remains stable across two presented frames; inactive first tabs derive current geometry from their logical split tree, pending runtime, read-only, focus, and typed input operations retain controller-owned order until initialization, duplicate readiness events cannot restart the session, and close-before-exposure launches no child or process-derived confirmation. The resulting one-shot geometry initializes libghostty and forkpty before child exec; immediate ioctl probes confirm matching rows, columns, and padding-excluded terminal PTY pixels. Tabs, splits, bare-QML fallback initialization, and normal windows remain immediate and cannot inherit the window seed."
         },
         "window-inherit-font-size": {
           "status": "partial",
@@ -884,6 +904,22 @@
           "status": "supported",
           "note": "The exact current/end enum defaults to current. Current inserts after the tab selected immediately before each creation, or appends with no selection; end appends, and the new tab is selected. Action-source inheritance remains independent of the insertion anchor, while reload affects future tabs only."
         },
+        "window-padding-balance": {
+          "status": "supported",
+          "note": "The exact false, true, and equal enum defaults false and applies live to existing and future panes. Explicit point padding selects the grid first. False leaves indivisible remainder at right/bottom, equal centers on both axes, and true centers before capping top padding from the explicit horizontal pair plus cell width and shifting excess below. Resize, DPR change, and reload recompute placement from each pane's retained x/y values without changing its selected grid, then republish the effective libghostty padding and padding-excluded terminal PTY pixel extent."
+        },
+        "window-padding-color": {
+          "status": "supported",
+          "note": "Background, extend, and extend-always apply live without geometry or worker mutation. Left/right always copy the nearest resolved cell-background layer. Ordinary extend permits top/bottom only when the edge row contains none of a prompt/continuation semantic, default-background cell, explicit background equal to the global background, or pinned perfect-fit Powerline glyph; extend-always bypasses those vertical guards. The layer remains pane-local, preserves cell alpha, and draws over the full-surface background image."
+        },
+        "window-padding-x": {
+          "status": "supported",
+          "note": "The finalized u32 pair defaults to 2 points on both left and right and is snapshotted per pane, so reload affects only future windows, tabs, and splits. Linux converts each side to floor(points times DPR times 96/72) physical pixels. Initial cell-sized windows add the explicit margins, while the shared layout supplies renderer origin, hit testing, all four libghostty mouse padding values, selection padding-left, padding-excluded columns, and Ghostty's padding-excluded terminal PTY pixel extent."
+        },
+        "window-padding-y": {
+          "status": "supported",
+          "note": "The finalized u32 pair defaults to 2 points on both top and bottom and is snapshotted per pane, so reload affects only future windows, tabs, and splits. Linux converts each side to floor(points times DPR times 96/72) physical pixels. Initial cell-sized windows add the explicit margins, and the authoritative layout keeps renderer origin, hit testing, padding-excluded rows, libghostty surface geometry, and Ghostty's padding-excluded terminal PTY pixel extent coherent."
+        },
         "window-show-tab-bar": {
           "status": "supported",
           "scope": "qt_mapping",
@@ -892,7 +928,7 @@
         "window-width": {
           "status": "supported",
           "scope": "qt_mapping",
-          "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. A normal first pane starts immediately from that viewport. Initially maximized/fullscreen windows keep synchronous pane/controller registration but defer first-session initialization until an exposed compositor-assigned viewport remains stable across two presented frames; inactive first tabs derive current geometry from their logical split tree, pending runtime, read-only, focus, and typed input operations retain controller-owned order until initialization, duplicate readiness events cannot restart the session, and close-before-exposure launches no child or process-derived confirmation. The resulting one-shot geometry initializes libghostty and forkpty before child exec; immediate ioctl probes confirm matching rows, columns, and PTY pixels. Tabs, splits, bare-QML fallback initialization, and normal windows remain immediate and cannot inherit the window seed."
+          "note": "The finalized u32 cell count participates only when paired with nonzero window-height. Every future window derives hidden normal geometry from its resolved Qt terminal font, inherits the live source/focused screen when available, includes construction-time explicit padding and declared QML chrome, applies a screen-bounded 10x4 cell minimum, and clamps best-effort before one activation-aware presentation; reload leaves existing windows unchanged. A normal first pane starts immediately from that viewport. Initially maximized/fullscreen windows keep synchronous pane/controller registration but defer first-session initialization until an exposed compositor-assigned viewport remains stable across two presented frames; inactive first tabs derive current geometry from their logical split tree, pending runtime, read-only, focus, and typed input operations retain controller-owned order until initialization, duplicate readiness events cannot restart the session, and close-before-exposure launches no child or process-derived confirmation. The resulting one-shot geometry initializes libghostty and forkpty before child exec; immediate ioctl probes confirm matching rows, columns, and padding-excluded terminal PTY pixels. Tabs, splits, bare-QML fallback initialization, and normal windows remain immediate and cannot inherit the window seed."
         },
         "working-directory": {
           "status": "partial",

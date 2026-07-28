@@ -509,6 +509,16 @@ fn writeValues(
     try json.write(config.@"background-opacity");
     try json.objectField("background-opacity-cells");
     try json.write(config.@"background-opacity-cells");
+    try json.objectField("background-image");
+    try writeOptionalConfigPath(json, config.@"background-image");
+    try json.objectField("background-image-opacity");
+    try json.write(config.@"background-image-opacity");
+    try json.objectField("background-image-position");
+    try json.write(@tagName(config.@"background-image-position"));
+    try json.objectField("background-image-fit");
+    try json.write(@tagName(config.@"background-image-fit"));
+    try json.objectField("background-image-repeat");
+    try json.write(config.@"background-image-repeat");
     try json.objectField("unfocused-split-opacity");
     try json.write(config.@"unfocused-split-opacity");
     try json.objectField("unfocused-split-fill");
@@ -535,6 +545,20 @@ fn writeValues(
     try json.write(config.@"window-width");
     try json.objectField("window-height");
     try json.write(config.@"window-height");
+    inline for (.{
+        .{ "window-padding-x", config.@"window-padding-x" },
+        .{ "window-padding-y", config.@"window-padding-y" },
+    }) |entry| {
+        try json.objectField(entry[0]);
+        try json.beginArray();
+        try json.write(entry[1].top_left);
+        try json.write(entry[1].bottom_right);
+        try json.endArray();
+    }
+    try json.objectField("window-padding-balance");
+    try json.write(@tagName(config.@"window-padding-balance"));
+    try json.objectField("window-padding-color");
+    try json.write(@tagName(config.@"window-padding-color"));
     try json.objectField("maximize");
     try json.write(config.maximize);
     try json.objectField("fullscreen");

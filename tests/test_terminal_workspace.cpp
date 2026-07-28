@@ -410,6 +410,7 @@ private Q_SLOTS:
     void initialGeometrySeedsOnlyFirstPane();
     void typographyReloadReachesLiveAndFuturePanes();
     void backgroundOpacityReloadIsPaneLocalAndInherited();
+    void backgroundImageAndPaddingReloadStayPaneLocalAndInherited();
     void launchOnlyReloadAffectsOnlyFuturePanes();
     void inheritedTypographyChangesOnlyPointSize();
     void initializationSurvivesReentrantConfigurationObservers();
@@ -829,6 +830,414 @@ void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
     window.close();
 }
 
+void TerminalWorkspaceTest::
+    backgroundImageAndPaddingReloadStayPaneLocalAndInherited()
+{
+    const QString temporaryRoot =
+        QDir::current().filePath(QStringLiteral("tmp"));
+    QVERIFY(QDir().mkpath(temporaryRoot));
+    QTemporaryDir temporary(
+        QDir(temporaryRoot)
+            .filePath(QStringLiteral("terminal-workspace-backdrop-XXXXXX")));
+    QVERIFY(temporary.isValid());
+
+    constexpr QSize sourceSize(32, 16);
+    const QString sourcePath =
+        temporary.filePath(QStringLiteral("split-backdrop.png"));
+    QImage source(sourceSize, QImage::Format_RGBA8888);
+    source.fill(QColor(QStringLiteral("#20a0d0")));
+    QVERIFY(source.save(sourcePath, "PNG"));
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 10"),
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = QColor(QStringLiteral("#102030"));
+    options.background.image = {
+        .path =
+            GhosttyConfigPath{
+                .path = sourcePath,
+                .optional = false,
+            },
+        .opacity = 0.8,
+        .position = TerminalBackgroundImagePosition::BottomRight,
+        .fit = TerminalBackgroundImageFit::None,
+        .repeat = false,
+    };
+    options.padding = {
+        .horizontal = {.leadingPoints = 9, .trailingPoints = 15},
+        .vertical = {.leadingPoints = 6, .trailingPoints = 12},
+        .balance = TerminalPaddingBalance::Disabled,
+        .color = TerminalPaddingColor::Background,
+    };
+    options.splitAppearance.unfocusedOpacity = 1.0;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.setColor(Qt::transparent);
+    window.resize(721, 360);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QVERIFY(workspace->initialize(options));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    const CurrentTabProbe first = currentTabProbe(*workspace);
+    QVERIFY(first.pane != nullptr);
+    const CurrentTabProbe second = splitRightProbe(*workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.pane != first.pane);
+    QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 2);
+
+    const QPointer<TerminalController> firstController =
+        first.pane->findChild<TerminalController *>();
+    const QPointer<TerminalController> secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(firstController->sessionStarted(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(secondController->sessionStarted(), 3000);
+    const QPointer<QThread> firstWorkerThread =
+        firstController->findChild<QThread *>();
+    const QPointer<QThread> secondWorkerThread =
+        secondController->findChild<QThread *>();
+    QVERIFY(firstWorkerThread != nullptr);
+    QVERIFY(secondWorkerThread != nullptr);
+
+    const auto paintAll = [&] {
+        for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+            pane->update();
+        }
+        return !window.grabWindow().isNull();
+    };
+    const auto initialImagesReady = [&] {
+        if (!paintAll()) return false;
+        return terminalPaneRenderProbe(first.pane).backgroundImageAssetSerial
+            != 0
+            && terminalPaneRenderProbe(second.pane).backgroundImageAssetSerial
+            != 0;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(initialImagesReady(), 3000);
+
+    const auto visiblePlacement =
+        [&](const TerminalPane *pane,
+            const TerminalBackgroundImageOptions &image) {
+            return terminalBackgroundImagePlacement(
+                       pane->boundingRect(), sourceSize,
+                       window.devicePixelRatio(), image.fit, image.position)
+                .intersected(pane->boundingRect());
+        };
+    const auto verifyPlacement =
+        [&](const TerminalPane *pane,
+            const TerminalPaneRenderProbeSnapshot &probe,
+            const TerminalBackgroundImageOptions &image) {
+            QCOMPARE(probe.backgroundImageRect, visiblePlacement(pane, image));
+            QCOMPARE(probe.backgroundImageSourceRect,
+                     QRectF(QPointF{}, QSizeF(sourceSize)));
+            QVERIFY(pane->boundingRect().contains(probe.backgroundImageRect));
+        };
+
+    const TerminalPaneRenderProbeSnapshot firstInitial =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondInitial =
+        terminalPaneRenderProbe(second.pane);
+    verifyPlacement(first.pane, firstInitial, options.background.image);
+    verifyPlacement(second.pane, secondInitial, options.background.image);
+    QCOMPARE(firstInitial.backgroundImageAssetSerial,
+             secondInitial.backgroundImageAssetSerial);
+    const quint64 assetSerial = firstInitial.backgroundImageAssetSerial;
+    QVERIFY(assetSerial != 0);
+    QVERIFY(firstInitial.rootSerial != 0);
+    QVERIFY(secondInitial.rootSerial != 0);
+
+    const QRectF firstGeometry(first.pane->position(), first.pane->size());
+    const QRectF secondGeometry(second.pane->position(), second.pane->size());
+    const PaneId activePaneId =
+        workspace->tabModel()->entryAt(workspace->currentIndex())->activePaneId;
+    QSignalSpy firstResize(firstController,
+                           &TerminalController::resizeRequested);
+    QSignalSpy secondResize(secondController,
+                            &TerminalController::resizeRequested);
+    QSignalSpy firstRuntime(firstController,
+                            &TerminalController::runtimeOptionsRequested);
+    QSignalSpy secondRuntime(secondController,
+                             &TerminalController::runtimeOptionsRequested);
+
+    LaunchOptions imageReload = options;
+    imageReload.background.image.opacity = 0.45;
+    imageReload.background.image.position =
+        TerminalBackgroundImagePosition::TopLeft;
+    workspace->applyLaunchOptions(imageReload);
+    QVERIFY(paintAll());
+    const TerminalPaneRenderProbeSnapshot firstImageReload =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondImageReload =
+        terminalPaneRenderProbe(second.pane);
+    verifyPlacement(first.pane, firstImageReload, imageReload.background.image);
+    verifyPlacement(second.pane, secondImageReload,
+                    imageReload.background.image);
+    QCOMPARE(firstImageReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(secondImageReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(firstImageReload.rootSerial, firstInitial.rootSerial);
+    QCOMPARE(secondImageReload.rootSerial, secondInitial.rootSerial);
+    QVERIFY(firstImageReload.paintSerial > firstInitial.paintSerial);
+    QVERIFY(secondImageReload.paintSerial > secondInitial.paintSerial);
+    QCOMPARE(QRectF(first.pane->position(), first.pane->size()), firstGeometry);
+    QCOMPARE(QRectF(second.pane->position(), second.pane->size()),
+             secondGeometry);
+    QCOMPARE(
+        workspace->tabModel()->entryAt(workspace->currentIndex())->activePaneId,
+        activePaneId);
+    QCOMPARE(first.pane->findChild<TerminalController *>(),
+             firstController.data());
+    QCOMPARE(second.pane->findChild<TerminalController *>(),
+             secondController.data());
+    QCOMPARE(firstController->findChild<QThread *>(), firstWorkerThread.data());
+    QCOMPARE(secondController->findChild<QThread *>(),
+             secondWorkerThread.data());
+    QCOMPARE(firstResize.count(), 0);
+    QCOMPARE(secondResize.count(), 0);
+    QCOMPARE(firstRuntime.count(), 0);
+    QCOMPARE(secondRuntime.count(), 0);
+
+    const auto layoutFor = [&](const TerminalPane *pane,
+                               const TerminalPaneRenderProbeSnapshot &probe,
+                               const TerminalPaddingOptions &padding) {
+        return terminalViewportLayout({
+            .surfaceSize = pane->size(),
+            .cellSize =
+                QSizeF(probe.metrics.cellWidth, probe.metrics.cellHeight),
+            .devicePixelRatio = window.devicePixelRatio(),
+            .padding = padding,
+        });
+    };
+    const auto firstInitialLayout =
+        layoutFor(first.pane, firstImageReload, options.padding);
+    const auto secondInitialLayout =
+        layoutFor(second.pane, secondImageReload, options.padding);
+    QVERIFY(firstInitialLayout.has_value());
+    QVERIFY(secondInitialLayout.has_value());
+
+    const QColor edgeBackground(QStringLiteral("#d050a0"));
+    quint64 contentRevision = 1;
+    const auto publishEdgeFrame = [&contentRevision, &edgeBackground](
+                                      TerminalPane *pane,
+                                      const TerminalViewportLayout &layout) {
+        TerminalController *const controller =
+            pane->findChild<TerminalController *>();
+        if (controller == nullptr) return false;
+
+        TerminalUpdate update;
+        update.columns = layout.session.columns;
+        update.rows = layout.session.rows;
+        update.fullFrame = true;
+        update.colorsChanged = true;
+        update.foreground = Qt::white;
+        update.background = QColor(QStringLiteral("#102030"));
+        update.cursorColor = Qt::white;
+        update.cursorChanged = true;
+        update.cursorVisible = false;
+        update.contentRevision = contentRevision++;
+        update.dirtyRows.reserve(update.rows);
+        for (int row = 0; row < update.rows; ++row) {
+            TerminalRowUpdate rowUpdate;
+            rowUpdate.row = row;
+            rowUpdate.cells.resize(update.columns);
+            for (TerminalCell &cell : rowUpdate.cells) {
+                cell.foreground = Qt::white;
+                cell.background = edgeBackground;
+                cell.backgroundExplicit = true;
+            }
+            update.dirtyRows.append(std::move(rowUpdate));
+        }
+        controller->terminalUpdated(update);
+        QObject::disconnect(controller, &TerminalController::terminalUpdated,
+                            pane, nullptr);
+        pane->update();
+        return true;
+    };
+    QVERIFY(publishEdgeFrame(first.pane, *firstInitialLayout));
+    QVERIFY(publishEdgeFrame(second.pane, *secondInitialLayout));
+    QVERIFY(paintAll());
+    const TerminalPaneRenderProbeSnapshot firstBeforePaddingPolicy =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondBeforePaddingPolicy =
+        terminalPaneRenderProbe(second.pane);
+
+    LaunchOptions paddingReload = imageReload;
+    paddingReload.padding = {
+        .horizontal = {.leadingPoints = 30, .trailingPoints = 45},
+        .vertical = {.leadingPoints = 24, .trailingPoints = 36},
+        .balance = TerminalPaddingBalance::Equal,
+        .color = TerminalPaddingColor::Background,
+    };
+    workspace->applyLaunchOptions(paddingReload);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstResize.isEmpty() && !secondResize.isEmpty(),
+                             1000);
+    QVERIFY(paintAll());
+
+    TerminalPaddingOptions retainedPadding = options.padding;
+    retainedPadding.balance = paddingReload.padding.balance;
+    retainedPadding.color = paddingReload.padding.color;
+    const TerminalPaneRenderProbeSnapshot firstPaddingReload =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondPaddingReload =
+        terminalPaneRenderProbe(second.pane);
+    const auto firstRetainedLayout =
+        layoutFor(first.pane, firstPaddingReload, retainedPadding);
+    const auto secondRetainedLayout =
+        layoutFor(second.pane, secondPaddingReload, retainedPadding);
+    const auto firstFutureLayout =
+        layoutFor(first.pane, firstPaddingReload, paddingReload.padding);
+    const auto secondFutureLayout =
+        layoutFor(second.pane, secondPaddingReload, paddingReload.padding);
+    QVERIFY(firstRetainedLayout.has_value());
+    QVERIFY(secondRetainedLayout.has_value());
+    QVERIFY(firstFutureLayout.has_value());
+    QVERIFY(secondFutureLayout.has_value());
+    QCOMPARE(
+        firstResize.constLast().constFirst().value<TerminalSessionGeometry>(),
+        firstRetainedLayout->session);
+    QCOMPARE(
+        secondResize.constLast().constFirst().value<TerminalSessionGeometry>(),
+        secondRetainedLayout->session);
+    QVERIFY(firstRetainedLayout->session != firstFutureLayout->session);
+    QVERIFY(secondRetainedLayout->session != secondFutureLayout->session);
+    QCOMPARE(firstPaddingReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(secondPaddingReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(firstPaddingReload.rootSerial, firstInitial.rootSerial);
+    QCOMPARE(secondPaddingReload.rootSerial, secondInitial.rootSerial);
+    QVERIFY(firstPaddingReload.paintSerial
+            > firstBeforePaddingPolicy.paintSerial);
+    QVERIFY(secondPaddingReload.paintSerial
+            > secondBeforePaddingPolicy.paintSerial);
+    verifyPlacement(first.pane, firstPaddingReload,
+                    paddingReload.background.image);
+    verifyPlacement(second.pane, secondPaddingReload,
+                    paddingReload.background.image);
+    QCOMPARE(firstRuntime.count(), 0);
+    QCOMPARE(secondRuntime.count(), 0);
+    QCOMPARE(firstController->findChild<QThread *>(), firstWorkerThread.data());
+    QCOMPARE(secondController->findChild<QThread *>(),
+             secondWorkerThread.data());
+    QCOMPARE(QRectF(first.pane->position(), first.pane->size()), firstGeometry);
+    QCOMPARE(QRectF(second.pane->position(), second.pane->size()),
+             secondGeometry);
+
+    // Color is a live paint-only policy. Isolate it from the balancing
+    // transition so a repaint cannot be mistaken for a grid resize or a
+    // worker runtime update.
+    const int firstBalanceResizeCount = firstResize.count();
+    const int secondBalanceResizeCount = secondResize.count();
+    LaunchOptions colorReload = paddingReload;
+    colorReload.padding.color = TerminalPaddingColor::ExtendAlways;
+    workspace->applyLaunchOptions(colorReload);
+    QVERIFY(paintAll());
+    const TerminalPaneRenderProbeSnapshot firstColorReload =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondColorReload =
+        terminalPaneRenderProbe(second.pane);
+    QCOMPARE(firstResize.count(), firstBalanceResizeCount);
+    QCOMPARE(secondResize.count(), secondBalanceResizeCount);
+    QCOMPARE(firstRuntime.count(), 0);
+    QCOMPARE(secondRuntime.count(), 0);
+    QCOMPARE(firstColorReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(secondColorReload.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(firstColorReload.rootSerial, firstInitial.rootSerial);
+    QCOMPARE(secondColorReload.rootSerial, secondInitial.rootSerial);
+    QVERIFY(firstColorReload.paintSerial > firstPaddingReload.paintSerial);
+    QVERIFY(secondColorReload.paintSerial > secondPaddingReload.paintSerial);
+    QVERIFY(std::ranges::all_of(firstColorReload.cellBackgrounds,
+                                [&edgeBackground](const QColor &color) {
+                                    return color == edgeBackground;
+                                }));
+    QVERIFY(std::ranges::all_of(secondColorReload.cellBackgrounds,
+                                [&edgeBackground](const QColor &color) {
+                                    return color == edgeBackground;
+                                }));
+    verifyPlacement(first.pane, firstColorReload, colorReload.background.image);
+    verifyPlacement(second.pane, secondColorReload,
+                    colorReload.background.image);
+    QCOMPARE(firstController->findChild<QThread *>(), firstWorkerThread.data());
+    QCOMPARE(secondController->findChild<QThread *>(),
+             secondWorkerThread.data());
+    QCOMPARE(QRectF(first.pane->position(), first.pane->size()), firstGeometry);
+    QCOMPARE(QRectF(second.pane->position(), second.pane->size()),
+             secondGeometry);
+
+    const CurrentTabProbe third = splitRightProbe(*workspace);
+    QVERIFY(third.pane != nullptr);
+    QVERIFY(third.pane != first.pane);
+    QVERIFY(third.pane != second.pane);
+    TerminalController *const thirdController =
+        third.pane->findChild<TerminalController *>();
+    QVERIFY(thirdController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(thirdController->sessionStarted(), 3000);
+    QThread *const thirdWorkerThread = thirdController->findChild<QThread *>();
+    QVERIFY(thirdWorkerThread != nullptr);
+
+    const auto inheritedImageReady = [&] {
+        if (!paintAll()) return false;
+        return terminalPaneRenderProbe(third.pane).backgroundImageAssetSerial
+            != 0;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(inheritedImageReady(), 3000);
+    const TerminalPaneRenderProbeSnapshot thirdInitial =
+        terminalPaneRenderProbe(third.pane);
+    QCOMPARE(thirdInitial.backgroundImageAssetSerial, assetSerial);
+    QVERIFY(thirdInitial.rootSerial != 0);
+    verifyPlacement(third.pane, thirdInitial, colorReload.background.image);
+    QVERIFY(workspace->effectiveLaunchOptions().background
+            == colorReload.background);
+    QVERIFY(workspace->effectiveLaunchOptions().padding == colorReload.padding);
+
+    QSignalSpy thirdResize(thirdController,
+                           &TerminalController::resizeRequested);
+    const QSizeF inheritedProbeSize(
+        std::max<qreal>(1.0, third.pane->width() - 3.0),
+        std::max<qreal>(1.0, third.pane->height() - 2.0));
+    third.pane->setSize(inheritedProbeSize);
+    QTRY_VERIFY_WITH_TIMEOUT(!thirdResize.isEmpty(), 1000);
+    QVERIFY(paintAll());
+    const TerminalPaneRenderProbeSnapshot thirdResized =
+        terminalPaneRenderProbe(third.pane);
+    const auto inheritedLayout =
+        layoutFor(third.pane, thirdResized, colorReload.padding);
+    const auto staleLayout =
+        layoutFor(third.pane, thirdResized, retainedPadding);
+    QVERIFY(inheritedLayout.has_value());
+    QVERIFY(staleLayout.has_value());
+    QCOMPARE(
+        thirdResize.constLast().constFirst().value<TerminalSessionGeometry>(),
+        inheritedLayout->session);
+    QVERIFY(inheritedLayout->session != staleLayout->session);
+    QCOMPARE(thirdResized.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(thirdResized.rootSerial, thirdInitial.rootSerial);
+    QCOMPARE(thirdController->findChild<QThread *>(), thirdWorkerThread);
+    verifyPlacement(third.pane, thirdResized, colorReload.background.image);
+
+    QVERIFY(publishEdgeFrame(third.pane, *inheritedLayout));
+    QVERIFY(paintAll());
+    const TerminalPaneRenderProbeSnapshot thirdWithInheritedColor =
+        terminalPaneRenderProbe(third.pane);
+    QCOMPARE(thirdWithInheritedColor.rootSerial, thirdInitial.rootSerial);
+    QVERIFY(std::ranges::all_of(thirdWithInheritedColor.cellBackgrounds,
+                                [&edgeBackground](const QColor &color) {
+                                    return color == edgeBackground;
+                                }));
+
+    workspace.reset();
+    window.close();
+}
+
 void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
 {
     ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
@@ -1115,7 +1524,12 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
     options.confirmCloseMode = ConfirmCloseMode::RunningProcesses;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
-    QTemporaryDir temporary;
+    const QString temporaryRoot =
+        QDir::current().filePath(QStringLiteral("tmp"));
+    QVERIFY(QDir().mkpath(temporaryRoot));
+    QTemporaryDir temporary(
+        QDir(temporaryRoot)
+            .filePath(QStringLiteral("terminal-workspace-deferred-XXXXXX")));
     QVERIFY(temporary.isValid());
     const QString startMarker =
         temporary.filePath(QStringLiteral("unexpected-start"));
@@ -1191,11 +1605,30 @@ void TerminalWorkspaceTest::deferredInitialSessionCancelsAndScopesToFirstPane()
         QVERIFY(!controller->activeProcess());
         QVERIFY(controller->findChild<QThread *>() == nullptr);
         QVERIFY(!workspace->closeAssessment().needsConfirmation);
+        QVERIFY(!pane->resizeOverlayVisible());
+
+        window.showMaximized();
+        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+        pane->update();
+        QVERIFY(!window.grabWindow().isNull());
+        const TerminalPaneRenderProbeSnapshot deferredProbe =
+            terminalPaneRenderProbe(pane);
+        QVERIFY(deferredProbe.rootSerial != 0);
+        QCOMPARE(deferredProbe.backgroundImageAssetSerial, quint64{0});
+        QVERIFY(deferredProbe.backgroundImageRect.isEmpty());
+        QVERIFY(deferredProbe.backgroundImageSourceRect.isEmpty());
+        QVERIFY(!pane->resizeOverlayVisible());
+        QVERIFY(!controller->sessionStarted());
+        QVERIFY(controller->findChild<QThread *>() == nullptr);
+
+        pane->setSize(pane->size() + QSizeF(7.0, 5.0));
+        QCoreApplication::processEvents();
+        QVERIFY(!pane->resizeOverlayVisible());
+        QVERIFY(!controller->sessionStarted());
+        QVERIFY(controller->findChild<QThread *>() == nullptr);
 
         QVERIFY(workspace->armInitialSessionStart());
         pane->beginShutdown();
-        window.showMaximized();
-        QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
         QTest::qWait(25);
         QVERIFY(!controller->sessionStarted());
         QVERIFY(controller->findChild<QThread *>() == nullptr);

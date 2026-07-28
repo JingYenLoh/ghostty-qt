@@ -141,10 +141,20 @@ struct TerminalCell {
     int columnSpan = 1;
 };
 
+struct TerminalRowPresentation {
+    // Ghostty's conservative vertical-padding heuristic rejects prompt rows,
+    // default backgrounds, default-colored explicit backgrounds, and
+    // perfect-fit powerline glyphs.
+    bool paddingExtensionSafe = false;
+
+    bool operator==(const TerminalRowPresentation &) const = default;
+};
+
 struct TerminalFrame {
     int columns = 0;
     int rows = 0;
     QVector<TerminalCell> cells;
+    QVector<TerminalRowPresentation> rowPresentation;
     QColor foreground = QColor(QStringLiteral("#d8dee9"));
     QColor background = QColor(QStringLiteral("#1e222a"));
     QColor cursorColor = QColor(QStringLiteral("#d8dee9"));
@@ -172,6 +182,7 @@ struct TerminalFrame {
 struct TerminalRowUpdate {
     int row = 0;
     QVector<TerminalCell> cells;
+    TerminalRowPresentation presentation;
 };
 
 // Value-only delta produced from libghostty's render state. A full update is
@@ -309,12 +320,16 @@ struct TerminalClipboardWriteRequest {
         frame.columns = update.columns;
         frame.rows = update.rows;
         frame.cells.resize(cellCount);
+        frame.rowPresentation.resize(update.rows);
+    } else if (frame.rowPresentation.size() != update.rows) {
+        frame.rowPresentation.resize(update.rows);
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         const qsizetype destination =
             static_cast<qsizetype>(row.row) * update.columns;
         std::copy(row.cells.cbegin(), row.cells.cend(),
                   frame.cells.begin() + destination);
+        frame.rowPresentation[row.row] = row.presentation;
     }
 
     if (update.fullFrame || update.colorsChanged) {

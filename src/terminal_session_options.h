@@ -157,14 +157,42 @@ struct TerminalSessionRuntimeOptions {
 // created; later resizes use this representation after the GUI has laid out
 // the pane.
 struct TerminalSessionGeometry {
+    struct Padding {
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+        int left = 0;
+
+        bool operator==(const Padding &) const = default;
+    };
+
     int columns = 80;
     int rows = 24;
     int cellWidthPixels = 8;
     int cellHeightPixels = 16;
+    // Full pane surface, including padding. The PTY pixel extent is derived
+    // from this and padding so the two representations cannot disagree.
     int surfaceWidthPixels = 640;
     int surfaceHeightPixels = 384;
+    Padding padding;
 
     bool operator==(const TerminalSessionGeometry &) const = default;
+
+    [[nodiscard]] int terminalWidthPixels() const noexcept
+    {
+        const qint64 width = static_cast<qint64>(surfaceWidthPixels)
+            - padding.left - padding.right;
+        return static_cast<int>(
+            std::clamp<qint64>(width, 0, std::numeric_limits<int>::max()));
+    }
+
+    [[nodiscard]] int terminalHeightPixels() const noexcept
+    {
+        const qint64 height = static_cast<qint64>(surfaceHeightPixels)
+            - padding.top - padding.bottom;
+        return static_cast<int>(
+            std::clamp<qint64>(height, 0, std::numeric_limits<int>::max()));
+    }
 };
 
 inline TerminalSessionGeometry
@@ -178,6 +206,10 @@ normalizedTerminalSessionGeometry(TerminalSessionGeometry geometry) noexcept
     geometry.cellHeightPixels = std::max(geometry.cellHeightPixels, 1);
     geometry.surfaceWidthPixels = std::max(geometry.surfaceWidthPixels, 1);
     geometry.surfaceHeightPixels = std::max(geometry.surfaceHeightPixels, 1);
+    geometry.padding.top = std::max(geometry.padding.top, 0);
+    geometry.padding.right = std::max(geometry.padding.right, 0);
+    geometry.padding.bottom = std::max(geometry.padding.bottom, 0);
+    geometry.padding.left = std::max(geometry.padding.left, 0);
     return geometry;
 }
 
@@ -244,4 +276,5 @@ inline quint64 scrollbackLimitInBytes(ScrollbackLimit limit, int columns)
 
 Q_DECLARE_METATYPE(TerminalSessionLaunchOptions)
 Q_DECLARE_METATYPE(TerminalSessionRuntimeOptions)
+Q_DECLARE_METATYPE(TerminalSessionGeometry)
 Q_DECLARE_METATYPE(TerminalClipboardDestination)

@@ -59,6 +59,17 @@ bool minimumContrastExemptGlyph(uint32_t codepoint)
         || (codepoint >= 0xe0b0 && codepoint <= 0xe0d7);
 }
 
+bool isPowerlinePaddingGlyph(uint32_t codepoint)
+{
+    return (codepoint >= 0xe0b0 && codepoint <= 0xe0c8) || codepoint == 0xe0ca
+        || (codepoint >= 0xe0cc && codepoint <= 0xe0d2) || codepoint == 0xe0d4;
+}
+
+bool sameRgb(const GhosttyColorRgb &left, const GhosttyColorRgb &right)
+{
+    return left.r == right.r && left.g == right.g && left.b == right.b;
+}
+
 bool isMacAddress(std::string_view value)
 {
     if (value.size() != 17) {
@@ -445,20 +456,15 @@ uint32_t boundedU32(int value)
     return static_cast<uint32_t>(std::max(value, 1));
 }
 
+uint32_t nonnegativeU32(int value)
+{
+    return static_cast<uint32_t>(std::max(value, 0));
+}
+
 GhosttyVtAdapter::Geometry
 normalizedGeometry(GhosttyVtAdapter::Geometry geometry)
 {
-    geometry.columns = boundedU16(geometry.columns);
-    geometry.rows = boundedU16(geometry.rows);
-    geometry.cellWidthPixels =
-        static_cast<int>(boundedU32(geometry.cellWidthPixels));
-    geometry.cellHeightPixels =
-        static_cast<int>(boundedU32(geometry.cellHeightPixels));
-    geometry.surfaceWidthPixels =
-        static_cast<int>(boundedU32(geometry.surfaceWidthPixels));
-    geometry.surfaceHeightPixels =
-        static_cast<int>(boundedU32(geometry.surfaceHeightPixels));
-    return geometry;
+    return normalizedTerminalSessionGeometry(std::move(geometry));
 }
 
 bool containsControlText(const QByteArray &text)
@@ -1267,6 +1273,10 @@ public:
         size.screen_height = boundedU32(geometry_.surfaceHeightPixels);
         size.cell_width = boundedU32(geometry_.cellWidthPixels);
         size.cell_height = boundedU32(geometry_.cellHeightPixels);
+        size.padding_top = nonnegativeU32(geometry_.padding.top);
+        size.padding_right = nonnegativeU32(geometry_.padding.right);
+        size.padding_bottom = nonnegativeU32(geometry_.padding.bottom);
+        size.padding_left = nonnegativeU32(geometry_.padding.left);
         ghostty_mouse_encoder_setopt(mouseEncoder_,
                                      GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
         ghostty_mouse_encoder_setopt(
@@ -2735,7 +2745,7 @@ public:
         const GhosttySelectionGestureGeometry geometry{
             .columns = boundedU32(geometry_.columns),
             .cell_width = boundedU32(geometry_.cellWidthPixels),
-            .padding_left = 0,
+            .padding_left = nonnegativeU32(geometry_.padding.left),
             .screen_height = boundedU32(geometry_.surfaceHeightPixels),
         };
         if (ghostty_selection_gesture_event_set(
@@ -3377,28 +3387,83 @@ public:
                 rowUpdate.row = rowIndex;
                 if (copyRow) {
                     rowUpdate.cells.resize(metadata.columns);
+                    GhosttyRow rawRow = 0;
+                    GhosttyRowSemanticPrompt semanticPrompt =
+                        GHOSTTY_ROW_SEMANTIC_NONE;
+                    if (ghostty_render_state_row_get(
+                            rowIterator_, GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
+                            &rawRow)
+                            != GHOSTTY_SUCCESS
+                        || ghostty_row_get(rawRow,
+                                           GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
+                                           &semanticPrompt)
+                            != GHOSTTY_SUCCESS) {
+                        return RenderResult::Retry;
+                    }
+                    rowUpdate.presentation.paddingExtensionSafe =
+                        semanticPrompt == GHOSTTY_ROW_SEMANTIC_NONE;
                 }
                 int columnIndex = 0;
                 while (columnIndex < metadata.columns
                        && ghostty_render_state_row_cells_next(rowCells_)) {
+                    if (!copyRow) {
+                        if (columnIndex != metadata.cursorColumn) {
+                            ++columnIndex;
+                            continue;
+                        }
+                        GhosttyCell rawCell = 0;
+                        GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                        if (ghostty_render_state_row_cells_get(
+                                rowCells_,
+                                GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                                &rawCell)
+                                != GHOSTTY_SUCCESS
+                            || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE,
+                                                &wide)
+                                != GHOSTTY_SUCCESS) {
+                            return RenderResult::Retry;
+                        }
+                        metadata.cursorColumnSpan =
+                            wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
+                        columnIndex = metadata.columns;
+                        break;
+                    }
+
                     GhosttyCell rawCell = 0;
+                    GhosttyStyle style{};
+                    style.size = sizeof(style);
+                    constexpr std::array fields{
+                        GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                        GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                    };
+                    std::array<void *, fields.size()> values{
+                        &rawCell,
+                        &style,
+                    };
+                    if (ghostty_render_state_row_cells_get_multi(
+                            rowCells_, fields.size(), fields.data(),
+                            values.data(), nullptr)
+                        != GHOSTTY_SUCCESS) {
+                        return RenderResult::Retry;
+                    }
+
                     GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
                     uint32_t codepoint = 0;
                     bool hasHyperlink = false;
-                    if (ghostty_render_state_row_cells_get(
-                            rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-                            &rawCell)
-                            != GHOSTTY_SUCCESS
-                        || ghostty_cell_get(rawCell, GHOSTTY_CELL_DATA_WIDE,
-                                            &wide)
-                            != GHOSTTY_SUCCESS
-                        || ghostty_cell_get(rawCell,
-                                            GHOSTTY_CELL_DATA_HAS_HYPERLINK,
-                                            &hasHyperlink)
-                            != GHOSTTY_SUCCESS
-                        || ghostty_cell_get(
-                               rawCell, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint)
-                            != GHOSTTY_SUCCESS) {
+                    constexpr std::array cellFields{
+                        GHOSTTY_CELL_DATA_WIDE,
+                        GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+                        GHOSTTY_CELL_DATA_CODEPOINT,
+                    };
+                    std::array<void *, cellFields.size()> cellValues{
+                        &wide,
+                        &hasHyperlink,
+                        &codepoint,
+                    };
+                    if (ghostty_cell_get_multi(rawCell, cellFields.size(),
+                                               cellFields.data(),
+                                               cellValues.data(), nullptr)
+                        != GHOSTTY_SUCCESS) {
                         return RenderResult::Retry;
                     }
 
@@ -3407,20 +3472,20 @@ public:
                         metadata.cursorColumnSpan =
                             wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
                     }
-                    if (!copyRow) {
-                        ++columnIndex;
-                        continue;
-                    }
 
                     TerminalCell &cell = rowUpdate.cells[columnIndex];
                     cell.columnSpan = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
                     cell.hasHyperlink = hasHyperlink;
                     cell.minimumContrastExemptGlyph =
                         minimumContrastExemptGlyph(codepoint);
+                    const bool coveringGlyph = codepoint == 0x2588;
                     cell.spacer = wide == GHOSTTY_CELL_WIDE_SPACER_TAIL
                         || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD;
+                    if (isPowerlinePaddingGlyph(codepoint)) {
+                        rowUpdate.presentation.paddingExtensionSafe = false;
+                    }
 
-                    std::array<uint8_t, 64> graphemeStorage{};
+                    std::array<uint8_t, 64> graphemeStorage;
                     GhosttyBuffer graphemeBuffer{
                         .ptr = graphemeStorage.data(),
                         .cap = graphemeStorage.size(),
@@ -3453,14 +3518,6 @@ public:
                             static_cast<qsizetype>(graphemeBuffer.len));
                     }
 
-                    GhosttyStyle style{};
-                    style.size = sizeof(style);
-                    if (ghostty_render_state_row_cells_get(
-                            rowCells_,
-                            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style)
-                        != GHOSTTY_SUCCESS) {
-                        return RenderResult::Retry;
-                    }
                     GhosttyColorRgb foreground = colors.foreground;
                     GhosttyColorRgb background = colors.background;
                     GhosttyColorRgb explicitColor{};
@@ -3479,12 +3536,21 @@ public:
                     if (backgroundResult == GHOSTTY_SUCCESS) {
                         background = explicitColor;
                         cell.backgroundExplicit = true;
+                        if (sameRgb(background, colors.background)) {
+                            rowUpdate.presentation.paddingExtensionSafe = false;
+                        }
                     } else if (backgroundResult != GHOSTTY_INVALID_VALUE) {
                         return RenderResult::Retry;
+                    } else {
+                        rowUpdate.presentation.paddingExtensionSafe = false;
                     }
-                    if (style.inverse) {
-                        std::swap(foreground, background);
-                    }
+                    const GhosttyColorRgb styleForeground = foreground;
+                    const GhosttyColorRgb styleBackground = background;
+                    foreground =
+                        style.inverse ? styleBackground : styleForeground;
+                    background = (style.inverse != coveringGlyph)
+                        ? styleForeground
+                        : styleBackground;
 
                     cell.foreground = toQColor(foreground);
                     cell.background = toQColor(background);

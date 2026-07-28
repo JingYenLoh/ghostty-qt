@@ -4,6 +4,7 @@
 #include "ghostty_application_keybindings.h"
 #include "initial_session_coordinator.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_geometry.h"
 #include "terminal_workspace.h"
 
 #include <QGuiApplication>
@@ -72,12 +73,14 @@ int pixelExtent(qreal cellExtent, quint32 cells, qreal chromeExtent) noexcept
 }
 
 QSize windowSizeForGrid(const TerminalCellMetrics &metrics, quint32 columns,
-                        quint32 rows, qreal chromeWidth,
-                        qreal chromeHeight) noexcept
+                        quint32 rows, qreal chromeWidth, qreal chromeHeight,
+                        const QMarginsF &padding = {}) noexcept
 {
     return {
-        pixelExtent(metrics.cellWidth, columns, chromeWidth),
-        pixelExtent(metrics.cellHeight, rows, chromeHeight),
+        pixelExtent(metrics.cellWidth, columns,
+                    chromeWidth + padding.left() + padding.right()),
+        pixelExtent(metrics.cellHeight, rows,
+                    chromeHeight + padding.top() + padding.bottom()),
     };
 }
 
@@ -95,9 +98,11 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
         nonNegativeWindowProperty(window, "terminalChromeWidth");
     const qreal chromeHeight =
         nonNegativeWindowProperty(window, "terminalChromeHeight");
+    const QMarginsF padding = terminalExplicitPaddingMargins(
+        options.padding, window.devicePixelRatio());
     QSize minimum =
         windowSizeForGrid(metrics, minimumWindowColumns, minimumWindowRows,
-                          chromeWidth, chromeHeight);
+                          chromeWidth, chromeHeight, padding);
 
     QSize available;
     if (const QScreen *const screen = window.screen(); screen != nullptr) {
@@ -123,7 +128,7 @@ InitialWindowGeometry initialWindowGeometry(const QQuickWindow &window,
     QSize requested = windowSizeForGrid(
         metrics, std::max(options.windowWidth, minimumWindowColumns),
         std::max(options.windowHeight, minimumWindowRows), chromeWidth,
-        chromeHeight);
+        chromeHeight, padding);
     if (available.width() > 0) {
         requested.setWidth(std::min(requested.width(), available.width()));
     }

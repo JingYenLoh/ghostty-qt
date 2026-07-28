@@ -219,6 +219,7 @@ private Q_SLOTS:
     void realHelperRejectsInvalidConfigurationArgumentsDeterministically();
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
+    void realHelperExportsBackdropConfiguration();
     void realHelperGeneratesEffectivePalette();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
@@ -355,6 +356,22 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QVERIFY(!result->values.configFiles.at(2).optional);
     QCOMPARE(result->values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
+    QVERIFY(result->values.backgroundImage.path.has_value());
+    QCOMPARE(result->values.backgroundImage.path->path,
+             QStringLiteral("/fixture/background.png"));
+    QVERIFY(result->values.backgroundImage.path->optional);
+    QCOMPARE(result->values.backgroundImage.opacity, 1.25);
+    QCOMPARE(result->values.backgroundImage.position,
+             TerminalBackgroundImagePosition::BottomRight);
+    QCOMPARE(result->values.backgroundImage.fit,
+             TerminalBackgroundImageFit::Cover);
+    QVERIFY(result->values.backgroundImage.repeat);
+    QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(3));
+    QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(5));
+    QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(7));
+    QCOMPARE(result->values.padding.vertical.trailingPoints, quint32(11));
+    QCOMPARE(result->values.padding.balance, TerminalPaddingBalance::Equal);
+    QCOMPARE(result->values.padding.color, TerminalPaddingColor::ExtendAlways);
     QVERIFY(!result->keybindings.root.isEmpty());
 }
 
@@ -955,6 +972,136 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QCOMPARE(defaults->values.appearance.backgroundOpacity, 1.0);
     QVERIFY(!defaults->values.appearance.backgroundOpacityCells);
     QCOMPARE(defaults->values.appearance.minimumContrast, 1.0);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    const QString requiredImage =
+        fixture.filePath(QStringLiteral("relative-background.png"));
+    ConfigFixture::writeFile(
+        requiredImage,
+        QByteArray::fromBase64(QByteArrayLiteral(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+            "+A8AAQUBAScY42YAAAAASUVORK5CYII=")));
+
+    const auto load = makeGhosttyConfigProcessLoader(realOptions(helperPath));
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("background-image = relative-background.png\n"
+                          "background-image-opacity = 1.5\n"
+                          "background-image-position = top-right\n"
+                          "background-image-fit = stretch\n"
+                          "background-image-repeat = true\n"
+                          "window-padding-x = 3,5\n"
+                          "window-padding-y = 7,11\n"
+                          "window-padding-balance = true\n"
+                          "window-padding-color = extend\n"));
+
+    GhosttyConfigLoadResult result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.backgroundImage.path.has_value());
+    QCOMPARE(result->values.backgroundImage.path->path, requiredImage);
+    QVERIFY(!result->values.backgroundImage.path->optional);
+    QCOMPARE(result->values.backgroundImage.opacity, 1.5);
+    QCOMPARE(result->values.backgroundImage.position,
+             TerminalBackgroundImagePosition::TopRight);
+    QCOMPARE(result->values.backgroundImage.fit,
+             TerminalBackgroundImageFit::Stretch);
+    QVERIFY(result->values.backgroundImage.repeat);
+    QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(3));
+    QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(5));
+    QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(7));
+    QCOMPARE(result->values.padding.vertical.trailingPoints, quint32(11));
+    QCOMPARE(result->values.padding.balance, TerminalPaddingBalance::Balanced);
+    QCOMPARE(result->values.padding.color, TerminalPaddingColor::Extend);
+
+    const QString optionalMissingImage =
+        fixture.filePath(QStringLiteral("optional-missing.png"));
+    QVERIFY(!QFileInfo::exists(optionalMissingImage));
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("background-image = ?optional-missing.png\n"
+                          "background-image-opacity = 0.25\n"
+                          "background-image-position = bottom-left\n"
+                          "background-image-fit = none\n"
+                          "background-image-repeat = false\n"
+                          "window-padding-x = 13\n"
+                          "window-padding-y = 17,19\n"
+                          "window-padding-balance = equal\n"
+                          "window-padding-color = extend-always\n"));
+
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.backgroundImage.path.has_value());
+    QCOMPARE(result->values.backgroundImage.path->path, optionalMissingImage);
+    QVERIFY(result->values.backgroundImage.path->optional);
+    QCOMPARE(result->values.backgroundImage.opacity, 0.25);
+    QCOMPARE(result->values.backgroundImage.position,
+             TerminalBackgroundImagePosition::BottomLeft);
+    QCOMPARE(result->values.backgroundImage.fit,
+             TerminalBackgroundImageFit::None);
+    QVERIFY(!result->values.backgroundImage.repeat);
+    QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(13));
+    QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(13));
+    QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(17));
+    QCOMPARE(result->values.padding.vertical.trailingPoints, quint32(19));
+    QCOMPARE(result->values.padding.balance, TerminalPaddingBalance::Equal);
+    QCOMPARE(result->values.padding.color, TerminalPaddingColor::ExtendAlways);
+
+    // An explicit empty image value and an absent backdrop configuration both
+    // finalize to Ghostty's canonical no-image/default-padding snapshot.
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("background-image =\n"));
+    result = load(fixture.candidates());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.backgroundImage.path.has_value());
+    QCOMPARE(result->values.backgroundImage.opacity, 1.0);
+    QCOMPARE(result->values.backgroundImage.position,
+             TerminalBackgroundImagePosition::Center);
+    QCOMPARE(result->values.backgroundImage.fit,
+             TerminalBackgroundImageFit::Contain);
+    QVERIFY(!result->values.backgroundImage.repeat);
+    QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(2));
+    QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(2));
+    QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(2));
+    QCOMPARE(result->values.padding.vertical.trailingPoints, quint32(2));
+    QCOMPARE(result->values.padding.balance, TerminalPaddingBalance::Disabled);
+    QCOMPARE(result->values.padding.color, TerminalPaddingColor::Background);
+
+    const auto invalidValues =
+        std::to_array<std::pair<QByteArray, QByteArray>>({
+            {QByteArrayLiteral("background-image-opacity = opaque\n"),
+             QByteArrayLiteral("background-image-opacity")},
+            {QByteArrayLiteral("background-image-position = nowhere\n"),
+             QByteArrayLiteral("background-image-position")},
+            {QByteArrayLiteral("background-image-fit = tile\n"),
+             QByteArrayLiteral("background-image-fit")},
+            {QByteArrayLiteral("background-image-repeat = sometimes\n"),
+             QByteArrayLiteral("background-image-repeat")},
+            {QByteArrayLiteral("window-padding-x = 3,-1\n"),
+             QByteArrayLiteral("window-padding-x")},
+            {QByteArrayLiteral("window-padding-y = points\n"),
+             QByteArrayLiteral("window-padding-y")},
+            {QByteArrayLiteral("window-padding-balance = sideways\n"),
+             QByteArrayLiteral("window-padding-balance")},
+            {QByteArrayLiteral("window-padding-color = transparent\n"),
+             QByteArrayLiteral("window-padding-color")},
+        });
+    for (const auto &[configuration, key] : invalidValues) {
+        ConfigFixture::writeFile(fixture.preferredPath, configuration);
+        const GhosttyConfigLoadResult invalid = load(fixture.candidates());
+        QVERIFY2(!invalid, key.constData());
+        QVERIFY2(invalid.error().contains(QString::fromUtf8(key)),
+                 qPrintable(invalid.error()));
+    }
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()

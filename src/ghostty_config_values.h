@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ghostty_config_path.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
@@ -170,15 +171,6 @@ struct GhosttyConfigFile {
     bool operator==(const GhosttyConfigFile &) const = default;
 };
 
-// A path finalized by Ghostty relative to its declaring config source. The
-// provenance bit controls whether an inaccessible optional resource is quiet.
-struct GhosttyConfigPath {
-    QString path;
-    bool optional = false;
-
-    bool operator==(const GhosttyConfigPath &) const = default;
-};
-
 // Ghostty dims an unfocused pane by compositing this fill over the terminal.
 // A missing fill resolves to the configured terminal background in the
 // frontend; opacity describes the terminal content that remains visible.
@@ -227,6 +219,8 @@ struct GhosttyConfigValues {
     TerminalTypography typography;
 
     GhosttyAppearanceConfig appearance;
+    TerminalPaddingOptions padding = TerminalPaddingOptions::ghosttyDefault();
+    TerminalBackgroundImageOptions backgroundImage;
     SplitAppearance splitAppearance;
 
     bool splitInheritWorkingDirectory = false;

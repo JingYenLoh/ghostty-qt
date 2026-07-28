@@ -6,12 +6,15 @@
 #include "launch_options.h"
 #include "revision_counter.h"
 #include "terminal_action_result.h"
+#include "terminal_backdrop.h"
 #include "terminal_bell.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_geometry.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
 #include "workspace_action.h"
 
+#include <QBitArray>
 #include <QByteArray>
 #include <QFont>
 #include <QHash>
@@ -288,7 +291,6 @@ private:
         bool startingAction = false;
         std::optional<TerminalActionExecutionResult> earlyResult;
     };
-
     [[nodiscard]] bool updateMetrics();
     [[nodiscard]] bool updateMetrics(const TerminalTypography &typography,
                                      qreal pointSize);
@@ -301,12 +303,15 @@ private:
     void restartResizeOverlayTimer();
     [[nodiscard]] std::optional<TerminalSessionGeometry> currentSessionGeometry(
         std::optional<QSizeF> viewportSize = std::nullopt) const;
+    [[nodiscard]] std::optional<TerminalViewportLayout> currentViewportLayout(
+        std::optional<QSizeF> viewportSize = std::nullopt) const;
     void watchWindow(QQuickWindow *quickWindow);
     void disconnectDeferredSessionWindowSignals();
     void scheduleDeferredSessionStart();
     void tryDeferredSessionStart();
     void markTextRowsChangedLocked(const TerminalUpdate &update);
     void syncCursorBlink(bool resetPhase);
+    void refreshBackgroundImage();
     void setFontPointSize(qreal points);
     void beginKeyEventDeferral() noexcept;
     void endKeyEventDeferral();
@@ -409,6 +414,7 @@ private:
     // under renderMutex_ while live configuration updates options_.
     TerminalAppearance appearance_;
     TerminalBackgroundOptions backgroundOptions_;
+    TerminalPaddingOptions paddingOptions_;
     SplitAppearance splitAppearance_;
     GhosttyKeybindState keybinds_;
     RevisionCounter runtimeOptionsRevision_;
@@ -418,6 +424,11 @@ private:
     double defaultFontPointSize_ = 12.0;
     mutable QMutex renderMutex_;
     TerminalFrame frame_;
+    std::shared_ptr<const TerminalBackgroundImageAsset> backgroundImageAsset_;
+    TerminalBackgroundImageRequestHandle backgroundImageRequest_;
+    std::optional<TerminalBackgroundImageRequest> backgroundImageSourceRequest_;
+    std::optional<GhosttyConfigPath> failedBackgroundImageSource_;
+    quint64 backgroundImageRequestGeneration_ = 0;
     // Persistent generations preserve the union of row changes when Qt
     // coalesces several GUI updates before one scene-graph synchronization.
     QVector<quint64> textRowEpochs_;
@@ -470,6 +481,10 @@ private:
     bool deferredSessionStartArmed_ = false;
     bool deferredSessionStartCheckQueued_ = false;
     std::optional<TerminalSessionGeometry> deferredSessionStartCandidate_;
+    // GUI-thread cache shared by resize, input, hit testing, and IME queries.
+    // Paint uses the same pure calculation from its render-state snapshot.
+    mutable std::optional<TerminalViewportSpec> viewportLayoutCacheSpec_;
+    mutable std::optional<TerminalViewportLayout> viewportLayoutCache_;
     std::function<QSizeF()> deferredSessionViewportSizeProvider_;
     quint64 deferredSessionPresentedFrame_ = 0;
     quint64 deferredSessionCandidateFrame_ = 0;
@@ -504,7 +519,7 @@ private:
     TerminalLinkKind hoveredLinkKind_ = TerminalLinkKind::Osc8;
     QByteArray hoveredHyperlinkUri_;
     QPoint hoveredHyperlinkCell_{-1, -1};
-    QSet<int> hoveredHyperlinkCellIndexes_;
+    QBitArray hoveredHyperlinkCellMask_;
     int hoveredHyperlinkColumns_ = 0;
     int hoveredHyperlinkRows_ = 0;
     QString linkPreviewText_;

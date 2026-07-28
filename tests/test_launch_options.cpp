@@ -147,6 +147,23 @@ GhosttyConfigSnapshot completeSnapshot()
         .faintOpacity = 0.375,
         .minimumContrast = 4.25,
     };
+    values.backgroundImage = {
+        .path =
+            GhosttyConfigPath{
+                .path = QStringLiteral("/work/background.png"),
+                .optional = true,
+            },
+        .opacity = 1.25,
+        .position = TerminalBackgroundImagePosition::BottomRight,
+        .fit = TerminalBackgroundImageFit::Cover,
+        .repeat = true,
+    };
+    values.padding = {
+        .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
+        .vertical = {.leadingPoints = 7, .trailingPoints = 11},
+        .balance = TerminalPaddingBalance::Equal,
+        .color = TerminalPaddingColor::ExtendAlways,
+    };
     values.splitAppearance = {
         .unfocusedOpacity = 0.42,
         .unfocusedFill = QColor(QStringLiteral("#778899")),
@@ -255,7 +272,7 @@ private Q_SLOTS:
     void mapsScrollbarPolicy();
     void mapsBellFeatures();
     void mapsBellAudio();
-    void mapsBackgroundOpacity();
+    void mapsBackdropAndPaddingSnapshots();
     void mapsMouseHideWhileTyping();
     void mapsFocusFollowsMouse();
     void mapsSelectionWordChars();
@@ -283,7 +300,7 @@ private Q_SLOTS:
     void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
-    void keepsBackgroundOpacityGuiOwned();
+    void keepsBackdropGuiOwned();
 };
 
 void LaunchOptionsTest::defaults()
@@ -358,6 +375,18 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.appearance.minimumContrast, 1.0);
     QCOMPARE(options.background.opacity, 1.0);
     QVERIFY(!options.background.opacityCells);
+    QVERIFY(!options.background.image.path.has_value());
+    QCOMPARE(options.background.image.opacity, 1.0);
+    QCOMPARE(options.background.image.position,
+             TerminalBackgroundImagePosition::Center);
+    QCOMPARE(options.background.image.fit, TerminalBackgroundImageFit::Contain);
+    QVERIFY(!options.background.image.repeat);
+    QCOMPARE(options.padding.horizontal.leadingPoints, quint32(0));
+    QCOMPARE(options.padding.horizontal.trailingPoints, quint32(0));
+    QCOMPARE(options.padding.vertical.leadingPoints, quint32(0));
+    QCOMPARE(options.padding.vertical.trailingPoints, quint32(0));
+    QCOMPARE(options.padding.balance, TerminalPaddingBalance::Disabled);
+    QCOMPARE(options.padding.color, TerminalPaddingColor::Background);
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
@@ -816,6 +845,21 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              QColor(QStringLiteral("#445566")));
     QCOMPARE(cliResult.background.opacity, 0.375);
     QVERIFY(cliResult.background.opacityCells);
+    QVERIFY(cliResult.background.image.path.has_value());
+    QCOMPARE(cliResult.background.image.path->path,
+             QStringLiteral("/work/background.png"));
+    QVERIFY(cliResult.background.image.path->optional);
+    QCOMPARE(cliResult.background.image.opacity, 1.25);
+    QCOMPARE(cliResult.background.image.position,
+             TerminalBackgroundImagePosition::BottomRight);
+    QCOMPARE(cliResult.background.image.fit, TerminalBackgroundImageFit::Cover);
+    QVERIFY(cliResult.background.image.repeat);
+    QCOMPARE(cliResult.padding.horizontal.leadingPoints, quint32(3));
+    QCOMPARE(cliResult.padding.horizontal.trailingPoints, quint32(5));
+    QCOMPARE(cliResult.padding.vertical.leadingPoints, quint32(7));
+    QCOMPARE(cliResult.padding.vertical.trailingPoints, quint32(11));
+    QCOMPARE(cliResult.padding.balance, TerminalPaddingBalance::Equal);
+    QCOMPARE(cliResult.padding.color, TerminalPaddingColor::ExtendAlways);
     QCOMPARE(cliResult.splitAppearance.unfocusedOpacity, 0.42);
     QCOMPARE(cliResult.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#778899"))));
@@ -970,25 +1014,63 @@ void LaunchOptionsTest::mapsBellAudio()
     QCOMPARE(defaults.bellAudioVolume, 0.5);
 }
 
-void LaunchOptionsTest::mapsBackgroundOpacity()
+void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
 {
     LaunchOptions base;
     base.background = {
         .opacity = 0.25,
         .opacityCells = false,
+        .image =
+            {
+                .path =
+                    GhosttyConfigPath{
+                        .path = QStringLiteral("/base/stale.png"),
+                        .optional = false,
+                    },
+                .opacity = 0.125,
+                .position = TerminalBackgroundImagePosition::TopLeft,
+                .fit = TerminalBackgroundImageFit::None,
+                .repeat = false,
+            },
+    };
+    base.padding = {
+        .horizontal = {.leadingPoints = 1, .trailingPoints = 2},
+        .vertical = {.leadingPoints = 3, .trailingPoints = 4},
+        .balance = TerminalPaddingBalance::Disabled,
+        .color = TerminalPaddingColor::Background,
     };
     GhosttyConfigSnapshot snapshot = completeSnapshot();
 
     const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(configured.background.opacity, 0.375);
     QVERIFY(configured.background.opacityCells);
+    QVERIFY(configured.background.image == snapshot.values.backgroundImage);
+    QVERIFY(configured.padding == snapshot.values.padding);
 
     snapshot.values.appearance.backgroundOpacity = 0.75;
     snapshot.values.appearance.backgroundOpacityCells = false;
+    snapshot.values.backgroundImage = {
+        .path = std::nullopt,
+        .opacity = 0.5,
+        .position = TerminalBackgroundImagePosition::CenterLeft,
+        .fit = TerminalBackgroundImageFit::Stretch,
+        .repeat = false,
+    };
+    snapshot.values.padding = {
+        .horizontal = {.leadingPoints = 13, .trailingPoints = 17},
+        .vertical = {.leadingPoints = 19, .trailingPoints = 23},
+        .balance = TerminalPaddingBalance::Balanced,
+        .color = TerminalPaddingColor::Extend,
+    };
     const LaunchOptions reloaded =
         applyGhosttyConfigSnapshot(configured, snapshot);
     QCOMPARE(reloaded.background.opacity, 0.75);
     QVERIFY(!reloaded.background.opacityCells);
+    QVERIFY(reloaded.background.image == snapshot.values.backgroundImage);
+    // The authoritative launch snapshot replaces x/y as well as the live
+    // balance/color pair. Existing panes retain their constructed x/y in the
+    // pane layer, while future panes consume these newest dimensions.
+    QVERIFY(reloaded.padding == snapshot.values.padding);
 }
 
 void LaunchOptionsTest::mapsMouseScrollMultiplier()
@@ -1957,20 +2039,38 @@ void LaunchOptionsTest::mapsCloseConfirmationModes()
     QVERIFY(shouldConfirmClose(ConfirmCloseMode::Always, true, true));
 }
 
-void LaunchOptionsTest::keepsBackgroundOpacityGuiOwned()
+void LaunchOptionsTest::keepsBackdropGuiOwned()
 {
-    LaunchOptions opaque;
-    LaunchOptions translucent = opaque;
-    translucent.background = {
+    LaunchOptions baseline;
+    LaunchOptions changed = baseline;
+    changed.background = {
         .opacity = 0.375,
         .opacityCells = true,
+        .image =
+            {
+                .path =
+                    GhosttyConfigPath{
+                        .path = QStringLiteral("/gui/background.png"),
+                        .optional = true,
+                    },
+                .opacity = 1.5,
+                .position = TerminalBackgroundImagePosition::TopRight,
+                .fit = TerminalBackgroundImageFit::Cover,
+                .repeat = true,
+            },
+    };
+    changed.padding = {
+        .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
+        .vertical = {.leadingPoints = 7, .trailingPoints = 11},
+        .balance = TerminalPaddingBalance::Equal,
+        .color = TerminalPaddingColor::ExtendAlways,
     };
 
-    QVERIFY(opaque != translucent);
-    QCOMPARE(toTerminalSessionRuntimeOptions(opaque),
-             toTerminalSessionRuntimeOptions(translucent));
-    QCOMPARE(toTerminalSessionLaunchOptions(opaque),
-             toTerminalSessionLaunchOptions(translucent));
+    QVERIFY(baseline != changed);
+    QCOMPARE(toTerminalSessionRuntimeOptions(baseline),
+             toTerminalSessionRuntimeOptions(changed));
+    QCOMPARE(toTerminalSessionLaunchOptions(baseline),
+             toTerminalSessionLaunchOptions(changed));
 }
 
 QTEST_APPLESS_MAIN(LaunchOptionsTest)

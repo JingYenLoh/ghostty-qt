@@ -51,6 +51,22 @@ public:
     // after terminal creation succeeds or fails, before child launch begins.
     bool initialize(const TerminalSessionLaunchOptions &options,
                     InitializationObserver observer = {});
+    // Test and non-Qt convenience; production requests cross the queue as one
+    // coherent geometry value.
+    void resizeTerminal(int columns, int rows, int cellWidthPixels,
+                        int cellHeightPixels, int surfaceWidthPixels,
+                        int surfaceHeightPixels)
+    {
+        resizeTerminal({
+            .columns = columns,
+            .rows = rows,
+            .cellWidthPixels = cellWidthPixels,
+            .cellHeightPixels = cellHeightPixels,
+            .surfaceWidthPixels = surfaceWidthPixels,
+            .surfaceHeightPixels = surfaceHeightPixels,
+            .padding = {},
+        });
+    }
 
 public Q_SLOTS:
     // Apply the worker-owned live state: terminal appearance, regex URL
@@ -60,9 +76,7 @@ public Q_SLOTS:
     // Ordered with input on the worker event queue so bytes submitted before
     // and after a toggle cannot cross the policy boundary.
     void setReadOnly(bool readOnly);
-    void resizeTerminal(int columns, int rows, int cellWidthPixels,
-                        int cellHeightPixels, int surfaceWidthPixels,
-                        int surfaceHeightPixels);
+    void resizeTerminal(const TerminalSessionGeometry &geometry);
     void sendKey(const TerminalKeyInput &input);
     void stageSequenceKey(quint64 token, const TerminalKeyInput &input);
     void resolveSequence(quint64 token, TerminalSequenceResolution resolution,
@@ -237,12 +251,7 @@ private:
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;
 
-    int columns_ = 80;
-    int rows_ = 24;
-    int cellWidthPixels_ = 8;
-    int cellHeightPixels_ = 16;
-    int surfaceWidthPixels_ = 640;
-    int surfaceHeightPixels_ = 384;
+    TerminalSessionGeometry geometry_;
     bool running_ = false;
     bool waitingForExitKey_ = false;
     bool interactiveShell_ = false;

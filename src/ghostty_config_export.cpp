@@ -71,6 +71,11 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("background"),
     QLatin1StringView("background-opacity"),
     QLatin1StringView("background-opacity-cells"),
+    QLatin1StringView("background-image"),
+    QLatin1StringView("background-image-opacity"),
+    QLatin1StringView("background-image-position"),
+    QLatin1StringView("background-image-fit"),
+    QLatin1StringView("background-image-repeat"),
     QLatin1StringView("unfocused-split-opacity"),
     QLatin1StringView("unfocused-split-fill"),
     QLatin1StringView("split-divider-color"),
@@ -84,6 +89,10 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("window-decoration"),
     QLatin1StringView("window-width"),
     QLatin1StringView("window-height"),
+    QLatin1StringView("window-padding-x"),
+    QLatin1StringView("window-padding-y"),
+    QLatin1StringView("window-padding-balance"),
+    QLatin1StringView("window-padding-color"),
     QLatin1StringView("maximize"),
     QLatin1StringView("fullscreen"),
     QLatin1StringView("palette"),
@@ -490,6 +499,29 @@ readUnsignedInteger(const QJsonValue &value, const QString &context,
                 .arg(context));
     }
     return static_cast<Integer>(number);
+}
+
+ParseResult<TerminalPaddingAxis>
+readTerminalPaddingAxis(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+    if (array->size() != 2) {
+        return std::unexpected(
+            QStringLiteral("%1 must contain exactly two point values")
+                .arg(context));
+    }
+
+    auto leading = readUnsignedInteger<quint32>(
+        array->at(0), QStringLiteral("%1[0]").arg(context));
+    if (!leading) return std::unexpected(std::move(leading.error()));
+    auto trailing = readUnsignedInteger<quint32>(
+        array->at(1), QStringLiteral("%1[1]").arg(context));
+    if (!trailing) return std::unexpected(std::move(trailing.error()));
+    return TerminalPaddingAxis{
+        .leadingPoints = *leading,
+        .trailingPoints = *trailing,
+    };
 }
 
 ParseResult<QByteArray> readByteArray(const QJsonValue &value,
@@ -1237,6 +1269,65 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
+    if (auto parsed =
+            assign(QLatin1StringView("background-image"),
+                   result.backgroundImage.path, readOptionalConfigPath);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("background-image-opacity"),
+                             result.backgroundImage.opacity, readDouble);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("background-image-position");
+        constexpr auto allowed = std::to_array<
+            std::pair<QLatin1StringView, TerminalBackgroundImagePosition>>({
+            {QLatin1StringView("top-left"),
+             TerminalBackgroundImagePosition::TopLeft},
+            {QLatin1StringView("top-center"),
+             TerminalBackgroundImagePosition::TopCenter},
+            {QLatin1StringView("top-right"),
+             TerminalBackgroundImagePosition::TopRight},
+            {QLatin1StringView("center-left"),
+             TerminalBackgroundImagePosition::CenterLeft},
+            {QLatin1StringView("center"),
+             TerminalBackgroundImagePosition::Center},
+            {QLatin1StringView("center-center"),
+             TerminalBackgroundImagePosition::Center},
+            {QLatin1StringView("center-right"),
+             TerminalBackgroundImagePosition::CenterRight},
+            {QLatin1StringView("bottom-left"),
+             TerminalBackgroundImagePosition::BottomLeft},
+            {QLatin1StringView("bottom-center"),
+             TerminalBackgroundImagePosition::BottomCenter},
+            {QLatin1StringView("bottom-right"),
+             TerminalBackgroundImagePosition::BottomRight},
+        });
+        auto parsed = readEnum(fieldValue(name), context(name), allowed);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.backgroundImage.position = *parsed;
+    }
+    {
+        constexpr QLatin1StringView name("background-image-fit");
+        constexpr auto allowed = std::to_array<
+            std::pair<QLatin1StringView, TerminalBackgroundImageFit>>({
+            {QLatin1StringView("contain"), TerminalBackgroundImageFit::Contain},
+            {QLatin1StringView("cover"), TerminalBackgroundImageFit::Cover},
+            {QLatin1StringView("stretch"), TerminalBackgroundImageFit::Stretch},
+            {QLatin1StringView("none"), TerminalBackgroundImageFit::None},
+        });
+        auto parsed = readEnum(fieldValue(name), context(name), allowed);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.backgroundImage.fit = *parsed;
+    }
+    if (auto parsed =
+            assignBoolean(QLatin1StringView("background-image-repeat"),
+                          result.backgroundImage.repeat);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     {
         constexpr QLatin1StringView name("unfocused-split-opacity");
         auto parsed =
@@ -1294,6 +1385,47 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         if (auto parsed = assignBoolean(name, *destination); !parsed) {
             return std::unexpected(std::move(parsed.error()));
         }
+    }
+
+    if (auto parsed =
+            assign(QLatin1StringView("window-padding-x"),
+                   result.padding.horizontal, readTerminalPaddingAxis);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("window-padding-y"),
+                             result.padding.vertical, readTerminalPaddingAxis);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("window-padding-balance");
+        constexpr auto allowed =
+            std::to_array<std::pair<QLatin1StringView, TerminalPaddingBalance>>(
+                {
+                    {QLatin1StringView("false"),
+                     TerminalPaddingBalance::Disabled},
+                    {QLatin1StringView("true"),
+                     TerminalPaddingBalance::Balanced},
+                    {QLatin1StringView("equal"), TerminalPaddingBalance::Equal},
+                });
+        auto parsed = readEnum(fieldValue(name), context(name), allowed);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.padding.balance = *parsed;
+    }
+    {
+        constexpr QLatin1StringView name("window-padding-color");
+        constexpr auto allowed =
+            std::to_array<std::pair<QLatin1StringView, TerminalPaddingColor>>({
+                {QLatin1StringView("background"),
+                 TerminalPaddingColor::Background},
+                {QLatin1StringView("extend"), TerminalPaddingColor::Extend},
+                {QLatin1StringView("extend-always"),
+                 TerminalPaddingColor::ExtendAlways},
+            });
+        auto parsed = readEnum(fieldValue(name), context(name), allowed);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.padding.color = *parsed;
     }
 
     constexpr auto NewTabPositions =

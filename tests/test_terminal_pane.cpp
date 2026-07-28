@@ -31,6 +31,7 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QTimer>
 #include <QWheelEvent>
 
@@ -414,6 +415,7 @@ private Q_SLOTS:
     void restoresHyperlinkPointerAfterTyping();
     void resolvesMinimumContrastWithShaderOrdering();
     void rendersBackgroundOpacityAndReloadsInPlace();
+    void retainsBackgroundImageAcrossOptionReloadAndDecodeFailure();
     void rendersMinimumContrastAndReloadsLive();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
@@ -2008,14 +2010,16 @@ void TerminalPaneTest::rebuildsMainTextRowsAfterWindowChange()
     QCOMPARE(resizeRequested.count(), 1);
     const TerminalCellMetrics secondWindowMetrics = terminalCellMetrics(
         options.typography, secondWindow.devicePixelRatio());
-    QCOMPARE(
-        resizeRequested.constLast().at(2).toInt(),
-        qRound(secondWindowMetrics.cellWidth
-               * secondWindow.devicePixelRatio()));
-    QCOMPARE(
-        resizeRequested.constLast().at(3).toInt(),
-        qRound(secondWindowMetrics.cellHeight
-               * secondWindow.devicePixelRatio()));
+    const TerminalSessionGeometry resizedGeometry =
+        resizeRequested.constLast()
+            .constFirst()
+            .value<TerminalSessionGeometry>();
+    QCOMPARE(resizedGeometry.cellWidthPixels,
+             qRound(secondWindowMetrics.cellWidth
+                    * secondWindow.devicePixelRatio()));
+    QCOMPARE(resizedGeometry.cellHeightPixels,
+             qRound(secondWindowMetrics.cellHeight
+                    * secondWindow.devicePixelRatio()));
     pane->update();
     const QImage rebuiltImage = secondWindow.grabWindow();
     QVERIFY(!rebuiltImage.isNull());
@@ -2654,8 +2658,10 @@ void TerminalPaneTest::executesTypedFontSizeActions()
         QStringLiteral("increase_font_size:nan")));
     QCOMPARE(pane.fontPointSize(), 255.0);
     QVERIFY(!resized.isEmpty());
-    QCOMPARE(resized.constLast().at(0).toInt(), 1);
-    QCOMPARE(resized.constLast().at(1).toInt(), 1);
+    const TerminalSessionGeometry tiny =
+        resized.constLast().constFirst().value<TerminalSessionGeometry>();
+    QCOMPARE(tiny.columns, 1);
+    QCOMPARE(tiny.rows, 1);
 
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("decrease_font_size:infinity")));
@@ -5136,6 +5142,174 @@ void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
     delete pane;
 }
 
+void TerminalPaneTest::
+    retainsBackgroundImageAcrossOptionReloadAndDecodeFailure()
+{
+    const QString temporaryRoot =
+        QDir::current().filePath(QStringLiteral("tmp"));
+    QVERIFY(QDir().mkpath(temporaryRoot));
+    QTemporaryDir temporary(
+        QDir(temporaryRoot)
+            .filePath(QStringLiteral("terminal-pane-backdrop-XXXXXX")));
+    QVERIFY(temporary.isValid());
+
+    constexpr QSize imageSize(32, 16);
+    const QString imagePath =
+        temporary.filePath(QStringLiteral("backdrop.png"));
+    QImage image(imageSize, QImage::Format_RGBA8888);
+    image.fill(QColor(QStringLiteral("#40a0e0")));
+    QVERIFY(image.save(imagePath, "PNG"));
+
+    const QString invalidPath =
+        temporary.filePath(QStringLiteral("invalid-image.bin"));
+    QFile invalidFile(invalidPath);
+    QVERIFY(invalidFile.open(QIODevice::WriteOnly));
+    QCOMPARE(invalidFile.write(QByteArrayLiteral("not an image")),
+             qsizetype{12});
+    invalidFile.close();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 10"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.appearance.backgroundColor = QColor(QStringLiteral("#102030"));
+    options.background.image = {
+        .path =
+            GhosttyConfigPath{
+                .path = imagePath,
+                .optional = false,
+            },
+        .opacity = 0.75,
+        .position = TerminalBackgroundImagePosition::Center,
+        .fit = TerminalBackgroundImageFit::Stretch,
+        .repeat = false,
+    };
+    options.padding = {
+        .horizontal = {.leadingPoints = 12, .trailingPoints = 18},
+        .vertical = {.leadingPoints = 9, .trailingPoints = 15},
+    };
+
+    QQuickWindow window;
+    window.setColor(Qt::transparent);
+    window.resize(320, 180);
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    const QPointer<TerminalPane> guardedPane(pane);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->sessionStarted(), 3000);
+    QThread *const workerThread = controller->findChild<QThread *>();
+    QVERIFY(workerThread != nullptr);
+
+    const auto paintedProbe = [&] {
+        pane->update();
+        const QImage frame = window.grabWindow();
+        if (frame.isNull()) return TerminalPaneRenderProbeSnapshot{};
+        return terminalPaneRenderProbe(pane);
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(paintedProbe().backgroundImageAssetSerial != 0,
+                             3000);
+    const TerminalPaneRenderProbeSnapshot loaded = paintedProbe();
+    const quint64 assetSerial = loaded.backgroundImageAssetSerial;
+    const quint64 rootSerial = loaded.rootSerial;
+    QVERIFY(assetSerial != 0);
+    QVERIFY(rootSerial != 0);
+    QCOMPARE(loaded.backgroundImageRect, pane->boundingRect());
+    QCOMPARE(loaded.backgroundImageSourceRect,
+             QRectF(QPointF{}, QSizeF(imageSize)));
+    QVERIFY(
+        std::ranges::all_of(loaded.backdropBaseRects,
+                            [](const QRectF &rect) { return rect.isEmpty(); }));
+
+    const auto layout = terminalViewportLayout({
+        .surfaceSize = pane->size(),
+        .cellSize = QSizeF(loaded.metrics.cellWidth, loaded.metrics.cellHeight),
+        .devicePixelRatio = window.devicePixelRatio(),
+        .padding = options.padding,
+    });
+    QVERIFY(layout.has_value());
+    QVERIFY(layout->gridRect.left() > pane->boundingRect().left());
+    QVERIFY(layout->gridRect.top() > pane->boundingRect().top());
+    QVERIFY(layout->gridRect.right() < pane->boundingRect().right());
+    QVERIFY(layout->gridRect.bottom() < pane->boundingRect().bottom());
+    QVERIFY(loaded.backgroundImageRect.contains(layout->gridRect));
+
+    QSignalSpy resized(controller, &TerminalController::resizeRequested);
+    QSignalSpy runtime(controller,
+                       &TerminalController::runtimeOptionsRequested);
+
+    LaunchOptions optionReload = options;
+    optionReload.background.image.opacity = 0.4;
+    optionReload.background.image.position =
+        TerminalBackgroundImagePosition::BottomRight;
+    optionReload.background.image.fit = TerminalBackgroundImageFit::None;
+    optionReload.background.image.repeat = true;
+    pane->applyRuntimeOptions(optionReload);
+    const TerminalPaneRenderProbeSnapshot reconfigured = paintedProbe();
+    QCOMPARE(reconfigured.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(reconfigured.backgroundImageRect, pane->boundingRect());
+    QCOMPARE(reconfigured.rootSerial, rootSerial);
+    QVERIFY(reconfigured.paintSerial > loaded.paintSerial);
+    QCOMPARE(guardedPane.data(), pane);
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
+    QCOMPARE(controller->findChild<QThread *>(), workerThread);
+    QCOMPARE(resized.count(), 0);
+    QCOMPARE(runtime.count(), 0);
+
+    LaunchOptions invalidReload = optionReload;
+    invalidReload.background.image.path = GhosttyConfigPath{
+        .path = invalidPath,
+        .optional = false,
+    };
+    const QByteArray expectedWarning =
+        QStringLiteral("Background image '%1' is not PNG or JPEG.")
+            .arg(invalidPath)
+            .toUtf8();
+    QTest::ignoreMessage(QtWarningMsg, expectedWarning.constData());
+    pane->applyRuntimeOptions(invalidReload);
+    QTest::qWait(500);
+    const TerminalPaneRenderProbeSnapshot retained = paintedProbe();
+    QCOMPARE(retained.backgroundImageAssetSerial, assetSerial);
+    QCOMPARE(retained.backgroundImageRect, pane->boundingRect());
+    QCOMPARE(retained.rootSerial, rootSerial);
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
+    QCOMPARE(controller->findChild<QThread *>(), workerThread);
+    QCOMPARE(resized.count(), 0);
+    QCOMPARE(runtime.count(), 0);
+
+    LaunchOptions cleared = invalidReload;
+    cleared.background.image.path.reset();
+    pane->applyRuntimeOptions(cleared);
+    const TerminalPaneRenderProbeSnapshot withoutImage = paintedProbe();
+    QCOMPARE(withoutImage.backgroundImageAssetSerial, quint64{0});
+    QVERIFY(withoutImage.backgroundImageRect.isEmpty());
+    QVERIFY(withoutImage.backgroundImageSourceRect.isEmpty());
+    QCOMPARE(withoutImage.rootSerial, rootSerial);
+    QCOMPARE(withoutImage.backdropBaseRects.size(), qsizetype{4});
+    QCOMPARE(withoutImage.backdropBaseRects.constFirst(), pane->boundingRect());
+    QVERIFY(
+        std::ranges::all_of(withoutImage.backdropBaseRects.cbegin() + 1,
+                            withoutImage.backdropBaseRects.cend(),
+                            [](const QRectF &rect) { return rect.isEmpty(); }));
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
+    QCOMPARE(controller->findChild<QThread *>(), workerThread);
+    QCOMPARE(resized.count(), 0);
+    QCOMPARE(runtime.count(), 0);
+
+    window.close();
+    delete pane;
+    QVERIFY(guardedPane.isNull());
+}
+
 void TerminalPaneTest::rendersMinimumContrastAndReloadsLive()
 {
     qRegisterMetaType<TerminalSearchUpdate>();
@@ -6917,7 +7091,8 @@ void TerminalPaneTest::routesViewportAndSelectionActions()
     QSignalSpy resizes(controller, &TerminalController::resizeRequested);
     pane.setSize(QSizeF(640.0, 320.0));
     QVERIFY(!resizes.isEmpty());
-    const int requestedRows = resizes.constLast().at(1).toInt();
+    const int requestedRows =
+        resizes.constLast().constFirst().value<TerminalSessionGeometry>().rows;
     QVERIFY(requestedRows > 0);
     QVERIFY(pane.executeConfiguredAction(
         QStringLiteral("scroll_page_down")));

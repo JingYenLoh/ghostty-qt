@@ -645,12 +645,12 @@ bool TerminalWorkspace::initialize(
         window() != nullptr ? window()->devicePixelRatio() : 1.0;
     const TerminalCellMetrics metrics =
         terminalCellMetrics(initialOptions.typography, devicePixelRatio);
-    const PaneHandle initialPane =
-        createNewTab({},
-                     terminalSessionGeometryForViewport(
-                         width(), height(), metrics.cellWidth,
-                         metrics.cellHeight, devicePixelRatio),
-                     initialSessionStartMode);
+    const PaneHandle initialPane = createNewTab(
+        {},
+        terminalSessionGeometryForViewport(width(), height(), metrics.cellWidth,
+                                           metrics.cellHeight, devicePixelRatio,
+                                           initialOptions.padding),
+        initialSessionStartMode);
     if (guard == nullptr) return true;
     if (!initialPane.isValid()) return false;
     if (initialSessionStartMode == TerminalSessionStartMode::Deferred) {

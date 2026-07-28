@@ -67,6 +67,9 @@ struct LaunchOptions {
     // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
     // without waking SessionWorker or mutating libghostty terminal state.
     TerminalBackgroundOptions background;
+    // Padding dimensions are captured per pane; balance and color are
+    // frontend-owned policies that can be repainted/relaid out live.
+    TerminalPaddingOptions padding;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     // Compression is a live session policy. Disabling it leaves existing

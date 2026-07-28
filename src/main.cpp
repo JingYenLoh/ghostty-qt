@@ -7,6 +7,7 @@
 #include "launch_options.h"
 #include "single_instance_activation.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_workspace.h"
 
@@ -997,12 +998,16 @@ bool installInitialWindowStateTestHook(QQuickWindow *window,
                 expectedStates.at(static_cast<std::size_t>(*stage));
             const TerminalCellMetrics metrics = terminalCellMetrics(
                 options.typography, window->devicePixelRatio());
+            const QMarginsF padding = terminalExplicitPaddingMargins(
+                options.padding, window->devicePixelRatio());
             const QSize configuredSize(
                 qCeil(metrics.cellWidth
                           * static_cast<qreal>(options.windowWidth)
+                      + padding.left() + padding.right()
                       + window->property("terminalChromeWidth").toDouble()),
                 qCeil(metrics.cellHeight
                           * static_cast<qreal>(options.windowHeight)
+                      + padding.top() + padding.bottom()
                       + window->property("terminalChromeHeight").toDouble()));
             if (window->visibility() != expected
                 || (*stage == 4 && window->size() != configuredSize)) {
@@ -1090,28 +1095,38 @@ bool installInitialWindowSizeTestHook(QQuickWindow *window,
                 window->property("terminalChromeWidth").toDouble();
             const qreal chromeHeight =
                 window->property("terminalChromeHeight").toDouble();
+            const QMarginsF padding = terminalExplicitPaddingMargins(
+                options.padding, window->devicePixelRatio());
             const QSize configuredSize(
                 qCeil(metrics.cellWidth
                           * static_cast<qreal>(options.windowWidth)
-                      + chromeWidth),
+                      + padding.left() + padding.right() + chromeWidth),
                 qCeil(metrics.cellHeight
                           * static_cast<qreal>(options.windowHeight)
-                      + chromeHeight));
+                      + padding.top() + padding.bottom() + chromeHeight));
             const QSize minimumSize(
-                qCeil(metrics.cellWidth * 10.0 + chromeWidth),
-                qCeil(metrics.cellHeight * 4.0 + chromeHeight));
+                qCeil(metrics.cellWidth * 10.0 + padding.left()
+                      + padding.right() + chromeWidth),
+                qCeil(metrics.cellHeight * 4.0 + padding.top()
+                      + padding.bottom() + chromeHeight));
+            const auto paneLayout = pane != nullptr
+                ? terminalViewportLayout({
+                      .surfaceSize = pane->size(),
+                      .cellSize = QSizeF(metrics.cellWidth, metrics.cellHeight),
+                      .devicePixelRatio = window->devicePixelRatio(),
+                      .padding = options.padding,
+                  })
+                : std::nullopt;
             const bool shouldBeWindowed =
                 *stage == 0 || *stage == 2 || *stage == 4;
             const bool windowReady = pane != nullptr
                 && (!shouldBeWindowed
                     || (window->visibility() == QWindow::Windowed
                         && window->size() == configuredSize
-                        && window->minimumSize() == minimumSize
-                        && static_cast<quint32>(
-                               std::floor(pane->width() / metrics.cellWidth))
+                        && window->minimumSize() == minimumSize && paneLayout
+                        && static_cast<quint32>(paneLayout->session.columns)
                             == options.windowWidth
-                        && static_cast<quint32>(
-                               std::floor(pane->height() / metrics.cellHeight))
+                        && static_cast<quint32>(paneLayout->session.rows)
                             == options.windowHeight));
             const QWindow::Visibility expectedState = *stage == 1
                 ? QWindow::Maximized

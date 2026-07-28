@@ -112,6 +112,57 @@ target_link_libraries(test-terminal-geometry PRIVATE
 add_test(NAME terminal-geometry COMMAND test-terminal-geometry)
 set_tests_properties(terminal-geometry PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-terminal-backdrop
+    test_terminal_backdrop.cpp
+)
+target_include_directories(test-terminal-backdrop PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-backdrop PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-backdrop COMMAND test-terminal-backdrop)
+set_tests_properties(terminal-backdrop PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-terminal-backdrop-rhi
+    test_terminal_backdrop_rhi.cpp
+)
+target_include_directories(test-terminal-backdrop-rhi PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-backdrop-rhi PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-backdrop-rhi COMMAND test-terminal-backdrop-rhi)
+set_tests_properties(terminal-backdrop-rhi PROPERTIES
+    TIMEOUT 20
+    ENVIRONMENT
+        "LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl"
+)
+
+qt_add_executable(test-terminal-rect-batch
+    test_terminal_rect_batch.cpp
+)
+target_include_directories(test-terminal-rect-batch PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-rect-batch PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-rect-batch COMMAND test-terminal-rect-batch)
+set_tests_properties(terminal-rect-batch PROPERTIES TIMEOUT 10)
+
 add_executable(fake-ghostty-cli-helper
     fake_ghostty_cli_helper.cpp
 )
@@ -297,6 +348,7 @@ target_link_libraries(test-application-controller PRIVATE
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-shell-integration
+    ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -444,6 +496,7 @@ target_link_libraries(test-terminal-pane PRIVATE
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-shell-integration
+    ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util
@@ -509,6 +562,7 @@ target_link_libraries(test-terminal-workspace PRIVATE
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
     ghostty-qt-shell-integration
+    ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
     util

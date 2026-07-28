@@ -238,6 +238,7 @@ private Q_SLOTS:
     void reportsTerminalInitializationSeparatelyFromChildExec();
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
+    void resizesPtyWithPaddingExcludedPixels();
     void injectsRawTerminalIdentity();
     void usesConfiguredTerminalEnvironment();
     void appliesConfiguredEnvironmentPwdPrecedence();
@@ -1257,6 +1258,7 @@ void SessionWorkerTest::initializesGeometryBeforeSpawningChild()
     qRegisterMetaType<TerminalUpdate>();
     SessionWorker worker;
     QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
     QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
     QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
 
@@ -1272,12 +1274,17 @@ void SessionWorkerTest::initializesGeometryBeforeSpawningChild()
         .cellWidthPixels = 11,
         .cellHeightPixels = 19,
         // Deliberately differ from the exact cell-grid product so this also
-        // proves forkpty receives the explicit surface pixel dimensions.
+        // proves forkpty receives the surface extent after asymmetric padding
+        // has been removed.
         .surfaceWidthPixels = 487,
         .surfaceHeightPixels = 337,
+        .padding = {.top = 7, .right = 23, .bottom = 29, .left = 13},
     };
-    worker.initialize(options);
+    QCOMPARE(options.initialGeometry->terminalWidthPixels(), 451);
+    QCOMPARE(options.initialGeometry->terminalHeightPixels(), 301);
+    QVERIFY(worker.initialize(options));
 
+    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 5000);
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
     QTRY_VERIFY_WITH_TIMEOUT(!updateSpy.isEmpty(), 5000);
     QVERIFY2(errorSpy.isEmpty(),
@@ -1291,9 +1298,77 @@ void SessionWorkerTest::initializesGeometryBeforeSpawningChild()
     QCOMPARE(finalFrame.rows, 17);
     const QString finalContents = frameText(finalFrame);
     QVERIFY2(finalContents.contains(
-                 QStringLiteral(
-                     "ghostty-qt-pty-geometry:43:17:487:337")),
+                 QStringLiteral("ghostty-qt-pty-geometry:43:17:451:301")),
              qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::resizesPtyWithPaddingExcludedPixels()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("printf 'resize-geometry-ready\\n'; "
+                       "IFS= read -r ignored; exec \"$1\""),
+        QStringLiteral("resize-geometry-test"),
+        QStringLiteral(GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE),
+    };
+    options.hold = true;
+    options.initialGeometry = TerminalSessionGeometry{
+        .columns = 20,
+        .rows = 5,
+        .cellWidthPixels = 8,
+        .cellHeightPixels = 16,
+        .surfaceWidthPixels = 180,
+        .surfaceHeightPixels = 100,
+        .padding = {.top = 3, .right = 5, .bottom = 7, .left = 11},
+    };
+    QVERIFY(worker.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(startedSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("resize-geometry-ready")),
+        5000);
+
+    const TerminalSessionGeometry resized{
+        .columns = 31,
+        .rows = 9,
+        .cellWidthPixels = 7,
+        .cellHeightPixels = 13,
+        .surfaceWidthPixels = 333,
+        .surfaceHeightPixels = 211,
+        .padding = {.top = 11, .right = 17, .bottom = 19, .left = 23},
+    };
+    QCOMPARE(resized.terminalWidthPixels(), 293);
+    QCOMPARE(resized.terminalHeightPixels(), 181);
+    worker.resizeTerminal(resized);
+    worker.sendKey({
+        .key = Qt::Key_Return,
+        .text = QStringLiteral("\r"),
+        .pressed = true,
+    });
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("ghostty-qt-pty-geometry:31:9:293:181")),
+        5000);
+    const TerminalFrame finalFrame = accumulatedFrame(updateSpy);
+    QCOMPARE(finalFrame.columns, 31);
+    QCOMPARE(finalFrame.rows, 9);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     worker.shutdown();
 }
 

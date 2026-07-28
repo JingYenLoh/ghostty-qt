@@ -399,6 +399,12 @@ uint16_t boundedU16(int value)
         std::clamp(value, 1, static_cast<int>(UINT16_MAX)));
 }
 
+uint16_t boundedPixelU16(int value)
+{
+    return static_cast<uint16_t>(
+        std::clamp(value, 0, static_cast<int>(UINT16_MAX)));
+}
+
 using TrackedTerminalLink = std::variant<GhosttyVtAdapter::TrackedHyperlink,
                                          GhosttyVtAdapter::TrackedTextRange>;
 
@@ -677,10 +683,7 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
         // With neither libghostty nor a PTY created yet, the normal resize
         // path is a side-effect-free geometry seed and keeps all bounds in
         // one place.
-        resizeTerminal(geometry.columns, geometry.rows,
-                       geometry.cellWidthPixels, geometry.cellHeightPixels,
-                       geometry.surfaceWidthPixels,
-                       geometry.surfaceHeightPixels);
+        resizeTerminal(geometry);
     }
     shuttingDown_ = false;
     waitingForExitKey_ = false;
@@ -753,17 +756,9 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
 bool SessionWorker::createTerminal()
 {
     const GhosttyVtAdapter::Options options{
-        .geometry =
-            {
-                .columns = columns_,
-                .rows = rows_,
-                .cellWidthPixels = cellWidthPixels_,
-                .cellHeightPixels = cellHeightPixels_,
-                .surfaceWidthPixels = surfaceWidthPixels_,
-                .surfaceHeightPixels = surfaceHeightPixels_,
-            },
+        .geometry = geometry_,
         .scrollbackBytes =
-            scrollbackLimitInBytes(options_.scrollbackLimit, columns_),
+            scrollbackLimitInBytes(options_.scrollbackLimit, geometry_.columns),
         .appearance = options_.runtime.appearance,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
         .enquiryResponse = options_.runtime.enquiryResponse,
@@ -1163,10 +1158,10 @@ bool SessionWorker::spawnChild()
     char *const *const envpData = envp.constData();
 
     struct winsize size{};
-    size.ws_col = boundedU16(columns_);
-    size.ws_row = boundedU16(rows_);
-    size.ws_xpixel = boundedU16(surfaceWidthPixels_);
-    size.ws_ypixel = boundedU16(surfaceHeightPixels_);
+    size.ws_col = boundedU16(geometry_.columns);
+    size.ws_row = boundedU16(geometry_.rows);
+    size.ws_xpixel = boundedPixelU16(geometry_.terminalWidthPixels());
+    size.ws_ypixel = boundedPixelU16(geometry_.terminalHeightPixels());
 
     bool gateChild = linuxCgroupEnabled(options_.linuxCgroup.mode,
                                         options_.processUsesSingleInstance);
@@ -1378,30 +1373,13 @@ bool SessionWorker::spawnChild()
     return true;
 }
 
-void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
-                                   int cellHeightPixels, int surfaceWidthPixels,
-                                   int surfaceHeightPixels)
+void SessionWorker::resizeTerminal(const TerminalSessionGeometry &geometry)
 {
     const TerminalSessionGeometry normalized =
-        normalizedTerminalSessionGeometry({
-            .columns = columns,
-            .rows = rows,
-            .cellWidthPixels = cellWidthPixels,
-            .cellHeightPixels = cellHeightPixels,
-            .surfaceWidthPixels = surfaceWidthPixels,
-            .surfaceHeightPixels = surfaceHeightPixels,
-        });
+        normalizedTerminalSessionGeometry(geometry);
 
     if (vt_ != nullptr) {
-        const GhosttyVtAdapter::Geometry geometry{
-            .columns = normalized.columns,
-            .rows = normalized.rows,
-            .cellWidthPixels = normalized.cellWidthPixels,
-            .cellHeightPixels = normalized.cellHeightPixels,
-            .surfaceWidthPixels = normalized.surfaceWidthPixels,
-            .surfaceHeightPixels = normalized.surfaceHeightPixels,
-        };
-        if (!vt_->resize(geometry)) {
+        if (!vt_->resize(normalized)) {
             Q_EMIT errorOccurred(
                 QStringLiteral("libghostty rejected the terminal resize."));
             return;
@@ -1413,12 +1391,7 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
         scheduleFrame();
     }
 
-    columns_ = normalized.columns;
-    rows_ = normalized.rows;
-    cellWidthPixels_ = normalized.cellWidthPixels;
-    cellHeightPixels_ = normalized.cellHeightPixels;
-    surfaceWidthPixels_ = normalized.surfaceWidthPixels;
-    surfaceHeightPixels_ = normalized.surfaceHeightPixels;
+    geometry_ = normalized;
 
     if (vt_ != nullptr) {
         markSearchContentChanged();
@@ -1426,10 +1399,10 @@ void SessionWorker::resizeTerminal(int columns, int rows, int cellWidthPixels,
 
     if (masterFd_ >= 0) {
         struct winsize size{};
-        size.ws_col = boundedU16(columns_);
-        size.ws_row = boundedU16(rows_);
-        size.ws_xpixel = boundedU16(surfaceWidthPixels_);
-        size.ws_ypixel = boundedU16(surfaceHeightPixels_);
+        size.ws_col = boundedU16(geometry_.columns);
+        size.ws_row = boundedU16(geometry_.rows);
+        size.ws_xpixel = boundedPixelU16(geometry_.terminalWidthPixels());
+        size.ws_ypixel = boundedPixelU16(geometry_.terminalHeightPixels());
         ::ioctl(masterFd_, TIOCSWINSZ, &size);
     }
 }

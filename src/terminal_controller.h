@@ -114,9 +114,7 @@ public:
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt);
     bool selectionAvailable() const { return selectionAvailable_; }
     bool readOnly() const { return readOnly_; }
-    void resizeTerminal(int columns, int rows, int cellWidthPixels,
-                        int cellHeightPixels, int surfaceWidthPixels,
-                        int surfaceHeightPixels);
+    void resizeTerminal(const TerminalSessionGeometry &geometry);
     void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
     // Update the GUI-thread base-title cache. The next worker title event,
     // including an empty value, replaces this action-originated value.
@@ -217,9 +215,7 @@ Q_SIGNALS:
     void terminalActionReady(const TerminalActionResult &result);
     void rightClickResolved(const TerminalRightClickResult &result);
 
-    void resizeRequested(int columns, int rows, int cellWidthPixels,
-                         int cellHeightPixels, int surfaceWidthPixels,
-                         int surfaceHeightPixels);
+    void resizeRequested(const TerminalSessionGeometry &geometry);
     void keyRequested(const TerminalKeyInput &input);
     void sequenceKeyStagingRequested(quint64 token,
                                      const TerminalKeyInput &input);

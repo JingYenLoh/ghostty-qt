@@ -147,14 +147,7 @@ public:
         std::unique_ptr<Impl> impl_;
     };
 
-    struct Geometry {
-        int columns = 80;
-        int rows = 24;
-        int cellWidthPixels = 8;
-        int cellHeightPixels = 16;
-        int surfaceWidthPixels = 640;
-        int surfaceHeightPixels = 384;
-    };
+    using Geometry = TerminalSessionGeometry;
 
     struct Options {
         Geometry geometry;

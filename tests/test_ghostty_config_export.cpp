@@ -196,6 +196,15 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(appearance.background, QColor(QStringLiteral("#445566")));
     QCOMPARE(appearance.backgroundOpacity, 0.375);
     QVERIFY(appearance.backgroundOpacityCells);
+    QVERIFY(values.backgroundImage.path.has_value());
+    QCOMPARE(values.backgroundImage.path->path,
+             QStringLiteral("/fixture/background.png"));
+    QVERIFY(values.backgroundImage.path->optional);
+    QCOMPARE(values.backgroundImage.opacity, 1.25);
+    QCOMPARE(values.backgroundImage.position,
+             TerminalBackgroundImagePosition::BottomRight);
+    QCOMPARE(values.backgroundImage.fit, TerminalBackgroundImageFit::Cover);
+    QVERIFY(values.backgroundImage.repeat);
     QCOMPARE(appearance.palette.size(), std::size_t{256});
     for (std::size_t index = 0; index < appearance.palette.size(); ++index) {
         const int component = static_cast<int>(index);
@@ -263,6 +272,12 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.windowDecoration, WindowDecorationMode::Server);
     QCOMPARE(values.windowWidth, quint32{120});
     QCOMPARE(values.windowHeight, quint32{40});
+    QCOMPARE(values.padding.horizontal,
+             TerminalPaddingAxis({.leadingPoints = 3, .trailingPoints = 5}));
+    QCOMPARE(values.padding.vertical,
+             TerminalPaddingAxis({.leadingPoints = 7, .trailingPoints = 11}));
+    QCOMPARE(values.padding.balance, TerminalPaddingBalance::Equal);
+    QCOMPARE(values.padding.color, TerminalPaddingColor::ExtendAlways);
     QVERIFY(values.maximize);
     QCOMPARE(values.fullscreen, GhosttyFullscreenMode::NonNative);
     QCOMPARE(values.resizeOverlay.mode, ResizeOverlayMode::Always);
@@ -496,6 +511,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     highValues = withValue(std::move(highValues),
                            QStringLiteral("background-opacity"), 2.0);
     highValues = withValue(std::move(highValues),
+                           QStringLiteral("background-image-opacity"), 3.5);
+    highValues = withValue(std::move(highValues),
                            QStringLiteral("bell-audio-volume"), 2.0);
     highValues = withValue(std::move(highValues),
                            QStringLiteral("mouse-scroll-multiplier"),
@@ -510,6 +527,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
     QCOMPARE(high->values.appearance.backgroundOpacity, 1.0);
+    QCOMPARE(high->values.backgroundImage.opacity, 3.5);
     QCOMPARE(high->values.bellAudioVolume, 2.0);
     QCOMPARE(high->values.mouseScrollMultiplier.precision, 10'000.0);
     QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
@@ -537,6 +555,67 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }
     };
 
+    verifyMappings(
+        QLatin1StringView("background-image-position"),
+        std::to_array<
+            std::pair<QLatin1StringView, TerminalBackgroundImagePosition>>({
+            {QLatin1StringView("top-left"),
+             TerminalBackgroundImagePosition::TopLeft},
+            {QLatin1StringView("top-center"),
+             TerminalBackgroundImagePosition::TopCenter},
+            {QLatin1StringView("top-right"),
+             TerminalBackgroundImagePosition::TopRight},
+            {QLatin1StringView("center-left"),
+             TerminalBackgroundImagePosition::CenterLeft},
+            {QLatin1StringView("center"),
+             TerminalBackgroundImagePosition::Center},
+            {QLatin1StringView("center-center"),
+             TerminalBackgroundImagePosition::Center},
+            {QLatin1StringView("center-right"),
+             TerminalBackgroundImagePosition::CenterRight},
+            {QLatin1StringView("bottom-left"),
+             TerminalBackgroundImagePosition::BottomLeft},
+            {QLatin1StringView("bottom-center"),
+             TerminalBackgroundImagePosition::BottomCenter},
+            {QLatin1StringView("bottom-right"),
+             TerminalBackgroundImagePosition::BottomRight},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.backgroundImage.position;
+        });
+    verifyMappings(
+        QLatin1StringView("background-image-fit"),
+        std::to_array<std::pair<QLatin1StringView, TerminalBackgroundImageFit>>(
+            {
+                {QLatin1StringView("contain"),
+                 TerminalBackgroundImageFit::Contain},
+                {QLatin1StringView("cover"), TerminalBackgroundImageFit::Cover},
+                {QLatin1StringView("stretch"),
+                 TerminalBackgroundImageFit::Stretch},
+                {QLatin1StringView("none"), TerminalBackgroundImageFit::None},
+            }),
+        [](const GhosttyConfigValues &values) {
+            return values.backgroundImage.fit;
+        });
+    verifyMappings(
+        QLatin1StringView("window-padding-balance"),
+        std::to_array<std::pair<QLatin1StringView, TerminalPaddingBalance>>({
+            {QLatin1StringView("false"), TerminalPaddingBalance::Disabled},
+            {QLatin1StringView("true"), TerminalPaddingBalance::Balanced},
+            {QLatin1StringView("equal"), TerminalPaddingBalance::Equal},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.padding.balance;
+        });
+    verifyMappings(
+        QLatin1StringView("window-padding-color"),
+        std::to_array<std::pair<QLatin1StringView, TerminalPaddingColor>>({
+            {QLatin1StringView("background"), TerminalPaddingColor::Background},
+            {QLatin1StringView("extend"), TerminalPaddingColor::Extend},
+            {QLatin1StringView("extend-always"),
+             TerminalPaddingColor::ExtendAlways},
+        }),
+        [](const GhosttyConfigValues &values) { return values.padding.color; });
     verifyMappings(
         QLatin1StringView("shell-integration"),
         std::to_array<
@@ -1257,6 +1336,23 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withoutValue(object(), QStringLiteral("background-opacity-cells"))
         << QStringLiteral(
                "values is missing field 'background-opacity-cells'");
+    for (const QString &field : {
+             QStringLiteral("background-image"),
+             QStringLiteral("background-image-opacity"),
+             QStringLiteral("background-image-position"),
+             QStringLiteral("background-image-fit"),
+             QStringLiteral("background-image-repeat"),
+             QStringLiteral("window-padding-x"),
+             QStringLiteral("window-padding-y"),
+             QStringLiteral("window-padding-balance"),
+             QStringLiteral("window-padding-color"),
+         }) {
+        const QByteArray row =
+            QStringLiteral("missing-%1").arg(field).toLatin1();
+        QTest::newRow(row.constData())
+            << withoutValue(object(), field)
+            << QStringLiteral("values is missing field '%1'").arg(field);
+    }
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
@@ -1735,6 +1831,58 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("background-opacity-cells"), 1)
         << QStringLiteral(
                "values.background-opacity-cells must be a boolean");
+    QTest::newRow("background-image-object")
+        << withValue(object(), QStringLiteral("background-image"),
+                     QJsonObject{})
+        << QStringLiteral("values.background-image is missing field 'path'");
+    QTest::newRow("background-image-relative")
+        << withValue(
+               object(), QStringLiteral("background-image"),
+               QJsonObject{
+                   {QStringLiteral("path"), QStringLiteral("relative.png")},
+                   {QStringLiteral("optional"), false},
+               })
+        << QStringLiteral(
+               "values.background-image.path must be a finalized absolute path");
+    QTest::newRow("background-image-opacity-type")
+        << withValue(object(), QStringLiteral("background-image-opacity"),
+                     QStringLiteral("1.5"))
+        << QStringLiteral(
+               "values.background-image-opacity must be a finite number");
+    QTest::newRow("background-image-position-value")
+        << withValue(object(), QStringLiteral("background-image-position"),
+                     QStringLiteral("middle"))
+        << QStringLiteral(
+               "values.background-image-position has unsupported value");
+    QTest::newRow("background-image-fit-value")
+        << withValue(object(), QStringLiteral("background-image-fit"),
+                     QStringLiteral("tile"))
+        << QStringLiteral("values.background-image-fit has unsupported value");
+    QTest::newRow("background-image-repeat-type")
+        << withValue(object(), QStringLiteral("background-image-repeat"), 1)
+        << QStringLiteral("values.background-image-repeat must be a boolean");
+    QTest::newRow("window-padding-x-type")
+        << withValue(object(), QStringLiteral("window-padding-x"), true)
+        << QStringLiteral("values.window-padding-x must be an array");
+    QTest::newRow("window-padding-x-length")
+        << withValue(object(), QStringLiteral("window-padding-x"),
+                     QJsonArray{2})
+        << QStringLiteral(
+               "values.window-padding-x must contain exactly two point values");
+    QTest::newRow("window-padding-y-negative")
+        << withValue(object(), QStringLiteral("window-padding-y"),
+                     QJsonArray{-1, 2})
+        << QStringLiteral(
+               "values.window-padding-y[0] must be an unsigned integer");
+    QTest::newRow("window-padding-balance-value")
+        << withValue(object(), QStringLiteral("window-padding-balance"),
+                     QStringLiteral("auto"))
+        << QStringLiteral(
+               "values.window-padding-balance has unsupported value");
+    QTest::newRow("window-padding-color-value")
+        << withValue(object(), QStringLiteral("window-padding-color"),
+                     QStringLiteral("nearest"))
+        << QStringLiteral("values.window-padding-color has unsupported value");
     QTest::newRow("canonical-color")
         << withValue(object(), QStringLiteral("foreground"),
                      QStringLiteral("#AABBCC"))
