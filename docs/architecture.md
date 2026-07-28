@@ -566,6 +566,20 @@ ownership explicit and localizing future upstream C API changes. A full-grid
 fallback keeps resize and viewport changes simple while ordinary output avoids
 copying unchanged rows between threads.
 
+The finalized `scroll-to-bottom.output` flag is evaluated at the frame
+boundary, before the visible value update is copied. When output scrolling is
+enabled and synchronized output is not active, the adapter resolves the active
+screen's physical bottom grid node and row. A change from its retained
+node-and-row anchor scrolls the viewport to the active screen before rendering.
+The comparison deliberately ignores content and column: a same-line rewrite,
+title change, or BEL does not jump, while adding or removing the physical final
+row or changing screens does. Synchronized output defers both the comparison
+and scroll until an eligible frame. The anchor is sampled only while the
+feature is enabled, matching pinned Ghostty. Consequently, disabling the flag
+prevents output-driven scrolling without advancing the anchor; enabling it
+live after intervening output may scroll on the first eligible frame when that
+stale anchor is compared.
+
 Renderer-v1 uses Qt's public scene-graph API throughout: text nodes supply the
 GPU glyph path and one vertex-colored `QSGGeometryNode` per painter layer
 supplies solid primitives on RHI backends. Qt's software adaptation does not
@@ -602,11 +616,17 @@ signals:
   modifier/Escape traits from the final physical Ghostty key. The worker uses
   those traits only after a nonempty encoding to apply live selection-clearing
   policy; sequence leaders remain byte-only and never acquire that policy when
-  flushed.
+  flushed. The same successfully encoded event returns the viewport to the
+  active screen when it is a non-modifier and the live finalized
+  `scroll-to-bottom.keystroke` field is enabled. A separately encoded
+  non-modifier current key qualifies after staged bytes are replayed, but
+  replaying staged leaders alone does not.
 - One typed IME value carries the commit and preedit transition through a
   single queued worker operation. Commits use the same encoded-key policy;
   preedit start/change/end clears independently when configured. The rendered
-  preedit string remains a local UI overlay.
+  preedit string remains a local UI overlay. A successfully encoded IME commit
+  is likewise a non-modifier keystroke for `scroll-to-bottom`; preedit alone is
+  not.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. The finalized four-state `mouse-shift-capture` value crosses the
   strict configuration wire and reloads into each existing pane. `always`
@@ -779,6 +799,10 @@ signals:
   `QClipboard`. Only an accepted paste marks activity, returns to the active
   screen, and queues PTY bytes. Pane removal, session exit, and cancellation
   invalidate pending targets without writing.
+- Valid `csi`, `esc`, and `text` binding actions and every accepted paste
+  return to the active screen independently of
+  `scroll-to-bottom.keystroke`. This preserves Ghostty's action and paste
+  behavior when ordinary encoded keystrokes are configured not to scroll.
 - Selection is stored in Ghostty's terminal model and formatted by Ghostty for
   clipboard copy. Formatting, destination intent, and optional explicit-copy
   clearing are one `SessionWorker` operation; the resulting immutable text and
@@ -1480,7 +1504,9 @@ required/optional provenance, the raw finite bell volume, the independently
 finalized finite precision/discrete mouse-scroll multipliers, the exact
 `mouse-hide-while-typing` and `focus-follows-mouse` booleans, the finalized
 whole-millisecond `click-repeat-interval`, and the lossless resize-overlay
-mode, position, and whole-millisecond duration plus Ghostty's finalized
+mode, position, and whole-millisecond duration, the finalized
+`scroll-to-bottom` object with its default-true `keystroke` and default-false
+`output` fields, plus Ghostty's finalized
 binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It

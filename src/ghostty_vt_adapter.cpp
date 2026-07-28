@@ -1041,6 +1041,55 @@ public:
         }
     }
 
+    bool observeOutputBottomAnchorChanged()
+    {
+        bool synchronizedOutput = false;
+        if (ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_SYNC_OUTPUT,
+                                      &synchronizedOutput)
+                != GHOSTTY_SUCCESS
+            || synchronizedOutput) {
+            // Ghostty skips its entire renderer update while mode 2026 is
+            // active, including both comparison and cache advancement.
+            return false;
+        }
+
+        uint16_t rows = 0;
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_ROWS, &rows)
+                != GHOSTTY_SUCCESS
+            || rows == 0) {
+            return false;
+        }
+
+        // getBottomRight(.screen), used by Ghostty's renderer, and the final
+        // row of the active area always resolve to the same PageList node/y.
+        // Resolve x=0 because the renderer deliberately ignores x; this also
+        // remains valid across mixed-width pages left behind by lazy reflow.
+        GhosttyPoint point{};
+        point.tag = GHOSTTY_POINT_TAG_ACTIVE;
+        point.value.coordinate = {
+            .x = 0,
+            .y = static_cast<uint32_t>(rows - 1),
+        };
+        GhosttyGridRef reference{};
+        reference.size = sizeof(reference);
+        if (ghostty_terminal_grid_ref(terminal_, point, &reference)
+                != GHOSTTY_SUCCESS
+            || reference.node == nullptr) {
+            return false;
+        }
+
+        // Store the opaque address only as an integer identity. Untracked
+        // GhosttyGridRef values expire on the next mutation and must not be
+        // retained or dereferenced.
+        const quintptr node = reinterpret_cast<quintptr>(reference.node);
+        const bool changed = !lastOutputBottomNode_.has_value()
+            || *lastOutputBottomNode_ != node
+            || lastOutputBottomY_ != reference.y;
+        lastOutputBottomNode_ = node;
+        lastOutputBottomY_ = reference.y;
+        return changed;
+    }
+
     void reset()
     {
         ghostty_terminal_reset(terminal_);
@@ -3860,6 +3909,8 @@ private:
         TerminalClipboardAccess::Allow;
     QVector<TerminalClipboardWriteRequest> pendingClipboardWrites_;
     quint64 pendingClipboardBytes_ = 0;
+    std::optional<quintptr> lastOutputBottomNode_;
+    quint16 lastOutputBottomY_ = 0;
     uint32_t mouseModeFingerprint_ = 0;
     bool mouseEncoderConfigured_ = false;
     bool normalizeKeyboardAfterCommandExit_ = false;
@@ -3958,6 +4009,11 @@ void GhosttyVtAdapter::setClipboardWriteAccess(TerminalClipboardAccess access)
 void GhosttyVtAdapter::writeVt(QByteArrayView data)
 {
     impl_->writeVt(data);
+}
+
+bool GhosttyVtAdapter::observeOutputBottomAnchorChanged()
+{
+    return impl_->observeOutputBottomAnchorChanged();
 }
 
 void GhosttyVtAdapter::reset()

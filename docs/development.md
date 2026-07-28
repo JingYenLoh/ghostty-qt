@@ -206,6 +206,8 @@ finalized finite precision/discrete mouse-scroll multipliers, the finalized
 four-state `mouse-shift-capture` value, the exact `mouse-hide-while-typing`
 and `focus-follows-mouse` booleans, the finalized
 whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
+the finalized `scroll-to-bottom` object with its default-true `keystroke` and
+default-false `output` fields,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's
 mandatory U+0000 boundary, the exact live `ask`/`allow`/`deny`
 `clipboard-write` policy, the exact five-state `right-click-action`, the raw
@@ -358,7 +360,12 @@ behavior, live interval/boundary reload during an active pane, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact
-CSI/ESC/text actions,
+CSI/ESC/text actions, default and live-reloaded scroll-to-bottom keystroke and
+output policy, non-modifier ordinary/IME qualification, staged-leader
+exclusion, unconditional raw-action and accepted-paste scrolling,
+active-screen bottom-node/row tracking, same-line and metadata-only output
+stability, synchronized-output deferral, and stale-anchor behavior after
+disabled output,
 full-reset cache synchronization, long OSC 8 URI extraction across viewport
 and alternate-screen state, tracked output/reflow/scroll/pruning behavior,
 latest-request coalescing, stale-result rejection, stable live-output hover,

@@ -195,6 +195,7 @@ private:
     QByteArray encodeMouse(const TerminalMouseInput &input);
     void commitPaste(const QString &text, const QByteArray &encoded);
     void scrollToBottomForInput();
+    void scrollToBottomForKeystroke(bool modifier);
     void clearSelectionState();
     void clearSelectionAndResetGestureState();
     void clearSelectionAfterKey(bool modifier, bool escape);

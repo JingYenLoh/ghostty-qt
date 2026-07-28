@@ -145,6 +145,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
         .scrollbackCompression = options.scrollbackCompression,
+        .scrollToBottom = options.scrollToBottom,
         .abnormalCommandExitRuntimeMilliseconds =
             options.abnormalCommandExitRuntimeMilliseconds,
         .waitAfterCommand = options.waitAfterCommand,
@@ -269,6 +270,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         config.clickRepeatIntervalMilliseconds;
     result.clipboardWrite = config.clipboardWrite;
     result.clipboardPaste = config.clipboardPaste;
+    result.scrollToBottom = config.scrollToBottom;
     result.rightClickAction = config.rightClickAction;
     result.middleClickAction = config.middleClickAction;
     result.mouseReporting = config.mouseReporting;

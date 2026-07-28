@@ -790,6 +790,8 @@ void SessionWorker::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
     const bool compressionWasEnabled = options_.runtime.scrollbackCompression;
+    const bool scrollToBottomOutputChanged =
+        options_.runtime.scrollToBottom.output != options.scrollToBottom.output;
     const bool appearanceChanged =
         options_.runtime.appearance != options.appearance;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
@@ -812,6 +814,12 @@ void SessionWorker::applyRuntimeOptions(
         vt_->setClipboardWriteAccess(options.clipboardWrite);
     }
     options_.runtime = options;
+    if (vt_ != nullptr && scrollToBottomOutputChanged) {
+        // Ghostty's output policy lives in the renderer. A live change marks
+        // that renderer dirty, so enabling the policy immediately compares
+        // its last observed bottom anchor with the active screen.
+        scheduleFrame();
+    }
 
     if (compressionWasEnabled && !options_.runtime.scrollbackCompression) {
         if (compressionTimer_ != nullptr) {
@@ -1581,6 +1589,7 @@ void SessionWorker::sendKey(const TerminalKeyInput &input)
     }
     queueInputWrite(encoded.bytes);
     clearSelectionAfterKey(encoded.modifier, encoded.escape);
+    scrollToBottomForKeystroke(encoded.modifier);
 }
 
 void SessionWorker::stageSequenceKey(quint64 token,
@@ -1667,6 +1676,7 @@ void SessionWorker::resolveSequence(quint64 token,
         queueInputWrite(bytes);
         if (currentEncoded) {
             clearSelectionAfterKey(currentModifier, currentEscape);
+            scrollToBottomForKeystroke(currentModifier);
         }
     }
 }
@@ -1704,6 +1714,7 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     }
     queueInputWrite(encoded.bytes);
     clearSelectionAfterKey(encoded.modifier, encoded.escape);
+    scrollToBottomForKeystroke(encoded.modifier);
 }
 
 void SessionWorker::sendCsi(const QByteArray &payload)
@@ -2006,6 +2017,13 @@ void SessionWorker::commitPaste(const QString &text, const QByteArray &encoded)
 void SessionWorker::scrollToBottomForInput()
 {
     scrollViewport({.kind = TerminalViewportRequest::Kind::Bottom});
+}
+
+void SessionWorker::scrollToBottomForKeystroke(bool modifier)
+{
+    if (!modifier && options_.runtime.scrollToBottom.keystroke) {
+        scrollToBottomForInput();
+    }
 }
 
 void SessionWorker::copySelection()
@@ -3273,6 +3291,20 @@ void SessionWorker::publishFrame()
 {
     if (vt_ == nullptr) {
         return;
+    }
+    if (options_.runtime.scrollToBottom.output
+        && vt_->observeOutputBottomAnchorChanged()
+        && vt_->scrollViewport(
+            {.kind = TerminalViewportRequest::Kind::Bottom})) {
+        // The output policy runs at the renderer boundary upstream. Apply the
+        // viewport mutation before taking this frame snapshot so observers
+        // never see a transient pre-scroll update.
+        markTerminalContentChanged();
+        if (searchState_->active) {
+            rebuildSearchVisibleCells();
+            publishSearchUpdate();
+        }
+        noteCompressionActivity();
     }
     GhosttyVtAdapter::RenderSnapshot snapshot;
     const GhosttyVtAdapter::RenderResult result = vt_->renderFrame(&snapshot);

@@ -1714,6 +1714,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.scrollbackCompression = options.scrollbackCompression;
+    updated.scrollToBottom = options.scrollToBottom;
     updated.abnormalCommandExitRuntimeMilliseconds =
         options.abnormalCommandExitRuntimeMilliseconds;
     updated.waitAfterCommand = options.waitAfterCommand;

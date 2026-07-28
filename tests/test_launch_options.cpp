@@ -186,6 +186,10 @@ GhosttyConfigSnapshot completeSnapshot()
         .bracketedSafe = true,
     };
     values.clipboardWrite = TerminalClipboardAccess::Ask;
+    values.scrollToBottom = {
+        .keystroke = false,
+        .output = true,
+    };
     values.rightClickAction = RightClickAction::CopyOrPaste;
     values.middleClickAction = MiddleClickAction::Ignore;
     values.mouseReporting = false;
@@ -251,6 +255,7 @@ private Q_SLOTS:
     void mapsSelectionWordChars();
     void mapsClickRepeatInterval();
     void mapsMouseScrollMultiplier();
+    void mapsScrollToBottom();
     void mapsLinkPreviewModes();
     void mapsLinkPreviewModes_data();
     void mapsClipboardModes();
@@ -369,6 +374,8 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.clipboardPaste.protection);
     QVERIFY(options.clipboardPaste.bracketedSafe);
     QCOMPARE(options.clipboardWrite, TerminalClipboardAccess::Allow);
+    QVERIFY(options.scrollToBottom.keystroke);
+    QVERIFY(!options.scrollToBottom.output);
     QCOMPARE(options.splitAppearance.unfocusedOpacity, 0.7);
     QVERIFY(!options.splitAppearance.unfocusedFill.has_value());
     QVERIFY(!options.splitAppearance.dividerColor.has_value());
@@ -845,6 +852,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
     QCOMPARE(cliResult.clipboardWrite, TerminalClipboardAccess::Ask);
+    QVERIFY(!cliResult.scrollToBottom.keystroke);
+    QVERIFY(cliResult.scrollToBottom.output);
     QCOMPARE(cliResult.rightClickAction, RightClickAction::CopyOrPaste);
     QCOMPARE(cliResult.middleClickAction, MiddleClickAction::Ignore);
     QVERIFY(!cliResult.mouseReporting);
@@ -976,6 +985,26 @@ void LaunchOptionsTest::mapsMouseHideWhileTyping()
             applyGhosttyConfigSnapshot(base, snapshot).mouseHideWhileTyping,
             enabled);
     }
+}
+
+void LaunchOptionsTest::mapsScrollToBottom()
+{
+    LaunchOptions base;
+    base.scrollToBottom = {
+        .keystroke = true,
+        .output = false,
+    };
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+
+    const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
+    QVERIFY(!configured.scrollToBottom.keystroke);
+    QVERIFY(configured.scrollToBottom.output);
+
+    snapshot.values.scrollToBottom = {};
+    const LaunchOptions defaults =
+        applyGhosttyConfigSnapshot(configured, snapshot);
+    QVERIFY(defaults.scrollToBottom.keystroke);
+    QVERIFY(!defaults.scrollToBottom.output);
 }
 
 void LaunchOptionsTest::mapsFocusFollowsMouse()
@@ -1557,6 +1586,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .bracketedSafe = true,
     };
     options.clipboardWrite = TerminalClipboardAccess::Deny;
+    options.scrollToBottom = {
+        .keystroke = false,
+        .output = true,
+    };
     options.rightClickAction = RightClickAction::CopyOrPaste;
     options.middleClickAction = MiddleClickAction::Ignore;
     options.linkUrl = false;
@@ -1577,6 +1610,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              options.clickRepeatIntervalMilliseconds);
     QCOMPARE(runtime.clipboardPaste, options.clipboardPaste);
     QCOMPARE(runtime.clipboardWrite, options.clipboardWrite);
+    QCOMPARE(runtime.scrollToBottom, options.scrollToBottom);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(runtime.scrollbackCompression, options.scrollbackCompression);
@@ -1688,6 +1722,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(toTerminalSessionRuntimeOptions(scrollbackCompressionChanged)
             != runtime);
 
+    LaunchOptions scrollToBottomChanged = options;
+    scrollToBottomChanged.scrollToBottom.keystroke = true;
+    QVERIFY(toTerminalSessionRuntimeOptions(scrollToBottomChanged) != runtime);
+
     LaunchOptions environmentChanged = options;
     environmentChanged.environment = {{
         .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1737,6 +1775,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.selectionClipboard = {};
     options.clipboardPaste = {};
     options.clipboardWrite = TerminalClipboardAccess::Allow;
+    options.scrollToBottom = {};
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
@@ -1780,6 +1819,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     };
     QCOMPARE(launch.runtime.clipboardPaste, expectedPaste);
     QCOMPARE(launch.runtime.clipboardWrite, TerminalClipboardAccess::Deny);
+    const TerminalScrollToBottomOptions expectedScrollToBottom{
+        .keystroke = false,
+        .output = true,
+    };
+    QCOMPARE(launch.runtime.scrollToBottom, expectedScrollToBottom);
     QVERIFY(!launch.runtime.linkUrl);
 }
 

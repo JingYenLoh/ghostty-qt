@@ -232,6 +232,7 @@ private Q_SLOTS:
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
     void realHelperExportsClipboardWrite();
+    void realHelperExportsScrollToBottom();
     void realHelperExportsRightClickAction();
     void realHelperExportsMouseShiftCapture();
     void realHelperFinalizesMouseScrollMultiplier();
@@ -1705,6 +1706,32 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsClipboardWrite()
     const auto result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.clipboardWrite, TerminalClipboardAccess::Allow);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsScrollToBottom()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("scroll-to-bottom = no-keystroke,output\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.scrollToBottom.keystroke);
+    QVERIFY(result->values.scrollToBottom.output);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.scrollToBottom.keystroke);
+    QVERIFY(!result->values.scrollToBottom.output);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsRightClickAction()

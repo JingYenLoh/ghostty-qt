@@ -185,6 +185,14 @@ inline QJsonObject mouseScrollMultiplier(double precision = 1.0,
     };
 }
 
+inline QJsonObject scrollToBottom(bool keystroke = true, bool output = false)
+{
+    return {
+        {QStringLiteral("keystroke"), keystroke},
+        {QStringLiteral("output"), output},
+    };
+}
+
 inline QJsonObject
 shellIntegrationFeatures(bool cursor = false, bool sudo = true,
                          bool title = false, bool sshEnvironment = true,
@@ -329,6 +337,7 @@ inline QJsonObject values()
         {QStringLiteral("mouse-reporting"), false},
         {QStringLiteral("mouse-shift-capture"), QStringLiteral("never")},
         {QStringLiteral("mouse-hide-while-typing"), true},
+        {QStringLiteral("scroll-to-bottom"), scrollToBottom(false, true)},
         {QStringLiteral("focus-follows-mouse"), true},
         {QStringLiteral("mouse-scroll-multiplier"),
          mouseScrollMultiplier(0.75, 4.5)},

@@ -576,6 +576,13 @@ fn writeValues(
     try json.write(config.@"clipboard-paste-protection");
     try json.objectField("clipboard-paste-bracketed-safe");
     try json.write(config.@"clipboard-paste-bracketed-safe");
+    try json.objectField("scroll-to-bottom");
+    try json.beginObject();
+    try json.objectField("keystroke");
+    try json.write(config.@"scroll-to-bottom".keystroke);
+    try json.objectField("output");
+    try json.write(config.@"scroll-to-bottom".output);
+    try json.endObject();
     try json.objectField("copy-on-select");
     try json.write(@tagName(config.@"copy-on-select"));
     try json.objectField("selection-clear-on-typing");

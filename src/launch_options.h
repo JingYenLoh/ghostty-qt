@@ -87,6 +87,9 @@ struct LaunchOptions {
     // Live access policy for terminal-originated writes such as OSC 52.
     TerminalClipboardAccess clipboardWrite = TerminalClipboardAccess::Allow;
     TerminalClipboardPasteOptions clipboardPaste;
+    // Live policy for returning a scrolled-back viewport to the active
+    // terminal output after PTY-bound input or newly displayed output.
+    TerminalScrollToBottomOptions scrollToBottom;
     // Split appearance belongs to the Qt pane/workspace renderers and never
     // crosses the terminal session-thread boundary.
     SplitAppearance splitAppearance;

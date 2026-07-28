@@ -118,6 +118,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("mouse-reporting"),
     QLatin1StringView("mouse-shift-capture"),
     QLatin1StringView("mouse-hide-while-typing"),
+    QLatin1StringView("scroll-to-bottom"),
     QLatin1StringView("focus-follows-mouse"),
     QLatin1StringView("mouse-scroll-multiplier"),
     QLatin1StringView("link-url"),
@@ -182,6 +183,10 @@ constexpr auto BellFeatureFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("attention"),
     QLatin1StringView("title"),
     QLatin1StringView("border"),
+});
+constexpr auto ScrollToBottomFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("keystroke"),
+    QLatin1StringView("output"),
 });
 constexpr auto ConfigPathFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("path"),
@@ -348,6 +353,26 @@ readShellIntegrationFeatures(const QJsonValue &value, const QString &context)
              {QLatin1StringView("ssh-env"), &result.sshEnvironment},
              {QLatin1StringView("ssh-terminfo"), &result.sshTerminfo},
              {QLatin1StringView("path"), &result.path},
+         })) {
+        auto parsed =
+            readBoolean(object->value(name), childContext(context, name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        *destination = *parsed;
+    }
+    return result;
+}
+
+ParseResult<TerminalScrollToBottomOptions>
+readScrollToBottom(const QJsonValue &value, const QString &context)
+{
+    auto object = readExactObject(value, context, ScrollToBottomFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    TerminalScrollToBottomOptions result;
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView, bool *>>({
+             {QLatin1StringView("keystroke"), &result.keystroke},
+             {QLatin1StringView("output"), &result.output},
          })) {
         auto parsed =
             readBoolean(object->value(name), childContext(context, name));
@@ -1161,6 +1186,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed =
             assign(QLatin1StringView("mouse-scroll-multiplier"),
                    result.mouseScrollMultiplier, readMouseScrollMultiplier);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("scroll-to-bottom"),
+                             result.scrollToBottom, readScrollToBottom);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

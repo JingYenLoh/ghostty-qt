@@ -2355,6 +2355,10 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.mouseShiftCapture = MouseShiftCapture::Never;
     reloaded.linkUrl = false;
     reloaded.scrollbackCompression = false;
+    reloaded.scrollToBottom = {
+        .keystroke = false,
+        .output = true,
+    };
     reloaded.abnormalCommandExitRuntimeMilliseconds = 731;
     reloaded.waitAfterCommand = true;
     pane.applyRuntimeOptions(reloaded);
@@ -2377,6 +2381,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
     QCOMPARE(splitOptions.scrollbackCompression,
              reloaded.scrollbackCompression);
+    QCOMPARE(splitOptions.scrollToBottom, reloaded.scrollToBottom);
     QCOMPARE(splitOptions.abnormalCommandExitRuntimeMilliseconds,
              reloaded.abnormalCommandExitRuntimeMilliseconds);
     QCOMPARE(splitOptions.waitAfterCommand, reloaded.waitAfterCommand);

@@ -97,6 +97,13 @@ struct TerminalClipboardPasteOptions {
     bool operator==(const TerminalClipboardPasteOptions &) const = default;
 };
 
+struct TerminalScrollToBottomOptions {
+    bool keystroke = true;
+    bool output = false;
+
+    bool operator==(const TerminalScrollToBottomOptions &) const = default;
+};
+
 enum class TerminalClipboardAccess : quint8 {
     Ask,
     Allow,
@@ -127,6 +134,7 @@ struct TerminalSessionRuntimeOptions {
     // Existing compressed pages remain valid when this live policy is
     // disabled; the worker gates only future compression scheduling.
     bool scrollbackCompression = true;
+    TerminalScrollToBottomOptions scrollToBottom;
     // Linux classifies a nonzero child exit observed at or before this live
     // threshold as abnormal. Zero remains meaningful for a sub-millisecond
     // failure and therefore is not a disabled sentinel.

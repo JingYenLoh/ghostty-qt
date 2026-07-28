@@ -129,6 +129,7 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void observesActiveScreenBottomAnchorChanges();
     void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
@@ -396,6 +397,74 @@ void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()
 
     adapter->reset();
     QCOMPARE(adapter->semanticPromptState(), State::Away);
+}
+
+void GhosttyVtAdapterTest::observesActiveScreenBottomAnchorChanges()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    // Ghostty initializes its renderer-side identity to null. Synchronized
+    // output must not seed that identity before the first renderable frame.
+    adapter->writeVt(QByteArrayLiteral("\033[?2026h"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\033[?2026l"));
+    // The first successful observation establishes the baseline and therefore
+    // changes.
+    QVERIFY(adapter->observeOutputBottomAnchorChanged());
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+
+    // Dirty cells, cursor movement, styles, BEL, and title changes do not
+    // constitute new output until the physical final row advances.
+    adapter->writeVt(
+        QByteArrayLiteral("abc\rXYZ\033[31m\007\033]2;anchor-title\007"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\r\nrow-1\r\nrow-2"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+
+    // Scrolling at the final row advances the PageList bottom node/y. Multiple
+    // writes before one observation coalesce into one change notification.
+    adapter->writeVt(QByteArrayLiteral("\r\nrow-3\r\nrow-4"));
+    QVERIFY(adapter->observeOutputBottomAnchorChanged());
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\rROW-4"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+
+    // Synchronized output suppresses renderer updates, so observations
+    // neither report nor consume bottom changes until mode 2026 ends.
+    adapter->writeVt(QByteArrayLiteral("\033[?2026h\r\nsync-5\r\nsync-6"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\r\nsync-7"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\033[?2026l"));
+    QVERIFY(adapter->observeOutputBottomAnchorChanged());
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+
+    // Each screen owns a different PageList, so entering and leaving the
+    // alternate screen changes the identity even when neither has scrollback.
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    QVERIFY(adapter->observeOutputBottomAnchorChanged());
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("alternate"));
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->writeVt(QByteArrayLiteral("\033[?1049l"));
+    QVERIFY(adapter->observeOutputBottomAnchorChanged());
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+
+    // Resizing and resetting may rebuild or reuse the same PageList identity.
+    // Whatever Ghostty exposes becomes a stable new baseline without retaining
+    // an expired grid reference.
+    GhosttyVtAdapter::Geometry resized = options.geometry;
+    resized.rows = 4;
+    QVERIFY(adapter->resize(resized));
+    (void)adapter->observeOutputBottomAnchorChanged();
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
+    adapter->reset();
+    (void)adapter->observeOutputBottomAnchorChanged();
+    QVERIFY(!adapter->observeOutputBottomAnchorChanged());
 }
 
 void GhosttyVtAdapterTest::normalizesTerminalClipboardWritesAndPolicies()

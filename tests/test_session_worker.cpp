@@ -267,6 +267,7 @@ private Q_SLOTS:
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
     void appliesLiveScrollbackCompressionPolicy();
+    void appliesLiveScrollToBottomPolicy();
     void appliesReloadedWordBoundariesToExistingGesture();
     void appliesClickRepeatIntervalAtLaunchAndReload();
     void extendsSelectionUsingReloadedClickInterval();
@@ -3773,6 +3774,229 @@ void SessionWorkerTest::appliesLiveScrollbackCompressionPolicy()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
+}
+
+void SessionWorkerTest::appliesLiveScrollToBottomPolicy()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    const auto letter = [](QChar character) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.unshiftedCodepoint = character.toLower().unicode();
+        input.pressed = true;
+        return input;
+    };
+
+    {
+        SessionWorker worker;
+        worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+        QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = QDir::tempPath();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("stty raw -echo; "
+                           "i=0; while [ $i -lt 48 ]; do "
+                           "printf 'keystroke-history-%02d\\r\\n' \"$i\"; "
+                           "i=$((i + 1)); done; "
+                           "printf 'keystroke-ready'; sleep 30"),
+        };
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(updateSpy, QStringLiteral("keystroke-ready")), 5000);
+
+        const auto scrollToTop = [&] {
+            worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+            QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                                      quint64{0}, 1000);
+        };
+        const auto expectBottom = [&] {
+            QTRY_VERIFY_WITH_TIMEOUT(
+                accumulatedFrame(updateSpy).scrollOffset > 0, 1000);
+        };
+        const auto expectStillAtTop = [&] {
+            QTest::qWait(50);
+            QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{0});
+        };
+
+        // The default follows Ghostty: an encoded ordinary key returns the
+        // viewport to the active screen.
+        scrollToTop();
+        worker.sendKey(letter(u'a'));
+        expectBottom();
+
+        TerminalSessionRuntimeOptions runtime = options.runtime;
+        runtime.scrollToBottom.keystroke = false;
+        worker.applyRuntimeOptions(runtime);
+        scrollToTop();
+        worker.sendKey(letter(u'b'));
+        expectStillAtTop();
+        worker.sendInputMethod({.commitText = QStringLiteral("ime")});
+        expectStillAtTop();
+
+        // Keybind payloads and accepted paste are intentionally independent
+        // of the physical-keystroke policy. A valid empty text action still
+        // has the upstream viewport side effect without writing PTY bytes.
+        worker.sendRawText({});
+        expectBottom();
+
+        runtime.scrollToBottom.keystroke = true;
+        worker.applyRuntimeOptions(runtime);
+        scrollToTop();
+        worker.sendInputMethod({.commitText = QStringLiteral("ime")});
+        expectBottom();
+
+        // Replayed leaders never retroactively become keystrokes. Only a
+        // separately encoded, non-modifier current key participates.
+        scrollToTop();
+        worker.stageSequenceKey(1, letter(u'c'));
+        worker.resolveSequence(1, TerminalSequenceResolution::Flush, false, {});
+        expectStillAtTop();
+        worker.stageSequenceKey(2, letter(u'd'));
+        worker.resolveSequence(2,
+                               TerminalSequenceResolution::FlushAndSendCurrent,
+                               true, letter(u'e'));
+        expectBottom();
+
+        // Read-only mode suppresses the bytes at the PTY boundary, not the
+        // surface-level viewport behavior.
+        worker.setReadOnly(true);
+        scrollToTop();
+        worker.sendKey(letter(u'f'));
+        expectBottom();
+
+        QVERIFY2(
+            errorSpy.isEmpty(),
+            errorSpy.isEmpty()
+                ? ""
+                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    {
+        QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+        QTemporaryDir controlDirectory(QDir::current().filePath(
+            QStringLiteral("tmp/scroll-output-XXXXXX")));
+        QVERIFY(controlDirectory.isValid());
+        const QDir controls(controlDirectory.path());
+        const QString rewriteMarker =
+            controls.filePath(QStringLiteral("rewrite"));
+        const QString advanceMarker =
+            controls.filePath(QStringLiteral("advance"));
+        const QString disabledMarker =
+            controls.filePath(QStringLiteral("disabled"));
+
+        SessionWorker worker;
+        worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+        QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+        QSignalSpy titleSpy(&worker, &SessionWorker::titleChanged);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = controlDirectory.path();
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral(
+                "i=0; while [ $i -lt 48 ]; do "
+                "printf 'output-history-%02d\\r\\n' \"$i\"; "
+                "i=$((i + 1)); done; "
+                "printf 'output-ready'; "
+                "while [ ! -e \"$1\" ]; do sleep 0.01; done; "
+                "printf '\\rrewrite-done\\033]2;rewrite-observed\\007'; "
+                "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+                "printf '\\r\\nadvance-done"
+                "\\033]2;advance-observed\\007'; "
+                "while [ ! -e \"$3\" ]; do sleep 0.01; done; "
+                "printf '\\r\\ndisabled-done"
+                "\\033]2;disabled-observed\\007'; "
+                "sleep 30"),
+            QStringLiteral("scroll-output-test"),
+            rewriteMarker,
+            advanceMarker,
+            disabledMarker,
+        };
+        options.hold = true;
+        options.runtime.scrollToBottom.output = true;
+        QVERIFY(worker.initialize(options));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            updatesContain(updateSpy, QStringLiteral("output-ready")), 5000);
+
+        const auto touch = [](const QString &path) {
+            QFile marker(path);
+            return marker.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        };
+        const auto scrollToTop = [&] {
+            worker.scrollViewport({.kind = TerminalViewportRequest::Kind::Top});
+            QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                                      quint64{0}, 1000);
+        };
+
+        // Rewriting the active final line, including an OSC title side
+        // effect, preserves the bottom node/y anchor and must not jump.
+        scrollToTop();
+        const int rewriteFrame = updateSpy.count();
+        QVERIFY(touch(rewriteMarker));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::any_of(titleSpy.cbegin(), titleSpy.cend(),
+                        [](const QList<QVariant> &arguments) {
+                            return arguments.constFirst().toString()
+                                == QStringLiteral("rewrite-observed");
+                        }),
+            5000);
+        QTRY_VERIFY_WITH_TIMEOUT(updateSpy.count() > rewriteFrame, 1000);
+        QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{0});
+
+        // Advancing the physical final row changes the opaque anchor and
+        // returns the viewport to the active screen before publication.
+        QVERIFY(touch(advanceMarker));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::any_of(titleSpy.cbegin(), titleSpy.cend(),
+                        [](const QList<QVariant> &arguments) {
+                            return arguments.constFirst().toString()
+                                == QStringLiteral("advance-observed");
+                        }),
+            5000);
+        QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                                 1000);
+
+        TerminalSessionRuntimeOptions runtime = options.runtime;
+        runtime.scrollToBottom.output = false;
+        worker.applyRuntimeOptions(runtime);
+        scrollToTop();
+        const int disabledFrame = updateSpy.count();
+        QVERIFY(touch(disabledMarker));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            std::any_of(titleSpy.cbegin(), titleSpy.cend(),
+                        [](const QList<QVariant> &arguments) {
+                            return arguments.constFirst().toString()
+                                == QStringLiteral("disabled-observed");
+                        }),
+            5000);
+        QTRY_VERIFY_WITH_TIMEOUT(updateSpy.count() > disabledFrame, 1000);
+        QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{0});
+
+        // Match the pinned renderer's live-reload behavior: observations are
+        // paused while disabled, so enabling compares the stale anchor on the
+        // config-triggered frame and catches up immediately.
+        runtime.scrollToBottom.output = true;
+        worker.applyRuntimeOptions(runtime);
+        QTRY_VERIFY_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset > 0,
+                                 1000);
+
+        QVERIFY2(
+            errorSpy.isEmpty(),
+            errorSpy.isEmpty()
+                ? ""
+                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
 }
 
 void SessionWorkerTest::appliesReloadedWordBoundariesToExistingGesture()

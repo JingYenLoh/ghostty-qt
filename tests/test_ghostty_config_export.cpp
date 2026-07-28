@@ -293,6 +293,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.mouseReporting);
     QCOMPARE(values.mouseShiftCapture, MouseShiftCapture::Never);
     QVERIFY(values.mouseHideWhileTyping);
+    QVERIFY(!values.scrollToBottom.keystroke);
+    QVERIFY(values.scrollToBottom.output);
     QVERIFY(values.focusFollowsMouse);
     QCOMPARE(values.mouseScrollMultiplier.precision, 0.75);
     QCOMPARE(values.mouseScrollMultiplier.discrete, 4.5);
@@ -1215,6 +1217,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-mouse-hide-while-typing")
         << withoutValue(object(), QStringLiteral("mouse-hide-while-typing"))
         << QStringLiteral("values is missing field 'mouse-hide-while-typing'");
+    QTest::newRow("missing-scroll-to-bottom")
+        << withoutValue(object(), QStringLiteral("scroll-to-bottom"))
+        << QStringLiteral("values is missing field 'scroll-to-bottom'");
     QTest::newRow("missing-focus-follows-mouse")
         << withoutValue(object(), QStringLiteral("focus-follows-mouse"))
         << QStringLiteral("values is missing field 'focus-follows-mouse'");
@@ -1363,6 +1368,42 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("mouse-hide-while-typing-type")
         << withValue(object(), QStringLiteral("mouse-hide-while-typing"), 1)
         << QStringLiteral("values.mouse-hide-while-typing must be a boolean");
+    QTest::newRow("scroll-to-bottom-type")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"), true)
+        << QStringLiteral("values.scroll-to-bottom must be an object");
+    QTest::newRow("scroll-to-bottom-missing-keystroke")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"),
+                     QJsonObject{{QStringLiteral("output"), false}})
+        << QStringLiteral(
+               "values.scroll-to-bottom is missing field 'keystroke'");
+    QTest::newRow("scroll-to-bottom-missing-output")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"),
+                     QJsonObject{{QStringLiteral("keystroke"), true}})
+        << QStringLiteral("values.scroll-to-bottom is missing field 'output'");
+    QTest::newRow("scroll-to-bottom-extra-field")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"),
+                     QJsonObject{
+                         {QStringLiteral("keystroke"), true},
+                         {QStringLiteral("output"), false},
+                         {QStringLiteral("future"), true},
+                     })
+        << QStringLiteral(
+               "values.scroll-to-bottom has unexpected field 'future'");
+    QTest::newRow("scroll-to-bottom-keystroke-type")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"),
+                     QJsonObject{
+                         {QStringLiteral("keystroke"), QStringLiteral("true")},
+                         {QStringLiteral("output"), false},
+                     })
+        << QStringLiteral(
+               "values.scroll-to-bottom.keystroke must be a boolean");
+    QTest::newRow("scroll-to-bottom-output-type")
+        << withValue(object(), QStringLiteral("scroll-to-bottom"),
+                     QJsonObject{
+                         {QStringLiteral("keystroke"), true},
+                         {QStringLiteral("output"), 0},
+                     })
+        << QStringLiteral("values.scroll-to-bottom.output must be a boolean");
     QTest::newRow("focus-follows-mouse-type")
         << withValue(object(), QStringLiteral("focus-follows-mouse"), 1)
         << QStringLiteral("values.focus-follows-mouse must be a boolean");

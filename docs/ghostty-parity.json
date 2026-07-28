@@ -809,6 +809,10 @@
         "quick-terminal-space-behavior": {
           "scope": "wayland"
         },
+        "scroll-to-bottom": {
+          "status": "supported",
+          "note": "The finalized object preserves Ghostty's default-true keystroke and default-false output fields, and both reload live. Ordinary or IME input scrolls only after a non-modifier key actually encodes; staged leaders replayed alone do not qualify, while valid CSI/ESC/text actions and accepted paste remain unconditional. At each eligible frame boundary, output compares the active screen's physical bottom node and row, so same-line rewrites, title changes, and BEL are stable while final-row or screen changes scroll. Synchronized output defers comparison. The anchor is intentionally not refreshed while output is disabled, preserving pinned Ghostty's possible first-frame scroll against a stale anchor when the flag is re-enabled after intervening writes."
+        },
         "scrollback-compression": {
           "status": "supported",
           "note": "The exact default-true Boolean applies live. Enabled panes schedule libghostty's bounded incremental compressor after Ghostty's 250 ms idle delay and continue pending passes 1 ms apart. Disable stops future work without eagerly decompressing pages or changing logical history capacity; re-enable clears the cached activity marker so unchanged resident history is reconsidered. Viewport movement and frontend reads that restore compressed pages feed the same gated scheduler."

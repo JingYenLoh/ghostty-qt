@@ -259,6 +259,12 @@ public:
     bool setAppearance(const TerminalAppearance &appearance);
     void setClipboardWriteAccess(TerminalClipboardAccess access);
     void writeVt(QByteArrayView data);
+    // Observe the active screen's final logical row at a renderer/frame
+    // boundary. The first successful observation and every later PageList
+    // node/y change return true. Cell rewrites on that row return false,
+    // matching Ghostty's scroll-to-bottom-on-output renderer policy. Query
+    // failures and synchronized output retain the previous observation.
+    bool observeOutputBottomAnchorChanged();
     void reset();
     void synchronizeInputModes();
     // Child-exit waiting uses ordinary legacy press encoding regardless of
