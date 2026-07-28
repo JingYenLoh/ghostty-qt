@@ -278,6 +278,9 @@ public:
     void normalizeKeyboardAfterCommandExit();
 
     EncodedKey encodeKey(const TerminalKeyInput &input);
+    // ANSI mode 2 is terminal state. Query it at the worker input boundary so
+    // terminal output and live policy updates remain ordered with input.
+    bool keyboardActionMode() const;
     bool mouseTracking() const;
     QByteArray encodeMouse(const TerminalMouseInput &input);
     QByteArray encodeFocus(bool focused) const;

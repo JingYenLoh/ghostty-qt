@@ -502,6 +502,10 @@
       "status": "supported",
       "note": "Linux primary-paste and ignore reload live; primary paste follows Ghostty's copy-on-select-dependent source choice and primary-to-standard fallback while terminal mouse reporting retains precedence."
     },
+    "minimum-contrast": {
+      "status": "supported",
+      "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Color emoji and images remain outside the separately planned rendering pipelines; the existing Qt preedit overlay remains a frontend-owned approximation."
+    },
     "mouse-hide-while-typing": {
       "status": "supported",
       "note": "The exact default-false boolean reloads live per pane. A nonempty, non-repeating text press hides only when it is forwarded to the terminal, including invalid-sequence flush and unavailable performable fallback; consumed bindings, staged leaders, modifiers, releases, raw actions, and paste are excluded. A nonempty IME commit hides while preedit alone does not. Physical motion of at least one device pixel, pointer leave, button press/release, wheel input, focus in/out, or disabling reveals it. Deferred keys and action chains retain their original pointer-activity epoch so late fallback cannot re-hide after newer interaction or become retroactively eligible when the policy is enabled. The pane cursor arbiter gives blank-while-typing priority over a retained hyperlink hand, rectangle crosshair, and raw-state-derived arrow or I-beam."
@@ -829,6 +833,10 @@
           "status": "supported",
           "scope": "qt_mapping",
           "note": "The exact system/never enum applies live to a Qt-styled control overlaid independently on every pane. System appears only for an authoritative active-screen range with scrollback; never removes the affordance without disabling other viewport actions. C++ normalizes the worker's u64 total/offset/length and saturates user movement back to an absolute-row request, avoiding QML integer precision loss and feedback loops. Splits and zoom retain each control and session without reserving grid or PTY geometry."
+        },
+        "vt-kam-allowed": {
+          "status": "supported",
+          "note": "The exact default-false boolean applies live. When allowed and terminal-owned ANSI mode 2 is active, the session worker suppresses ordinary physical-key and committed IME input after frontend keybinding resolution. Matching sequence leaders execute in Ghostty's pre-KAM binding path, so their staged bytes remain flushable even while mode 2 is active; a separately resolving current key is checked at resolution time. Preedit lifecycle and selection clearing remain active; keybinding-produced CSI, ESC, and text actions plus accepted paste bypass KAM. Worker-published mode transitions keep pane-local pointer hiding and hyperlink modifier presentation from running for rejected ordinary input, while the worker query remains the authoritative byte gate. A rejected newline reconciles the controller's optimistic process-activity state so it cannot create a stuck close confirmation. Disabling the policy immediately permits input without mutating mode 2, DECRST immediately permits input while the policy remains enabled, and child-exit normalization clears KAM so a waiting surface can still be dismissed."
         },
         "wait-after-command": {
           "status": "supported",

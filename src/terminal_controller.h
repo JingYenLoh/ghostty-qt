@@ -30,6 +30,8 @@ class TerminalController final : public QObject {
                    currentDirectoryChanged)
     Q_PROPERTY(
         bool mouseTracking READ mouseTracking NOTIFY mouseTrackingChanged)
+    Q_PROPERTY(bool keyboardActionMode READ keyboardActionMode NOTIFY
+                   keyboardActionModeChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
     Q_PROPERTY(
         bool activeProcess READ activeProcess NOTIFY activeProcessChanged)
@@ -61,6 +63,11 @@ public:
     }
     bool terminalMouseTracking() const { return terminalMouseTracking_; }
     bool mouseReportingEnabled() const { return mouseReportingEnabled_; }
+    bool keyboardActionMode() const { return keyboardActionMode_; }
+    bool keyboardInputSuppressed() const
+    {
+        return launchOptions_.runtime.vtKamAllowed && keyboardActionMode_;
+    }
     bool running() const { return running_; }
     bool activeProcess() const { return activeProcess_; }
     bool sessionStarted() const
@@ -183,6 +190,7 @@ Q_SIGNALS:
     void currentDirectoryChanged(const QString &directory);
     void terminalMouseTrackingChanged(bool enabled);
     void mouseTrackingChanged(bool enabled);
+    void keyboardActionModeChanged(bool enabled);
     void runningChanged(bool running);
     void activeProcessChanged(bool active);
     void selectionAvailableChanged(bool available);
@@ -321,6 +329,7 @@ private:
     QString currentDirectory_;
     bool terminalMouseTracking_ = false;
     bool mouseReportingEnabled_ = true;
+    bool keyboardActionMode_ = false;
     bool running_ = false;
     bool activeProcess_ = false;
     bool explicitProgram_ = false;

@@ -641,6 +641,22 @@ signals:
   preedit string remains a local UI overlay. A successfully encoded IME commit
   is likewise a non-modifier keystroke for `scroll-to-bottom`; preedit alone is
   not.
+- The finalized default-false `vt-kam-allowed` policy also crosses that queued
+  runtime boundary. After Qt has resolved keybindings, the worker queries
+  libghostty's terminal-owned ANSI mode 2 and suppresses ordinary physical
+  keys and committed IME text only when both states are true. Matching
+  sequence leaders run inside Ghostty's pre-KAM keybinding path, so their
+  encoded bytes remain staged and flushable even while mode 2 is active. A
+  separately resolving current key is checked when its sequence resolves.
+  Preedit lifecycle remains terminal-local. The worker also publishes mode-2
+  transitions to the controller before the corresponding frame is scheduled;
+  the pane uses that mirror to avoid KAM-rejected pointer-hiding and hyperlink
+  modifier presentation, while the worker's direct terminal query remains the
+  authoritative byte gate.
+  CSI, ESC, and text binding actions plus paste retain their raw input paths
+  and bypass KAM. Policy reload never mutates mode 2; DECRST takes effect
+  immediately, while child-exit normalization clears KAM before a waiting
+  surface accepts its dismissal key.
 - Mouse events use Ghostty's mouse encoder when an application enables mouse
   tracking. The finalized four-state `mouse-shift-capture` value crosses the
   strict configuration wire and reloads into each existing pane. `always`
@@ -1330,9 +1346,9 @@ colors. Appearance then crosses worker threads as a value-only
 `TerminalAppearance`: terminal
 foreground/background, all 256 effective palette defaults, selection and
 candidate/selected search colors, cursor color/style/blink/opacity/text,
-bold-color, and faint-opacity. Fixed colors and Ghostty's cell-foreground and
-cell-background aliases remain distinct until the renderer has the target
-cell.
+bold-color, faint-opacity, and minimum-contrast. Fixed colors and Ghostty's
+cell-foreground and cell-background aliases remain distinct until the renderer
+has the target cell.
 
 The same schema carries `click-repeat-interval` as Ghostty's finalized
 unsigned whole-millisecond value, including the Linux 500 ms default, and
@@ -1447,9 +1463,18 @@ fixed cursor defaults are updated through
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
 configured style. Selection, search, cursor aliases/opacity/text, bold-color,
-and faint-opacity are frontend render policy and therefore update without
-mutating terminal-originated state. Close confirmation policy and the built-in
-regex link matcher also update live; toggling `link-url` never disables OSC 8.
+faint-opacity, and minimum-contrast are frontend render policy and therefore
+update without mutating terminal-originated state. Minimum contrast mirrors the
+pinned Linux cell shader: after bold, inverse, selection/search, and faint
+alpha resolve, each glyph and decoration independently compares linear
+premultiplied color with the effective cell background. A ratio strictly below
+the configured threshold becomes opaque white or black, whichever contrasts
+more (black on a tie). The worker marks the five pinned terminal-graphics
+codepoint ranges so only their glyph bypasses correction; their decorations
+still participate. Block cursor text overrides the result, while cursor
+sprites are corrected after cursor opacity. Close confirmation policy and the
+built-in regex link matcher also update live; toggling `link-url` never
+disables OSC 8.
 The nullable divider color likewise reloads entirely on the UI thread: a fixed
 RGB value paints the exact reserved gaps, while an empty canonical value
 removes those nodes without relayout, focus changes, or terminal-state work.

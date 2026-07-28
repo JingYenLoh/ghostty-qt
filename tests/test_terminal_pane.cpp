@@ -407,10 +407,13 @@ private Q_SLOTS:
     void appliesMouseShiftCaptureAcrossPointerRoutes();
     void routesAllPasteEntryPointsThroughController();
     void routesUnsafePasteConfirmationThroughWorker();
+    void reconcilesActivityAfterKamRejectsEnter();
     void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
     void focusesPaneAfterPhysicalPointerMotionAndReload();
     void asyncFallbackDoesNotHideAfterPointerActivity();
     void restoresHyperlinkPointerAfterTyping();
+    void resolvesMinimumContrastWithShaderOrdering();
+    void rendersMinimumContrastAndReloadsLive();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
     void retainsTextWhileDimmingUnfocusedSplits();
@@ -2354,6 +2357,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     reloaded.enquiryResponse = QByteArray::fromHex("00454e51ff");
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.mouseShiftCapture = MouseShiftCapture::Never;
+    reloaded.vtKamAllowed = true;
     reloaded.linkUrl = false;
     reloaded.scrollbackCompression = false;
     reloaded.scrollToBottom = {
@@ -2380,6 +2384,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.enquiryResponse, reloaded.enquiryResponse);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.mouseShiftCapture, reloaded.mouseShiftCapture);
+    QCOMPARE(splitOptions.vtKamAllowed, reloaded.vtKamAllowed);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);
     QCOMPARE(splitOptions.scrollbackCompression,
              reloaded.scrollbackCompression);
@@ -4196,6 +4201,71 @@ void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
     QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, true), 2000);
 }
 
+void TerminalPaneTest::reconcilesActivityAfterKamRejectsEnter()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.ordinaryCommand = TerminalCommand::shell(
+        QByteArrayLiteral("printf '\\033[2hkam-activity-ready'; "
+                          "while IFS= read -r line; do :; done"),
+        true);
+    options.hold = true;
+    options.vtKamAllowed = true;
+    options.mouseHideWhileTyping = true;
+
+    TerminalPane pane(options);
+    auto *controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy updates(controller, &TerminalController::terminalUpdated);
+    QSignalSpy activity(controller, &TerminalController::activeProcessChanged);
+    QSignalSpy errors(controller, &TerminalController::errorOccurred);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("kam-activity-ready")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(controller->keyboardActionMode(), 3000);
+    QVERIFY(controller->keyboardInputSuppressed());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->activeProcess(), 3000);
+    activity.clear();
+
+    const Qt::CursorShape cursorBeforeBlockedInput = pane.cursor().shape();
+    QKeyEvent blockedText(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier,
+                          QStringLiteral("x"));
+    QCoreApplication::sendEvent(&pane, &blockedText);
+    QCOMPARE(pane.cursor().shape(), cursorBeforeBlockedInput);
+
+    QInputMethodEvent blockedIme;
+    blockedIme.setCommitString(QStringLiteral("y"));
+    QCoreApplication::sendEvent(&pane, &blockedIme);
+    QCOMPARE(pane.cursor().shape(), cursorBeforeBlockedInput);
+
+    TerminalKeyInput blockedEnter;
+    blockedEnter.key = Qt::Key_Return;
+    blockedEnter.text = QStringLiteral("\n");
+    blockedEnter.pressed = true;
+    controller->sendKey(blockedEnter);
+
+    // The GUI's conservative transition is immediate. The worker then
+    // rejects the key under KAM and publishes its unchanged idle state so the
+    // close-confirmation policy cannot remain stuck.
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, true), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(activity, false), 1000);
+    QVERIFY(!controller->activeProcess());
+
+    LaunchOptions disabled = options;
+    disabled.vtKamAllowed = false;
+    pane.applyRuntimeOptions(disabled);
+    QVERIFY(!controller->keyboardInputSuppressed());
+    QKeyEvent permittedText(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier,
+                            QStringLiteral("z"));
+    QCoreApplication::sendEvent(&pane, &permittedText);
+    QCOMPARE(pane.cursor().shape(), Qt::BlankCursor);
+
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
+}
+
 void TerminalPaneTest::
     hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction()
 {
@@ -4810,6 +4880,212 @@ void TerminalPaneTest::restoresHyperlinkPointerAfterTyping()
         Qt::ControlModifier);
     QCoreApplication::sendEvent(&pane, &revealWithoutLink);
     QCOMPARE(pane.cursor().shape(), Qt::IBeamCursor);
+}
+
+void TerminalPaneTest::resolvesMinimumContrastWithShaderOrdering()
+{
+    QColor faintWhite(Qt::white);
+    faintWhite.setAlpha(64);
+
+    // The default threshold is a byte-for-byte no-op, including alpha.
+    QCOMPARE(terminalMinimumContrastColorForTest(faintWhite, Qt::black,
+                                                 Qt::black, 1.0),
+             faintWhite);
+
+    // Ghostty premultiplies faint alpha before measuring. The quarter-opaque
+    // white is below 7:1 and correction deliberately becomes opaque.
+    const QColor correctedFaint = terminalMinimumContrastColorForTest(
+        faintWhite, Qt::black, Qt::black, 7.0);
+    QCOMPARE(correctedFaint, QColor(Qt::white));
+    QCOMPARE(correctedFaint.alpha(), 255);
+
+    QCOMPARE(terminalMinimumContrastColorForTest(
+                 QColor(QStringLiteral("#333333")), Qt::black, Qt::black, 7.0),
+             QColor(Qt::white));
+    QCOMPARE(terminalMinimumContrastColorForTest(
+                 QColor(QStringLiteral("#dddddd")), Qt::white, Qt::white, 7.0),
+             QColor(Qt::black));
+
+    // Cell alpha is composited in linear premultiplied space before the
+    // comparison. Half-transparent black over global white is a midtone, so
+    // black—not the white that an opaque-black shortcut would choose—is the
+    // stronger replacement.
+    QCOMPARE(terminalMinimumContrastColorForTest(
+                 QColor(QStringLiteral("#333333")), QColor(0, 0, 0, 128),
+                 Qt::white, 7.0),
+             QColor(Qt::black));
+
+    // Sufficient contrast and the exact maximum boundary retain the input.
+    QCOMPARE(terminalMinimumContrastColorForTest(Qt::cyan, Qt::black, Qt::black,
+                                                 7.0),
+             QColor(Qt::cyan));
+    QCOMPARE(terminalMinimumContrastColorForTest(Qt::white, Qt::black,
+                                                 Qt::black, 21.0),
+             QColor(Qt::white));
+}
+
+void TerminalPaneTest::rendersMinimumContrastAndReloadsLive()
+{
+    qRegisterMetaType<TerminalSearchUpdate>();
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 10"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+    options.appearance.faintOpacity = 0.25;
+    options.appearance.cursorOpacity = 0.25;
+    options.appearance.cursorTextColor =
+        TerminalColorValue::fromColor(Qt::green);
+    options.appearance.boldColor = {
+        .kind = TerminalBoldColorKind::Color,
+        .color = QColor(QStringLiteral("#333333")),
+    };
+    options.appearance.selectionForeground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#eeeeee")));
+    options.appearance.selectionBackground =
+        TerminalColorValue::fromColor(Qt::white);
+    options.appearance.searchForeground =
+        TerminalColorValue::fromColor(QColor(QStringLiteral("#eeeeee")));
+    options.appearance.searchBackground =
+        TerminalColorValue::fromColor(Qt::white);
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    constexpr int columns = 8;
+    constexpr int rows = 2;
+    constexpr qsizetype cellCount = columns * rows;
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * (rows + 1)));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    pane->forceActiveFocus();
+    QTRY_VERIFY_WITH_TIMEOUT(pane->hasActiveFocus(), 1000);
+
+    TerminalUpdate update;
+    update.columns = columns;
+    update.rows = rows;
+    update.fullFrame = true;
+    update.colorsChanged = true;
+    update.foreground = Qt::white;
+    update.background = Qt::black;
+    update.cursorColor = QColor(QStringLiteral("#202020"));
+    update.cursorColorExplicit = true;
+    update.cursorChanged = true;
+    update.cursorVisible = true;
+    update.cursorColumn = 0;
+    update.cursorRow = 1;
+    update.cursorStyle = 1;
+    update.contentRevision = 91;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (TerminalCell &cell : rowUpdate.cells) {
+            cell.text = QStringLiteral("A");
+            cell.foreground = QColor(QStringLiteral("#333333"));
+            cell.background = Qt::black;
+            cell.underlineColor = QColor(QStringLiteral("#333333"));
+        }
+        update.dirtyRows.append(std::move(rowUpdate));
+    }
+
+    update.dirtyRows[0].cells[1].foreground = Qt::cyan;
+
+    TerminalCell &graphics = update.dirtyRows[0].cells[2];
+    graphics.text = QString(QChar(0x2588));
+    graphics.minimumContrastExemptGlyph = true;
+    graphics.underlineStyle = TerminalUnderlineStyle::Single;
+    graphics.strikeThrough = true;
+    graphics.overline = true;
+
+    TerminalCell &explicitUnderline = update.dirtyRows[0].cells[3];
+    explicitUnderline.foreground = Qt::cyan;
+    explicitUnderline.underlineStyle = TerminalUnderlineStyle::Single;
+    explicitUnderline.underlineUsesForeground = false;
+
+    update.dirtyRows[0].cells[4].selected = true;
+
+    TerminalCell &faint = update.dirtyRows[0].cells[6];
+    faint.foreground = Qt::white;
+    faint.faint = true;
+
+    TerminalCell &bold = update.dirtyRows[0].cells[7];
+    bold.foreground = Qt::white;
+    bold.bold = true;
+    bold.styleForegroundSource = TerminalColorSource::Default;
+
+    controller->terminalUpdated(update);
+    TerminalSearchUpdate search;
+    search.generation = 1;
+    search.contentRevision = update.contentRevision;
+    search.active = true;
+    search.complete = true;
+    search.totalMatches = 1;
+    search.selectedMatch = -1;
+    search.columns = columns;
+    search.rows = rows;
+    search.visibleCellMask = QBitArray(cellCount);
+    search.selectedCellMask = QBitArray(cellCount);
+    search.visibleCellMask.setBit(5);
+    controller->searchUpdated(search);
+
+    // Keep the synthetic frame stable while exercising appearance-only reload.
+    QObject::disconnect(controller, &TerminalController::terminalUpdated, pane,
+                        nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        terminalPaneRenderProbe(pane).glyphForegrounds.size() == cellCount,
+        3000);
+    const TerminalPaneRenderProbeSnapshot before =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(before.glyphForegrounds.at(0), QColor(QStringLiteral("#333333")));
+    QCOMPARE(before.glyphForegrounds.at(6).alpha(), 64);
+    QCOMPARE(before.cursorColor, QColor(32, 32, 32, 64));
+
+    LaunchOptions reloaded = options;
+    reloaded.appearance.minimumContrast = 7.0;
+    pane->applyRuntimeOptions(reloaded);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        terminalPaneRenderProbe(pane).paintSerial > before.paintSerial, 3000);
+    const TerminalPaneRenderProbeSnapshot after = terminalPaneRenderProbe(pane);
+    QCOMPARE(after.rootSerial, before.rootSerial);
+    QVERIFY(allVisibleRowsRebuilt(before, after));
+
+    QCOMPARE(after.glyphForegrounds.at(0), QColor(Qt::white));
+    QCOMPARE(after.glyphForegrounds.at(1), QColor(Qt::cyan));
+    QCOMPARE(after.glyphForegrounds.at(2), QColor(QStringLiteral("#333333")));
+    QCOMPARE(after.decorationForegrounds.at(2), QColor(Qt::white));
+    QCOMPARE(after.underlineColors.at(2), QColor(Qt::white));
+    QCOMPARE(after.glyphForegrounds.at(3), QColor(Qt::cyan));
+    QCOMPARE(after.underlineColors.at(3), QColor(Qt::white));
+    QCOMPARE(after.glyphForegrounds.at(4), QColor(Qt::black));
+    QCOMPARE(after.glyphForegrounds.at(5), QColor(Qt::black));
+    QCOMPARE(after.glyphForegrounds.at(6), QColor(Qt::white));
+    QCOMPARE(after.glyphForegrounds.at(6).alpha(), 255);
+    QCOMPARE(after.glyphForegrounds.at(7), QColor(Qt::white));
+
+    // Minimum contrast precedes the block cursor-text override, while the
+    // low-contrast cursor sprite itself snaps to opaque white.
+    QCOMPARE(after.glyphForegrounds.at(columns), QColor(Qt::green));
+    QCOMPARE(after.decorationForegrounds.at(columns), QColor(Qt::green));
+    QCOMPARE(after.cursorColor, QColor(Qt::white));
+    QCOMPARE(after.cursorColor.alpha(), 255);
+
+    window.close();
+    delete pane;
 }
 
 void TerminalPaneTest::rendersConfiguredCellCursorAndDecorationAppearance()

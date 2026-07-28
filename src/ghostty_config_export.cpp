@@ -98,6 +98,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("cursor-text"),
     QLatin1StringView("bold-color"),
     QLatin1StringView("faint-opacity"),
+    QLatin1StringView("minimum-contrast"),
+    QLatin1StringView("vt-kam-allowed"),
     QLatin1StringView("scrollback-limit"),
     QLatin1StringView("scrollback-compression"),
     QLatin1StringView("scrollbar"),
@@ -1267,6 +1269,7 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
               &result.mouseHideWhileTyping},
              {QLatin1StringView("focus-follows-mouse"),
               &result.focusFollowsMouse},
+             {QLatin1StringView("vt-kam-allowed"), &result.vtKamAllowed},
              {QLatin1StringView("link-url"), &result.linkUrl},
              {QLatin1StringView("quit-after-last-window-closed"),
               &result.quitAfterLastWindowClosed},
@@ -1559,6 +1562,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             readFiniteDouble(fieldValue(name), context(name), 0.0, 1.0);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
         result.appearance.faintOpacity = *parsed;
+    }
+    {
+        constexpr QLatin1StringView name("minimum-contrast");
+        auto parsed =
+            readFiniteDouble(fieldValue(name), context(name), 1.0, 21.0);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.appearance.minimumContrast = *parsed;
     }
     if (auto parsed = assign(QLatin1StringView("scrollback-limit"),
                              result.scrollbackLimitBytes, readDecimalUint64);

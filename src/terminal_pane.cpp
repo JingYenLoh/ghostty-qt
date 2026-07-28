@@ -246,6 +246,88 @@ QColor withOpacity(QColor color, double opacity)
     return color;
 }
 
+struct LinearPremultipliedColor {
+    float red = 0.0F;
+    float green = 0.0F;
+    float blue = 0.0F;
+    float alpha = 0.0F;
+};
+
+float linearizeSrgb(float component)
+{
+    return component <= 0.04045F
+        ? component / 12.92F
+        : std::pow((component + 0.055F) / 1.055F, 2.4F);
+}
+
+LinearPremultipliedColor loadLinearColor(const QColor &color)
+{
+    const float alpha = static_cast<float>(color.alpha()) / 255.0F;
+    return {
+        .red = linearizeSrgb(static_cast<float>(color.red()) / 255.0F) * alpha,
+        .green =
+            linearizeSrgb(static_cast<float>(color.green()) / 255.0F) * alpha,
+        .blue =
+            linearizeSrgb(static_cast<float>(color.blue()) / 255.0F) * alpha,
+        .alpha = alpha,
+    };
+}
+
+float colorLuminance(const LinearPremultipliedColor &color)
+{
+    return 0.2126F * color.red + 0.7152F * color.green + 0.0722F * color.blue;
+}
+
+float colorContrast(const LinearPremultipliedColor &left,
+                    const LinearPremultipliedColor &right)
+{
+    const float leftLuminance = colorLuminance(left) + 0.05F;
+    const float rightLuminance = colorLuminance(right) + 0.05F;
+    return std::max(leftLuminance, rightLuminance)
+        / std::min(leftLuminance, rightLuminance);
+}
+
+QColor minimumContrastColor(const QColor &foreground,
+                            const QColor &cellBackground,
+                            const QColor &globalBackground,
+                            double minimumContrast)
+{
+    const float threshold = static_cast<float>(minimumContrast);
+    if (threshold <= 1.0F || !foreground.isValid() || !cellBackground.isValid()
+        || !globalBackground.isValid()) {
+        return foreground;
+    }
+
+    const LinearPremultipliedColor foregroundLinear =
+        loadLinearColor(foreground);
+    const LinearPremultipliedColor cellBackgroundLinear =
+        loadLinearColor(cellBackground);
+    const LinearPremultipliedColor globalBackgroundLinear =
+        loadLinearColor(globalBackground);
+    const float uncovered = 1.0F - cellBackgroundLinear.alpha;
+    const LinearPremultipliedColor effectiveBackground{
+        .red =
+            cellBackgroundLinear.red + globalBackgroundLinear.red * uncovered,
+        .green = cellBackgroundLinear.green
+            + globalBackgroundLinear.green * uncovered,
+        .blue =
+            cellBackgroundLinear.blue + globalBackgroundLinear.blue * uncovered,
+        .alpha = cellBackgroundLinear.alpha
+            + globalBackgroundLinear.alpha * uncovered,
+    };
+
+    if (colorContrast(foregroundLinear, effectiveBackground) >= threshold) {
+        return foreground;
+    }
+
+    const LinearPremultipliedColor white = loadLinearColor(Qt::white);
+    const LinearPremultipliedColor black = loadLinearColor(Qt::black);
+    return colorContrast(white, effectiveBackground)
+            > colorContrast(black, effectiveBackground)
+        ? QColor(Qt::white)
+        : QColor(Qt::black);
+}
+
 QColor resolveRelativeColor(const TerminalColorValue &configured,
                             const QColor &cellForeground,
                             const QColor &cellBackground,
@@ -777,6 +859,9 @@ void publishRenderProbe(
     const TerminalCellMetrics &metrics,
     const std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
         &fontRoleCellCounts,
+    const QVector<QColor> &glyphForegrounds,
+    const QVector<QColor> &decorationForegrounds,
+    const QVector<QColor> &underlineColors, const QColor &cursorColor,
     const QVector<QRectF> &underlineRects,
     const QVector<QRectF> &strikethroughRects,
     const QVector<QRectF> &overlineRects, const QVector<QRectF> &cursorRects)
@@ -793,6 +878,10 @@ void publishRenderProbe(
     snapshot.metrics = metrics;
     snapshot.renderFonts = root.fonts;
     snapshot.fontRoleCellCounts = fontRoleCellCounts;
+    snapshot.glyphForegrounds = glyphForegrounds;
+    snapshot.decorationForegrounds = decorationForegrounds;
+    snapshot.underlineColors = underlineColors;
+    snapshot.cursorColor = cursorColor;
     snapshot.underlineRects = underlineRects;
     snapshot.strikethroughRects = strikethroughRects;
     snapshot.overlineRects = overlineRects;
@@ -928,6 +1017,15 @@ terminalPaneRenderProbe(const TerminalPane *pane)
 {
     QMutexLocker locker(&renderProbeMutex);
     return renderProbes.value(pane);
+}
+
+QColor terminalMinimumContrastColorForTest(const QColor &foreground,
+                                           const QColor &cellBackground,
+                                           const QColor &globalBackground,
+                                           double minimumContrast)
+{
+    return minimumContrastColor(foreground, cellBackground, globalBackground,
+                                minimumContrast);
 }
 #endif
 
@@ -1712,6 +1810,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.mouseReporting = options.mouseReporting;
     updated.mouseShiftCapture = options.mouseShiftCapture;
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
+    updated.vtKamAllowed = options.vtKamAllowed;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.scrollbackCompression = options.scrollbackCompression;
@@ -2191,6 +2290,10 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QVector<QRectF> strikethroughRects;
     QVector<QRectF> overlineRects;
     QVector<QRectF> cursorRects;
+    QVector<QColor> glyphForegrounds(frame.cells.size());
+    QVector<QColor> decorationForegrounds(frame.cells.size());
+    QVector<QColor> underlineColors(frame.cells.size());
+    QColor renderedCursorColor;
     underlineProbe = &underlineRects;
     strikethroughProbe = &strikethroughRects;
     overlineProbe = &overlineRects;
@@ -2234,6 +2337,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         const bool blockCursorActive = cursorActive && cursorStyle == 1;
         QColor cursorCellForeground = frame.foreground;
         QColor cursorCellBackground = frame.background;
+        QColor cursorEffectiveBackground = frame.background;
         const qsizetype cursorCellIndex = cursorActive
             ? static_cast<qsizetype>(frame.cursorRow) * frame.columns
                 + frame.cursorColumn
@@ -2245,6 +2349,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             cursorCellBackground = cursorCell.background;
             applyBoldColor(cursorCell, frame, appearance, &cursorCellForeground,
                            &cursorCellBackground);
+            cursorEffectiveBackground = cursorCellBackground;
         }
         QColor blockCursorTextColor = resolveRelativeColor(
             appearance.cursorTextColor, cursorCellForeground,
@@ -2367,6 +2472,9 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                QRectF(left, top, cellWidth, cellHeight),
                                cellBackground);
                 }
+                if (index == cursorCellIndex) {
+                    cursorEffectiveBackground = cellBackground;
+                }
 
                 QColor foreground = styledForeground;
                 if (cell.selected) {
@@ -2386,17 +2494,28 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     && row == frame.cursorRow && column >= frame.cursorColumn
                     && column < frame.cursorColumn
                             + std::max(1, frame.cursorColumnSpan);
-                if (cell.faint && !insideBlockCursor) {
+                if (cell.faint) {
                     foreground =
                         withOpacity(foreground, appearance.faintOpacity);
+                }
+                QColor decorationForeground = minimumContrastColor(
+                    foreground, cellBackground, frame.background,
+                    appearance.minimumContrast);
+                if (!cell.minimumContrastExemptGlyph) {
+                    foreground = decorationForeground;
                 }
                 // Ghostty applies the block-cursor text uniform last to all
                 // foreground primitives in every column covered by a wide
                 // cursor. It is intentionally opaque and overrides faint and
-                // explicit decoration colors.
+                // minimum contrast, including explicit decoration colors.
                 if (insideBlockCursor) {
                     foreground = blockCursorTextColor;
+                    decorationForeground = blockCursorTextColor;
                 }
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                glyphForegrounds[index] = foreground;
+                decorationForegrounds[index] = decorationForeground;
+#endif
 
                 if (!cell.invisible && !cell.text.isEmpty() && !cell.spacer) {
                     const std::size_t fontIndex = terminalEnumIndex(
@@ -2416,15 +2535,24 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                     continue;
                 }
 
-                QColor underlineColor = insideBlockCursor
-                    ? blockCursorTextColor
-                    : (cell.underlineUsesForeground ? foreground
-                                                    : cell.underlineColor);
-                if (!insideBlockCursor && !cell.underlineUsesForeground
-                    && cell.faint) {
+                QColor underlineColor = cell.underlineUsesForeground
+                    ? decorationForeground
+                    : cell.underlineColor;
+                if (!cell.underlineUsesForeground && cell.faint) {
                     underlineColor =
                         withOpacity(underlineColor, appearance.faintOpacity);
                 }
+                if (!cell.underlineUsesForeground) {
+                    underlineColor = minimumContrastColor(
+                        underlineColor, cellBackground, frame.background,
+                        appearance.minimumContrast);
+                }
+                if (insideBlockCursor) {
+                    underlineColor = blockCursorTextColor;
+                }
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                underlineColors[index] = underlineColor;
+#endif
                 TerminalUnderlineStyle underlineStyle = cell.underlineStyle;
                 if (index <= std::numeric_limits<int>::max()
                     && hoveredHyperlinkCells.contains(
@@ -2450,14 +2578,14 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                       drawWidth,
                                       metrics.strikethroughThickness);
                     appendClippedRect(decorationsAfterText, rect,
-                                      decorationCanvas, foreground,
+                                      decorationCanvas, decorationForeground,
                                       strikethroughProbe);
                 }
                 if (cell.overline) {
                     const QRectF rect(left, top + overlinePosition, drawWidth,
                                       metrics.overlineThickness);
                     appendClippedRect(decorationsBeforeText, rect,
-                                      decorationCanvas, foreground,
+                                      decorationCanvas, decorationForeground,
                                       overlineProbe);
                 }
             }
@@ -2490,6 +2618,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             }
             cursorColor = withOpacity(cursorColor,
                                       focused ? appearance.cursorOpacity : 1.0);
+            cursorColor = minimumContrastColor(
+                cursorColor, cursorEffectiveBackground, frame.background,
+                appearance.minimumContrast);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+            renderedCursorColor = cursorColor;
+#endif
             const auto appendCursorRect = [&](QVector<ColoredRect> &rects,
                                               const QRectF &rect,
                                               const QRectF &canvas) {
@@ -2677,8 +2811,10 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
     root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    publishRenderProbe(this, *root, metrics, fontRoleCellCounts, underlineRects,
-                       strikethroughRects, overlineRects, cursorRects);
+    publishRenderProbe(this, *root, metrics, fontRoleCellCounts,
+                       glyphForegrounds, decorationForegrounds, underlineColors,
+                       renderedCursorColor, underlineRects, strikethroughRects,
+                       overlineRects, cursorRects);
 #endif
     return root;
 }
@@ -3024,7 +3160,10 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     // Run configured actions against the previously accepted hover before a
     // chord's non-modifier key refreshes link eligibility. This keeps
     // copy_url_to_clipboard synchronous within Ghostty action chains.
-    updateHyperlinkModifiers(modifiersAfterKeyEvent(event, true));
+    if (handling != KeyHandling::PassThrough
+        || !controller_->keyboardInputSuppressed()) {
+        updateHyperlinkModifiers(modifiersAfterKeyEvent(event, true));
+    }
     if (guard == nullptr) {
         event->accept();
         return;
@@ -3058,7 +3197,9 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
-    updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
+    if (!controller_->keyboardInputSuppressed()) {
+        updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
+    }
     if (guard == nullptr) {
         event->accept();
         return;
@@ -4052,6 +4193,7 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
             return;
         }
         if (!input.commitText.isEmpty() && options_.mouseHideWhileTyping
+            && !controller_->keyboardInputSuppressed()
             && pointerActivityEpoch == pointerActivityEpoch_) {
             setMouseHiddenWhileTyping(true);
             if (bellGuard == nullptr) {
@@ -4229,7 +4371,7 @@ void TerminalPane::beginLocalSelection(const QMouseEvent &event,
 void TerminalPane::hideMouseForTerminalKey(const TerminalKeyInput &input,
                                            quint64 pointerActivityEpoch)
 {
-    if (options_.mouseHideWhileTyping
+    if (!controller_->keyboardInputSuppressed() && options_.mouseHideWhileTyping
         && pointerActivityEpoch == pointerActivityEpoch_ && input.pressed
         && !input.autoRepeat && !input.text.isEmpty()) {
         setMouseHiddenWhileTyping(true);

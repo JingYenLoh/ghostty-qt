@@ -143,6 +143,7 @@ GhosttyConfigSnapshot completeSnapshot()
             GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
         .boldColor = GhosttyBoldColor{QColor(QStringLiteral("#abcdef"))},
         .faintOpacity = 0.375,
+        .minimumContrast = 4.25,
     };
     values.splitAppearance = {
         .unfocusedOpacity = 0.42,
@@ -203,6 +204,7 @@ GhosttyConfigSnapshot completeSnapshot()
         .precision = 0.75,
         .discrete = 4.5,
     };
+    values.vtKamAllowed = true;
     values.linkUrl = false;
     values.linkPreviews = LinkPreviewMode::Osc8;
     values.configFiles = {
@@ -349,6 +351,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.appearance.cursorBlink.has_value());
     QCOMPARE(options.appearance.cursorOpacity, 1.0);
     QCOMPARE(options.appearance.faintOpacity, 0.5);
+    QCOMPARE(options.appearance.minimumContrast, 1.0);
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
@@ -367,6 +370,7 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.clickRepeatIntervalMilliseconds, quint32{500});
     QCOMPARE(options.mouseScrollMultiplier.precision, 1.0);
     QCOMPARE(options.mouseScrollMultiplier.discrete, 3.0);
+    QVERIFY(!options.vtKamAllowed);
     QCOMPARE(options.confirmCloseMode, ConfirmCloseMode::RunningProcesses);
     QVERIFY(options.selectionClipboard.trimTrailingSpaces);
     QCOMPARE(options.selectionClipboard.copyOnSelect,
@@ -843,6 +847,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.appearance.boldColor.color,
              QColor(QStringLiteral("#abcdef")));
     QCOMPARE(cliResult.appearance.faintOpacity, 0.375);
+    QCOMPARE(cliResult.appearance.minimumContrast, 4.25);
     QCOMPARE(cliResult.scrollbackLimit.value, quint64(25'000));
     QCOMPARE(cliResult.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!cliResult.scrollbackCompression);
@@ -864,6 +869,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.selectionWordChars,
              QVector<quint32>({0, 0x20, 0x2502, 0x1f642}));
     QCOMPARE(cliResult.clickRepeatIntervalMilliseconds, quint32{731});
+    QVERIFY(cliResult.vtKamAllowed);
     QVERIFY(!cliResult.linkUrl);
     QCOMPARE(cliResult.linkPreviews, LinkPreviewMode::Osc8);
     QVERIFY(cliResult.keybindSource.isAvailable());
@@ -1596,6 +1602,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     };
     options.rightClickAction = RightClickAction::CopyOrPaste;
     options.middleClickAction = MiddleClickAction::Ignore;
+    options.vtKamAllowed = true;
+    options.appearance.minimumContrast = 7.25;
     options.linkUrl = false;
     options.splitAppearance = {
         .unfocusedOpacity = 0.35,
@@ -1608,6 +1616,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         toTerminalSessionLaunchOptions(options);
 
     QCOMPARE(runtime.appearance, options.appearance);
+    QCOMPARE(runtime.appearance.minimumContrast, 7.25);
     QCOMPARE(runtime.enquiryResponse, options.enquiryResponse);
     QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
     QCOMPARE(runtime.selectionWordChars, options.selectionWordChars);
@@ -1617,6 +1626,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(runtime.clipboardWrite, options.clipboardWrite);
     QCOMPARE(runtime.scrollToBottom, options.scrollToBottom);
     QCOMPARE(runtime.rightClickAction, options.rightClickAction);
+    QCOMPARE(runtime.vtKamAllowed, options.vtKamAllowed);
     QCOMPARE(runtime.linkUrl, options.linkUrl);
     QCOMPARE(runtime.scrollbackCompression, options.scrollbackCompression);
     QCOMPARE(runtime.abnormalCommandExitRuntimeMilliseconds,
@@ -1736,6 +1746,10 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     scrollToBottomChanged.scrollToBottom.keystroke = true;
     QVERIFY(toTerminalSessionRuntimeOptions(scrollToBottomChanged) != runtime);
 
+    LaunchOptions vtKamChanged = options;
+    vtKamChanged.vtKamAllowed = false;
+    QVERIFY(toTerminalSessionRuntimeOptions(vtKamChanged) != runtime);
+
     LaunchOptions environmentChanged = options;
     environmentChanged.environment = {{
         .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1788,6 +1802,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.clipboardWrite = TerminalClipboardAccess::Allow;
     options.scrollToBottom = {};
     options.middleClickAction = MiddleClickAction::PrimaryPaste;
+    options.vtKamAllowed = false;
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
              QStringLiteral("/session/working-directory"));
@@ -1836,6 +1851,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .output = true,
     };
     QCOMPARE(launch.runtime.scrollToBottom, expectedScrollToBottom);
+    QVERIFY(launch.runtime.vtKamAllowed);
     QVERIFY(!launch.runtime.linkUrl);
 }
 

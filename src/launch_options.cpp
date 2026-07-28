@@ -113,6 +113,7 @@ toTerminalAppearance(const GhosttyAppearanceConfig &configured)
         .cursorTextColor = toTerminalColor(configured.cursorText),
         .boldColor = toTerminalBoldColor(configured.boldColor),
         .faintOpacity = configured.faintOpacity,
+        .minimumContrast = configured.minimumContrast,
     };
     result.palette.reserve(static_cast<qsizetype>(configured.palette.size()));
     for (const QColor &color : configured.palette) {
@@ -145,6 +146,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .clipboardPaste = options.clipboardPaste,
         .rightClickAction = options.rightClickAction,
         .linkUrl = options.linkUrl,
+        .vtKamAllowed = options.vtKamAllowed,
         .scrollbackCompression = options.scrollbackCompression,
         .scrollToBottom = options.scrollToBottom,
         .abnormalCommandExitRuntimeMilliseconds =
@@ -280,6 +282,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.mouseHideWhileTyping = config.mouseHideWhileTyping;
     result.focusFollowsMouse = config.focusFollowsMouse;
     result.mouseScrollMultiplier = config.mouseScrollMultiplier;
+    result.vtKamAllowed = config.vtKamAllowed;
     result.linkUrl = config.linkUrl;
     result.linkPreviews = config.linkPreviews;
     result.keybindSource =

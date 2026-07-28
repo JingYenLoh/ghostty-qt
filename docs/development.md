@@ -197,7 +197,8 @@ canonical `navigation`/`no-navigation` split-preserve-zoom policy,
 four ordered regular/bold/italic/bold-italic family lists and their tagged
 automatic/disabled/named styles, the f32 font size, eleven nullable tagged
 absolute-pixel/percentage metric modifiers, selection colors, cursor
-color/style/blink/opacity/text, bold-color, faint-opacity, the nullable
+color/style/blink/opacity/text, bold-color, faint-opacity, the finalized
+minimum-contrast threshold, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
 split-divider color, the boolean `link-url` setting plus the three-state
 `link-previews` policy, the exact `system`/`never` scrollbar policy, the five
@@ -207,6 +208,7 @@ finalized finite precision/discrete mouse-scroll multipliers, the finalized
 four-state `mouse-shift-capture` value, the exact `mouse-hide-while-typing`
 and `focus-follows-mouse` booleans, the finalized
 whole-millisecond `click-repeat-interval` including the Linux 500 ms default,
+the exact live default-false `vt-kam-allowed` boolean,
 the finalized `scroll-to-bottom` object with its default-true `keystroke` and
 default-false `output` fields,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's

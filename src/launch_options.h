@@ -179,6 +179,9 @@ struct LaunchOptions {
     // discrete wheel notches. The frontend applies the appropriate value when
     // translating each Qt wheel event.
     MouseScrollMultiplier mouseScrollMultiplier;
+    // Allows terminal-owned ANSI KAM mode 2 to suppress ordinary keyboard and
+    // IME input. Keybindings and their raw actions remain independent.
+    bool vtKamAllowed = false;
     // Enables Ghostty's built-in URL matcher. OSC 8 hyperlinks remain
     // available independently of this setting.
     bool linkUrl = true;

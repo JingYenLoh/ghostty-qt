@@ -565,6 +565,10 @@ fn writeValues(
     try writeOptionalBoldColor(json, config.@"bold-color");
     try json.objectField("faint-opacity");
     try json.write(config.@"faint-opacity");
+    try json.objectField("minimum-contrast");
+    try json.write(config.@"minimum-contrast");
+    try json.objectField("vt-kam-allowed");
+    try json.write(config.@"vt-kam-allowed");
     try json.objectField("scrollback-limit");
     var scrollback_buf: [32]u8 = undefined;
     try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));

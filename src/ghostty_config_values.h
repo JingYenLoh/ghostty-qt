@@ -154,6 +154,7 @@ struct GhosttyAppearanceConfig {
 
     std::optional<GhosttyBoldColor> boldColor;
     double faintOpacity = 0.5;
+    double minimumContrast = 1.0;
 
     bool operator==(const GhosttyAppearanceConfig &) const = default;
 };
@@ -266,6 +267,9 @@ struct GhosttyConfigValues {
     bool mouseHideWhileTyping = false;
     bool focusFollowsMouse = false;
     MouseScrollMultiplier mouseScrollMultiplier;
+    // When true, terminal-owned ANSI mode 2 suppresses ordinary key and IME
+    // input after frontend keybindings have had an opportunity to run.
+    bool vtKamAllowed = false;
     bool linkUrl = false;
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;
 

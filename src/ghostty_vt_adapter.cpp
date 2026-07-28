@@ -50,6 +50,15 @@ constexpr size_t maximumClipboardRepresentations = 256;
 constexpr qsizetype maximumPendingClipboardWrites = 64;
 constexpr quint64 maximumPendingClipboardBytes = 64 * 1024 * 1024;
 
+bool minimumContrastExemptGlyph(uint32_t codepoint)
+{
+    return (codepoint >= 0x2500 && codepoint <= 0x257f)
+        || (codepoint >= 0x2580 && codepoint <= 0x259f)
+        || (codepoint >= 0x1fb00 && codepoint <= 0x1fbff)
+        || (codepoint >= 0x1cc00 && codepoint <= 0x1cebf)
+        || (codepoint >= 0xe0b0 && codepoint <= 0xe0d7);
+}
+
 bool isMacAddress(std::string_view value)
 {
     if (value.size() != 17) {
@@ -1240,6 +1249,14 @@ public:
             .modifier = isModifierKey(key),
             .escape = key == GHOSTTY_KEY_ESCAPE,
         };
+    }
+
+    bool keyboardActionMode() const
+    {
+        bool enabled = false;
+        return ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_KAM, &enabled)
+            == GHOSTTY_SUCCESS
+            && enabled;
     }
 
     QByteArray encodeMouse(const TerminalMouseInput &input)
@@ -3366,6 +3383,7 @@ public:
                        && ghostty_render_state_row_cells_next(rowCells_)) {
                     GhosttyCell rawCell = 0;
                     GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
+                    uint32_t codepoint = 0;
                     bool hasHyperlink = false;
                     if (ghostty_render_state_row_cells_get(
                             rowCells_, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
@@ -3377,6 +3395,9 @@ public:
                         || ghostty_cell_get(rawCell,
                                             GHOSTTY_CELL_DATA_HAS_HYPERLINK,
                                             &hasHyperlink)
+                            != GHOSTTY_SUCCESS
+                        || ghostty_cell_get(
+                               rawCell, GHOSTTY_CELL_DATA_CODEPOINT, &codepoint)
                             != GHOSTTY_SUCCESS) {
                         return RenderResult::Retry;
                     }
@@ -3394,6 +3415,8 @@ public:
                     TerminalCell &cell = rowUpdate.cells[columnIndex];
                     cell.columnSpan = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
                     cell.hasHyperlink = hasHyperlink;
+                    cell.minimumContrastExemptGlyph =
+                        minimumContrastExemptGlyph(codepoint);
                     cell.spacer = wide == GHOSTTY_CELL_WIDE_SPACER_TAIL
                         || wide == GHOSTTY_CELL_WIDE_SPACER_HEAD;
 
@@ -4068,6 +4091,11 @@ GhosttyVtAdapter::EncodedKey
 GhosttyVtAdapter::encodeKey(const TerminalKeyInput &input)
 {
     return impl_->encodeKey(input);
+}
+
+bool GhosttyVtAdapter::keyboardActionMode() const
+{
+    return impl_->keyboardActionMode();
 }
 
 bool GhosttyVtAdapter::mouseTracking() const

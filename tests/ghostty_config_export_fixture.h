@@ -314,6 +314,8 @@ inline QJsonObject values()
         {QStringLiteral("cursor-text"), QStringLiteral("cell-background")},
         {QStringLiteral("bold-color"), QStringLiteral("bright")},
         {QStringLiteral("faint-opacity"), 0.375},
+        {QStringLiteral("minimum-contrast"), 4.25},
+        {QStringLiteral("vt-kam-allowed"), true},
         {QStringLiteral("scrollback-limit"),
          QStringLiteral("18446744073709551615")},
         {QStringLiteral("scrollback-compression"), false},

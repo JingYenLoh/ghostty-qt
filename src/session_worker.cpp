@@ -1495,6 +1495,7 @@ void SessionWorker::drainPty(bool finalDrain)
         // once per output batch without resetting motion deduplication for
         // every individual pointer event.
         syncMouseEncoder();
+        syncKeyboardActionMode();
         syncSelectionAvailability();
         processDeferredEffects();
         noteCompressionActivity();
@@ -1569,6 +1570,10 @@ void SessionWorker::flushPtyWrites()
 
 void SessionWorker::sendKey(const TerminalKeyInput &input)
 {
+    if (keyboardInputSuppressed()) {
+        Q_EMIT inputActivityReconciled(activeProcess_);
+        return;
+    }
     if (!readOnly_ && masterFd_ >= 0 && input.pressed
         && (input.key == Qt::Key_Return || input.key == Qt::Key_Enter
             || input.text.contains(u'\n') || input.text.contains(u'\r'))) {
@@ -1646,16 +1651,20 @@ void SessionWorker::resolveSequence(quint64 token,
     }
     if (resolution == TerminalSequenceResolution::FlushAndSendCurrent
         && hasCurrent) {
-        const GhosttyVtAdapter::EncodedKey encodedCurrent = vt_ != nullptr
-            ? vt_->encodeKey(current)
-            : GhosttyVtAdapter::EncodedKey{};
-        if (!encodedCurrent.bytes.isEmpty()) {
-            bytes.append(encodedCurrent.bytes);
-            potentialActivity =
-                potentialActivity || keyMayStartProcess(current);
-            currentModifier = encodedCurrent.modifier;
-            currentEscape = encodedCurrent.escape;
-            currentEncoded = true;
+        if (keyboardInputSuppressed()) {
+            Q_EMIT inputActivityReconciled(activeProcess_);
+        } else {
+            const GhosttyVtAdapter::EncodedKey encodedCurrent = vt_ != nullptr
+                ? vt_->encodeKey(current)
+                : GhosttyVtAdapter::EncodedKey{};
+            if (!encodedCurrent.bytes.isEmpty()) {
+                bytes.append(encodedCurrent.bytes);
+                potentialActivity =
+                    potentialActivity || keyMayStartProcess(current);
+                currentModifier = encodedCurrent.modifier;
+                currentEscape = encodedCurrent.escape;
+                currentEncoded = true;
+            }
         }
     }
 
@@ -1691,6 +1700,10 @@ void SessionWorker::sendInputMethod(const TerminalInputMethodInput &input)
     }
 
     if (input.commitText.isEmpty() || vt_ == nullptr) {
+        return;
+    }
+    if (keyboardInputSuppressed()) {
+        Q_EMIT inputActivityReconciled(activeProcess_);
         return;
     }
     if (!readOnly_ && masterFd_ >= 0
@@ -1784,6 +1797,7 @@ void SessionWorker::resetTerminal()
     markTerminalContentChanged();
     markSearchContentChanged();
     syncMouseEncoder();
+    syncKeyboardActionMode();
     syncSelectionAvailability();
     processDeferredEffects();
     noteCompressionActivity();
@@ -1820,6 +1834,22 @@ void SessionWorker::clearSelectionAfterKey(bool modifier, bool escape)
         && (options_.runtime.selectionClipboard.clearOnTyping || escape)) {
         clearSelectionState();
     }
+}
+
+bool SessionWorker::keyboardInputSuppressed() const
+{
+    return options_.runtime.vtKamAllowed && vt_ != nullptr
+        && vt_->keyboardActionMode();
+}
+
+void SessionWorker::syncKeyboardActionMode()
+{
+    const bool enabled = vt_ != nullptr && vt_->keyboardActionMode();
+    if (keyboardActionMode_ == enabled) {
+        return;
+    }
+    keyboardActionMode_ = enabled;
+    Q_EMIT keyboardActionModeChanged(enabled);
 }
 
 void SessionWorker::sendMouse(const TerminalMouseInput &input)
@@ -3548,6 +3578,7 @@ void SessionWorker::handleChildStatus(int status)
     if (!shuttingDown_) {
         if (waitingForExitKey_ && vt_ != nullptr) {
             vt_->normalizeKeyboardAfterCommandExit();
+            syncKeyboardActionMode();
         }
         Q_EMIT sessionExited(exitCode, signalNumber, options_.hold,
                              waitingForExitKey_, runtimeMilliseconds, abnormal);

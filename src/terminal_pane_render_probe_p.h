@@ -31,6 +31,10 @@ struct TerminalPaneRenderProbeSnapshot {
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> renderFonts;
     std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
         fontRoleCellCounts{};
+    QVector<QColor> glyphForegrounds;
+    QVector<QColor> decorationForegrounds;
+    QVector<QColor> underlineColors;
+    QColor cursorColor;
     QVector<QRectF> underlineRects;
     QVector<QRectF> strikethroughRects;
     QVector<QRectF> overlineRects;
@@ -39,5 +43,9 @@ struct TerminalPaneRenderProbeSnapshot {
 
 [[nodiscard]] TerminalPaneRenderProbeSnapshot
 terminalPaneRenderProbe(const TerminalPane *pane);
+
+[[nodiscard]] QColor terminalMinimumContrastColorForTest(
+    const QColor &foreground, const QColor &cellBackground,
+    const QColor &globalBackground, double minimumContrast);
 
 #endif

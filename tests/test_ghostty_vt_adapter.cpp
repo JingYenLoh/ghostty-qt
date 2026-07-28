@@ -136,6 +136,8 @@ private Q_SLOTS:
     void translatesCellStylesAndAppearanceMetadata();
     void preservesTerminalAppearanceOverrides();
     void queriesSemanticPromptStateFromPublicTerminalData();
+    void queriesKeyboardActionMode();
+    void marksMinimumContrastExemptGlyphs();
     void encodesUsingTerminalModes();
     void preparesPasteUsingExactSafetyPolicy();
     void clearsSelectionWithoutCancellingGesture();
@@ -1658,6 +1660,67 @@ void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.cursorStyle, 0);
     QVERIFY(frame.cursorBlinking);
+}
+
+void GhosttyVtAdapterTest::queriesKeyboardActionMode()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter != nullptr);
+    QVERIFY(!adapter->keyboardActionMode());
+
+    adapter->writeVt(QByteArrayLiteral("\033[2h"));
+    QVERIFY(adapter->keyboardActionMode());
+
+    adapter->writeVt(QByteArrayLiteral("\033[2l"));
+    QVERIFY(!adapter->keyboardActionMode());
+
+    adapter->writeVt(QByteArrayLiteral("\033[2h"));
+    QVERIFY(adapter->keyboardActionMode());
+    adapter->reset();
+    QVERIFY(!adapter->keyboardActionMode());
+}
+
+void GhosttyVtAdapterTest::marksMinimumContrastExemptGlyphs()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 80;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+
+    struct Sample {
+        char32_t codepoint;
+        bool exempt;
+    };
+    constexpr std::array samples{
+        Sample{U'A', false},   Sample{0x24ff, false},  Sample{0x2500, true},
+        Sample{0x257f, true},  Sample{0x2580, true},   Sample{0x259f, true},
+        Sample{0x25a0, false}, Sample{0x1faff, false}, Sample{0x1fb00, true},
+        Sample{0x1fbff, true}, Sample{0x1fc00, false}, Sample{0x1cbff, false},
+        Sample{0x1cc00, true}, Sample{0x1cebf, true},  Sample{0x1cec0, false},
+        Sample{0xe0af, false}, Sample{0xe0b0, true},   Sample{0xe0d7, true},
+        Sample{0xe0d8, false},
+    };
+
+    QString text;
+    for (const Sample &sample : samples) {
+        text.append(QString::fromUcs4(&sample.codepoint, 1));
+    }
+    adapter->writeVt(text.toUtf8());
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    qsizetype sampleIndex = 0;
+    for (const TerminalCell &cell : frame.cells) {
+        if (cell.text.isEmpty()) {
+            continue;
+        }
+        QVERIFY(sampleIndex < static_cast<qsizetype>(samples.size()));
+        QCOMPARE(cell.minimumContrastExemptGlyph,
+                 samples[static_cast<size_t>(sampleIndex)].exempt);
+        ++sampleIndex;
+    }
+    QCOMPARE(sampleIndex, static_cast<qsizetype>(samples.size()));
 }
 
 void GhosttyVtAdapterTest::encodesUsingTerminalModes()

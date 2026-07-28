@@ -266,6 +266,7 @@ private Q_SLOTS:
     void appliesLiveEnquiryResponse();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
+    void gatesKeyboardAndImeWithLiveKamPolicy();
     void appliesReloadedAppearanceToExistingTerminal();
     void appliesLiveScrollbackCompressionPolicy();
     void appliesLiveScrollToBottomPolicy();
@@ -533,10 +534,12 @@ void SessionWorkerTest::waitsForEncodedKeyUsingLiveExitPolicy()
     options.program = {
         QStringLiteral("/bin/sh"),
         QStringLiteral("-c"),
-        // Leave Kitty report-all-keys enabled. Ghostty normalizes this state
-        // on child exit so a modifier-only press still encodes no bytes.
-        QStringLiteral("printf '\\033[=15u'; sleep 0.2"),
+        // Leave Kitty report-all-keys and ANSI KAM enabled. Ghostty
+        // normalizes both on child exit, so a modifier-only press still
+        // encodes no bytes and KAM cannot block the later dismissal key.
+        QStringLiteral("printf '\\033[=15u\\033[2h'; sleep 0.2"),
     };
+    options.runtime.vtKamAllowed = true;
     QVERIFY(worker.initialize(options));
 
     TerminalSessionRuntimeOptions reloaded = options.runtime;
@@ -3664,6 +3667,98 @@ void SessionWorkerTest::stagesSequenceKeysUsingModesAtStageTime()
     QVERIFY2(finalContents.contains(
                  QStringLiteral("staged-mode-bytes:1b5b41")),
              qPrintable(finalContents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::gatesKeyboardAndImeWithLiveKamPolicy()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[2hkam-enabled'; "
+            "first=$(dd bs=1 count=3 2>/dev/null | "
+            "od -An -v -tx1 | tr -d ' \\n'); "
+            "printf '\\r\\nkam-blocked:%s\\r\\n' \"$first\"; "
+            "second=$(dd bs=1 count=2 2>/dev/null | "
+            "od -An -v -tx1 | tr -d ' \\n'); "
+            "printf '\\033[2l\\r\\nkam-policy-bypassed:%s\\r\\n' \"$second\"; "
+            "third=$(dd bs=1 count=2 2>/dev/null | "
+            "od -An -v -tx1 | tr -d ' \\n'); "
+            "stty sane; "
+            "printf '\\r\\nkam-mode-disabled:%s\\r\\n' \"$third\"; ")};
+    options.runtime.vtKamAllowed = true;
+    QVERIFY(worker.initialize(options));
+
+    const auto key = [](QChar character) {
+        TerminalKeyInput input;
+        input.key = character.toUpper().unicode();
+        input.text = QString(character);
+        input.unshiftedCodepoint = character.toLower().unicode();
+        input.pressed = true;
+        return input;
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("kam-enabled")), 5000);
+
+    // Preedit lifecycle remains terminal-local and clears selection before
+    // KAM gates only the committed IME key event.
+    worker.selectAll();
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+    worker.sendInputMethod({.preeditTransition = true});
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, false), 1000);
+
+    worker.sendKey(key(u'a'));
+    // Ghostty handles keybinding leaders before KAM. Their encoded bytes
+    // remain staged and can be flushed even though the separately resolving
+    // ordinary key is suppressed.
+    worker.stageSequenceKey(1, key(u'b'));
+    worker.resolveSequence(1, TerminalSequenceResolution::FlushAndSendCurrent,
+                           true, key(u'c'));
+    worker.sendInputMethod({.commitText = QStringLiteral("d")});
+
+    // Keybinding-produced raw input and accepted paste bypass KAM exactly as
+    // they bypass Ghostty's ordinary physical-key path.
+    worker.sendRawText(QByteArrayLiteral("R"));
+    worker.paste(QStringLiteral("P"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("kam-blocked:625250")), 5000);
+
+    TerminalSessionRuntimeOptions runtime = options.runtime;
+    runtime.vtKamAllowed = false;
+    worker.applyRuntimeOptions(runtime);
+    worker.sendKey(key(u'e'));
+    worker.sendInputMethod({.commitText = QStringLiteral("f")});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("kam-policy-bypassed:6566")),
+        5000);
+
+    // The child has now reset ANSI mode 2. Re-enabling the live policy does
+    // not suppress input unless the terminal-owned mode is active.
+    runtime.vtKamAllowed = true;
+    worker.applyRuntimeOptions(runtime);
+    worker.sendKey(key(u'g'));
+    worker.sendInputMethod({.commitText = QStringLiteral("h")});
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(QStringLiteral("kam-mode-disabled:6768")),
+             qPrintable(finalContents));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

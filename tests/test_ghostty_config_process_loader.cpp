@@ -230,6 +230,7 @@ private Q_SLOTS:
     void realHelperExportsBellFeatures();
     void realHelperExportsMouseHideWhileTyping();
     void realHelperExportsFocusFollowsMouse();
+    void realHelperExportsVtKamAllowed();
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
     void realHelperExportsClipboardWrite();
@@ -874,6 +875,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
                           "cursor-text = cell-foreground\n"
                           "bold-color = bright\n"
                           "faint-opacity = 0.25\n"
+                          "minimum-contrast = 99\n"
                           "clipboard-trim-trailing-spaces = 0\n"
                           "clipboard-paste-protection = 0\n"
                           "clipboard-paste-bracketed-safe = t\n"
@@ -933,6 +935,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
         std::get<GhosttyBoldBrightness>(*result->values.appearance.boldColor),
         GhosttyBoldBrightness::Bright);
     QCOMPARE(result->values.appearance.faintOpacity, 0.25);
+    QCOMPARE(result->values.appearance.minimumContrast, 21.0);
     QVERIFY(!result->values.selectionClipboard.trimTrailingSpaces);
     QVERIFY(!result->values.clipboardPaste.protection);
     QVERIFY(result->values.clipboardPaste.bracketedSafe);
@@ -941,6 +944,11 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QVERIFY(!result->values.selectionClipboard.clearOnTyping);
     QVERIFY(result->values.selectionClipboard.clearOnCopy);
     QCOMPARE(result->values.middleClickAction, MiddleClickAction::Ignore);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    const auto defaults = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(defaults.has_value(), qPrintable(errorMessage(defaults)));
+    QCOMPARE(defaults->values.appearance.minimumContrast, 1.0);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()
@@ -1730,6 +1738,29 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsFocusFollowsMouse()
     result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QVERIFY(!result->values.focusFollowsMouse);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsVtKamAllowed()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("vt-kam-allowed = true\n"));
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.vtKamAllowed);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(!result->values.vtKamAllowed);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsSelectionWordChars()

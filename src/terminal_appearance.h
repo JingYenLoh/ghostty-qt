@@ -78,6 +78,9 @@ struct TerminalAppearance {
 
     TerminalBoldColor boldColor;
     double faintOpacity = 0.5;
+    // Ghostty's WCAG threshold is evaluated by the renderer after faint
+    // alpha and before the block-cursor text override.
+    double minimumContrast = 1.0;
 
     bool operator==(const TerminalAppearance &) const = default;
 };

@@ -244,6 +244,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(boldColor != nullptr);
     QCOMPARE(*boldColor, GhosttyBoldBrightness::Bright);
     QCOMPARE(appearance.faintOpacity, 0.375);
+    QCOMPARE(appearance.minimumContrast, 4.25);
+    QVERIFY(values.vtKamAllowed);
 
     QCOMPARE(values.splitAppearance.unfocusedOpacity, 0.7);
     QVERIFY(!values.splitAppearance.unfocusedFill.has_value());
@@ -1700,6 +1702,16 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("faint-opacity-range")
         << withValue(object(), QStringLiteral("faint-opacity"), 1.1)
         << QStringLiteral("values.faint-opacity is outside");
+    QTest::newRow("minimum-contrast-type")
+        << withValue(object(), QStringLiteral("minimum-contrast"),
+                     QStringLiteral("4.5"))
+        << QStringLiteral("values.minimum-contrast must be a finite number");
+    QTest::newRow("minimum-contrast-low")
+        << withValue(object(), QStringLiteral("minimum-contrast"), 0.99)
+        << QStringLiteral("values.minimum-contrast is outside");
+    QTest::newRow("minimum-contrast-high")
+        << withValue(object(), QStringLiteral("minimum-contrast"), 21.01)
+        << QStringLiteral("values.minimum-contrast is outside");
     QTest::newRow("canonical-color")
         << withValue(object(), QStringLiteral("foreground"),
                      QStringLiteral("#AABBCC"))
@@ -1718,6 +1730,10 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("cursor-blink-type")
         << withValue(object(), QStringLiteral("cursor-style-blink"), 1)
         << QStringLiteral("values.cursor-style-blink must be a boolean");
+    QTest::newRow("vt-kam-allowed-type")
+        << withValue(object(), QStringLiteral("vt-kam-allowed"),
+                     QStringLiteral("true"))
+        << QStringLiteral("values.vt-kam-allowed must be a boolean");
     QTest::newRow("bold-color")
         << withValue(object(), QStringLiteral("bold-color"),
                      QStringLiteral("dim"))

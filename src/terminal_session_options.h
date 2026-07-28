@@ -134,6 +134,9 @@ struct TerminalSessionRuntimeOptions {
     TerminalClipboardPasteOptions clipboardPaste;
     RightClickAction rightClickAction = RightClickAction::ContextMenu;
     bool linkUrl = true;
+    // KAM remains terminal-owned. This live frontend policy decides whether
+    // ANSI mode 2 is permitted to suppress ordinary keyboard and IME input.
+    bool vtKamAllowed = false;
     // Existing compressed pages remain valid when this live policy is
     // disabled; the worker gates only future compression scheduling.
     bool scrollbackCompression = true;

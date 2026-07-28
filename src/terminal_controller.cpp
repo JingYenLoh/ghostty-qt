@@ -236,7 +236,23 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
         },
         Qt::QueuedConnection);
     connect(
+        worker, &SessionWorker::keyboardActionModeChanged, this,
+        [this](bool enabled) {
+            if (keyboardActionMode_ == enabled) return;
+            keyboardActionMode_ = enabled;
+            Q_EMIT keyboardActionModeChanged(enabled);
+        },
+        Qt::QueuedConnection);
+    connect(
         worker, &SessionWorker::activeProcessChanged, this,
+        [this](bool active) {
+            if (activeProcess_ == active) return;
+            activeProcess_ = active;
+            Q_EMIT activeProcessChanged(activeProcess_);
+        },
+        Qt::QueuedConnection);
+    connect(
+        worker, &SessionWorker::inputActivityReconciled, this,
         [this](bool active) {
             if (activeProcess_ == active) return;
             activeProcess_ = active;
@@ -621,8 +637,11 @@ void TerminalController::resizeTerminal(int columns, int rows,
 void TerminalController::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
+    // Keep the GUI-side policy mirror current even after the worker starts.
+    // KAM presentation routing combines this value with terminal-owned mode 2
+    // while the worker independently applies the same authoritative snapshot.
+    launchOptions_.runtime = options;
     if (sessionStartState_ != SessionStartState::Started) {
-        launchOptions_.runtime = options;
         return;
     }
     Q_EMIT runtimeOptionsRequested(options);

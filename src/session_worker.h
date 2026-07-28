@@ -116,6 +116,7 @@ Q_SIGNALS:
     void titleChanged(const QString &title);
     void currentDirectoryChanged(const QString &directory);
     void mouseTrackingChanged(bool enabled);
+    void keyboardActionModeChanged(bool enabled);
     void clipboardTextReady(const QString &text,
                             TerminalClipboardDestination destination);
     // Terminal-originated writes are already deep-copied and policy-tagged by
@@ -131,6 +132,11 @@ Q_SIGNALS:
     // True means closing this surface would interrupt active work. An idle
     // interactive shell remains running but reports false here.
     void activeProcessChanged(bool active);
+    // The GUI marks newline-bearing input as potential activity before this
+    // worker receives it. A KAM rejection publishes the authoritative worker
+    // state even when that state did not change, so the optimistic value
+    // cannot remain stuck.
+    void inputActivityReconciled(bool active);
     void selectionAvailableChanged(bool available);
     void rightClickFinished(const TerminalRightClickResult &result);
     // Emitted for every select-all request, including a blank terminal where
@@ -199,6 +205,8 @@ private:
     void clearSelectionState();
     void clearSelectionAndResetGestureState();
     void clearSelectionAfterKey(bool modifier, bool escape);
+    bool keyboardInputSuppressed() const;
+    void syncKeyboardActionMode();
     void copySelectionTo(TerminalClipboardDestination destination,
                          bool clearAfterCopy);
     void copySelectionOnSelect();
@@ -256,6 +264,7 @@ private:
     bool cursorBlinkResetPending_ = false;
     bool shuttingDown_ = false;
     bool mouseTracking_ = false;
+    bool keyboardActionMode_ = false;
     quint64 terminalContentRevision_ = 1;
     quint64 searchContentRevision_ = 1;
     quint64 publishedContentRevision_ = 0;

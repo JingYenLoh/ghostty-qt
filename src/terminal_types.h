@@ -126,6 +126,9 @@ struct TerminalCell {
     bool strikeThrough = false;
     bool overline = false;
     bool selected = false;
+    // Derived from Ghostty's raw base codepoint, not from shaped QString
+    // contents. Only the glyph is exempt; decorations still use contrast.
+    bool minimumContrastExemptGlyph = false;
     // The URI remains worker-owned and is resolved only for an active hover.
     // This cheap bit lets the UI avoid querying ordinary cells.
     bool hasHyperlink = false;
