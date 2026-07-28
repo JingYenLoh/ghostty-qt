@@ -408,6 +408,7 @@ private:
     // Mirrored separately so the render thread can take a value-only snapshot
     // under renderMutex_ while live configuration updates options_.
     TerminalAppearance appearance_;
+    TerminalBackgroundOptions backgroundOptions_;
     SplitAppearance splitAppearance_;
     GhosttyKeybindState keybinds_;
     RevisionCounter runtimeOptionsRevision_;

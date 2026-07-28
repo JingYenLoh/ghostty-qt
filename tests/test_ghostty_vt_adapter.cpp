@@ -1513,6 +1513,8 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     GhosttyVtAdapter::Options options;
     options.geometry.columns = 16;
     options.geometry.rows = 2;
+    const QColor globalBackground(QStringLiteral("#1e222a"));
+    options.appearance.backgroundColor = globalBackground;
     options.appearance.palette.resize(256);
     for (int index = 0; index < options.appearance.palette.size(); ++index) {
         options.appearance.palette[index] = QColor::fromRgb(index, index, index);
@@ -1534,7 +1536,11 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
         "\033[0;4:3mC"
         "\033[0;4:4mO"
         "\033[0;4:5mH"
-        "\033[0;9;53mK"));
+        "\033[0;9;53mK"
+        "\033[0;48;2;30;34;42mB"
+        "\033[0mD"
+        "\033[48;2;1;2;3m\033[K"
+        "\033[0m"));
 
     GhosttyVtAdapter::RenderSnapshot snapshot;
     QCOMPARE(adapter->renderFrame(&snapshot), GhosttyVtAdapter::RenderResult::Ready);
@@ -1567,6 +1573,7 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     const TerminalCell &inverse = frame.cells.at(3);
     QCOMPARE(inverse.text, QStringLiteral("I"));
     QVERIFY(inverse.inverse);
+    QVERIFY(!inverse.backgroundExplicit);
     QCOMPARE(inverse.foreground, frame.background);
     QCOMPARE(inverse.background, frame.foreground);
 
@@ -1586,6 +1593,25 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     const TerminalCell &decorations = frame.cells.at(10);
     QVERIFY(decorations.strikeThrough);
     QVERIFY(decorations.overline);
+
+    const TerminalCell &matchingExplicitBackground = frame.cells.at(11);
+    QCOMPARE(matchingExplicitBackground.text, QStringLiteral("B"));
+    QVERIFY(matchingExplicitBackground.backgroundExplicit);
+    QCOMPARE(matchingExplicitBackground.background, globalBackground);
+    QCOMPARE(matchingExplicitBackground.background, frame.background);
+
+    const TerminalCell &defaultBackground = frame.cells.at(12);
+    QCOMPARE(defaultBackground.text, QStringLiteral("D"));
+    QVERIFY(!defaultBackground.backgroundExplicit);
+    QCOMPARE(defaultBackground.background, frame.background);
+
+    // Erasing with a background pen uses Ghostty's compact bg-color content
+    // cell rather than a styled text cell. The public resolved-color query
+    // deliberately treats both representations as explicit.
+    const TerminalCell &contentBackground = frame.cells.at(13);
+    QVERIFY(contentBackground.text.isEmpty());
+    QVERIFY(contentBackground.backgroundExplicit);
+    QCOMPARE(contentBackground.background, QColor::fromRgb(1, 2, 3));
 }
 
 void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()

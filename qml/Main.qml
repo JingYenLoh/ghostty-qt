@@ -69,7 +69,10 @@ ApplicationWindow {
     title: workspace.currentTitle.length > 0
            ? workspace.currentTitle + " — ghostty-qt"
            : "ghostty-qt"
-    color: "#1e222a"
+    // Terminal panes paint their own effective background. Keep the window's
+    // clear color fully transparent so those pane-local alpha values reach the
+    // compositor instead of blending onto an opaque QML backing color first.
+    color: "transparent"
 
     Component {
         id: terminalSearchOverlayFactory
@@ -110,18 +113,22 @@ ApplicationWindow {
         workspace.requestWindowClose()
     }
 
-    header: Item {
+    header: Rectangle {
         id: topToolbarSlot
         objectName: "topToolbarSlot"
         implicitHeight: windowHeader.implicitHeight
         visible: !workspace.tabBarAtBottom
+        // The terminal viewport may be translucent, but application chrome is
+        // intentionally opaque.
+        color: "#3b4252"
     }
 
-    footer: Item {
+    footer: Rectangle {
         id: bottomToolbarSlot
         objectName: "bottomToolbarSlot"
         implicitHeight: windowHeader.implicitHeight
         visible: workspace.tabBarAtBottom
+        color: "#3b4252"
     }
 
     ToolBar {
@@ -197,21 +204,16 @@ ApplicationWindow {
         }
     }
 
-    Rectangle {
+    TerminalWorkspace {
+        id: workspace
         anchors.fill: parent
-        color: "#3b4252"
-
-        TerminalWorkspace {
-            id: workspace
-            anchors.fill: parent
-            searchOverlayComponent: terminalSearchOverlayFactory
-            abnormalExitOverlayComponent: terminalAbnormalExitOverlayFactory
-            readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
-            resizeOverlayComponent: terminalResizeOverlayFactory
-            scrollbarComponent: terminalScrollBarFactory
-            bellBorderComponent: terminalBellBorderFactory
-            onWindowAttentionRequested: window.alert(0)
-        }
+        searchOverlayComponent: terminalSearchOverlayFactory
+        abnormalExitOverlayComponent: terminalAbnormalExitOverlayFactory
+        readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
+        resizeOverlayComponent: terminalResizeOverlayFactory
+        scrollbarComponent: terminalScrollBarFactory
+        bellBorderComponent: terminalBellBorderFactory
+        onWindowAttentionRequested: window.alert(0)
     }
 
     Menu {

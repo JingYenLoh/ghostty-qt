@@ -314,6 +314,10 @@
           "status": "supported",
           "note": "The modifier applies in rounded physical pixels to the regular-face underline thickness and drives every rendered underline style."
         },
+        "alpha-blending": {
+          "status": "planned",
+          "note": "Qt Quick currently owns text and primitive blending and does not expose Ghostty's exact native, linear, and linear-corrected renderer pipeline, including the Linux linear-corrected default. Background opacity is implemented independently and does not claim this color-space behavior."
+        },
         "auto-update": {
           "status": "not_applicable",
           "scope": "macos"
@@ -328,6 +332,14 @@
     },
     "background-blur": {
       "scope": "wayland"
+    },
+    "background-opacity": {
+      "status": "supported",
+      "note": "The finalized f64 defaults to 1, is clamped to [0, 1], and reloads every existing and future split pane without replacing its scene root, session worker, terminal, or PTY. The pane base layer uses Ghostty's rounded 8-bit alpha. Qt requests an alpha-capable native surface before any window and the QML terminal host is transparent, while retained top or bottom chrome and the ordinary interactive split dividers remain opaque. Offscreen coverage verifies the Qt surface format, divider fallback, and emitted alpha values; final hardware/compositor output remains an interactive Wayland check."
+    },
+    "background-opacity-cells": {
+      "status": "supported",
+      "note": "The exact default-false boolean preserves style and erase-cell explicit background provenance from the public libghostty render-cell query even when its RGB equals the terminal background. Explicit cell backgrounds are opaque when false and use Ghostty's truncated 8-bit background opacity when true; selection, candidate or selected search, and inverse backgrounds remain opaque, while default cells expose the rounded pane base. Minimum contrast composes the quantized linear-premultiplied cell layer over that base before evaluating glyphs and decorations. Reload is GUI-owned and pane-local."
     },
     "bell-audio-path": {
       "status": "supported",

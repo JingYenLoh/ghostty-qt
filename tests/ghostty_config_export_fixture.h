@@ -281,6 +281,8 @@ inline QJsonObject values()
         {QStringLiteral("metric-modifier-order"), metricModifierOrder()},
         {QStringLiteral("foreground"), QStringLiteral("#112233")},
         {QStringLiteral("background"), QStringLiteral("#445566")},
+        {QStringLiteral("background-opacity"), 0.375},
+        {QStringLiteral("background-opacity-cells"), true},
         {QStringLiteral("unfocused-split-opacity"), 0.7},
         {QStringLiteral("unfocused-split-fill"), QJsonValue::Null},
         {QStringLiteral("split-divider-color"), QStringLiteral("#778899")},

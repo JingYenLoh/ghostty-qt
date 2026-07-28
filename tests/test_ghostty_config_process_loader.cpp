@@ -859,6 +859,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     ConfigFixture::writeFile(
         fixture.preferredPath,
         QByteArrayLiteral("unfocused-split-opacity = -1\n"
+                          "background-opacity = -1\n"
+                          "background-opacity-cells = true\n"
                           "unfocused-split-fill = AliceBlue\n"
                           "palette = 42=#123456\n"
                           "split-divider-color = AliceBlue\n"
@@ -895,6 +897,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QCOMPARE(result->keybindings.root.constFirst().actions,
              QStringList({QStringLiteral("new_tab")}));
     QCOMPARE(result->values.splitAppearance.unfocusedOpacity, 0.15);
+    QCOMPARE(result->values.appearance.backgroundOpacity, 0.0);
+    QVERIFY(result->values.appearance.backgroundOpacityCells);
     QCOMPARE(result->values.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#f0f8ff"))));
     QCOMPARE(result->values.appearance.palette.size(), std::size_t{256});
@@ -948,6 +952,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     ConfigFixture::writeFile(fixture.preferredPath, {});
     const auto defaults = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(defaults.has_value(), qPrintable(errorMessage(defaults)));
+    QCOMPARE(defaults->values.appearance.backgroundOpacity, 1.0);
+    QVERIFY(!defaults->values.appearance.backgroundOpacityCells);
     QCOMPARE(defaults->values.appearance.minimumContrast, 1.0);
 }
 

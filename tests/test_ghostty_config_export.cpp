@@ -194,6 +194,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const GhosttyAppearanceConfig &appearance = values.appearance;
     QCOMPARE(appearance.foreground, QColor(QStringLiteral("#112233")));
     QCOMPARE(appearance.background, QColor(QStringLiteral("#445566")));
+    QCOMPARE(appearance.backgroundOpacity, 0.375);
+    QVERIFY(appearance.backgroundOpacityCells);
     QCOMPARE(appearance.palette.size(), std::size_t{256});
     for (std::size_t index = 0; index < appearance.palette.size(); ++index) {
         const int component = static_cast<int>(index);
@@ -403,6 +405,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     lowValues =
         withValue(std::move(lowValues), QStringLiteral("cursor-opacity"), -2.0);
     lowValues = withValue(std::move(lowValues),
+                          QStringLiteral("background-opacity"), -2.0);
+    lowValues = withValue(std::move(lowValues),
                           QStringLiteral("resize-overlay-duration"), 0);
     lowValues = withValue(std::move(lowValues),
                           QStringLiteral("bell-audio-volume"), -2.0);
@@ -422,6 +426,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
     QVERIFY(!low->values.workingDirectoryPath.has_value());
     QCOMPARE(low->values.appearance.cursorOpacity, 0.0);
+    QCOMPARE(low->values.appearance.backgroundOpacity, 0.0);
     QCOMPARE(low->values.resizeOverlay.duration,
              std::chrono::milliseconds{250});
     QCOMPARE(low->values.bellAudioVolume, -2.0);
@@ -489,6 +494,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     highValues =
         withValue(std::move(highValues), QStringLiteral("cursor-opacity"), 2.0);
     highValues = withValue(std::move(highValues),
+                           QStringLiteral("background-opacity"), 2.0);
+    highValues = withValue(std::move(highValues),
                            QStringLiteral("bell-audio-volume"), 2.0);
     highValues = withValue(std::move(highValues),
                            QStringLiteral("mouse-scroll-multiplier"),
@@ -502,6 +509,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
+    QCOMPARE(high->values.appearance.backgroundOpacity, 1.0);
     QCOMPARE(high->values.bellAudioVolume, 2.0);
     QCOMPARE(high->values.mouseScrollMultiplier.precision, 10'000.0);
     QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
@@ -1242,6 +1250,13 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-metric-modifier-order")
         << withoutValue(object(), QStringLiteral("metric-modifier-order"))
         << QStringLiteral("values is missing field 'metric-modifier-order'");
+    QTest::newRow("missing-background-opacity")
+        << withoutValue(object(), QStringLiteral("background-opacity"))
+        << QStringLiteral("values is missing field 'background-opacity'");
+    QTest::newRow("missing-background-opacity-cells")
+        << withoutValue(object(), QStringLiteral("background-opacity-cells"))
+        << QStringLiteral(
+               "values is missing field 'background-opacity-cells'");
     QTest::newRow("missing-scrollbar")
         << withoutValue(object(), QStringLiteral("scrollbar"))
         << QStringLiteral("values is missing field 'scrollbar'");
@@ -1712,6 +1727,14 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("minimum-contrast-high")
         << withValue(object(), QStringLiteral("minimum-contrast"), 21.01)
         << QStringLiteral("values.minimum-contrast is outside");
+    QTest::newRow("background-opacity-type")
+        << withValue(object(), QStringLiteral("background-opacity"),
+                     QStringLiteral("0.5"))
+        << QStringLiteral("values.background-opacity must be a finite number");
+    QTest::newRow("background-opacity-cells-type")
+        << withValue(object(), QStringLiteral("background-opacity-cells"), 1)
+        << QStringLiteral(
+               "values.background-opacity-cells must be a boolean");
     QTest::newRow("canonical-color")
         << withValue(object(), QStringLiteral("foreground"),
                      QStringLiteral("#AABBCC"))

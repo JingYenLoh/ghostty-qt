@@ -100,15 +100,16 @@ identity on each event instead of retaining tree pointers that pane closure can
 invalidate. Their hit rectangles are exactly the existing two-logical-pixel
 layout gaps, so they never cover a terminal cell; adjacent half-open rectangles
 also make nested T-junction ownership deterministic without stacking tricks.
-An optional configured RGB color is painted by one public
-`QSGSimpleRectNode` per visible handle; an unset value creates no scene-graph
-node and exposes the ordinary Qt/QML gap color. Color reloads update existing
-handles in place, while newly created handles inherit the current workspace
-value. Drag ratios remain unitless, clamp to `[0, 1]`, and relayout only after
-the floored divider position changes. The handles accept no keyboard focus, so
-active-pane and search-overlay focus survive a drag. Moving the workspace to a
-different Qt Quick scene destroys the old scene's handles synchronously to
-release any delivery-agent grab, then recreates them from the stable split IDs.
+One public `QSGSimpleRectNode` paints each visible handle. A configured RGB
+uses that exact color; an unset value uses the frontend's opaque ordinary gap
+color instead of exposing the desktop through the transparent terminal host.
+Color reloads update existing handles in place, while newly created handles
+inherit the current workspace value. Drag ratios remain unitless, clamp to
+`[0, 1]`, and relayout only after the floored divider position changes. The
+handles accept no keyboard focus, so active-pane and search-overlay focus
+survive a drag. Moving the workspace to a different Qt Quick scene destroys
+the old scene's handles synchronously to release any delivery-agent grab, then
+recreates them from the stable split IDs.
 
 Zoom changes only presentation: the complete tree, ratios, PTYs, and logical
 geometry remain intact, while divider handles are absent. Only the current
@@ -339,6 +340,17 @@ Pane-originated and source-less focused-window requests assign that source
 screen before sizing; an initial or zero-window request retains Qt's primary
 screen default.
 
+Before `QApplication` or any `QQuickWindow` exists, startup unconditionally
+requests Qt's default alpha buffer. The capability is therefore available even
+when the initial opacity is `1`, so a later reload can become translucent
+without recreating a native window. `Main.qml` uses a transparent
+`ApplicationWindow` clear color and places `TerminalWorkspace` directly in
+that host, allowing each pane's alpha-bearing background to reach the
+compositor. The retained top or bottom toolbar slot remains an opaque
+rectangle, and unset split dividers paint an explicit opaque frontend fallback,
+so terminal transparency does not make application chrome or the interactive
+two-pixel split gaps translucent.
+
 `goto_window` keeps Ghostty's less obvious surface scope: each matched surface
 emits a typed previous/next request, then `ApplicationController` traverses its
 live root registry because only the process owner can see every window. The
@@ -551,12 +563,22 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    scene-graph overlays in the same global painter order. Each nonempty cell in a
    rebuilt row is shaped with `QTextLayout` and placed at an explicit grid
    coordinate. This avoids fallback-font and wide-cell advances shifting later
-   cells. Cell values retain foreground provenance and bold, faint, inverse,
-   invisible, underline, strike-through, overline, and text-blink attributes so
-   frontend-only appearance rules do not have to be flattened at the worker
-   boundary. The GUI selects one of four cached regular, bold, italic, and
-   bold-italic Qt faces from those attributes; the worker never owns a font or
-   platform font-database handle.
+   cells. Cell values retain foreground provenance, a separate explicit-background
+   bit, and bold, faint, inverse, invisible, underline, strike-through, overline,
+   and text-blink attributes so frontend-only appearance rules do not have to be
+   flattened at the worker boundary. The GUI selects one of four cached regular,
+   bold, italic, and bold-italic Qt faces from those attributes; the worker never
+   owns a font or platform font-database handle.
+
+The adapter derives explicit-background provenance from the public
+`GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR` query rather than comparing
+resolved colors. A successful query therefore remains explicit even when its
+RGB is identical to the terminal's global background, and covers both styled
+SGR cells and background-only cells produced by erase operations;
+`GHOSTTY_INVALID_VALUE` means the cell uses the default background. The bit is
+retained independently of inverse, selection, and search presentation so the
+renderer can apply those later policies without reconstructing terminal style
+state.
 
 ENQ (`0x05`) follows a terminal-protocol return path inside that same worker
 transaction. The adapter owns Ghostty's finalized raw `enquiry-response` bytes
@@ -1348,7 +1370,10 @@ foreground/background, all 256 effective palette defaults, selection and
 candidate/selected search colors, cursor color/style/blink/opacity/text,
 bold-color, faint-opacity, and minimum-contrast. Fixed colors and Ghostty's
 cell-foreground and cell-background aliases remain distinct until the renderer
-has the target cell.
+has the target cell. Background compositing crosses separately as the
+value-only `TerminalBackgroundOptions`, containing the finalized opacity and
+explicit-cell policy. It is GUI-owned: it never enters `SessionWorker` or
+mutates libghostty terminal state.
 
 The same schema carries `click-repeat-interval` as Ghostty's finalized
 unsigned whole-millisecond value, including the Linux 500 ms default, and
@@ -1463,21 +1488,37 @@ fixed cursor defaults are updated through
 OSC 104/OSC 112 reset to the newest configured defaults. Likewise, an active
 DECSCUSR cursor style survives a config reload and its reset selects the newest
 configured style. Selection, search, cursor aliases/opacity/text, bold-color,
-faint-opacity, and minimum-contrast are frontend render policy and therefore
-update without mutating terminal-originated state. Minimum contrast mirrors the
-pinned Linux cell shader: after bold, inverse, selection/search, and faint
-alpha resolve, each glyph and decoration independently compares linear
-premultiplied color with the effective cell background. A ratio strictly below
-the configured threshold becomes opaque white or black, whichever contrasts
-more (black on a tie). The worker marks the five pinned terminal-graphics
-codepoint ranges so only their glyph bypasses correction; their decorations
-still participate. Block cursor text overrides the result, while cursor
-sprites are corrected after cursor opacity. Close confirmation policy and the
-built-in regex link matcher also update live; toggling `link-url` never
-disables OSC 8.
+faint-opacity, minimum-contrast, and both background-opacity values are
+frontend render policy and therefore update without mutating
+terminal-originated state. The base pane rectangle uses the effective terminal
+background and Ghostty's rounded `opacity * 255` alpha. A default-background
+cell contributes no second fill. An explicit background is opaque while
+`background-opacity-cells` is false and uses Ghostty's truncated
+`opacity * 255` alpha while it is true. Selection, candidate or selected
+search, and inverse presentation always replace that choice with an opaque
+cell layer.
+
+Minimum contrast mirrors the pinned Linux cell shader: after bold, inverse,
+selection/search, and faint alpha resolve, the renderer first composites the
+linear-premultiplied cell layer over the linear-premultiplied pane base. Each
+glyph and decoration independently compares against that effective background.
+A ratio strictly below the configured threshold becomes opaque white or black,
+whichever contrasts more (black on a tie). The calculation intentionally
+does not sample content behind the compositor surface. The worker marks the
+five pinned terminal-graphics codepoint ranges so only their glyph bypasses
+correction; their decorations still participate. Block cursor text overrides
+the result, while cursor sprites are corrected after cursor opacity.
+
+Opacity reload is applied to each existing `TerminalPane` and to defaults for
+future tabs and splits. It invalidates retained drawing state only where the
+changed composition can affect it; it does not replace a pane, scene root,
+session worker, terminal, or PTY, and split panes keep independent background
+layers. Close confirmation policy and the built-in regex link matcher also
+update live; toggling `link-url` never disables OSC 8.
 The nullable divider color likewise reloads entirely on the UI thread: a fixed
 RGB value paints the exact reserved gaps, while an empty canonical value
-removes those nodes without relayout, focus changes, or terminal-state work.
+restores the opaque frontend fallback in the same nodes without relayout,
+focus changes, or terminal-state work.
 Unfocused split appearance also reloads entirely on the UI/render side. A pane
 is dimmed only while its tab root is structurally split, its actual terminal
 and window focus is absent, and its own search UI is closed. The nullable fill
@@ -2123,8 +2164,10 @@ The default CTest suite has focused layers for each ownership boundary:
   cells, key and 1002 mouse-drag encoding, bracketed paste, and terminal query
   callbacks directly through the C API.
 - `ghostty-vt-adapter` verifies the application-facing boundary renders value
-  snapshots, carries style provenance and effective palette state, preserves
-  OSC and DECSCUSR overrides across appearance reloads, reports
+  snapshots, carries foreground provenance plus explicit/default background
+  provenance even for RGB equal to the terminal background, and retains
+  effective palette state. It preserves OSC and DECSCUSR overrides across
+  appearance reloads, reports
   title/directory/bell effects, handles terminal callbacks, and encodes paste,
   focus, and key input using terminal modes. It also verifies tagged viewport
   scrolling, selection-target alignment, select-all, and endpoint adjustment
@@ -2185,7 +2228,10 @@ The default CTest suite has focused layers for each ownership boundary:
   source stability, local OSC 7/reset fallback, manual font zoom, and
   future-creation policy reloads. Workspace/QML coverage also verifies exact
   live `always`/`auto`/`never` tab-strip visibility, including one/two-tab
-  transitions while the surrounding toolbar remains visible. Resize-overlay
+  transitions while the surrounding toolbar remains visible. Background-opacity
+  coverage uses two live split panes to verify independent effective colors,
+  live GUI-only reload, inherited future splits, and stable pane, controller,
+  worker, terminal, PTY, and scene identity. Resize-overlay
   coverage verifies all seven pane-relative positions, exact logical size,
   startup and deferred-start suppression, latest-grid coalescing, timer
   restart, grid-preserving pixel-resize rejection, split locality, live mode,
@@ -2233,7 +2279,10 @@ The default CTest suite has focused layers for each ownership boundary:
   grammar, complete closed key/value schema, transactional rejection, missing
   file defaults, file/directory watches, debounce, non-blocking generation
   handling, and last-good retention. `application-tabs-location` verifies the
-  real QML toolbar moves to the configured edge without a binding loop.
+  real QML toolbar moves to the configured edge without a binding loop. It
+  also checks the pre-window alpha-buffer request, the created window format,
+  transparent host clear color, opaque top/bottom chrome, and stable window,
+  content item, workspace, and split panes across live reparenting.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including tagged nullable command objects and their raw
   bytes, finalized non-empty byte-valued `term`, the ordered raw-byte `env`
@@ -2242,8 +2291,9 @@ The default CTest suite has focused layers for each ownership boundary:
   nullable uint64 limits, exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
-  canonical colors, the fixed 256-color palette, the full unsigned scrollback
-  range, and binding trees.
+  canonical colors, clamped background opacity and exact cell-opacity boolean,
+  the fixed 256-color palette, the full unsigned scrollback range, and binding
+  trees.
 - `ghostty-config-process-loader` verifies the four-process
   validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser
@@ -2275,7 +2325,10 @@ The default CTest suite has focused layers for each ownership boundary:
 - `terminal-pane-render` renders frames offscreen, verifies the initial
   placeholder is replaced plus four-role font selection, physical-pixel cell,
   decoration, and cursor metrics at multiple DPRs, selection/cursor/text
-  appearance, and exercises
+  appearance, and the rounded pane versus truncated explicit-cell alpha rules.
+  The same probe covers default and explicit-same-RGB backgrounds, opaque
+  selection/search/inverse layers, zero opacity, live in-place reload, and
+  premultiplied minimum-contrast composition. It also exercises
   sequence consume/replay, performability, viewport/selection action routing,
   release suppression, reload cancellation, correlated worker-action chain
   suspension/cancellation, and tracked OSC 8 hover, copy, and
@@ -2361,12 +2414,13 @@ tests cover first-session FIFO lease commit/release, reload snapshots,
 close-before-start preservation, immediate-tab and reverse-root start order,
 single-start guarantees, immediate child rows/columns/PTY pixels, multiwindow
 creation, inheritance, lifetime, and aggregate quit.
-the offscreen tests validate QML startup, close/recreate shutdown, dialog
-shutdown, and scene-graph frame replacement in a headless environment, but
-they do not validate the hardware RHI path.
+The offscreen tests validate QML startup, close/recreate shutdown, dialog
+shutdown, scene-graph frame replacement, Qt's requested/created alpha format,
+and the renderer's emitted alpha values in a headless environment. They do not
+validate hardware RHI blending or the desktop compositor's final composition.
 `GHOSTTY_QT_ALLOW_NON_WAYLAND=1` is a test escape hatch rather than a
-supported runtime configuration; GPU output must also be checked interactively
-in a real Wayland session.
+supported runtime configuration; GPU output and visible translucency must also
+be checked interactively in a real Wayland session.
 
 ## Deliberate renderer-v1 limits
 
@@ -2378,6 +2432,10 @@ in a real Wayland session.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends, but
   there is no ligature shaping across terminal cells, color-emoji pipeline, or
   Kitty graphics/inline-image renderer.
+- `alpha-blending` remains planned. Qt Quick owns text and primitive blending,
+  and the current public scene-graph path does not expose an exact mapping for
+  Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented
+  background alpha policy is independent of that color-space choice.
 - Public `libghostty-vt` cannot preserve configured cursor-blink tri-state
   precedence over DEC mode 12, so that case remains explicitly partial in the
   parity ledger. Palette generation does not depend on the text config dump:

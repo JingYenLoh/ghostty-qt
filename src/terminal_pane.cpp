@@ -246,6 +246,46 @@ QColor withOpacity(QColor color, double opacity)
     return color;
 }
 
+double normalizedBackgroundOpacity(double opacity)
+{
+    return std::isfinite(opacity) ? std::clamp(opacity, 0.0, 1.0) : 1.0;
+}
+
+int roundedOpacityByte(double opacity)
+{
+    return std::clamp(
+        static_cast<int>(std::lround(normalizedBackgroundOpacity(opacity)
+                                     * 255.0)),
+        0, 255);
+}
+
+int truncatedOpacityByte(double opacity)
+{
+    return std::clamp(
+        static_cast<int>(normalizedBackgroundOpacity(opacity) * 255.0), 0,
+        255);
+}
+
+QColor withAlpha(QColor color, int alpha)
+{
+    if (color.isValid()) {
+        color.setAlpha(std::clamp(alpha, 0, 255));
+    }
+    return color;
+}
+
+QColor cellBackgroundLayer(QColor resolved, bool explicitBackground,
+                           bool forceOpaque, int explicitBackgroundAlpha)
+{
+    if (forceOpaque) {
+        return withAlpha(resolved, 255);
+    }
+    if (!explicitBackground) {
+        return withAlpha(resolved, 0);
+    }
+    return withAlpha(resolved, explicitBackgroundAlpha);
+}
+
 struct LinearPremultipliedColor {
     float red = 0.0F;
     float green = 0.0F;
@@ -686,7 +726,8 @@ struct TerminalTextRenderState {
     qreal baseline = 1.0;
     TerminalAppearance appearance;
     QColor foreground;
-    QColor background;
+    QColor globalBackground;
+    int explicitBackgroundAlpha = 255;
     QVector<QColor> palette;
     QBitArray searchCandidateCells;
     QBitArray searchSelectedCells;
@@ -859,6 +900,7 @@ void publishRenderProbe(
     const TerminalCellMetrics &metrics,
     const std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
         &fontRoleCellCounts,
+    const QColor &baseBackground, const QVector<QColor> &cellBackgrounds,
     const QVector<QColor> &glyphForegrounds,
     const QVector<QColor> &decorationForegrounds,
     const QVector<QColor> &underlineColors, const QColor &cursorColor,
@@ -878,6 +920,8 @@ void publishRenderProbe(
     snapshot.metrics = metrics;
     snapshot.renderFonts = root.fonts;
     snapshot.fontRoleCellCounts = fontRoleCellCounts;
+    snapshot.baseBackground = baseBackground;
+    snapshot.cellBackgrounds = cellBackgrounds;
     snapshot.glyphForegrounds = glyphForegrounds;
     snapshot.decorationForegrounds = decorationForegrounds;
     snapshot.underlineColors = underlineColors;
@@ -1038,6 +1082,7 @@ TerminalPane::TerminalPane(
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
+    , backgroundOptions_(options.background)
     , splitAppearance_(options.splitAppearance)
     , keybinds_(
           keybindProgram.has_value()
@@ -1791,6 +1836,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
+    updated.background = options.background;
     updated.scrollbar = options.scrollbar;
     updated.bellFeatures = options.bellFeatures;
     updated.bellAudioPath = options.bellAudioPath;
@@ -1885,6 +1931,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
                 : updated.appearance.foregroundColor;
         }
         appearance_ = updated.appearance;
+        backgroundOptions_ = updated.background;
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
@@ -2216,6 +2263,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     TerminalFrame frame;
     QVector<quint64> textRowEpochs;
     TerminalAppearance appearance;
+    TerminalBackgroundOptions backgroundOptions;
     SplitAppearance splitAppearance;
     TerminalCellMetrics metrics;
     QString preedit;
@@ -2231,6 +2279,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         frame = frame_;
         textRowEpochs = textRowEpochs_;
         appearance = appearance_;
+        backgroundOptions = backgroundOptions_;
         splitAppearance = splitAppearance_;
         metrics = metrics_;
         preedit = preedit_;
@@ -2269,8 +2318,15 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         std::max(metrics.overlinePosition, metrics.overlineMinimumPosition);
     const bool softwareRenderer = rendererInterface == nullptr
         || rendererInterface->graphicsApi() == QSGRendererInterface::Software;
-    const QColor background =
-        hasFrame ? frame.background : QColor(QStringLiteral("#1e222a"));
+    const QColor opaqueBackground =
+        hasFrame ? frame.background : appearance.backgroundColor;
+    const int baseBackgroundAlpha =
+        roundedOpacityByte(backgroundOptions.opacity);
+    const int explicitBackgroundAlpha = backgroundOptions.opacityCells
+        ? truncatedOpacityByte(backgroundOptions.opacity)
+        : 255;
+    const QColor globalBackground = withAlpha(
+        opaqueBackground, baseBackgroundAlpha);
     QVector<ColoredRect> baseBackgrounds;
     QVector<ColoredRect> backgrounds;
     QVector<ColoredRect> cursorBackgrounds;
@@ -2293,6 +2349,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     QVector<QColor> glyphForegrounds(frame.cells.size());
     QVector<QColor> decorationForegrounds(frame.cells.size());
     QVector<QColor> underlineColors(frame.cells.size());
+    QVector<QColor> cellBackgroundLayers(frame.cells.size());
     QColor renderedCursorColor;
     underlineProbe = &underlineRects;
     strikethroughProbe = &strikethroughRects;
@@ -2301,7 +2358,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 #endif
     // Keep base, cell, and cursor fills in explicit scene-graph layers so
     // their painter order is identical across Qt render backends.
-    appendRect(baseBackgrounds, viewport, background);
+    appendRect(baseBackgrounds, viewport, globalBackground);
 
     QSGTextNode *overlayText = nullptr;
     const auto ensureOverlayText = [&] {
@@ -2337,7 +2394,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         const bool blockCursorActive = cursorActive && cursorStyle == 1;
         QColor cursorCellForeground = frame.foreground;
         QColor cursorCellBackground = frame.background;
-        QColor cursorEffectiveBackground = frame.background;
+        QColor cursorEffectiveBackground = withAlpha(frame.background, 0);
         const qsizetype cursorCellIndex = cursorActive
             ? static_cast<qsizetype>(frame.cursorRow) * frame.columns
                 + frame.cursorColumn
@@ -2365,7 +2422,15 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         textState.baseline = metrics.baseline;
         textState.appearance = appearance;
         textState.foreground = frame.foreground;
-        textState.background = frame.background;
+        // Opacity can only alter retained glyph/decor colors through minimum
+        // contrast. Keep background-only reloads off the text rebuild path at
+        // the default threshold.
+        if (appearance.minimumContrast > 1.0) {
+            textState.globalBackground = globalBackground;
+            textState.explicitBackgroundAlpha = explicitBackgroundAlpha;
+        } else {
+            textState.globalBackground = frame.background;
+        }
         textState.palette = frame.palette;
         textState.searchCandidateCells = searchCandidateCellMask;
         textState.searchSelectedCells = searchSelectedCellMask;
@@ -2463,17 +2528,26 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                         appearance.searchBackground, styledForeground,
                         styledBackground, frame.foreground);
                 }
-                if (cellBackground != background) {
+                const bool forceOpaqueBackground = cell.selected
+                    || selectedSearchMatch || candidateSearchMatch
+                    || cell.inverse;
+                const QColor backgroundLayer = cellBackgroundLayer(
+                    cellBackground, cell.backgroundExplicit,
+                    forceOpaqueBackground, explicitBackgroundAlpha);
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+                cellBackgroundLayers[index] = backgroundLayer;
+#endif
+                if (backgroundLayer.alpha() > 0) {
                     // Background is grid-cell state, even when the glyph in
                     // this cell spans multiple columns. Drawing one column at
                     // a time keeps adjacent/spacer backgrounds non-overlapping
                     // so they can be safely color-batched.
                     appendRect(backgrounds,
                                QRectF(left, top, cellWidth, cellHeight),
-                               cellBackground);
+                               backgroundLayer);
                 }
                 if (index == cursorCellIndex) {
-                    cursorEffectiveBackground = cellBackground;
+                    cursorEffectiveBackground = backgroundLayer;
                 }
 
                 QColor foreground = styledForeground;
@@ -2499,7 +2573,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                         withOpacity(foreground, appearance.faintOpacity);
                 }
                 QColor decorationForeground = minimumContrastColor(
-                    foreground, cellBackground, frame.background,
+                    foreground, backgroundLayer, globalBackground,
                     appearance.minimumContrast);
                 if (!cell.minimumContrastExemptGlyph) {
                     foreground = decorationForeground;
@@ -2544,7 +2618,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 }
                 if (!cell.underlineUsesForeground) {
                     underlineColor = minimumContrastColor(
-                        underlineColor, cellBackground, frame.background,
+                        underlineColor, backgroundLayer, globalBackground,
                         appearance.minimumContrast);
                 }
                 if (insideBlockCursor) {
@@ -2619,7 +2693,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             cursorColor = withOpacity(cursorColor,
                                       focused ? appearance.cursorOpacity : 1.0);
             cursorColor = minimumContrastColor(
-                cursorColor, cursorEffectiveBackground, frame.background,
+                cursorColor, cursorEffectiveBackground, globalBackground,
                 appearance.minimumContrast);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
             renderedCursorColor = cursorColor;
@@ -2812,6 +2886,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     publishRenderProbe(this, *root, metrics, fontRoleCellCounts,
+                       globalBackground, cellBackgroundLayers,
                        glyphForegrounds, decorationForegrounds, underlineColors,
                        renderedCursorColor, underlineRects, strikethroughRects,
                        overlineRects, cursorRects);

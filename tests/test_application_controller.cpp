@@ -361,6 +361,11 @@ private Q_SLOTS:
 
 void ApplicationControllerTest::initTestCase()
 {
+    // Mirror the process policy installed by main() before its first Quick
+    // window. All injected factory windows below should therefore request an
+    // alpha-capable native surface, irrespective of current terminal opacity.
+    QQuickWindow::setDefaultAlphaBuffer(true);
+    QVERIFY(QQuickWindow::hasDefaultAlphaBuffer());
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
 }
@@ -680,6 +685,9 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
 
     const auto initial = controller.createInitialWindow();
     QVERIFY(initial.has_value());
+    QVERIFY(initial->window->requestedFormat().hasAlpha());
+    const WId initialNativeWindowId = initial->window->winId();
+    QQuickItem *const initialContentItem = initial->window->contentItem();
     QCOMPARE(harness.presentations.size(), 1);
     QCOMPARE(presentationWindowStates(initial->window->windowStates()),
              Qt::WindowStates(Qt::WindowNoState));
@@ -687,6 +695,10 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
     LaunchOptions maximized = options;
     maximized.maximize = true;
     controller.applyLaunchOptions(maximized);
+    QCOMPARE(controller.windows().constFirst().window, initial->window);
+    QCOMPARE(initial->window->winId(), initialNativeWindowId);
+    QCOMPARE(initial->window->contentItem(), initialContentItem);
+    QVERIFY(initial->window->requestedFormat().hasAlpha());
     QCOMPARE(presentationWindowStates(initial->window->windowStates()),
              Qt::WindowStates(Qt::WindowNoState));
     QCOMPARE(initial->window->property(
@@ -697,6 +709,7 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
     QTRY_COMPARE_WITH_TIMEOUT(controller.windowCount(), 2, 1000);
     QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 2, 1000);
     const ApplicationWindow actionCreated = controller.windows().constLast();
+    QVERIFY(actionCreated.window->requestedFormat().hasAlpha());
     QCOMPARE(presentationWindowStates(actionCreated.window->windowStates()),
              Qt::WindowStates(Qt::WindowMaximized));
     QCOMPARE(actionCreated.window->visibility(), QWindow::Maximized);
@@ -720,6 +733,7 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
     QTRY_COMPARE_WITH_TIMEOUT(harness.presentations.size(), 3, 1000);
     const ApplicationWindow residentReplacement =
         controller.windows().constFirst();
+    QVERIFY(residentReplacement.window->requestedFormat().hasAlpha());
     QCOMPARE(presentationWindowStates(
                  residentReplacement.window->windowStates()),
              Qt::WindowStates(Qt::WindowFullScreen));
@@ -736,6 +750,7 @@ void ApplicationControllerTest::windowStateReloadAffectsOnlyFutureWindows()
     QCOMPARE(controller.windowCount(), 1);
     QCOMPARE(harness.presentations.size(), 4);
     const ApplicationWindow activated = controller.windows().constFirst();
+    QVERIFY(activated.window->requestedFormat().hasAlpha());
     QCOMPARE(presentationWindowStates(activated.window->windowStates()),
              Qt::WindowStates(Qt::WindowFullScreen));
     QCOMPARE(activated.window->visibility(), QWindow::FullScreen);

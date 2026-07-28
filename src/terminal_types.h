@@ -126,6 +126,11 @@ struct TerminalCell {
     bool strikeThrough = false;
     bool overline = false;
     bool selected = false;
+    // True when libghostty reports a cell-owned background source. This
+    // provenance cannot be recovered from the resolved RGB value because an
+    // explicit color may equal the terminal's global background. Keep it
+    // independent of inverse, selection, and search presentation policy.
+    bool backgroundExplicit = false;
     // Derived from Ghostty's raw base codepoint, not from shaped QString
     // contents. Only the glyph is exempt; decorations still use contrast.
     bool minimumContrastExemptGlyph = false;

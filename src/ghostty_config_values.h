@@ -135,6 +135,10 @@ using GhosttyBoldColor = std::variant<QColor, GhosttyBoldBrightness>;
 struct GhosttyAppearanceConfig {
     QColor foreground;
     QColor background;
+    // The helper exports Ghostty's raw f64. The strict C++ boundary clamps it
+    // using the same [0, 1] renderer semantics before this value is exposed.
+    double backgroundOpacity = 1.0;
+    bool backgroundOpacityCells = false;
     // Effective defaults after Ghostty applies palette generation and
     // harmonious light-theme orientation in the config helper.
     std::array<QColor, 256> palette;

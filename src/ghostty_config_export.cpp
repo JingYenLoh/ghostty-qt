@@ -69,6 +69,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("metric-modifier-order"),
     QLatin1StringView("foreground"),
     QLatin1StringView("background"),
+    QLatin1StringView("background-opacity"),
+    QLatin1StringView("background-opacity-cells"),
     QLatin1StringView("unfocused-split-opacity"),
     QLatin1StringView("unfocused-split-fill"),
     QLatin1StringView("split-divider-color"),
@@ -1222,6 +1224,18 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         if (auto parsed = assign(name, *destination, readRgbColor); !parsed) {
             return std::unexpected(std::move(parsed.error()));
         }
+    }
+    {
+        constexpr QLatin1StringView name("background-opacity");
+        auto parsed = readFiniteDouble(fieldValue(name), context(name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.appearance.backgroundOpacity = std::clamp(*parsed, 0.0, 1.0);
+    }
+    if (auto parsed =
+            assignBoolean(QLatin1StringView("background-opacity-cells"),
+                          result.appearance.backgroundOpacityCells);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
     }
     {
         constexpr QLatin1StringView name("unfocused-split-opacity");

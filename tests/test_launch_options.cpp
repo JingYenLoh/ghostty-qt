@@ -121,6 +121,8 @@ GhosttyConfigSnapshot completeSnapshot()
     values.appearance = {
         .foreground = QColor(QStringLiteral("#112233")),
         .background = QColor(QStringLiteral("#445566")),
+        .backgroundOpacity = 0.375,
+        .backgroundOpacityCells = true,
         .palette = testPalette(),
         .selectionForeground =
             GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
@@ -253,6 +255,7 @@ private Q_SLOTS:
     void mapsScrollbarPolicy();
     void mapsBellFeatures();
     void mapsBellAudio();
+    void mapsBackgroundOpacity();
     void mapsMouseHideWhileTyping();
     void mapsFocusFollowsMouse();
     void mapsSelectionWordChars();
@@ -280,6 +283,7 @@ private Q_SLOTS:
     void projectsTerminalSessionOptions();
     void convertsLegacyLineCapacityToLibghosttyBytes();
     void mapsCloseConfirmationModes();
+    void keepsBackgroundOpacityGuiOwned();
 };
 
 void LaunchOptionsTest::defaults()
@@ -352,6 +356,8 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.appearance.cursorOpacity, 1.0);
     QCOMPARE(options.appearance.faintOpacity, 0.5);
     QCOMPARE(options.appearance.minimumContrast, 1.0);
+    QCOMPARE(options.background.opacity, 1.0);
+    QVERIFY(!options.background.opacityCells);
     QCOMPARE(options.scrollbackLimit.value, quint64(10'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(!options.scrollbackLimitExplicit);
@@ -808,6 +814,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              QColor(QStringLiteral("#112233")));
     QCOMPARE(cliResult.appearance.backgroundColor,
              QColor(QStringLiteral("#445566")));
+    QCOMPARE(cliResult.background.opacity, 0.375);
+    QVERIFY(cliResult.background.opacityCells);
     QCOMPARE(cliResult.splitAppearance.unfocusedOpacity, 0.42);
     QCOMPARE(cliResult.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#778899"))));
@@ -960,6 +968,27 @@ void LaunchOptionsTest::mapsBellAudio()
         applyGhosttyConfigSnapshot(configured, snapshot);
     QVERIFY(!defaults.bellAudioPath.has_value());
     QCOMPARE(defaults.bellAudioVolume, 0.5);
+}
+
+void LaunchOptionsTest::mapsBackgroundOpacity()
+{
+    LaunchOptions base;
+    base.background = {
+        .opacity = 0.25,
+        .opacityCells = false,
+    };
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+
+    const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(configured.background.opacity, 0.375);
+    QVERIFY(configured.background.opacityCells);
+
+    snapshot.values.appearance.backgroundOpacity = 0.75;
+    snapshot.values.appearance.backgroundOpacityCells = false;
+    const LaunchOptions reloaded =
+        applyGhosttyConfigSnapshot(configured, snapshot);
+    QCOMPARE(reloaded.background.opacity, 0.75);
+    QVERIFY(!reloaded.background.opacityCells);
 }
 
 void LaunchOptionsTest::mapsMouseScrollMultiplier()
@@ -1926,6 +1955,22 @@ void LaunchOptionsTest::mapsCloseConfirmationModes()
     QVERIFY(!shouldConfirmClose(ConfirmCloseMode::Always, false, false));
     QVERIFY(shouldConfirmClose(ConfirmCloseMode::Always, true, false));
     QVERIFY(shouldConfirmClose(ConfirmCloseMode::Always, true, true));
+}
+
+void LaunchOptionsTest::keepsBackgroundOpacityGuiOwned()
+{
+    LaunchOptions opaque;
+    LaunchOptions translucent = opaque;
+    translucent.background = {
+        .opacity = 0.375,
+        .opacityCells = true,
+    };
+
+    QVERIFY(opaque != translucent);
+    QCOMPARE(toTerminalSessionRuntimeOptions(opaque),
+             toTerminalSessionRuntimeOptions(translucent));
+    QCOMPARE(toTerminalSessionLaunchOptions(opaque),
+             toTerminalSessionLaunchOptions(translucent));
 }
 
 QTEST_APPLESS_MAIN(LaunchOptionsTest)

@@ -3471,12 +3471,16 @@ public:
                         == GHOSTTY_SUCCESS) {
                         foreground = explicitColor;
                     }
-                    if (ghostty_render_state_row_cells_get(
+                    const GhosttyResult backgroundResult =
+                        ghostty_render_state_row_cells_get(
                             rowCells_,
                             GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
-                            &explicitColor)
-                        == GHOSTTY_SUCCESS) {
+                            &explicitColor);
+                    if (backgroundResult == GHOSTTY_SUCCESS) {
                         background = explicitColor;
+                        cell.backgroundExplicit = true;
+                    } else if (backgroundResult != GHOSTTY_INVALID_VALUE) {
+                        return RenderResult::Retry;
                     }
                     if (style.inverse) {
                         std::swap(foreground, background);

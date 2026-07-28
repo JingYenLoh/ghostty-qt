@@ -413,6 +413,7 @@ private Q_SLOTS:
     void asyncFallbackDoesNotHideAfterPointerActivity();
     void restoresHyperlinkPointerAfterTyping();
     void resolvesMinimumContrastWithShaderOrdering();
+    void rendersBackgroundOpacityAndReloadsInPlace();
     void rendersMinimumContrastAndReloadsLive();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
@@ -4915,6 +4916,18 @@ void TerminalPaneTest::resolvesMinimumContrastWithShaderOrdering()
                  Qt::white, 7.0),
              QColor(Qt::black));
 
+    QColor translucentWhite(Qt::white);
+    translucentWhite.setAlpha(128);
+    QColor defaultCell(Qt::black);
+    defaultCell.setAlpha(0);
+    // Default cells contribute no second layer. Ghostty therefore compares
+    // against the quantized, premultiplied pane-wide background, even though
+    // the compositor color behind the window is unknowable.
+    QCOMPARE(terminalMinimumContrastColorForTest(
+                 QColor(QStringLiteral("#333333")), defaultCell,
+                 translucentWhite, 7.0),
+             QColor(Qt::black));
+
     // Sufficient contrast and the exact maximum boundary retain the input.
     QCOMPARE(terminalMinimumContrastColorForTest(Qt::cyan, Qt::black, Qt::black,
                                                  7.0),
@@ -4922,6 +4935,205 @@ void TerminalPaneTest::resolvesMinimumContrastWithShaderOrdering()
     QCOMPARE(terminalMinimumContrastColorForTest(Qt::white, Qt::black,
                                                  Qt::black, 21.0),
              QColor(Qt::white));
+}
+
+void TerminalPaneTest::rendersBackgroundOpacityAndReloadsInPlace()
+{
+    qRegisterMetaType<TerminalSearchUpdate>();
+    qRegisterMetaType<TerminalUpdate>();
+
+    const QColor globalBackground(QStringLiteral("#203040"));
+    const QColor explicitBackground(QStringLiteral("#804020"));
+    const QColor inverseBackground(QStringLiteral("#106030"));
+    const QColor selectionBackground(QStringLiteral("#405080"));
+    const QColor searchBackground(QStringLiteral("#805040"));
+    const QColor selectedSearchBackground(QStringLiteral("#408050"));
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 10"),
+    };
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = globalBackground;
+    options.appearance.selectionBackground =
+        TerminalColorValue::fromColor(selectionBackground);
+    options.appearance.searchBackground =
+        TerminalColorValue::fromColor(searchBackground);
+    options.appearance.searchSelectedBackground =
+        TerminalColorValue::fromColor(selectedSearchBackground);
+    options.background = {
+        .opacity = 0.5,
+        .opacityCells = false,
+    };
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    constexpr int columns = 7;
+    constexpr int rows = 1;
+    QQuickWindow window;
+    window.setColor(Qt::transparent);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * 3));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *const controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+
+    TerminalUpdate update;
+    update.columns = columns;
+    update.rows = rows;
+    update.fullFrame = true;
+    update.colorsChanged = true;
+    update.foreground = Qt::white;
+    update.background = globalBackground;
+    update.cursorColor = Qt::white;
+    update.cursorChanged = true;
+    update.cursorVisible = false;
+    update.contentRevision = 401;
+    TerminalRowUpdate row;
+    row.row = 0;
+    row.cells.resize(columns);
+    for (TerminalCell &cell : row.cells) {
+        cell.text = QStringLiteral("A");
+        cell.foreground = Qt::white;
+        cell.background = globalBackground;
+        cell.underlineColor = Qt::white;
+    }
+    // A default cell and an explicit cell may resolve to the same RGB but
+    // must remain distinguishable for cell-opacity policy.
+    row.cells[1].backgroundExplicit = true;
+    row.cells[2].background = explicitBackground;
+    row.cells[2].backgroundExplicit = true;
+    row.cells[3].background = inverseBackground;
+    row.cells[3].inverse = true;
+    row.cells[4].selected = true;
+    update.dirtyRows.append(std::move(row));
+    controller->terminalUpdated(update);
+
+    TerminalSearchUpdate search;
+    search.generation = 1;
+    search.contentRevision = update.contentRevision;
+    search.active = true;
+    search.complete = true;
+    search.totalMatches = 2;
+    search.selectedMatch = 0;
+    search.columns = columns;
+    search.rows = rows;
+    search.visibleCellMask =
+        cellMask(columns, rows, {QPoint(5, 0), QPoint(6, 0)});
+    search.selectedCellMask = cellMask(columns, rows, {QPoint(6, 0)});
+    controller->searchUpdated(search);
+
+    const auto paintedProbe = [&] {
+        pane->update();
+        (void)window.grabWindow();
+        return terminalPaneRenderProbe(pane);
+    };
+    const TerminalPaneRenderProbeSnapshot opaqueCells = paintedProbe();
+    QCOMPARE(opaqueCells.baseBackground, QColor(32, 48, 64, 128));
+    QCOMPARE(opaqueCells.cellBackgrounds.size(), columns);
+    QCOMPARE(opaqueCells.cellBackgrounds.at(0).alpha(), 0);
+    QCOMPARE(opaqueCells.cellBackgrounds.at(1),
+             QColor(32, 48, 64, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(2),
+             QColor(128, 64, 32, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(3),
+             QColor(16, 96, 48, 255));
+    QCOMPARE(opaqueCells.cellBackgrounds.at(4), selectionBackground);
+    QCOMPARE(opaqueCells.cellBackgrounds.at(5), searchBackground);
+    QCOMPARE(opaqueCells.cellBackgrounds.at(6), selectedSearchBackground);
+    const quint64 rootSerial = opaqueCells.rootSerial;
+    const QVector<quint64> rowBuildCounts = opaqueCells.rowBuildCounts;
+
+    LaunchOptions translucentCells = options;
+    translucentCells.background.opacityCells = true;
+    pane->applyRuntimeOptions(translucentCells);
+    const TerminalPaneRenderProbeSnapshot translucent = paintedProbe();
+    QCOMPARE(translucent.rootSerial, rootSerial);
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
+    QCOMPARE(translucent.rowBuildCounts, rowBuildCounts);
+    QCOMPARE(translucent.baseBackground.alpha(), 128);
+    QCOMPARE(translucent.cellBackgrounds.at(0).alpha(), 0);
+    // Pinned Ghostty truncates cell alpha but rounds the global alpha.
+    QCOMPARE(translucent.cellBackgrounds.at(1).alpha(), 127);
+    QCOMPARE(translucent.cellBackgrounds.at(2).alpha(), 127);
+    for (int index = 3; index < columns; ++index) {
+        QCOMPARE(translucent.cellBackgrounds.at(index).alpha(), 255);
+    }
+
+    LaunchOptions zeroOpacity = translucentCells;
+    zeroOpacity.background.opacity = 0.0;
+    pane->applyRuntimeOptions(zeroOpacity);
+    const TerminalPaneRenderProbeSnapshot transparent = paintedProbe();
+    QCOMPARE(transparent.rootSerial, rootSerial);
+    QCOMPARE(transparent.rowBuildCounts, rowBuildCounts);
+    QCOMPARE(transparent.baseBackground.alpha(), 0);
+    for (int index = 0; index <= 2; ++index) {
+        QCOMPARE(transparent.cellBackgrounds.at(index).alpha(), 0);
+    }
+    for (int index = 3; index < columns; ++index) {
+        QCOMPARE(transparent.cellBackgrounds.at(index).alpha(), 255);
+    }
+
+    zeroOpacity.background.opacityCells = false;
+    pane->applyRuntimeOptions(zeroOpacity);
+    const TerminalPaneRenderProbeSnapshot explicitOpaque = paintedProbe();
+    QCOMPARE(explicitOpaque.rootSerial, rootSerial);
+    QCOMPARE(explicitOpaque.baseBackground.alpha(), 0);
+    QCOMPARE(explicitOpaque.cellBackgrounds.at(0).alpha(), 0);
+    QCOMPARE(explicitOpaque.cellBackgrounds.at(1).alpha(), 255);
+    QCOMPARE(explicitOpaque.cellBackgrounds.at(2).alpha(), 255);
+    for (int index = 3; index < columns; ++index) {
+        QCOMPARE(explicitOpaque.cellBackgrounds.at(index).alpha(), 255);
+    }
+
+    // Minimum-contrast colors are retained in row text nodes. Changing only
+    // explicit-cell alpha must invalidate those nodes even though the rounded
+    // pane base is unchanged.
+    TerminalUpdate contrastUpdate = update;
+    contrastUpdate.background = Qt::white;
+    ++contrastUpdate.contentRevision;
+    for (TerminalCell &cell : contrastUpdate.dirtyRows.first().cells) {
+        cell.background = Qt::white;
+    }
+    contrastUpdate.dirtyRows.first().cells[1].backgroundExplicit = true;
+    contrastUpdate.dirtyRows.first().cells[2].background = Qt::black;
+    contrastUpdate.dirtyRows.first().cells[2].backgroundExplicit = true;
+    controller->terminalUpdated(contrastUpdate);
+
+    LaunchOptions contrastOpaqueCells = options;
+    contrastOpaqueCells.appearance.minimumContrast = 7.0;
+    pane->applyRuntimeOptions(contrastOpaqueCells);
+    const TerminalPaneRenderProbeSnapshot beforeContrastReload =
+        paintedProbe();
+    QCOMPARE(beforeContrastReload.baseBackground,
+             QColor(255, 255, 255, 128));
+    QCOMPARE(beforeContrastReload.cellBackgrounds.at(2), QColor(Qt::black));
+    QCOMPARE(beforeContrastReload.glyphForegrounds.at(2), QColor(Qt::white));
+
+    LaunchOptions contrastTranslucentCells = contrastOpaqueCells;
+    contrastTranslucentCells.background.opacityCells = true;
+    pane->applyRuntimeOptions(contrastTranslucentCells);
+    const TerminalPaneRenderProbeSnapshot afterContrastReload =
+        paintedProbe();
+    QCOMPARE(afterContrastReload.rootSerial, rootSerial);
+    QCOMPARE(afterContrastReload.baseBackground,
+             beforeContrastReload.baseBackground);
+    QCOMPARE(afterContrastReload.cellBackgrounds.at(2),
+             QColor(0, 0, 0, 127));
+    QCOMPARE(afterContrastReload.glyphForegrounds.at(2), QColor(Qt::black));
+    QVERIFY(allVisibleRowsRebuilt(beforeContrastReload,
+                                  afterContrastReload));
+
+    window.close();
+    delete pane;
 }
 
 void TerminalPaneTest::rendersMinimumContrastAndReloadsLive()

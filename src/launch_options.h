@@ -63,6 +63,10 @@ struct LaunchOptions {
     bool fontFamilyExplicit = false;
     bool fontSizeExplicit = false;
     TerminalAppearance appearance;
+    // Qt-only compositing policy. This deliberately does not enter
+    // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
+    // without waking SessionWorker or mutating libghostty terminal state.
+    TerminalBackgroundOptions background;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
     // Compression is a live session policy. Disabling it leaves existing

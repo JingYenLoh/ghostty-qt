@@ -33,6 +33,7 @@ namespace {
 
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
+constexpr QRgb defaultSplitDividerRgb = 0xff3b4252U;
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
 constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
@@ -41,6 +42,13 @@ constexpr auto kScrollbarProperty = "_ghosttyQtScrollbar";
 constexpr auto kBellBorderProperty = "_ghosttyQtBellBorder";
 constexpr std::size_t kMaximumPendingClipboardWrites = 64;
 constexpr quint64 kMaximumPendingClipboardWriteBytes = 64ULL * 1024 * 1024;
+
+QColor effectiveSplitDividerColor(const std::optional<QColor> &configured)
+{
+    return configured.has_value() && configured->isValid()
+        ? *configured
+        : QColor::fromRgba(defaultSplitDividerRgb);
+}
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
 {
@@ -306,11 +314,8 @@ public:
 
     void markCurrent(quint64 generation) { generation_ = generation; }
 
-    void setColor(std::optional<QColor> color)
+    void setColor(QColor color)
     {
-        if (color.has_value() && !color->isValid()) {
-            color.reset();
-        }
         if (color_ == color) {
             return;
         }
@@ -335,15 +340,11 @@ protected:
 
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override
     {
-        if (!color_.has_value()) {
-            delete oldNode;
-            return nullptr;
-        }
         auto *node = oldNode != nullptr
             ? static_cast<QSGSimpleRectNode *>(oldNode)
             : new QSGSimpleRectNode;
         node->setRect(boundingRect());
-        node->setColor(*color_);
+        node->setColor(color_);
         return node;
     }
 
@@ -417,7 +418,7 @@ private:
     quint64 splitId_ = 0;
     TerminalWorkspace *workspace_ = nullptr;
     SplitDividerDrag drag_;
-    std::optional<QColor> color_;
+    QColor color_ = QColor::fromRgba(defaultSplitDividerRgb);
     quint64 generation_ = 0;
     bool dragging_ = false;
 };
@@ -742,7 +743,8 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
         if (!stillCurrentUpdate()) return;
     }
     for (SplitDividerItem *divider : std::as_const(splitDividers_)) {
-        divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
+        divider->setColor(effectiveSplitDividerColor(
+            effectiveOptions_.splitAppearance.dividerColor));
     }
     const QVector<QPointer<TerminalPane>> panes = paneSnapshot();
     for (const QPointer<TerminalPane> &pane : panes) {
@@ -3135,7 +3137,8 @@ void TerminalWorkspace::updateSplitDividers(Node *node, quint64 generation)
         SplitDividerItem *divider = splitDividers_.value(node->splitId);
         if (divider == nullptr) {
             divider = new SplitDividerItem(node->splitId, this);
-            divider->setColor(effectiveOptions_.splitAppearance.dividerColor);
+            divider->setColor(effectiveSplitDividerColor(
+                effectiveOptions_.splitAppearance.dividerColor));
             splitDividers_.insert(node->splitId, divider);
         }
         divider->markCurrent(generation);

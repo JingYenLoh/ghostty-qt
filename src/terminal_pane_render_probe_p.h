@@ -31,6 +31,10 @@ struct TerminalPaneRenderProbeSnapshot {
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> renderFonts;
     std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
         fontRoleCellCounts{};
+    QColor baseBackground;
+    // Row-major effective cell layers. A valid zero-alpha color represents a
+    // default cell that contributes no second fill over baseBackground.
+    QVector<QColor> cellBackgrounds;
     QVector<QColor> glyphForegrounds;
     QVector<QColor> decorationForegrounds;
     QVector<QColor> underlineColors;

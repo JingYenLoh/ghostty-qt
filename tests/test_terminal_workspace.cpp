@@ -220,7 +220,8 @@ bool approximatelyEqual(const QColor &left, const QColor &right)
     constexpr int tolerance = 2;
     return std::abs(left.red() - right.red()) <= tolerance
         && std::abs(left.green() - right.green()) <= tolerance
-        && std::abs(left.blue() - right.blue()) <= tolerance;
+        && std::abs(left.blue() - right.blue()) <= tolerance
+        && std::abs(left.alpha() - right.alpha()) <= tolerance;
 }
 
 TerminalActionResult successfulOpenFileResult(
@@ -408,6 +409,7 @@ private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
     void typographyReloadReachesLiveAndFuturePanes();
+    void backgroundOpacityReloadIsPaneLocalAndInherited();
     void launchOnlyReloadAffectsOnlyFuturePanes();
     void inheritedTypographyChangesOnlyPointSize();
     void initializationSurvivesReentrantConfigurationObservers();
@@ -610,6 +612,221 @@ void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
          workspace.findChildren<TerminalPane *>()) {
         verifyTypography(pane);
     }
+}
+
+void TerminalWorkspaceTest::backgroundOpacityReloadIsPaneLocalAndInherited()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("sleep 10"),
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor =
+        QColor(QStringLiteral("#101820"));
+    options.background = {
+        .opacity = 0.25,
+        .opacityCells = false,
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQuickWindow window;
+    window.setColor(Qt::transparent);
+    window.resize(720, 360);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QVERIFY(workspace->initialize(options));
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+
+    const CurrentTabProbe first = currentTabProbe(*workspace);
+    QVERIFY(first.pane != nullptr);
+    const CurrentTabProbe second = splitRightProbe(*workspace);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(second.pane != first.pane);
+    QCOMPARE(workspace->findChildren<TerminalPane *>().size(), 2);
+
+    const QPointer<TerminalController> firstController =
+        first.pane->findChild<TerminalController *>();
+    const QPointer<TerminalController> secondController =
+        second.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QVERIFY(firstController->sessionStarted());
+    QVERIFY(secondController->sessionStarted());
+    const QPointer<QThread> firstWorkerThread =
+        firstController->findChild<QThread *>();
+    const QPointer<QThread> secondWorkerThread =
+        secondController->findChild<QThread *>();
+    QVERIFY(firstWorkerThread != nullptr);
+    QVERIFY(secondWorkerThread != nullptr);
+
+    quint64 contentRevision = 1;
+    const auto publishFrame =
+        [&contentRevision](TerminalPane *pane, const QColor &background,
+                           const QColor &explicitBackground) {
+            TerminalController *const controller =
+                pane->findChild<TerminalController *>();
+            if (controller == nullptr) return false;
+
+            TerminalUpdate update;
+            update.columns = 2;
+            update.rows = 1;
+            update.fullFrame = true;
+            update.colorsChanged = true;
+            update.foreground = Qt::white;
+            update.background = background;
+            update.cursorColor = Qt::white;
+            update.cursorChanged = true;
+            update.cursorVisible = false;
+            update.contentRevision = contentRevision++;
+
+            TerminalRowUpdate row;
+            row.row = 0;
+            row.cells.resize(update.columns);
+            for (TerminalCell &cell : row.cells) {
+                cell.foreground = Qt::white;
+                cell.background = background;
+            }
+            row.cells[1].background = explicitBackground;
+            row.cells[1].backgroundExplicit = true;
+            update.dirtyRows.append(std::move(row));
+
+            controller->terminalUpdated(update);
+            // The test-owned frame must remain authoritative while the real
+            // workers continue running in the background.
+            QObject::disconnect(
+                controller, &TerminalController::terminalUpdated, pane,
+                nullptr);
+            pane->update();
+            return true;
+        };
+
+    const QColor firstBackground(QStringLiteral("#203040"));
+    const QColor firstExplicit(QStringLiteral("#904020"));
+    const QColor secondBackground(QStringLiteral("#405060"));
+    const QColor secondExplicit(QStringLiteral("#209060"));
+    QVERIFY(publishFrame(first.pane, firstBackground, firstExplicit));
+    QVERIFY(publishFrame(second.pane, secondBackground, secondExplicit));
+    QVERIFY(!window.grabWindow().isNull());
+
+    const auto withAlpha = [](QColor color, int alpha) {
+        color.setAlpha(alpha);
+        return color;
+    };
+    const auto verifyBackgroundLayers =
+        [&withAlpha](const TerminalPaneRenderProbeSnapshot &probe,
+                     const QColor &background,
+                     const QColor &explicitBackground, int baseAlpha,
+                     int explicitAlpha) {
+            QCOMPARE(probe.baseBackground,
+                     withAlpha(background, baseAlpha));
+            QCOMPARE(probe.cellBackgrounds.size(), 2);
+            QCOMPARE(probe.cellBackgrounds.at(0).alpha(), 0);
+            QCOMPARE(probe.cellBackgrounds.at(1),
+                     withAlpha(explicitBackground, explicitAlpha));
+        };
+    const TerminalPaneRenderProbeSnapshot firstInitial =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondInitial =
+        terminalPaneRenderProbe(second.pane);
+    verifyBackgroundLayers(firstInitial, firstBackground, firstExplicit, 64,
+                           255);
+    verifyBackgroundLayers(secondInitial, secondBackground, secondExplicit, 64,
+                           255);
+    QVERIFY(firstInitial.rootSerial != 0);
+    QVERIFY(secondInitial.rootSerial != 0);
+
+    const QRectF firstGeometry(first.pane->position(), first.pane->size());
+    const QRectF secondGeometry(second.pane->position(), second.pane->size());
+    const PaneId activePaneId =
+        workspace->tabModel()->entryAt(workspace->currentIndex())
+            ->activePaneId;
+    QSignalSpy firstResize(firstController,
+                           &TerminalController::resizeRequested);
+    QSignalSpy secondResize(secondController,
+                            &TerminalController::resizeRequested);
+    QSignalSpy firstRuntime(
+        firstController, &TerminalController::runtimeOptionsRequested);
+    QSignalSpy secondRuntime(
+        secondController, &TerminalController::runtimeOptionsRequested);
+
+    LaunchOptions reloaded = options;
+    reloaded.background = {
+        .opacity = 0.5,
+        .opacityCells = true,
+    };
+    workspace->applyLaunchOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    QVERIFY(workspace->effectiveLaunchOptions().background
+            == reloaded.background);
+
+    const TerminalPaneRenderProbeSnapshot firstReloaded =
+        terminalPaneRenderProbe(first.pane);
+    const TerminalPaneRenderProbeSnapshot secondReloaded =
+        terminalPaneRenderProbe(second.pane);
+    verifyBackgroundLayers(firstReloaded, firstBackground, firstExplicit, 128,
+                           127);
+    verifyBackgroundLayers(secondReloaded, secondBackground, secondExplicit,
+                           128, 127);
+    QCOMPARE(firstReloaded.rootSerial, firstInitial.rootSerial);
+    QCOMPARE(secondReloaded.rootSerial, secondInitial.rootSerial);
+    QVERIFY(firstReloaded.paintSerial > firstInitial.paintSerial);
+    QVERIFY(secondReloaded.paintSerial > secondInitial.paintSerial);
+    QVERIFY(first.pane != nullptr);
+    QVERIFY(second.pane != nullptr);
+    QVERIFY(firstController != nullptr);
+    QVERIFY(secondController != nullptr);
+    QVERIFY(firstWorkerThread != nullptr);
+    QVERIFY(secondWorkerThread != nullptr);
+    QCOMPARE(first.pane->findChild<TerminalController *>(),
+             firstController.data());
+    QCOMPARE(second.pane->findChild<TerminalController *>(),
+             secondController.data());
+    QCOMPARE(firstController->findChild<QThread *>(),
+             firstWorkerThread.data());
+    QCOMPARE(secondController->findChild<QThread *>(),
+             secondWorkerThread.data());
+    QVERIFY(firstController->sessionStarted());
+    QVERIFY(secondController->sessionStarted());
+    QCOMPARE(QRectF(first.pane->position(), first.pane->size()),
+             firstGeometry);
+    QCOMPARE(QRectF(second.pane->position(), second.pane->size()),
+             secondGeometry);
+    QCOMPARE(workspace->tabModel()->entryAt(workspace->currentIndex())
+                 ->activePaneId,
+             activePaneId);
+    QCOMPARE(firstResize.count(), 0);
+    QCOMPARE(secondResize.count(), 0);
+    QCOMPARE(firstRuntime.count(), 0);
+    QCOMPARE(secondRuntime.count(), 0);
+
+    const CurrentTabProbe third = splitRightProbe(*workspace);
+    QVERIFY(third.pane != nullptr);
+    QVERIFY(third.pane != first.pane);
+    QVERIFY(third.pane != second.pane);
+    TerminalController *const thirdController =
+        third.pane->findChild<TerminalController *>();
+    QVERIFY(thirdController != nullptr);
+    QVERIFY(thirdController->sessionStarted());
+
+    const QColor thirdBackground(QStringLiteral("#607080"));
+    const QColor thirdExplicit(QStringLiteral("#806020"));
+    QVERIFY(publishFrame(third.pane, thirdBackground, thirdExplicit));
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot thirdPainted =
+        terminalPaneRenderProbe(third.pane);
+    verifyBackgroundLayers(thirdPainted, thirdBackground, thirdExplicit, 128,
+                           127);
+    QVERIFY(thirdPainted.rootSerial != 0);
+
+    workspace.reset();
+    window.close();
 }
 
 void TerminalWorkspaceTest::launchOnlyReloadAffectsOnlyFuturePanes()
@@ -9528,11 +9745,11 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     options.hold = true;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
-    const QColor toolkitColor(QStringLiteral("#07111b"));
+    const QColor defaultColor(QStringLiteral("#3b4252"));
     const QColor firstColor(QStringLiteral("#a1b2c3"));
     const QColor secondColor(QStringLiteral("#d4a017"));
     QQuickWindow window;
-    window.setColor(toolkitColor);
+    window.setColor(Qt::transparent);
     window.resize(604, 404);
     auto workspace = std::make_unique<TerminalWorkspace>();
     workspace->setParentItem(window.contentItem());
@@ -9568,7 +9785,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QQuickItem *rootDivider = dividers.constFirst();
     QCOMPARE(rootDivider->width(), 2.0);
     QTRY_VERIFY_WITH_TIMEOUT(
-        dividerPaintsExactColor(&window, rootDivider, toolkitColor, false),
+        dividerPaintsExactColor(&window, rootDivider, defaultColor, false),
         2000);
 
     const QRectF rootDividerGeometry(rootDivider->position(),
@@ -9665,8 +9882,8 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
     QCOMPARE(window.activeFocusItem(), thirdPane);
     QCOMPARE(thirdActivated.count(), 0);
 
-    // Empty canonical output removes the custom node and reveals the
-    // frontend's ordinary gap color without recreating the handles.
+    // Empty canonical output restores the frontend's opaque ordinary gap
+    // color without recreating the handles, even over a transparent host.
     reloadedOptions.splitAppearance.dividerColor.reset();
     workspace->applyLaunchOptions(reloadedOptions);
     for (const DividerState &state : dividerStates) {
@@ -9675,7 +9892,7 @@ void TerminalWorkspaceTest::splitDividerColorReloadsWithoutRelayout()
                  state.geometry);
         QTRY_VERIFY_WITH_TIMEOUT(
             dividerPaintsExactColor(
-                &window, state.item, toolkitColor, false),
+                &window, state.item, defaultColor, false),
             2000);
     }
     QCOMPARE(window.activeFocusItem(), thirdPane);

@@ -232,6 +232,10 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     }
 
     result.appearance = toTerminalAppearance(config.appearance);
+    result.background = {
+        .opacity = config.appearance.backgroundOpacity,
+        .opacityCells = config.appearance.backgroundOpacityCells,
+    };
     result.splitAppearance = config.splitAppearance;
     result.splitInheritWorkingDirectory = config.splitInheritWorkingDirectory;
     result.splitPreserveZoomNavigation = config.splitPreserveZoom;

@@ -6,6 +6,17 @@
 
 #include <optional>
 
+// GUI-owned background compositing policy. Keep this separate from
+// TerminalAppearance: the latter crosses to SessionWorker only to update
+// libghostty's terminal colors, while opacity is applied exclusively by the
+// Qt scene graph and compositor.
+struct TerminalBackgroundOptions {
+    double opacity = 1.0;
+    bool opacityCells = false;
+
+    bool operator==(const TerminalBackgroundOptions &) const = default;
+};
+
 enum class TerminalColorKind {
     Unset,
     Color,

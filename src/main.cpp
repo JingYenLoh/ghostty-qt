@@ -1421,6 +1421,11 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
 bool installTabsLocationTestHook(QQuickWindow *window,
                                  TerminalWorkspace *workspace)
 {
+    if (window == nullptr || workspace == nullptr) {
+        qCritical()
+            << "Tabs-location test hook could not find the QML window";
+        return false;
+    }
     auto *const toolbar =
         window->findChild<QQuickItem *>(QStringLiteral("windowToolbar"));
     auto *const topSlot =
@@ -1434,15 +1439,25 @@ bool installTabsLocationTestHook(QQuickWindow *window,
     }
 
     const auto exercise = [window, workspace, toolbar, topSlot, bottomSlot] {
-        TerminalPane *const pane = workspace->findChild<TerminalPane *>();
-        if (pane == nullptr) {
+        if (workspace->findChildren<TerminalPane *>().size() != 1) {
             qCritical()
-                << "Tabs-location test hook could not find the terminal pane";
+                << "Tabs-location test hook did not start with one terminal pane";
+            QCoreApplication::exit(1);
+            return;
+        }
+        workspace->splitRight();
+        const QList<TerminalPane *> panes =
+            workspace->findChildren<TerminalPane *>();
+        if (panes.size() != 2) {
+            qCritical()
+                << "Tabs-location test hook could not create a split";
             QCoreApplication::exit(1);
             return;
         }
 
         const QSize windowSize = window->size();
+        const WId nativeWindowId = window->winId();
+        QQuickItem *const contentItem = window->contentItem();
         const qreal chromeHeight =
             window->property("terminalChromeHeight").toReal();
         const auto locationSignals = std::make_shared<int>(0);
@@ -1450,17 +1465,32 @@ bool installTabsLocationTestHook(QQuickWindow *window,
                          workspace, [locationSignals] { ++*locationSignals; });
 
         const auto verify = [window, workspace, toolbar, topSlot, bottomSlot,
-                             pane, locationSignals, windowSize, chromeHeight](
+                             panes, locationSignals, windowSize, nativeWindowId,
+                             contentItem, chromeHeight](
                                 bool expectedBottom, int expectedSignals,
                                 const char *stage) {
             QQuickItem *const expectedParent =
                 expectedBottom ? bottomSlot : topSlot;
+            const QColor topChromeColor =
+                topSlot->property("color").value<QColor>();
+            const QColor bottomChromeColor =
+                bottomSlot->property("color").value<QColor>();
             const bool valid =
-                workspace->tabBarAtBottom() == expectedBottom
+                QQuickWindow::hasDefaultAlphaBuffer()
+                && window->requestedFormat().hasAlpha()
+                && window->format().hasAlpha()
+                && window->color().alpha() == 0
+                && topChromeColor.isValid() && topChromeColor.alpha() == 255
+                && bottomChromeColor.isValid()
+                && bottomChromeColor.alpha() == 255
+                && workspace->tabBarAtBottom() == expectedBottom
                 && topSlot->isVisible() != expectedBottom
                 && bottomSlot->isVisible() == expectedBottom
                 && toolbar->parentItem() == expectedParent
-                && workspace->findChild<TerminalPane *>() == pane
+                && workspace->findChildren<TerminalPane *>() == panes
+                && workspace->window() == window
+                && window->contentItem() == contentItem
+                && window->winId() == nativeWindowId
                 && *locationSignals == expectedSignals
                 && window->size() == windowSize
                 && qFuzzyCompare(
@@ -1475,6 +1505,12 @@ bool installTabsLocationTestHook(QQuickWindow *window,
                 << ", bottom-visible=" << bottomSlot->isVisible()
                 << ", stable-parent="
                 << (toolbar->parentItem() == expectedParent)
+                << ", alpha-default="
+                << QQuickWindow::hasDefaultAlphaBuffer()
+                << ", alpha-requested="
+                << window->requestedFormat().hasAlpha()
+                << ", alpha-actual=" << window->format().hasAlpha()
+                << ", clear-alpha=" << window->color().alpha()
                 << ", signals=" << *locationSignals;
             QCoreApplication::exit(1);
             return false;
@@ -1608,6 +1644,11 @@ int main(int argc, char *argv[])
     DesktopActivationContext startupActivation =
         DesktopActivationContext::takeFromEnvironment();
 
+    // An alpha channel is a native-surface capability and cannot be added by
+    // live reload after the first QQuickWindow has been created. Request it
+    // unconditionally so an initially opaque terminal can become translucent
+    // without recreating its window, scene graph, panes, or PTYs.
+    QQuickWindow::setDefaultAlphaBuffer(true);
     QApplication application(argc, argv);
     // Ghostty owns last-window process lifetime, including disabled and
     // delayed modes. Qt's implicit auto-quit would bypass that policy.
