@@ -7,6 +7,82 @@ public contract here and do not mark the unavailable behavior supported. Use
 `partial`, `planned`, or `blocked_upstream` as appropriate until an official
 Ghostty commit provides it.
 
+## ENQ response payload length
+
+**Status:** finalized binary `enquiry-response` values, live reload, read-only
+protocol replies, and exact 1–255-byte responses are implemented; longer
+responses are blocked by the pinned public libghostty bridge.
+
+Full Ghostty's termio stream handler places the configured byte slice directly
+in one PTY-write request for every ENQ (`0x05`) and does not impose a
+255-byte configured-length limit. The public `libghostty-vt` callback contract
+also returns a pointer and explicit length, and its PTY-write callback accepts
+a pointer and explicit length. Its internal standalone stream bridge
+nevertheless copies the response into a fixed 256-byte sentinel buffer and
+returns without writing when `response.len >= 256`.
+
+The public header also says the returned memory need remain valid only until
+the enquiry callback returns, although the bridge can read that returned
+pointer only after the callback has returned. ghostty-qt avoids the ambiguity
+by keeping adapter-owned response storage stable across the complete
+synchronous VT-write operation.
+
+Consequently, ghostty-qt preserves the finalized raw bytes, including embedded
+NUL, and responds byte-exactly once per ENQ for lengths 1 through 255. The
+empty default is silent. Values of 256 bytes or more reach the public callback
+but the pinned bridge silently suppresses the reply. This was verified against
+official upstream commit `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on
+2026-07-28.
+
+### Why ghostty-qt does not patch or duplicate the bridge
+
+A local Ghostty source patch would violate this repository's
+official-submodule policy. Parsing ENQ independently in `SessionWorker` would
+create a second streaming terminal parser and could double-reply for shorter
+values while diverging on fragmented input, cancellation, and future parser
+changes. Rejecting longer configuration values would also differ from
+Ghostty's parser and full termio behavior.
+
+The frontend therefore keeps the public callback installed for every finalized
+value and records the public bridge's length limitation explicitly.
+
+### Required upstream contract
+
+Official `libghostty-vt` should forward the enquiry callback's complete
+explicit-length result to the existing PTY-write callback without a fixed
+255-byte payload ceiling. The implementation may change its internal handler
+slice type, allocate temporary sentinel storage, or use another ABI-neutral
+mechanism; no public signature needs to change.
+
+The path must:
+
+- treat a zero-length response as silent;
+- preserve every byte, including embedded NUL;
+- emit exactly one ordered PTY write for each parsed ENQ with a non-empty
+  response;
+- support fragmented input and multiple ENQs in one VT-write call;
+- clarify the returned-buffer lifetime and avoid retaining it beyond the
+  enclosing synchronous VT-write operation; and
+- avoid imposing a smaller response limit than full Ghostty's termio path.
+
+### Upstream acceptance evidence
+
+Public C API tests should verify byte-exact responses of lengths 1, 255, 256,
+and a substantially larger value, plus an embedded-NUL value. They should also
+cover the empty response, repeated and fragmented ENQs, one write per ENQ, and
+callback-result storage released after the documented synchronous lifetime.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once the fixed buffer is removed in an official, publicly reachable Ghostty
+commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Extend adapter and worker integration tests above the old 255-byte boundary.
+3. Remove the length caveat from the user and architecture documentation.
+4. Promote `enquiry-response` from partial to supported in
+   `docs/ghostty-parity.json`.
+
 ## Terminal XTSHIFTESCAPE state query
 
 **Status:** the four-value `mouse-shift-capture` configuration and the

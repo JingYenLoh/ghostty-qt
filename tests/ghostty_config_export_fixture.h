@@ -218,6 +218,8 @@ inline QJsonObject values()
 
     return {
         {QStringLiteral("term"), bytes(QByteArrayLiteral("ghostty-qt-test"))},
+        {QStringLiteral("enquiry-response"),
+         bytes(QByteArray::fromHex("000580ff"))},
         {QStringLiteral("command"),
          shellCommand(QByteArrayLiteral("/bin/fixture-shell"), true)},
         {QStringLiteral("initial-command"),

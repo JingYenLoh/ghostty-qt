@@ -232,6 +232,7 @@ private Q_SLOTS:
     void realHelperExportsSelectionWordChars();
     void realHelperExportsClickRepeatInterval();
     void realHelperExportsClipboardWrite();
+    void realHelperExportsEnquiryResponse();
     void realHelperExportsScrollToBottom();
     void realHelperExportsRightClickAction();
     void realHelperExportsMouseShiftCapture();
@@ -1706,6 +1707,33 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsClipboardWrite()
     const auto result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     QCOMPARE(result->values.clipboardWrite, TerminalClipboardAccess::Allow);
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsEnquiryResponse()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+
+    QByteArray expected = QByteArrayLiteral("literal\\x05:");
+    expected.append(QByteArray::fromHex("050080ff"));
+    ConfigFixture::writeFile(fixture.preferredPath,
+                             QByteArrayLiteral("enquiry-response = ") + expected
+                                 + '\n');
+
+    auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.enquiryResponse, expected);
+
+    ConfigFixture::writeFile(fixture.preferredPath, {});
+    result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QVERIFY(result->values.enquiryResponse.isEmpty());
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsScrollToBottom()

@@ -33,6 +33,7 @@ constexpr auto RootFields = std::to_array<QLatin1StringView>({
 
 constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("term"),
+    QLatin1StringView("enquiry-response"),
     QLatin1StringView("command"),
     QLatin1StringView("initial-command"),
     QLatin1StringView("wait-after-command"),
@@ -1077,6 +1078,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 
     if (auto parsed = assign(QLatin1StringView("term"), result.term,
                              readNonEmptyByteArray);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("enquiry-response"),
+                             result.enquiryResponse, readByteArray);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

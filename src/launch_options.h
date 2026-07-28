@@ -21,6 +21,9 @@ struct LaunchOptions {
     // Finalized terminal identity for future children. This launch-only value
     // never mutates the environment of an already-running pane.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Live raw response to a terminal ENQ control byte. Empty disables the
+    // reply without disabling recognition of the control sequence.
+    QByteArray enquiryResponse;
     // Ghostty's ordinary command applies to every new pane. Initial-command
     // remains separate because its process-wide lease may be won by any pane
     // whose terminal initialization reaches the coordinator first.

@@ -812,6 +812,7 @@ public:
     bool initialize(const Options &adapterOptions)
     {
         clipboardWriteAccess_ = adapterOptions.clipboardWriteAccess;
+        enquiryResponse_ = adapterOptions.enquiryResponse;
         const quint64 maximum =
             static_cast<quint64>(std::numeric_limits<size_t>::max());
         const GhosttyTerminalOptions options{
@@ -833,6 +834,9 @@ public:
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
             reinterpret_cast<const void *>(&Impl::writePtyCallback));
+        ghostty_terminal_set(
+            terminal_, GHOSTTY_TERMINAL_OPT_ENQUIRY,
+            reinterpret_cast<const void *>(&Impl::enquiryCallback));
         ghostty_terminal_set(
             terminal_, GHOSTTY_TERMINAL_OPT_BELL,
             reinterpret_cast<const void *>(&Impl::bellCallback));
@@ -963,6 +967,11 @@ public:
     void setClipboardWriteAccess(TerminalClipboardAccess access)
     {
         clipboardWriteAccess_ = access;
+    }
+
+    void setEnquiryResponse(const QByteArray &response)
+    {
+        enquiryResponse_ = response;
     }
 
     void destroy()
@@ -3689,6 +3698,24 @@ private:
         }
     }
 
+    static GhosttyString enquiryCallback(GhosttyTerminal, void *userdata)
+    {
+        auto *impl = static_cast<Impl *>(userdata);
+        if (impl == nullptr || impl->enquiryResponse_.isEmpty()) {
+            return {};
+        }
+
+        // libghostty copies this borrowed response synchronously before the
+        // surrounding terminal write returns. Adapter-owned storage therefore
+        // remains valid across the callback return and preserves arbitrary
+        // bytes, including NUL.
+        return {
+            .ptr = reinterpret_cast<const uint8_t *>(
+                impl->enquiryResponse_.constData()),
+            .len = static_cast<size_t>(impl->enquiryResponse_.size()),
+        };
+    }
+
     static void bellCallback(GhosttyTerminal, void *userdata)
     {
         if (auto *impl = static_cast<Impl *>(userdata)) {
@@ -3907,6 +3934,7 @@ private:
     bool bellPending_ = false;
     TerminalClipboardAccess clipboardWriteAccess_ =
         TerminalClipboardAccess::Allow;
+    QByteArray enquiryResponse_;
     QVector<TerminalClipboardWriteRequest> pendingClipboardWrites_;
     quint64 pendingClipboardBytes_ = 0;
     std::optional<quintptr> lastOutputBottomNode_;
@@ -4004,6 +4032,11 @@ bool GhosttyVtAdapter::setAppearance(const TerminalAppearance &appearance)
 void GhosttyVtAdapter::setClipboardWriteAccess(TerminalClipboardAccess access)
 {
     impl_->setClipboardWriteAccess(access);
+}
+
+void GhosttyVtAdapter::setEnquiryResponse(const QByteArray &response)
+{
+    impl_->setEnquiryResponse(response);
 }
 
 void GhosttyVtAdapter::writeVt(QByteArrayView data)

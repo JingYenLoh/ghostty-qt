@@ -193,6 +193,9 @@ struct SplitAppearance {
 struct GhosttyConfigValues {
     // Ghostty finalizes an empty source value back to this non-empty default.
     QByteArray term = QByteArrayLiteral("xterm-ghostty");
+    // Raw bytes written to the PTY when the terminal receives ENQ. The empty
+    // default deliberately means that ENQ is silent.
+    QByteArray enquiryResponse;
     // The ordinary command is finalized for every terminal surface. The
     // optional initial command replaces it only for the first surface that
     // successfully initializes.

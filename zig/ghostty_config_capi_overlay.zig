@@ -408,6 +408,10 @@ fn writeValues(
     try json.beginArray();
     for (config.term) |byte| try json.write(byte);
     try json.endArray();
+    try json.objectField("enquiry-response");
+    try json.beginArray();
+    for (config.@"enquiry-response") |byte| try json.write(byte);
+    try json.endArray();
     try json.objectField("command");
     try writeOptionalCommand(json, config.command, command_uses_default_shell);
     try json.objectField("initial-command");

@@ -136,6 +136,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
 {
     return {
         .appearance = options.appearance,
+        .enquiryResponse = options.enquiryResponse,
         .selectionClipboard = options.selectionClipboard,
         .selectionWordChars = options.selectionWordChars,
         .clickRepeatIntervalMilliseconds =
@@ -189,6 +190,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     const GhosttyConfigValues &config = snapshot.values;
 
     result.term = config.term;
+    result.enquiryResponse = config.enquiryResponse;
     // Ghostty finalization normally resolves the default shell, but its
     // runtime still defines shell-form `sh` when neither SHELL nor passwd
     // provides one. Materialize that fallback while this value is known to

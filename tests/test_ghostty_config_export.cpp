@@ -69,6 +69,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     const GhosttyConfigValues &values = parsed->values;
 
     QCOMPARE(values.term, QByteArrayLiteral("ghostty-qt-test"));
+    QCOMPARE(values.enquiryResponse, QByteArray::fromHex("000580ff"));
     QVERIFY(values.ordinaryCommand.has_value());
     QCOMPARE(values.ordinaryCommand->kind, TerminalCommandKind::Shell);
     QCOMPARE(values.ordinaryCommand->shellCommand,
@@ -376,6 +377,23 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
 
 void GhosttyConfigExportTest::normalizesBoundaryValues()
 {
+    QByteArray longEnquiryResponse(300, '\0');
+    for (qsizetype index = 0; index < longEnquiryResponse.size(); ++index) {
+        longEnquiryResponse[index] = static_cast<char>(index);
+    }
+    QJsonObject unrestrictedBytes =
+        withValue(object(), QStringLiteral("enquiry-response"),
+                  bytes(QByteArrayView(longEnquiryResponse)));
+    const auto unrestricted =
+        parseGhosttyConfigExportJson(json(unrestrictedBytes));
+    QVERIFY2(unrestricted.has_value(), qPrintable(errorMessage(unrestricted)));
+    QCOMPARE(unrestricted->values.enquiryResponse, longEnquiryResponse);
+
+    const auto emptyEnquiry = parseGhosttyConfigExportJson(json(
+        withValue(object(), QStringLiteral("enquiry-response"), QJsonArray{})));
+    QVERIFY2(emptyEnquiry.has_value(), qPrintable(errorMessage(emptyEnquiry)));
+    QVERIFY(emptyEnquiry->values.enquiryResponse.isEmpty());
+
     QJsonObject lowValues = object();
     lowValues =
         withValue(std::move(lowValues), QStringLiteral("working-directory"),
@@ -893,6 +911,32 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("term"), QJsonArray{256})
         << QStringLiteral(
                "values.term[0] must be an unsigned integer in range");
+    QTest::newRow("missing-enquiry-response")
+        << withoutValue(object(), QStringLiteral("enquiry-response"))
+        << QStringLiteral("values is missing field 'enquiry-response'");
+    QTest::newRow("enquiry-response-type")
+        << withValue(object(), QStringLiteral("enquiry-response"), true)
+        << QStringLiteral("values.enquiry-response must be an array");
+    QTest::newRow("enquiry-response-negative-byte")
+        << withValue(object(), QStringLiteral("enquiry-response"),
+                     QJsonArray{-1})
+        << QStringLiteral(
+               "values.enquiry-response[0] must be an unsigned integer in range");
+    QTest::newRow("enquiry-response-large-byte")
+        << withValue(object(), QStringLiteral("enquiry-response"),
+                     QJsonArray{256})
+        << QStringLiteral(
+               "values.enquiry-response[0] must be an unsigned integer in range");
+    QTest::newRow("enquiry-response-fractional-byte")
+        << withValue(object(), QStringLiteral("enquiry-response"),
+                     QJsonArray{1.5})
+        << QStringLiteral(
+               "values.enquiry-response[0] must be an unsigned integer in range");
+    QTest::newRow("enquiry-response-byte-type")
+        << withValue(object(), QStringLiteral("enquiry-response"),
+                     QJsonArray{QStringLiteral("5")})
+        << QStringLiteral(
+               "values.enquiry-response[0] must be an unsigned integer");
     QTest::newRow("missing-command")
         << withoutValue(object(), QStringLiteral("command"))
         << QStringLiteral("values is missing field 'command'");

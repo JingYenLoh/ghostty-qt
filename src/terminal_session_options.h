@@ -122,6 +122,9 @@ enum class RightClickAction {
 // boundary limited to state that SessionWorker actually owns at runtime.
 struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
+    // Raw protocol response for ENQ. QByteArray preserves embedded NUL and
+    // non-UTF-8 bytes across queued runtime reloads.
+    QByteArray enquiryResponse;
     TerminalSelectionClipboardOptions selectionClipboard;
     QVector<quint32> selectionWordChars;
     quint32 clickRepeatIntervalMilliseconds = 500;

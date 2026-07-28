@@ -766,6 +766,7 @@ bool SessionWorker::createTerminal()
             scrollbackLimitInBytes(options_.scrollbackLimit, columns_),
         .appearance = options_.runtime.appearance,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
+        .enquiryResponse = options_.runtime.enquiryResponse,
     };
     GhosttyVtAdapter::Callbacks callbacks;
     callbacks.writePty = [this](const QByteArray &data) {
@@ -812,6 +813,7 @@ void SessionWorker::applyRuntimeOptions(
             options.clickRepeatIntervalMilliseconds);
     if (vt_ != nullptr) {
         vt_->setClipboardWriteAccess(options.clipboardWrite);
+        vt_->setEnquiryResponse(options.enquiryResponse);
     }
     options_.runtime = options;
     if (vt_ != nullptr && scrollToBottomOutputChanged) {

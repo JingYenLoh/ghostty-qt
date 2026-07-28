@@ -2351,6 +2351,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
         .protection = false,
         .bracketedSafe = true,
     };
+    reloaded.enquiryResponse = QByteArray::fromHex("00454e51ff");
     reloaded.middleClickAction = MiddleClickAction::Ignore;
     reloaded.mouseShiftCapture = MouseShiftCapture::Never;
     reloaded.linkUrl = false;
@@ -2376,6 +2377,7 @@ void TerminalPaneTest::reloadsFontWithoutOverwritingManualZoom()
     QCOMPARE(splitOptions.clickRepeatIntervalMilliseconds,
              reloaded.clickRepeatIntervalMilliseconds);
     QCOMPARE(splitOptions.clipboardPaste, reloaded.clipboardPaste);
+    QCOMPARE(splitOptions.enquiryResponse, reloaded.enquiryResponse);
     QCOMPARE(splitOptions.middleClickAction, reloaded.middleClickAction);
     QCOMPARE(splitOptions.mouseShiftCapture, reloaded.mouseShiftCapture);
     QCOMPARE(splitOptions.linkUrl, reloaded.linkUrl);

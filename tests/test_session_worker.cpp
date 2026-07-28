@@ -263,6 +263,7 @@ private Q_SLOTS:
     void sendsTerminalControlActionsThroughPty();
     void pastesTerminalFilePathAsRawOrderedInput();
     void readOnlyBlocksSurfaceInputButPreservesProtocolReplies();
+    void appliesLiveEnquiryResponse();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
     void appliesReloadedAppearanceToExistingTerminal();
@@ -3445,6 +3446,104 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
         updatesContain(updateSpy, QStringLiteral("readonly-done")), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::appliesLiveEnquiryResponse()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/enquiry-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QDir controls(controlDirectory.path());
+    const QString firstResponsePath =
+        controls.filePath(QStringLiteral("first-response"));
+    const QString reloadMarker = controls.filePath(QStringLiteral("reload"));
+    const QString secondResponsePath =
+        controls.filePath(QStringLiteral("second-response"));
+    const QString readOnlyMarker =
+        controls.filePath(QStringLiteral("readonly"));
+    const QString thirdResponsePath =
+        controls.filePath(QStringLiteral("third-response"));
+
+    const QByteArray initialResponse = QByteArray::fromHex("004180ff");
+    const QByteArray reloadedResponse = QByteArrayLiteral("NEXT");
+    const QByteArray readOnlyResponse = QByteArray::fromHex("0052fe");
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'enquiry-ready\\005'; "
+                       "dd bs=1 count=4 of=\"$1\" 2>/dev/null; "
+                       "printf '\\r\\nfirst-complete'; "
+                       "while [ ! -e \"$2\" ]; do sleep 0.01; done; "
+                       "printf '\\005'; "
+                       "dd bs=1 count=4 of=\"$3\" 2>/dev/null; "
+                       "printf '\\r\\nsecond-complete'; "
+                       "while [ ! -e \"$4\" ]; do sleep 0.01; done; "
+                       "printf '\\005'; "
+                       "dd bs=1 count=3 of=\"$5\" 2>/dev/null; "
+                       "printf '\\r\\nreadonly-complete'; "
+                       "sleep 30"),
+        QStringLiteral("enquiry-test"),
+        firstResponsePath,
+        reloadMarker,
+        secondResponsePath,
+        readOnlyMarker,
+        thirdResponsePath,
+    };
+    options.hold = true;
+    options.runtime.enquiryResponse = initialResponse;
+    QVERIFY(worker.initialize(options));
+
+    const auto readFile = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+    };
+    const auto touch = [](const QString &path) {
+        QFile marker(path);
+        return marker.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("enquiry-ready")), 5000);
+    QTRY_COMPARE_WITH_TIMEOUT(readFile(firstResponsePath), initialResponse,
+                              5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("first-complete")), 1000);
+
+    TerminalSessionRuntimeOptions runtime = options.runtime;
+    runtime.enquiryResponse = reloadedResponse;
+    worker.applyRuntimeOptions(runtime);
+    QVERIFY(touch(reloadMarker));
+    QTRY_COMPARE_WITH_TIMEOUT(readFile(secondResponsePath), reloadedResponse,
+                              5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("second-complete")), 1000);
+
+    // ENQ is terminal protocol traffic. It bypasses the surface-input
+    // read-only gate just like cursor-position and focus-report responses.
+    runtime.enquiryResponse = readOnlyResponse;
+    worker.applyRuntimeOptions(runtime);
+    worker.setReadOnly(true);
+    QVERIFY(touch(readOnlyMarker));
+    QTRY_COMPARE_WITH_TIMEOUT(readFile(thirdResponsePath), readOnlyResponse,
+                              5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("readonly-complete")), 1000);
+
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""

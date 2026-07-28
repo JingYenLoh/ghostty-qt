@@ -80,6 +80,7 @@ GhosttyConfigSnapshot completeSnapshot()
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     GhosttyConfigValues &values = snapshot.values;
     values.term = QByteArrayLiteral("ghostty-qt-configured");
+    values.enquiryResponse = QByteArray::fromHex("000580ff");
     values.ordinaryCommand =
         TerminalCommand::shell(QByteArrayLiteral("printf 'ordinary command'"));
     values.initialCommand = TerminalCommand::direct({
@@ -286,6 +287,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
+    QVERIFY(options.enquiryResponse.isEmpty());
     QVERIFY(!options.ordinaryCommand.has_value());
     QVERIFY(!options.initialCommand.has_value());
     QCOMPARE(options.abnormalCommandExitRuntimeMilliseconds, quint32{250});
@@ -785,6 +787,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     // projection must trust that complete value instead of rebuilding a
     // hybrid from the original frontend flags.
     QCOMPARE(cliResult.term, QByteArrayLiteral("ghostty-qt-configured"));
+    QCOMPARE(cliResult.enquiryResponse, snapshot.values.enquiryResponse);
     QVERIFY(cliResult.ordinaryCommand == snapshot.values.ordinaryCommand);
     QVERIFY(cliResult.initialCommand == snapshot.values.initialCommand);
     QCOMPARE(cliResult.abnormalCommandExitRuntimeMilliseconds, quint32{731});
@@ -1525,6 +1528,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 {
     LaunchOptions options;
     options.term = QByteArrayLiteral("ghostty-qt-session");
+    options.enquiryResponse = QByteArray::fromHex("000580ff");
     options.environment = {
         {
             .key = QByteArrayLiteral("SESSION_ASCII"),
@@ -1604,6 +1608,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         toTerminalSessionLaunchOptions(options);
 
     QCOMPARE(runtime.appearance, options.appearance);
+    QCOMPARE(runtime.enquiryResponse, options.enquiryResponse);
     QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
     QCOMPARE(runtime.selectionWordChars, options.selectionWordChars);
     QCOMPARE(runtime.clickRepeatIntervalMilliseconds,
@@ -1646,6 +1651,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     workerPolicyChanged.rightClickAction = RightClickAction::Ignore;
     QVERIFY(toTerminalSessionRuntimeOptions(workerPolicyChanged) != runtime);
     QVERIFY(toTerminalSessionLaunchOptions(workerPolicyChanged) != launch);
+
+    LaunchOptions enquiryResponseChanged = options;
+    enquiryResponseChanged.enquiryResponse = QByteArrayLiteral("changed");
+    QVERIFY(toTerminalSessionRuntimeOptions(enquiryResponseChanged) != runtime);
+    QVERIFY(toTerminalSessionLaunchOptions(enquiryResponseChanged) != launch);
 
     LaunchOptions frontendOnlyChanged = options;
     frontendOnlyChanged.typography.face(TerminalFontRole::Regular).families = {
@@ -1762,6 +1772,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(toTerminalSessionRuntimeOptions(inheritedDirectory), runtime);
 
     options.workingDirectory.clear();
+    options.enquiryResponse.clear();
     options.ordinaryCommand.reset();
     options.initialCommand.reset();
     options.abnormalCommandExitRuntimeMilliseconds = 0;
@@ -1790,6 +1801,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(launch.command->defaultShell);
     QCOMPARE(launch.runtime.abnormalCommandExitRuntimeMilliseconds,
              std::numeric_limits<quint32>::max());
+    QCOMPARE(launch.runtime.enquiryResponse, QByteArray::fromHex("000580ff"));
     QVERIFY(launch.runtime.waitAfterCommand);
     QCOMPARE(launch.environment,
              TerminalEnvironment({

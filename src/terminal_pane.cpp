@@ -1703,6 +1703,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         options.clickRepeatIntervalMilliseconds;
     updated.clipboardPaste = options.clipboardPaste;
     updated.clipboardWrite = options.clipboardWrite;
+    updated.enquiryResponse = options.enquiryResponse;
     updated.splitAppearance = options.splitAppearance;
     updated.rightClickAction = options.rightClickAction;
     updated.middleClickAction = options.middleClickAction;

@@ -558,6 +558,20 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    bold-italic Qt faces from those attributes; the worker never owns a font or
    platform font-database handle.
 
+ENQ (`0x05`) follows a terminal-protocol return path inside that same worker
+transaction. The adapter owns Ghostty's finalized raw `enquiry-response` bytes
+and keeps that storage stable across the enquiry callback return and
+libghostty's synchronous consumption. An empty response is silent. For a
+response of 1–255 bytes, each parsed ENQ invokes the callback once and
+libghostty forwards one byte-exact write—including embedded NUL—through its
+ordinary `write_pty` callback. `SessionWorker` queues that callback with
+device-status and other terminal-generated replies rather than with surface
+input, so read-only mode does not suppress it. Live configuration replacement
+happens on the session thread before later VT parsing, keeping the callback
+storage and response generation ordered. The pinned public libghostty bridge
+uses a 256-byte scratch buffer and silently drops responses of 256 bytes or
+more; full Ghostty's termio path has no corresponding configured-length limit.
+
 The application-facing adapter header contains only Qt and project value
 types; the Ghostty C header and every Ghostty handle remain in its private
 implementation. No Ghostty handle crosses into `SessionWorker` or the
@@ -1496,7 +1510,8 @@ only to panes created afterward.
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the finalized non-empty raw-byte child terminal identity,
-the finalized ordered raw-byte child-environment override map, the exact
+the finalized ordered raw-byte child-environment override map, the finalized
+raw-byte `enquiry-response`, the exact
 default-true scrollback-compression Boolean, the exact scrollbar policy, all
 five finalized
 `bell-features` booleans, the nullable finalized custom-audio path with
@@ -1804,9 +1819,10 @@ While enabled, surface-originated keyboard and IME data, encoded mouse reports,
 paste, and raw `csi`/`esc`/`text` actions are discarded before reaching the PTY;
 the controller also avoids turning those suppressed bytes into speculative
 foreground-process activity. PTY output, terminal-generated protocol replies,
-resize/focus lifecycle, selection and copy, search, native scrolling, and other
-terminal-local actions remain available. Toggling the mode off resumes later
-input without replaying anything discarded while it was enabled.
+including a configured response to each ENQ, resize/focus lifecycle, selection
+and copy, search, native scrolling, and other terminal-local actions remain
+available. Toggling the mode off resumes later input without replaying anything
+discarded while it was enabled.
 
 The visible state mirrors pinned GTK with an input-transparent top-right
 `Read-only` badge on the affected pane, so the indicator never captures the

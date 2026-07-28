@@ -408,6 +408,10 @@
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
     },
+    "enquiry-response": {
+      "status": "partial",
+      "note": "The strict config projection preserves Ghostty's finalized raw bytes, including embedded NUL, and the empty default is silent. Every ENQ (0x05) invokes the public libghostty callback once; each non-empty response that fits the pinned callback's 255-byte payload boundary is returned byte-exactly through the terminal-generated PTY-write path, independently of read-only surface-input policy. Existing panes replace their adapter-owned response on live reload before later terminal parsing. The pinned public libghostty bridge silently drops payloads of 256 bytes or more even though full Ghostty's termio path has no corresponding configured-length limit; REQUIRES_UPSTREAM.md tracks that remaining gap."
+    },
     "env": {
       "status": "supported",
       "note": "The private typed projection preserves Ghostty's finalized ordered raw-byte override map, including repeated-key replacement, configured-key removal, whole-map reset, and include precedence. Each pane snapshots the map at construction and applies it byte-exactly after inherited and terminal-injected values; a concrete working directory writes PWD last, while a configured PATH is visible to the child without changing parent-PATH executable lookup. Removal/reset do not unset inherited variables. Embedded NUL is rejected as an execve-safety hardening."

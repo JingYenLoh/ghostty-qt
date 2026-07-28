@@ -187,8 +187,8 @@ deterministic fake editor; invoking this action with a developer's environment
 can intentionally replace the test process with their interactive editor.
 
 The schema-v1 projection includes the finalized non-empty raw-byte `term`
-child identity, the finalized ordered raw-byte `env` override map, finalized
-working-directory,
+child identity, the finalized ordered raw-byte `env` override map, the
+finalized binary-safe `enquiry-response`, finalized working-directory,
 split/tab/window directory inheritance policies, new-window/tab font-size policy,
 and the canonical `current`/`end` new-tab position plus the
 `always`/`auto`/`never` tab-bar visibility policy, complete canonical 256-entry
@@ -218,14 +218,16 @@ export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, Unicode scalar range/surrogate rejection,
 transaction consistency, and default-aware keybinding diagnostics;
 launch-option and process-loader tests verify that
-explicit font CLI arguments enter both structured queries before Ghostty
-finalization, preserving f32 and styled-role defaults while the public
+binary `enquiry-response` values reach runtime options unchanged and explicit
+font CLI arguments enter both structured queries before Ghostty finalization,
+preserving f32 and styled-role defaults while the public
 `+validate-config` action retains its exact action-specific grammar.
 Terminal-cell-metric and
 pane tests verify four-role selection, physical-pixel/DPR projection,
 decoration and cursor geometry, live reload, and manual zoom. Adapter tests
-verify that
-config-default changes preserve OSC/DECSCUSR terminal overrides; and
+verify binary ENQ callbacks at the empty, 255-byte, and public-bridge
+256-byte boundaries as well as config-default changes preserving
+OSC/DECSCUSR terminal overrides; and
 `terminal-pane-render` verifies
 frontend-only terminal color/style, retained split dimming, live link-matcher
 rules, and live preview policy. Workspace render tests cover dimming's actual
@@ -272,17 +274,18 @@ The five focused config tests have distinct boundaries:
 - `ghostty-config-export` exercises the strict schema-v1 decoder independently
   of process execution, including finalized non-empty byte-valued `term`, the
   ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
-  rejection, the exact cgroup enum/boolean and nullable canonical-decimal
-  uint64 limits, typography role lists, tagged style and metric alternatives,
-  fields and types, the full unsigned scrollback range, nullable values, and
-  malformed keybinding trees.
+  rejection, empty and binary `enquiry-response` values, the exact cgroup
+  enum/boolean and nullable canonical-decimal uint64 limits, typography role
+  lists, tagged style and metric alternatives, fields and types, the full
+  unsigned scrollback range, nullable values, and malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
   surface-inheritance booleans, default/custom/empty and non-UTF-8 `term`
   finalization, repeated `env` replacement, configured-map removal/reset,
-  include precedence and raw-byte transport, default/custom/empty Linux cgroup
-  settings and maximum-width limits, exact font CLI forwarding and role
+  include precedence and raw-byte transport, empty/custom binary
+  `enquiry-response` finalization, default/custom/empty Linux cgroup settings
+  and maximum-width limits, exact font CLI forwarding and role
   finalization, Ghostty's effective `clear`/`unbind` result, and structured
   sequences, chains, catch-all triggers, flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
@@ -360,8 +363,10 @@ behavior, live interval/boundary reload during an active pane, select-all,
 endpoint adjustment/autoscroll, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact
-CSI/ESC/text actions, default and live-reloaded scroll-to-bottom keystroke and
-output policy, non-modifier ordinary/IME qualification, staged-leader
+CSI/ESC/text actions, binary/repeated ENQ responses through the protocol write
+path, live response replacement, read-only reply behavior, default and
+live-reloaded scroll-to-bottom keystroke and output policy, non-modifier
+ordinary/IME qualification, staged-leader
 exclusion, unconditional raw-action and accepted-paste scrolling,
 active-screen bottom-node/row tracking, same-line and metadata-only output
 stability, synchronized-output deferral, and stale-anchor behavior after

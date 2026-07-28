@@ -129,6 +129,7 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void respondsToEnquiryWithConfiguredBytes();
     void observesActiveScreenBottomAnchorChanges();
     void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
@@ -355,6 +356,75 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
+{
+    QVector<QByteArray> defaultWrites;
+    auto defaultAdapter = GhosttyVtAdapter::create(
+        {}, {.writePty = [&defaultWrites](const QByteArray &data) {
+            defaultWrites.append(data);
+        }});
+    QVERIFY(defaultAdapter != nullptr);
+    defaultAdapter->writeVt(QByteArray(1, '\x05'));
+    QVERIFY(defaultWrites.isEmpty());
+
+    QByteArray response;
+    response.append('\0');
+    response.append(static_cast<char>(0x80));
+    response.append(static_cast<char>(0xff));
+    response.append('A');
+
+    QVector<QByteArray> writes;
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 32;
+    options.geometry.rows = 2;
+    options.enquiryResponse = response;
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&writes](const QByteArray &data) {
+            writes.append(data);
+        }});
+    QVERIFY(adapter != nullptr);
+
+    // The adapter owns the configured bytes; changing the source after
+    // construction cannot invalidate the synchronous callback response.
+    options.enquiryResponse.fill('x');
+    QByteArray input = QByteArrayLiteral("left");
+    input.append('\x05');
+    input.append(QByteArrayLiteral("middle"));
+    input.append('\x05');
+    input.append(QByteArrayLiteral("right"));
+    adapter->writeVt(input);
+    QCOMPARE(writes.size(), 2);
+    QCOMPARE(writes.at(0), response);
+    QCOMPARE(writes.at(1), response);
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("leftmiddleright"));
+
+    QByteArray reloaded = QByteArrayLiteral("next");
+    reloaded.append('\0');
+    adapter->setEnquiryResponse(reloaded);
+    adapter->writeVt(QByteArray(1, '\x05'));
+    QCOMPARE(writes.size(), 3);
+    QCOMPARE(writes.constLast(), reloaded);
+
+    const QByteArray maximumBridgeResponse(255, 'y');
+    adapter->setEnquiryResponse(maximumBridgeResponse);
+    adapter->writeVt(QByteArray(1, '\x05'));
+    QCOMPARE(writes.size(), 4);
+    QCOMPARE(writes.constLast(), maximumBridgeResponse);
+
+    // The pinned public C bridge reserves one byte in a 256-byte stack buffer
+    // for its terminator and silently ignores responses that do not fit.
+    adapter->setEnquiryResponse(QByteArray(256, 'z'));
+    adapter->writeVt(QByteArray(1, '\x05'));
+    QCOMPARE(writes.size(), 4);
+
+    adapter->setEnquiryResponse({});
+    adapter->writeVt(QByteArray(1, '\x05'));
+    QCOMPARE(writes.size(), 4);
 }
 
 void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()

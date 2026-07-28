@@ -163,6 +163,10 @@ public:
         TerminalAppearance appearance;
         TerminalClipboardAccess clipboardWriteAccess =
             TerminalClipboardAccess::Allow;
+        // The pinned public C bridge emits at most 255 response bytes. Retain
+        // longer values without truncation so a future upstream widening is
+        // inherited automatically; the current bridge treats them as silent.
+        QByteArray enquiryResponse;
     };
 
     struct Callbacks {
@@ -258,6 +262,7 @@ public:
     bool resize(const Geometry &geometry);
     bool setAppearance(const TerminalAppearance &appearance);
     void setClipboardWriteAccess(TerminalClipboardAccess access);
+    void setEnquiryResponse(const QByteArray &response);
     void writeVt(QByteArrayView data);
     // Observe the active screen's final logical row at a renderer/frame
     // boundary. The first successful observation and every later PageList
