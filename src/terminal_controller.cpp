@@ -42,6 +42,16 @@ TerminalActionResult failedTerminalActionResult(quint64 requestId)
     };
 }
 
+template <typename... Types> void registerMetaTypesOnce()
+{
+    // Qt's registry is process-wide, so repeating this work for every pane is
+    // unnecessary. One specialization owns one thread-safe initialization.
+    [[maybe_unused]] static const bool registered = [] {
+        (qRegisterMetaType<Types>(), ...);
+        return true;
+    }();
+}
+
 } // namespace
 
 template <typename... SignalArgs, typename... WorkerArgs>
@@ -166,27 +176,16 @@ TerminalController::TerminalController(
                             : options.workingDirectory)
     , explicitProgram_(hasExplicitCommand(options))
 {
-    qRegisterMetaType<TerminalUpdate>();
-    qRegisterMetaType<TerminalHyperlinkState>();
-    qRegisterMetaType<TerminalLinkKind>();
-    qRegisterMetaType<TerminalSearchDirection>();
-    qRegisterMetaType<TerminalSearchUpdate>();
-    qRegisterMetaType<TerminalViewportRequest>();
-    qRegisterMetaType<TerminalSelectionAdjustment>();
-    qRegisterMetaType<TerminalKeyInput>();
-    qRegisterMetaType<TerminalInputMethodInput>();
-    qRegisterMetaType<TerminalSequenceResolution>();
-    qRegisterMetaType<TerminalMouseInput>();
-    qRegisterMetaType<TerminalRightClickInput>();
-    qRegisterMetaType<TerminalRightClickResult>();
-    qRegisterMetaType<TerminalSelectionPressInput>();
-    qRegisterMetaType<TerminalSelectionDragInput>();
-    qRegisterMetaType<QVector<QPoint>>();
-    qRegisterMetaType<TerminalSessionRuntimeOptions>();
-    qRegisterMetaType<TerminalClipboardDestination>();
-    qRegisterMetaType<TerminalClipboardWriteRequest>();
-    qRegisterMetaType<TerminalActionResult>();
-    qRegisterMetaType<TerminalWriteFileAction>();
+    registerMetaTypesOnce<
+        TerminalUpdate, TerminalHyperlinkState, TerminalLinkKind,
+        TerminalSearchDirection, TerminalSearchUpdate, TerminalViewportRequest,
+        TerminalSelectionAdjustment, TerminalKeyInput, TerminalInputMethodInput,
+        TerminalSequenceResolution, TerminalMouseInput, TerminalRightClickInput,
+        TerminalRightClickResult, TerminalSelectionPressInput,
+        TerminalSelectionDragInput, QVector<QPoint>,
+        TerminalSessionRuntimeOptions, TerminalClipboardDestination,
+        TerminalClipboardWriteRequest, TerminalActionResult,
+        TerminalWriteFileAction>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();

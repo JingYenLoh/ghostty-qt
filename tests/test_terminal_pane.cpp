@@ -391,6 +391,7 @@ private Q_SLOTS:
     void resizeOverlayPositions_data();
     void resizeOverlayPositions();
     void resizeOverlayCoalescesAndRestarts();
+    void retainsStartingTextAcrossNoFramePaints();
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
     void reloadsTypographyNonCumulatively();
@@ -1500,14 +1501,48 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(metadata.rowNodeSerials, initial.rowNodeSerials);
     QCOMPARE(metadata.rowBuildCounts, initial.rowBuildCounts);
 
+    // A pixel resize that leaves grid rows, columns, and snapped cell metrics
+    // unchanged updates text-node clipping without reshaping every row.
+    pane->setWidth(pane->width() + 1.0);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot pixelResized =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(pixelResized.rootSerial, metadata.rootSerial);
+    QCOMPARE(pixelResized.rowNodeSerials, metadata.rowNodeSerials);
+    QCOMPARE(pixelResized.rowBuildCounts, metadata.rowBuildCounts);
+
     // GUI-only overlays rebuild transient layers without touching main text.
     controller->errorOccurred(QStringLiteral("renderer overlay update"));
     QVERIFY(!window.grabWindow().isNull());
     const TerminalPaneRenderProbeSnapshot overlay =
         terminalPaneRenderProbe(pane);
-    QCOMPARE(overlay.rootSerial, metadata.rootSerial);
-    QCOMPARE(overlay.rowNodeSerials, metadata.rowNodeSerials);
-    QCOMPARE(overlay.rowBuildCounts, metadata.rowBuildCounts);
+    QCOMPARE(overlay.rootSerial, pixelResized.rootSerial);
+    QCOMPARE(overlay.rowNodeSerials, pixelResized.rowNodeSerials);
+    QCOMPARE(overlay.rowBuildCounts, pixelResized.rowBuildCounts);
+    QVERIFY(overlay.paneOverlayTextNodeSerial != 0);
+    QVERIFY(overlay.paneOverlayTextBuildCount > 0);
+
+    pane->update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot repeatedOverlay =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(repeatedOverlay.paneOverlayTextNodeSerial,
+             overlay.paneOverlayTextNodeSerial);
+    QCOMPARE(repeatedOverlay.paneOverlayTextBuildCount,
+             overlay.paneOverlayTextBuildCount);
+    QCOMPARE(repeatedOverlay.rowNodeSerials, overlay.rowNodeSerials);
+    QCOMPARE(repeatedOverlay.rowBuildCounts, overlay.rowBuildCounts);
+
+    controller->errorOccurred(QStringLiteral("updated renderer overlay"));
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot updatedOverlay =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(updatedOverlay.paneOverlayTextNodeSerial,
+             overlay.paneOverlayTextNodeSerial);
+    QCOMPARE(updatedOverlay.paneOverlayTextBuildCount,
+             overlay.paneOverlayTextBuildCount + 1);
+    QCOMPARE(updatedOverlay.rowNodeSerials, overlay.rowNodeSerials);
+    QCOMPARE(updatedOverlay.rowBuildCounts, overlay.rowBuildCounts);
 
     // Two updates coalesced before one render must retain both dirty rows.
     TerminalUpdate firstRow;
@@ -2255,6 +2290,37 @@ void TerminalPaneTest::routesSearchActionsAndRetainsUiState()
     QCOMPARE(textSpy.count(), unavailableTextBefore);
     QCOMPARE(focusSpy.count(), unavailableFocusBefore);
     QCOMPARE(searchRequests.count(), unavailableSearchBefore);
+}
+
+void TerminalPaneTest::retainsStartingTextAcrossNoFramePaints()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    window.resize(320, 160);
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot first = terminalPaneRenderProbe(pane);
+    QVERIFY(first.startingTextNodeSerial != 0);
+    QVERIFY(first.startingTextBuildCount > 0);
+
+    pane->update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot repeated =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(repeated.rootSerial, first.rootSerial);
+    QCOMPARE(repeated.startingTextNodeSerial, first.startingTextNodeSerial);
+    QCOMPARE(repeated.startingTextBuildCount, first.startingTextBuildCount);
+
+    window.close();
+    delete pane;
 }
 
 void TerminalPaneTest::replacesStartingFrameInsteadOfAccumulatingSceneRoots()
@@ -6043,10 +6109,39 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
     const TerminalPaneRenderProbeSnapshot withPreedit =
         terminalPaneRenderProbe(pane);
     QCOMPARE(withPreedit.underlineRects.size(), 2);
+    QVERIFY(withPreedit.overlayTextNodeSerial != 0);
+    QVERIFY(withPreedit.overlayTextBuildCount > 0);
     const QRectF preeditUnderline = withPreedit.underlineRects.constLast();
     QCOMPARE(preeditUnderline.left(), cursorLeft);
     QCOMPARE(preeditUnderline.top(), underlinePosition);
     QCOMPARE(preeditUnderline.height(), expected.underlineThickness);
+
+    pane->update();
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot repeatedPreedit =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(repeatedPreedit.overlayTextNodeSerial,
+             withPreedit.overlayTextNodeSerial);
+    QCOMPARE(repeatedPreedit.overlayTextBuildCount,
+             withPreedit.overlayTextBuildCount);
+
+    QInputMethodEvent clearedPreedit(QString{}, {});
+    QCoreApplication::sendEvent(pane, &clearedPreedit);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot cleared =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(cleared.overlayTextNodeSerial, withPreedit.overlayTextNodeSerial);
+    QCOMPARE(cleared.overlayTextBuildCount,
+             withPreedit.overlayTextBuildCount + 1);
+
+    QInputMethodEvent restoredPreedit(QStringLiteral("restored"), {});
+    QCoreApplication::sendEvent(pane, &restoredPreedit);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot restored =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(restored.overlayTextNodeSerial, withPreedit.overlayTextNodeSerial);
+    QCOMPARE(restored.overlayTextBuildCount,
+             withPreedit.overlayTextBuildCount + 2);
 
     LaunchOptions oversizedCursor = options;
     oversizedCursor.typography.metricModifiers[

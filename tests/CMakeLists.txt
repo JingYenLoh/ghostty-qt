@@ -57,14 +57,21 @@ target_link_libraries(test-frontend-config PRIVATE
 add_test(NAME frontend-config COMMAND test-frontend-config)
 set_tests_properties(frontend-config PROPERTIES TIMEOUT 15)
 
+qt_add_executable(test-pty-write-buffer
+    test_pty_write_buffer.cpp
+)
+target_link_libraries(test-pty-write-buffer PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-pty-write-buffer
+)
+add_test(NAME pty-write-buffer COMMAND test-pty-write-buffer)
+set_tests_properties(pty-write-buffer PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-launch-options
     test_launch_options.cpp
     ghostty_config_export_fixture.h
     ghostty_config_snapshot_fixture.h
-    ../src/launch_options.cpp
-    ../src/launch_options.h
-    ../src/terminal_appearance.h
-    ../src/terminal_session_options.h
 )
 target_include_directories(test-launch-options PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_link_libraries(test-launch-options PRIVATE
@@ -73,13 +80,12 @@ target_link_libraries(test-launch-options PRIVATE
     Qt6::Test
     ghostty-qt-config-export
     ghostty-qt-frontend-config
+    ghostty-qt-launch-options
 )
 add_test(NAME launch-options COMMAND test-launch-options)
 
 qt_add_executable(test-terminal-cell-metrics
     test_terminal_cell_metrics.cpp
-    ../src/terminal_cell_metrics.cpp
-    ../src/terminal_cell_metrics.h
 )
 target_include_directories(test-terminal-cell-metrics PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -88,6 +94,7 @@ target_link_libraries(test-terminal-cell-metrics PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-terminal-foundation
 )
 add_test(NAME terminal-cell-metrics COMMAND test-terminal-cell-metrics)
 set_tests_properties(terminal-cell-metrics PROPERTIES
@@ -97,9 +104,6 @@ set_tests_properties(terminal-cell-metrics PROPERTIES
 
 qt_add_executable(test-terminal-geometry
     test_terminal_geometry.cpp
-    ../src/terminal_geometry.cpp
-    ../src/terminal_geometry.h
-    ../src/terminal_session_options.h
 )
 target_include_directories(test-terminal-geometry PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -108,6 +112,7 @@ target_link_libraries(test-terminal-geometry PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-terminal-foundation
 )
 add_test(NAME terminal-geometry COMMAND test-terminal-geometry)
 set_tests_properties(terminal-geometry PROPERTIES TIMEOUT 10)
@@ -233,9 +238,6 @@ set_tests_properties(desktop-activation PROPERTIES
 
 qt_add_executable(test-application-lifetime
     test_application_lifetime.cpp
-    ../src/application_lifetime.cpp
-    ../src/application_lifetime.h
-    ../src/launch_options.h
 )
 target_include_directories(test-application-lifetime PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -244,6 +246,7 @@ target_link_libraries(test-application-lifetime PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-application-lifetime
 )
 add_test(NAME application-lifetime-controller
     COMMAND test-application-lifetime)
@@ -255,8 +258,6 @@ set_tests_properties(application-lifetime-controller PROPERTIES
 qt_add_executable(test-single-instance-activation
     test_single_instance_activation.cpp
     private_session_bus.h
-    ../src/single_instance_activation.cpp
-    ../src/single_instance_activation.h
 )
 target_include_directories(test-single-instance-activation PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -266,7 +267,7 @@ target_link_libraries(test-single-instance-activation PRIVATE
     Qt6::Core
     Qt6::DBus
     Qt6::Test
-    ghostty-qt-desktop-activation
+    ghostty-qt-single-instance-activation
 )
 add_test(NAME single-instance-activation
     COMMAND test-single-instance-activation)
@@ -289,69 +290,48 @@ target_link_libraries(test-linux-cgroup PRIVATE
 add_test(NAME linux-cgroup COMMAND test-linux-cgroup)
 set_tests_properties(linux-cgroup PROPERTIES TIMEOUT 15)
 
-qt_add_executable(test-application-controller
-    test_application_controller.cpp
-    ../src/application_action.h
-    ../src/application_controller.cpp
-    ../src/application_controller.h
-    ../src/application_lifetime.cpp
-    ../src/application_lifetime.h
-    ../src/ghostty_application_keybindings.cpp
-    ../src/ghostty_application_keybindings.h
-    ../src/ghostty_global_shortcut_portal.cpp
-    ../src/ghostty_global_shortcut_portal.h
-    ../src/initial_session_coordinator.cpp
-    ../src/initial_session_coordinator.h
-    ../src/launch_options.cpp
-    ../src/launch_options.h
-    ../src/session_worker.cpp
-    ../src/session_worker.h
-    ../src/tab_list_model.cpp
-    ../src/tab_list_model.h
-    ../src/terminal_controller.cpp
-    ../src/terminal_controller.h
-    ../src/terminal_clipboard.cpp
-    ../src/terminal_clipboard.h
-    ../src/terminal_cell_metrics.cpp
-    ../src/terminal_cell_metrics.h
-    ../src/terminal_geometry.cpp
-    ../src/terminal_geometry.h
+ghostty_qt_add_internal_library(ghostty-qt-render-test-support
     ../src/terminal_pane.cpp
     ../src/terminal_pane.h
+    ../src/terminal_pane_renderer.cpp
+    ../src/terminal_pane_renderer.h
+    ../src/terminal_pane_render_probe_p.h
     ../src/terminal_workspace.cpp
     ../src/terminal_workspace.h
-    ../src/terminal_osc8_index.h
-    ../src/terminal_session_options.h
-    ../src/terminal_types.h
-    ../src/workspace_action.h
-    ../src/workspace_ids.h
+)
+target_compile_definitions(ghostty-qt-render-test-support PUBLIC
+    GHOSTTY_QT_RENDER_TEST_PROBE=1
+)
+target_link_libraries(ghostty-qt-render-test-support PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Quick
+    ghostty-qt-action-pipeline
+    ghostty-qt-launch-options
+    ghostty-qt-tab-list-model
+    ghostty-qt-terminal-bell
+    ghostty-qt-terminal-controller
+    ghostty-qt-terminal-foundation
+    ghostty-qt-terminal-rendering
+)
+
+qt_add_executable(test-application-controller
+    test_application_controller.cpp
 )
 target_include_directories(test-application-controller PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
 target_compile_definitions(test-application-controller PRIVATE
-    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_RENDER_TEST_PROBE=1
     GHOSTTY_QT_TEST_PTY_GEOMETRY_PROBE="$<TARGET_FILE:pty-geometry-probe>"
 )
 target_link_libraries(test-application-controller PRIVATE
     Qt6::Core
-    Qt6::DBus
     Qt6::Gui
-    Qt6::Qml
     Qt6::Quick
     Qt6::Test
-    PkgConfig::XKBCommon
-    ghostty-qt-action-pipeline
-    ghostty-qt-desktop-activation
-    ghostty-qt-linux-cgroup
-    ghostty-qt-link-matcher
-    ghostty-qt-runtime-paths
-    ghostty-qt-shell-integration
-    ghostty-qt-terminal-rendering
-    ghostty-qt-terminal-bell
-    ghostty-qt-vt-adapter
-    util
+    ghostty-qt-application-controller
+    ghostty-qt-render-test-support
 )
 add_dependencies(test-application-controller
     ghostty-qt-terminfo
@@ -366,8 +346,6 @@ set_tests_properties(application-controller PROPERTIES
 
 qt_add_executable(test-initial-session-coordinator
     test_initial_session_coordinator.cpp
-    ../src/initial_session_coordinator.cpp
-    ../src/initial_session_coordinator.h
 )
 target_include_directories(test-initial-session-coordinator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -375,6 +353,7 @@ target_include_directories(test-initial-session-coordinator PRIVATE
 target_link_libraries(test-initial-session-coordinator PRIVATE
     Qt6::Core
     Qt6::Test
+    ghostty-qt-terminal-foundation
 )
 add_test(NAME initial-session-coordinator
     COMMAND test-initial-session-coordinator)
@@ -421,11 +400,6 @@ add_test(NAME ghostty-smoke COMMAND test-ghostty-smoke)
 
 qt_add_executable(test-session-worker
     test_session_worker.cpp
-    ../src/session_worker.cpp
-    ../src/session_worker.h
-    ../src/terminal_osc8_index.h
-    ../src/terminal_session_options.h
-    ../src/terminal_types.h
 )
 target_include_directories(test-session-worker PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_compile_definitions(test-session-worker PRIVATE
@@ -437,14 +411,7 @@ target_link_libraries(test-session-worker PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
-    ghostty-qt-action-pipeline
-    ghostty-qt-desktop-activation
-    ghostty-qt-linux-cgroup
-    ghostty-qt-link-matcher
-    ghostty-qt-runtime-paths
-    ghostty-qt-shell-integration
-    ghostty-qt-vt-adapter
-    util
+    ghostty-qt-session-worker
 )
 add_dependencies(test-session-worker
     ghostty-qt-terminfo
@@ -459,47 +426,15 @@ add_test(NAME session-worker COMMAND test-session-worker)
 
 qt_add_executable(test-terminal-pane
     test_terminal_pane.cpp
-    ../src/initial_session_coordinator.cpp
-    ../src/initial_session_coordinator.h
-    ../src/session_worker.cpp
-    ../src/session_worker.h
-    ../src/terminal_controller.cpp
-    ../src/terminal_controller.h
-    ../src/terminal_clipboard.cpp
-    ../src/terminal_clipboard.h
-    ../src/terminal_cell_metrics.cpp
-    ../src/terminal_cell_metrics.h
-    ../src/terminal_geometry.cpp
-    ../src/terminal_geometry.h
-    ../src/terminal_pane.cpp
-    ../src/terminal_pane.h
     ../src/terminal_pane_render_probe_p.h
-    ../src/launch_options.cpp
-    ../src/launch_options.h
-    ../src/terminal_osc8_index.h
-    ../src/terminal_session_options.h
-    ../src/terminal_types.h
 )
 target_include_directories(test-terminal-pane PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
-target_compile_definitions(test-terminal-pane PRIVATE
-    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_RENDER_TEST_PROBE=1
-)
 target_link_libraries(test-terminal-pane PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
     Qt6::Test
-    ghostty-qt-action-pipeline
-    ghostty-qt-desktop-activation
-    ghostty-qt-linux-cgroup
-    ghostty-qt-link-matcher
-    ghostty-qt-runtime-paths
-    ghostty-qt-shell-integration
-    ghostty-qt-terminal-rendering
-    ghostty-qt-terminal-bell
-    ghostty-qt-vt-adapter
-    util
+    ghostty-qt-render-test-support
 )
 add_dependencies(test-terminal-pane ghostty-qt-terminfo)
 add_test(NAME terminal-pane-render COMMAND test-terminal-pane)
@@ -511,61 +446,18 @@ set_tests_properties(terminal-pane-render PROPERTIES
 
 qt_add_executable(test-terminal-workspace
     test_terminal_workspace.cpp
-    ../src/ghostty_application_keybindings.cpp
-    ../src/ghostty_application_keybindings.h
-    ../src/ghostty_global_shortcut_portal.cpp
-    ../src/ghostty_global_shortcut_portal.h
-    ../src/initial_session_coordinator.cpp
-    ../src/initial_session_coordinator.h
-    ../src/launch_options.cpp
-    ../src/launch_options.h
-    ../src/session_worker.cpp
-    ../src/session_worker.h
-    ../src/tab_list_model.cpp
-    ../src/tab_list_model.h
-    ../src/terminal_controller.cpp
-    ../src/terminal_controller.h
-    ../src/terminal_clipboard.cpp
-    ../src/terminal_clipboard.h
-    ../src/terminal_cell_metrics.cpp
-    ../src/terminal_cell_metrics.h
-    ../src/terminal_geometry.cpp
-    ../src/terminal_geometry.h
-    ../src/terminal_pane.cpp
-    ../src/terminal_pane.h
-    ../src/terminal_osc8_index.h
-    ../src/terminal_session_options.h
-    ../src/terminal_workspace.cpp
-    ../src/terminal_workspace.h
-    ../src/terminal_types.h
-    ../src/workspace_action.h
-    ../src/workspace_ids.h
 )
 target_include_directories(test-terminal-workspace PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
 )
-target_compile_definitions(test-terminal-workspace PRIVATE
-    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
-    GHOSTTY_QT_RENDER_TEST_PROBE=1
-)
 target_link_libraries(test-terminal-workspace PRIVATE
     Qt6::Core
-    Qt6::DBus
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
     Qt6::Test
-    PkgConfig::XKBCommon
-    ghostty-qt-action-pipeline
-    ghostty-qt-desktop-activation
-    ghostty-qt-linux-cgroup
-    ghostty-qt-link-matcher
-    ghostty-qt-runtime-paths
-    ghostty-qt-shell-integration
-    ghostty-qt-terminal-rendering
-    ghostty-qt-terminal-bell
-    ghostty-qt-vt-adapter
-    util
+    ghostty-qt-application-keybindings
+    ghostty-qt-render-test-support
 )
 add_dependencies(test-terminal-workspace ghostty-qt-terminfo)
 add_test(NAME terminal-workspace COMMAND test-terminal-workspace)
@@ -627,8 +519,6 @@ set_tests_properties(ghostty-link-matcher-upstream-corpus PROPERTIES
 
 qt_add_executable(test-workspace-foundation
     test_workspace_foundation.cpp
-    ../src/tab_list_model.cpp
-    ../src/tab_list_model.h
     ../src/workspace_action.h
     ../src/workspace_ids.h
 )
@@ -638,14 +528,13 @@ target_include_directories(test-workspace-foundation PRIVATE
 target_link_libraries(test-workspace-foundation PRIVATE
     Qt6::Core
     Qt6::Test
+    ghostty-qt-tab-list-model
 )
 add_test(NAME workspace-foundation COMMAND test-workspace-foundation)
 set_tests_properties(workspace-foundation PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-tab-list-model
     test_tab_list_model.cpp
-    ../src/tab_list_model.cpp
-    ../src/tab_list_model.h
     ../src/workspace_ids.h
 )
 target_include_directories(test-tab-list-model PRIVATE
@@ -654,6 +543,7 @@ target_include_directories(test-tab-list-model PRIVATE
 target_link_libraries(test-tab-list-model PRIVATE
     Qt6::Core
     Qt6::Test
+    ghostty-qt-tab-list-model
 )
 add_test(NAME tab-list-model COMMAND test-tab-list-model)
 set_tests_properties(tab-list-model PROPERTIES TIMEOUT 10)
@@ -685,8 +575,6 @@ set_tests_properties(ghostty-keybind-set PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-global-shortcut-portal
     test_ghostty_global_shortcut_portal.cpp
-    ../src/ghostty_global_shortcut_portal.cpp
-    ../src/ghostty_global_shortcut_portal.h
 )
 target_include_directories(test-ghostty-global-shortcut-portal PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -696,6 +584,7 @@ target_link_libraries(test-ghostty-global-shortcut-portal PRIVATE
     Qt6::DBus
     Qt6::Test
     PkgConfig::XKBCommon
+    ghostty-qt-global-shortcut-portal
 )
 add_test(NAME ghostty-global-shortcut-portal
     COMMAND test-ghostty-global-shortcut-portal)
@@ -706,8 +595,6 @@ qt_add_executable(test-ghostty-config-service
     ghostty_config_export_fixture.h
     ghostty_config_snapshot_fixture.h
     ../src/ghostty_config_loader.h
-    ../src/ghostty_config_service.cpp
-    ../src/ghostty_config_service.h
     ../src/ghostty_config_snapshot.h
 )
 target_include_directories(test-ghostty-config-service PRIVATE
@@ -718,14 +605,13 @@ target_link_libraries(test-ghostty-config-service PRIVATE
     Qt6::Gui
     Qt6::Test
     ghostty-qt-config-export
+    ghostty-qt-config-runtime
 )
 add_test(NAME ghostty-config-service COMMAND test-ghostty-config-service)
 set_tests_properties(ghostty-config-service PROPERTIES TIMEOUT 10)
 
 qt_add_executable(test-ghostty-config-edit
     test_ghostty_config_edit.cpp
-    ../src/ghostty_config_edit.cpp
-    ../src/ghostty_config_edit.h
 )
 target_include_directories(test-ghostty-config-edit PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -734,6 +620,7 @@ target_link_libraries(test-ghostty-config-edit PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-config-runtime
 )
 add_test(NAME ghostty-config-edit COMMAND test-ghostty-config-edit)
 set_tests_properties(ghostty-config-edit PROPERTIES TIMEOUT 10)
@@ -748,8 +635,6 @@ target_compile_options(fake-ghostty-config-helper PRIVATE
 qt_add_executable(test-ghostty-config-process-loader
     test_ghostty_config_process_loader.cpp
     ../src/ghostty_config_loader.h
-    ../src/ghostty_config_process_loader.cpp
-    ../src/ghostty_config_process_loader.h
     ../src/ghostty_config_snapshot.h
 )
 target_include_directories(test-ghostty-config-process-loader PRIVATE
@@ -775,6 +660,7 @@ target_link_libraries(test-ghostty-config-process-loader PRIVATE
     Qt6::Test
     ghostty-qt-action-pipeline
     ghostty-qt-config-export
+    ghostty-qt-config-runtime
 )
 add_dependencies(test-ghostty-config-process-loader
     fake-ghostty-config-helper)

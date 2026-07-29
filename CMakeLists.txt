@@ -494,6 +494,22 @@ add_custom_command(
     VERBATIM)
 add_custom_target(ghostty-qt-terminfo DEPENDS "${GHOSTTY_QT_TERMINFO_STAMP}")
 
+function(ghostty_qt_add_internal_library target)
+    add_library(${target} STATIC ${ARGN})
+    target_include_directories(${target} PUBLIC
+        "${PROJECT_SOURCE_DIR}/src"
+    )
+    target_compile_options(${target} PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+    )
+endfunction()
+
+ghostty_qt_add_internal_library(ghostty-qt-pty-write-buffer
+    src/pty_write_buffer.cpp
+    src/pty_write_buffer.h
+)
+target_link_libraries(ghostty-qt-pty-write-buffer PUBLIC Qt6::Core)
+
 add_library(ghostty-qt-runtime-paths STATIC
     src/terminfo_paths.cpp
     src/terminfo_paths.h
@@ -695,54 +711,190 @@ target_compile_options(ghostty-qt-vt-adapter PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
-qt_add_executable(ghostty-qt
-    src/main.cpp
-    src/application_action.h
-    src/application_controller.cpp
-    src/application_controller.h
+ghostty_qt_add_internal_library(ghostty-qt-launch-options
+    src/launch_options.cpp
+    src/launch_options.h
+    src/terminal_appearance.h
+    src/terminal_session_options.h
+)
+target_link_libraries(ghostty-qt-launch-options PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    ghostty-qt-config-export
+    ghostty-qt-frontend-config
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
+    src/initial_session_coordinator.cpp
+    src/initial_session_coordinator.h
+    src/terminal_cell_metrics.cpp
+    src/terminal_cell_metrics.h
+    src/terminal_clipboard.cpp
+    src/terminal_clipboard.h
+    src/terminal_geometry.cpp
+    src/terminal_geometry.h
+    src/terminal_session_options.h
+    src/terminal_typography.h
+    src/terminal_types.h
+)
+target_link_libraries(ghostty-qt-terminal-foundation PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-session-worker
+    src/session_worker.cpp
+    src/session_worker.h
+    src/terminal_action_result.h
+    src/terminal_osc8_index.h
+    src/terminal_session_options.h
+    src/terminal_types.h
+    src/terminal_write_file_action.h
+)
+target_compile_definitions(ghostty-qt-session-worker PRIVATE
+    GHOSTTY_QT_VERSION="${PROJECT_VERSION}"
+)
+target_link_libraries(ghostty-qt-session-worker
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-pty-write-buffer
+    PRIVATE
+        ghostty-qt-action-pipeline
+        ghostty-qt-desktop-activation
+        ghostty-qt-linux-cgroup
+        ghostty-qt-link-matcher
+        ghostty-qt-runtime-paths
+        ghostty-qt-shell-integration
+        ghostty-qt-vt-adapter
+        util
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-terminal-controller
+    src/terminal_controller.cpp
+    src/terminal_controller.h
+)
+target_link_libraries(ghostty-qt-terminal-controller
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-session-worker
+        ghostty-qt-terminal-foundation
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-tab-list-model
+    src/tab_list_model.cpp
+    src/tab_list_model.h
+    src/workspace_ids.h
+)
+target_link_libraries(ghostty-qt-tab-list-model PUBLIC Qt6::Core)
+
+ghostty_qt_add_internal_library(ghostty-qt-application-lifetime
     src/application_lifetime.cpp
     src/application_lifetime.h
+)
+target_link_libraries(ghostty-qt-application-lifetime PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    ghostty-qt-launch-options
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-global-shortcut-portal
+    src/ghostty_global_shortcut_portal.cpp
+    src/ghostty_global_shortcut_portal.h
+)
+target_link_libraries(ghostty-qt-global-shortcut-portal
+    PUBLIC
+        Qt6::Core
+        Qt6::DBus
+    PRIVATE
+        PkgConfig::XKBCommon
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-application-keybindings
     src/ghostty_application_keybindings.cpp
     src/ghostty_application_keybindings.h
-    src/ghostty_config_loader.h
-    src/ghostty_config_export.h
+)
+target_link_libraries(ghostty-qt-application-keybindings
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        ghostty-qt-action-pipeline
+        ghostty-qt-launch-options
+    PRIVATE
+        Qt6::DBus
+        Qt6::Qml
+        Qt6::Quick
+        ghostty-qt-global-shortcut-portal
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-application-controller
+    src/application_controller.cpp
+    src/application_controller.h
+)
+target_link_libraries(ghostty-qt-application-controller
+    PUBLIC
+        Qt6::Core
+        ghostty-qt-application-lifetime
+        ghostty-qt-desktop-activation
+        ghostty-qt-launch-options
+    PRIVATE
+        Qt6::DBus
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        ghostty-qt-application-keybindings
+        ghostty-qt-terminal-foundation
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-config-runtime
     src/ghostty_config_edit.cpp
     src/ghostty_config_edit.h
+    src/ghostty_config_loader.h
     src/ghostty_config_process_loader.cpp
     src/ghostty_config_process_loader.h
     src/ghostty_config_service.cpp
     src/ghostty_config_service.h
     src/ghostty_config_snapshot.h
-    src/ghostty_config_values.h
-    src/ghostty_keybind_config.h
-    src/ghostty_global_shortcut_portal.cpp
-    src/ghostty_global_shortcut_portal.h
-    src/initial_session_coordinator.cpp
-    src/initial_session_coordinator.h
-    src/key_event_snapshot.h
-    src/launch_options.cpp
-    src/launch_options.h
-    src/revision_counter.h
-    src/session_worker.cpp
-    src/session_worker.h
+)
+target_link_libraries(ghostty-qt-config-runtime PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    ghostty-qt-config-export
+)
+target_link_libraries(ghostty-qt-config-runtime PRIVATE
+    ghostty-qt-action-pipeline
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-single-instance-activation
     src/single_instance_activation.cpp
     src/single_instance_activation.h
-    src/tab_list_model.cpp
-    src/tab_list_model.h
+)
+target_compile_definitions(ghostty-qt-single-instance-activation PRIVATE
+    GHOSTTY_QT_APPLICATION_ID="${GHOSTTY_QT_EFFECTIVE_APPLICATION_ID}"
+)
+target_link_libraries(ghostty-qt-single-instance-activation PUBLIC
+    Qt6::Core
+    Qt6::DBus
+    ghostty-qt-desktop-activation
+)
+
+qt_add_executable(ghostty-qt
+    src/main.cpp
+    src/application_action.h
+    src/ghostty_config_export.h
+    src/ghostty_config_values.h
+    src/ghostty_keybind_config.h
+    src/key_event_snapshot.h
+    src/revision_counter.h
     src/terminal_action_result.h
     src/terminal_appearance.h
-    src/terminal_controller.cpp
-    src/terminal_controller.h
-    src/terminal_clipboard.cpp
-    src/terminal_clipboard.h
-    src/terminal_cell_metrics.cpp
-    src/terminal_cell_metrics.h
     src/terminal_command.h
-    src/terminal_geometry.cpp
-    src/terminal_geometry.h
     src/terminal_osc8_index.h
     src/terminal_pane.cpp
     src/terminal_pane.h
+    src/terminal_pane_renderer.cpp
+    src/terminal_pane_renderer.h
     src/terminal_session_options.h
     src/terminal_typography.h
     src/terminal_types.h
@@ -777,14 +929,21 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Widgets
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-application-controller
     ghostty-qt-cli-delegation
     ghostty-qt-config-export
+    ghostty-qt-config-runtime
     ghostty-qt-desktop-activation
     ghostty-qt-frontend-config
+    ghostty-qt-launch-options
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
     ghostty-qt-runtime-paths
+    ghostty-qt-single-instance-activation
     ghostty-qt-shell-integration
+    ghostty-qt-tab-list-model
+    ghostty-qt-terminal-controller
+    ghostty-qt-terminal-foundation
     ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter

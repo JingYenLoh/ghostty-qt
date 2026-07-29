@@ -258,6 +258,7 @@ private Q_SLOTS:
     void continuesPathLookupAfterMissingInterpreter();
     void usesPinnedDefaultPathWhenUnset();
     void drainsLargeFinalOutputBeforeClosingPty();
+    void drainsLargeQueuedInputAfterPtyBackpressure();
     void routesTerminalClipboardWritesUsingLivePolicy();
     void sendsBracketedPasteThroughPty();
     void protectsPasteWithCorrelatedWorkerConfirmation();
@@ -2903,6 +2904,43 @@ void SessionWorkerTest::drainsLargeFinalOutputBeforeClosingPty()
     QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 8000);
     const QString finalContents = frameText(accumulatedFrame(updateSpy));
     QVERIFY2(finalContents.contains(QStringLiteral("large-output-final")),
+             qPrintable(finalContents));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::drainsLargeQueuedInputAfterPtyBackpressure()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    constexpr qsizetype payloadSize = 512 * 1024;
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf 'large-input-ready\\r\\n'; "
+                       "sleep 0.2; "
+                       "count=$(head -c 524288 | wc -c); "
+                       "stty sane; "
+                       "printf '\\r\\nlarge-input-bytes:%s\\r\\n' \"$count\"")};
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("large-input-ready")), 5000);
+    worker.paste(QString(payloadSize, u'x'));
+
+    QTRY_VERIFY_WITH_TIMEOUT(exitSpy.count() > 0, 8000);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(QStringLiteral("large-input-bytes:524288")),
              qPrintable(finalContents));
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()

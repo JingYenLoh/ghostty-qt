@@ -886,8 +886,8 @@ ParseResult<std::optional<QColor>> readOptionalRgb(const QJsonValue &value,
     return *color;
 }
 
-ParseResult<GhosttyTerminalColor> readTerminalColor(const QJsonValue &value,
-                                                    const QString &context)
+ParseResult<TerminalColorValue> readTerminalColor(const QJsonValue &value,
+                                                  const QString &context)
 {
     if (value.isNull()) {
         return std::unexpected(
@@ -896,24 +896,28 @@ ParseResult<GhosttyTerminalColor> readTerminalColor(const QJsonValue &value,
     if (value.isString()) {
         const QString sentinel = value.toString();
         if (sentinel == QStringLiteral("cell-foreground")) {
-            return GhosttyCellRelativeColor::Foreground;
+            return TerminalColorValue{
+                .kind = TerminalColorKind::CellForeground,
+                .color = {},
+            };
         }
         if (sentinel == QStringLiteral("cell-background")) {
-            return GhosttyCellRelativeColor::Background;
+            return TerminalColorValue{
+                .kind = TerminalColorKind::CellBackground,
+                .color = {},
+            };
         }
     }
     auto color = readRgbColor(value, context);
     if (!color) return std::unexpected(std::move(color.error()));
-    return *color;
+    return TerminalColorValue::fromColor(*color);
 }
 
-ParseResult<std::optional<GhosttyTerminalColor>>
+ParseResult<TerminalColorValue>
 readOptionalTerminalColor(const QJsonValue &value, const QString &context)
 {
-    if (value.isNull()) return std::nullopt;
-    auto color = readTerminalColor(value, context);
-    if (!color) return std::unexpected(std::move(color.error()));
-    return std::move(*color);
+    if (value.isNull()) return TerminalColorValue{};
+    return readTerminalColor(value, context);
 }
 
 ParseResult<std::optional<bool>> readOptionalBoolean(const QJsonValue &value,
@@ -925,20 +929,26 @@ ParseResult<std::optional<bool>> readOptionalBoolean(const QJsonValue &value,
     return *result;
 }
 
-ParseResult<std::optional<GhosttyBoldColor>>
-readBoldColor(const QJsonValue &value, const QString &context)
+ParseResult<TerminalBoldColor> readBoldColor(const QJsonValue &value,
+                                             const QString &context)
 {
-    if (value.isNull()) return std::nullopt;
+    if (value.isNull()) return TerminalBoldColor{};
     if (value.isString() && value.toString() == QStringLiteral("bright")) {
-        return GhosttyBoldColor{GhosttyBoldBrightness::Bright};
+        return TerminalBoldColor{
+            .kind = TerminalBoldColorKind::Bright,
+            .color = {},
+        };
     }
     auto color = readRgbColor(value, context);
     if (!color) return std::unexpected(std::move(color.error()));
-    return GhosttyBoldColor{*color};
+    return TerminalBoldColor{
+        .kind = TerminalBoldColorKind::Color,
+        .color = *color,
+    };
 }
 
-ParseResult<std::array<QColor, 256>> readPalette(const QJsonValue &value,
-                                                 const QString &context)
+ParseResult<QVector<QColor>> readPalette(const QJsonValue &value,
+                                         const QString &context)
 {
     auto array = readArray(value, context);
     if (!array) return std::unexpected(std::move(array.error()));
@@ -946,12 +956,13 @@ ParseResult<std::array<QColor, 256>> readPalette(const QJsonValue &value,
         return std::unexpected(
             QStringLiteral("%1 must contain exactly 256 colors").arg(context));
     }
-    std::array<QColor, 256> result;
+    QVector<QColor> result;
+    result.reserve(array->size());
     for (qsizetype index = 0; index < array->size(); ++index) {
         auto color = readRgbColor(
             array->at(index), QStringLiteral("%1[%2]").arg(context).arg(index));
         if (!color) return std::unexpected(std::move(color.error()));
-        result[static_cast<std::size_t>(index)] = *color;
+        result.append(*color);
     }
     return result;
 }
@@ -1250,8 +1261,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
 
     for (const auto [name, destination] :
          std::to_array<std::pair<QLatin1StringView, QColor *>>({
-             {QLatin1StringView("foreground"), &result.appearance.foreground},
-             {QLatin1StringView("background"), &result.appearance.background},
+             {QLatin1StringView("foreground"),
+              &result.appearance.foregroundColor},
+             {QLatin1StringView("background"),
+              &result.appearance.backgroundColor},
          })) {
         if (auto parsed = assign(name, *destination, readRgbColor); !parsed) {
             return std::unexpected(std::move(parsed.error()));
@@ -1261,22 +1274,22 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         constexpr QLatin1StringView name("background-opacity");
         auto parsed = readFiniteDouble(fieldValue(name), context(name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.appearance.backgroundOpacity = std::clamp(*parsed, 0.0, 1.0);
+        result.background.opacity = std::clamp(*parsed, 0.0, 1.0);
     }
     if (auto parsed =
             assignBoolean(QLatin1StringView("background-opacity-cells"),
-                          result.appearance.backgroundOpacityCells);
+                          result.background.opacityCells);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
     if (auto parsed =
             assign(QLatin1StringView("background-image"),
-                   result.backgroundImage.path, readOptionalConfigPath);
+                   result.background.image.path, readOptionalConfigPath);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
     if (auto parsed = assign(QLatin1StringView("background-image-opacity"),
-                             result.backgroundImage.opacity, readDouble);
+                             result.background.image.opacity, readDouble);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
@@ -1307,7 +1320,7 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         });
         auto parsed = readEnum(fieldValue(name), context(name), allowed);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.backgroundImage.position = *parsed;
+        result.background.image.position = *parsed;
     }
     {
         constexpr QLatin1StringView name("background-image-fit");
@@ -1320,11 +1333,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         });
         auto parsed = readEnum(fieldValue(name), context(name), allowed);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        result.backgroundImage.fit = *parsed;
+        result.background.image.fit = *parsed;
     }
     if (auto parsed =
             assignBoolean(QLatin1StringView("background-image-repeat"),
-                          result.backgroundImage.repeat);
+                          result.background.image.repeat);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }
@@ -1657,15 +1670,15 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
 
     for (const auto [name, destination] :
-         std::to_array<std::pair<QLatin1StringView,
-                                 std::optional<GhosttyTerminalColor> *>>({
+         std::to_array<std::pair<QLatin1StringView, TerminalColorValue *>>({
              {QLatin1StringView("selection-foreground"),
               &result.appearance.selectionForeground},
              {QLatin1StringView("selection-background"),
               &result.appearance.selectionBackground},
              {QLatin1StringView("cursor-color"),
               &result.appearance.cursorColor},
-             {QLatin1StringView("cursor-text"), &result.appearance.cursorText},
+             {QLatin1StringView("cursor-text"),
+              &result.appearance.cursorTextColor},
          })) {
         auto parsed =
             readOptionalTerminalColor(fieldValue(name), context(name));
@@ -1673,7 +1686,7 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         *destination = *parsed;
     }
     for (const auto [name, destination] :
-         std::to_array<std::pair<QLatin1StringView, GhosttyTerminalColor *>>({
+         std::to_array<std::pair<QLatin1StringView, TerminalColorValue *>>({
              {QLatin1StringView("search-foreground"),
               &result.appearance.searchForeground},
              {QLatin1StringView("search-background"),

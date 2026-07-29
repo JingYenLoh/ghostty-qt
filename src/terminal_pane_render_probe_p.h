@@ -22,6 +22,13 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 paintSerial = 0;
     quint64 rootSerial = 0;
     quint64 unfocusedSplitOverlaySerial = 0;
+    quint64 startingTextNodeSerial = 0;
+    quint64 overlayTextNodeSerial = 0;
+    quint64 paneOverlayTextNodeSerial = 0;
+    // Cumulative layout rebuilds for retained grid and pane overlay nodes.
+    quint64 overlayTextBuildCount = 0;
+    quint64 paneOverlayTextBuildCount = 0;
+    quint64 startingTextBuildCount = 0;
     quint64 backgroundImageAssetSerial = 0;
     QRectF backgroundImageRect;
     QRectF backgroundImageSourceRect;

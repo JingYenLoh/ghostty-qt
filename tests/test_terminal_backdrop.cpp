@@ -220,6 +220,7 @@ void TerminalBackdropTest::composesGhosttyOpacityExactly()
     QImage source(2, 1, QImage::Format_RGBA8888);
     source.setPixelColor(0, 0, QColor(255, 0, 0, 255));
     source.setPixelColor(1, 0, QColor(0, 255, 0, 0));
+    const QImage original = source.copy();
     const QColor background(0, 0, 255);
 
     const QImage ordinary =
@@ -236,6 +237,7 @@ void TerminalBackdropTest::composesGhosttyOpacityExactly()
         terminalCompositedBackgroundImage(source, background, 0, 2.0);
     QCOMPARE(transparent.pixelColor(0, 0), QColor(0, 0, 0, 0));
     QCOMPARE(transparent.pixelColor(1, 0), QColor(0, 0, 0, 0));
+    QCOMPARE(source, original);
 }
 
 void TerminalBackdropTest::decodesPngIntoStraightPlanes()

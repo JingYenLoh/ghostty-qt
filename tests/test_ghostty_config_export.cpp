@@ -191,69 +191,50 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(typography.metricModifiers.applicationOrder
             == expectedModifierOrder);
 
-    const GhosttyAppearanceConfig &appearance = values.appearance;
-    QCOMPARE(appearance.foreground, QColor(QStringLiteral("#112233")));
-    QCOMPARE(appearance.background, QColor(QStringLiteral("#445566")));
-    QCOMPARE(appearance.backgroundOpacity, 0.375);
-    QVERIFY(appearance.backgroundOpacityCells);
-    QVERIFY(values.backgroundImage.path.has_value());
-    QCOMPARE(values.backgroundImage.path->path,
+    const TerminalAppearance &appearance = values.appearance;
+    QCOMPARE(appearance.foregroundColor, QColor(QStringLiteral("#112233")));
+    QCOMPARE(appearance.backgroundColor, QColor(QStringLiteral("#445566")));
+    QCOMPARE(values.background.opacity, 0.375);
+    QVERIFY(values.background.opacityCells);
+    QVERIFY(values.background.image.path.has_value());
+    QCOMPARE(values.background.image.path->path,
              QStringLiteral("/fixture/background.png"));
-    QVERIFY(values.backgroundImage.path->optional);
-    QCOMPARE(values.backgroundImage.opacity, 1.25);
-    QCOMPARE(values.backgroundImage.position,
+    QVERIFY(values.background.image.path->optional);
+    QCOMPARE(values.background.image.opacity, 1.25);
+    QCOMPARE(values.background.image.position,
              TerminalBackgroundImagePosition::BottomRight);
-    QCOMPARE(values.backgroundImage.fit, TerminalBackgroundImageFit::Cover);
-    QVERIFY(values.backgroundImage.repeat);
-    QCOMPARE(appearance.palette.size(), std::size_t{256});
-    for (std::size_t index = 0; index < appearance.palette.size(); ++index) {
+    QCOMPARE(values.background.image.fit, TerminalBackgroundImageFit::Cover);
+    QVERIFY(values.background.image.repeat);
+    QCOMPARE(appearance.palette.size(), qsizetype{256});
+    for (qsizetype index = 0; index < appearance.palette.size(); ++index) {
         const int component = static_cast<int>(index);
-        QCOMPARE(appearance.palette[index],
+        QCOMPARE(appearance.palette.at(index),
                  QColor(component, component, component));
     }
 
-    QVERIFY(!appearance.selectionForeground.has_value());
-    QVERIFY(appearance.selectionBackground.has_value());
-    const auto *selectionBackground =
-        std::get_if<GhosttyCellRelativeColor>(&*appearance.selectionBackground);
-    QVERIFY(selectionBackground != nullptr);
-    QCOMPARE(*selectionBackground, GhosttyCellRelativeColor::Foreground);
+    QCOMPARE(appearance.selectionForeground.kind, TerminalColorKind::Unset);
+    QCOMPARE(appearance.selectionBackground.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(appearance.searchForeground.kind, TerminalColorKind::Color);
+    QCOMPARE(appearance.searchForeground.color,
+             QColor(QStringLiteral("#010203")));
+    QCOMPARE(appearance.searchBackground.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(appearance.searchSelectedForeground.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(appearance.searchSelectedBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(appearance.searchSelectedBackground.color,
+             QColor(QStringLiteral("#aabbcc")));
 
-    const auto *searchForeground =
-        std::get_if<QColor>(&appearance.searchForeground);
-    QVERIFY(searchForeground != nullptr);
-    QCOMPARE(*searchForeground, QColor(QStringLiteral("#010203")));
-    const auto *searchBackground =
-        std::get_if<GhosttyCellRelativeColor>(&appearance.searchBackground);
-    QVERIFY(searchBackground != nullptr);
-    QCOMPARE(*searchBackground, GhosttyCellRelativeColor::Background);
-    const auto *searchSelectedForeground =
-        std::get_if<GhosttyCellRelativeColor>(
-            &appearance.searchSelectedForeground);
-    QVERIFY(searchSelectedForeground != nullptr);
-    QCOMPARE(*searchSelectedForeground, GhosttyCellRelativeColor::Foreground);
-    const auto *searchSelectedBackground =
-        std::get_if<QColor>(&appearance.searchSelectedBackground);
-    QVERIFY(searchSelectedBackground != nullptr);
-    QCOMPARE(*searchSelectedBackground, QColor(QStringLiteral("#aabbcc")));
-
-    QVERIFY(appearance.cursorColor.has_value());
-    const auto *cursorColor = std::get_if<QColor>(&*appearance.cursorColor);
-    QVERIFY(cursorColor != nullptr);
-    QCOMPARE(*cursorColor, QColor(QStringLiteral("#abcdef")));
+    QCOMPARE(appearance.cursorColor.kind, TerminalColorKind::Color);
+    QCOMPARE(appearance.cursorColor.color, QColor(QStringLiteral("#abcdef")));
     QCOMPARE(appearance.cursorOpacity, 0.625);
     QCOMPARE(appearance.cursorStyle, TerminalCursorStyle::BlockHollow);
     QVERIFY(!appearance.cursorBlink.has_value());
-    QVERIFY(appearance.cursorText.has_value());
-    const auto *cursorText =
-        std::get_if<GhosttyCellRelativeColor>(&*appearance.cursorText);
-    QVERIFY(cursorText != nullptr);
-    QCOMPARE(*cursorText, GhosttyCellRelativeColor::Background);
-    QVERIFY(appearance.boldColor.has_value());
-    const auto *boldColor =
-        std::get_if<GhosttyBoldBrightness>(&*appearance.boldColor);
-    QVERIFY(boldColor != nullptr);
-    QCOMPARE(*boldColor, GhosttyBoldBrightness::Bright);
+    QCOMPARE(appearance.cursorTextColor.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(appearance.boldColor.kind, TerminalBoldColorKind::Bright);
     QCOMPARE(appearance.faintOpacity, 0.375);
     QCOMPARE(appearance.minimumContrast, 4.25);
     QVERIFY(values.vtKamAllowed);
@@ -374,18 +355,18 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(inverse->values.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#102030"))));
     QVERIFY(!inverse->values.splitAppearance.dividerColor.has_value());
-    QVERIFY(inverse->values.appearance.selectionForeground.has_value());
-    const auto *inverseSelectionForeground =
-        std::get_if<GhosttyCellRelativeColor>(
-            &*inverse->values.appearance.selectionForeground);
-    QVERIFY(inverseSelectionForeground != nullptr);
-    QCOMPARE(*inverseSelectionForeground, GhosttyCellRelativeColor::Background);
-    QVERIFY(!inverse->values.appearance.selectionBackground.has_value());
-    QVERIFY(!inverse->values.appearance.cursorColor.has_value());
+    QCOMPARE(inverse->values.appearance.selectionForeground.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(inverse->values.appearance.selectionBackground.kind,
+             TerminalColorKind::Unset);
+    QCOMPARE(inverse->values.appearance.cursorColor.kind,
+             TerminalColorKind::Unset);
     QCOMPARE(inverse->values.appearance.cursorBlink,
              std::optional<bool>(false));
-    QVERIFY(!inverse->values.appearance.cursorText.has_value());
-    QVERIFY(!inverse->values.appearance.boldColor.has_value());
+    QCOMPARE(inverse->values.appearance.cursorTextColor.kind,
+             TerminalColorKind::Unset);
+    QCOMPARE(inverse->values.appearance.boldColor.kind,
+             TerminalBoldColorKind::Unset);
     QCOMPARE(inverse->values.quitAfterLastWindowClosedDelay,
              std::optional(std::chrono::milliseconds::zero()));
     QVERIFY(!inverse->values.bellAudioPath.has_value());
@@ -441,7 +422,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY2(low.has_value(), qPrintable(errorMessage(low)));
     QVERIFY(!low->values.workingDirectoryPath.has_value());
     QCOMPARE(low->values.appearance.cursorOpacity, 0.0);
-    QCOMPARE(low->values.appearance.backgroundOpacity, 0.0);
+    QCOMPARE(low->values.background.opacity, 0.0);
     QCOMPARE(low->values.resizeOverlay.duration,
              std::chrono::milliseconds{250});
     QCOMPARE(low->values.bellAudioVolume, -2.0);
@@ -526,8 +507,8 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     const auto high = parseGhosttyConfigExportJson(json(highValues));
     QVERIFY2(high.has_value(), qPrintable(errorMessage(high)));
     QCOMPARE(high->values.appearance.cursorOpacity, 1.0);
-    QCOMPARE(high->values.appearance.backgroundOpacity, 1.0);
-    QCOMPARE(high->values.backgroundImage.opacity, 3.5);
+    QCOMPARE(high->values.background.opacity, 1.0);
+    QCOMPARE(high->values.background.image.opacity, 3.5);
     QCOMPARE(high->values.bellAudioVolume, 2.0);
     QCOMPARE(high->values.mouseScrollMultiplier.precision, 10'000.0);
     QCOMPARE(high->values.mouseScrollMultiplier.discrete, 10'000.0);
@@ -581,7 +562,7 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
              TerminalBackgroundImagePosition::BottomRight},
         }),
         [](const GhosttyConfigValues &values) {
-            return values.backgroundImage.position;
+            return values.background.image.position;
         });
     verifyMappings(
         QLatin1StringView("background-image-fit"),
@@ -595,7 +576,7 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
                 {QLatin1StringView("none"), TerminalBackgroundImageFit::None},
             }),
         [](const GhosttyConfigValues &values) {
-            return values.backgroundImage.fit;
+            return values.background.image.fit;
         });
     verifyMappings(
         QLatin1StringView("window-padding-balance"),

@@ -1,13 +1,11 @@
 #include "terminal_pane.h"
 
 #include "ghostty_action_catalog.h"
-#include "terminal_backdrop_qsg.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
 #include "terminal_geometry.h"
-#include "terminal_pane_render_probe_p.h"
-#include "terminal_rect_batch.h"
+#include "terminal_pane_renderer.h"
 
 #include <QChronoTimer>
 #include <QClipboard>
@@ -19,36 +17,22 @@
 #include <QFocusEvent>
 #include <QFontMetricsF>
 #include <QGuiApplication>
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-#include <QHash>
-#endif
 #include <QHoverEvent>
 #include <QInputMethod>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QLatin1StringView>
-#include <QMatrix4x4>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QMutexLocker>
 #include <QQuickWindow>
-#include <QSGSimpleRectNode>
-#include <QSGTextNode>
 #include <QStyleHints>
-#include <QTextCharFormat>
-#include <QTextLayout>
-#include <QTextOption>
 #include <QTimer>
 #include <QWheelEvent>
 
 #include <algorithm>
-#include <array>
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-#include <atomic>
-#endif
 #include <cmath>
 #include <limits>
-#include <numbers>
 #include <optional>
 #include <utility>
 
@@ -67,8 +51,6 @@ constexpr auto kResizeOverlayStartupSuppression =
 constexpr float kMinimumActionFontSize = 1.0F;
 constexpr float kMaximumActionFontSize = 255.0F;
 constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
-constexpr qreal kLinkPreviewHorizontalPadding = 8.0;
-constexpr qreal kLinkPreviewVerticalPadding = 4.0;
 constexpr double kMinimumMouseScrollMultiplier = 0.01;
 constexpr double kMaximumMouseScrollMultiplier = 10'000.0;
 constexpr qint64 kMaximumMouseScrollRowsPerEvent = 10'000;
@@ -95,18 +77,6 @@ bool isModifierOnlyKey(int key)
         || key == Qt::Key_AltGr || key == Qt::Key_Meta;
 }
 
-float unfocusedSplitOverlayOpacity(double paneOpacity)
-{
-    if (!std::isfinite(paneOpacity)) {
-        paneOpacity = SplitAppearance{}.unfocusedOpacity;
-    }
-    paneOpacity = std::clamp(paneOpacity, 0.15, 1.0);
-    // Pinned GTK writes the complementary opacity into runtime CSS with two
-    // decimals. Preserve that observable composition rather than treating
-    // this setting as the rectangle's opacity directly.
-    return static_cast<float>(std::round((1.0 - paneOpacity) * 100.0) / 100.0);
-}
-
 float clampFontActionValue(float value, float minimum)
 {
     // Zig's @min/@max select the numeric operand when the other is NaN.
@@ -119,14 +89,6 @@ bool terminalGridMetricsChanged(const TerminalCellMetrics &left,
 {
     return left.cellWidth != right.cellWidth
         || left.cellHeight != right.cellHeight;
-}
-
-TerminalFontRole terminalFontRole(bool bold, bool italic) noexcept
-{
-    if (bold) {
-        return italic ? TerminalFontRole::BoldItalic : TerminalFontRole::Bold;
-    }
-    return italic ? TerminalFontRole::Italic : TerminalFontRole::Regular;
 }
 
 QString linkPreviewDisplaySource(const QByteArray &uri)
@@ -162,814 +124,6 @@ QString linkPreviewDisplaySource(const QByteArray &uri)
     }
     return display;
 }
-
-using ColoredRect = TerminalColoredRect;
-
-void appendRect(QVector<ColoredRect> &rects, const QRectF &rect,
-                const QColor &color)
-{
-    if (!rect.isEmpty() && color.isValid() && color.alpha() > 0) {
-        rects.append({rect, color});
-    }
-}
-
-void appendHorizontalRect(QVector<ColoredRect> &rects, const QRectF &rect,
-                          const QColor &color)
-{
-    if (rect.isEmpty() || !color.isValid() || color.alpha() == 0) return;
-    if (!rects.isEmpty()) {
-        ColoredRect &previous = rects.last();
-        const bool adjacent =
-            qFuzzyCompare(previous.rect.x() + previous.rect.width(), rect.x());
-        if (previous.color == color && adjacent
-            && qFuzzyCompare(previous.rect.y(), rect.y())
-            && qFuzzyCompare(previous.rect.height(), rect.height())) {
-            previous.rect.setWidth(previous.rect.width() + rect.width());
-            return;
-        }
-    }
-    rects.append({rect, color});
-}
-
-[[nodiscard]] qreal normalizedDevicePixelRatio(qreal value) noexcept
-{
-    return std::isfinite(value) && value > 0.0 ? value : 1.0;
-}
-
-[[nodiscard]] qint64 physicalPixels(qreal logicalPixels,
-                                    qreal devicePixelRatio) noexcept
-{
-    if (!std::isfinite(logicalPixels) || logicalPixels <= 0.0) {
-        return 0;
-    }
-
-    const qreal physical =
-        logicalPixels * normalizedDevicePixelRatio(devicePixelRatio);
-    if (physical >= static_cast<qreal>(std::numeric_limits<qint64>::max())) {
-        return std::numeric_limits<qint64>::max();
-    }
-    return std::max<qint64>(0, qRound64(physical));
-}
-
-[[nodiscard]] qreal logicalPixels(double physicalPixels,
-                                  qreal devicePixelRatio) noexcept
-{
-    return physicalPixels / normalizedDevicePixelRatio(devicePixelRatio);
-}
-
-[[nodiscard]] QRectF paddedSpriteCanvas(const QRectF &spriteRect,
-                                        qreal devicePixelRatio)
-{
-    const qint64 physicalWidth =
-        physicalPixels(spriteRect.width(), devicePixelRatio);
-    const qint64 physicalHeight =
-        physicalPixels(spriteRect.height(), devicePixelRatio);
-    const qreal horizontalPadding =
-        logicalPixels(static_cast<double>(physicalWidth / 4), devicePixelRatio);
-    const qreal verticalPadding = logicalPixels(
-        static_cast<double>(physicalHeight / 4), devicePixelRatio);
-    return spriteRect.adjusted(-horizontalPadding, -verticalPadding,
-                               horizontalPadding, verticalPadding);
-}
-
-[[nodiscard]] QRectF clippedToCanvas(const QRectF &rect, const QRectF &canvas)
-{
-    return rect.intersected(canvas);
-}
-
-void appendClippedRect(QVector<ColoredRect> &rects, const QRectF &rect,
-                       const QRectF &canvas, const QColor &color,
-                       QVector<QRectF> *geometry = nullptr)
-{
-    const QRectF clipped = clippedToCanvas(rect, canvas);
-    if (clipped.isEmpty()) {
-        return;
-    }
-
-    appendRect(rects, clipped, color);
-    if (geometry != nullptr) {
-        geometry->append(clipped);
-    }
-}
-
-QColor withOpacity(QColor color, double opacity)
-{
-    if (!color.isValid()) {
-        return color;
-    }
-    color.setAlpha(std::clamp(
-        static_cast<int>(std::ceil(std::clamp(opacity, 0.0, 1.0) * 255.0)), 0,
-        255));
-    return color;
-}
-
-double normalizedBackgroundOpacity(double opacity)
-{
-    return std::isfinite(opacity) ? std::clamp(opacity, 0.0, 1.0) : 1.0;
-}
-
-int roundedOpacityByte(double opacity)
-{
-    return std::clamp(
-        static_cast<int>(std::lround(normalizedBackgroundOpacity(opacity)
-                                     * 255.0)),
-        0, 255);
-}
-
-int truncatedOpacityByte(double opacity)
-{
-    return std::clamp(
-        static_cast<int>(normalizedBackgroundOpacity(opacity) * 255.0), 0,
-        255);
-}
-
-QColor withAlpha(QColor color, int alpha)
-{
-    if (color.isValid()) {
-        color.setAlpha(std::clamp(alpha, 0, 255));
-    }
-    return color;
-}
-
-QColor cellBackgroundLayer(QColor resolved, bool explicitBackground,
-                           bool forceOpaque, int explicitBackgroundAlpha)
-{
-    if (forceOpaque) {
-        return withAlpha(resolved, 255);
-    }
-    if (!explicitBackground) {
-        return withAlpha(resolved, 0);
-    }
-    return withAlpha(resolved, explicitBackgroundAlpha);
-}
-
-struct LinearPremultipliedColor {
-    float red = 0.0F;
-    float green = 0.0F;
-    float blue = 0.0F;
-    float alpha = 0.0F;
-};
-
-float linearizeSrgb(float component)
-{
-    return component <= 0.04045F
-        ? component / 12.92F
-        : std::pow((component + 0.055F) / 1.055F, 2.4F);
-}
-
-LinearPremultipliedColor loadLinearColor(const QColor &color)
-{
-    const float alpha = static_cast<float>(color.alpha()) / 255.0F;
-    return {
-        .red = linearizeSrgb(static_cast<float>(color.red()) / 255.0F) * alpha,
-        .green =
-            linearizeSrgb(static_cast<float>(color.green()) / 255.0F) * alpha,
-        .blue =
-            linearizeSrgb(static_cast<float>(color.blue()) / 255.0F) * alpha,
-        .alpha = alpha,
-    };
-}
-
-float colorLuminance(const LinearPremultipliedColor &color)
-{
-    return 0.2126F * color.red + 0.7152F * color.green + 0.0722F * color.blue;
-}
-
-float colorContrast(const LinearPremultipliedColor &left,
-                    const LinearPremultipliedColor &right)
-{
-    const float leftLuminance = colorLuminance(left) + 0.05F;
-    const float rightLuminance = colorLuminance(right) + 0.05F;
-    return std::max(leftLuminance, rightLuminance)
-        / std::min(leftLuminance, rightLuminance);
-}
-
-QColor minimumContrastColor(const QColor &foreground,
-                            const QColor &cellBackground,
-                            const QColor &globalBackground,
-                            double minimumContrast)
-{
-    const float threshold = static_cast<float>(minimumContrast);
-    if (threshold <= 1.0F || !foreground.isValid() || !cellBackground.isValid()
-        || !globalBackground.isValid()) {
-        return foreground;
-    }
-
-    const LinearPremultipliedColor foregroundLinear =
-        loadLinearColor(foreground);
-    const LinearPremultipliedColor cellBackgroundLinear =
-        loadLinearColor(cellBackground);
-    const LinearPremultipliedColor globalBackgroundLinear =
-        loadLinearColor(globalBackground);
-    const float uncovered = 1.0F - cellBackgroundLinear.alpha;
-    const LinearPremultipliedColor effectiveBackground{
-        .red =
-            cellBackgroundLinear.red + globalBackgroundLinear.red * uncovered,
-        .green = cellBackgroundLinear.green
-            + globalBackgroundLinear.green * uncovered,
-        .blue =
-            cellBackgroundLinear.blue + globalBackgroundLinear.blue * uncovered,
-        .alpha = cellBackgroundLinear.alpha
-            + globalBackgroundLinear.alpha * uncovered,
-    };
-
-    if (colorContrast(foregroundLinear, effectiveBackground) >= threshold) {
-        return foreground;
-    }
-
-    const LinearPremultipliedColor white = loadLinearColor(Qt::white);
-    const LinearPremultipliedColor black = loadLinearColor(Qt::black);
-    return colorContrast(white, effectiveBackground)
-            > colorContrast(black, effectiveBackground)
-        ? QColor(Qt::white)
-        : QColor(Qt::black);
-}
-
-QColor resolveRelativeColor(const TerminalColorValue &configured,
-                            const QColor &cellForeground,
-                            const QColor &cellBackground,
-                            const QColor &fallback)
-{
-    switch (configured.kind) {
-    case TerminalColorKind::Color:
-        return configured.color.isValid() ? configured.color : fallback;
-    case TerminalColorKind::CellForeground: return cellForeground;
-    case TerminalColorKind::CellBackground: return cellBackground;
-    case TerminalColorKind::Unset: return fallback;
-    }
-    return fallback;
-}
-
-void applyBoldColor(const TerminalCell &cell, const TerminalFrame &frame,
-                    const TerminalAppearance &appearance, QColor *foreground,
-                    QColor *background)
-{
-    if (!cell.bold || foreground == nullptr || background == nullptr
-        || appearance.boldColor.kind == TerminalBoldColorKind::Unset) {
-        return;
-    }
-
-    // The source is the logical SGR foreground. Inverse is applied after
-    // Ghostty resolves bold-color, so its rendered destination is the cell
-    // background when SGR inverse is active.
-    QColor *styleForeground = cell.inverse ? background : foreground;
-    switch (cell.styleForegroundSource) {
-    case TerminalColorSource::Default:
-        if (appearance.boldColor.kind == TerminalBoldColorKind::Color
-            && appearance.boldColor.color.isValid()) {
-            *styleForeground = appearance.boldColor.color;
-        }
-        break;
-    case TerminalColorSource::Palette:
-        if (cell.styleForegroundPaletteIndex >= 0
-            && cell.styleForegroundPaletteIndex < 8
-            && frame.palette.size() > cell.styleForegroundPaletteIndex + 8) {
-            const QColor bright =
-                frame.palette.at(cell.styleForegroundPaletteIndex + 8);
-            if (bright.isValid()) {
-                *styleForeground = bright;
-            }
-        }
-        break;
-    case TerminalColorSource::Rgb:
-        if (appearance.boldColor.kind == TerminalBoldColorKind::Color
-            && appearance.boldColor.color.isValid()
-            && *styleForeground == frame.foreground) {
-            *styleForeground = appearance.boldColor.color;
-        }
-        break;
-    }
-}
-
-void appendUnderline(QVector<ColoredRect> &rects, const QRectF &cellRect,
-                     qreal position, qreal thickness,
-                     TerminalUnderlineStyle style, const QColor &color,
-                     qreal devicePixelRatio,
-                     QVector<QRectF> *geometry = nullptr)
-{
-    if (style == TerminalUnderlineStyle::None) {
-        return;
-    }
-
-    const qreal dpr = normalizedDevicePixelRatio(devicePixelRatio);
-    const qint64 physicalWidth = physicalPixels(cellRect.width(), dpr);
-    const qint64 physicalHeight = physicalPixels(cellRect.height(), dpr);
-    const qint64 physicalPosition = physicalPixels(position, dpr);
-    const qint64 physicalThickness = physicalPixels(thickness, dpr);
-    if (physicalWidth <= 0 || physicalHeight <= 0 || physicalThickness <= 0) {
-        return;
-    }
-
-    const qint64 physicalPadding = physicalHeight / 4;
-    const qint64 physicalCanvasBottom =
-        std::min(static_cast<qint64>(std::numeric_limits<quint32>::max()),
-                 physicalHeight + physicalPadding);
-    const QRectF canvas = paddedSpriteCanvas(cellRect, dpr);
-    const auto saturatingSubtract = [](qint64 left, qint64 right) {
-        return left > right ? left - right : qint64{0};
-    };
-    const auto localRect = [&](double x, double y, double width,
-                               double height) {
-        return QRectF(cellRect.left() + logicalPixels(x, dpr),
-                      cellRect.top() + logicalPixels(y, dpr),
-                      logicalPixels(width, dpr), logicalPixels(height, dpr));
-    };
-    const auto appendLine = [&](const QRectF &rect) {
-        appendClippedRect(rects, rect, canvas, color, geometry);
-    };
-    const qint64 singlePosition =
-        std::min(physicalPosition,
-                 saturatingSubtract(physicalCanvasBottom, physicalThickness));
-
-    switch (style) {
-    case TerminalUnderlineStyle::None: break;
-    case TerminalUnderlineStyle::Single:
-        appendLine(localRect(0.0, static_cast<double>(singlePosition),
-                             static_cast<double>(physicalWidth),
-                             static_cast<double>(physicalThickness)));
-        break;
-    case TerminalUnderlineStyle::Double: {
-        const qint64 twiceThickness =
-            std::min(std::numeric_limits<qint64>::max(),
-                     physicalThickness > std::numeric_limits<qint64>::max() / 2
-                         ? std::numeric_limits<qint64>::max()
-                         : physicalThickness * 2);
-        const qint64 middle =
-            std::min(physicalPosition,
-                     saturatingSubtract(physicalCanvasBottom, twiceThickness));
-        const qint64 first = saturatingSubtract(middle, physicalThickness);
-        const qint64 second =
-            middle > std::numeric_limits<qint64>::max() - physicalThickness
-            ? std::numeric_limits<qint64>::max()
-            : middle + physicalThickness;
-        appendLine(localRect(0.0, static_cast<double>(first),
-                             static_cast<double>(physicalWidth),
-                             static_cast<double>(physicalThickness)));
-        appendLine(localRect(0.0, static_cast<double>(second),
-                             static_cast<double>(physicalWidth),
-                             static_cast<double>(physicalThickness)));
-        break;
-    }
-    case TerminalUnderlineStyle::Curly: {
-        const double width = static_cast<double>(physicalWidth);
-        const double lineThickness = static_cast<double>(physicalThickness);
-        const double amplitude = width / std::numbers::pi;
-        const double top = std::min(static_cast<double>(physicalPosition),
-                                    static_cast<double>(physicalCanvasBottom)
-                                        - amplitude - lineThickness);
-        const double bottom = top + amplitude;
-        const double center = width / 2.0;
-        constexpr double curvature = 0.4;
-        const auto cubic = [](double start, double control1, double control2,
-                              double end, double t) {
-            const double inverse = 1.0 - t;
-            return inverse * inverse * inverse * start
-                + 3.0 * inverse * inverse * t * control1
-                + 3.0 * inverse * t * t * control2 + t * t * t * end;
-        };
-        const auto firstHalfY = [&](double x) {
-            const double target = x / center;
-            double t = target;
-            for (int iteration = 0; iteration < 6; ++iteration) {
-                const double inverse = 1.0 - t;
-                const double candidate =
-                    cubic(0.0, curvature, 1.0 - curvature, 1.0, t);
-                const double derivative = 3.0 * inverse * inverse * curvature
-                    + 6.0 * inverse * t * (1.0 - 2.0 * curvature)
-                    + 3.0 * t * t * curvature;
-                t = std::clamp(t - (candidate - target) / derivative, 0.0, 1.0);
-            }
-            return cubic(bottom, bottom, top, top, t);
-        };
-
-        // The pinned sprite is one cubic cycle per cell. Sampling at physical
-        // pixel centers keeps that wavelength independent of line thickness,
-        // and disjoint one-pixel columns apply opacity only once.
-        for (qint64 x = 0; x < physicalWidth; ++x) {
-            const double centerX = static_cast<double>(x) + 0.5;
-            const double firstHalfX = std::min(centerX, width - centerX);
-            const double centerY = firstHalfY(firstHalfX);
-            appendLine(localRect(static_cast<double>(x),
-                                 centerY - lineThickness / 2.0, 1.0,
-                                 lineThickness));
-        }
-        break;
-    }
-    case TerminalUnderlineStyle::Dotted: {
-        const double width = static_cast<double>(physicalWidth);
-        const double lineThickness = static_cast<double>(physicalThickness);
-        const double radius = std::numbers::sqrt2 / 2.0 * lineThickness;
-        const double centerY = std::min(
-            static_cast<double>(physicalPosition) + 0.5 * lineThickness,
-            static_cast<double>(physicalCanvasBottom) - std::ceil(radius));
-        const qint64 dotCount = static_cast<qint64>(
-            std::max(std::min({
-                         std::ceil(width / (4.0 * radius)),
-                         std::floor(width / (3.0 * radius)),
-                         std::floor(width / (2.0 * radius + 1.0)),
-                     }),
-                     1.0));
-        const double stride = width / static_cast<double>(dotCount);
-        for (qint64 dot = 0; dot < dotCount; ++dot) {
-            const double centerX = (static_cast<double>(dot) + 0.5) * stride;
-            const qint64 firstY = std::max<qint64>(
-                -physicalPadding,
-                static_cast<qint64>(std::floor(centerY - radius)));
-            const qint64 pastLastY = std::min<qint64>(
-                physicalCanvasBottom,
-                static_cast<qint64>(std::ceil(centerY + radius)));
-            for (qint64 y = firstY; y < pastLastY; ++y) {
-                const double distanceY = static_cast<double>(y) + 0.5 - centerY;
-                const double remaining =
-                    radius * radius - distanceY * distanceY;
-                if (remaining < 0.0) {
-                    continue;
-                }
-                const double halfWidth = std::sqrt(remaining);
-                const qint64 firstX =
-                    static_cast<qint64>(std::ceil(centerX - halfWidth - 0.5));
-                const qint64 lastX =
-                    static_cast<qint64>(std::floor(centerX + halfWidth - 0.5));
-                if (lastX >= firstX) {
-                    appendLine(localRect(
-                        static_cast<double>(firstX), static_cast<double>(y),
-                        static_cast<double>(lastX - firstX + 1), 1.0));
-                }
-            }
-        }
-        break;
-    }
-    case TerminalUnderlineStyle::Dashed: {
-        const qint64 dashWidth = physicalWidth / 3 + 1;
-        const qint64 dashCount = physicalWidth / dashWidth + 1;
-        for (qint64 index = 0; index < dashCount; index += 2) {
-            appendLine(localRect(static_cast<double>(index * dashWidth),
-                                 static_cast<double>(singlePosition),
-                                 static_cast<double>(dashWidth),
-                                 static_cast<double>(physicalThickness)));
-        }
-        break;
-    }
-    }
-}
-
-QSGTextNode *createTextNode(QQuickWindow *window, const QRectF &viewport,
-                            const QColor &defaultColor)
-{
-    if (window == nullptr) {
-        return nullptr;
-    }
-    QSGTextNode *node = window->createTextNode();
-    if (node == nullptr) {
-        return nullptr;
-    }
-    // QtRendering uses Qt Quick's distance-field glyph cache on hardware RHI
-    // backends. Set every node property before adding layouts, as required by
-    // QSGTextNode's public contract.
-    node->setRenderType(QSGTextNode::QtRendering);
-    node->setColor(defaultColor);
-    node->setTextStyle(QSGTextNode::Normal);
-    node->setFiltering(QSGTexture::Linear);
-    node->setViewport(viewport);
-    return node;
-}
-
-void appendTextLayout(QSGTextNode *node, const QString &text, const QFont &font,
-                      const QColor &color, const QPointF &position,
-                      qreal baseline, qreal lineWidth)
-{
-    if (node == nullptr || text.isEmpty()) {
-        return;
-    }
-
-    QTextLayout layout(text, font);
-    QTextOption option;
-    option.setWrapMode(QTextOption::NoWrap);
-    option.setFlags(QTextOption::IncludeTrailingSpaces);
-    layout.setTextOption(option);
-
-    QTextLayout::FormatRange range;
-    range.start = 0;
-    range.length = static_cast<int>(text.size());
-    range.format.setForeground(color);
-    layout.setFormats({range});
-
-    layout.beginLayout();
-    QTextLine line = layout.createLine();
-    if (line.isValid()) {
-        line.setLineWidth(std::max<qreal>(1.0, lineWidth));
-        line.setPosition(QPointF(0.0, baseline - line.ascent()));
-    }
-    layout.endLayout();
-    if (line.isValid()) {
-        node->addTextLayout(position, &layout);
-    }
-}
-
-void clearNodeChildren(QSGNode *parent)
-{
-    while (QSGNode *child = parent->firstChild()) {
-        parent->removeChildNode(child);
-        delete child;
-    }
-}
-
-struct TerminalTextRenderState {
-    QQuickWindow *window = nullptr;
-    QRectF viewport;
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
-    qreal cellWidth = 1.0;
-    qreal cellHeight = 1.0;
-    qreal baseline = 1.0;
-    TerminalAppearance appearance;
-    QColor foreground;
-    QColor globalBackground;
-    int explicitBackgroundAlpha = 255;
-    QVector<QColor> palette;
-    QBitArray searchCandidateCells;
-    QBitArray searchSelectedCells;
-    qreal devicePixelRatio = 1.0;
-    int graphicsApi = -1;
-    int frameColumns = 0;
-    int frameRows = 0;
-    int visibleColumns = 0;
-    int visibleRows = 0;
-
-    bool operator==(const TerminalTextRenderState &) const = default;
-};
-
-struct BlockCursorTextState {
-    bool active = false;
-    int row = -1;
-    int column = 0;
-    int span = 0;
-    QColor color;
-
-    bool operator==(const BlockCursorTextState &) const = default;
-};
-
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-std::atomic<quint64> nextRenderNodeSerial{1};
-QMutex renderProbeMutex;
-QHash<const TerminalPane *, TerminalPaneRenderProbeSnapshot> renderProbes;
-#endif
-
-enum class RectLayer : quint8 {
-    Background,
-    CursorBackground,
-    DecorationBeforeText,
-    DecorationAfterText,
-    CursorDecoration,
-    OverlayBackground,
-    OverlayDecoration,
-    PaneOverlayBackground,
-    PaneOverlayDecoration,
-    Count,
-};
-
-class TerminalSceneNode final : public QSGNode {
-public:
-    TerminalSceneNode()
-        : backdrop(new TerminalBackdropSceneNode)
-        , gridTransform(new QSGTransformNode)
-        , beforeMain(new QSGNode)
-        , mainTextRows(new QSGNode)
-        , afterMain(new QSGNode)
-        , overlayTextContainer(new QSGNode)
-        , paneOverlay(new QSGNode)
-        , paneOverlayTextContainer(new QSGNode)
-        , unfocusedSplitOverlay(new QSGSimpleRectNode)
-    {
-        const auto appendLayer = [this](RectLayer layer, QSGNode *parent) {
-            auto *const batch = new TerminalRectBatch;
-            rectLayers[terminalEnumIndex(layer)] = batch;
-            parent->appendChildNode(batch);
-        };
-
-        appendChildNode(backdrop);
-        appendLayer(RectLayer::Background, beforeMain);
-        appendLayer(RectLayer::CursorBackground, beforeMain);
-        appendLayer(RectLayer::DecorationBeforeText, beforeMain);
-        appendLayer(RectLayer::DecorationAfterText, afterMain);
-        appendLayer(RectLayer::CursorDecoration, afterMain);
-        appendLayer(RectLayer::OverlayBackground, afterMain);
-        afterMain->appendChildNode(overlayTextContainer);
-        appendLayer(RectLayer::OverlayDecoration, afterMain);
-        gridTransform->appendChildNode(beforeMain);
-        gridTransform->appendChildNode(mainTextRows);
-        gridTransform->appendChildNode(afterMain);
-        appendChildNode(gridTransform);
-        appendLayer(RectLayer::PaneOverlayBackground, paneOverlay);
-        paneOverlay->appendChildNode(paneOverlayTextContainer);
-        appendLayer(RectLayer::PaneOverlayDecoration, paneOverlay);
-        appendChildNode(paneOverlay);
-        appendChildNode(unfocusedSplitOverlay);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        rootSerial =
-            nextRenderNodeSerial.fetch_add(1, std::memory_order_relaxed);
-        unfocusedSplitOverlaySerial =
-            nextRenderNodeSerial.fetch_add(1, std::memory_order_relaxed);
-#endif
-    }
-
-    void setGridOrigin(const QPointF &origin) const
-    {
-        QMatrix4x4 matrix;
-        matrix.translate(static_cast<float>(origin.x()),
-                         static_cast<float>(origin.y()));
-        if (gridTransform->matrix() != matrix) {
-            gridTransform->setMatrix(matrix);
-        }
-    }
-
-    void setUnfocusedSplitOverlay(const QRectF &rect, QColor color) const
-    {
-        QRectF effectiveRect = rect;
-        if (effectiveRect.isEmpty() || !color.isValid() || color.alpha() == 0) {
-            effectiveRect = {};
-            color = Qt::transparent;
-        }
-        if (unfocusedSplitOverlay->rect() != effectiveRect) {
-            unfocusedSplitOverlay->setRect(effectiveRect);
-        }
-        if (unfocusedSplitOverlay->color() != color) {
-            unfocusedSplitOverlay->setColor(color);
-        }
-    }
-
-    void beginFrame() const
-    {
-        clearNodeChildren(overlayTextContainer);
-        clearNodeChildren(paneOverlayTextContainer);
-    }
-
-    [[nodiscard]] QVector<ColoredRect> &rects(RectLayer layer) const
-    {
-        return rectLayers[terminalEnumIndex(layer)]->beginUpdate();
-    }
-
-    void commitRectLayers(bool softwareRenderer) const
-    {
-        for (TerminalRectBatch *batch : rectLayers) {
-            batch->commit(softwareRenderer);
-        }
-    }
-
-    void clearMainText()
-    {
-        clearNodeChildren(mainTextRows);
-        rowContainers.clear();
-        rowTextNodes.clear();
-        builtRowEpochs.clear();
-        textState.reset();
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        rowNodeSerials.clear();
-        rowBuildCounts.clear();
-#endif
-    }
-
-    void resetTextRows(
-        int rowCount,
-        const std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
-            &newFonts)
-    {
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        QVector<quint64> cumulativeBuildCounts = rowBuildCounts;
-#endif
-        clearMainText();
-        rowContainers.reserve(rowCount);
-        rowTextNodes.fill(nullptr, rowCount);
-        builtRowEpochs.fill(0, rowCount);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        rowNodeSerials.fill(0, rowCount);
-        cumulativeBuildCounts.resize(rowCount);
-        rowBuildCounts = std::move(cumulativeBuildCounts);
-#endif
-        for (int row = 0; row < rowCount; ++row) {
-            auto *container = new QSGNode;
-            mainTextRows->appendChildNode(container);
-            rowContainers.append(container);
-        }
-
-        fonts = newFonts;
-    }
-
-    QSGTextNode *prepareTextRow(int row, QQuickWindow *window,
-                                const QRectF &viewport,
-                                const QColor &defaultColor)
-    {
-        QSGTextNode *&textNode = rowTextNodes[row];
-        if (textNode == nullptr) {
-            textNode = createTextNode(window, viewport, defaultColor);
-            if (textNode != nullptr) {
-                rowContainers.at(row)->appendChildNode(textNode);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                rowNodeSerials[row] = nextRenderNodeSerial.fetch_add(
-                    1, std::memory_order_relaxed);
-#endif
-            }
-        } else {
-            textNode->clear();
-        }
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-        if (textNode != nullptr) {
-            ++rowBuildCounts[row];
-        }
-#endif
-        return textNode;
-    }
-
-    TerminalBackdropSceneNode *backdrop = nullptr;
-    QSGTransformNode *gridTransform = nullptr;
-    QSGNode *beforeMain = nullptr;
-    QSGNode *mainTextRows = nullptr;
-    QSGNode *afterMain = nullptr;
-    QSGNode *overlayTextContainer = nullptr;
-    QSGNode *paneOverlay = nullptr;
-    QSGNode *paneOverlayTextContainer = nullptr;
-    QSGSimpleRectNode *unfocusedSplitOverlay = nullptr;
-    std::array<TerminalRectBatch *, terminalEnumIndex(RectLayer::Count)>
-        rectLayers{};
-    QVector<QSGNode *> rowContainers;
-    QVector<QSGTextNode *> rowTextNodes;
-    QVector<quint64> builtRowEpochs;
-    QVector<QColor> leftEdgeBackgrounds;
-    QVector<QColor> rightEdgeBackgrounds;
-    QVector<QColor> topEdgeBackgrounds;
-    QVector<QColor> bottomEdgeBackgrounds;
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
-    std::optional<TerminalTextRenderState> textState;
-    BlockCursorTextState blockCursorTextState;
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    quint64 rootSerial = 0;
-    quint64 unfocusedSplitOverlaySerial = 0;
-    QVector<quint64> rowNodeSerials;
-    QVector<quint64> rowBuildCounts;
-#endif
-};
-
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-void clearRenderProbe(const TerminalPane *pane)
-{
-    QMutexLocker locker(&renderProbeMutex);
-    renderProbes.remove(pane);
-}
-
-void publishInitialGeometryProbe(
-    const TerminalPane *pane,
-    const std::optional<TerminalSessionGeometry> &geometry)
-{
-    QMutexLocker locker(&renderProbeMutex);
-    renderProbes[pane].initialGeometry = geometry;
-}
-
-void publishRenderProbe(
-    const TerminalPane *pane, const TerminalSceneNode &root,
-    const TerminalCellMetrics &metrics,
-    const std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
-        &fontRoleCellCounts,
-    const QColor &baseBackground, const QVector<QColor> &cellBackgrounds,
-    const QVector<QColor> &glyphForegrounds,
-    const QVector<QColor> &decorationForegrounds,
-    const QVector<QColor> &underlineColors, const QColor &cursorColor,
-    const QVector<QRectF> &underlineRects,
-    const QVector<QRectF> &strikethroughRects,
-    const QVector<QRectF> &overlineRects, const QVector<QRectF> &cursorRects)
-{
-    QMutexLocker locker(&renderProbeMutex);
-    TerminalPaneRenderProbeSnapshot &snapshot = renderProbes[pane];
-    ++snapshot.paintSerial;
-    snapshot.rootSerial = root.rootSerial;
-    snapshot.unfocusedSplitOverlaySerial = root.unfocusedSplitOverlaySerial;
-    snapshot.unfocusedSplitOverlayRect = root.unfocusedSplitOverlay->rect();
-    snapshot.unfocusedSplitOverlayColor = root.unfocusedSplitOverlay->color();
-    snapshot.backgroundImageAssetSerial = root.backdrop->assetSerial();
-    snapshot.backgroundImageRect = root.backdrop->imageRect();
-    snapshot.backgroundImageSourceRect = root.backdrop->sourceRect();
-    snapshot.backdropBaseRects.clear();
-    const auto baseRects = root.backdrop->baseRects();
-    snapshot.backdropBaseRects.reserve(
-        static_cast<qsizetype>(baseRects.size()));
-    for (const QRectF &rect : baseRects) {
-        snapshot.backdropBaseRects.append(rect);
-    }
-    snapshot.rowNodeSerials = root.rowNodeSerials;
-    snapshot.rowBuildCounts = root.rowBuildCounts;
-    snapshot.metrics = metrics;
-    snapshot.renderFonts = root.fonts;
-    snapshot.fontRoleCellCounts = fontRoleCellCounts;
-    snapshot.baseBackground = baseBackground;
-    snapshot.cellBackgrounds = cellBackgrounds;
-    snapshot.glyphForegrounds = glyphForegrounds;
-    snapshot.decorationForegrounds = decorationForegrounds;
-    snapshot.underlineColors = underlineColors;
-    snapshot.cursorColor = cursorColor;
-    snapshot.underlineRects = underlineRects;
-    snapshot.strikethroughRects = strikethroughRects;
-    snapshot.overlineRects = overlineRects;
-    snapshot.cursorRects = cursorRects;
-}
-#endif
 
 Qt::KeyboardModifiers normalizedModifiers(Qt::KeyboardModifiers modifiers)
 {
@@ -1093,24 +247,6 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
 
 } // namespace
 
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-TerminalPaneRenderProbeSnapshot
-terminalPaneRenderProbe(const TerminalPane *pane)
-{
-    QMutexLocker locker(&renderProbeMutex);
-    return renderProbes.value(pane);
-}
-
-QColor terminalMinimumContrastColorForTest(const QColor &foreground,
-                                           const QColor &cellBackground,
-                                           const QColor &globalBackground,
-                                           double minimumContrast)
-{
-    return minimumContrastColor(foreground, cellBackground, globalBackground,
-                                minimumContrast);
-}
-#endif
-
 TerminalPane::TerminalPane(
     const LaunchOptions &options, QQuickItem *parent,
     std::optional<TerminalSessionGeometry> initialGeometry,
@@ -1133,8 +269,8 @@ TerminalPane::TerminalPane(
     , sessionStartMode_(startMode)
 {
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    clearRenderProbe(this);
-    publishInitialGeometryProbe(this, initialGeometry);
+    TerminalPaneRenderer::clearProbe(this);
+    TerminalPaneRenderer::publishInitialGeometryProbe(this, initialGeometry);
 #endif
     setFlag(QQuickItem::ItemHasContents, true);
     setClip(true);
@@ -1320,81 +456,78 @@ TerminalPane::TerminalPane(
                 }
                 update();
             });
-    connect(controller_, &TerminalController::sessionExited, this,
-            [this](int exitCode, int signalNumber, bool hold, bool waitForKey,
-                   quint64 runtimeMilliseconds, bool abnormal) {
-                const QPointer<TerminalPane> guard(this);
-                // Advance before any destruction-capable UI notification.
-                // Results already queued to this pane, or retained by a
-                // process-wide barrier, belong to the pre-exit epoch.
-                advanceTerminalActionEpoch();
-                clearHyperlinkHover();
+    connect(
+        controller_, &TerminalController::sessionExited, this,
+        [this](int exitCode, int signalNumber, bool hold, bool waitForKey,
+               quint64 runtimeMilliseconds, bool abnormal) {
+            const QPointer<TerminalPane> guard(this);
+            // Advance before any destruction-capable UI notification.
+            // Results already queued to this pane, or retained by a
+            // process-wide barrier, belong to the pre-exit epoch.
+            advanceTerminalActionEpoch();
+            clearHyperlinkHover();
+            if (guard == nullptr) return;
+            cancelHyperlinkPress();
+            cancelPendingHyperlinkActivation();
+            // TerminalController invalidates worker progress and fails
+            // unresolved terminal actions before forwarding sessionExited.
+            setSearchUiActive(false);
+            if (guard == nullptr) return;
+            searchEngineActive_ = false;
+            searchMatchLabel_ = QStringLiteral("0/0");
+            Q_EMIT searchMatchLabelChanged();
+            if (guard == nullptr) return;
+            {
+                QMutexLocker locker(&renderMutex_);
+                clearPendingSearchUpdateLocked();
+                clearSearchDecorationsLocked();
+            }
+            bool hasError = false;
+            waitingForExitKey_ = waitForKey;
+            const QString abnormalText = abnormal
+                ? (signalNumber > 0
+                       ? QStringLiteral(
+                             "Command failed after %1 ms (signal %2).")
+                             .arg(static_cast<qulonglong>(runtimeMilliseconds))
+                             .arg(signalNumber)
+                       : QStringLiteral(
+                             "Command failed after %1 ms (exit status %2).")
+                             .arg(static_cast<qulonglong>(runtimeMilliseconds))
+                             .arg(exitCode))
+                : QString{};
+            const bool abnormalStateChanged = abnormalExitVisible_ != abnormal
+                || abnormalExitText_ != abnormalText;
+            abnormalExitVisible_ = abnormal;
+            abnormalExitText_ = abnormalText;
+            if (abnormalStateChanged) {
+                Q_EMIT abnormalExitChanged();
                 if (guard == nullptr) return;
-                cancelHyperlinkPress();
-                cancelPendingHyperlinkActivation();
-                // TerminalController invalidates worker progress and fails
-                // unresolved terminal actions before forwarding sessionExited.
-                setSearchUiActive(false);
-                if (guard == nullptr) return;
-                searchEngineActive_ = false;
-                searchMatchLabel_ = QStringLiteral("0/0");
-                Q_EMIT searchMatchLabelChanged();
-                if (guard == nullptr) return;
-                {
-                    QMutexLocker locker(&renderMutex_);
-                    clearPendingSearchUpdateLocked();
-                    clearSearchDecorationsLocked();
+            }
+            {
+                QMutexLocker locker(&renderMutex_);
+                hasError = !statusMessage_.isEmpty();
+                if (statusMessage_.isEmpty()) {
+                    const QString outcome = signalNumber > 0
+                        ? QStringLiteral("Process ended after signal %1")
+                              .arg(signalNumber)
+                        : QStringLiteral("Process exited with status %1")
+                              .arg(exitCode);
+                    statusMessage_ = waitForKey
+                        ? outcome
+                            + QStringLiteral(
+                                ". Press any key to close the terminal.")
+                        : outcome;
                 }
-                bool hasError = false;
-                waitingForExitKey_ = waitForKey;
-                const QString abnormalText = abnormal
-                    ? (signalNumber > 0
-                           ? QStringLiteral(
-                                 "Command failed after %1 ms (signal %2).")
-                                 .arg(static_cast<qulonglong>(
-                                     runtimeMilliseconds))
-                                 .arg(signalNumber)
-                           : QStringLiteral(
-                                 "Command failed after %1 ms (exit status %2).")
-                                 .arg(static_cast<qulonglong>(
-                                     runtimeMilliseconds))
-                                 .arg(exitCode))
-                    : QString{};
-                const bool abnormalStateChanged =
-                    abnormalExitVisible_ != abnormal
-                    || abnormalExitText_ != abnormalText;
-                abnormalExitVisible_ = abnormal;
-                abnormalExitText_ = abnormalText;
-                if (abnormalStateChanged) {
-                    Q_EMIT abnormalExitChanged();
-                    if (guard == nullptr) return;
-                }
-                {
-                    QMutexLocker locker(&renderMutex_);
-                    hasError = !statusMessage_.isEmpty();
-                    if (statusMessage_.isEmpty()) {
-                        const QString outcome = signalNumber > 0
-                            ? QStringLiteral("Process ended after signal %1")
-                                  .arg(signalNumber)
-                            : QStringLiteral("Process exited with status %1")
-                                  .arg(exitCode);
-                        statusMessage_ = waitForKey
-                            ? outcome
-                                + QStringLiteral(
-                                    ". Press any key to close the terminal.")
-                            : outcome;
-                    }
-                }
-                failStaleTerminalActionCompletions();
-                if (guard == nullptr) return;
-                update();
-                Q_EMIT sessionEnded(this, exitCode, signalNumber);
-                if (guard == nullptr) return;
-                if (!hold && !waitForKey && !abnormal && !hasError) {
-                    QTimer::singleShot(0, this,
-                                       [this] { Q_EMIT requestClose(); });
-                }
-            });
+            }
+            failStaleTerminalActionCompletions();
+            if (guard == nullptr) return;
+            update();
+            Q_EMIT sessionEnded(this, exitCode, signalNumber);
+            if (guard == nullptr) return;
+            if (!hold && !waitForKey && !abnormal && !hasError) {
+                QTimer::singleShot(0, this, [this] { Q_EMIT requestClose(); });
+            }
+        });
     connect(controller_, &TerminalController::exitKeyDismissed, this, [this] {
         if (!waitingForExitKey_) return;
         waitingForExitKey_ = false;
@@ -1419,7 +552,7 @@ TerminalPane::~TerminalPane()
     QObject::disconnect(windowScreenConnection_);
     disconnectDeferredSessionWindowSignals();
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    clearRenderProbe(this);
+    TerminalPaneRenderer::clearProbe(this);
 #endif
 }
 
@@ -2308,753 +1441,6 @@ void TerminalPane::handleSearchUpdate(const TerminalSearchUpdate &searchUpdate)
         }
     }
     update();
-}
-
-QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
-{
-    auto *root = oldNode != nullptr ? static_cast<TerminalSceneNode *>(oldNode)
-                                    : new TerminalSceneNode;
-    root->beginFrame();
-
-    TerminalFrame frame;
-    QVector<quint64> textRowEpochs;
-    TerminalAppearance appearance;
-    TerminalBackgroundOptions backgroundOptions;
-    std::shared_ptr<const TerminalBackgroundImageAsset> backgroundImageAsset;
-    TerminalPaddingOptions paddingOptions;
-    SplitAppearance splitAppearance;
-    TerminalCellMetrics metrics;
-    QString preedit;
-    QString status;
-    QString linkPreview;
-    QRectF linkPreviewRect;
-    QBitArray hoveredHyperlinkCells;
-    QBitArray searchCandidateCellMask;
-    QBitArray searchSelectedCellMask;
-    bool hasFrame = false;
-    {
-        QMutexLocker locker(&renderMutex_);
-        frame = frame_;
-        textRowEpochs = textRowEpochs_;
-        appearance = appearance_;
-        backgroundOptions = backgroundOptions_;
-        backgroundImageAsset = backgroundImageAsset_;
-        paddingOptions = paddingOptions_;
-        splitAppearance = splitAppearance_;
-        metrics = metrics_;
-        preedit = preedit_;
-        status = statusMessage_;
-        linkPreview = linkPreviewText_;
-        linkPreviewRect = linkPreviewRect_;
-        if (hoveredHyperlinkColumns_ == frame_.columns
-            && hoveredHyperlinkRows_ == frame_.rows) {
-            hoveredHyperlinkCells = hoveredHyperlinkCellMask_;
-        }
-        if (searchDecorationRevision_ == frame_.contentRevision
-            && searchDecorationColumns_ == frame_.columns
-            && searchDecorationRows_ == frame_.rows) {
-            searchCandidateCellMask = searchCandidateCellMask_;
-            searchSelectedCellMask = searchSelectedCellMask_;
-        }
-        hasFrame = hasFrame_;
-    }
-    const QFont &baseFont = metrics.font(TerminalFontRole::Regular);
-    const qreal metricCellWidth = metrics.cellWidth;
-    const qreal metricCellHeight = metrics.cellHeight;
-    const qreal baseline = metrics.baseline;
-    const bool candidateMaskMatchesFrame =
-        searchCandidateCellMask.size() == frame.cells.size();
-    const bool selectedMaskMatchesFrame =
-        searchSelectedCellMask.size() == frame.cells.size();
-
-    const QRectF viewport = boundingRect();
-    const QSGRendererInterface *rendererInterface =
-        window() != nullptr ? window()->rendererInterface() : nullptr;
-    const qreal devicePixelRatio =
-        window() != nullptr ? window()->devicePixelRatio() : 1.0;
-    const std::optional<TerminalViewportLayout> layout =
-        terminalViewportLayout({
-            .surfaceSize = viewport.size(),
-            .cellSize = QSizeF(metricCellWidth, metricCellHeight),
-            .devicePixelRatio = devicePixelRatio,
-            .padding = paddingOptions,
-        });
-    const QPointF gridOrigin = layout ? layout->gridRect.topLeft() : QPointF{};
-    const qreal cellWidth = layout
-        ? layout->gridRect.width() / layout->session.columns
-        : metricCellWidth;
-    const qreal cellHeight = layout
-        ? layout->gridRect.height() / layout->session.rows
-        : metricCellHeight;
-    const QRectF gridViewport = viewport.translated(-gridOrigin);
-    root->setGridOrigin(gridOrigin);
-    const qreal underlinePosition =
-        std::min(metrics.underlinePosition, metrics.underlineMaximumPosition);
-    const qreal overlinePosition =
-        std::max(metrics.overlinePosition, metrics.overlineMinimumPosition);
-    const bool softwareRenderer = rendererInterface == nullptr
-        || rendererInterface->graphicsApi() == QSGRendererInterface::Software;
-    const bool customBackdropRenderer = rendererInterface != nullptr
-        && QSGRendererInterface::isApiRhiBased(
-                                            rendererInterface->graphicsApi());
-    const QColor opaqueBackground =
-        hasFrame ? frame.background : appearance.backgroundColor;
-    const int baseBackgroundAlpha =
-        roundedOpacityByte(backgroundOptions.opacity);
-    const int explicitBackgroundAlpha = backgroundOptions.opacityCells
-        ? truncatedOpacityByte(backgroundOptions.opacity)
-        : 255;
-    const QColor globalBackground = withAlpha(
-        opaqueBackground, baseBackgroundAlpha);
-    root->backdrop->update(window(), viewport, globalBackground,
-                           backgroundImageAsset, backgroundOptions.image,
-                           devicePixelRatio, customBackdropRenderer);
-    auto &backgrounds = root->rects(RectLayer::Background);
-    auto &cursorBackgrounds = root->rects(RectLayer::CursorBackground);
-    auto &decorationsBeforeText = root->rects(RectLayer::DecorationBeforeText);
-    auto &decorationsAfterText = root->rects(RectLayer::DecorationAfterText);
-    auto &cursorDecorations = root->rects(RectLayer::CursorDecoration);
-    auto &overlayBackgrounds = root->rects(RectLayer::OverlayBackground);
-    auto &overlayDecorations = root->rects(RectLayer::OverlayDecoration);
-    auto &paneOverlayBackgrounds =
-        root->rects(RectLayer::PaneOverlayBackground);
-    auto &paneOverlayDecorations =
-        root->rects(RectLayer::PaneOverlayDecoration);
-    QVector<QRectF> *underlineProbe = nullptr;
-    QVector<QRectF> *strikethroughProbe = nullptr;
-    QVector<QRectF> *overlineProbe = nullptr;
-    QVector<QRectF> *cursorProbe = nullptr;
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>
-        fontRoleCellCounts{};
-    QVector<QRectF> underlineRects;
-    QVector<QRectF> strikethroughRects;
-    QVector<QRectF> overlineRects;
-    QVector<QRectF> cursorRects;
-    QVector<QColor> glyphForegrounds(frame.cells.size());
-    QVector<QColor> decorationForegrounds(frame.cells.size());
-    QVector<QColor> underlineColors(frame.cells.size());
-    QVector<QColor> cellBackgroundLayers(frame.cells.size());
-    QColor renderedCursorColor;
-    underlineProbe = &underlineRects;
-    strikethroughProbe = &strikethroughRects;
-    overlineProbe = &overlineRects;
-    cursorProbe = &cursorRects;
-#endif
-    QSGTextNode *overlayText = nullptr;
-    const auto ensureOverlayText = [&] {
-        if (overlayText == nullptr) {
-            overlayText = createTextNode(window(), gridViewport,
-                                         QColor(QStringLiteral("#eceff4")));
-        }
-        return overlayText;
-    };
-    QSGTextNode *paneOverlayText = nullptr;
-    const auto ensurePaneOverlayText = [&] {
-        if (paneOverlayText == nullptr) {
-            paneOverlayText = createTextNode(window(), viewport,
-                                             QColor(QStringLiteral("#eceff4")));
-        }
-        return paneOverlayText;
-    };
-
-    if (!hasFrame || frame.columns <= 0 || frame.rows <= 0) {
-        root->clearMainText();
-        QSGTextNode *startingText = createTextNode(
-            window(), gridViewport, QColor(QStringLiteral("#88909d")));
-        appendTextLayout(startingText, QStringLiteral("Starting terminal…"),
-                         baseFont, QColor(QStringLiteral("#88909d")),
-                         QPointF(12.0, 12.0), baseline,
-                         std::max<qreal>(1.0, viewport.width() - 24.0));
-        if (startingText != nullptr) {
-            root->mainTextRows->appendChildNode(startingText);
-        }
-    } else {
-        const int visibleRows =
-            std::min(frame.rows, layout ? layout->session.rows : frame.rows);
-        const int visibleColumns = std::min(
-            frame.columns, layout ? layout->session.columns : frame.columns);
-        const bool focused = hasActiveFocus();
-        const bool cursorActive = frame.cursorVisible
-            && (!focused || !frame.cursorBlinking || cursorBlinkOn_)
-            && frame.cursorColumn >= 0 && frame.cursorColumn < visibleColumns
-            && frame.cursorRow >= 0 && frame.cursorRow < visibleRows;
-        const int cursorStyle = focused ? frame.cursorStyle : 3;
-        const bool blockCursorActive = cursorActive && cursorStyle == 1;
-        QColor cursorCellForeground = frame.foreground;
-        QColor cursorCellBackground = frame.background;
-        QColor cursorEffectiveBackground = withAlpha(frame.background, 0);
-        const qsizetype cursorCellIndex = cursorActive
-            ? static_cast<qsizetype>(frame.cursorRow) * frame.columns
-                + frame.cursorColumn
-            : -1;
-        if (cursorActive && cursorCellIndex >= 0
-            && cursorCellIndex < frame.cells.size()) {
-            const TerminalCell &cursorCell = frame.cells.at(cursorCellIndex);
-            cursorCellForeground = cursorCell.foreground;
-            cursorCellBackground = cursorCell.background;
-            applyBoldColor(cursorCell, frame, appearance, &cursorCellForeground,
-                           &cursorCellBackground);
-            cursorEffectiveBackground = cursorCellBackground;
-        }
-        QColor blockCursorTextColor = resolveRelativeColor(
-            appearance.cursorTextColor, cursorCellForeground,
-            cursorCellBackground, frame.background);
-        blockCursorTextColor.setAlpha(255);
-
-        TerminalTextRenderState textState;
-        textState.window = window();
-        textState.viewport = gridViewport;
-        textState.fonts = metrics.fonts;
-        textState.cellWidth = metrics.cellWidth;
-        textState.cellHeight = metrics.cellHeight;
-        textState.baseline = metrics.baseline;
-        textState.appearance = appearance;
-        textState.foreground = frame.foreground;
-        // Opacity can only alter retained glyph/decor colors through minimum
-        // contrast. Keep background-only reloads off the text rebuild path at
-        // the default threshold.
-        if (appearance.minimumContrast > 1.0) {
-            textState.globalBackground = globalBackground;
-            textState.explicitBackgroundAlpha = explicitBackgroundAlpha;
-        } else {
-            textState.globalBackground = frame.background;
-        }
-        textState.palette = frame.palette;
-        textState.searchCandidateCells = searchCandidateCellMask;
-        textState.searchSelectedCells = searchSelectedCellMask;
-        textState.devicePixelRatio = devicePixelRatio;
-        textState.graphicsApi = rendererInterface != nullptr
-            ? static_cast<int>(rendererInterface->graphicsApi())
-            : -1;
-        textState.frameColumns = frame.columns;
-        textState.frameRows = frame.rows;
-        textState.visibleColumns = visibleColumns;
-        textState.visibleRows = visibleRows;
-
-        const bool rebuildAllText = !root->textState.has_value()
-            || *root->textState != textState
-            || root->rowTextNodes.size() != visibleRows;
-        if (rebuildAllText) {
-            root->resetTextRows(visibleRows, metrics.fonts);
-            root->textState = textState;
-        }
-
-        BlockCursorTextState blockCursorTextState;
-        if (blockCursorActive) {
-            blockCursorTextState = {
-                .active = true,
-                .row = frame.cursorRow,
-                .column = frame.cursorColumn,
-                .span = std::max(1, frame.cursorColumnSpan),
-                .color = blockCursorTextColor,
-            };
-        }
-        const BlockCursorTextState previousBlockCursorTextState =
-            root->blockCursorTextState;
-        const bool blockCursorTextChanged = !rebuildAllText
-            && previousBlockCursorTextState != blockCursorTextState;
-        const bool extendPadding =
-            layout && paddingOptions.color != TerminalPaddingColor::Background;
-        if (extendPadding) {
-            root->leftEdgeBackgrounds.fill({}, visibleRows);
-            root->rightEdgeBackgrounds.fill({}, visibleRows);
-            root->topEdgeBackgrounds.fill({}, visibleColumns);
-            root->bottomEdgeBackgrounds.fill({}, visibleColumns);
-        } else {
-            root->leftEdgeBackgrounds.clear();
-            root->rightEdgeBackgrounds.clear();
-            root->topEdgeBackgrounds.clear();
-            root->bottomEdgeBackgrounds.clear();
-        }
-        QVector<QColor> &leftEdgeBackgrounds = root->leftEdgeBackgrounds;
-        QVector<QColor> &rightEdgeBackgrounds = root->rightEdgeBackgrounds;
-        QVector<QColor> &topEdgeBackgrounds = root->topEdgeBackgrounds;
-        QVector<QColor> &bottomEdgeBackgrounds = root->bottomEdgeBackgrounds;
-
-        for (int row = 0; row < visibleRows; ++row) {
-            const qreal top = static_cast<qreal>(row) * cellHeight;
-            const quint64 rowEpoch =
-                row < textRowEpochs.size() ? textRowEpochs.at(row) : 0;
-            const bool cursorChangedThisRow = blockCursorTextChanged
-                && ((previousBlockCursorTextState.active
-                     && previousBlockCursorTextState.row == row)
-                    || (blockCursorTextState.active
-                        && blockCursorTextState.row == row));
-            const bool rebuildRowText = rebuildAllText
-                || root->rowTextNodes.at(row) == nullptr
-                || root->builtRowEpochs.at(row) != rowEpoch
-                || cursorChangedThisRow;
-            QSGTextNode *rowText = rebuildRowText
-                ? root->prepareTextRow(row, window(), gridViewport,
-                                       frame.foreground)
-                : nullptr;
-            for (int column = 0; column < visibleColumns; ++column) {
-                const qsizetype index =
-                    static_cast<qsizetype>(row) * frame.columns + column;
-                if (index >= frame.cells.size()) {
-                    continue;
-                }
-                const TerminalCell &cell = frame.cells.at(index);
-                const qreal left = static_cast<qreal>(column) * cellWidth;
-                const qreal drawWidth = cellWidth
-                    * static_cast<qreal>(std::max(1, cell.columnSpan));
-                QColor styledForeground = cell.foreground;
-                QColor styledBackground = cell.background;
-                applyBoldColor(cell, frame, appearance, &styledForeground,
-                               &styledBackground);
-
-                bool candidateSearchMatch = candidateMaskMatchesFrame
-                    && searchCandidateCellMask.testBit(index);
-                bool selectedSearchMatch = selectedMaskMatchesFrame
-                    && searchSelectedCellMask.testBit(index);
-                if (cell.spacer && column > 0) {
-                    // libghostty maps every UTF-8 byte to the owning wide
-                    // head. Carry that decoration into its spacer tail so the
-                    // highlighted grapheme remains one visual unit.
-                    candidateSearchMatch = candidateSearchMatch
-                        || (candidateMaskMatchesFrame
-                            && searchCandidateCellMask.testBit(index - 1));
-                    selectedSearchMatch = selectedSearchMatch
-                        || (selectedMaskMatchesFrame
-                            && searchSelectedCellMask.testBit(index - 1));
-                }
-
-                QColor cellBackground = styledBackground;
-                if (cell.selected) {
-                    cellBackground = resolveRelativeColor(
-                        appearance.selectionBackground, styledForeground,
-                        styledBackground, frame.foreground);
-                } else if (selectedSearchMatch) {
-                    cellBackground = resolveRelativeColor(
-                        appearance.searchSelectedBackground, styledForeground,
-                        styledBackground, frame.foreground);
-                } else if (candidateSearchMatch) {
-                    cellBackground = resolveRelativeColor(
-                        appearance.searchBackground, styledForeground,
-                        styledBackground, frame.foreground);
-                }
-                const bool forceOpaqueBackground = cell.selected
-                    || selectedSearchMatch || candidateSearchMatch
-                    || cell.inverse;
-                const QColor backgroundLayer = cellBackgroundLayer(
-                    cellBackground, cell.backgroundExplicit,
-                    forceOpaqueBackground, explicitBackgroundAlpha);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                cellBackgroundLayers[index] = backgroundLayer;
-#endif
-                if (backgroundLayer.alpha() > 0) {
-                    // Background is grid-cell state, even when the glyph in
-                    // this cell spans multiple columns. Drawing one column at
-                    // a time keeps adjacent/spacer backgrounds non-overlapping
-                    // so they can be safely color-batched.
-                    appendHorizontalRect(
-                        backgrounds, QRectF(left, top, cellWidth, cellHeight),
-                        backgroundLayer);
-                }
-                if (extendPadding) {
-                    if (column == 0) {
-                        leftEdgeBackgrounds[row] = backgroundLayer;
-                    }
-                    if (column == visibleColumns - 1) {
-                        rightEdgeBackgrounds[row] = backgroundLayer;
-                    }
-                    if (row == 0) {
-                        topEdgeBackgrounds[column] = backgroundLayer;
-                    }
-                    if (row == visibleRows - 1) {
-                        bottomEdgeBackgrounds[column] = backgroundLayer;
-                    }
-                }
-                if (index == cursorCellIndex) {
-                    cursorEffectiveBackground = backgroundLayer;
-                }
-
-                QColor foreground = styledForeground;
-                if (cell.selected) {
-                    foreground = resolveRelativeColor(
-                        appearance.selectionForeground, styledForeground,
-                        styledBackground, frame.background);
-                } else if (selectedSearchMatch) {
-                    foreground = resolveRelativeColor(
-                        appearance.searchSelectedForeground, styledForeground,
-                        styledBackground, frame.background);
-                } else if (candidateSearchMatch) {
-                    foreground = resolveRelativeColor(
-                        appearance.searchForeground, styledForeground,
-                        styledBackground, frame.background);
-                }
-                const bool insideBlockCursor = blockCursorActive
-                    && row == frame.cursorRow && column >= frame.cursorColumn
-                    && column < frame.cursorColumn
-                            + std::max(1, frame.cursorColumnSpan);
-                if (cell.faint) {
-                    foreground =
-                        withOpacity(foreground, appearance.faintOpacity);
-                }
-                QColor decorationForeground = minimumContrastColor(
-                    foreground, backgroundLayer, globalBackground,
-                    appearance.minimumContrast);
-                if (!cell.minimumContrastExemptGlyph) {
-                    foreground = decorationForeground;
-                }
-                // Ghostty applies the block-cursor text uniform last to all
-                // foreground primitives in every column covered by a wide
-                // cursor. It is intentionally opaque and overrides faint and
-                // minimum contrast, including explicit decoration colors.
-                if (insideBlockCursor) {
-                    foreground = blockCursorTextColor;
-                    decorationForeground = blockCursorTextColor;
-                }
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                glyphForegrounds[index] = foreground;
-                decorationForegrounds[index] = decorationForeground;
-#endif
-
-                if (!cell.invisible && !cell.text.isEmpty() && !cell.spacer) {
-                    const std::size_t fontIndex = terminalEnumIndex(
-                        terminalFontRole(cell.bold, cell.italic));
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                    ++fontRoleCellCounts[fontIndex];
-#endif
-                    if (rowText != nullptr) {
-                        appendTextLayout(rowText, cell.text,
-                                         root->fonts[fontIndex], foreground,
-                                         QPointF(left, top), baseline,
-                                         drawWidth);
-                    }
-                }
-
-                if (cell.invisible) {
-                    continue;
-                }
-
-                QColor underlineColor = cell.underlineUsesForeground
-                    ? decorationForeground
-                    : cell.underlineColor;
-                if (!cell.underlineUsesForeground && cell.faint) {
-                    underlineColor =
-                        withOpacity(underlineColor, appearance.faintOpacity);
-                }
-                if (!cell.underlineUsesForeground) {
-                    underlineColor = minimumContrastColor(
-                        underlineColor, backgroundLayer, globalBackground,
-                        appearance.minimumContrast);
-                }
-                if (insideBlockCursor) {
-                    underlineColor = blockCursorTextColor;
-                }
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-                underlineColors[index] = underlineColor;
-#endif
-                TerminalUnderlineStyle underlineStyle = cell.underlineStyle;
-                if (index < hoveredHyperlinkCells.size()
-                    && hoveredHyperlinkCells.testBit(index)) {
-                    // Ghostty renders a hovered link as single-underlined,
-                    // except an existing single underline becomes double so
-                    // the hover remains visually distinguishable.
-                    underlineStyle =
-                        cell.underlineStyle == TerminalUnderlineStyle::Single
-                        ? TerminalUnderlineStyle::Double
-                        : TerminalUnderlineStyle::Single;
-                }
-                appendUnderline(decorationsBeforeText,
-                                QRectF(left, top, drawWidth, cellHeight),
-                                metrics.underlinePosition,
-                                metrics.underlineThickness, underlineStyle,
-                                underlineColor, devicePixelRatio,
-                                underlineProbe);
-                const QRectF decorationCanvas = paddedSpriteCanvas(
-                    QRectF(left, top, drawWidth, cellHeight), devicePixelRatio);
-                if (cell.strikeThrough) {
-                    const QRectF rect(left, top + metrics.strikethroughPosition,
-                                      drawWidth,
-                                      metrics.strikethroughThickness);
-                    appendClippedRect(decorationsAfterText, rect,
-                                      decorationCanvas, decorationForeground,
-                                      strikethroughProbe);
-                }
-                if (cell.overline) {
-                    const QRectF rect(left, top + overlinePosition, drawWidth,
-                                      metrics.overlineThickness);
-                    appendClippedRect(decorationsBeforeText, rect,
-                                      decorationCanvas, decorationForeground,
-                                      overlineProbe);
-                }
-            }
-            if (rebuildRowText) {
-                root->builtRowEpochs[row] = rowText != nullptr ? rowEpoch : 0;
-            }
-        }
-
-        if (extendPadding && visibleRows > 0 && visibleColumns > 0) {
-            const qreal gridWidth = visibleColumns * cellWidth;
-            const qreal gridHeight = visibleRows * cellHeight;
-            const qreal leftExtent = std::max<qreal>(0.0, gridOrigin.x());
-            const qreal topExtent = std::max<qreal>(0.0, gridOrigin.y());
-            const qreal rightExtent = std::max<qreal>(
-                0.0, viewport.width() - gridOrigin.x() - gridWidth);
-            const qreal bottomExtent = std::max<qreal>(
-                0.0, viewport.height() - gridOrigin.y() - gridHeight);
-            for (int row = 0; row < visibleRows; ++row) {
-                const qreal top = row * cellHeight;
-                appendRect(backgrounds,
-                           QRectF(-leftExtent, top, leftExtent, cellHeight),
-                           leftEdgeBackgrounds.at(row));
-                appendRect(backgrounds,
-                           QRectF(gridWidth, top, rightExtent, cellHeight),
-                           rightEdgeBackgrounds.at(row));
-            }
-
-            const bool always =
-                paddingOptions.color == TerminalPaddingColor::ExtendAlways;
-            const bool presentationsMatch =
-                frame.rowPresentation.size() == frame.rows;
-            const bool extendTop = always
-                || (presentationsMatch
-                    && frame.rowPresentation.first().paddingExtensionSafe);
-            const bool extendBottom = always
-                || (presentationsMatch
-                    && frame.rowPresentation.at(visibleRows - 1)
-                           .paddingExtensionSafe);
-            if (extendTop) {
-                for (int column = 0; column < visibleColumns; ++column) {
-                    appendHorizontalRect(backgrounds,
-                                         QRectF(column * cellWidth, -topExtent,
-                                                cellWidth, topExtent),
-                                         topEdgeBackgrounds.at(column));
-                }
-                appendRect(
-                    backgrounds,
-                    QRectF(-leftExtent, -topExtent, leftExtent, topExtent),
-                    topEdgeBackgrounds.first());
-                appendRect(
-                    backgrounds,
-                    QRectF(gridWidth, -topExtent, rightExtent, topExtent),
-                    topEdgeBackgrounds.last());
-            }
-            if (extendBottom) {
-                for (int column = 0; column < visibleColumns; ++column) {
-                    appendHorizontalRect(backgrounds,
-                                         QRectF(column * cellWidth, gridHeight,
-                                                cellWidth, bottomExtent),
-                                         bottomEdgeBackgrounds.at(column));
-                }
-                appendRect(
-                    backgrounds,
-                    QRectF(-leftExtent, gridHeight, leftExtent, bottomExtent),
-                    bottomEdgeBackgrounds.first());
-                appendRect(
-                    backgrounds,
-                    QRectF(gridWidth, gridHeight, rightExtent, bottomExtent),
-                    bottomEdgeBackgrounds.last());
-            }
-        }
-        root->blockCursorTextState = blockCursorTextState;
-
-        if (cursorActive) {
-            const qreal left =
-                static_cast<qreal>(frame.cursorColumn) * cellWidth;
-            const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
-            const qreal cursorWidth = cellWidth
-                * static_cast<qreal>(std::max(1, frame.cursorColumnSpan));
-            const qreal cursorTop = top + metrics.cursorTop;
-            const QRectF cursorRect(left, cursorTop, cursorWidth,
-                                    metrics.cursorHeight);
-            const QRectF cursorCanvas =
-                paddedSpriteCanvas(cursorRect, devicePixelRatio);
-            const QRectF underlineCursorCell(left, top, cursorWidth,
-                                             cellHeight);
-            const QRectF underlineCursorCanvas =
-                paddedSpriteCanvas(underlineCursorCell, devicePixelRatio);
-            QColor cursorColor = frame.cursorColor;
-            if (!frame.cursorColorExplicit) {
-                cursorColor = resolveRelativeColor(
-                    appearance.cursorColor, cursorCellForeground,
-                    cursorCellBackground, frame.foreground);
-            }
-            cursorColor = withOpacity(cursorColor,
-                                      focused ? appearance.cursorOpacity : 1.0);
-            cursorColor = minimumContrastColor(
-                cursorColor, cursorEffectiveBackground, globalBackground,
-                appearance.minimumContrast);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-            renderedCursorColor = cursorColor;
-#endif
-            const auto appendCursorRect = [&](QVector<ColoredRect> &rects,
-                                              const QRectF &rect,
-                                              const QRectF &canvas) {
-                appendClippedRect(rects, rect, canvas, cursorColor,
-                                  cursorProbe);
-            };
-            switch (cursorStyle) {
-            case 0:
-                appendCursorRect(cursorDecorations,
-                                 QRectF(left + metrics.cursorBarLeft, cursorTop,
-                                        metrics.cursorThickness,
-                                        metrics.cursorHeight),
-                                 cursorCanvas);
-                break;
-            case 2:
-                appendCursorRect(cursorDecorations,
-                                 QRectF(left, top + underlinePosition,
-                                        cursorWidth, metrics.cursorThickness),
-                                 underlineCursorCanvas);
-                break;
-            case 3: {
-                const qreal thickness = metrics.cursorThickness;
-                const qreal innerWidth =
-                    std::max(qreal{0.0}, cursorWidth - 2.0 * thickness);
-                const qreal innerHeight = std::max(
-                    qreal{0.0}, metrics.cursorHeight - 2.0 * thickness);
-                if (innerWidth <= 0.0 || innerHeight <= 0.0) {
-                    appendCursorRect(cursorDecorations, cursorRect,
-                                     cursorCanvas);
-                    break;
-                }
-
-                const QRectF inner(left + thickness, cursorTop + thickness,
-                                   innerWidth, innerHeight);
-                // These four rectangles form an exact, non-overlapping
-                // partition of outer minus inner. In particular, fractional
-                // cursor opacity is applied once at the corners.
-                appendCursorRect(cursorDecorations,
-                                 QRectF(cursorRect.left(), cursorRect.top(),
-                                        cursorRect.width(),
-                                        inner.top() - cursorRect.top()),
-                                 cursorCanvas);
-                appendCursorRect(cursorDecorations,
-                                 QRectF(cursorRect.left(), inner.bottom(),
-                                        cursorRect.width(),
-                                        cursorRect.bottom() - inner.bottom()),
-                                 cursorCanvas);
-                appendCursorRect(cursorDecorations,
-                                 QRectF(cursorRect.left(), inner.top(),
-                                        inner.left() - cursorRect.left(),
-                                        inner.height()),
-                                 cursorCanvas);
-                appendCursorRect(cursorDecorations,
-                                 QRectF(inner.right(), inner.top(),
-                                        cursorRect.right() - inner.right(),
-                                        inner.height()),
-                                 cursorCanvas);
-                break;
-            }
-            default:
-                // Appended after cell backgrounds so a wide block cursor is
-                // not overwritten by the spacer cell's background.
-                appendCursorRect(cursorBackgrounds, cursorRect, cursorCanvas);
-                break;
-            }
-        }
-
-        if (!preedit.isEmpty()) {
-            const qreal left =
-                static_cast<qreal>(frame.cursorColumn) * cellWidth;
-            const qreal top = static_cast<qreal>(frame.cursorRow) * cellHeight;
-            const qreal preeditWidth = std::max(
-                cellWidth, QFontMetricsF(baseFont).horizontalAdvance(preedit));
-            appendRect(overlayBackgrounds,
-                       QRectF(left, top, preeditWidth, cellHeight),
-                       QColor(QStringLiteral("#3b4252")));
-            appendTextLayout(ensureOverlayText(), preedit, baseFont,
-                             QColor(QStringLiteral("#eceff4")),
-                             QPointF(left, top), baseline, preeditWidth);
-            appendUnderline(
-                overlayDecorations, QRectF(left, top, preeditWidth, cellHeight),
-                metrics.underlinePosition, metrics.underlineThickness,
-                TerminalUnderlineStyle::Single,
-                QColor(QStringLiteral("#eceff4")), devicePixelRatio,
-                underlineProbe);
-        }
-
-        if (!status.isEmpty()) {
-            const QFontMetricsF fontMetrics(baseFont);
-            const qreal statusHeight = fontMetrics.height() + 12.0;
-            const qreal statusTop = height() - statusHeight;
-            appendRect(paneOverlayBackgrounds,
-                       QRectF(0.0, statusTop, width(), statusHeight),
-                       QColor(46, 52, 64, 230));
-            appendTextLayout(ensurePaneOverlayText(), status, baseFont,
-                             QColor(QStringLiteral("#e5c07b")),
-                             QPointF(8.0, statusTop),
-                             statusHeight - 6.0 - fontMetrics.descent(),
-                             std::max<qreal>(1.0, width() - 16.0));
-        }
-
-        if (!linkPreview.isEmpty() && !linkPreviewRect.isEmpty()) {
-            QColor previewBackground = frame.background;
-            previewBackground.setAlpha(242);
-            QColor previewForeground = frame.foreground;
-            previewForeground.setAlpha(255);
-            QColor previewOutline = previewForeground;
-            previewOutline.setAlpha(100);
-            appendRect(paneOverlayBackgrounds, linkPreviewRect,
-                       previewBackground);
-
-            constexpr qreal outlineWidth = 1.0;
-            appendRect(paneOverlayDecorations,
-                       QRectF(linkPreviewRect.left(), linkPreviewRect.top(),
-                              linkPreviewRect.width(), outlineWidth),
-                       previewOutline);
-            appendRect(paneOverlayDecorations,
-                       QRectF(linkPreviewRect.left(),
-                              linkPreviewRect.bottom() - outlineWidth,
-                              linkPreviewRect.width(), outlineWidth),
-                       previewOutline);
-            appendRect(paneOverlayDecorations,
-                       QRectF(linkPreviewRect.left(), linkPreviewRect.top(),
-                              outlineWidth, linkPreviewRect.height()),
-                       previewOutline);
-            appendRect(paneOverlayDecorations,
-                       QRectF(linkPreviewRect.right() - outlineWidth,
-                              linkPreviewRect.top(), outlineWidth,
-                              linkPreviewRect.height()),
-                       previewOutline);
-
-            const QFontMetricsF fontMetrics(baseFont);
-            appendTextLayout(
-                ensurePaneOverlayText(), linkPreview, baseFont,
-                previewForeground,
-                QPointF(linkPreviewRect.left() + kLinkPreviewHorizontalPadding,
-                        linkPreviewRect.top() + kLinkPreviewVerticalPadding),
-                std::ceil(fontMetrics.ascent()),
-                std::max<qreal>(1.0,
-                                linkPreviewRect.width()
-                                    - 2.0 * kLinkPreviewHorizontalPadding));
-        }
-    }
-
-    if (overlayText != nullptr) {
-        root->overlayTextContainer->appendChildNode(overlayText);
-    }
-    if (paneOverlayText != nullptr) {
-        root->paneOverlayTextContainer->appendChildNode(paneOverlayText);
-    }
-    root->commitRectLayers(softwareRenderer);
-
-    QColor unfocusedSplitColor;
-    const bool surfaceFocused =
-        hasActiveFocus() && window() != nullptr && window()->isActive();
-    if (split_ && !surfaceFocused && !searchUiActive_) {
-        unfocusedSplitColor = splitAppearance.unfocusedFill.has_value()
-                && splitAppearance.unfocusedFill->isValid()
-            ? *splitAppearance.unfocusedFill
-            : appearance.backgroundColor;
-        if (unfocusedSplitColor.isValid()) {
-            unfocusedSplitColor.setAlphaF(
-                unfocusedSplitOverlayOpacity(splitAppearance.unfocusedOpacity));
-        }
-    }
-    root->setUnfocusedSplitOverlay(viewport, unfocusedSplitColor);
-#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
-    publishRenderProbe(this, *root, metrics, fontRoleCellCounts,
-                       globalBackground, cellBackgroundLayers,
-                       glyphForegrounds, decorationForegrounds, underlineColors,
-                       renderedCursorColor, underlineRects, strikethroughRects,
-                       overlineRects, cursorRects);
-#endif
-    return root;
 }
 
 void TerminalPane::geometryChange(const QRectF &newGeometry,
@@ -4665,8 +3051,9 @@ void TerminalPane::beginLocalSelection(const QMouseEvent &event,
 {
     const QPointF position = event.position();
     const QPoint cell = cellAt(position);
-    const qreal devicePixelRatio = normalizedDevicePixelRatio(
-        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
     constexpr quint64 nanosecondsPerMillisecond = 1'000'000;
     const quint64 timestampMilliseconds = event.timestamp();
     const bool timestampValid = timestampMilliseconds != 0
@@ -4743,8 +3130,9 @@ bool TerminalPane::revealMouseForPointerPosition(const QPointF &position)
         revealMouseAfterActivity();
         return true;
     }
-    const qreal devicePixelRatio = normalizedDevicePixelRatio(
-        window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
     const QPointF physicalDelta =
         (position - *lastPointerActivityPosition_) * devicePixelRatio;
     if (std::abs(physicalDelta.x()) >= 1.0
@@ -4814,8 +3202,9 @@ void TerminalPane::mouseMoveEvent(QMouseEvent *event)
                   event->buttons(), modifiers);
     } else if (selecting_ && event->buttons().testFlag(Qt::LeftButton)) {
         const QPoint cell = cellAt(event->position());
-        const qreal devicePixelRatio = normalizedDevicePixelRatio(
-            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+        const qreal devicePixelRatio =
+            TerminalPaneRenderer::normalizedDevicePixelRatio(
+                window() != nullptr ? window()->devicePixelRatio() : 1.0);
         controller_->updateSelection({
             .column = cell.x(),
             .row = cell.y(),
@@ -4919,10 +3308,12 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         QMutexLocker locker(&renderMutex_);
         logicalCellHeight = metrics_.cellHeight;
     }
-    const qreal devicePixelRatio = normalizedDevicePixelRatio(
-        window() != nullptr ? window()->devicePixelRatio() : 1.0);
-    const double physicalCellHeight = static_cast<double>(
-        physicalPixels(logicalCellHeight, devicePixelRatio));
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const double physicalCellHeight =
+        static_cast<double>(TerminalPaneRenderer::physicalPixels(
+            logicalCellHeight, devicePixelRatio));
     if (!std::isfinite(physicalCellHeight) || physicalCellHeight <= 0.0) {
         event->ignore();
         return;
@@ -5260,20 +3651,21 @@ void TerminalPane::refreshLinkPreview()
             font = metrics_.font(TerminalFontRole::Regular);
         }
         const QFontMetricsF metrics(font);
-        const qreal maximumTextWidth =
-            std::max<qreal>(1.0, width() - 2.0 * kLinkPreviewHorizontalPadding);
+        const qreal maximumTextWidth = std::max<qreal>(
+            1.0,
+            width() - 2.0 * TerminalPaneRenderer::linkPreviewHorizontalPadding);
         text =
             metrics.elidedText(linkPreviewDisplaySource(hoveredHyperlinkUri_),
                                Qt::ElideMiddle, maximumTextWidth);
         if (!text.isEmpty()) {
-            const qreal previewWidth =
-                std::min(width(),
-                         std::ceil(metrics.horizontalAdvance(text))
-                             + 2.0 * kLinkPreviewHorizontalPadding);
-            const qreal previewHeight =
-                std::min(height(),
-                         std::ceil(metrics.height())
-                             + 2.0 * kLinkPreviewVerticalPadding);
+            const qreal previewWidth = std::min(
+                width(),
+                std::ceil(metrics.horizontalAdvance(text))
+                    + 2.0 * TerminalPaneRenderer::linkPreviewHorizontalPadding);
+            const qreal previewHeight = std::min(
+                height(),
+                std::ceil(metrics.height())
+                    + 2.0 * TerminalPaneRenderer::linkPreviewVerticalPadding);
             guardRect = QRectF(0.0, std::max(0.0, height() - previewHeight),
                                previewWidth, previewHeight);
             pointerCaptured = guardRect.contains(hoverPosition_);

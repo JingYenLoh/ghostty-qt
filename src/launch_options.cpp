@@ -10,15 +10,10 @@
 #include <cmath>
 #include <limits>
 #include <utility>
-#include <variant>
 
 namespace {
 
 constexpr int kMaximumScrollbackLines = 10'000'000;
-
-template <typename... Visitor> struct Overloaded : Visitor... {
-    using Visitor::operator()...;
-};
 
 std::optional<bool> parseGhosttyBoolean(QStringView value)
 {
@@ -31,95 +26,6 @@ std::optional<bool> parseGhosttyBoolean(QStringView value)
         return false;
     }
     return std::nullopt;
-}
-
-TerminalColorValue toTerminalColor(const GhosttyTerminalColor &configured)
-{
-    return std::visit(Overloaded{
-                          [](const QColor &color) {
-                              return TerminalColorValue::fromColor(color);
-                          },
-                          [](GhosttyCellRelativeColor relative) {
-                              switch (relative) {
-                              case GhosttyCellRelativeColor::Foreground:
-                                  return TerminalColorValue{
-                                      .kind = TerminalColorKind::CellForeground,
-                                      .color = {},
-                                  };
-                              case GhosttyCellRelativeColor::Background:
-                                  return TerminalColorValue{
-                                      .kind = TerminalColorKind::CellBackground,
-                                      .color = {},
-                                  };
-                              }
-                              std::unreachable();
-                          },
-                      },
-                      configured);
-}
-
-TerminalColorValue
-toTerminalColor(const std::optional<GhosttyTerminalColor> &configured)
-{
-    return configured ? toTerminalColor(*configured) : TerminalColorValue{};
-}
-
-TerminalBoldColor
-toTerminalBoldColor(const std::optional<GhosttyBoldColor> &configured)
-{
-    if (!configured) {
-        return {};
-    }
-    return std::visit(Overloaded{
-                          [](const QColor &color) {
-                              return TerminalBoldColor{
-                                  .kind = TerminalBoldColorKind::Color,
-                                  .color = color,
-                              };
-                          },
-                          [](GhosttyBoldBrightness brightness) {
-                              switch (brightness) {
-                              case GhosttyBoldBrightness::Bright:
-                                  return TerminalBoldColor{
-                                      .kind = TerminalBoldColorKind::Bright,
-                                      .color = {},
-                                  };
-                              }
-                              std::unreachable();
-                          },
-                      },
-                      *configured);
-}
-
-TerminalAppearance
-toTerminalAppearance(const GhosttyAppearanceConfig &configured)
-{
-    TerminalAppearance result{
-        .foregroundColor = configured.foreground,
-        .backgroundColor = configured.background,
-        .palette = {},
-        .selectionForeground = toTerminalColor(configured.selectionForeground),
-        .selectionBackground = toTerminalColor(configured.selectionBackground),
-        .searchForeground = toTerminalColor(configured.searchForeground),
-        .searchBackground = toTerminalColor(configured.searchBackground),
-        .searchSelectedForeground =
-            toTerminalColor(configured.searchSelectedForeground),
-        .searchSelectedBackground =
-            toTerminalColor(configured.searchSelectedBackground),
-        .cursorColor = toTerminalColor(configured.cursorColor),
-        .cursorStyle = configured.cursorStyle,
-        .cursorBlink = configured.cursorBlink,
-        .cursorOpacity = configured.cursorOpacity,
-        .cursorTextColor = toTerminalColor(configured.cursorText),
-        .boldColor = toTerminalBoldColor(configured.boldColor),
-        .faintOpacity = configured.faintOpacity,
-        .minimumContrast = configured.minimumContrast,
-    };
-    result.palette.reserve(static_cast<qsizetype>(configured.palette.size()));
-    for (const QColor &color : configured.palette) {
-        result.palette.append(color);
-    }
-    return result;
 }
 
 void enforceExplicitCommandLifetime(const LaunchOptions &base,
@@ -231,12 +137,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.typography.pointSize = base.typography.pointSize;
     }
 
-    result.appearance = toTerminalAppearance(config.appearance);
-    result.background = {
-        .opacity = config.appearance.backgroundOpacity,
-        .opacityCells = config.appearance.backgroundOpacityCells,
-        .image = config.backgroundImage,
-    };
+    result.appearance = config.appearance;
+    result.background = config.background;
     result.padding = config.padding;
     result.splitAppearance = config.splitAppearance;
     result.splitInheritWorkingDirectory = config.splitInheritWorkingDirectory;
@@ -302,12 +204,11 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
 }
 
 LaunchOptions
-applyFrontendConfigSnapshot(const LaunchOptions &base,
+applyFrontendConfigSnapshot(LaunchOptions result,
                             const FrontendConfigSnapshot &snapshot)
 {
-    LaunchOptions result = base;
     result.tabsLocation = snapshot.values.tabsLocation;
-    if (!base.singleInstanceModeExplicit) {
+    if (!result.singleInstanceModeExplicit) {
         result.singleInstanceMode = snapshot.values.singleInstanceMode;
     }
     return result;
@@ -322,7 +223,8 @@ resolveLaunchOptions(const LaunchOptions &base,
         ? applyGhosttyConfigSnapshot(base, *ghosttySnapshot)
         : base;
     if (frontendSnapshot != nullptr) {
-        result = applyFrontendConfigSnapshot(result, *frontendSnapshot);
+        result =
+            applyFrontendConfigSnapshot(std::move(result), *frontendSnapshot);
     }
     return result;
 }
@@ -330,7 +232,7 @@ resolveLaunchOptions(const LaunchOptions &base,
 bool shouldUseSingleInstance(const LaunchOptions &options,
                              QByteArrayView termProgram)
 {
-    if (options.hasUnforwardedLaunchPayload) return false;
+    if (options.hasUnforwardedLaunchPayload()) return false;
     switch (options.singleInstanceMode) {
     case SingleInstanceMode::Enabled: return true;
     case SingleInstanceMode::Disabled: return false;
@@ -494,11 +396,6 @@ parseLaunchOptions(const QStringList &arguments)
     parsed.showHelp = parser.isSet(helpOption);
     parsed.showVersion = parser.isSet(versionOption);
     parsed.program = parser.positionalArguments();
-    parsed.hasUnforwardedLaunchPayload = parsed.workingDirectoryExplicit
-        || parsed.fontFamilyExplicit || parsed.fontSizeExplicit
-        || parsed.scrollbackLimitExplicit || parsed.hold
-        || !parsed.program.isEmpty();
-
     const bool singleInstanceSet = parser.isSet(singleInstanceOption);
     const bool legacySingleInstanceSet =
         parser.isSet(legacySingleInstanceOption);

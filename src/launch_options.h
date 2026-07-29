@@ -153,10 +153,15 @@ struct LaunchOptions {
     bool initialWindow = true;
     // Command-line service bootstrap values must outrank the user's config.
     bool initialWindowExplicit = false;
-    // This transport accepts only source-less activation. The parser marks
-    // every option/program that would need forwarding; the exact coordination
-    // flags remain payload-free.
-    bool hasUnforwardedLaunchPayload = false;
+    // This transport accepts only source-less activation. Derive whether this
+    // invocation carries an option/program that would need forwarding so the
+    // answer cannot drift from the actual launch state.
+    [[nodiscard]] bool hasUnforwardedLaunchPayload() const noexcept
+    {
+        return workingDirectoryExplicit || fontFamilyExplicit
+            || fontSizeExplicit || scrollbackLimitExplicit || hold
+            || !program.isEmpty();
+    }
     // Detect additionally excludes launches from a terminal advertising
     // TERM_PROGRAM. The structured helper preserves Ghostty's raw mode so the
     // originating process can resolve detect from its real invocation.
@@ -231,9 +236,11 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options);
 LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
                                          const GhosttyConfigSnapshot &snapshot);
 // Apply the independent Qt frontend generation after shared Ghostty settings.
-// Explicit frontend CLI values stored in base remain authoritative.
+// Passing by value lets callers transfer an already-resolved Ghostty snapshot
+// without another full LaunchOptions copy. Explicit frontend CLI values stored
+// in the value remain authoritative.
 LaunchOptions
-applyFrontendConfigSnapshot(const LaunchOptions &base,
+applyFrontendConfigSnapshot(LaunchOptions options,
                             const FrontendConfigSnapshot &snapshot);
 // Resolve both independently reloadable configuration domains from the
 // immutable process command line. Null snapshots retain built-in/CLI values.

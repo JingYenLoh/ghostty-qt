@@ -10,10 +10,8 @@
 #include <QVector>
 #include <QtGlobal>
 
-#include <array>
 #include <chrono>
 #include <optional>
-#include <variant>
 
 enum class ConfirmCloseMode {
     Never,
@@ -117,53 +115,6 @@ enum class GhosttyFullscreenMode {
     NonNativePaddedNotch,
 };
 
-enum class GhosttyCellRelativeColor {
-    Foreground,
-    Background,
-};
-
-// A required Ghostty terminal color is either an exact RGB value or a
-// cell-relative alias. Nullable fields wrap this type in std::optional, so an
-// unset value cannot be confused with either relative alternative.
-using GhosttyTerminalColor = std::variant<QColor, GhosttyCellRelativeColor>;
-
-enum class GhosttyBoldBrightness {
-    Bright,
-};
-
-using GhosttyBoldColor = std::variant<QColor, GhosttyBoldBrightness>;
-
-struct GhosttyAppearanceConfig {
-    QColor foreground;
-    QColor background;
-    // The helper exports Ghostty's raw f64. The strict C++ boundary clamps it
-    // using the same [0, 1] renderer semantics before this value is exposed.
-    double backgroundOpacity = 1.0;
-    bool backgroundOpacityCells = false;
-    // Effective defaults after Ghostty applies palette generation and
-    // harmonious light-theme orientation in the config helper.
-    std::array<QColor, 256> palette;
-
-    std::optional<GhosttyTerminalColor> selectionForeground;
-    std::optional<GhosttyTerminalColor> selectionBackground;
-    GhosttyTerminalColor searchForeground;
-    GhosttyTerminalColor searchBackground;
-    GhosttyTerminalColor searchSelectedForeground;
-    GhosttyTerminalColor searchSelectedBackground;
-
-    std::optional<GhosttyTerminalColor> cursorColor;
-    TerminalCursorStyle cursorStyle = TerminalCursorStyle::Block;
-    std::optional<bool> cursorBlink;
-    double cursorOpacity = 1.0;
-    std::optional<GhosttyTerminalColor> cursorText;
-
-    std::optional<GhosttyBoldColor> boldColor;
-    double faintOpacity = 0.5;
-    double minimumContrast = 1.0;
-
-    bool operator==(const GhosttyAppearanceConfig &) const = default;
-};
-
 struct GhosttyConfigFile {
     QString path;
     bool optional = false;
@@ -218,9 +169,12 @@ struct GhosttyConfigValues {
     std::optional<QString> workingDirectoryPath;
     TerminalTypography typography;
 
-    GhosttyAppearanceConfig appearance;
+    // Store the frontend's runtime-ready value types directly. This keeps the
+    // finalized 256-color palette in QVector's implicitly shared storage and
+    // avoids rebuilding it whenever a snapshot is projected to LaunchOptions.
+    TerminalAppearance appearance;
+    TerminalBackgroundOptions background;
     TerminalPaddingOptions padding = TerminalPaddingOptions::ghosttyDefault();
-    TerminalBackgroundImageOptions backgroundImage;
     SplitAppearance splitAppearance;
 
     bool splitInheritWorkingDirectory = false;

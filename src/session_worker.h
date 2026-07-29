@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pty_write_buffer.h"
 #include "terminal_action_result.h"
 #include "terminal_session_options.h"
 #include "terminal_types.h"
@@ -243,7 +244,7 @@ private:
     QTimer *childTimer_ = nullptr;
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
-    QByteArray pendingWrites_;
+    PtyWriteBuffer pendingWrites_;
     QHash<quint64, QString> pendingPastes_;
     quint64 nextPasteRequestId_ = 0;
     QByteArray stagedSequenceBytes_;

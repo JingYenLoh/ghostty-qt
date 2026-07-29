@@ -356,16 +356,16 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QVERIFY(!result->values.configFiles.at(2).optional);
     QCOMPARE(result->values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
-    QVERIFY(result->values.backgroundImage.path.has_value());
-    QCOMPARE(result->values.backgroundImage.path->path,
+    QVERIFY(result->values.background.image.path.has_value());
+    QCOMPARE(result->values.background.image.path->path,
              QStringLiteral("/fixture/background.png"));
-    QVERIFY(result->values.backgroundImage.path->optional);
-    QCOMPARE(result->values.backgroundImage.opacity, 1.25);
-    QCOMPARE(result->values.backgroundImage.position,
+    QVERIFY(result->values.background.image.path->optional);
+    QCOMPARE(result->values.background.image.opacity, 1.25);
+    QCOMPARE(result->values.background.image.position,
              TerminalBackgroundImagePosition::BottomRight);
-    QCOMPARE(result->values.backgroundImage.fit,
+    QCOMPARE(result->values.background.image.fit,
              TerminalBackgroundImageFit::Cover);
-    QVERIFY(result->values.backgroundImage.repeat);
+    QVERIFY(result->values.background.image.repeat);
     QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(3));
     QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(5));
     QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(7));
@@ -914,47 +914,36 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QCOMPARE(result->keybindings.root.constFirst().actions,
              QStringList({QStringLiteral("new_tab")}));
     QCOMPARE(result->values.splitAppearance.unfocusedOpacity, 0.15);
-    QCOMPARE(result->values.appearance.backgroundOpacity, 0.0);
-    QVERIFY(result->values.appearance.backgroundOpacityCells);
+    QCOMPARE(result->values.background.opacity, 0.0);
+    QVERIFY(result->values.background.opacityCells);
     QCOMPARE(result->values.splitAppearance.unfocusedFill,
              std::optional<QColor>(QColor(QStringLiteral("#f0f8ff"))));
-    QCOMPARE(result->values.appearance.palette.size(), std::size_t{256});
+    QCOMPARE(result->values.appearance.palette.size(), qsizetype{256});
     QCOMPARE(result->values.appearance.palette.at(42),
              QColor(QStringLiteral("#123456")));
     QCOMPARE(result->values.splitAppearance.dividerColor,
              std::optional<QColor>(QColor(QStringLiteral("#f0f8ff"))));
 
-    QVERIFY(result->values.appearance.selectionForeground.has_value());
-    QVERIFY(std::holds_alternative<GhosttyCellRelativeColor>(
-        *result->values.appearance.selectionForeground));
-    QCOMPARE(std::get<GhosttyCellRelativeColor>(
-                 *result->values.appearance.selectionForeground),
-             GhosttyCellRelativeColor::Background);
-    QVERIFY(result->values.appearance.selectionBackground.has_value());
-    QVERIFY(std::holds_alternative<QColor>(
-        *result->values.appearance.selectionBackground));
-    QCOMPARE(std::get<QColor>(*result->values.appearance.selectionBackground),
+    QCOMPARE(result->values.appearance.selectionForeground.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(result->values.appearance.selectionBackground.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(result->values.appearance.selectionBackground.color,
              QColor(QStringLiteral("#334455")));
-    QVERIFY(std::holds_alternative<GhosttyCellRelativeColor>(
-        result->values.appearance.searchForeground));
-    QCOMPARE(std::get<GhosttyCellRelativeColor>(
-                 result->values.appearance.searchForeground),
-             GhosttyCellRelativeColor::Background);
-    QVERIFY(result->values.appearance.cursorColor.has_value());
-    QVERIFY(
-        std::holds_alternative<QColor>(*result->values.appearance.cursorColor));
-    QCOMPARE(std::get<QColor>(*result->values.appearance.cursorColor),
+    QCOMPARE(result->values.appearance.searchForeground.kind,
+             TerminalColorKind::CellBackground);
+    QCOMPARE(result->values.appearance.cursorColor.kind,
+             TerminalColorKind::Color);
+    QCOMPARE(result->values.appearance.cursorColor.color,
              QColor(QStringLiteral("#abcdef")));
     QCOMPARE(result->values.appearance.cursorOpacity, 0.4);
     QCOMPARE(result->values.appearance.cursorStyle,
              TerminalCursorStyle::BlockHollow);
     QCOMPARE(result->values.appearance.cursorBlink, std::optional<bool>(false));
-    QVERIFY(result->values.appearance.boldColor.has_value());
-    QVERIFY(std::holds_alternative<GhosttyBoldBrightness>(
-        *result->values.appearance.boldColor));
-    QCOMPARE(
-        std::get<GhosttyBoldBrightness>(*result->values.appearance.boldColor),
-        GhosttyBoldBrightness::Bright);
+    QCOMPARE(result->values.appearance.cursorTextColor.kind,
+             TerminalColorKind::CellForeground);
+    QCOMPARE(result->values.appearance.boldColor.kind,
+             TerminalBoldColorKind::Bright);
     QCOMPARE(result->values.appearance.faintOpacity, 0.25);
     QCOMPARE(result->values.appearance.minimumContrast, 21.0);
     QVERIFY(!result->values.selectionClipboard.trimTrailingSpaces);
@@ -969,8 +958,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     ConfigFixture::writeFile(fixture.preferredPath, {});
     const auto defaults = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(defaults.has_value(), qPrintable(errorMessage(defaults)));
-    QCOMPARE(defaults->values.appearance.backgroundOpacity, 1.0);
-    QVERIFY(!defaults->values.appearance.backgroundOpacityCells);
+    QCOMPARE(defaults->values.background.opacity, 1.0);
+    QVERIFY(!defaults->values.background.opacityCells);
     QCOMPARE(defaults->values.appearance.minimumContrast, 1.0);
 }
 
@@ -1007,15 +996,15 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
 
     GhosttyConfigLoadResult result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QVERIFY(result->values.backgroundImage.path.has_value());
-    QCOMPARE(result->values.backgroundImage.path->path, requiredImage);
-    QVERIFY(!result->values.backgroundImage.path->optional);
-    QCOMPARE(result->values.backgroundImage.opacity, 1.5);
-    QCOMPARE(result->values.backgroundImage.position,
+    QVERIFY(result->values.background.image.path.has_value());
+    QCOMPARE(result->values.background.image.path->path, requiredImage);
+    QVERIFY(!result->values.background.image.path->optional);
+    QCOMPARE(result->values.background.image.opacity, 1.5);
+    QCOMPARE(result->values.background.image.position,
              TerminalBackgroundImagePosition::TopRight);
-    QCOMPARE(result->values.backgroundImage.fit,
+    QCOMPARE(result->values.background.image.fit,
              TerminalBackgroundImageFit::Stretch);
-    QVERIFY(result->values.backgroundImage.repeat);
+    QVERIFY(result->values.background.image.repeat);
     QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(3));
     QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(5));
     QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(7));
@@ -1040,15 +1029,15 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
 
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QVERIFY(result->values.backgroundImage.path.has_value());
-    QCOMPARE(result->values.backgroundImage.path->path, optionalMissingImage);
-    QVERIFY(result->values.backgroundImage.path->optional);
-    QCOMPARE(result->values.backgroundImage.opacity, 0.25);
-    QCOMPARE(result->values.backgroundImage.position,
+    QVERIFY(result->values.background.image.path.has_value());
+    QCOMPARE(result->values.background.image.path->path, optionalMissingImage);
+    QVERIFY(result->values.background.image.path->optional);
+    QCOMPARE(result->values.background.image.opacity, 0.25);
+    QCOMPARE(result->values.background.image.position,
              TerminalBackgroundImagePosition::BottomLeft);
-    QCOMPARE(result->values.backgroundImage.fit,
+    QCOMPARE(result->values.background.image.fit,
              TerminalBackgroundImageFit::None);
-    QVERIFY(!result->values.backgroundImage.repeat);
+    QVERIFY(!result->values.background.image.repeat);
     QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(13));
     QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(13));
     QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(17));
@@ -1062,13 +1051,13 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
                              QByteArrayLiteral("background-image =\n"));
     result = load(fixture.candidates());
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    QVERIFY(!result->values.backgroundImage.path.has_value());
-    QCOMPARE(result->values.backgroundImage.opacity, 1.0);
-    QCOMPARE(result->values.backgroundImage.position,
+    QVERIFY(!result->values.background.image.path.has_value());
+    QCOMPARE(result->values.background.image.opacity, 1.0);
+    QCOMPARE(result->values.background.image.position,
              TerminalBackgroundImagePosition::Center);
-    QCOMPARE(result->values.backgroundImage.fit,
+    QCOMPARE(result->values.background.image.fit,
              TerminalBackgroundImageFit::Contain);
-    QVERIFY(!result->values.backgroundImage.repeat);
+    QVERIFY(!result->values.background.image.repeat);
     QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(2));
     QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(2));
     QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(2));
@@ -1118,7 +1107,7 @@ void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()
     ConfigFixture::writeFile(fixture.preferredPath, {});
     auto result = queryRealConfigExport(helperPath, fixture);
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
-    const std::array<QColor, 256> canonical = result->values.appearance.palette;
+    const auto canonical = result->values.appearance.palette;
 
     // Ghostty deliberately leaves its canonical palette alone until at least
     // one palette entry is explicit, even when generation is enabled and the
@@ -1170,8 +1159,7 @@ void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()
              QColor(QStringLiteral("#f0e0d0")));
     QCOMPARE(result->values.appearance.palette.at(240),
              QColor(QStringLiteral("#654321")));
-    const std::array<QColor, 256> darkGenerated =
-        result->values.appearance.palette;
+    const auto darkGenerated = result->values.appearance.palette;
 
     // Harmonious changes only the orientation of a light theme.
     ConfigFixture::writeFile(fixture.preferredPath,

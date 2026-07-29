@@ -94,34 +94,36 @@ extractStraightPlanes(const QImage &source, quint64 serial)
             QStringLiteral("Decoded background image is empty."));
     }
 
-    const QImage straight =
-        source.convertToFormat(QImage::Format_RGBA8888);
-    QImage rgb(straight.size(), QImage::Format_RGBX8888);
-    QImage alpha(straight.size(), QImage::Format_RGBX8888);
-    if (straight.isNull() || rgb.isNull() || alpha.isNull()) {
+    QImage rgb = source.convertToFormat(QImage::Format_RGBA8888);
+    QImage alpha(rgb.size(), QImage::Format_RGBX8888);
+    if (rgb.isNull() || alpha.isNull()) {
         return std::unexpected(
             QStringLiteral("Could not allocate background image planes."));
     }
+    // Reuse the converted straight-alpha storage for the RGB plane. Keeping a
+    // separate source, RGB, and alpha image would otherwise add one full
+    // 32-bit image to peak decode memory. detach() protects callers when the
+    // source already has the requested format and Qt can share its storage.
+    rgb.detach();
     rgb.setDevicePixelRatio(1.0);
     alpha.setDevicePixelRatio(1.0);
 
-    for (int y = 0; y < straight.height(); ++y) {
-        const uchar *sourceLine = straight.constScanLine(y);
+    for (int y = 0; y < rgb.height(); ++y) {
         uchar *rgbLine = rgb.scanLine(y);
         uchar *alphaLine = alpha.scanLine(y);
-        for (int x = 0; x < straight.width(); ++x) {
+        for (int x = 0; x < rgb.width(); ++x) {
             const qsizetype offset = 4 * static_cast<qsizetype>(x);
-            rgbLine[offset] = sourceLine[offset];
-            rgbLine[offset + 1] = sourceLine[offset + 1];
-            rgbLine[offset + 2] = sourceLine[offset + 2];
-            rgbLine[offset + 3] = 255;
-
-            const uchar value = sourceLine[offset + 3];
+            const uchar value = rgbLine[offset + 3];
             alphaLine[offset] = value;
             alphaLine[offset + 1] = value;
             alphaLine[offset + 2] = value;
             alphaLine[offset + 3] = 255;
+            rgbLine[offset + 3] = 255;
         }
+    }
+    if (!rgb.reinterpretAsFormat(QImage::Format_RGBX8888)) {
+        return std::unexpected(
+            QStringLiteral("Could not prepare background image RGB data."));
     }
 
     return TerminalBackgroundImageAsset{

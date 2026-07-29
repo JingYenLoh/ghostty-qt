@@ -1495,7 +1495,7 @@ void SessionWorker::queuePtyWrite(const QByteArray &data)
     if (data.isEmpty() || masterFd_ < 0) {
         return;
     }
-    pendingWrites_.append(data);
+    pendingWrites_.append(QByteArrayView(data));
     flushPtyWrites();
 }
 
@@ -1514,11 +1514,11 @@ void SessionWorker::setReadOnly(bool readOnly)
 void SessionWorker::flushPtyWrites()
 {
     while (masterFd_ >= 0 && !pendingWrites_.isEmpty()) {
-        const ssize_t count =
-            ::write(masterFd_, pendingWrites_.constData(),
-                    static_cast<size_t>(pendingWrites_.size()));
+        const QByteArrayView pending = pendingWrites_.bytes();
+        const ssize_t count = ::write(masterFd_, pending.data(),
+                                      static_cast<size_t>(pending.size()));
         if (count > 0) {
-            pendingWrites_.remove(0, static_cast<qsizetype>(count));
+            pendingWrites_.consume(static_cast<qsizetype>(count));
             continue;
         }
         if (count < 0 && errno == EINTR) {

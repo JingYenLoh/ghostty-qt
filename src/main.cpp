@@ -1685,13 +1685,10 @@ int main(int argc, char *argv[])
     }
 
     FrontendConfigService frontendConfigService;
-    std::optional<FrontendConfigSnapshot> currentFrontendSnapshot;
     if (!frontendConfigService.hasSnapshot()) {
         qWarning().noquote()
             << "ghostty-qt frontend configuration is unavailable; using built-in and command-line defaults:"
             << frontendConfigService.lastError();
-    } else {
-        currentFrontendSnapshot = frontendConfigService.snapshot();
     }
     QObject::connect(
         &frontendConfigService, &FrontendConfigService::reloadFailed,
@@ -1724,21 +1721,19 @@ int main(int argc, char *argv[])
                 << "Ghostty configuration reload failed; keeping the last valid configuration:"
                 << message;
         });
-    std::optional<GhosttyConfigSnapshot> currentGhosttySnapshot;
-    if (configService.hasSnapshot()) {
-        currentGhosttySnapshot = configService.snapshot();
-    }
 #endif
 
     const auto resolveCurrentOptions = [&] {
 #if GHOSTTY_QT_CONFIG_ENABLED
         const GhosttyConfigSnapshot *const ghosttySnapshot =
-            currentGhosttySnapshot ? &*currentGhosttySnapshot : nullptr;
+            configService.hasSnapshot() ? &configService.snapshot() : nullptr;
 #else
         const GhosttyConfigSnapshot *const ghosttySnapshot = nullptr;
 #endif
         const FrontendConfigSnapshot *const frontendSnapshot =
-            currentFrontendSnapshot ? &*currentFrontendSnapshot : nullptr;
+            frontendConfigService.hasSnapshot()
+            ? &frontendConfigService.snapshot()
+            : nullptr;
         return resolveLaunchOptions(options, ghosttySnapshot, frontendSnapshot);
     };
     LaunchOptions effectiveApplicationOptions = resolveCurrentOptions();
@@ -1775,9 +1770,9 @@ int main(int argc, char *argv[])
     // Cgroup single-instance policy follows the process role that startup
     // arbitration actually established. Keep this invariant fixed across
     // later frontend and shared-config reloads.
-    const bool processUsesSingleInstance = activationEndpoint != nullptr;
+    options.processUsesSingleInstance = activationEndpoint != nullptr;
     effectiveApplicationOptions.processUsesSingleInstance =
-        processUsesSingleInstance;
+        options.processUsesSingleInstance;
 
     // The engine and process controller both outlive every QML root. Their
     // declaration order tears down the controller, portal, windows, and pane
@@ -1809,15 +1804,11 @@ int main(int argc, char *argv[])
 
 #if GHOSTTY_QT_CONFIG_ENABLED
     const auto applyCurrentOptions = [&] {
-        LaunchOptions resolved = resolveCurrentOptions();
-        resolved.processUsesSingleInstance = processUsesSingleInstance;
-        applicationController.applyLaunchOptions(resolved);
+        applicationController.applyLaunchOptions(resolveCurrentOptions());
     };
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &applicationController,
-                     [&currentGhosttySnapshot, &applyCurrentOptions](
-                         const GhosttyConfigSnapshot &snapshot) {
-                         currentGhosttySnapshot = snapshot;
+                     [&applyCurrentOptions](const GhosttyConfigSnapshot &) {
                          applyCurrentOptions();
                      });
     QObject::connect(&configService, &GhosttyConfigService::changed,
@@ -1827,16 +1818,12 @@ int main(int argc, char *argv[])
                      &configService, &GhosttyConfigService::requestReload);
 #else
     const auto applyCurrentOptions = [&] {
-        LaunchOptions resolved = resolveCurrentOptions();
-        resolved.processUsesSingleInstance = processUsesSingleInstance;
-        applicationController.applyLaunchOptions(resolved);
+        applicationController.applyLaunchOptions(resolveCurrentOptions());
     };
 #endif
     QObject::connect(&frontendConfigService, &FrontendConfigService::changed,
                      &applicationController,
-                     [&currentFrontendSnapshot, &applyCurrentOptions](
-                         const FrontendConfigSnapshot &snapshot) {
-                         currentFrontendSnapshot = snapshot;
+                     [&applyCurrentOptions](const FrontendConfigSnapshot &) {
                          applyCurrentOptions();
                      });
     QObject::connect(

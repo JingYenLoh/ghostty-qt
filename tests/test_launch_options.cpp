@@ -20,12 +20,12 @@ QString errorMessage(
     return result ? QString{} : result.error();
 }
 
-std::array<QColor, 256> testPalette()
+QVector<QColor> testPalette()
 {
-    std::array<QColor, 256> palette;
+    QVector<QColor> palette;
+    palette.reserve(256);
     for (int index = 0; index < 256; ++index) {
-        palette[static_cast<std::size_t>(index)] =
-            QColor::fromRgb(index, 255 - index, index / 2);
+        palette.append(QColor::fromRgb(index, 255 - index, index / 2));
     }
     return palette;
 }
@@ -119,44 +119,46 @@ GhosttyConfigSnapshot completeSnapshot()
     values.typography = completeTypography();
 
     values.appearance = {
-        .foreground = QColor(QStringLiteral("#112233")),
-        .background = QColor(QStringLiteral("#445566")),
-        .backgroundOpacity = 0.375,
-        .backgroundOpacityCells = true,
+        .foregroundColor = QColor(QStringLiteral("#112233")),
+        .backgroundColor = QColor(QStringLiteral("#445566")),
         .palette = testPalette(),
-        .selectionForeground =
-            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
+        .selectionForeground = {.kind = TerminalColorKind::CellForeground},
         .selectionBackground =
-            GhosttyTerminalColor{QColor(QStringLiteral("#223344"))},
-        .searchForeground =
-            GhosttyTerminalColor{GhosttyCellRelativeColor::Background},
+            TerminalColorValue::fromColor(QColor(QStringLiteral("#223344"))),
+        .searchForeground = {.kind = TerminalColorKind::CellBackground},
         .searchBackground =
-            GhosttyTerminalColor{QColor(QStringLiteral("#123456"))},
-        .searchSelectedForeground =
-            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
+            TerminalColorValue::fromColor(QColor(QStringLiteral("#123456"))),
+        .searchSelectedForeground = {.kind = TerminalColorKind::CellForeground},
         .searchSelectedBackground =
-            GhosttyTerminalColor{QColor(QStringLiteral("#654321"))},
-        .cursorColor =
-            GhosttyTerminalColor{GhosttyCellRelativeColor::Background},
+            TerminalColorValue::fromColor(QColor(QStringLiteral("#654321"))),
+        .cursorColor = {.kind = TerminalColorKind::CellBackground},
         .cursorStyle = TerminalCursorStyle::BlockHollow,
         .cursorBlink = false,
         .cursorOpacity = 0.625,
-        .cursorText =
-            GhosttyTerminalColor{GhosttyCellRelativeColor::Foreground},
-        .boldColor = GhosttyBoldColor{QColor(QStringLiteral("#abcdef"))},
+        .cursorTextColor = {.kind = TerminalColorKind::CellForeground},
+        .boldColor =
+            {
+                .kind = TerminalBoldColorKind::Color,
+                .color = QColor(QStringLiteral("#abcdef")),
+            },
         .faintOpacity = 0.375,
         .minimumContrast = 4.25,
     };
-    values.backgroundImage = {
-        .path =
-            GhosttyConfigPath{
-                .path = QStringLiteral("/work/background.png"),
-                .optional = true,
+    values.background = {
+        .opacity = 0.375,
+        .opacityCells = true,
+        .image =
+            {
+                .path =
+                    GhosttyConfigPath{
+                        .path = QStringLiteral("/work/background.png"),
+                        .optional = true,
+                    },
+                .opacity = 1.25,
+                .position = TerminalBackgroundImagePosition::BottomRight,
+                .fit = TerminalBackgroundImageFit::Cover,
+                .repeat = true,
             },
-        .opacity = 1.25,
-        .position = TerminalBackgroundImagePosition::BottomRight,
-        .fit = TerminalBackgroundImageFit::Cover,
-        .repeat = true,
     };
     values.padding = {
         .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
@@ -441,7 +443,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(options.initialWindow);
     QVERIFY(!options.initialWindowExplicit);
-    QVERIFY(!options.hasUnforwardedLaunchPayload);
+    QVERIFY(!options.hasUnforwardedLaunchPayload());
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QVERIFY(!options.singleInstanceModeExplicit);
     QCOMPARE(options.rightClickAction, RightClickAction::ContextMenu);
@@ -466,7 +468,7 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
     QVERIFY(service->singleInstanceModeExplicit);
     QVERIFY(!service->initialWindow);
     QVERIFY(service->initialWindowExplicit);
-    QVERIFY(!service->hasUnforwardedLaunchPayload);
+    QVERIFY(!service->hasUnforwardedLaunchPayload());
     QVERIFY(service->program.isEmpty());
     QVERIFY(shouldUseSingleInstance(*service, QByteArrayView("ghostty")));
 
@@ -536,7 +538,7 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
         QStringLiteral("--font-size=14"),
     });
     QVERIFY2(payload.has_value(), qPrintable(errorMessage(payload)));
-    QVERIFY(payload->hasUnforwardedLaunchPayload);
+    QVERIFY(payload->hasUnforwardedLaunchPayload());
     QVERIFY(!shouldUseSingleInstance(*payload, QByteArrayView{}));
 }
 
@@ -577,7 +579,7 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(options.scrollbackLimitExplicit);
     QVERIFY(options.hold);
-    QVERIFY(options.hasUnforwardedLaunchPayload);
+    QVERIFY(options.hasUnforwardedLaunchPayload());
     QCOMPARE(options.program,
              QStringList({QStringLiteral("/bin/sh"), QStringLiteral("-lc"),
                           QStringLiteral("printf hello")}));
@@ -1044,17 +1046,20 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
     const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(configured.background.opacity, 0.375);
     QVERIFY(configured.background.opacityCells);
-    QVERIFY(configured.background.image == snapshot.values.backgroundImage);
+    QVERIFY(configured.background == snapshot.values.background);
     QVERIFY(configured.padding == snapshot.values.padding);
 
-    snapshot.values.appearance.backgroundOpacity = 0.75;
-    snapshot.values.appearance.backgroundOpacityCells = false;
-    snapshot.values.backgroundImage = {
-        .path = std::nullopt,
-        .opacity = 0.5,
-        .position = TerminalBackgroundImagePosition::CenterLeft,
-        .fit = TerminalBackgroundImageFit::Stretch,
-        .repeat = false,
+    snapshot.values.background = {
+        .opacity = 0.75,
+        .opacityCells = false,
+        .image =
+            {
+                .path = std::nullopt,
+                .opacity = 0.5,
+                .position = TerminalBackgroundImagePosition::CenterLeft,
+                .fit = TerminalBackgroundImageFit::Stretch,
+                .repeat = false,
+            },
     };
     snapshot.values.padding = {
         .horizontal = {.leadingPoints = 13, .trailingPoints = 17},
@@ -1066,7 +1071,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
         applyGhosttyConfigSnapshot(configured, snapshot);
     QCOMPARE(reloaded.background.opacity, 0.75);
     QVERIFY(!reloaded.background.opacityCells);
-    QVERIFY(reloaded.background.image == snapshot.values.backgroundImage);
+    QVERIFY(reloaded.background == snapshot.values.background);
     // The authoritative launch snapshot replaces x/y as well as the live
     // balance/color pair. Existing panes retain their constructed x/y in the
     // pane layer, while future panes consume these newest dimensions.
@@ -1508,9 +1513,9 @@ void LaunchOptionsTest::mapsSingleInstancePolicy()
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView("ghostty")));
     // Forwarding command-line payloads is deliberately outside this first
     // protocol even when the config explicitly enables process uniqueness.
-    options.hasUnforwardedLaunchPayload = true;
+    options.workingDirectoryExplicit = true;
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
-    options.hasUnforwardedLaunchPayload = false;
+    options.workingDirectoryExplicit = false;
 
     snapshot.values.singleInstanceMode = SingleInstanceMode::Disabled;
     options = applyFrontendConfigSnapshot(base, snapshot);
@@ -1522,7 +1527,7 @@ void LaunchOptionsTest::mapsSingleInstancePolicy()
     QCOMPARE(options.singleInstanceMode, SingleInstanceMode::Detect);
     QVERIFY(shouldUseSingleInstance(options, QByteArrayView{}));
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView("ghostty")));
-    options.hasUnforwardedLaunchPayload = true;
+    options.workingDirectoryExplicit = true;
     QVERIFY(!shouldUseSingleInstance(options, QByteArrayView{}));
 }
 
@@ -1620,12 +1625,12 @@ void LaunchOptionsTest::restoresNullableAppearanceDefaults()
     base.splitAppearance.dividerColor = QColor(Qt::blue);
 
     GhosttyConfigSnapshot snapshot = completeSnapshot();
-    snapshot.values.appearance.selectionForeground.reset();
-    snapshot.values.appearance.selectionBackground.reset();
-    snapshot.values.appearance.cursorColor.reset();
+    snapshot.values.appearance.selectionForeground = {};
+    snapshot.values.appearance.selectionBackground = {};
+    snapshot.values.appearance.cursorColor = {};
     snapshot.values.appearance.cursorBlink.reset();
-    snapshot.values.appearance.cursorText.reset();
-    snapshot.values.appearance.boldColor.reset();
+    snapshot.values.appearance.cursorTextColor = {};
+    snapshot.values.appearance.boldColor = {};
     snapshot.values.splitAppearance.unfocusedFill.reset();
     snapshot.values.splitAppearance.dividerColor.reset();
 
