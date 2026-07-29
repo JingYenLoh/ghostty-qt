@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <utility>
@@ -398,6 +399,7 @@ private Q_SLOTS:
     void replacesStartingFrameInsteadOfAccumulatingSceneRoots();
     void reloadsFontWithoutOverwritingManualZoom();
     void reloadsTypographyNonCumulatively();
+    void refreshesFontProgramAfterDatabaseChange();
     void executesTypedFontSizeActions();
     void workspaceActionHandlerRetainsMutableState();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
@@ -2811,6 +2813,53 @@ void TerminalPaneTest::reloadsTypographyNonCumulatively()
         terminalPaneRenderProbe(pane).metrics
         == terminalCellMetrics(
             equivalent.typography, window.devicePixelRatio()));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::refreshesFontProgramAfterDatabaseChange()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    window.resize(320, 160);
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QVERIFY(!window.grabWindow().isNull());
+    const std::shared_ptr<const TerminalFontProgram> initial =
+        terminalPaneRenderProbe(pane).metrics.fontProgram;
+    QVERIFY(initial != nullptr);
+
+    const QString path =
+        QFINDTESTDATA("../ghostty/src/font/res/CodeNewRoman-Regular.otf");
+    QVERIFY2(!path.isEmpty(), "Bundled font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !window.grabWindow().isNull()
+            && terminalPaneRenderProbe(pane).metrics.fontProgram != initial,
+        3000);
+    const std::shared_ptr<const TerminalFontProgram> added =
+        terminalPaneRenderProbe(pane).metrics.fontProgram;
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
+
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !window.grabWindow().isNull()
+            && terminalPaneRenderProbe(pane).metrics.fontProgram != added,
+        3000);
+    QCOMPARE(pane->findChild<TerminalController *>(), controller);
 
     window.close();
     delete pane;
@@ -6196,7 +6245,7 @@ void TerminalPaneTest::rendersResolvedTypographyAndPhysicalGeometry()
     const TerminalPaneRenderProbeSnapshot block =
         terminalPaneRenderProbe(pane);
     QVERIFY(block.metrics == expected);
-    QVERIFY(block.renderFonts == expected.fonts);
+    QVERIFY(block.renderFonts == expected.fontProgram->fonts);
     QVERIFY(
         block.fontRoleCellCounts
         == (std::array<quint64, 4>{1, 1, 1, 1}));

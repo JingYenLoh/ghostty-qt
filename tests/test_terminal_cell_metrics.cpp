@@ -11,7 +11,9 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <ranges>
 
 namespace {
 
@@ -204,12 +206,15 @@ private Q_SLOTS:
     void resolvesExactNamedStyleWithoutGenericFlags();
     void resolvesNamedStyleThroughGenericAlias();
     void resolvesNamedStylesForRegularAndItalicRoles();
-    void fallsBackFromInvalidNamedStyle();
+    void synthesizesMissingNamedStyleWhenAllowed();
     void appliesOrderedFeaturesWithoutChangingGrid();
     void appliesFirstMatchingVariation();
+    void appliesVariationsToEveryRole();
     void resolvesCodepointMapsWithLaterEntryPolicy();
+    void normalizesCodepointMapIntervals();
     void obeysSyntheticStylePermissions();
     void approximatesFreetypeLoadFlags();
+    void sharesImmutableFontPrograms();
     void projectsBaseMetricsToPhysicalPixels_data();
     void projectsBaseMetricsToPhysicalPixels();
     void usesIndependentFontStrokeThicknesses();
@@ -428,7 +433,7 @@ resolvesNamedStylesForRegularAndItalicRoles()
     }
 }
 
-void TerminalCellMetricsTest::fallsBackFromInvalidNamedStyle()
+void TerminalCellMetricsTest::synthesizesMissingNamedStyleWhenAllowed()
 {
     const QString family =
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
@@ -439,19 +444,21 @@ void TerminalCellMetricsTest::fallsBackFromInvalidNamedStyle()
             QStringLiteral("ghostty-qt-no-such-style")};
 
     const TerminalCellMetrics actual = terminalCellMetrics(typography);
-    QCOMPARE(
-        actual.font(TerminalFontRole::Bold),
-        actual.font(TerminalFontRole::Regular));
+    QVERIFY(actual.font(TerminalFontRole::Bold).bold());
+    typography.syntheticStyle.bold = false;
+    const TerminalCellMetrics synthesisDisabled =
+        terminalCellMetrics(typography);
+    QCOMPARE(synthesisDisabled.font(TerminalFontRole::Bold),
+             synthesisDisabled.font(TerminalFontRole::Regular));
 
+    typography.syntheticStyle.bold = true;
     typography.face(TerminalFontRole::Bold).families.clear();
     typography.face(TerminalFontRole::Bold).style =
         TerminalFontStyles::Named{
             QFontDatabase::styles(family).value(0)};
     const TerminalCellMetrics styleWithoutFamily =
         terminalCellMetrics(typography);
-    QCOMPARE(
-        styleWithoutFamily.font(TerminalFontRole::Bold),
-        styleWithoutFamily.font(TerminalFontRole::Regular));
+    QVERIFY(styleWithoutFamily.font(TerminalFontRole::Bold).bold());
 
     const QStringList styles = QFontDatabase::styles(family);
     if (!styles.isEmpty()) {
@@ -461,9 +468,7 @@ void TerminalCellMetricsTest::fallsBackFromInvalidNamedStyle()
             TerminalFontStyles::Named{styles.front()};
         const TerminalCellMetrics missingFamily =
             terminalCellMetrics(typography);
-        QCOMPARE(
-            missingFamily.font(TerminalFontRole::Bold),
-            missingFamily.font(TerminalFontRole::Regular));
+        QVERIFY(missingFamily.font(TerminalFontRole::Bold).bold());
     }
 }
 
@@ -540,6 +545,47 @@ void TerminalCellMetricsTest::appliesFirstMatchingVariation()
     QVERIFY(QFontDatabase::removeApplicationFont(fontId));
 }
 
+void TerminalCellMetricsTest::appliesVariationsToEveryRole()
+{
+    const QString path = QFINDTESTDATA("../ghostty/src/font/res/Lilex-VF.ttf");
+    QVERIFY2(!path.isEmpty(), "Bundled variable test font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    const QString family =
+        QFontDatabase::applicationFontFamilies(fontId).value(0);
+    QVERIFY(!family.isEmpty());
+
+    const QList<QFontVariableAxis> axes =
+        QFontInfo(QFont({family}, 12)).variableAxes();
+    if (axes.isEmpty()) {
+        QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+        QSKIP("Bundled font exposes no variable axes through this Qt backend");
+    }
+    const QFontVariableAxis &axis = axes.front();
+    TerminalTypography typography = typographyFor({family});
+    std::array<float, kRoles.size()> expected{};
+    for (std::size_t index = 0; index < kRoles.size(); ++index) {
+        const TerminalFontRole role = kRoles[index];
+        typography.face(role).families = {family};
+        const double fraction = static_cast<double>(index + 1U)
+            / static_cast<double>(kRoles.size() + 1U);
+        const double value = axis.minimumValue()
+            + (axis.maximumValue() - axis.minimumValue()) * fraction;
+        expected[index] = static_cast<float>(value);
+        typography.face(role).variations = {
+            TerminalFontVariation::fromValue(axis.tag().value(), value),
+        };
+    }
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(typography);
+    for (std::size_t index = 0; index < kRoles.size(); ++index) {
+        const QFont &font = metrics.font(kRoles[index]);
+        QVERIFY(font.isVariableAxisSet(axis.tag()));
+        QCOMPARE(font.variableAxisValue(axis.tag()), expected[index]);
+    }
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+}
+
 void TerminalCellMetricsTest::resolvesCodepointMapsWithLaterEntryPolicy()
 {
     const QString basePath = QFINDTESTDATA(
@@ -613,6 +659,70 @@ void TerminalCellMetricsTest::resolvesCodepointMapsWithLaterEntryPolicy()
     QVERIFY(QFontDatabase::removeApplicationFont(baseId));
 }
 
+void TerminalCellMetricsTest::normalizesCodepointMapIntervals()
+{
+    TerminalTypography typography;
+    typography.codepointMap = {
+        {.first = 10, .last = 30, .family = QStringLiteral("zero")},
+        {.first = 20, .last = 40, .family = QStringLiteral("one")},
+        {.first = 25, .last = 26, .family = QStringLiteral("two")},
+        {.first = 0, .last = 15, .family = QStringLiteral("three")},
+        // Invalid direct-construction input is ignored defensively. Ghostty's
+        // finalized parser never emits a descending range.
+        {.first = 50, .last = 49, .family = QStringLiteral("invalid")},
+    };
+
+    const TerminalCellMetrics metrics = terminalCellMetrics(typography);
+    QVERIFY(metrics.fontProgram != nullptr);
+    const QVector<TerminalMappedFontInterval> &segments =
+        metrics.fontProgram->mappedIntervals;
+    QCOMPARE(segments.size(), 5);
+    const auto verify = [&segments](qsizetype index, quint32 first,
+                                    quint32 last, qsizetype sourceIndex) {
+        QCOMPARE(segments.at(index).first, first);
+        QCOMPARE(segments.at(index).last, last);
+        QCOMPARE(segments.at(index).sourceIndex, sourceIndex);
+    };
+    verify(0, 0, 15, 3);
+    verify(1, 16, 19, 0);
+    verify(2, 20, 24, 1);
+    verify(3, 25, 26, 2);
+    verify(4, 27, 40, 1);
+    QVERIFY(std::ranges::all_of(segments,
+                                [](const TerminalMappedFontInterval &segment) {
+                                    return segment.faceIndex < 0;
+                                }));
+
+    // Fully shadowed declarations never need face resolution and collapse to
+    // one winner rather than repeatedly copying an interval table.
+    typography.codepointMap.clear();
+    for (int index = 0; index < 4096; ++index) {
+        typography.codepointMap.append({
+            .first = 0,
+            .last = 0x1fffffU,
+            .family = QStringLiteral("shadow-%1").arg(index),
+        });
+    }
+    const TerminalCellMetrics shadowed = terminalCellMetrics(typography);
+    QCOMPARE(shadowed.fontProgram->mappedIntervals.size(), 1);
+    QCOMPARE(shadowed.fontProgram->mappedIntervals.front().sourceIndex,
+             qsizetype{4095});
+    QCOMPARE(shadowed.fontProgram->mappedFaces.size(), 0);
+
+    const QString family =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    TerminalTypography repeatedFace;
+    repeatedFace.codepointMap = {
+        {.first = 1, .last = 2, .family = family},
+        {.first = 4, .last = 5, .family = family},
+    };
+    const TerminalCellMetrics deduplicated = terminalCellMetrics(repeatedFace);
+    QCOMPARE(deduplicated.fontProgram->mappedIntervals.size(), 2);
+    QCOMPARE(deduplicated.fontProgram->mappedFaces.size(), 1);
+    QCOMPARE(deduplicated.fontProgram->mappedIntervals.at(0).faceIndex,
+             deduplicated.fontProgram->mappedIntervals.at(1).faceIndex);
+}
+
 void TerminalCellMetricsTest::obeysSyntheticStylePermissions()
 {
     const QString family =
@@ -651,6 +761,102 @@ void TerminalCellMetricsTest::approximatesFreetypeLoadFlags()
         QVERIFY(static_cast<int>(font.styleStrategy())
                 & static_cast<int>(QFont::NoAntialias));
     }
+
+    TerminalTypography light;
+    const TerminalCellMetrics lightMetrics = terminalCellMetrics(light);
+    QCOMPARE(lightMetrics.font(TerminalFontRole::Regular).hintingPreference(),
+             QFont::PreferVerticalHinting);
+    light.freetypeLoadFlags.light = false;
+    const TerminalCellMetrics fullMetrics = terminalCellMetrics(light);
+    QCOMPARE(fullMetrics.font(TerminalFontRole::Regular).hintingPreference(),
+             QFont::PreferFullHinting);
+}
+
+void TerminalCellMetricsTest::sharesImmutableFontPrograms()
+{
+    TerminalTypography typography;
+    const TerminalCellMetrics first = terminalCellMetrics(typography, 1.0);
+    const TerminalCellMetrics otherDpr = terminalCellMetrics(typography, 1.5);
+    QVERIFY(first.fontProgram != nullptr);
+    QVERIFY(first.fontProgram == otherDpr.fontProgram);
+
+    TerminalTypography layoutOnly = typography;
+    layoutOnly.shapingBreakCursor = false;
+    layoutOnly.metricModifiers[TerminalMetric::CellWidth] =
+        TerminalMetricModifiers::Absolute{2};
+    const TerminalCellMetrics adjusted = terminalCellMetrics(layoutOnly, 1.0);
+    QVERIFY(first.fontProgram == adjusted.fontProgram);
+    QVERIFY(first.cellWidth != adjusted.cellWidth);
+
+    TerminalTypography transportOnly = typography;
+    transportOnly.freetypeLoadFlags.forceAutohint = true;
+    transportOnly.freetypeLoadFlags.autohint = false;
+    const TerminalCellMetrics ignoredFlags =
+        terminalCellMetrics(transportOnly, 1.0);
+    QVERIFY(first.fontProgram == ignoredFlags.fontProgram);
+    QCOMPARE(first, ignoredFlags);
+
+    TerminalTypography shaping = typography;
+    shaping.features = {{.tag = 0x6c696761U, .value = 0}};
+    const TerminalCellMetrics changed = terminalCellMetrics(shaping, 1.0);
+    QVERIFY(first.fontProgram != changed.fontProgram);
+
+    const auto verifyDifferent = [&first](TerminalTypography source) {
+        const TerminalCellMetrics metrics = terminalCellMetrics(source, 1.0);
+        QVERIFY(metrics.fontProgram != first.fontProgram);
+    };
+    TerminalTypography source = typography;
+    source.pointSize = 13.0;
+    verifyDifferent(source);
+    source = typography;
+    source.face(TerminalFontRole::Regular).families = {
+        QStringLiteral("ghostty-qt-cache-key")};
+    verifyDifferent(source);
+    source = typography;
+    source.face(TerminalFontRole::Regular).style =
+        TerminalFontStyles::Named{QStringLiteral("cache-key")};
+    verifyDifferent(source);
+    source = typography;
+    source.face(TerminalFontRole::Regular).variations = {
+        TerminalFontVariation::fromValue(0x77676874U, 500.0)};
+    verifyDifferent(source);
+    source = typography;
+    source.codepointMap = {{.first = U'A',
+                            .last = U'Z',
+                            .family = QStringLiteral("ghostty-qt-cache-map")}};
+    verifyDifferent(source);
+    source = typography;
+    source.syntheticStyle.bold = false;
+    verifyDifferent(source);
+    source = typography;
+    source.freetypeLoadFlags.hinting = false;
+    verifyDifferent(source);
+    source = typography;
+    source.freetypeLoadFlags.light = false;
+    verifyDifferent(source);
+    source = typography;
+    source.freetypeLoadFlags.monochrome = true;
+    verifyDifferent(source);
+
+    const QString path =
+        QFINDTESTDATA("../ghostty/src/font/res/CodeNewRoman-Regular.otf");
+    QVERIFY2(!path.isEmpty(), "Bundled font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    const TerminalCellMetrics afterDatabaseChange =
+        terminalCellMetrics(typography, 1.0);
+    QVERIFY(first.fontProgram != afterDatabaseChange.fontProgram);
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+
+    std::weak_ptr<const TerminalFontProgram> released;
+    {
+        TerminalTypography transient = typography;
+        transient.pointSize = 17.25;
+        const TerminalCellMetrics metrics = terminalCellMetrics(transient, 1.0);
+        released = metrics.fontProgram;
+        QVERIFY(!released.expired());
+    }
+    QVERIFY(released.expired());
 }
 
 void TerminalCellMetricsTest::projectsBaseMetricsToPhysicalPixels_data()

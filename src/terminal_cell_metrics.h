@@ -7,11 +7,13 @@
 #include <QStringView>
 #include <QtTypes>
 
-#include <array>
+#include <memory>
 
 struct TerminalCellMetrics {
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
-    QVector<TerminalMappedFont> mappedFonts;
+    // Retains the weak-cached immutable program while this metrics generation
+    // is live. Renderer snapshots compare and share this pointer instead of
+    // copying four QFonts plus the interval table on every frame.
+    std::shared_ptr<const TerminalFontProgram> fontProgram;
     bool shapingBreakCursor = true;
 
     // All geometry is expressed in logical scene units. Each value is derived
@@ -32,20 +34,17 @@ struct TerminalCellMetrics {
     qreal underlineMaximumPosition = 1.0;
     qreal overlineMinimumPosition = 0.0;
 
-    [[nodiscard]] QFont &font(TerminalFontRole role) noexcept
-    {
-        return fonts[terminalEnumIndex(role)];
-    }
-
     [[nodiscard]] const QFont &font(TerminalFontRole role) const noexcept
     {
-        return fonts[terminalEnumIndex(role)];
+        Q_ASSERT(fontProgram != nullptr);
+        return fontProgram->fonts[terminalEnumIndex(role)];
     }
 
     [[nodiscard]] const QFont &fontForText(TerminalFontRole role,
                                            QStringView text) const noexcept
     {
-        return terminalFontForText(fonts, mappedFonts, role, text);
+        Q_ASSERT(fontProgram != nullptr);
+        return terminalFontForText(*fontProgram, role, text);
     }
 
     bool operator==(const TerminalCellMetrics &) const = default;

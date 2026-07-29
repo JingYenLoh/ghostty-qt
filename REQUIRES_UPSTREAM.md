@@ -529,10 +529,14 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
 - schema v1 transports Ghostty's finalized ordered feature list, four ordered
   variation lists as exact f64 bit patterns, u21 codepoint maps, three
   synthesis booleans, cursor shaping-break policy, and five FreeType flags;
-- one GUI-thread database pass resolves a metric face array, shaping-feature
-  face array, and sorted disjoint later-entry-wins codepoint-map table;
-- unrelated live reloads skip font discovery by comparing effective
-  typography before resolution;
+- a weak-cached immutable GUI-thread font program shares its metric and
+  shaping-face arrays across panes, DPRs, and layout-only generations, and
+  invalidates every live pane when Qt's font database changes;
+- codepoint maps compile in O(n log n) into sorted disjoint
+  later-entry-wins intervals and an interned face table, avoiding quadratic
+  overlay copies and duplicate resolved faces;
+- unrelated, metric-only, shaping-break-only, and transport-only FreeType
+  reloads skip font discovery through an effective program key;
 - a pure planner forms maximal row runs at every observable text-style,
   selection, font, invisible-cell, defensive ligature, and configured cursor
   boundary while retaining wide spacers with their head;
@@ -542,9 +546,9 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:
-`font-feature`, the four `font-variation*` keys, `font-codepoint-map`,
-`font-synthetic-style`, `font-shaping-break`, and `freetype-load-flags` are
-partial rather than exact.
+all four `font-family*` keys, all four `font-style*` keys, `font-feature`, the
+four `font-variation*` keys, `font-codepoint-map`, `font-synthetic-style`,
+`font-shaping-break`, and `freetype-load-flags` are partial rather than exact.
 
 ### Why ghostty-qt does not copy Ghostty's private font stack
 

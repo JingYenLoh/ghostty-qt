@@ -29,6 +29,7 @@
 #endif
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <ranges>
@@ -754,8 +755,7 @@ struct TerminalGlyphStyle {
 
 struct TerminalTextRenderState {
     QQuickWindow *window = nullptr;
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
-    QVector<TerminalMappedFont> mappedFonts;
+    std::shared_ptr<const TerminalFontProgram> fontProgram;
     bool shapingBreakCursor = true;
     qreal cellWidth = 1.0;
     qreal cellHeight = 1.0;
@@ -1397,8 +1397,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
         TerminalTextRenderState textState;
         textState.window = window();
-        textState.fonts = metrics.fonts;
-        textState.mappedFonts = metrics.mappedFonts;
+        textState.fontProgram = metrics.fontProgram;
         textState.shapingBreakCursor = metrics.shapingBreakCursor;
         textState.cellWidth = cellWidth;
         textState.cellHeight = cellHeight;
@@ -1431,7 +1430,7 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             || *root->textState != textState
             || root->rowTextNodes.size() != visibleRows;
         if (rebuildAllText) {
-            root->resetTextRows(visibleRows, metrics.fonts);
+            root->resetTextRows(visibleRows, metrics.fontProgram->fonts);
             root->textState = textState;
         } else {
             // The viewport is clipping state, not shaping state. Interactive

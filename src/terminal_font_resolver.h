@@ -8,39 +8,47 @@
 #include <QVector>
 
 #include <array>
+#include <memory>
 
-struct TerminalMappedFont {
-    TerminalCodepointFontMap range;
+struct TerminalMappedFontFace {
     QFont font;
     QRawFont rawFont;
 
-    bool operator==(const TerminalMappedFont &) const = default;
+    bool operator==(const TerminalMappedFontFace &) const = default;
 };
 
-struct TerminalResolvedFonts {
+struct TerminalMappedFontInterval {
+    quint32 first = 0;
+    quint32 last = 0;
+    // Negative means the latest owning declaration could not be resolved and
+    // deliberately masks every earlier mapping.
+    qsizetype faceIndex = -1;
+    qsizetype sourceIndex = -1;
+
+    bool operator==(const TerminalMappedFontInterval &) const = default;
+};
+
+struct TerminalFontProgram {
     // Metric fonts contain face, variation, synthesis, and hinting choices.
     // Shaping-only OpenType features are applied to `fonts` afterward so a
     // feature such as `pwid` cannot redefine the terminal grid.
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> metricFonts;
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
-    QVector<TerminalMappedFont> mappedFonts;
+    QVector<TerminalMappedFontFace> mappedFaces;
+    QVector<TerminalMappedFontInterval> mappedIntervals;
 
-    bool operator==(const TerminalResolvedFonts &) const = default;
+    bool operator==(const TerminalFontProgram &) const = default;
 };
 
-// Uses Qt's GUI-thread font database. Resolve once per typography generation;
-// renderer-side cell lookup uses a sorted, disjoint interval table.
-[[nodiscard]] TerminalResolvedFonts
-resolveTerminalFonts(const TerminalTypography &typography);
+// Uses Qt's GUI-thread font database. Equal font-affecting typography shares
+// one immutable program across panes, DPRs, and metric-only reloads. The weak
+// process cache is invalidated when Qt reports a font-database change.
+[[nodiscard]] std::shared_ptr<const TerminalFontProgram>
+terminalFontProgram(const TerminalTypography &typography);
 
 // Applies Ghostty's later-entry-wins range policy with logarithmic lookup. A
 // mapped face is returned only when its primary raw face supports the complete
 // cell grapheme.
-[[nodiscard]] const QFont &
-terminalFontForText(const TerminalResolvedFonts &fonts, TerminalFontRole role,
-                    QStringView text) noexcept;
-
-[[nodiscard]] const QFont &terminalFontForText(
-    const std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> &fonts,
-    const QVector<TerminalMappedFont> &mappedFonts, TerminalFontRole role,
-    QStringView text) noexcept;
+[[nodiscard]] const QFont &terminalFontForText(const TerminalFontProgram &fonts,
+                                               TerminalFontRole role,
+                                               QStringView text) noexcept;

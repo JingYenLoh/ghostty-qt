@@ -283,6 +283,8 @@ TerminalPane::TerminalPane(
     metrics_ = terminalCellMetrics(
         options.typography,
         window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    connect(qGuiApp, &QGuiApplication::fontDatabaseChanged, this,
+            &TerminalPane::refreshResolvedFonts);
     itemWindowConnection_ = connect(this, &QQuickItem::windowChanged, this,
                                     &TerminalPane::watchWindow);
     watchWindow(window());
@@ -1520,6 +1522,35 @@ bool TerminalPane::updateMetrics(const TerminalTypography &typography,
     }
     metrics_ = next;
     return true;
+}
+
+void TerminalPane::refreshResolvedFonts()
+{
+    const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
+    TerminalCellMetrics previous;
+    {
+        QMutexLocker locker(&renderMutex_);
+        previous = metrics_;
+    }
+    if (!updateMetrics()) {
+        return;
+    }
+
+    TerminalCellMetrics current;
+    {
+        QMutexLocker locker(&renderMutex_);
+        current = metrics_;
+    }
+    if (terminalGridMetricsChanged(previous, current)) {
+        updateTerminalSize();
+    }
+    refreshLinkPreview();
+    reconcileReleasedLinkPreview(previewWasPointerCaptured);
+    update();
+    if (!qFuzzyCompare(previous.font(TerminalFontRole::Regular).pointSizeF(),
+                       current.font(TerminalFontRole::Regular).pointSizeF())) {
+        Q_EMIT fontPointSizeChanged();
+    }
 }
 
 void TerminalPane::markTextRowsChangedLocked(const TerminalUpdate &update)

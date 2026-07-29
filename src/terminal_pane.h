@@ -299,6 +299,7 @@ private:
     [[nodiscard]] bool updateMetrics();
     [[nodiscard]] bool updateMetrics(const TerminalTypography &typography,
                                      qreal pointSize);
+    void refreshResolvedFonts();
     void updateTerminalSize();
     void noteTerminalGridSize(const TerminalSessionGeometry &geometry);
     void scheduleResizeOverlay();

@@ -479,23 +479,23 @@
     },
     "font-codepoint-map": {
       "status": "partial",
-      "note": "The strict schema preserves finalized u21 ranges and family strings. GUI-thread resolution normalizes overlaps into a sorted disjoint later-entry-wins table, including an unavailable latest face masking an older entry; lookup is logarithmic, always selects the mapped regular face, requires complete grapheme coverage, and ignores ZWJ plus text/emoji variation selectors for coverage. Live reload replaces the table without pane or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's resolved face collection, codepoint resolver, or face coverage decisions, so Qt owns platform discovery and glyph support."
+      "note": "The strict schema preserves finalized u21 ranges and family strings. GUI-thread resolution compiles overlaps in O(n log n) into sorted disjoint later-entry-wins intervals, including an unavailable latest face masking an older entry, and interns repeated resolved families in a compact face table. Cell lookup is logarithmic, always selects the mapped regular face, requires complete grapheme coverage, and ignores ZWJ plus text/emoji variation selectors for coverage. The immutable program is shared across panes and live reload replaces it without pane or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's resolved face collection, codepoint resolver, or face coverage decisions, so Qt owns platform discovery and glyph support."
     },
     "font-family": {
       "status": "partial",
-      "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."
+      "note": "Pinned parsing, exact CLI precedence, four-role propagation, live reload, and ordered Qt fallback families are implemented. Equal effective font inputs share one weak-cached immutable program across panes and DPRs, and Qt font-database changes invalidate every live pane's program. Status remains partial because Ghostty's embedded production fallback stack and resolver are not exposed through public libghostty-vt, so Qt's platform resolver supplies the final fallback behavior."
     },
     "font-family-bold": {
-      "status": "supported",
-      "note": "The finalized ordered family list selects the bold rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+      "status": "partial",
+      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold style uses the regular role, while a missing configured bold face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
     },
     "font-family-bold-italic": {
-      "status": "supported",
-      "note": "The finalized ordered family list selects the bold-italic rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+      "status": "partial",
+      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled bold-italic style uses the regular role, while a missing configured combined face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
     },
     "font-family-italic": {
-      "status": "supported",
-      "note": "The finalized ordered family list selects the italic rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+      "status": "partial",
+      "note": "The finalized ordered family list, role inheritance, synthesis permission, and live replacement are preserved. A disabled italic style uses the regular role, while a missing configured italic face may request Qt synthesis when permitted. Status remains partial because Qt owns final family substitution, fallback order, and native-versus-synthetic face selection."
     },
     "font-feature": {
       "status": "partial",
@@ -510,24 +510,24 @@
       "note": "The pinned f32 value, exact CLI precedence, initial geometry, inheritance, and live reload are implemented. Manually adjusted panes retain their local size while adopting other typography changes; reset_font_size restores the newest live default and resumes following reloads."
     },
     "font-style": {
-      "status": "supported",
-      "note": "Ghostty's automatic, disabled, and named style alternatives are preserved in the typed wire and applied to the regular rendering role; pinned runtime semantics normalize disabled regular style to automatic."
+      "status": "partial",
+      "note": "Ghostty's automatic, disabled, and named alternatives cross the typed wire and reload live; pinned runtime semantics normalize disabled regular style to automatic. Status remains partial because Qt owns named-style substitution and final face selection rather than Ghostty's Fontconfig and FreeType collection."
     },
     "font-style-bold": {
-      "status": "supported",
-      "note": "Ghostty's automatic, disabled, and named style alternatives select the bold role; disabled or unavailable styled faces fall back to the regular role."
+      "status": "partial",
+      "note": "Ghostty's automatic, disabled, and named alternatives select the bold role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
     },
     "font-style-bold-italic": {
-      "status": "supported",
-      "note": "Ghostty's automatic, disabled, and named style alternatives select the bold-italic role; disabled or unavailable styled faces fall back to the regular role."
+      "status": "partial",
+      "note": "Ghostty's automatic, disabled, and named alternatives select the bold-italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
     },
     "font-style-italic": {
-      "status": "supported",
-      "note": "Ghostty's automatic, disabled, and named style alternatives select the italic role; disabled or unavailable styled faces fall back to the regular role."
+      "status": "partial",
+      "note": "Ghostty's automatic, disabled, and named alternatives select the italic role and reload live. Disabled uses the regular role; a missing automatic or named role requests synthesis only when its permission is enabled. Status remains partial because Qt owns exact style matching and native-versus-synthetic face selection."
     },
     "font-synthetic-style": {
       "status": "partial",
-      "note": "The finalized bold, italic, and bold-italic synthesis permissions cross the typed schema and reload live. Native role faces are preferred, an unavailable exact named style falls back to regular, and only an allowed missing automatic role requests Qt synthesis. Status remains partial because Qt does not expose Ghostty's backend-specific FreeType synthetic-face construction or its exact bold and italic transforms."
+      "note": "The finalized bold, italic, and bold-italic synthesis permissions cross the typed schema and reload live. Native role faces are preferred; an allowed missing automatic or named styled role requests Qt synthesis, while a disabled permission or style uses the regular role. Status remains partial because Qt does not expose Ghostty's backend-specific FreeType synthetic-face construction or its exact bold and italic transforms."
     },
     "font-thicken": {
       "status": "not_applicable",
@@ -562,7 +562,7 @@
     "freetype-load-flags": {
       "status": "partial",
       "scope": "linux",
-      "note": "All five finalized booleans cross the strict typed schema and reload live. Qt maps disabled hinting, light versus full hinting, and monochrome antialias policy to its public QFont controls. Status remains partial because public Qt cannot request Ghostty's exact FreeType force-autohint and autohint load flags or expose the resulting face load options."
+      "note": "All five finalized booleans cross the strict typed schema and reload live. Qt maps disabled hinting, effective light versus full hinting, and monochrome antialias policy to public QFont controls. Force-autohint and autohint are transport-only no-ops and are excluded from the effective font-program cache key, as is light while hinting is disabled. Status remains partial because public Qt cannot request Ghostty's exact FreeType load flags or expose the resulting face options."
     },
     "fullscreen": {
       "status": "supported",

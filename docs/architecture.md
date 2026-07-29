@@ -1462,18 +1462,28 @@ metric modifiers. Variation values retain their finalized f64 bit pattern in
 schema v1, including negative zero and non-finite values, instead of relying on
 non-standard JSON numbers.
 
-`resolveTerminalFonts` takes one GUI-thread font-database snapshot per changed
-effective typography generation. The regular metric face defines the grid,
-and a second shaping-face array applies OpenType features so a proportional
-feature cannot silently redefine terminal geometry. Qt's context font merging
-consumes each ordered family list. A native role face is preferred before
-allowed synthesis; disabled roles and unresolved exact named styles use the
-regular face. Variation processing consumes the first matching tag before
-validity and range checks, matching the pinned FreeType duplicate behavior.
-Codepoint-map overlays are normalized once into sorted disjoint intervals, so
-the renderer performs logarithmic later-entry-wins lookup instead of scanning
-the configuration for every cell. A mapped regular face must cover the entire
-cell grapheme, ignoring only ZWJ and text/emoji variation selectors.
+`terminalFontProgram` takes one GUI-thread font-database snapshot for each
+distinct effective font input. A weak process cache shares that immutable
+program across panes, DPRs, and metric- or shaping-break-only generations,
+while allowing unused entries to expire. Unsupported FreeType
+force-autohint/autohint values and light hinting while hinting is disabled are
+canonicalized out of the key. Qt font-database changes invalidate the cache
+and make every live pane acquire a fresh program without replacing its
+terminal or PTY.
+
+The regular metric face defines the grid, and a second shaping-face array
+applies OpenType features so a proportional feature cannot silently redefine
+terminal geometry. Qt's context font merging consumes each ordered family
+list. A native role face is preferred before allowed synthesis; disabled
+styled roles use the regular face, while a missing automatic or named styled
+role requests synthesis only when permitted. Variation processing consumes
+the first matching tag before validity and range checks, matching the pinned
+FreeType duplicate behavior. Codepoint-map overlays are compiled in
+O(n log n) into sorted disjoint later-entry-wins intervals plus an interned
+face table. The renderer performs logarithmic lookup without scanning or
+copying the configuration per cell or frame. A mapped regular face must cover
+the entire cell grapheme, ignoring only ZWJ and text/emoji variation
+selectors.
 
 Dirty rows are converted into maximal compatible text runs by a renderer-free
 planner. Font, foreground, text style, selection, invisible cells, defensive
@@ -1505,8 +1515,9 @@ panes without overriding a pane's manual font zoom. A manually zoomed pane
 keeps only its local point size while adopting new family, style, and metric
 values; resetting the size uses the newest configured default and resumes size
 reloads. The pane compares the old and new effective typography—including its
-local zoom—before resolving fonts, so appearance-only and other unrelated
-reloads do not rescan the font database or rebuild codepoint-map faces.
+local zoom—before requesting metrics, and the normalized program cache makes
+appearance-only, metric-only, shaping-break-only, and transport-only FreeType
+changes avoid font discovery and codepoint-map reconstruction.
 Directory and font inheritance booleans plus tab
 insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
@@ -2308,10 +2319,10 @@ The contract remains conservative: only the typed configuration slice,
 including the four-role typography and exposed physical metric controls, four
 search colors, `link-url`, `link-previews`, and all five `bell-features`, is
 marked partial or supported.
-The regular family, feature, variation, codepoint-map, synthesis, shaping-break,
-and FreeType settings stay partial because final face and glyph resolution is
-Qt-owned; the three styled-family keys, four style keys, font size, and eleven
-exposed metric keys are supported. Search actions remain partial because the
+All four family keys, all four style keys, feature, variation, codepoint-map,
+synthesis, shaping-break, and FreeType settings stay partial because final
+face and glyph resolution is Qt-owned; font size and the eleven exposed metric
+keys are supported. Search actions remain partial because the
 public library artifact cannot expose Ghostty's `xev`-dependent search thread,
 while custom `link` rules and other upstream keys stay explicitly planned.
 All bell features and both audio settings are supported through the public Qt

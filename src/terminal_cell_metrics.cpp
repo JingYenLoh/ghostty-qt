@@ -378,9 +378,10 @@ TerminalCellMetrics terminalCellMetrics(const TerminalTypography &typography,
                                         qreal devicePixelRatio)
 {
     const qreal dpr = normalizedDpr(devicePixelRatio);
-    TerminalResolvedFonts fonts = resolveTerminalFonts(typography);
+    const std::shared_ptr<const TerminalFontProgram> fonts =
+        terminalFontProgram(typography);
     PhysicalMetrics physical = baseMetrics(
-        fonts.metricFonts[terminalEnumIndex(TerminalFontRole::Regular)], dpr);
+        fonts->metricFonts[terminalEnumIndex(TerminalFontRole::Regular)], dpr);
     applyModifiers(physical, typography.metricModifiers);
 
     const qint64 baselineFromTop = static_cast<qint64>(physical.cellHeight)
@@ -398,8 +399,7 @@ TerminalCellMetrics terminalCellMetrics(const TerminalTypography &typography,
     const qint64 overlineMinimumPosition =
         -static_cast<qint64>(physical.cellHeight / 4);
     return {
-        .fonts = std::move(fonts.fonts),
-        .mappedFonts = std::move(fonts.mappedFonts),
+        .fontProgram = fonts,
         .shapingBreakCursor = typography.shapingBreakCursor,
         .cellWidth = logical(physical.cellWidth, dpr),
         .cellHeight = logical(physical.cellHeight, dpr),

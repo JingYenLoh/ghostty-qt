@@ -3,23 +3,79 @@
 #include <QFontDatabase>
 #include <QFontInfo>
 #include <QFontVariableAxis>
+#include <QGuiApplication>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
+#include <QThread>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <concepts>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
 [[nodiscard]] double normalizedPointSize(double value) noexcept
 {
     return std::isfinite(value) && value > 0.0 ? value : 12.0;
+}
+
+struct FontProgramCacheEntry {
+    TerminalTypography source;
+    std::weak_ptr<const TerminalFontProgram> program;
+};
+
+quint64 fontDatabaseRevision = 0;
+QPointer<QGuiApplication> watchedApplication;
+
+[[nodiscard]] quint64 currentFontDatabaseRevision()
+{
+    QGuiApplication *const application = qGuiApp;
+    Q_ASSERT(application == nullptr
+             || QThread::currentThread() == application->thread());
+    if (watchedApplication == application) {
+        return fontDatabaseRevision;
+    }
+
+    watchedApplication = application;
+    ++fontDatabaseRevision;
+    if (application != nullptr) {
+        QObject::connect(application, &QGuiApplication::fontDatabaseChanged,
+                         application, [] { ++fontDatabaseRevision; });
+    }
+    return fontDatabaseRevision;
+}
+
+[[nodiscard]] TerminalTypography
+fontProgramSource(TerminalTypography typography)
+{
+    typography.pointSize = normalizedPointSize(typography.pointSize);
+    typography.shapingBreakCursor = true;
+    typography.metricModifiers = {};
+    // Public QFont has no force-autohint/autohint equivalents. Keeping these
+    // transport-only values out of the key prevents a no-op reload from
+    // rescanning the font database and rebuilding every text row.
+    typography.freetypeLoadFlags.forceAutohint = false;
+    typography.freetypeLoadFlags.autohint = true;
+    if (!typography.freetypeLoadFlags.hinting) {
+        typography.freetypeLoadFlags.light = true;
+    }
+    return typography;
+}
+
+[[nodiscard]] std::vector<FontProgramCacheEntry> &fontProgramCache()
+{
+    thread_local std::vector<FontProgramCacheEntry> result;
+    return result;
 }
 
 void appendUnique(QStringList &destination, const QStringList &families)
@@ -366,10 +422,13 @@ resolveRoleFont(FontDatabaseSnapshot &database,
                         style.name, pointSize, fixedPitch, flags)) {
                     return *named;
                 }
-                // An explicit named style is an exact request. Ghostty does
-                // not reinterpret a typo as permission to synthesize a
-                // different face.
-                return regular;
+                // A named descriptor that discovers no face leaves this role
+                // empty in Ghostty; Collection.completeStyles then applies
+                // the ordinary synthesis permission using the regular face.
+                return syntheticAllowed(syntheticStyle, role)
+                    ? syntheticRoleFont({}, regular.families(), role, pointSize,
+                                        fixedPitch, flags)
+                    : regular;
             } else {
                 if (const auto native = nativeRoleFont(
                         database, specificFamilies, fallbackFamilies, role,
@@ -468,113 +527,202 @@ resolveRoleFonts(FontDatabaseSnapshot &database,
     return true;
 }
 
-void overlayMappedFont(QVector<TerminalMappedFont> &segments,
-                       TerminalMappedFont mapping)
+struct FontMapEvent {
+    quint64 point = 0;
+    qsizetype mappingIndex = 0;
+    bool entering = false;
+};
+
+struct FontMapSegment {
+    quint32 first = 0;
+    quint32 last = 0;
+    qsizetype mappingIndex = 0;
+};
+
+[[nodiscard]] std::vector<FontMapSegment>
+winningFontMapSegments(const QVector<TerminalCodepointFontMap> &mappings)
 {
-    QVector<TerminalMappedFont> next;
-    next.reserve(segments.size() + 2);
-    bool inserted = false;
-    for (const TerminalMappedFont &existing : std::as_const(segments)) {
-        if (existing.range.last < mapping.range.first) {
-            next.append(existing);
+    std::vector<FontMapEvent> events;
+    events.reserve(static_cast<std::size_t>(mappings.size()) * 2U);
+    for (qsizetype index = 0; index < mappings.size(); ++index) {
+        const TerminalCodepointFontMap &mapping = mappings.at(index);
+        if (mapping.first > mapping.last) {
             continue;
         }
-        if (mapping.range.last < existing.range.first) {
-            if (!inserted) {
-                next.append(mapping);
-                inserted = true;
+        events.push_back({
+            .point = mapping.first,
+            .mappingIndex = index,
+            .entering = true,
+        });
+        events.push_back({
+            .point = static_cast<quint64>(mapping.last) + 1U,
+            .mappingIndex = index,
+            .entering = false,
+        });
+    }
+    std::ranges::sort(events, {}, &FontMapEvent::point);
+
+    std::vector<FontMapSegment> result;
+    result.reserve(events.size());
+    std::set<qsizetype> active;
+    quint64 previous = events.empty() ? 0 : events.front().point;
+    for (std::size_t position = 0; position < events.size();) {
+        const quint64 point = events[position].point;
+        if (previous < point && !active.empty()) {
+            const qsizetype winner = *active.rbegin();
+            const quint32 first = static_cast<quint32>(previous);
+            const quint32 last = static_cast<quint32>(point - 1U);
+            if (!result.empty() && result.back().mappingIndex == winner
+                && static_cast<quint64>(result.back().last) + 1U == first) {
+                result.back().last = last;
+            } else {
+                result.push_back({
+                    .first = first,
+                    .last = last,
+                    .mappingIndex = winner,
+                });
             }
-            next.append(existing);
-            continue;
         }
 
-        if (existing.range.first < mapping.range.first) {
-            TerminalMappedFont left = existing;
-            left.range.last = mapping.range.first - 1;
-            next.append(std::move(left));
-        }
-        if (mapping.range.last < existing.range.last) {
-            if (!inserted) {
-                next.append(mapping);
-                inserted = true;
+        while (position < events.size() && events[position].point == point) {
+            const FontMapEvent &event = events[position++];
+            if (event.entering) {
+                active.insert(event.mappingIndex);
+            } else {
+                active.erase(event.mappingIndex);
             }
-            TerminalMappedFont right = existing;
-            right.range.first = mapping.range.last + 1;
-            next.append(std::move(right));
         }
-    }
-    if (!inserted) {
-        next.append(std::move(mapping));
-    }
-    segments = std::move(next);
-}
-
-} // namespace
-
-TerminalResolvedFonts
-resolveTerminalFonts(const TerminalTypography &typography)
-{
-    FontDatabaseSnapshot database;
-    TerminalResolvedFonts result;
-    result.metricFonts = resolveRoleFonts(
-        database, typography,
-        requestedFamilies(
-            typography.face(TerminalFontRole::Regular).families),
-        true);
-    result.fonts = result.metricFonts;
-    for (QFont &font : result.fonts) {
-        applyFeatures(font, typography.features);
-    }
-
-    result.mappedFonts.reserve(typography.codepointMap.size());
-    for (const TerminalCodepointFontMap &mapping : typography.codepointMap) {
-        TerminalMappedFont resolved;
-        resolved.range = mapping;
-        if (const auto canonical =
-                database.canonicalFamily(mapping.family,
-                                         typography.pointSize)) {
-            resolved.font = baseFont(
-                {*canonical}, typography.pointSize, false,
-                typography.freetypeLoadFlags);
-            applyFeatures(resolved.font, typography.features);
-            resolved.rawFont = QRawFont::fromFont(resolved.font);
-        }
-        // Normalize overlapping declarations once. The resulting table is
-        // sorted and disjoint, with each point owned by the latest config
-        // entry, including an entry whose face could not be resolved.
-        overlayMappedFont(result.mappedFonts, std::move(resolved));
+        previous = point;
     }
     return result;
 }
 
-const QFont &terminalFontForText(const TerminalResolvedFonts &fonts,
+struct ResolvedMappedFonts {
+    QVector<TerminalMappedFontFace> faces;
+    QVector<TerminalMappedFontInterval> intervals;
+};
+
+[[nodiscard]] ResolvedMappedFonts
+resolveMappedFonts(FontDatabaseSnapshot &database,
+                   const TerminalTypography &typography)
+{
+    const std::vector<FontMapSegment> segments =
+        winningFontMapSegments(typography.codepointMap);
+    ResolvedMappedFonts result;
+    result.intervals.reserve(static_cast<qsizetype>(segments.size()));
+    result.faces.reserve(std::min(typography.codepointMap.size(),
+                                  static_cast<qsizetype>(segments.size())));
+    std::vector<bool> resolved(
+        static_cast<std::size_t>(typography.codepointMap.size()));
+    std::vector<std::optional<qsizetype>> faceByMapping(resolved.size());
+    QHash<QString, qsizetype> faceByFamily;
+
+    for (const FontMapSegment &segment : segments) {
+        const std::size_t index =
+            static_cast<std::size_t>(segment.mappingIndex);
+        if (!resolved[index]) {
+            resolved[index] = true;
+            const TerminalCodepointFontMap &mapping =
+                typography.codepointMap.at(segment.mappingIndex);
+            if (const auto canonical = database.canonicalFamily(
+                    mapping.family, typography.pointSize)) {
+                const auto existing = faceByFamily.constFind(*canonical);
+                if (existing != faceByFamily.cend()) {
+                    faceByMapping[index] = *existing;
+                } else {
+                    TerminalMappedFontFace face;
+                    face.font = baseFont({*canonical}, typography.pointSize,
+                                         false, typography.freetypeLoadFlags);
+                    applyFeatures(face.font, typography.features);
+                    face.rawFont = QRawFont::fromFont(face.font);
+                    const qsizetype faceIndex = result.faces.size();
+                    result.faces.append(std::move(face));
+                    faceByFamily.insert(*canonical, faceIndex);
+                    faceByMapping[index] = faceIndex;
+                }
+            }
+        }
+        result.intervals.append({
+            .first = segment.first,
+            .last = segment.last,
+            .faceIndex = faceByMapping[index].value_or(-1),
+            .sourceIndex = segment.mappingIndex,
+        });
+    }
+    return result;
+}
+
+} // namespace
+
+std::shared_ptr<const TerminalFontProgram>
+terminalFontProgram(const TerminalTypography &typography)
+{
+    const quint64 revision = currentFontDatabaseRevision();
+    thread_local quint64 cachedRevision = 0;
+    std::vector<FontProgramCacheEntry> &cache = fontProgramCache();
+    if (std::exchange(cachedRevision, revision) != revision) {
+        cache.clear();
+    } else {
+        std::erase_if(cache, [](const FontProgramCacheEntry &entry) {
+            return entry.program.expired();
+        });
+    }
+
+    TerminalTypography source = fontProgramSource(typography);
+    const auto found =
+        std::ranges::find(cache, source, &FontProgramCacheEntry::source);
+    if (found != cache.end()) {
+        if (std::shared_ptr<const TerminalFontProgram> program =
+                found->program.lock()) {
+            return program;
+        }
+        cache.erase(found);
+    }
+
+    FontDatabaseSnapshot database;
+    auto result = std::make_shared<TerminalFontProgram>();
+    result->metricFonts = resolveRoleFonts(
+        database, source,
+        requestedFamilies(source.face(TerminalFontRole::Regular).families),
+        true);
+    result->fonts = result->metricFonts;
+    for (QFont &font : result->fonts) {
+        applyFeatures(font, source.features);
+    }
+    ResolvedMappedFonts mapped = resolveMappedFonts(database, source);
+    result->mappedFaces = std::move(mapped.faces);
+    result->mappedIntervals = std::move(mapped.intervals);
+    cache.push_back({
+        .source = std::move(source),
+        .program = result,
+    });
+    return result;
+}
+
+const QFont &terminalFontForText(const TerminalFontProgram &fonts,
                                  TerminalFontRole role,
                                  QStringView text) noexcept
 {
-    return terminalFontForText(fonts.fonts, fonts.mappedFonts, role, text);
-}
-
-const QFont &terminalFontForText(
-    const std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> &fonts,
-    const QVector<TerminalMappedFont> &mappedFonts, TerminalFontRole role,
-    QStringView text) noexcept
-{
     const auto codepoint = firstCodepoint(text);
     if (!codepoint) {
-        return fonts[terminalEnumIndex(role)];
+        return fonts.fonts[terminalEnumIndex(role)];
     }
 
-    const auto after = std::ranges::upper_bound(
-        mappedFonts, *codepoint, {}, [](const TerminalMappedFont &mapping) {
-            return mapping.range.first;
-        });
-    if (after != mappedFonts.cbegin()) {
-        const TerminalMappedFont &mapping = *std::prev(after);
-        if (*codepoint <= mapping.range.last) {
-            return supportsCompleteText(mapping.rawFont, text)
-                ? mapping.font
-                : fonts[terminalEnumIndex(role)];
+    const auto after =
+        std::ranges::upper_bound(fonts.mappedIntervals, *codepoint, {},
+                                 [](const TerminalMappedFontInterval &mapping) {
+                                     return mapping.first;
+                                 });
+    if (after != fonts.mappedIntervals.cbegin()) {
+        const TerminalMappedFontInterval &mapping = *std::prev(after);
+        if (*codepoint <= mapping.last && mapping.faceIndex >= 0
+            && mapping.faceIndex < fonts.mappedFaces.size()) {
+            const TerminalMappedFontFace &face =
+                fonts.mappedFaces.at(mapping.faceIndex);
+            if (supportsCompleteText(face.rawFont, text)) {
+                return face.font;
+            }
         }
     }
-    return fonts[terminalEnumIndex(role)];
+    return fonts.fonts[terminalEnumIndex(role)];
 }
