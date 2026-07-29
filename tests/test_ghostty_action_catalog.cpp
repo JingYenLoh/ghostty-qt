@@ -809,6 +809,7 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         {"new_window", ApplicationAction::NewWindow},
         {"open_config", ApplicationAction::OpenConfig},
         {"reload_config", ApplicationAction::ReloadConfig},
+        {"toggle_quick_terminal", ApplicationAction::ToggleQuickTerminal},
         {"quit", ApplicationAction::Quit},
     };
     for (const auto &testCase : accepted) {
@@ -818,16 +819,9 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
     }
 
-    // Quick terminal has an exact application-level identity, but remains
-    // absent from executable chains until a layer-shell-capable backend is
-    // available. In particular, a configured global binding must not be
-    // silently consumed by an ordinary window fallback.
+    // The process-owned layer-shell route makes the exact application action
+    // executable without changing its application-only scope.
     constexpr auto quickTerminal = ApplicationAction::ToggleQuickTerminal;
-    QCOMPARE(GhosttyActionCatalog::parseApplicationAction(
-                 QStringLiteral("toggle_quick_terminal")),
-             std::optional{quickTerminal});
-    QVERIFY(!GhosttyActionCatalog::isImplemented(
-        QStringLiteral("toggle_quick_terminal")));
     const GhosttyCompiledActionChain quickTerminalBinding =
         GhosttyActionCatalog::compileActionChain(
             {QStringLiteral("toggle_quick_terminal")});
@@ -835,7 +829,10 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
     QCOMPARE(quickTerminalBinding.entries.size(), 1);
     QCOMPARE(quickTerminalBinding.entries.constFirst().scope,
              GhosttyActionScope::Application);
-    QVERIFY(!quickTerminalBinding.entries.constFirst().action.has_value());
+    const ApplicationAction *const compiledQuickTerminal =
+        quickTerminalBinding.entries.constFirst().getIf<ApplicationAction>();
+    QVERIFY(compiledQuickTerminal != nullptr);
+    QCOMPARE(*compiledQuickTerminal, quickTerminal);
 
     for (const QString &unsupported : {
              QStringLiteral("unbind"),
@@ -1008,7 +1005,6 @@ void GhosttyActionCatalogTest::parsesFrontendActionsExactly()
         QStringLiteral("crash:Main"),
         QStringLiteral("crash:unknown"),
         QStringLiteral("Crash:main"),
-        QStringLiteral("toggle_quick_terminal"),
     };
     for (const QString &serialized : rejected) {
         QVERIFY2(!GhosttyActionCatalog::parseFrontendAction(serialized),
@@ -1016,6 +1012,12 @@ void GhosttyActionCatalogTest::parsesFrontendActionsExactly()
         QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
                  qPrintable(serialized));
     }
+
+    // This spelling is deliberately not a frontend action: it remains an
+    // implemented application action routed by ApplicationController.
+    const QString quickTerminal = QStringLiteral("toggle_quick_terminal");
+    QVERIFY(!GhosttyActionCatalog::parseFrontendAction(quickTerminal));
+    QVERIFY(GhosttyActionCatalog::isImplemented(quickTerminal));
 }
 
 void GhosttyActionCatalogTest::parsesWindowNavigationActionsExactly()

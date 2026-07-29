@@ -920,6 +920,20 @@ bool TerminalWorkspace::executeSurfaceActionOnAllPanes(
     return performed;
 }
 
+bool TerminalWorkspace::containsPane(PaneId paneId) const
+{
+    return paneForId(paneId) != nullptr;
+}
+
+bool TerminalWorkspace::focusPaneForFrontend(PaneId paneId)
+{
+    const QPointer<TerminalWorkspace> guard(this);
+    const QPointer<TerminalPane> pane(paneForId(paneId));
+    if (pane == nullptr) return false;
+    activatePane(paneId);
+    return guard != nullptr && pane != nullptr && paneForId(paneId) == pane;
+}
+
 bool TerminalWorkspace::executeAction(const WorkspaceActionRequest &request)
 {
     // Model and workspace signals are synchronous. Reject nested actions while
@@ -1383,6 +1397,12 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                                  TerminalPane *) {
                 beginTerminalClipboardWrite(request, {paneId, pane});
             });
+    connect(pane, &TerminalPane::standardClipboardCommitted, this,
+            [this, paneId, pane](bool empty) {
+                if (paneForId(paneId) == pane) {
+                    Q_EMIT standardClipboardCommitted(empty);
+                }
+            });
     connect(pane, &TerminalPane::contextMenuRequested, this,
             [this, paneId, pane](const QPointF &windowPosition,
                                  bool selectionAvailable) {
@@ -1488,6 +1508,20 @@ void TerminalWorkspace::setCurrentIndex(int index)
     index = std::clamp(index, 0, static_cast<int>(tabs_.size()) - 1);
     dispatchAction({WorkspaceAction::ActivateTab,
                     {tabs_[static_cast<size_t>(index)]->id, PaneId{}, 0}});
+}
+
+bool TerminalWorkspace::activateTabByStableId(quint64 tabId)
+{
+    const TabId id(tabId);
+    if (!id.isValid() || tabById(id) == nullptr) return false;
+    activateTab(id);
+    return true;
+}
+
+bool TerminalWorkspace::executeActiveConfiguredAction(const QString &action)
+{
+    TerminalPane *const pane = paneForId(currentPaneId());
+    return pane != nullptr && pane->executeConfiguredAction(action);
 }
 
 void TerminalWorkspace::activateTab(TabId id,
@@ -2711,7 +2745,7 @@ void TerminalWorkspace::drainPendingClipboardWrites()
         pendingClipboardWriteBytes_ -= pending.byteSize;
         pendingClipboardWrites_.pop_front();
         const QPointer<TerminalWorkspace> guard(this);
-        (void)writeTerminalClipboard(QGuiApplication::clipboard(), write);
+        (void)commitTerminalClipboardWrite(write);
         if (guard == nullptr) return;
     }
 }
@@ -2759,13 +2793,31 @@ void TerminalWorkspace::finishTerminalClipboardWrite(quint64 confirmationId,
     // the pane while its deleteLater QPointer is still non-null.
     if (confirmed && pane != nullptr
         && paneForId(pending.paneId) == pending.pane) {
-        (void)writeTerminalClipboard(QGuiApplication::clipboard(),
-                                     pending.request.write);
+        (void)commitTerminalClipboardWrite(pending.request.write);
         if (guard == nullptr) return;
     }
 
     Q_EMIT terminalClipboardWriteConfirmationResolved(confirmationId);
     if (guard != nullptr) schedulePendingClipboardWriteDrain();
+}
+
+bool TerminalWorkspace::commitTerminalClipboardWrite(
+    const TerminalClipboardWrite &write)
+{
+    if (!writeTerminalClipboard(QGuiApplication::clipboard(), write)) {
+        return false;
+    }
+    if (write.location == TerminalClipboardLocation::Standard) {
+        const bool empty =
+            write.contents.isEmpty()
+            || std::ranges::all_of(
+                write.contents,
+                [](const TerminalClipboardMimeRepresentation &content) {
+                    return content.data.isEmpty();
+                });
+        Q_EMIT standardClipboardCommitted(empty);
+    }
+    return true;
 }
 
 void TerminalWorkspace::removePendingClipboardWritesForPane(PaneHandle handle)

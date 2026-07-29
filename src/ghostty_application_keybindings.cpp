@@ -242,9 +242,8 @@ void GhosttyApplicationKeybindings::registerWorkspace(
     });
 }
 
-GhosttyKeybindProgram GhosttyApplicationKeybindings::applyLaunchOptions(
-    const LaunchOptions &options,
-    std::span<const ModifierRemap> orderedModifierRemaps)
+GhosttyKeybindProgram
+GhosttyApplicationKeybindings::applyLaunchOptions(const LaunchOptions &options)
 {
     beginConfigurationUpdate();
     const QPointer<GhosttyApplicationKeybindings> guard(this);
@@ -254,13 +253,11 @@ GhosttyKeybindProgram GhosttyApplicationKeybindings::applyLaunchOptions(
 
     GhosttyKeybindProgram program =
         GhosttyKeybindProgram::compile(options.keybindSource).program;
-    ModifierRemapEngine remaps(orderedModifierRemaps);
-
     // Both values become visible inside one input-deferral transaction. A new
     // keybinding generation also resets any traversal/table state held by the
     // root matcher.
     (void)rootState_.replaceProgram(program);
-    modifierRemaps_ = std::move(remaps);
+    modifierRemaps_.replaceMappings(options.modifierRemaps);
 
     if (portal_ != nullptr) {
         if (const GhosttyKeybindConfig *config =
@@ -688,14 +685,14 @@ bool GhosttyApplicationKeybindings::eventFilter(QObject *watched, QEvent *event)
         event->accept();
         return true;
     }
+    const KeyEventSnapshot remapped =
+        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*keyEvent));
     if (keyRelease) {
         if (consumedKeys_.remove(keyEventIdentity(keyEvent))) {
             return true;
         }
         return QObject::eventFilter(watched, event);
     }
-    const KeyEventSnapshot remapped =
-        modifierRemaps_.remap(KeyEventSnapshot::capture(*keyEvent));
     const auto match = rootState_.match(GhosttyKeybindEvent{
         .qtKey = remapped.key,
         .modifiers = remapped.modifiers,

@@ -188,8 +188,12 @@ public:
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
     bool executeSurfaceActionOnAllPanes(const GhosttyConfiguredAction &action);
+    [[nodiscard]] bool containsPane(PaneId paneId) const;
+    [[nodiscard]] bool focusPaneForFrontend(PaneId paneId);
 
     Q_INVOKABLE void setCurrentIndex(int index);
+    Q_INVOKABLE bool activateTabByStableId(quint64 tabId);
+    Q_INVOKABLE bool executeActiveConfiguredAction(const QString &action);
     Q_INVOKABLE void newTab();
     Q_INVOKABLE void closeCurrentTab();
     Q_INVOKABLE void splitRight();
@@ -238,6 +242,7 @@ Q_SIGNALS:
     void windowNavigationRequested(WindowNavigationAction action,
                                    PaneId sourcePaneId);
     void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
+    void standardClipboardCommitted(bool empty);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();
@@ -445,6 +450,7 @@ private:
     void finishTerminalClipboardWrite(quint64 confirmationId, bool confirmed,
                                       bool remember);
     void removePendingClipboardWritesForPane(PaneHandle handle);
+    bool commitTerminalClipboardWrite(const TerminalClipboardWrite &write);
     void schedulePendingClipboardWriteDrain();
     void drainPendingClipboardWrites();
     static QString

@@ -355,9 +355,9 @@ struct ApplicationActionSpec {
 // Binding.Action.scope() classifies all of these as application actions even
 // when the current frontend cannot execute them. `unbind` is a
 // configuration-finalization directive and therefore deliberately has no
-// runtime ApplicationAction. Parsing and execution are separate so a
-// platform-blocked action such as toggle_quick_terminal retains its exact
-// typed identity without activating its default/global binding.
+// runtime ApplicationAction. Parsing and execution remain separate so
+// platform-specific actions are admitted only when their frontend route is
+// complete.
 constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
     {QLatin1StringView("ignore"), ApplicationAction::Ignore, true},
     {QLatin1StringView("unbind"), std::nullopt},
@@ -366,7 +366,7 @@ constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
     {QLatin1StringView("close_all_windows"), std::nullopt},
     {QLatin1StringView("quit"), ApplicationAction::Quit, true},
     {QLatin1StringView("toggle_quick_terminal"),
-     ApplicationAction::ToggleQuickTerminal},
+     ApplicationAction::ToggleQuickTerminal, true},
     {QLatin1StringView("toggle_visibility"), std::nullopt},
     {QLatin1StringView("check_for_updates"), std::nullopt},
     {QLatin1StringView("show_gtk_inspector"), std::nullopt},

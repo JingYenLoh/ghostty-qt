@@ -93,8 +93,9 @@ terminalMiddleClickSource(TerminalCopyOnSelectMode copyOnSelect,
 }
 
 // These are GUI adapters: callers must remain on the QGuiApplication thread.
-void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
-                            TerminalClipboardDestination destination);
+TerminalClipboardWriteTargets
+writeTerminalClipboard(QClipboard *clipboard, const QString &text,
+                       TerminalClipboardDestination destination);
 // Commits all normalized MIME representations in one ownership transition.
 // An empty contents vector clears the requested clipboard, while a
 // representation with empty data remains an explicitly present format.

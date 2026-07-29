@@ -6,15 +6,24 @@ import GhosttyQt 1.0
 ApplicationWindow {
     id: window
     property bool closeApproved: false
+    // These are installed by ApplicationController before presentation. The
+    // quick-terminal role remains immutable for the lifetime of this root,
+    // while its window-local UI controller survives modal/toast QML objects.
+    property bool quickTerminal: false
+    property var uiController: null
     property int visibilityBeforeFullscreen: Window.Windowed
     property int previousVisibility: Window.Hidden
     property size initialNormalSize: Qt.size(0, 0)
     property bool initialNormalSizePending: false
+    readonly property bool terminalHeaderVisible: !window.quickTerminal
+                                                  || workspace.tabBarVisible
     // ApplicationController sizes the client area in terminal cells before
     // the first pane is constructed. Keep the frontend chrome contract typed
     // and explicit instead of guessing it from a partially laid-out item tree.
     readonly property real terminalChromeWidth: 0
-    readonly property real terminalChromeHeight: windowHeader.implicitHeight
+    readonly property real terminalChromeHeight: terminalHeaderVisible
+                                                  ? windowHeader.implicitHeight
+                                                  : 0
 
     function toggleFullscreen() {
         if (visibility === Window.FullScreen) {
@@ -122,8 +131,10 @@ ApplicationWindow {
     header: Rectangle {
         id: topToolbarSlot
         objectName: "topToolbarSlot"
-        implicitHeight: windowHeader.implicitHeight
-        visible: !workspace.tabBarAtBottom
+        implicitHeight: terminalHeaderVisible
+                        ? windowHeader.implicitHeight
+                        : 0
+        visible: terminalHeaderVisible && !workspace.tabBarAtBottom
         // The terminal viewport may be translucent, but application chrome is
         // intentionally opaque.
         color: workspace.chromeBackground
@@ -132,14 +143,19 @@ ApplicationWindow {
     footer: Rectangle {
         id: bottomToolbarSlot
         objectName: "bottomToolbarSlot"
-        implicitHeight: windowHeader.implicitHeight
-        visible: workspace.tabBarAtBottom
+        implicitHeight: terminalHeaderVisible
+                        ? windowHeader.implicitHeight
+                        : 0
+        visible: terminalHeaderVisible && workspace.tabBarAtBottom
         color: workspace.chromeBackground
     }
 
     ToolBar {
         id: windowHeader
         objectName: "windowToolbar"
+        // Pinned Linux quick terminals hide their ordinary header bar but
+        // retain the tab strip when multiple tabs make it visible.
+        visible: terminalHeaderVisible
         parent: workspace.tabBarAtBottom
                 ? bottomToolbarSlot
                 : topToolbarSlot
@@ -182,7 +198,8 @@ ApplicationWindow {
             Label {
                 objectName: "windowSubtitle"
                 Layout.maximumWidth: 320
-                visible: workspace.currentSubtitle.length > 0
+                visible: !window.quickTerminal
+                         && workspace.currentSubtitle.length > 0
                 text: workspace.currentSubtitle
                 elide: Text.ElideMiddle
                 color: workspace.chromeForeground
@@ -190,6 +207,7 @@ ApplicationWindow {
 
             ToolButton {
                 text: "+"
+                visible: !window.quickTerminal
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "New tab"
                 ToolTip.visible: hovered
@@ -198,6 +216,7 @@ ApplicationWindow {
             }
             ToolButton {
                 text: "↔"
+                visible: !window.quickTerminal
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Split right"
                 ToolTip.visible: hovered
@@ -206,6 +225,7 @@ ApplicationWindow {
             }
             ToolButton {
                 text: "↕"
+                visible: !window.quickTerminal
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Split down"
                 ToolTip.visible: hovered
@@ -214,6 +234,7 @@ ApplicationWindow {
             }
             ToolButton {
                 text: "×"
+                visible: !window.quickTerminal
                 focusPolicy: Qt.NoFocus
                 Accessible.name: "Close pane"
                 ToolTip.visible: hovered
@@ -233,6 +254,32 @@ ApplicationWindow {
         scrollbarComponent: terminalScrollBarFactory
         bellBorderComponent: terminalBellBorderFactory
         onWindowAttentionRequested: window.alert(0)
+    }
+
+    CommandPalette {
+        id: commandPalette
+        uiController: window.uiController
+        onActionRequested: function(action) {
+            workspace.executeActiveConfiguredAction(action)
+        }
+    }
+
+    TabOverview {
+        id: tabOverview
+        uiController: window.uiController
+        tabModel: workspace.tabModel
+        currentIndex: workspace.currentIndex
+        onTabActivated: function(tabId) {
+            workspace.activateTabByStableId(tabId)
+        }
+    }
+
+    AppToast {
+        id: applicationToast
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 20
+        uiController: window.uiController
     }
 
     Menu {

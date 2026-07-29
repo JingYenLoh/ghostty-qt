@@ -155,10 +155,12 @@ void QuickTerminalSurface::applyScreen(QuickTerminalScreen selection,
     Q_ASSERT(layerShellWindow != nullptr);
     switch (selection) {
     case QuickTerminalScreen::Mouse:
+        layerShellWindow->setScreen(nullptr);
         layerShellWindow->setWantsToBeOnActiveScreen(true);
         break;
     case QuickTerminalScreen::Main:
     case QuickTerminalScreen::MacosMenuBar:
+        layerShellWindow->setWantsToBeOnActiveScreen(false);
         layerShellWindow->setScreen(&sizingScreen);
         break;
     }

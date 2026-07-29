@@ -5,6 +5,7 @@
 #include <QAbstractListModel>
 #include <QObject>
 #include <QString>
+#include <QStringView>
 #include <QVector>
 #include <QtQmlIntegration/qqmlintegration.h>
 
@@ -55,15 +56,23 @@ Q_SIGNALS:
     void selectedActionChanged();
 
 private:
-    static bool lessThan(const CommandPaletteEntry &left,
-                         const CommandPaletteEntry &right);
-    static bool matches(const CommandPaletteEntry &entry,
-                        const QString &filter);
+    struct PreparedEntry {
+        CommandPaletteEntry entry;
+        QString sortKey;
+        QString foldedTitle;
+        QString foldedActionKey;
+
+        bool operator==(const PreparedEntry &) const = default;
+    };
+
+    static PreparedEntry prepare(CommandPaletteEntry entry);
+    static bool lessThan(const PreparedEntry &left, const PreparedEntry &right);
+    static bool matches(const PreparedEntry &entry, QStringView foldedFilter);
     void rebuildVisibleRows(const QString &previousSelectedAction,
                             bool preserveSelectedAction);
     void updateSelectedIndex(int selectedIndex);
 
-    QVector<CommandPaletteEntry> entries_;
+    QVector<PreparedEntry> entries_;
     QVector<int> visibleRows_;
     QString filter_;
     int selectedIndex_ = -1;

@@ -55,3 +55,23 @@ private:
     quint8 sourceLeftSides_ = 0;
     quint8 sourceRightSides_ = 0;
 };
+
+// Stateful Qt adapter for ModifierRemapEngine. Qt reports only the generic
+// modifier bits on ordinary key events, so remember the side observed on the
+// physical modifier press and reuse it for the rest of that chord. The pure
+// engine above remains useful for finalized-value tests and non-event callers.
+class ModifierRemapTracker final {
+public:
+    ModifierRemapTracker() = default;
+    explicit ModifierRemapTracker(
+        std::span<const ModifierRemap> orderedMappings);
+
+    void replaceMappings(std::span<const ModifierRemap> orderedMappings);
+    void resetState() noexcept;
+
+    [[nodiscard]] KeyEventSnapshot remapEvent(KeyEventSnapshot event) noexcept;
+
+private:
+    ModifierRemapEngine engine_;
+    quint8 rightSides_ = 0;
+};

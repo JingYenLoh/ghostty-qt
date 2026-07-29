@@ -1,5 +1,6 @@
 #include "modifier_remap.h"
 
+#include <array>
 #include <cstdint>
 #include <linux/input-event-codes.h>
 #include <optional>
@@ -30,6 +31,13 @@ constexpr Qt::KeyboardModifier qtModifier(ModifierKey key) noexcept
 
 constexpr Qt::KeyboardModifiers RelevantModifiers = Qt::ShiftModifier
     | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier;
+
+constexpr std::array ModifierKeys{
+    ModifierKey::Shift,
+    ModifierKey::Ctrl,
+    ModifierKey::Alt,
+    ModifierKey::Super,
+};
 
 constexpr quint32 xkbKeycode(std::uint32_t evdevCode) noexcept
 {
@@ -113,8 +121,7 @@ eventModifier(const KeyEventSnapshot &event) noexcept
 quint8 modifierKeys(Qt::KeyboardModifiers modifiers) noexcept
 {
     quint8 result = 0;
-    for (const ModifierKey key : {ModifierKey::Shift, ModifierKey::Ctrl,
-                                  ModifierKey::Alt, ModifierKey::Super}) {
+    for (const ModifierKey key : ModifierKeys) {
         if (modifiers.testFlag(qtModifier(key))) {
             result |= modifierBit(key);
         }
@@ -125,8 +132,7 @@ quint8 modifierKeys(Qt::KeyboardModifiers modifiers) noexcept
 Qt::KeyboardModifiers qtModifiers(quint8 keys) noexcept
 {
     Qt::KeyboardModifiers result = Qt::NoModifier;
-    for (const ModifierKey key : {ModifierKey::Shift, ModifierKey::Ctrl,
-                                  ModifierKey::Alt, ModifierKey::Super}) {
+    for (const ModifierKey key : ModifierKeys) {
         if ((keys & modifierBit(key)) != 0) {
             result |= qtModifier(key);
         }
@@ -237,5 +243,54 @@ KeyEventSnapshot
 ModifierRemapEngine::remap(KeyEventSnapshot event) const noexcept
 {
     event.modifiers = remapModifiers(event).modifiers;
+    return event;
+}
+
+ModifierRemapTracker::ModifierRemapTracker(
+    std::span<const ModifierRemap> orderedMappings)
+    : engine_(orderedMappings)
+{}
+
+void ModifierRemapTracker::replaceMappings(
+    std::span<const ModifierRemap> orderedMappings)
+{
+    engine_.replaceMappings(orderedMappings);
+    resetState();
+}
+
+void ModifierRemapTracker::resetState() noexcept
+{
+    rightSides_ = 0;
+}
+
+KeyEventSnapshot
+ModifierRemapTracker::remapEvent(KeyEventSnapshot event) noexcept
+{
+    ModifierRemapState state{
+        .modifiers = event.modifiers,
+        .rightSides = rightSides_,
+    };
+    if (const auto current = eventModifier(event)) {
+        const quint8 currentBit = modifierBit(current->key);
+        if (event.pressed) {
+            state.modifiers |= qtModifier(current->key);
+            if (current->side == ModifierSide::Right) {
+                rightSides_ |= currentBit;
+            } else {
+                rightSides_ &= static_cast<quint8>(~currentBit);
+            }
+        } else {
+            state.modifiers &= ~Qt::KeyboardModifiers(qtModifier(current->key));
+            rightSides_ &= static_cast<quint8>(~currentBit);
+        }
+    }
+
+    // A missed release (for example, after focus leaves the surface) must not
+    // retain a stale right-side classification. Qt's current generic mask is
+    // authoritative for which modifier families remain active.
+    rightSides_ &= modifierKeys(state.modifiers);
+    state.rightSides = rightSides_;
+
+    event.modifiers = engine_.remap(state).modifiers;
     return event;
 }

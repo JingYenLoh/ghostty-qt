@@ -49,12 +49,13 @@ bool writeTerminalClipboard(QClipboard *clipboard,
     return true;
 }
 
-void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
-                            TerminalClipboardDestination destination)
+TerminalClipboardWriteTargets
+writeTerminalClipboard(QClipboard *clipboard, const QString &text,
+                       TerminalClipboardDestination destination)
 {
     assertGuiThread();
     if (clipboard == nullptr) {
-        return;
+        return {};
     }
 
     const TerminalClipboardWriteTargets targets = terminalClipboardWriteTargets(
@@ -65,6 +66,7 @@ void writeTerminalClipboard(QClipboard *clipboard, const QString &text,
     if (targets.primary) {
         clipboard->setText(text, QClipboard::Selection);
     }
+    return targets;
 }
 
 std::optional<QString> readTerminalClipboard(QClipboard *clipboard,

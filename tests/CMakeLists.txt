@@ -420,6 +420,7 @@ target_link_libraries(ghostty-qt-render-test-support PUBLIC
     Qt6::Quick
     ghostty-qt-action-pipeline
     ghostty-qt-launch-options
+    ghostty-qt-modifier-remap
     ghostty-qt-tab-list-model
     ghostty-qt-terminal-bell
     ghostty-qt-terminal-controller
@@ -442,7 +443,9 @@ target_link_libraries(test-application-controller PRIVATE
     Qt6::Quick
     Qt6::Test
     ghostty-qt-application-controller
+    ghostty-qt-quick-terminal
     ghostty-qt-render-test-support
+    ghostty-qt-window-ui
 )
 add_dependencies(test-application-controller
     ghostty-qt-terminfo

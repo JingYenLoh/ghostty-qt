@@ -1,5 +1,6 @@
 #include "application_appearance.h"
 #include "application_controller.h"
+#include "application_identity.h"
 #include "desktop_activation.h"
 #include "frontend_config_service.h"
 #include "ghostty_cli_delegation.h"
@@ -1673,8 +1674,6 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("ghostty-qt"));
     QCoreApplication::setApplicationVersion(QStringLiteral(GHOSTTY_QT_VERSION));
     QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
-    QGuiApplication::setDesktopFileName(
-        QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
     QStyleHints *const styleHints = QGuiApplication::styleHints();
     ApplicationAppearance appearance(
         ApplicationAppearance::fromQtColorScheme(styleHints->colorScheme()));
@@ -1778,10 +1777,26 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    const auto identity =
+        resolveApplicationIdentity(effectiveApplicationOptions.applicationClass,
+                                   QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
+    if (!identity.has_value()) {
+        qCritical().noquote() << identity.error();
+        return 1;
+    }
+    if (identity->diagnostic.has_value()) {
+        qWarning().noquote() << *identity->diagnostic;
+    }
+    // Both identities are startup-only and must be fixed before the first
+    // QML/native surface or org.freedesktop.Application endpoint is created.
+    QGuiApplication::setDesktopFileName(identity->applicationId);
+
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
     if (shouldUseSingleInstance(effectiveApplicationOptions,
                                 QByteArrayView(qgetenv("TERM_PROGRAM")))) {
-        auto candidate = std::make_unique<SingleInstanceActivation>();
+        auto candidate = std::make_unique<SingleInstanceActivation>(
+            SingleInstanceActivation::defaultConnection(),
+            identity->serviceId());
         const SingleInstanceActivation::StartResult activation =
             candidate->start({
                 .existingInstanceAction =
@@ -1848,8 +1863,10 @@ int main(int argc, char *argv[])
     };
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &applicationController,
-                     [&applyCurrentOptions](const GhosttyConfigSnapshot &) {
+                     [&applyCurrentOptions,
+                      &applicationController](const GhosttyConfigSnapshot &) {
                          applyCurrentOptions();
+                         applicationController.notifyConfigurationReloaded();
                      });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
@@ -1863,8 +1880,10 @@ int main(int argc, char *argv[])
 #endif
     QObject::connect(&frontendConfigService, &FrontendConfigService::changed,
                      &applicationController,
-                     [&applyCurrentOptions](const FrontendConfigSnapshot &) {
+                     [&applyCurrentOptions,
+                      &applicationController](const FrontendConfigSnapshot &) {
                          applyCurrentOptions();
+                         applicationController.notifyConfigurationReloaded();
                      });
     QObject::connect(
         &applicationController, &ApplicationController::configReloadRequested,

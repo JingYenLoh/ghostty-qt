@@ -85,12 +85,17 @@ QString CommandPaletteModel::selectedAction() const
 
 void CommandPaletteModel::replaceEntries(QVector<CommandPaletteEntry> entries)
 {
-    std::ranges::sort(entries, lessThan);
-    if (entries_ == entries) {
+    QVector<PreparedEntry> prepared;
+    prepared.reserve(entries.size());
+    std::ranges::transform(
+        entries, std::back_inserter(prepared),
+        [](CommandPaletteEntry &entry) { return prepare(std::move(entry)); });
+    std::ranges::sort(prepared, lessThan);
+    if (entries_ == prepared) {
         return;
     }
     const QString preferredAction = selectedAction();
-    entries_ = std::move(entries);
+    entries_ = std::move(prepared);
     rebuildVisibleRows(preferredAction, true);
 }
 
@@ -99,7 +104,7 @@ const CommandPaletteEntry *CommandPaletteModel::entryAt(int visibleRow) const
     if (visibleRow < 0 || visibleRow >= visibleRows_.size()) {
         return nullptr;
     }
-    return &entries_.at(visibleRows_.at(visibleRow));
+    return &entries_.at(visibleRows_.at(visibleRow)).entry;
 }
 
 QString CommandPaletteModel::actionAt(int visibleRow) const
@@ -123,42 +128,57 @@ void CommandPaletteModel::selectRelative(int delta)
     updateSelectedIndex(wrapped);
 }
 
-bool CommandPaletteModel::lessThan(const CommandPaletteEntry &left,
-                                   const CommandPaletteEntry &right)
+CommandPaletteModel::PreparedEntry
+CommandPaletteModel::prepare(CommandPaletteEntry entry)
 {
-    const QString leftKey = commandSortKey(left.title);
-    const QString rightKey = commandSortKey(right.title);
-    if (const int order = compareStrings(leftKey, rightKey); order != 0) {
+    QString sortKey = commandSortKey(entry.title);
+    QString foldedTitle = entry.title.toCaseFolded();
+    QString foldedActionKey = entry.actionKey.toCaseFolded();
+    return {
+        .entry = std::move(entry),
+        .sortKey = std::move(sortKey),
+        .foldedTitle = std::move(foldedTitle),
+        .foldedActionKey = std::move(foldedActionKey),
+    };
+}
+
+bool CommandPaletteModel::lessThan(const PreparedEntry &left,
+                                   const PreparedEntry &right)
+{
+    if (const int order = compareStrings(left.sortKey, right.sortKey);
+        order != 0) {
         return order < 0;
     }
 
     // Ghostty's regular-command comparison treats case-insensitive title ties
     // as equivalent. Complete that ordering so config replacement produces a
     // deterministic model independent of parser/container iteration order.
-    if (const int order = compareStrings(left.title, right.title); order != 0) {
-        return order < 0;
-    }
-    if (const int order = compareStrings(left.actionKey, right.actionKey,
-                                         Qt::CaseInsensitive);
+    if (const int order = compareStrings(left.entry.title, right.entry.title);
         order != 0) {
         return order < 0;
     }
-    if (const int order = compareStrings(left.actionKey, right.actionKey);
+    if (const int order = compareStrings(
+            left.entry.actionKey, right.entry.actionKey, Qt::CaseInsensitive);
         order != 0) {
         return order < 0;
     }
-    if (const int order = compareStrings(left.action, right.action);
+    if (const int order =
+            compareStrings(left.entry.actionKey, right.entry.actionKey);
         order != 0) {
         return order < 0;
     }
-    return compareStrings(left.description, right.description) < 0;
+    if (const int order = compareStrings(left.entry.action, right.entry.action);
+        order != 0) {
+        return order < 0;
+    }
+    return compareStrings(left.entry.description, right.entry.description) < 0;
 }
 
-bool CommandPaletteModel::matches(const CommandPaletteEntry &entry,
-                                  const QString &filter)
+bool CommandPaletteModel::matches(const PreparedEntry &entry,
+                                  QStringView foldedFilter)
 {
-    return filter.isEmpty() || entry.title.contains(filter, Qt::CaseInsensitive)
-        || entry.actionKey.contains(filter, Qt::CaseInsensitive);
+    return foldedFilter.isEmpty() || entry.foldedTitle.contains(foldedFilter)
+        || entry.foldedActionKey.contains(foldedFilter);
 }
 
 void CommandPaletteModel::rebuildVisibleRows(
@@ -170,9 +190,10 @@ void CommandPaletteModel::rebuildVisibleRows(
     beginResetModel();
     visibleRows_.clear();
     visibleRows_.reserve(entries_.size());
+    const QString foldedFilter = filter_.toCaseFolded();
     for (const int row :
          std::views::iota(0, static_cast<int>(entries_.size()))) {
-        if (matches(entries_.at(row), filter_)) {
+        if (matches(entries_.at(row), foldedFilter)) {
             visibleRows_.append(row);
         }
     }
@@ -180,7 +201,7 @@ void CommandPaletteModel::rebuildVisibleRows(
     if (preserveSelectedAction && !previousSelectedAction.isEmpty()) {
         const auto selected =
             std::ranges::find_if(std::as_const(visibleRows_), [&](int row) {
-                return entries_.at(row).action == previousSelectedAction;
+                return entries_.at(row).entry.action == previousSelectedAction;
             });
         if (selected != visibleRows_.cend()) {
             selectedIndex_ = static_cast<int>(

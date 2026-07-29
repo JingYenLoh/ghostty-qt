@@ -4944,6 +4944,8 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
         &TerminalWorkspace::terminalClipboardWriteConfirmationResolved);
     QSignalSpy runtimeUpdates(controller,
                               &TerminalController::runtimeOptionsRequested);
+    QSignalSpy standardCommits(&workspace,
+                               &TerminalWorkspace::standardClipboardCommitted);
 
     const QByteArray firstBytes("first\0tail", 10);
     const TerminalClipboardWriteRequest first{
@@ -4991,6 +4993,8 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
                  ->data(QStringLiteral("text/plain")),
              firstBytes);
     QCOMPARE(resolved.count(), 1);
+    QCOMPARE(standardCommits.count(), 1);
+    QVERIFY(!standardCommits.constLast().constFirst().toBool());
     QVERIFY(!runtimeUpdates.isEmpty());
     QCOMPARE(qvariant_cast<TerminalSessionRuntimeOptions>(
                  runtimeUpdates.constLast().constFirst())
@@ -5000,6 +5004,8 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
     QTRY_COMPARE_WITH_TIMEOUT(clipboard->mimeData(QClipboard::Clipboard)
                                   ->data(QStringLiteral("text/plain")),
                               QByteArrayLiteral("later"), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(standardCommits.count(), 2, 1000);
+    QVERIFY(!standardCommits.constLast().constFirst().toBool());
 
     // Reloading the configured Ask value replaces a remembered per-split
     // decision, exactly as the confirmation dialog promises.
@@ -5058,6 +5064,8 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
     QCOMPARE(clipboard->mimeData(QClipboard::Clipboard)
                  ->data(QStringLiteral("text/plain")),
              QByteArrayLiteral("visible"));
+    QCOMPARE(standardCommits.count(), 3);
+    QVERIFY(!standardCommits.constLast().constFirst().toBool());
 
     const TerminalClipboardWriteRequest clear{
         .write =
@@ -5076,6 +5084,8 @@ void TerminalWorkspaceTest::ordersAndConfirmsTerminalClipboardWrites()
                 || !data->hasFormat(QStringLiteral("text/plain"));
         }(),
         1000);
+    QCOMPARE(standardCommits.count(), 4);
+    QVERIFY(standardCommits.constLast().constFirst().toBool());
 
     // Authorization previews remain bounded and cannot use control,
     // directional-format, or line-separator characters to disguise content.

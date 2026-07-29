@@ -217,6 +217,10 @@ Q_SIGNALS:
                                           const QString &text);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request);
+    // Published only after this GUI-thread adapter successfully commits to the
+    // standard clipboard. Primary-selection-only writes intentionally do not
+    // participate in application toast policy.
+    void standardClipboardCommitted(bool empty);
     void terminalActionReady(const TerminalActionResult &result);
     void rightClickResolved(const TerminalRightClickResult &result);
 

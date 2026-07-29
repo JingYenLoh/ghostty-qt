@@ -24,7 +24,11 @@ class InitialSessionCoordinator;
 class QQmlEngine;
 class QQuickWindow;
 class QScreen;
+class QTimer;
+class QuickTerminalSurface;
 class TerminalWorkspace;
+class WindowUiController;
+struct WorkspaceFrontendActionRequest;
 
 Q_MOC_INCLUDE("terminal_workspace.h")
 
@@ -73,6 +77,10 @@ public:
     // Wayland can associate requestActivate() with the originating key event.
     [[nodiscard]] bool dispatch(WindowNavigationAction action);
     void applyLaunchOptions(const LaunchOptions &options);
+    // Call only after a configuration source has completed a successful
+    // post-startup reload. Initial bootstrap and failed reloads deliberately
+    // never produce an in-application notification.
+    void notifyConfigurationReloaded();
 
     [[nodiscard]] TerminalWorkspace *activeWorkspace() const;
     [[nodiscard]] int windowCount() const;
@@ -93,9 +101,19 @@ Q_SIGNALS:
     void windowCreationFailed(const QString &message);
 
 private:
+    enum class WindowRole {
+        Normal,
+        QuickTerminal,
+    };
+
     struct WindowRecord {
+        WindowRole role = WindowRole::Normal;
         QPointer<QQuickWindow> window;
         QPointer<TerminalWorkspace> workspace;
+        std::unique_ptr<WindowUiController> ui;
+        std::unique_ptr<QuickTerminalSurface> quickTerminalSurface;
+        QPointer<QTimer> quickTerminalAutohideTimer;
+        bool quickTerminalActivationAcknowledged = false;
     };
 
     enum class QuitState {
@@ -108,7 +126,8 @@ private:
     [[nodiscard]] std::expected<ApplicationWindow, QString>
     createWindow(LaunchOptions options,
                  const DesktopActivationContext &activation = {},
-                 QScreen *preferredScreen = nullptr);
+                 QScreen *preferredScreen = nullptr,
+                 WindowRole role = WindowRole::Normal);
     [[nodiscard]] LaunchOptions
     nextWindowOptions(TerminalWorkspace *sourceWorkspace,
                       PaneId sourcePaneId) const;
@@ -121,7 +140,24 @@ private:
     void dispatchRequestedAction(ApplicationAction action,
                                  TerminalWorkspace *sourceWorkspace = nullptr,
                                  PaneId sourcePaneId = {});
-    void registerWindow(ApplicationWindow window);
+    void
+    registerWindow(ApplicationWindow window, WindowRole role,
+                   std::unique_ptr<QuickTerminalSurface> quickTerminalSurface);
+    [[nodiscard]] WindowRecord *recordForWindow(QQuickWindow *window);
+    [[nodiscard]] const WindowRecord *
+    recordForWindow(QQuickWindow *window) const;
+    [[nodiscard]] WindowRecord *
+    recordForWorkspace(TerminalWorkspace *workspace);
+    [[nodiscard]] WindowRecord *quickTerminalRecord();
+    [[nodiscard]] QScreen *quickTerminalSizingScreen() const;
+    [[nodiscard]] bool toggleQuickTerminal();
+    [[nodiscard]] std::expected<void, QString>
+    syncQuickTerminal(WindowRecord &record);
+    void updateQuickTerminalAutohide(WindowRecord &record);
+    void syncApplicationShell();
+    [[nodiscard]] bool
+    dispatchFrontendAction(TerminalWorkspace *workspace,
+                           const WorkspaceFrontendActionRequest &request);
     void syncWindowDecoration(QQuickWindow *window,
                               TerminalWorkspace *workspace);
     void noteWorkspaceActivated(TerminalWorkspace *workspace);

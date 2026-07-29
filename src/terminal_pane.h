@@ -4,6 +4,7 @@
 #include "ghostty_keybind_set.h"
 #include "key_event_snapshot.h"
 #include "launch_options.h"
+#include "modifier_remap.h"
 #include "revision_counter.h"
 #include "terminal_action_result.h"
 #include "terminal_backdrop.h"
@@ -230,6 +231,7 @@ Q_SIGNALS:
                               TerminalPane *pane);
     void terminalClipboardWriteRequested(
         const TerminalClipboardWriteRequest &request, TerminalPane *pane);
+    void standardClipboardCommitted(bool empty);
     void sessionEnded(TerminalPane *pane, int exitCode, int signalNumber);
 
 protected:
@@ -418,6 +420,7 @@ private:
     TerminalPaddingOptions paddingOptions_;
     SplitAppearance splitAppearance_;
     GhosttyKeybindState keybinds_;
+    ModifierRemapTracker modifierRemaps_;
     RevisionCounter runtimeOptionsRevision_;
     TerminalController *controller_ = nullptr;
     std::optional<QString> surfaceTitleOverride_;

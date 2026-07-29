@@ -28,7 +28,9 @@ Popup {
 
     function activate(tabId) {
         dismiss()
-        tabActivated(tabId)
+        Qt.callLater(function() {
+            root.tabActivated(tabId)
+        })
     }
 
     function activateCurrent() {

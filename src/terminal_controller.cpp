@@ -339,9 +339,13 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
         Qt::QueuedConnection);
     connect(
         worker, &SessionWorker::clipboardTextReady, this,
-        [](const QString &text, TerminalClipboardDestination destination) {
-            writeTerminalClipboard(QGuiApplication::clipboard(), text,
-                                   destination);
+        [this](const QString &text, TerminalClipboardDestination destination) {
+            const TerminalClipboardWriteTargets targets =
+                writeTerminalClipboard(QGuiApplication::clipboard(), text,
+                                       destination);
+            if (targets.standard) {
+                Q_EMIT standardClipboardCommitted(text.isEmpty());
+            }
         },
         Qt::QueuedConnection);
     connect(worker, &SessionWorker::terminalClipboardWriteRequested, this,

@@ -35,9 +35,12 @@
 #include <QTimer>
 #include <QWheelEvent>
 
+#include <linux/input-event-codes.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <numbers>
@@ -429,6 +432,7 @@ private Q_SLOTS:
     void clipsDecorationAndCursorSprites();
     void routesEmergencyTabShortcuts();
     void compiledProgramAvailabilityControlsEmergencyShortcuts();
+    void remapsSidedModifiersAcrossBindingsAndTerminalInput();
     void routesConfiguredBindingsAndDisablesEmergencyFallback();
     void routesBroadConfiguredActionEffects();
     void routesTypedCloseTabModes();
@@ -6826,6 +6830,97 @@ void TerminalPaneTest::compiledProgramAvailabilityControlsEmergencyShortcuts()
     QCoreApplication::sendEvent(&fallback, &fallbackShortcut);
     QCOMPARE(fallbackNewTab.count(), 1);
     QCOMPARE(fallbackForwarded.count(), 0);
+}
+
+void TerminalPaneTest::remapsSidedModifiersAcrossBindingsAndTerminalInput()
+{
+    constexpr auto xkbKeycode = [](std::uint32_t evdevCode) {
+        return static_cast<quint32>(evdevCode + 8U);
+    };
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    GhosttyKeybindConfig keybinds;
+    keybinds.root = {
+        generationTestBinding({generationTestKey('n', GhosttyKeybindAlt)},
+                              QStringLiteral("new_tab")),
+    };
+    options.keybindSource =
+        GhosttyKeybindSource::structured(std::move(keybinds));
+    options.modifierRemaps = {{
+        .from =
+            {
+                .key = ModifierKey::Ctrl,
+                .side = ModifierSide::Right,
+            },
+        .to =
+            {
+                .key = ModifierKey::Alt,
+                .side = ModifierSide::Left,
+            },
+    }};
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy newTabs(&pane, &TerminalPane::requestNewTab);
+    QSignalSpy forwarded(controller, &TerminalController::keyRequested);
+
+    const auto sendRightControl = [&pane, xkbKeycode](QEvent::Type type,
+                                                      bool pressed) {
+        QKeyEvent event(type, Qt::Key_Control,
+                        pressed ? Qt::NoModifier : Qt::ControlModifier,
+                        xkbKeycode(KEY_RIGHTCTRL), 0, 0);
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+    const auto sendKey = [&pane](QEvent::Type type, int key,
+                                 Qt::KeyboardModifiers modifiers,
+                                 QString text = {}) {
+        QKeyEvent event(type, key, modifiers, std::move(text));
+        QCoreApplication::sendEvent(&pane, &event);
+    };
+
+    sendRightControl(QEvent::KeyPress, true);
+    const int beforeBinding = forwarded.count();
+    sendKey(QEvent::KeyPress, Qt::Key_N, Qt::ControlModifier,
+            QStringLiteral("n"));
+    QCOMPARE(newTabs.count(), 1);
+    QCOMPARE(forwarded.count(), beforeBinding);
+    sendKey(QEvent::KeyRelease, Qt::Key_N, Qt::ControlModifier);
+    QCOMPARE(forwarded.count(), beforeBinding);
+    sendRightControl(QEvent::KeyRelease, false);
+
+    // The same preprocessed modifiers reach PTY encoding when no configured
+    // binding consumes the key; native identity and text remain unchanged.
+    sendRightControl(QEvent::KeyPress, true);
+    const int beforeTerminalKey = forwarded.count();
+    sendKey(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+            QString(QChar(0x18)));
+    QCOMPARE(forwarded.count(), beforeTerminalKey + 1);
+    const TerminalKeyInput terminalInput =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QCOMPARE(terminalInput.key, static_cast<int>(Qt::Key_X));
+    QCOMPARE(terminalInput.text, QString(QChar(0x18)));
+    QVERIFY(terminalInput.modifiers & Qt::AltModifier);
+    QVERIFY(!(terminalInput.modifiers & Qt::ControlModifier));
+
+    // Live replacement is part of the pane's matcher transaction and resets
+    // the observed physical side rather than leaking it into a new policy.
+    LaunchOptions reloaded = options;
+    reloaded.modifierRemaps.clear();
+    const GhosttyKeybindProgram generation = pane.keybindProgram();
+    pane.applyRuntimeOptions(reloaded, generation);
+    const int beforeCleared = forwarded.count();
+    sendKey(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+            QString(QChar(0x18)));
+    QCOMPARE(forwarded.count(), beforeCleared + 1);
+    const TerminalKeyInput clearedInput =
+        qvariant_cast<TerminalKeyInput>(forwarded.constLast().constFirst());
+    QVERIFY(clearedInput.modifiers & Qt::ControlModifier);
+    QVERIFY(!(clearedInput.modifiers & Qt::AltModifier));
 }
 
 void TerminalPaneTest::routesConfiguredBindingsAndDisablesEmergencyFallback()

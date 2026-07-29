@@ -96,6 +96,8 @@ private Q_SLOTS:
     void handlesModifierPressRepeatAndRelease();
     void preservesLayoutTextNativeIdentityAndUnrelatedFlags();
     void replacementTakesEffectWithoutRetainedState();
+    void trackerRetainsSideAcrossChordAndPrunesMissedRelease();
+    void trackerReplacementClearsObservedSide();
     void rootMatchingUsesTheSameAtomicRemapGeneration();
 };
 
@@ -260,6 +262,74 @@ void ModifierRemapTest::replacementTakesEffectWithoutRetainedState()
     QVERIFY(!cleared.contains(ModifierKey::Super));
 }
 
+void ModifierRemapTest::trackerRetainsSideAcrossChordAndPrunesMissedRelease()
+{
+    ModifierRemapTracker tracker(QVector{
+        mapping(ModifierKey::Ctrl, ModifierSide::Right, ModifierKey::Alt,
+                ModifierSide::Left),
+    });
+
+    const KeyEventSnapshot rightPress = tracker.remapEvent(snapshot(
+        true, Qt::Key_Control, Qt::NoModifier, xkbKeycode(KEY_RIGHTCTRL)));
+    QVERIFY(rightPress.modifiers.testFlag(Qt::AltModifier));
+    QVERIFY(!rightPress.modifiers.testFlag(Qt::ControlModifier));
+
+    // Ordinary Qt key events retain only the generic Ctrl bit. The tracker
+    // carries the observed physical side through the rest of the chord.
+    const KeyEventSnapshot chord =
+        tracker.remapEvent(snapshot(true, Qt::Key_R, Qt::ControlModifier));
+    QVERIFY(chord.modifiers.testFlag(Qt::AltModifier));
+    QVERIFY(!chord.modifiers.testFlag(Qt::ControlModifier));
+
+    // A focus transition can drop the physical release. The next generic Qt
+    // mask is authoritative and clears the stale right-side classification.
+    const KeyEventSnapshot afterMissedRelease =
+        tracker.remapEvent(snapshot(true, Qt::Key_A, Qt::NoModifier));
+    QCOMPARE(afterMissedRelease.modifiers, Qt::NoModifier);
+
+    (void)tracker.remapEvent(snapshot(true, Qt::Key_Control, Qt::NoModifier,
+                                      xkbKeycode(KEY_RIGHTCTRL)));
+    const KeyEventSnapshot release =
+        tracker.remapEvent(snapshot(false, Qt::Key_Control, Qt::ControlModifier,
+                                    xkbKeycode(KEY_RIGHTCTRL)));
+    QCOMPARE(release.modifiers, Qt::NoModifier);
+
+    const KeyEventSnapshot leftPress = tracker.remapEvent(snapshot(
+        true, Qt::Key_Control, Qt::NoModifier, xkbKeycode(KEY_LEFTCTRL)));
+    QVERIFY(leftPress.modifiers.testFlag(Qt::ControlModifier));
+    QVERIFY(!leftPress.modifiers.testFlag(Qt::AltModifier));
+    const KeyEventSnapshot leftChord =
+        tracker.remapEvent(snapshot(true, Qt::Key_R, Qt::ControlModifier));
+    QVERIFY(leftChord.modifiers.testFlag(Qt::ControlModifier));
+    QVERIFY(!leftChord.modifiers.testFlag(Qt::AltModifier));
+}
+
+void ModifierRemapTest::trackerReplacementClearsObservedSide()
+{
+    ModifierRemapTracker tracker(QVector{
+        mapping(ModifierKey::Ctrl, ModifierSide::Right, ModifierKey::Alt,
+                ModifierSide::Left),
+    });
+    (void)tracker.remapEvent(snapshot(true, Qt::Key_Control, Qt::NoModifier,
+                                      xkbKeycode(KEY_RIGHTCTRL)));
+
+    tracker.replaceMappings(QVector{
+        mapping(ModifierKey::Ctrl, ModifierSide::Left, ModifierKey::Super,
+                ModifierSide::Right),
+    });
+    const KeyEventSnapshot replaced =
+        tracker.remapEvent(snapshot(true, Qt::Key_R, Qt::ControlModifier));
+    QVERIFY(replaced.modifiers.testFlag(Qt::MetaModifier));
+    QVERIFY(!replaced.modifiers.testFlag(Qt::AltModifier));
+    QVERIFY(!replaced.modifiers.testFlag(Qt::ControlModifier));
+
+    tracker.replaceMappings(std::span<const ModifierRemap>{});
+    const KeyEventSnapshot cleared =
+        tracker.remapEvent(snapshot(true, Qt::Key_R, Qt::ControlModifier));
+    QVERIFY(cleared.modifiers.testFlag(Qt::ControlModifier));
+    QVERIFY(!cleared.modifiers.testFlag(Qt::MetaModifier));
+}
+
 void ModifierRemapTest::rootMatchingUsesTheSameAtomicRemapGeneration()
 {
     LaunchOptions options;
@@ -274,8 +344,9 @@ void ModifierRemapTest::rootMatchingUsesTheSameAtomicRemapGeneration()
         mapping(ModifierKey::Ctrl, ModifierSide::Left, ModifierKey::Alt,
                 ModifierSide::Left),
     };
+    options.modifierRemaps = remaps;
     const GhosttyKeybindProgram generation =
-        bindings.applyLaunchOptions(options, remaps);
+        bindings.applyLaunchOptions(options);
     QVERIFY(bindings.keybindProgram().isSameGeneration(generation));
 
     QSignalSpy requested(
@@ -297,6 +368,7 @@ void ModifierRemapTest::rootMatchingUsesTheSameAtomicRemapGeneration()
     // Reinstalling a generation without the remap updates both root inputs in
     // one transaction. The raw Ctrl event now reaches the target, while Alt
     // activates the same binding.
+    options.modifierRemaps.clear();
     (void)bindings.applyLaunchOptions(options);
     QKeyEvent rawControl(QEvent::KeyPress, Qt::Key_R, Qt::ControlModifier,
                          QString(QChar(0x12)));

@@ -5,7 +5,11 @@
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_workspace.h"
+#include "window_ui_controller.h"
 
+#include <LayerShellQt/Window>
+
+#include <QClipboard>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
@@ -14,8 +18,8 @@
 #include <QKeyEvent>
 #include <QPointer>
 #include <QQuickWindow>
-#include <QScreen>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -247,6 +251,27 @@ TerminalController *onlyController(TerminalWorkspace *workspace)
         ? pane->findChild<TerminalController *>() : nullptr;
 }
 
+WindowUiController *windowUiController(QQuickWindow *window)
+{
+    return window != nullptr
+        ? qobject_cast<WindowUiController *>(
+              window->property("uiController").value<QObject *>())
+        : nullptr;
+}
+
+std::optional<ApplicationWindow>
+quickTerminalWindow(const ApplicationController &controller)
+{
+    const QVector<ApplicationWindow> windows = controller.windows();
+    const auto quick =
+        std::ranges::find_if(windows, [](const ApplicationWindow &window) {
+            return window.window != nullptr
+                && window.window->property("quickTerminal").toBool();
+        });
+    return quick == windows.cend() ? std::nullopt
+                                   : std::optional<ApplicationWindow>{*quick};
+}
+
 void sendCtrlKPressAndRelease(TerminalPane *pane)
 {
     QKeyEvent press(QEvent::KeyPress, Qt::Key_K,
@@ -310,6 +335,9 @@ private Q_SLOTS:
     void configuresInitialWindowGeometryBeforePresentation_data();
     void configuresInitialWindowGeometryBeforePresentation();
     void windowGeometryReloadAffectsOnlyFutureWindows();
+    void integratesQuickTerminalLifecycleAndLiveShellReload();
+    void quickTerminalAutohideRequiresActivationAndReloadsLive();
+    void routesWindowUiActionsAndNotificationPolicy();
     void sharesOneKeybindProgramGenerationAcrossWindows();
     void globalBindingWaitsForPaneReloadTransaction();
     void terminalBarrierWaitsForConfigurationTransaction();
@@ -368,6 +396,263 @@ void ApplicationControllerTest::initTestCase()
     QVERIFY(QQuickWindow::hasDefaultAlphaBuffer());
     QVERIFY(QDir().mkpath(
         QDir::current().filePath(QStringLiteral("tmp"))));
+}
+
+void ApplicationControllerTest::
+    integratesQuickTerminalLifecycleAndLiveShellReload()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.environment = {
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QUICK_TERMINAL"),
+            .value = QByteArrayLiteral("stale-first"),
+        },
+        {
+            .key = QByteArrayLiteral("UNCHANGED"),
+            .value = QByteArrayLiteral("yes"),
+        },
+        {
+            .key = QByteArrayLiteral("GHOSTTY_QUICK_TERMINAL"),
+            .value = QByteArrayLiteral("stale-last"),
+        },
+    };
+    options.applicationShell.commandPalette = {{
+        .title = QStringLiteral("Initial command"),
+        .actionKey = QStringLiteral("initial"),
+        .action = QStringLiteral("new_tab"),
+    }};
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto ordinary = controller.createInitialWindow();
+    QVERIFY(ordinary.has_value());
+    QVERIFY(!ordinary->window->property("quickTerminal").toBool());
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    QCOMPARE(controller.windowCount(), 2);
+    QCOMPARE(harness.calls, 2);
+
+    const std::optional<ApplicationWindow> quick =
+        quickTerminalWindow(controller);
+    QVERIFY(quick.has_value());
+    QVERIFY(quick->window != ordinary->window);
+    QVERIFY(quick->window->isVisible());
+    QVERIFY(quick->window->flags().testFlag(Qt::FramelessWindowHint));
+    QCOMPARE(harness.sessionStartedAtPresentation.size(), 2);
+    QVERIFY(!harness.sessionStartedAtPresentation.constLast());
+
+    TerminalController *const terminal = onlyController(quick->workspace);
+    QVERIFY(terminal != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(terminal->sessionStarted(), 1000);
+    const TerminalEnvironment &environment = terminal->launchEnvironment();
+    const auto isQuickTerminalEntry =
+        [](const TerminalEnvironmentEntry &entry) {
+            return entry.key == QByteArrayLiteral("GHOSTTY_QUICK_TERMINAL");
+        };
+    QCOMPARE(static_cast<int>(
+                 std::ranges::count_if(environment, isQuickTerminalEntry)),
+             1);
+    const auto quickEnvironment =
+        std::ranges::find_if(environment, isQuickTerminalEntry);
+    QVERIFY(quickEnvironment != environment.cend());
+    QCOMPARE(quickEnvironment->value, QByteArrayLiteral("1"));
+    QVERIFY(std::ranges::any_of(
+        environment, [](const TerminalEnvironmentEntry &entry) {
+            return entry.key == QByteArrayLiteral("UNCHANGED")
+                && entry.value == QByteArrayLiteral("yes");
+        }));
+
+    auto *const layer = LayerShellQt::Window::get(quick->window);
+    QVERIFY(layer != nullptr);
+    QCOMPARE(layer->anchors(),
+             LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorTop));
+    WindowUiController *const ordinaryUi = windowUiController(ordinary->window);
+    WindowUiController *const quickUi = windowUiController(quick->window);
+    QVERIFY(ordinaryUi != nullptr);
+    QVERIFY(quickUi != nullptr);
+    QCOMPARE(ordinaryUi->commandPaletteModel()->count(), 1);
+    QCOMPARE(quickUi->commandPaletteModel()->count(), 1);
+
+    const GhosttyKeybindProgram generation = controller.keybindProgram();
+    LaunchOptions reloaded = options;
+    reloaded.applicationShell.quickTerminal.position =
+        QuickTerminalPosition::Bottom;
+    reloaded.applicationShell.quickTerminal.size.primary =
+        QuickTerminalPercentage{37.5F};
+    reloaded.applicationShell.quickTerminal.keyboardInteractivity =
+        QuickTerminalKeyboardInteractivity::None;
+    reloaded.applicationShell.commandPalette = {{
+        .title = QStringLiteral("Reloaded command"),
+        .actionKey = QStringLiteral("reloaded"),
+        .action = QStringLiteral("toggle_tab_overview"),
+    }};
+    controller.applyLaunchOptions(reloaded);
+
+    QVERIFY(controller.keybindProgram().isSameGeneration(generation));
+    QCOMPARE(controller.windowCount(), 2);
+    QCOMPARE(harness.calls, 2);
+    QCOMPARE(layer->anchors(),
+             LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorBottom));
+    QCOMPARE(layer->keyboardInteractivity(),
+             LayerShellQt::Window::KeyboardInteractivityNone);
+    QVERIFY(!layer->activateOnShow());
+    QCOMPARE(ordinaryUi->commandPaletteModel()->count(), 1);
+    QCOMPARE(ordinaryUi->commandPaletteModel()
+                 ->data(ordinaryUi->commandPaletteModel()->index(0, 0),
+                        CommandPaletteModel::TitleRole)
+                 .toString(),
+             QStringLiteral("Reloaded command"));
+    QCOMPARE(quickUi->commandPaletteModel()->count(), 1);
+
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    QVERIFY(!quick->window->isVisible());
+    QCOMPARE(controller.windowCount(), 2);
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    QVERIFY(quick->window->isVisible());
+    QCOMPARE(quickTerminalWindow(controller)->window, quick->window);
+    QCOMPARE(harness.calls, 2);
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    QVERIFY(!quick->window->isVisible());
+}
+
+void ApplicationControllerTest::
+    quickTerminalAutohideRequiresActivationAndReloadsLive()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.applicationShell.quickTerminal.autohide = true;
+    options.applicationShell.quickTerminal.keyboardInteractivity =
+        QuickTerminalKeyboardInteractivity::None;
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto ordinary = controller.createInitialWindow();
+    QVERIFY(ordinary.has_value());
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    const std::optional<ApplicationWindow> quick =
+        quickTerminalWindow(controller);
+    QVERIFY(quick.has_value());
+
+    // A never-focusable surface cannot acknowledge activation. It must remain
+    // visible rather than interpreting initial compositor focus settling as
+    // an autohide transition.
+    QTest::qWait(80);
+    QVERIFY(quick->window->isVisible());
+
+    options.applicationShell.quickTerminal.keyboardInteractivity =
+        QuickTerminalKeyboardInteractivity::OnDemand;
+    controller.applyLaunchOptions(options);
+    quick->window->requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(quick->window->isActive(), 1000);
+    ordinary->window->requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(ordinary->window->isActive(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!quick->window->isVisible(), 1000);
+
+    QVERIFY(controller.dispatch(ApplicationAction::ToggleQuickTerminal));
+    QTRY_VERIFY_WITH_TIMEOUT(quick->window->isActive(), 1000);
+    ordinary->window->requestActivate();
+    QTRY_VERIFY_WITH_TIMEOUT(ordinary->window->isActive(), 1000);
+
+    LaunchOptions disabled = options;
+    disabled.applicationShell.quickTerminal.autohide = false;
+    controller.applyLaunchOptions(disabled);
+    QTest::qWait(80);
+    QVERIFY(quick->window->isVisible());
+    QCOMPARE(controller.windowCount(), 2);
+    QCOMPARE(harness.calls, 2);
+
+    // Re-enabling while the acknowledged surface remains inactive starts the
+    // same settling timer; no show, pane, or PTY recreation is required.
+    controller.applyLaunchOptions(options);
+    QTRY_VERIFY_WITH_TIMEOUT(!quick->window->isVisible(), 1000);
+    QCOMPARE(controller.windowCount(), 2);
+    QCOMPARE(harness.calls, 2);
+}
+
+void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.configuredTitle = QStringLiteral("notice title");
+    options.applicationShell.commandPalette = {
+        {
+            .title = QStringLiteral("Create tab"),
+            .description = QStringLiteral("Create another terminal tab"),
+            .actionKey = QStringLiteral("new_tab"),
+            .action = QStringLiteral("new_tab"),
+        },
+        {
+            .title = QStringLiteral("Unsupported"),
+            .actionKey = QStringLiteral("undo"),
+            .action = QStringLiteral("undo"),
+        },
+    };
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    WindowUiController *const ui = windowUiController(initial->window);
+    QVERIFY(ui != nullptr);
+    QCOMPARE(ui->commandPaletteModel()->count(), 1);
+    TerminalPane *const firstPane = onlyPane(initial->workspace);
+    QVERIFY(firstPane != nullptr);
+
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("toggle_command_palette")));
+    QCOMPARE(ui->modal(), WindowUiController::Modal::CommandPalette);
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("toggle_tab_overview")));
+    QCOMPARE(ui->modal(), WindowUiController::Modal::TabOverview);
+    ui->closeModal();
+
+    // Frontend requests retain a stable originating PaneId. A stale identity
+    // must not open a window modal after its pane has disappeared.
+    Q_EMIT initial->workspace->frontendActionRequested({
+        .action = WorkspaceFrontendActions::ToggleCommandPalette{},
+        .context = {.paneId = PaneId(std::numeric_limits<quint64>::max())},
+    });
+    QCOMPARE(ui->modal(), WindowUiController::Modal::None);
+
+    const TabId firstTab = initial->workspace->tabModel()->idAt(0);
+    QVERIFY(firstTab.isValid());
+    initial->workspace->newTab();
+    QCOMPARE(initial->workspace->tabCount(), 2);
+    QVERIFY(initial->workspace->currentIndex() != 0);
+    QVERIFY(initial->workspace->activateTabByStableId(firstTab.value()));
+    QCOMPARE(initial->workspace->currentIndex(), 0);
+    QVERIFY(!initial->workspace->activateTabByStableId(0));
+
+    QClipboard *const clipboard = QGuiApplication::clipboard();
+    QVERIFY(clipboard != nullptr);
+    const QString previousClipboard = clipboard->text();
+    const auto restoreClipboard = qScopeGuard([clipboard, previousClipboard] {
+        clipboard->setText(previousClipboard);
+    });
+
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("copy_title_to_clipboard")));
+    QCOMPARE(clipboard->text(), QStringLiteral("notice title"));
+    QCOMPARE(ui->toastMessage(), QStringLiteral("Copied to clipboard"));
+    ui->clearToasts();
+
+    LaunchOptions clipboardDisabled = options;
+    clipboardDisabled.applicationShell.notifications.clipboardCopy = false;
+    controller.applyLaunchOptions(clipboardDisabled);
+    QVERIFY(initial->workspace->executeActiveConfiguredAction(
+        QStringLiteral("copy_title_to_clipboard")));
+    QVERIFY(!ui->toastVisible());
+    controller.notifyConfigurationReloaded();
+    QCOMPARE(ui->toastMessage(), QStringLiteral("Reloaded the configuration"));
+    ui->clearToasts();
+
+    LaunchOptions reloadDisabled = options;
+    reloadDisabled.applicationShell.notifications.configReload = false;
+    controller.applyLaunchOptions(reloadDisabled);
+    controller.notifyConfigurationReloaded();
+    QVERIFY(!ui->toastVisible());
+
+    // Empty commits use distinct presentation text, while still following
+    // the live clipboard-copy policy on the originating window only.
+    Q_EMIT firstPane->standardClipboardCommitted(true);
+    QCOMPARE(ui->toastMessage(), QStringLiteral("Cleared clipboard"));
 }
 
 void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation_data()

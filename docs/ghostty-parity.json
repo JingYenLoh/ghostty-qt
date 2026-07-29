@@ -319,9 +319,9 @@
           "note": "Qt Quick currently owns text and primitive blending and does not expose Ghostty's exact native, linear, and linear-corrected renderer pipeline, including the Linux linear-corrected default. Background opacity is implemented independently and does not claim this color-space behavior."
         },
         "app-notifications": {
-          "status": "planned",
+          "status": "supported",
           "scope": "qt_mapping",
-          "note": "Ghostty's GTK-only clipboard-copy and config-reload toast flags have a meaningful Qt mapping, but ghostty-qt does not yet own the required window-local toast queue. This remains separate from native desktop notifications."
+          "note": "The exact clipboard-copy and config-reload flags drive a bounded FIFO toast queue owned independently by every Qt window. Successful standard-clipboard text and MIME commits distinguish copied from cleared content, while primary-only writes remain silent; successful post-startup configuration generations notify every retained window. Both policies reload live without recreating windows or panes, and the input-transparent presentation restarts its three-second timer for each queued item. This remains separate from native desktop notifications."
         },
         "auto-update": {
           "status": "not_applicable",
@@ -391,6 +391,11 @@
       "status": "supported",
       "note": "The strict config projection carries Ghostty's finalized whole-millisecond value, including the Linux 500 ms default. Qt converts a nonzero arbitrary-origin millisecond window-system timestamp to nanoseconds with checked multiplication; zero or overflow produces an untimed press. The worker supplies the live interval and physical cell width, and libghostty accepts a repeat at inclusive consecutive-time and Euclidean-distance thresholds, with distance anchored to the original first press. It owns cell/word/line classification and clamps later repeats at triple; Linux Ctrl maps triple-click to OSC 133 semantic output while Meta/Super remains line. A Shift-left released by the effective mouse-shift-capture policy becomes an immediate drag only when a selection exists and its comparable timestamp is strictly more than the live interval after the retained ordinary press; the exact boundary remains an ordinary repeat candidate. The extension preserves libghostty's tracked anchor and selection behavior without replacing the retained press time, and Linux Ctrl+Alt selects rectangle mode for ordinary drags or delayed Shift extension. The pointer becomes a crosshair for Ctrl+Alt normally or Shift+Ctrl+Alt under raw DEC tracking, below hidden/link cursor priority. Qt ignores MouseButtonDblClick because its physical press already arrived. Reload affects the next press without reshaping an installed selection; ordinary release preserves repeat history, reported physical buttons reset it, and reported motion, wheels, or captured fractional scrolling preserve it."
     },
+    "class": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "The finalized optional raw value is resolved once before D-Bus arbitration or native surface creation. A valid GApplication/D-Bus application ID becomes both Qt's Wayland desktop-file identity and the single-instance service name; an invalid configured value emits a byte-exact diagnostic and falls back to the validated build application ID. Live reload deliberately cannot change this startup-only process identity."
+    },
     "clipboard-paste-bracketed-safe": {
       "status": "supported",
       "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
@@ -414,6 +419,11 @@
     "command": {
       "status": "supported",
       "note": "The exact pinned parser supplies a nullable raw-byte shell/direct union. Shell values execute byte-for-byte through /bin/sh -c; direct values preserve the parser's literal-space argv boundaries and use the launching process PATH for bare argv[0] lookup before finalized env overrides are installed. The finalized default shell follows Ghostty's SHELL/passwd selection, and reload affects future panes."
+    },
+    "command-palette-entry": {
+      "status": "supported",
+      "scope": "qt_mapping",
+      "note": "Finalized title, description, action key, and canonical serialized action values populate a window-local Qt model after unsupported frontend actions are removed. Colon-normalized case-insensitive ordering is deterministic, title/action-key filtering is case-folded once per query, selection survives equivalent live replacements by action identity, and activation closes the modal before executing against the window's current active pane. Prepared sort and search keys are cached once per configuration generation."
     },
     "config-file": {
       "status": "supported",
@@ -832,6 +842,10 @@
           "scope": "gtk_only",
           "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
         },
+        "key-remap": {
+          "status": "supported",
+          "note": "The finalized ordered sided modifier mappings apply one-way and non-transitively to both root/pane keybinding matching and terminal input encoding without changing layout text, logical key, or native identity. A stateful allocation-free Qt adapter retains the observed XKB left/right side across ordinary generic-modifier events, prunes missed releases from Qt's authoritative mask, and replaces mappings atomically with the keybinding generation on live reload."
+        },
         "language": {
           "scope": "qt_mapping"
         },
@@ -927,19 +941,29 @@
           "scope": "wayland"
         },
         "quick-terminal-autohide": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "The retained quick-terminal window hides after the pinned 50 ms focus-settling interval only after compositor activation has first been acknowledged. Live disable cancels a pending hide, live enable observes the current acknowledged focus state, and keyboard-interactivity none does not dismiss a newly shown never-focusable surface."
         },
         "quick-terminal-keyboard-interactivity": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "None, on-demand, and exclusive synchronize live to the layer-shell keyboard-interactivity and activate-on-show policy. None suppresses explicit Qt activation and focus requests; the other modes focus the retained active pane when the surface is shown."
         },
         "quick-terminal-position": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "Top, bottom, left, right, and center map to the pinned layer-shell anchor and 20-logical-pixel unanchored-margin contract before first presentation and on live reload."
         },
         "quick-terminal-screen": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "Main and macos-menu-bar bind the layer surface to Qt's primary output, while mouse leaves output selection to the compositor and uses the cursor output for initial sizing. The target is re-resolved on live synchronization and before every retained-surface show."
         },
         "quick-terminal-size": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "The exact nullable percentage-or-pixel primary and secondary extents use pinned f32 truncation, axis selection, full-output logical geometry, and saturation. Desired layer-shell size updates for position, output, geometry, and live size changes without recreating the window, panes, or PTYs."
         },
         "quick-terminal-space-behavior": {
           "scope": "wayland"
@@ -1423,7 +1447,9 @@
           "scope": "gtk_only"
         },
         "show_on_screen_keyboard": {
-          "scope": "qt_mapping"
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact void action validates its originating stable PaneId, focuses that pane without changing topology, and asks Qt's platform input method to show the on-screen keyboard."
         },
         "start_search": {
           "status": "partial",
@@ -1438,7 +1464,9 @@
           "scope": "macos"
         },
         "toggle_command_palette": {
-          "scope": "qt_mapping"
+          "status": "partial",
+          "scope": "qt_mapping",
+          "note": "The exact void action toggles one retained modal model per originating window, including live custom entries, keyboard navigation, filtering, and close-before-action execution. Pinned GTK also synthesizes one cross-window focus command for every live surface; the Qt palette currently omits those dynamic jump rows because tab overview and window navigation remain separate typed routes."
         },
         "toggle_fullscreen": {
           "status": "supported",
@@ -1457,7 +1485,9 @@
           "note": "Toggles read-only state per source surface, including stable all/global fanout. Worker-ordered policy suppresses surface-originated key, IME, mouse-report, paste, and raw-action bytes while output, terminal-generated protocol replies, focus bookkeeping, and terminal-local selection, copy, search, and native scrolling remain active; toggling off resumes input without replay. An input-transparent top-right Read-only badge and active-pane model role publish the state. Read-only forces pane, tab, and workspace close confirmation regardless of confirm-close-surface, foreground activity, or child-exit state."
         },
         "toggle_quick_terminal": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "The application action creates at most one layer-shell window before its first native presentation, injects exactly GHOSTTY_QUICK_TERMINAL=1 into that window's pane launch environment, forces compositor-owned frameless/deferred geometry, and then retains the same tabs, splits, PTYs, and UI controller across hide/show cycles. Shell-only reloads synchronize live without recompiling keybindings or walking terminal panes; quick-terminal tabs retain a tab strip while ordinary header chrome remains hidden."
         },
         "toggle_secure_input": {
           "status": "not_applicable",
@@ -1468,7 +1498,9 @@
           "note": "Zooms the active leaf without rebuilding the tree or PTY sessions and publishes the zoom state to the tab strip."
         },
         "toggle_tab_overview": {
-          "scope": "qt_mapping"
+          "status": "supported",
+          "scope": "qt_mapping",
+          "note": "The exact void action toggles a window-local modal grid backed by the live tab model. Activation closes the modal first and then resolves the selected stable TabId, so reordering or removal cannot target a different tab."
         },
         "toggle_visibility": {
           "status": "not_applicable",

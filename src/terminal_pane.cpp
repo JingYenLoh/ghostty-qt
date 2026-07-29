@@ -263,6 +263,7 @@ TerminalPane::TerminalPane(
           keybindProgram.has_value()
               ? std::move(*keybindProgram)
               : GhosttyKeybindProgram::compile(options.keybindSource).program)
+    , modifierRemaps_(options.modifierRemaps)
     , defaultFontPointSize_(options.typography.pointSize)
     , resizeOverlayStartupSuppressionEnds_(std::chrono::steady_clock::now()
                                            + kResizeOverlayStartupSuppression)
@@ -311,6 +312,8 @@ TerminalPane::TerminalPane(
     controller_ = new TerminalController(sessionOptions, this,
                                          std::move(initialSessionCoordinator));
     controller_->setMouseReportingEnabled(options.mouseReporting);
+    connect(controller_, &TerminalController::standardClipboardCommitted, this,
+            &TerminalPane::standardClipboardCommitted);
     connect(
         controller_, &TerminalController::terminalUpdated, this,
         [this](const TerminalUpdate &terminalUpdate) {
@@ -1052,6 +1055,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.waitAfterCommand = options.waitAfterCommand;
     updated.resizeOverlay = options.resizeOverlay;
     updated.keybindSource = options.keybindSource;
+    updated.modifierRemaps = options.modifierRemaps;
 
     controller_->applyConfiguredTitle(updated.configuredTitle);
     // titleChanged observers may synchronously apply a newer snapshot. The
@@ -1064,6 +1068,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
 
     const bool keybindGenerationChanged =
         !keybinds_.program().isSameGeneration(keybindProgram);
+    const bool modifierRemapsChanged =
+        options_.modifierRemaps != updated.modifierRemaps;
     LaunchOptions updatedWithoutTitle = updated;
     updatedWithoutTitle.configuredTitle = options_.configuredTitle;
     if (updatedWithoutTitle == options_ && !keybindGenerationChanged) {
@@ -1157,10 +1163,18 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
 
     quint64 previousSequenceToken = 0;
     bool keyTablesChanged = false;
-    if (keybindGenerationChanged) {
+    if (keybindGenerationChanged || modifierRemapsChanged) {
         previousSequenceToken = std::exchange(activeSequenceToken_, 0);
         keyTablesChanged = keybinds_.hasActiveTables();
-        (void)keybinds_.replaceProgram(keybindProgram);
+        if (keybindGenerationChanged) {
+            (void)keybinds_.replaceProgram(keybindProgram);
+        } else {
+            (void)keybinds_.deactivateAllTables();
+            keybinds_.resetSequence();
+        }
+        if (modifierRemapsChanged) {
+            modifierRemaps_.replaceMappings(options_.modifierRemaps);
+        }
     }
 
     // The pane snapshot and matcher are now authoritative. Queue a changed
@@ -1863,8 +1877,11 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
+    const KeyEventSnapshot remappedSnapshot =
+        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
+    QKeyEvent remappedEvent = remappedSnapshot.replay();
     const KeyHandling handling =
-        handleShortcut(event, guard, pointerActivityEpoch);
+        handleShortcut(&remappedEvent, guard, pointerActivityEpoch);
     // Lifecycle actions are owner-deferred, but an embedding application may
     // still attach a destructive direct observer to another pane signal.
     // Never resume ordinary key handling through a deleted QObject.
@@ -1891,7 +1908,7 @@ void TerminalPane::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    const TerminalKeyInput input = terminalKeyInput(event);
+    const TerminalKeyInput input = terminalKeyInput(&remappedEvent);
     hideMouseForTerminalKey(input, pointerActivityEpoch);
     if (guard == nullptr) {
         event->accept();
@@ -1912,6 +1929,9 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
     const auto dispatchGuard = qScopeGuard([guard] {
         if (guard != nullptr) guard->endKeyEventDispatch();
     });
+    const KeyEventSnapshot remappedSnapshot =
+        modifierRemaps_.remapEvent(KeyEventSnapshot::capture(*event));
+    QKeyEvent remappedEvent = remappedSnapshot.replay();
     if (!controller_->keyboardInputSuppressed()) {
         updateHyperlinkModifiers(modifiersAfterKeyEvent(event, false));
     }
@@ -1923,7 +1943,7 @@ void TerminalPane::keyReleaseEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    controller_->sendKey(terminalKeyInput(event, false));
+    controller_->sendKey(terminalKeyInput(&remappedEvent, false));
     event->accept();
 }
 
@@ -2504,8 +2524,12 @@ bool TerminalPane::commitConfiguredActionResult(
     case TerminalActionEffect::Clipboard: {
         QClipboard *const clipboard = QGuiApplication::clipboard();
         if (clipboard != nullptr) {
-            writeTerminalClipboard(clipboard, terminal.payload,
-                                   terminal.clipboardDestination);
+            const TerminalClipboardWriteTargets targets =
+                writeTerminalClipboard(clipboard, terminal.payload,
+                                       terminal.clipboardDestination);
+            if (targets.standard) {
+                Q_EMIT standardClipboardCommitted(terminal.payload.isEmpty());
+            }
         }
         return true;
     }
@@ -2805,6 +2829,7 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 auto *mimeData = new QMimeData;
                 mimeData->setData(QStringLiteral("text/plain"), *uri);
                 clipboard->setMimeData(mimeData);
+                Q_EMIT standardClipboardCommitted(uri->isEmpty());
                 return true;
             },
             [this](const PaneAction::CopyTitleToClipboard &) {
@@ -2813,8 +2838,13 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
                 if (!title || title->isEmpty() || clipboard == nullptr) {
                     return false;
                 }
-                writeTerminalClipboard(clipboard, *title,
-                                       TerminalClipboardDestination::Standard);
+                const TerminalClipboardWriteTargets targets =
+                    writeTerminalClipboard(
+                        clipboard, *title,
+                        TerminalClipboardDestination::Standard);
+                if (targets.standard) {
+                    Q_EMIT standardClipboardCommitted(title->isEmpty());
+                }
                 return true;
             },
             [this](const PaneAction::EndKeySequence &) {

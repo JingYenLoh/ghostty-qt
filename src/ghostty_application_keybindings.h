@@ -15,7 +15,6 @@
 
 #include <deque>
 #include <memory>
-#include <span>
 #include <variant>
 
 class ApplicationController;
@@ -36,9 +35,8 @@ public:
     ~GhosttyApplicationKeybindings() override;
 
     void registerWorkspace(TerminalWorkspace *workspace);
-    [[nodiscard]] GhosttyKeybindProgram applyLaunchOptions(
-        const LaunchOptions &options,
-        std::span<const ModifierRemap> orderedModifierRemaps = {});
+    [[nodiscard]] GhosttyKeybindProgram
+    applyLaunchOptions(const LaunchOptions &options);
     [[nodiscard]] GhosttyKeybindProgram keybindProgram() const noexcept
     {
         return rootState_.program();
@@ -94,7 +92,7 @@ private:
     broadExecutionHasLostTarget(const BroadExecution &execution);
 
     GhosttyKeybindState rootState_;
-    ModifierRemapEngine modifierRemaps_;
+    ModifierRemapTracker modifierRemaps_;
     QVector<QPointer<TerminalWorkspace>> workspaces_;
     QSet<quint64> consumedKeys_;
     std::deque<DeferredInput> deferredInputs_;

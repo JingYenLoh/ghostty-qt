@@ -43,7 +43,11 @@ Popup {
         if (action.length === 0)
             return
         dismiss()
-        actionRequested(action)
+        // Popup teardown and focus restoration must complete before a command
+        // is resolved against the window's current stable active pane.
+        Qt.callLater(function() {
+            root.actionRequested(action)
+        })
     }
 
     background: Rectangle {
@@ -116,8 +120,6 @@ Popup {
                 required property int index
                 required property string title
                 required property string description
-                required property string actionKey
-                required property string action
 
                 width: ListView.view.width
                 highlighted: ListView.isCurrentItem
