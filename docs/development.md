@@ -30,7 +30,7 @@ Configure, build, and test a preset as one sequence:
 ```sh
 cmake --preset dev
 cmake --build --preset dev -j"$(nproc)"
-ctest --preset dev -j8 --output-on-failure
+ctest --preset dev -j"$(nproc)" --output-on-failure
 ```
 
 ## Renderer microbenchmark
@@ -137,8 +137,21 @@ relocatable-install coverage. List or run individual tests with:
 
 ```sh
 ctest --preset dev --show-only
-ctest --preset dev -j8 -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-cli-delegation|ghostty-parity-manifest'
+ctest --preset dev -j"$(nproc)" -R 'ghostty-vt-adapter|ghostty-link-matcher|terminal-pane-render|launch-options|application-(controller|lifetime)|workspace-foundation|terminal-workspace|ghostty-action-catalog|ghostty-keybind-set|ghostty-global-shortcut-portal|ghostty-config|ghostty-cli-delegation|ghostty-parity-manifest'
 ```
+
+For a headless QML startup smoke test, use the explicitly unsupported-backend
+escape hatch:
+
+```sh
+GHOSTTY_QT_ALLOW_NON_WAYLAND=1 \
+QT_QPA_PLATFORM=offscreen \
+QT_QUICK_BACKEND=software \
+timeout 3s ./build/dev/ghostty-qt --hold -- /bin/sh -c 'printf "smoke\n"'
+```
+
+The timeout status is expected because `--hold` keeps the window alive. This
+path is for CI and smoke diagnostics only; normal use remains Wayland-only.
 
 ## ghostty-qt frontend configuration
 
@@ -592,13 +605,15 @@ while Ghostty's finalized explicit-entry mask is still available. It mirrors
 indices remain untouched, and `palette-harmonious` changes orientation only
 for generated light-theme palettes. The exported palette is therefore already
 effective, and the ordinary live appearance path preserves terminal OSC 4
-overrides while OSC 104 reveals its newest defaults. Dynamic light/dark theme
-selection remains separate and unimplemented. Real-helper regression coverage
-includes disabled generation, the nonempty-mask gate, preservation of explicit
-base and extended entries, the dark-theme harmonious no-op, and both
-light-theme orientations. The remaining public terminal option limitation here
-is cursor blink: it is boolean rather than Ghostty's configuration tri-state,
-so the parity ledger keeps that key partial.
+overrides while OSC 104 reveals its newest defaults. Conditional light/dark
+themes are finalized for the concrete Qt color scheme, and generation-safe
+reload tests cover scheme changes, watched files for both branches, and
+last-known-good failure handling. Real-helper regression coverage includes
+disabled generation, the nonempty-mask gate, preservation of explicit base and
+extended entries, the dark-theme harmonious no-op, and both light-theme
+orientations. The remaining public terminal option limitation here is cursor
+blink: it is boolean rather than Ghostty's configuration tri-state, so the
+parity ledger keeps that key partial.
 
 ## Ghostty parity manifest
 
@@ -628,7 +643,7 @@ For a sanitizer run, install Clang and use:
 cmake --preset sanitize
 cmake --build --preset sanitize --target clean -j"$(nproc)"
 cmake --build --preset sanitize -j"$(nproc)"
-ctest --preset sanitize -j8 --output-on-failure
+ctest --preset sanitize -j"$(nproc)" --output-on-failure
 ```
 
 LeakSanitizer itself requires ptrace support. In a restricted container that
@@ -638,7 +653,7 @@ the test preset's overriding environment:
 ```sh
 ASAN_OPTIONS=abort_on_error=1:detect_leaks=0:strict_string_checks=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
-ctest --test-dir build/sanitize -j8 --output-on-failure
+ctest --test-dir build/sanitize -j"$(nproc)" --output-on-failure
 ```
 
 The sanitizer preset instruments the project's C and C++ targets with ASan and

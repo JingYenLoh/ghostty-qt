@@ -1808,10 +1808,12 @@ private helper applies Ghostty's exact `termio.DerivedConfig` gate and
 generation routine before exporting the effective palette. For a light theme,
 `palette-harmonious=false` orients the generated cube and ramp dark-to-light,
 while `true` retains the configured light-background-to-dark-foreground
-orientation; dark themes are unchanged. Static themes can contribute
-canonical appearance values and explicit palette entries through the pinned
-parser, while dynamic light/dark theme selection remains a separate
-unimplemented feature.
+orientation; dark themes are unchanged. Static and conditional light/dark
+themes contribute canonical appearance values and explicit palette entries
+through the pinned parser. Qt system color scheme changes request a newly
+finalized Ghostty snapshot for the selected branch; the serialized
+last-known-good service applies it without replacing windows, panes,
+terminals, PTYs, or scene roots.
 
 Because the pinned terminal API cannot resize an existing scrollback
 allocation, the byte-valued Ghostty limit applies when a pane is created; a
@@ -2783,11 +2785,11 @@ be checked interactively in a real Wayland session.
   the private structured helper derives the effective palette while Ghostty's
   internal explicit-entry mask is available.
 - Configuration beyond the documented typed slice, unsupported keybinding
-  actions, user-defined `link` rules, payload-bearing desktop/process
-  activation, saved sessions, and full production packaging remain future
-  work. Standard source-less desktop activation and minimal metadata are
-  implemented, including activation-token consumption; systemd notification,
-  icon, and AppStream layers remain. OSC 8, the
+  actions, user-defined `link` rules, saved sessions, and full production
+  packaging remain future work. Source-less desktop activation and
+  payload-bearing `+new-window` activation are implemented, including
+  activation-token consumption; systemd notification, icon, and AppStream
+  layers remain. OSC 8, the
   default `link-url` matcher, link previews, and the incremental search foundation are
   implemented. Search remains partial because the library artifact omits the
   upstream `xev`-dependent thread, mutation restarts its scan, inactive-screen
