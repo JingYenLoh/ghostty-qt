@@ -73,8 +73,11 @@ advanced text/graphics support, and distribution:
   retained geometry are the remaining high-throughput CPU opportunities.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
-- Color emoji, ligatures across cells, Kitty graphics, and search each require
-  explicit UI/render policy beyond VT parsing. OSC 8 and the
+- Color emoji and exact Ghostty font shaping still require explicit renderer
+  policy beyond VT parsing. Ordinary Kitty graphics placements now use
+  libghostty's public decoded-image and placement APIs with Qt RHI/software
+  paths; Unicode virtual placements remain blocked on expanded public viewport
+  fragments. Search uses the cooperative public-grid foundation. OSC 8 and the
   built-in `link-url` matcher now share tracked hover, copy, and open behavior,
   stable live-output handling, coalesced pointer queries, and mutation-safe
   activation. The `true`/`false`/`osc8` preview policy is implemented as a

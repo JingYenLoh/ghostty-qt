@@ -3,6 +3,7 @@
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 
 #include "terminal_cell_metrics.h"
+#include "terminal_kitty_graphics.h"
 #include "terminal_session_options.h"
 
 #include <QColor>
@@ -15,6 +16,16 @@
 
 class TerminalPane;
 
+enum class TerminalPaneRenderLayer : quint8 {
+    KittyBelowBackground,
+    CellBackground,
+    KittyBelowText,
+    CursorBackground,
+    CellForeground,
+    KittyAboveText,
+    TerminalOverlay,
+};
+
 struct TerminalPaneRenderProbeSnapshot {
     // Captured before the controller starts so tests can verify the one-shot
     // first-pane launch contract independently of scene-graph rendering.
@@ -25,6 +36,10 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 startingTextNodeSerial = 0;
     quint64 overlayTextNodeSerial = 0;
     quint64 paneOverlayTextNodeSerial = 0;
+    quint64 kittyBelowBackgroundNodeSerial = 0;
+    quint64 kittyBelowTextNodeSerial = 0;
+    quint64 kittyAboveTextNodeSerial = 0;
+    QVector<TerminalPaneRenderLayer> renderLayerOrder;
     // Cumulative layout rebuilds for retained grid and pane overlay nodes.
     quint64 overlayTextBuildCount = 0;
     quint64 paneOverlayTextBuildCount = 0;
@@ -32,12 +47,21 @@ struct TerminalPaneRenderProbeSnapshot {
     quint64 backgroundImageAssetSerial = 0;
     QRectF backgroundImageRect;
     QRectF backgroundImageSourceRect;
+    quint64 kittyGraphicsTextureUploadCount = 0;
+    qsizetype kittyGraphicsTextureCount = 0;
+    QVector<QRectF> kittyGraphicsDestinations;
+    QVector<QRectF> kittyGraphicsSources;
+    QVector<TerminalKittyGraphicsLayer> kittyGraphicsLayers;
     QVector<QRectF> backdropBaseRects;
     QRectF unfocusedSplitOverlayRect;
     QColor unfocusedSplitOverlayColor;
     QVector<quint64> rowNodeSerials;
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
+    // Cumulative cell-derived solid-plan rebuilds by visible row. Flattening a
+    // cached row into a retained geometry batch does not increment this.
+    QVector<quint64> rowSolidBuildCounts;
+    quint64 solidCellVisitCount = 0;
     // Layouts in each row's latest rebuild. A compatible shaped run counts
     // once; a rejected run counts once per exact-position fallback cell.
     QVector<quint64> rowLayoutCounts;

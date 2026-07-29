@@ -398,6 +398,7 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QVERIFY(!result->values.configFiles.at(2).optional);
     QCOMPARE(result->values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
+    QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{123456789});
     QVERIFY(result->values.background.image.path.has_value());
     QCOMPARE(result->values.background.image.path->path,
              QStringLiteral("/fixture/background.png"));
@@ -1108,7 +1109,8 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
                        "window-height = 1\n"
                        "maximize = true\n"
                        "fullscreen = non-native-visible-menu\n"
-                       "scrollback-limit = 18446744073709551615\n")
+                       "scrollback-limit = 18446744073709551615\n"
+                       "image-storage-limit = 987654321\n")
             .arg(directory)
             .toUtf8());
 
@@ -1135,6 +1137,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesSurfaceValues()
              GhosttyFullscreenMode::NonNativeVisibleMenu);
     QCOMPARE(result->values.scrollbackLimitBytes,
              std::numeric_limits<quint64>::max());
+    QCOMPARE(result->values.kittyImageStorageLimitBytes, quint32{987654321});
 
     ConfigFixture::writeFile(fixture.preferredPath,
                              QByteArrayLiteral("term =\n"));

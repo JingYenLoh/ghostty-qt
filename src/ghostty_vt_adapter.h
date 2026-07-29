@@ -153,6 +153,7 @@ public:
         Geometry geometry;
         // libghostty's max_scrollback initialization option is byte-valued.
         quint64 scrollbackBytes = 10'000'000;
+        quint64 kittyImageStorageLimitBytes = 320'000'000;
         TerminalAppearance appearance;
         TerminalColorScheme colorScheme = TerminalColorScheme::Light;
         TerminalClipboardAccess clipboardWriteAccess =
@@ -255,6 +256,7 @@ public:
 
     bool resize(const Geometry &geometry);
     bool setAppearance(const TerminalAppearance &appearance);
+    bool setKittyImageStorageLimit(quint64 bytes);
     void setColorScheme(TerminalColorScheme scheme);
     void setClipboardWriteAccess(TerminalClipboardAccess access);
     void setEnquiryResponse(const QByteArray &response);

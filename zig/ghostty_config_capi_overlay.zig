@@ -712,6 +712,8 @@ fn writeValues(
     try json.objectField("scrollback-limit");
     var scrollback_buf: [32]u8 = undefined;
     try json.write(try std.fmt.bufPrint(&scrollback_buf, "{d}", .{config.@"scrollback-limit"}));
+    try json.objectField("image-storage-limit");
+    try json.write(config.@"image-storage-limit");
     try json.objectField("scrollback-compression");
     try json.write(config.@"scrollback-compression");
     try json.objectField("scrollbar");

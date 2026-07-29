@@ -346,6 +346,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.resizeOverlay.duration, std::chrono::milliseconds{1250});
 
     QCOMPARE(values.scrollbackLimitBytes, std::numeric_limits<quint64>::max());
+    QCOMPARE(values.kittyImageStorageLimitBytes, quint32{123456789});
     QVERIFY(!values.scrollbackCompression);
     QCOMPARE(values.scrollbar, ScrollbarPolicy::Never);
     QVERIFY(values.bellFeatures.system);
@@ -2777,6 +2778,15 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("scrollback-limit"),
                      QStringLiteral("18446744073709551616"))
         << QStringLiteral("exceeds the uint64 range");
+    QTest::newRow("image-storage-limit-negative")
+        << withValue(object(), QStringLiteral("image-storage-limit"), -1)
+        << QStringLiteral(
+               "values.image-storage-limit must be an unsigned integer");
+    QTest::newRow("image-storage-limit-overflow")
+        << withValue(object(), QStringLiteral("image-storage-limit"),
+                     4294967296.0)
+        << QStringLiteral(
+               "values.image-storage-limit must be an unsigned integer");
     QTest::newRow("scrollback-compression-type")
         << withValue(object(), QStringLiteral("scrollback-compression"),
                      QStringLiteral("true"))

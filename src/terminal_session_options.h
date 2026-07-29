@@ -147,6 +147,7 @@ struct TerminalSessionRuntimeOptions {
     // Existing compressed pages remain valid when this live policy is
     // disabled; the worker gates only future compression scheduling.
     bool scrollbackCompression = true;
+    quint32 kittyImageStorageLimitBytes = 320'000'000;
     TerminalScrollToBottomOptions scrollToBottom;
     // Linux classifies a nonzero child exit observed at or before this live
     // threshold as abnormal. Zero remains meaningful for a sub-millisecond

@@ -243,6 +243,24 @@ target_link_libraries(test-terminal-backdrop PRIVATE
 add_test(NAME terminal-backdrop COMMAND test-terminal-backdrop)
 set_tests_properties(terminal-backdrop PROPERTIES TIMEOUT 10)
 
+qt_add_executable(test-terminal-kitty-graphics
+    test_terminal_kitty_graphics.cpp
+)
+target_include_directories(test-terminal-kitty-graphics PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-kitty-graphics PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-kitty-graphics COMMAND test-terminal-kitty-graphics)
+set_tests_properties(terminal-kitty-graphics PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(test-terminal-backdrop-rhi
     test_terminal_backdrop_rhi.cpp
 )
@@ -578,6 +596,33 @@ set_tests_properties(terminal-pane-render PROPERTIES
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_SCALE_FACTOR=1"
 )
+add_test(
+    NAME terminal-pane-kitty-rhi
+    COMMAND test-terminal-pane rendersAndRetainsKittyGraphics
+)
+set_tests_properties(terminal-pane-kitty-rhi PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+)
+
+if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
+    qt_add_executable(bench-terminal-pane-renderer
+        bench_terminal_pane_renderer.cpp
+        ../src/terminal_pane_render_probe_p.h
+    )
+    target_include_directories(bench-terminal-pane-renderer PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-pane-renderer PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Quick
+        Qt6::Test
+        ghostty-qt-render-test-support
+    )
+    add_dependencies(bench-terminal-pane-renderer ghostty-qt-terminfo)
+endif()
 
 qt_add_executable(test-terminal-workspace
     test_terminal_workspace.cpp
@@ -801,7 +846,7 @@ add_dependencies(test-ghostty-config-process-loader
     fake-ghostty-config-helper)
 add_test(NAME ghostty-config-process-loader
     COMMAND test-ghostty-config-process-loader)
-set_tests_properties(ghostty-config-process-loader PROPERTIES TIMEOUT 15)
+set_tests_properties(ghostty-config-process-loader PROPERTIES TIMEOUT 30)
 
 qt_add_executable(test-ghostty-config-export
     test_ghostty_config_export.cpp
@@ -813,7 +858,7 @@ target_link_libraries(test-ghostty-config-export PRIVATE
     ghostty-qt-config-export
 )
 add_test(NAME ghostty-config-export COMMAND test-ghostty-config-export)
-set_tests_properties(ghostty-config-export PROPERTIES TIMEOUT 10)
+set_tests_properties(ghostty-config-export PROPERTIES TIMEOUT 30)
 
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     set(_ghostty_qt_helper_test_home

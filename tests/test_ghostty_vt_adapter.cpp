@@ -4,6 +4,7 @@
 #error "ghostty_vt_adapter.h must not expose the libghostty-vt C API"
 #endif
 
+#include <QBuffer>
 #include <QSysInfo>
 #include <QTest>
 #include <QUrl>
@@ -129,6 +130,8 @@ class GhosttyVtAdapterTest : public QObject {
 
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
+    void publishesKittyGraphicsSnapshots();
+    void decodesKittyPngPayloads();
     void respondsToEnquiryWithConfiguredBytes();
     void reportsConfiguredColorSchemeAndLiveChanges();
     void observesActiveScreenBottomAnchorChanges();
@@ -360,6 +363,154 @@ void GhosttyVtAdapterTest::rendersTerminalValuesAndEffects()
     QVERIFY(applyTerminalUpdate(frame, snapshot.update));
     QCOMPARE(frame.columns, 10);
     QCOMPARE(frame.rows, 4);
+}
+
+void GhosttyVtAdapterTest::publishesKittyGraphicsSnapshots()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 20,
+        .rows = 3,
+        .cellWidthPixels = 10,
+        .cellHeightPixels = 20,
+    };
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+
+    // Two distinct RGB pixels, transmitted once and placed into Ghostty's
+    // three renderer layers. Placement commands do not re-upload image data.
+    adapter->writeVt(QByteArrayLiteral(
+        "\033_Ga=t,t=d,f=24,i=1,s=1,v=2;ECAwQFBg\033\\"
+        "\033[H\033_Ga=p,i=1,p=1,c=2,r=1,z=5;\033\\"
+        "\033[H\033_Ga=p,i=1,p=2,c=2,r=1,z=-1;\033\\"
+        "\033[H\033_Ga=p,i=1,p=3,c=2,r=1,z=-1073741825;\033\\"));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.kittyGraphics != nullptr);
+    QCOMPARE(frame.kittyGraphics->cellWidthPixels, quint32{10});
+    QCOMPARE(frame.kittyGraphics->cellHeightPixels, quint32{20});
+    QVERIFY(frame.kittyGraphics->storageGeneration > 0);
+    QVERIFY(!frame.kittyGraphics->containsVirtualPlacements);
+    QCOMPARE(frame.kittyGraphics->placements.size(), 3);
+
+    const auto &belowBackground = frame.kittyGraphics->placements.at(0);
+    const auto &belowText = frame.kittyGraphics->placements.at(1);
+    const auto &aboveText = frame.kittyGraphics->placements.at(2);
+    QCOMPARE(belowBackground.z, qint32{-1'073'741'825});
+    QCOMPARE(belowBackground.layer,
+             TerminalKittyGraphicsLayer::BelowBackground);
+    QCOMPARE(belowText.z, qint32{-1});
+    QCOMPARE(belowText.layer, TerminalKittyGraphicsLayer::BelowText);
+    QCOMPARE(aboveText.z, qint32{5});
+    QCOMPARE(aboveText.layer, TerminalKittyGraphicsLayer::AboveText);
+    QCOMPARE(belowBackground.placementId, quint32{3});
+    QCOMPARE(belowText.placementId, quint32{2});
+    QCOMPARE(aboveText.placementId, quint32{1});
+
+    for (const TerminalKittyGraphicsPlacement &placement :
+         frame.kittyGraphics->placements) {
+        QCOMPARE(placement.viewportColumn, 0);
+        QCOMPARE(placement.viewportRow, 0);
+        QCOMPARE(placement.destinationWidthPixels, quint32{20});
+        QCOMPARE(placement.destinationHeightPixels, quint32{20});
+        QCOMPARE(placement.sourceX, quint32{0});
+        QCOMPARE(placement.sourceY, quint32{0});
+        QCOMPARE(placement.sourceWidth, quint32{1});
+        QCOMPARE(placement.sourceHeight, quint32{2});
+        QVERIFY(placement.image == belowBackground.image);
+    }
+
+    QVERIFY(belowBackground.image != nullptr);
+    QCOMPARE(belowBackground.image->imageId, quint32{1});
+    QVERIFY(belowBackground.image->generation > 0);
+    QCOMPARE(belowBackground.image->straightRgbPlane.size(), QSize(1, 2));
+    QCOMPARE(belowBackground.image->straightRgbPlane.pixelColor(0, 0),
+             QColor(0x10, 0x20, 0x30));
+    QCOMPARE(belowBackground.image->straightRgbPlane.pixelColor(0, 1),
+             QColor(0x40, 0x50, 0x60));
+    QCOMPARE(belowBackground.image->alphaPlane.pixelColor(0, 0), Qt::white);
+    QCOMPARE(belowBackground.image->alphaPlane.pixelColor(0, 1), Qt::white);
+
+    GhosttyVtAdapter::RenderSnapshot unchanged;
+    QCOMPARE(adapter->renderFrame(&unchanged),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(!unchanged.update.kittyGraphicsChanged);
+
+    const quint64 firstGeneration = belowBackground.image->generation;
+    adapter->writeVt(
+        QByteArrayLiteral("\033_Ga=t,t=d,f=24,i=1,s=1,v=2;AQIDBAUG\033\\"));
+    GhosttyVtAdapter::RenderSnapshot replaced;
+    QCOMPARE(adapter->renderFrame(&replaced),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(replaced.update.kittyGraphicsChanged);
+    QVERIFY(replaced.update.kittyGraphics != nullptr);
+    QCOMPARE(replaced.update.kittyGraphics->placements.size(), 3);
+    const auto replacement =
+        replaced.update.kittyGraphics->placements.constFirst().image;
+    QVERIFY(replacement != nullptr);
+    QVERIFY(replacement->generation > firstGeneration);
+    QCOMPARE(replacement->straightRgbPlane.pixelColor(0, 0), QColor(1, 2, 3));
+    QCOMPARE(replacement->straightRgbPlane.pixelColor(0, 1), QColor(4, 5, 6));
+
+    adapter->writeVt(QByteArrayLiteral("\033_Ga=d,d=A\033\\"));
+    GhosttyVtAdapter::RenderSnapshot deleted;
+    QCOMPARE(adapter->renderFrame(&deleted),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(deleted.update.kittyGraphicsChanged);
+    QVERIFY(deleted.update.kittyGraphics != nullptr);
+    QVERIFY(deleted.update.kittyGraphics->placements.isEmpty());
+    QVERIFY(applyTerminalUpdate(frame, deleted.update));
+    QVERIFY(frame.kittyGraphics == deleted.update.kittyGraphics);
+
+    adapter->writeVt(
+        QByteArrayLiteral("\033_Ga=T,t=d,f=24,i=9,p=9,s=1,v=2,c=1,r=1;"
+                          "ECAwQFBg\033\\"));
+    GhosttyVtAdapter::RenderSnapshot restored;
+    QCOMPARE(adapter->renderFrame(&restored),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QCOMPARE(restored.update.kittyGraphics->placements.size(), 1);
+    QVERIFY(adapter->setKittyImageStorageLimit(0));
+    GhosttyVtAdapter::RenderSnapshot disabled;
+    QCOMPARE(adapter->renderFrame(&disabled),
+             GhosttyVtAdapter::RenderResult::Ready);
+    QVERIFY(disabled.update.kittyGraphicsChanged);
+    QVERIFY(disabled.update.kittyGraphics->placements.isEmpty());
+}
+
+void GhosttyVtAdapterTest::decodesKittyPngPayloads()
+{
+    QImage source(QSize(2, 1), QImage::Format_RGBA8888);
+    source.setPixelColor(0, 0, QColor(10, 20, 30, 40));
+    source.setPixelColor(1, 0, QColor(50, 60, 70, 255));
+    QBuffer encoded;
+    QVERIFY(encoded.open(QIODevice::WriteOnly));
+    QVERIFY(source.save(&encoded, "PNG"));
+
+    GhosttyVtAdapter::Options options;
+    options.geometry = {
+        .columns = 4,
+        .rows = 2,
+        .cellWidthPixels = 8,
+        .cellHeightPixels = 16,
+    };
+    auto adapter = GhosttyVtAdapter::create(options, {});
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("\033_Ga=T,t=d,f=100,i=2,p=7,c=1,r=1;")
+                     + encoded.data().toBase64() + QByteArrayLiteral("\033\\"));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QVERIFY(frame.kittyGraphics != nullptr);
+    QCOMPARE(frame.kittyGraphics->placements.size(), 1);
+    const auto asset = frame.kittyGraphics->placements.constFirst().image;
+    QVERIFY(asset != nullptr);
+    QCOMPARE(asset->imageId, quint32{2});
+    QCOMPARE(asset->straightRgbPlane.size(), QSize(2, 1));
+    QCOMPARE(asset->straightRgbPlane.pixelColor(0, 0), QColor(10, 20, 30));
+    QCOMPARE(asset->straightRgbPlane.pixelColor(1, 0), QColor(50, 60, 70));
+    QCOMPARE(asset->alphaPlane.pixelColor(0, 0), QColor(40, 40, 40));
+    QCOMPARE(asset->alphaPlane.pixelColor(1, 0), Qt::white);
 }
 
 void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()

@@ -132,6 +132,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("minimum-contrast"),
     QLatin1StringView("vt-kam-allowed"),
     QLatin1StringView("scrollback-limit"),
+    QLatin1StringView("image-storage-limit"),
     QLatin1StringView("scrollback-compression"),
     QLatin1StringView("scrollbar"),
     QLatin1StringView("bell-features"),
@@ -2490,6 +2491,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     }
     if (auto parsed = assign(QLatin1StringView("scrollback-limit"),
                              result.scrollbackLimitBytes, readDecimalUint64);
+        !parsed)
+        return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("image-storage-limit"),
+                             result.kittyImageStorageLimitBytes, readUint32);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assignBoolean(QLatin1StringView("scrollback-compression"),

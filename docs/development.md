@@ -33,6 +33,28 @@ cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev -j8 --output-on-failure
 ```
 
+## Renderer microbenchmark
+
+The renderer benchmark is opt-in and deliberately excluded from CTest. It
+measures the end-to-end cost of installing a terminal update and grabbing the
+result through Qt's offscreen software scene graph. Damage counters assert
+that metadata, one-row, cursor, and full-frame cases visit the intended number
+of cells, preventing a faster result caused by accidentally skipping work.
+
+Use a Release build and compare results only on the same machine, Qt version,
+backend, dimensions, warmup, and iteration count:
+
+```sh
+cmake --preset release -DGHOSTTY_QT_BUILD_RENDER_BENCHMARKS=ON
+cmake --build --preset release --target bench-terminal-pane-renderer -j"$(nproc)"
+./build/release/tests/bench-terminal-pane-renderer \
+    --warmup 20 --iterations 200
+```
+
+The current cases measure Kitty graphics' empty-image fast path. Image-specific
+benchmarks should distinguish first texture upload, retained redraw,
+placement-only movement, same-ID replacement, and eviction.
+
 ## C++ formatting
 
 Install `clang-format` as a development dependency; version 18 or newer is

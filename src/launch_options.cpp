@@ -55,6 +55,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
         .linkUrl = options.linkUrl,
         .vtKamAllowed = options.vtKamAllowed,
         .scrollbackCompression = options.scrollbackCompression,
+        .kittyImageStorageLimitBytes = options.kittyImageStorageLimitBytes,
         .scrollToBottom = options.scrollToBottom,
         .abnormalCommandExitRuntimeMilliseconds =
             options.abnormalCommandExitRuntimeMilliseconds,
@@ -180,6 +181,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         };
     }
     result.scrollbackCompression = config.scrollbackCompression;
+    result.kittyImageStorageLimitBytes = config.kittyImageStorageLimitBytes;
     result.scrollbar = config.scrollbar;
     result.bellFeatures = config.bellFeatures;
     result.bellAudioPath = config.bellAudioPath;

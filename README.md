@@ -905,9 +905,12 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   device-pixel cell boundary, with exact per-cell fallback when Qt's result
   leaves the grid. Public `libghostty-vt` does not expose Ghostty's selected
   faces, HarfBuzz runs, or positioned glyph cells, so Qt still owns the final
-  platform result. There is no color-emoji pipeline or Kitty graphics/inline
-  image renderer. Ghostty's embedded fallback stack, generated box sprites,
-  and icon/Nerd Font glyph classification are likewise unavailable;
+  platform result. There is no color-emoji pipeline. Kitty graphics supports
+  ordinary placements, all three z layers, PNG/direct/file media, retained
+  generation-keyed textures, and software/RHI rendering; Unicode virtual
+  placements still need expanded viewport data from public `libghostty-vt`.
+  Ghostty's embedded fallback stack, generated box sprites, and icon/Nerd Font
+  glyph classification are likewise unavailable;
   `font-family` stays partial and
   `adjust-box-thickness`/`adjust-icon-height` stay planned.
 - Hyperlink interaction covers explicit OSC 8 destinations and the built-in

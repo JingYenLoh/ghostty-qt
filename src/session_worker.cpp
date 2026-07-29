@@ -903,6 +903,8 @@ bool SessionWorker::createTerminal()
         .geometry = geometry_,
         .scrollbackBytes =
             scrollbackLimitInBytes(options_.scrollbackLimit, geometry_.columns),
+        .kittyImageStorageLimitBytes =
+            options_.runtime.kittyImageStorageLimitBytes,
         .appearance = options_.runtime.appearance,
         .colorScheme = options_.runtime.colorScheme,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
@@ -935,6 +937,11 @@ void SessionWorker::applyRuntimeOptions(
         options_.runtime.scrollToBottom.output != options.scrollToBottom.output;
     const bool appearanceChanged =
         options_.runtime.appearance != options.appearance;
+    const bool kittyImageStorageLimitChanged =
+        options_.runtime.kittyImageStorageLimitBytes
+        != options.kittyImageStorageLimitBytes;
+    const quint32 previousKittyImageStorageLimit =
+        options_.runtime.kittyImageStorageLimitBytes;
     const bool linkUrlChanged = options_.runtime.linkUrl != options.linkUrl;
     const QVector<quint32> previousSelectionWordChars =
         options_.runtime.selectionWordChars;
@@ -951,6 +958,9 @@ void SessionWorker::applyRuntimeOptions(
         || !clickRepeatIntervalChanged
         || vt_->setClickRepeatIntervalMilliseconds(
             options.clickRepeatIntervalMilliseconds);
+    const bool kittyImageStorageLimitApplied = vt_ == nullptr
+        || !kittyImageStorageLimitChanged
+        || vt_->setKittyImageStorageLimit(options.kittyImageStorageLimitBytes);
     if (vt_ != nullptr) {
         vt_->setColorScheme(options.colorScheme);
         vt_->setClipboardWriteAccess(options.clipboardWrite);
@@ -1026,6 +1036,15 @@ void SessionWorker::applyRuntimeOptions(
             previousClickRepeatInterval;
         Q_EMIT errorOccurred(QStringLiteral(
             "Failed to apply click repeat interval to libghostty-vt."));
+    }
+    if (!kittyImageStorageLimitApplied) {
+        options_.runtime.kittyImageStorageLimitBytes =
+            previousKittyImageStorageLimit;
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Failed to apply Kitty image storage limit to libghostty-vt."));
+    } else if (vt_ != nullptr && kittyImageStorageLimitChanged) {
+        markTerminalContentChanged();
+        scheduleFrame();
     }
     if (vt_ != nullptr && appearanceChanged) {
         if (!vt_->setAppearance(options.appearance)) {

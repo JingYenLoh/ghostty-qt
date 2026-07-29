@@ -22,6 +22,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(GNUInstallDirs)
 
 option(GHOSTTY_QT_BUILD_TESTS "Build ghostty-qt tests" ON)
+option(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS
+    "Build opt-in terminal renderer microbenchmarks" OFF)
 option(GHOSTTY_QT_ALLOW_UNPINNED_GHOSTTY "Allow a Ghostty checkout other than the pinned revision" OFF)
 option(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG
     "Build the pinned Ghostty application config parser" ON)
@@ -708,6 +710,10 @@ add_library(ghostty-qt-terminal-rendering STATIC
     src/terminal_backdrop.h
     src/terminal_backdrop_qsg.cpp
     src/terminal_backdrop_qsg.h
+    src/terminal_kitty_graphics.cpp
+    src/terminal_kitty_graphics.h
+    src/terminal_kitty_graphics_qsg.cpp
+    src/terminal_kitty_graphics_qsg.h
     src/terminal_rect_batch.cpp
     src/terminal_rect_batch.h
 )
@@ -739,6 +745,23 @@ qt_add_shaders(
     OUTPUTS
         terminal_backdrop.vert.qsb
         terminal_backdrop.frag.qsb
+)
+qt_add_shaders(
+    ghostty-qt-terminal-rendering
+    ghostty_qt_terminal_kitty_shaders
+
+    BATCHABLE
+
+    PREFIX
+        "/ghostty-qt/shaders"
+
+    FILES
+        shaders/terminal_kitty.vert
+        shaders/terminal_kitty.frag
+
+    OUTPUTS
+        terminal_kitty.vert.qsb
+        terminal_kitty.frag.qsb
 )
 
 add_library(ghostty-qt-vt-adapter STATIC
@@ -1139,4 +1162,7 @@ if(GHOSTTY_QT_BUILD_TESTS)
     enable_testing()
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
     add_subdirectory(tests)
+elseif(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
+    message(FATAL_ERROR
+        "GHOSTTY_QT_BUILD_RENDER_BENCHMARKS requires GHOSTTY_QT_BUILD_TESTS")
 endif()

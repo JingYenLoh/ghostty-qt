@@ -591,14 +591,25 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    resize, viewport scroll, and Ghostty full-dirty states produce a value-only
    full-grid update. Ordinary output copies only Ghostty's indexed dirty rows;
    colors, the effective 256-entry palette, cursor state, scrollbar metadata,
-   and each cell's OSC 8 presence bit cross as values. Each published update
-   also carries the worker's current terminal-content revision.
+   and each cell's OSC 8 presence bit cross as values. Non-virtual Kitty
+   placements and their decoded pixels are copied into immutable,
+   generation-stamped Qt snapshots while every libghostty handle is still
+   valid on the worker thread. Each published update also carries the worker's
+   current terminal-content revision.
 5. A queued Qt signal copies the update across the thread boundary. The pane
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
 6. `TerminalPane::updatePaintNode()` keeps fixed before-text/main-text/after-text
-   groups followed by one persistent full-pane unfocused-split rectangle.
+   groups, three persistent Kitty-graphics insertion points, and frontend
+   overlays followed by one persistent full-pane unfocused-split rectangle.
+   The image insertion points are ordered below cell backgrounds, between cell
+   backgrounds and terminal foreground content, and above terminal foreground
+   content but below input-method and pane overlays. Ordinary Kitty placements
+   populate those points from the retained value snapshot. Textures are keyed
+   by libghostty's process-unique image generation, so metadata updates,
+   scrolling, and placement-only mutations rebuild at most geometry; replacing
+   an image ID uploads the new generation and deletion evicts it.
    Main terminal text is retained in one public `QSGTextNode` per visible row;
    accepted row epochs rebuild only changed rows, while font, geometry,
    appearance, palette, search, and frame-shape changes rebuild the complete
@@ -609,15 +620,22 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    state is absent from the retained text-state key. Existing focus-driven
    block-cursor changes keep their targeted row rebuilds, while search
    decoration changes retain their full text-state invalidation.
-7. Nine retained `TerminalRectBatch` layers draw cell backgrounds, selections,
-   search results, cursor shapes, text decorations, and scene-graph overlays
-   in the same painter order. Their two CPU vectors exchange storage instead
+7. Cell-derived backgrounds, resolved glyph/decor colors, and before/after-text
+   decorations are retained in one render-thread cache per visible row.
+   Independent solid-row epochs cover terminal dirty rows; search and
+   hyperlink mask replacement marks only rows whose bits changed. A global
+   solid-state key invalidates all rows for palette, appearance,
+   cell-affecting opacity, geometry, or device-pixel changes. Block-cursor
+   transitions rebuild only their old and new rows, while bar/underline cursor
+   movement and metadata/frontend-overlay updates reuse every row plan. Cached
+   rows are flattened in painter order into the existing nine
+   `TerminalRectBatch` layers; their two CPU vectors exchange storage instead
    of copying, identical batches do not dirty the scene graph, RHI geometry
    grows only when its retained capacity is insufficient, and the software
    adaptation hides and reuses a pool of `QSGSimpleRectNode`s. Each nonempty
-   cell in a rebuilt row is shaped with `QTextLayout` and placed at an explicit
-   grid coordinate. This avoids fallback-font and wide-cell advances shifting
-   later cells. Cell values retain foreground provenance, a separate
+   cell in a rebuilt text row is shaped with `QTextLayout` and placed at an
+   explicit grid coordinate. This avoids fallback-font and wide-cell advances
+   shifting later cells. Cell values retain foreground provenance, a separate
    explicit-background bit, and bold, faint, inverse, invisible, underline,
    strike-through, overline, and text-blink attributes so frontend-only
    appearance rules do not have to be flattened at the worker boundary. The
@@ -678,14 +696,15 @@ not render that public vertex-color material, so the test/fallback path retains
 one reusable `QSGSimpleRectNode` pool per layer for correctness.
 No intermediate raster-image upload sits between the frame and the scene
 graph. Qt's implicitly shared frame snapshot is normally an O(1) reference-count
-operation rather than a deep cell copy. The renderer still scans visible cells
-on every presented update, but unchanged rectangle batches skip geometry
-updates and all batches reuse their CPU and scene-graph allocation capacity.
-During ordinary sparse updates, the renderer shapes text and recreates glyph
-data only for rows whose persistent epochs or derived block-cursor text state
-changed; global text-state changes rebuild the complete text layer. Larger
-compatible text runs and row-epoch-based rectangle generation remain possible
-CPU-side optimizations.
+operation rather than a deep cell copy. During ordinary sparse updates, the
+renderer resolves solid presentation and shapes text only for rows whose
+persistent epochs or derived block-cursor state changed. Metadata-only,
+frontend-overlay, and non-block cursor updates perform no cell-presentation
+scan. Cached solid rows are still flattened into whole painter-layer vectors,
+and a changed vector rewrites that layer's complete geometry; unchanged
+batches skip geometry updates and every batch reuses its CPU and scene-graph
+allocation capacity. Global text-state changes, including search-decoration
+mask replacement, still rebuild the complete text layer.
 
 The renderer resolves configured selection, search, and cursor cell-relative
 aliases against each cell's visual colors, applies Ghostty's bold
@@ -1712,6 +1731,35 @@ integration coverage, but scaled varying-alpha edges and repeated tile seams
 are source-resolution approximations rather than claims of pixel identity
 with Ghostty's shader.
 
+Kitty graphics use libghostty as the sole protocol parser and storage owner.
+Direct RGB/RGBA, zlib, PNG, file, temporary-file, and shared-memory
+transmission all terminate in Ghostty's decoded image store; the snapshot
+bridge accepts every decoded public format, including grayscale and
+grayscale-alpha.
+The adapter installs one process-wide Qt PNG decoder, aligns Qt's allocation
+ceiling with Kitty's 400 MiB decoded-image maximum, and enables every
+libghostty medium. `image-storage-limit` defaults to Ghostty's 320,000,000
+bytes and applies live to every screen.
+
+The worker deep-copies borrowed decoded pixels into an opaque straight-RGB
+plane and an opaque replicated-alpha plane before terminal mutation can
+invalidate the handles. Hardware RHI backends filter those planes separately
+and premultiply in a custom shader; the software scene graph premultiplies on
+the CPU before creating a simple texture node. Physical placement offsets,
+source rectangles, and destination sizes are projected through the exact
+libghostty cell-pixel geometry, cropped to the visible grid, and hidden during
+asynchronous frame/layout geometry disagreement instead of being stretched.
+Qt renderer mirrors are additional to Ghostty's configured storage budget;
+the two CPU planes and, on hardware, two textures can substantially amplify
+memory use for large images. A future packed straight-alpha texture path should
+reduce that amplification without weakening interpolation correctness.
+
+Ordinary placements are supported. Unicode virtual placements remain partial:
+their definitions are detectable and their U+10EEEE placeholders are kept
+blank, but the public library deliberately reports no expanded viewport
+fragments. The required renderer-neutral iterator is tracked in
+`REQUIRES_UPSTREAM.md`.
+
 `window-padding-color=background` leaves the backdrop visible in every padding
 region. Both extension modes copy the nearest resolved cell-background layer
 through the retained grid transform: left and right always extend, including
@@ -2705,15 +2753,17 @@ be checked interactively in a real Wayland session.
 - Dirty-row value updates keep the thread boundary small for ordinary output,
   and persistent row text nodes restrict `QTextLayout` work to those rows.
   Maximal compatible text runs replace ordinary per-cell layouts, with
-  boundary validation and per-cell fallback for unsafe runs. Solid-layer
-  generation still scans the visible grid, although retained batches skip
-  unchanged uploads and reuse established capacity. Row-epoch-based
-  solid-geometry generation remains a future optimization.
+  boundary validation and per-cell fallback for unsafe runs. Solid
+  presentation is cached by row, so sparse output and cursor-only updates plan
+  only damaged rows. The cached rows are still flattened into each complete
+  painter-layer vector; when one row changes, the corresponding RHI geometry
+  upload is currently whole-layer rather than a dirty subrange.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends and
   shapes compatible cells together. It cannot consume Ghostty's private
   selected-face and positioned-glyph plan, so exact fallback, synthesis,
   FreeType flags, and cluster placement remain Qt-owned approximations. There
-  is no color-emoji pipeline or Kitty graphics/inline-image renderer.
+  is no color-emoji pipeline. Kitty graphics render ordinary placements;
+  Unicode virtual placements await an expanded-placement public API.
 - `alpha-blending` remains planned. Qt Quick owns text and primitive blending,
   and the current public scene-graph path does not expose an exact mapping for
   Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented

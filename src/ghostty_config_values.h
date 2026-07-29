@@ -227,6 +227,7 @@ struct GhosttyConfigValues {
     ResizeOverlayOptions resizeOverlay;
 
     quint64 scrollbackLimitBytes = 0;
+    quint32 kittyImageStorageLimitBytes = 320'000'000;
     bool scrollbackCompression = true;
     ScrollbarPolicy scrollbar = ScrollbarPolicy::System;
     BellFeatures bellFeatures;

@@ -316,6 +316,11 @@ private:
     void scheduleDeferredSessionStart();
     void tryDeferredSessionStart();
     void markTextRowsChangedLocked(const TerminalUpdate &update);
+    void markSolidRowsChangedLocked(const TerminalUpdate &update);
+    void markSolidMaskRowsChangedLocked(const QBitArray &oldMask,
+                                        int oldColumns, int oldRows,
+                                        const QBitArray &newMask,
+                                        int newColumns, int newRows);
     void syncCursorBlink(bool resetPhase);
     void refreshBackgroundImage();
     void setFontPointSize(qreal points);
@@ -440,6 +445,8 @@ private:
     // coalesces several GUI updates before one scene-graph synchronization.
     QVector<quint64> textRowEpochs_;
     quint64 textRowEpoch_ = 0;
+    QVector<quint64> solidRowEpochs_;
+    quint64 solidRowEpoch_ = 0;
     bool hasFrame_ = false;
     // Mirrors the row count requested from the worker. While a resize is in
     // flight, stale frames must not make page actions use the previous height.

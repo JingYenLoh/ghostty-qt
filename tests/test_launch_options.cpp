@@ -200,6 +200,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
 
     values.scrollbackLimitBytes = 50'000'000;
+    values.kittyImageStorageLimitBytes = 123'456'789;
     values.scrollbackCompression = false;
     values.bellAudioPath = GhosttyConfigPath{
         .path = QStringLiteral("/work/bell.oga"),
@@ -1036,6 +1037,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QVERIFY(configResult.typography == completeTypography());
     QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
+    QCOMPARE(configResult.kittyImageStorageLimitBytes, quint32{123'456'789});
 
     for (const double unusableSize : {0.0, -2.0}) {
         GhosttyConfigSnapshot unusable = snapshot;

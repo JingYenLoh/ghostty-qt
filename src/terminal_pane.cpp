@@ -332,6 +332,7 @@ TerminalPane::TerminalPane(
                     hasFrame_ = hasFrame_ || applied;
                     if (applied) {
                         markTextRowsChangedLocked(terminalUpdate);
+                        markSolidRowsChangedLocked(terminalUpdate);
                         backgroundChanged = terminalUpdate.fullFrame
                             || terminalUpdate.colorsChanged;
                     }
@@ -1054,6 +1055,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
     updated.scrollbackCompression = options.scrollbackCompression;
+    updated.kittyImageStorageLimitBytes = options.kittyImageStorageLimitBytes;
     updated.scrollToBottom = options.scrollToBottom;
     updated.abnormalCommandExitRuntimeMilliseconds =
         options.abnormalCommandExitRuntimeMilliseconds;
@@ -1412,6 +1414,14 @@ void TerminalPane::navigateSearch(int direction)
 
 void TerminalPane::clearSearchDecorationsLocked()
 {
+    markSolidMaskRowsChangedLocked(
+        searchCandidateCellMask_, searchDecorationColumns_,
+        searchDecorationRows_, {}, searchDecorationColumns_,
+        searchDecorationRows_);
+    markSolidMaskRowsChangedLocked(
+        searchSelectedCellMask_, searchDecorationColumns_,
+        searchDecorationRows_, {}, searchDecorationColumns_,
+        searchDecorationRows_);
     searchCandidateCellMask_.clear();
     searchSelectedCellMask_.clear();
     searchDecorationRevision_ = 0;
@@ -1427,29 +1437,38 @@ void TerminalPane::clearPendingSearchUpdateLocked()
 void TerminalPane::installSearchDecorationsLocked(
     const TerminalSearchUpdate &searchUpdate)
 {
-    searchCandidateCellMask_.clear();
-    searchSelectedCellMask_.clear();
+    QBitArray candidateCellMask;
+    QBitArray selectedCellMask;
+    if (!searchUpdate.active || searchUpdate.columns <= 0
+        || searchUpdate.rows <= 0) {
+        // Keep both masks empty.
+    } else {
+        const qsizetype columnCount = searchUpdate.columns;
+        const qsizetype maskSize = searchUpdate.visibleCellMask.size();
+        const bool masksEmpty =
+            maskSize == 0 && searchUpdate.selectedCellMask.isEmpty();
+        const bool masksMatchGrid = maskSize > 0
+            && maskSize == searchUpdate.selectedCellMask.size()
+            && maskSize % columnCount == 0
+            && maskSize / columnCount == searchUpdate.rows;
+        if (masksEmpty || masksMatchGrid) {
+            candidateCellMask = searchUpdate.visibleCellMask;
+            selectedCellMask = searchUpdate.selectedCellMask;
+        }
+    }
+    markSolidMaskRowsChangedLocked(searchCandidateCellMask_,
+                                   searchDecorationColumns_,
+                                   searchDecorationRows_, candidateCellMask,
+                                   searchUpdate.columns, searchUpdate.rows);
+    markSolidMaskRowsChangedLocked(searchSelectedCellMask_,
+                                   searchDecorationColumns_,
+                                   searchDecorationRows_, selectedCellMask,
+                                   searchUpdate.columns, searchUpdate.rows);
+    searchCandidateCellMask_ = std::move(candidateCellMask);
+    searchSelectedCellMask_ = std::move(selectedCellMask);
     searchDecorationRevision_ = searchUpdate.contentRevision;
     searchDecorationColumns_ = searchUpdate.columns;
     searchDecorationRows_ = searchUpdate.rows;
-    if (!searchUpdate.active || searchUpdate.columns <= 0
-        || searchUpdate.rows <= 0) {
-        return;
-    }
-
-    const qsizetype columnCount = searchUpdate.columns;
-    const qsizetype maskSize = searchUpdate.visibleCellMask.size();
-    const bool masksEmpty =
-        maskSize == 0 && searchUpdate.selectedCellMask.isEmpty();
-    const bool masksMatchGrid = maskSize > 0
-        && maskSize == searchUpdate.selectedCellMask.size()
-        && maskSize % columnCount == 0
-        && maskSize / columnCount == searchUpdate.rows;
-    if (!masksEmpty && !masksMatchGrid) {
-        return;
-    }
-    searchCandidateCellMask_ = searchUpdate.visibleCellMask;
-    searchSelectedCellMask_ = searchUpdate.selectedCellMask;
 }
 
 void TerminalPane::handleSearchUpdate(const TerminalSearchUpdate &searchUpdate)
@@ -1567,6 +1586,75 @@ void TerminalPane::markTextRowsChangedLocked(const TerminalUpdate &update)
     }
     for (const TerminalRowUpdate &row : update.dirtyRows) {
         textRowEpochs_[row.row] = textRowEpoch_;
+    }
+}
+
+void TerminalPane::markSolidRowsChangedLocked(const TerminalUpdate &update)
+{
+    if (!update.fullFrame && update.dirtyRows.isEmpty()) {
+        return;
+    }
+
+    ++solidRowEpoch_;
+
+    if (update.fullFrame || solidRowEpochs_.size() != frame_.rows) {
+        solidRowEpochs_.fill(solidRowEpoch_, frame_.rows);
+        return;
+    }
+    for (const TerminalRowUpdate &row : update.dirtyRows) {
+        solidRowEpochs_[row.row] = solidRowEpoch_;
+    }
+}
+
+void TerminalPane::markSolidMaskRowsChangedLocked(const QBitArray &oldMask,
+                                                  int oldColumns, int oldRows,
+                                                  const QBitArray &newMask,
+                                                  int newColumns, int newRows)
+{
+    if (oldMask.isEmpty() && newMask.isEmpty()) {
+        return;
+    }
+    if (oldMask == newMask && oldColumns == newColumns && oldRows == newRows) {
+        return;
+    }
+
+    ++solidRowEpoch_;
+    const bool hasOldMask = !oldMask.isEmpty();
+    const bool hasNewMask = !newMask.isEmpty();
+    const bool oldMaskMatchesShape = !hasOldMask
+        || (oldColumns > 0 && oldRows > 0
+            && oldMask.size() == static_cast<qsizetype>(oldColumns) * oldRows);
+    const bool newMaskMatchesShape = !hasNewMask
+        || (newColumns > 0 && newRows > 0
+            && newMask.size() == static_cast<qsizetype>(newColumns) * newRows);
+    const int columns = hasNewMask ? newColumns : oldColumns;
+    const int rows = hasNewMask ? newRows : oldRows;
+    if (solidRowEpochs_.size() != frame_.rows || !oldMaskMatchesShape
+        || !newMaskMatchesShape
+        || (hasOldMask && hasNewMask
+            && (oldColumns != newColumns || oldRows != newRows))
+        || columns != frame_.columns || rows != frame_.rows) {
+        solidRowEpochs_.fill(solidRowEpoch_, frame_.rows);
+        return;
+    }
+
+    for (int row = 0; row < rows; ++row) {
+        const qsizetype rowStart = static_cast<qsizetype>(row) * columns;
+        bool rowChanged = false;
+        for (int column = 0; column < columns; ++column) {
+            const qsizetype index = rowStart + column;
+            const bool oldValue =
+                index < oldMask.size() && oldMask.testBit(index);
+            const bool newValue =
+                index < newMask.size() && newMask.testBit(index);
+            if (oldValue != newValue) {
+                rowChanged = true;
+                break;
+            }
+        }
+        if (rowChanged && row < solidRowEpochs_.size()) {
+            solidRowEpochs_[row] = solidRowEpoch_;
+        }
     }
 }
 
@@ -3816,6 +3904,10 @@ void TerminalPane::clearHyperlinkDecoration()
     {
         QMutexLocker locker(&renderMutex_);
         hadHighlight = !hoveredHyperlinkCellMask_.isEmpty();
+        markSolidMaskRowsChangedLocked(
+            hoveredHyperlinkCellMask_, hoveredHyperlinkColumns_,
+            hoveredHyperlinkRows_, {}, hoveredHyperlinkColumns_,
+            hoveredHyperlinkRows_);
         hoveredHyperlinkCellMask_.clear();
         hoveredHyperlinkColumns_ = 0;
         hoveredHyperlinkRows_ = 0;
@@ -3995,6 +4087,9 @@ void TerminalPane::handleHyperlinkResult(quint64 contentRevision,
     hoveredHyperlinkCell_ = hoverCell_;
     {
         QMutexLocker locker(&renderMutex_);
+        markSolidMaskRowsChangedLocked(
+            hoveredHyperlinkCellMask_, hoveredHyperlinkColumns_,
+            hoveredHyperlinkRows_, indexes, columns, rows);
         hoveredHyperlinkCellMask_ = std::move(indexes);
         hoveredHyperlinkColumns_ = columns;
         hoveredHyperlinkRows_ = rows;

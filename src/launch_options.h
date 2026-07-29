@@ -95,6 +95,9 @@ struct LaunchOptions {
     TerminalPaddingOptions padding;
     ScrollbackLimit scrollbackLimit;
     bool scrollbackLimitExplicit = false;
+    // Live per-screen Kitty image storage budget. Unlike scrollback, the
+    // public libghostty API can resize this allocation for existing screens.
+    quint32 kittyImageStorageLimitBytes = 320'000'000;
     // Compression is a live session policy. Disabling it leaves existing
     // compressed pages intact while preventing further background work.
     bool scrollbackCompression = true;

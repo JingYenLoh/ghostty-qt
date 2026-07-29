@@ -1,6 +1,7 @@
 #pragma once
 
 #include "terminal_actions.h"
+#include "terminal_kitty_graphics.h"
 
 #include <QBitArray>
 #include <QByteArray>
@@ -177,6 +178,7 @@ struct TerminalFrame {
     quint64 scrollTotal = 0;
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
+    std::shared_ptr<const TerminalKittyGraphicsSnapshot> kittyGraphics;
     // Monotonic worker-owned revision for terminal content and viewport
     // mutations. New hyperlink anchors require the exact frame revision that
     // supplied their initial viewport coordinate; accepted anchors then follow
@@ -223,6 +225,9 @@ struct TerminalUpdate {
     quint64 scrollOffset = 0;
     quint64 scrollLength = 0;
 
+    bool kittyGraphicsChanged = false;
+    std::shared_ptr<const TerminalKittyGraphicsSnapshot> kittyGraphics;
+
     quint64 contentRevision = 0;
 
     // SessionWorker sets this only for PTY output activity. It is transport
@@ -233,7 +238,8 @@ struct TerminalUpdate {
     bool hasChanges() const
     {
         return fullFrame || !dirtyRows.isEmpty() || colorsChanged
-            || cursorChanged || scrollbarChanged || resetCursorBlink;
+            || cursorChanged || scrollbarChanged || kittyGraphicsChanged
+            || resetCursorBlink;
     }
 };
 
@@ -359,6 +365,9 @@ struct TerminalClipboardWriteRequest {
         frame.scrollTotal = update.scrollTotal;
         frame.scrollOffset = update.scrollOffset;
         frame.scrollLength = update.scrollLength;
+    }
+    if (update.fullFrame || update.kittyGraphicsChanged) {
+        frame.kittyGraphics = update.kittyGraphics;
     }
     frame.contentRevision = update.contentRevision;
     return true;

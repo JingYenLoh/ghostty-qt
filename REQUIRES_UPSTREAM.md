@@ -532,6 +532,47 @@ commit:
 6. Promote `clear_screen` in `docs/ghostty-parity.json` only after the public
    adapter and PTY-ordering tests pass.
 
+## Expanded Kitty Unicode placement rendering
+
+**Status:** ordinary Kitty placements are implemented; Unicode virtual
+placements are blocked on an upstream public API.
+
+Official `libghostty-vt` exposes decoded image bytes, image and storage
+generations, ordinary placement iteration, layer ordering, source rectangles,
+physical destination sizes, and viewport positions. That is sufficient for
+ghostty-qt to render ordinary placements without borrowing a terminal-owned
+handle across threads.
+
+Virtual placements are different. A `U=1` placement is only a definition.
+Ghostty's renderer privately scans visible cells for U+10EEEE placeholders,
+decodes placement and image IDs from combining codepoints, applies per-cell
+row bookkeeping, and expands each match into a clipped render fragment.
+`ghostty_kitty_graphics_placement_render_info()` intentionally marks a virtual
+definition invisible and the public iterator does not expose those expanded
+fragments. Reimplementing the placeholder scan in Qt would duplicate
+terminal-owned rules and could diverge across reflow, scrollback compression,
+wide cells, and future protocol changes.
+
+The preferred append-only contract is an expanded-render-placement iterator
+for a terminal viewport. Each result should identify the image and placement
+generations, image and placement IDs, z index, viewport cell origin, physical
+pixel offset and destination size, and resolved source rectangle. Results must
+cover both ordinary and virtual fragments in Ghostty renderer order, or expose
+an explicit kind while preserving an equivalent stable sort. All returned
+handles and pixel pointers may remain borrowed under the existing
+no-terminal-mutation lifetime rule.
+
+Public C acceptance should cover multiple placeholders for one definition,
+combining-codepoint IDs, clipping on all viewport edges, wide and spacer
+cells, scrolling and reflow, primary/alternate screens, deletion and image
+replacement generations, malformed placeholders, and no-placeholder
+definitions.
+
+After that contract reaches an official commit, ghostty-qt can replace its
+ordinary-only snapshot builder with the expanded iterator, remove the
+diagnostic `containsVirtualPlacements` limitation, and add identical RHI and
+software rendering tests without changing the Qt layer or texture architecture.
+
 ## Exact font resolution and terminal shaping
 
 **Status:** the finalized typography configuration, Qt-owned face resolution,

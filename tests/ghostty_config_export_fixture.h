@@ -544,6 +544,7 @@ inline QJsonObject values()
         {QStringLiteral("vt-kam-allowed"), true},
         {QStringLiteral("scrollback-limit"),
          QStringLiteral("18446744073709551615")},
+        {QStringLiteral("image-storage-limit"), 123456789},
         {QStringLiteral("scrollback-compression"), false},
         {QStringLiteral("scrollbar"), QStringLiteral("never")},
         {QStringLiteral("bell-features"),
