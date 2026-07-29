@@ -737,6 +737,8 @@ fn writeValues(
     try json.write(@tagName(config.@"confirm-close-surface"));
     try json.objectField("clipboard-trim-trailing-spaces");
     try json.write(config.@"clipboard-trim-trailing-spaces");
+    try json.objectField("clipboard-codepoint-map");
+    try writeClipboardCodepointMap(json, &config.@"clipboard-codepoint-map");
     try json.objectField("clipboard-write");
     try json.write(@tagName(config.@"clipboard-write"));
     try json.objectField("clipboard-paste-protection");
@@ -1182,6 +1184,37 @@ fn writeFontCodepointMap(
         try json.write(range[1]);
         try json.objectField("family");
         try json.write(descriptor.family orelse "");
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn writeClipboardCodepointMap(json: *std.json.Stringify, mappings: anytype) !void {
+    try json.beginArray();
+    const ranges = mappings.map.list.items(.range);
+    const replacements = mappings.map.list.items(.replacement);
+    for (ranges, replacements) |range, replacement| {
+        try json.beginObject();
+        try json.objectField("first");
+        try json.write(range[0]);
+        try json.objectField("last");
+        try json.write(range[1]);
+        try json.objectField("replacement");
+        try json.beginObject();
+        try json.objectField("kind");
+        switch (replacement) {
+            .codepoint => |codepoint| {
+                try json.write("codepoint");
+                try json.objectField("value");
+                try json.write(codepoint);
+            },
+            .string => |text| {
+                try json.write("text");
+                try json.objectField("value");
+                try json.write(text);
+            },
+        }
+        try json.endObject();
         try json.endObject();
     }
     try json.endArray();

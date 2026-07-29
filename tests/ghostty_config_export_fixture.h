@@ -219,6 +219,32 @@ inline QJsonObject codepointFontMap(quint32 first, quint32 last,
     };
 }
 
+inline QJsonObject clipboardCodepointReplacement(quint32 codepoint)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("codepoint")},
+        {QStringLiteral("value"), static_cast<qint64>(codepoint)},
+    };
+}
+
+inline QJsonObject clipboardTextReplacement(const QString &text)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("text")},
+        {QStringLiteral("value"), text},
+    };
+}
+
+inline QJsonObject clipboardCodepointMap(quint32 first, quint32 last,
+                                         QJsonObject replacement)
+{
+    return {
+        {QStringLiteral("first"), static_cast<qint64>(first)},
+        {QStringLiteral("last"), static_cast<qint64>(last)},
+        {QStringLiteral("replacement"), std::move(replacement)},
+    };
+}
+
 inline QJsonObject syntheticStyle(bool bold, bool italic, bool boldItalic)
 {
     return {
@@ -527,6 +553,21 @@ inline QJsonObject values()
         {QStringLiteral("bell-audio-volume"), 0.625},
         {QStringLiteral("confirm-close-surface"), QStringLiteral("always")},
         {QStringLiteral("clipboard-trim-trailing-spaces"), false},
+        {QStringLiteral("clipboard-codepoint-map"),
+         QJsonArray{
+             clipboardCodepointMap(
+                 0x2500U, 0x257fU,
+                 clipboardCodepointReplacement(static_cast<quint32>('-'))),
+             clipboardCodepointMap(
+                 0x2500U, 0x2500U,
+                 clipboardTextReplacement(QStringLiteral("line"))),
+             clipboardCodepointMap(0x1f642U, 0x1f642U,
+                                   clipboardCodepointReplacement(0x1f47bU)),
+             clipboardCodepointMap(0x200bU, 0x200bU,
+                                   clipboardTextReplacement(QString{})),
+             clipboardCodepointMap(0x110000U, 0x1fffffU,
+                                   clipboardCodepointReplacement(0x1fffffU)),
+         }},
         {QStringLiteral("clipboard-write"), QStringLiteral("ask")},
         {QStringLiteral("clipboard-paste-protection"), false},
         {QStringLiteral("clipboard-paste-bracketed-safe"), true},

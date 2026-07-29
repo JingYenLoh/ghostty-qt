@@ -222,6 +222,7 @@ private:
     void clearSelectionAfterKey(bool modifier, bool escape);
     bool keyboardInputSuppressed() const;
     void syncKeyboardActionMode();
+    [[nodiscard]] QString clipboardSelectionText();
     void copySelectionTo(TerminalClipboardDestination destination,
                          bool clearAfterCopy);
     void copySelectionOnSelect();

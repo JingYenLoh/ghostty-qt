@@ -396,6 +396,10 @@
       "scope": "qt_mapping",
       "note": "The finalized optional raw value is resolved once before D-Bus arbitration or native surface creation. A valid GApplication/D-Bus application ID becomes both Qt's Wayland desktop-file identity and the single-instance service name; an invalid configured value emits a byte-exact diagnostic and falls back to the validated build application ID. Live reload deliberately cannot change this startup-only process identity."
     },
+    "clipboard-codepoint-map": {
+      "status": "partial",
+      "note": "Schema v1 preserves Ghostty's finalized ordered u21 ranges and codepoint-or-UTF-8 replacements, including empty deletion strings and non-scalar codepoints. SessionWorker applies the live list after plain selection formatting with Ghostty's last-overlapping-entry-wins rule, emitting U+FFFD for a non-scalar codepoint exactly like the pinned formatter. Explicit action/context copies, automatic primary/standard copies, and select_all share that worker-atomic path; title, URL, terminal-file, and search consumers remain unmapped. Status is partial because automatic and mixed copies still lack Ghostty's exact styled MIME payload and upstream must define mapping behavior for VT/HTML."
+    },
     "clipboard-paste-bracketed-safe": {
       "status": "supported",
       "note": "The live default-true policy trusts newlines only while Ghostty reports bracketed-paste mode, still rejects an embedded end fence, and shares one mode snapshot with encoding."
@@ -425,6 +429,10 @@
       "scope": "qt_mapping",
       "note": "Finalized title, description, action key, and canonical serialized action values populate each window-local Qt model after unsupported frontend actions are removed. On every palette opening they are combined with current typed surface-target rows, then prepared and deterministically sorted using colon-normalized case-insensitive keys. Filtering case-folds the query against cached keys for that row snapshot, equivalent replacement preserves selection by typed command identity, and configured actions close the modal before executing against the source window's then-current active pane."
     },
+    "config-default-files": {
+      "status": "supported",
+      "note": "The Ghostty CLI-only boolean is parsed with the pinned boolean grammar and forwarded to every private-helper query. False discards standard user configuration candidates before replaying explicit CLI/config-file sources; successful snapshots omit those candidates from the live watcher set while still retaining explicit recursive includes. A config-file occurrence intentionally cannot toggle the value, matching pinned Ghostty, and single-instance launch forwarding preserves an explicit startup override."
+    },
     "config-file": {
       "status": "supported",
       "note": "The pinned parser owns recursive include precedence and diagnostics. Existing include files, directories containing missing optional or required includes, atomic replacements, and failed-load retries all participate in asynchronous live reload while the last valid generation remains active."
@@ -435,7 +443,11 @@
     },
     "copy-on-select": {
       "status": "partial",
-      "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies currently contain plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
+      "note": "Linux false, primary-only true, and clipboard destination modes apply live, including standard fallback when primary selection is unavailable. Automatic copies use the same live trim and clipboard-codepoint-map path as explicit plain copies, but currently contain only plain text instead of Ghostty's mixed plain-plus-HTML payload; the missing exact public formatter contract is tracked in REQUIRES_UPSTREAM.md."
+    },
+    "cursor-click-to-move": {
+      "status": "blocked_upstream",
+      "note": "Ghostty gates this feature on its private live semantic click mode and computes exact prompt-relative shell movement inside Surface. Official libghostty-vt exposes neither that mode nor the cursor-click movement operation; duplicating it from visible cells would diverge across wrapped prompts, continuations, and compressed scrollback."
     },
     "cursor-color": {
       "status": "supported",
@@ -572,6 +584,10 @@
     "grapheme-width-method": {
       "status": "blocked_upstream",
       "note": "The standalone public libghostty-vt constructor does not expose Ghostty's legacy versus Unicode grapheme-width policy for new terminals. Recomputing clusters in Qt would diverge from the terminal model and mode 2027 override."
+    },
+    "input": {
+      "status": "supported",
+      "note": "The strict helper exports Ghostty's finalized ordered raw/path variants as lossless byte arrays. Before creating launch pipes or forking, SessionWorker resolves every path relative to the frontend process working directory, requires a regular readable file, and reads at most the exact 10 MiB limit; any failure aborts the entire pane without a child or cgroup move. Distinct chunks retain source order and are queued before started is published, so later GUI input cannot overtake them. Reload affects only subsequently constructed panes, including leaving an already deferred pane's immutable launch snapshot unchanged."
     },
     "initial-command": {
       "status": "supported",
@@ -1241,7 +1257,7 @@
         },
         "copy_to_clipboard": {
           "status": "partial",
-          "note": "Unmapped plain copy uses Ghostty's public selection formatter with live trailing-space trimming and worker-atomic optional clearing. Selection presence and formatting are worker-authoritative even across separate input events. Correlated local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits plain text, while mapped plain, VT, HTML, and exact mixed formatting require clipboard-specific formatter state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
+          "note": "Plain copy uses Ghostty's public selection formatter with live trailing-space trimming, then applies the finalized ordered clipboard-codepoint-map with last-overlap precedence before worker-atomic optional clearing. Selection presence and formatting are worker-authoritative even across separate input events. Correlated local chains commit the clipboard before continuing, while all/global chains prepare panes concurrently and commit in stable workspace/tab/tree order before advancing. The accepted mixed spelling currently emits this mapped plain text, while VT, HTML, and exact mixed formatting require clipboard-specific styled state not exposed by official libghostty-vt; the required contract is tracked in REQUIRES_UPSTREAM.md."
         },
         "copy_title_to_clipboard": {
           "status": "partial",
@@ -1254,6 +1270,10 @@
         "csi": {
           "status": "supported",
           "note": "Restores the configured byte payload from Ghostty's canonical action format, queues it with the CSI introducer as one contiguous sequence on the worker thread, and scrolls the viewport to the active area."
+        },
+        "cursor_key": {
+          "status": "supported",
+          "note": "The pinned Binding.Action parser deliberately returns InvalidAction for cursor_key before parsing any payload. Ghostty's finalized binding export can therefore never contain this action, and ghostty-qt rejects the omitted, empty, and normal/application serialized forms at the same boundary instead of inventing an unreachable frontend grammar."
         },
         "decrease_font_size": {
           "status": "supported",

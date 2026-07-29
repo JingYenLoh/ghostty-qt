@@ -212,6 +212,13 @@ GhosttyConfigSnapshot completeSnapshot()
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
         .clearOnTyping = false,
         .clearOnCopy = true,
+        .codepointMap =
+            {
+                {.first = 0x2500, .last = 0x257f, .replacement = quint32{'-'}},
+                {.first = 0x2500,
+                 .last = 0x2500,
+                 .replacement = QStringLiteral("line")},
+            },
     };
     values.clipboardPaste = {
         .protection = false,
@@ -1000,6 +1007,10 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              TerminalCopyOnSelectMode::PrimaryAndClipboard);
     QVERIFY(!cliResult.selectionClipboard.clearOnTyping);
     QVERIFY(cliResult.selectionClipboard.clearOnCopy);
+    QCOMPARE(cliResult.selectionClipboard.codepointMap.size(), qsizetype{2});
+    QCOMPARE(std::get<QString>(
+                 cliResult.selectionClipboard.codepointMap.at(1).replacement),
+             QStringLiteral("line"));
     QVERIFY(!cliResult.clipboardPaste.protection);
     QVERIFY(cliResult.clipboardPaste.bracketedSafe);
     QCOMPARE(cliResult.clipboardWrite, TerminalClipboardAccess::Ask);
@@ -1819,6 +1830,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
         .clearOnTyping = false,
         .clearOnCopy = true,
+        .codepointMap =
+            {
+                {.first = 'x',
+                 .last = 'z',
+                 .replacement = QStringLiteral("mapped")},
+            },
     };
     options.selectionWordChars = {0, 0x20, 0x2502, 0x1f642};
     options.clickRepeatIntervalMilliseconds =
@@ -2084,6 +2101,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
         .clearOnTyping = false,
         .clearOnCopy = true,
+        .codepointMap =
+            {
+                {.first = 'x',
+                 .last = 'z',
+                 .replacement = QStringLiteral("mapped")},
+            },
     };
     QCOMPARE(launch.runtime.selectionClipboard, expectedClipboard);
     const TerminalClipboardPasteOptions expectedPaste{

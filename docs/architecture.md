@@ -913,14 +913,21 @@ signals:
   `scroll-to-bottom.keystroke`. This preserves Ghostty's action and paste
   behavior when ordinary encoded keystrokes are configured not to scroll.
 - Selection is stored in Ghostty's terminal model and formatted by Ghostty for
-  clipboard copy. Formatting, destination intent, and optional explicit-copy
-  clearing are one `SessionWorker` operation; the resulting immutable text and
-  typed intent cross to a queued GUI receiver, so only the GUI thread
-  reads or writes `QClipboard`. Linux copy-on-select commits on left-button
-  release and select-all, with primary-selection fallback resolved from Qt's
-  GUI-thread capability. The pane-local `copy_title_to_clipboard` action also
-  writes through that GUI adapter, but always targets only the standard
-  clipboard and bypasses every selection policy. Libghostty's tracked
+  clipboard copy. After the public plain formatter applies live trimming, the
+  worker scans Unicode codepoints once and searches the finalized ordered
+  `clipboard-codepoint-map` newest-first, matching Ghostty's expected-small-map
+  strategy and last-overlap rule. It allocates a replacement string only after
+  the first match and preserves empty deletion results separately from
+  formatter failure. Formatting, destination intent, and optional
+  explicit-copy clearing are one `SessionWorker` operation; the resulting
+  immutable text and typed intent cross to a queued GUI receiver, so only the
+  GUI thread reads or writes `QClipboard`. Explicit action/context copy,
+  Linux copy-on-select on left-button release, and select-all share that path,
+  with primary-selection fallback resolved from Qt's GUI-thread capability.
+  The pane-local `copy_title_to_clipboard` action also writes through that GUI
+  adapter, but always targets only the standard clipboard and bypasses every
+  selection policy and codepoint mapping. URL, search, and terminal-file
+  consumers are likewise unmapped. Libghostty's tracked
   selection-gesture state keeps the drag anchor stable across output,
   scrolling, resize, and automatic selection clearing. Raw binding actions,
   paste, mouse/focus reports, and replayed sequence leaders bypass
@@ -1334,6 +1341,12 @@ standard-file discovery, legacy/preferred-file precedence, include handling,
 validation, defaults, and finalization. The private selector installs the
 current concrete desktop color scheme before parsing conditional theme state
 and is stripped before Ghostty processes ordinary configuration arguments.
+The CLI-only `config-default-files` switch is forwarded to every helper
+invocation. When false, the helper omits standard candidates before replaying
+explicit CLI and recursive `config-file` sources, and the successful snapshot
+omits those candidates from the service's watcher set. A setting encountered
+inside a config file remains intentionally inert, matching Ghostty's own load
+order.
 Each JSON document is one exact schema-v1 frontend projection containing all
 consumed values plus the finalized current and platform-default binding sets.
 The two JSON byte streams must match, preventing a valid A-to-B edit from
@@ -1392,22 +1405,33 @@ still preserved, and the parity ledger keeps this setting and the dependent
 tab/split fallbacks partial.
 
 The current typed compatibility slice covers tagged ordinary/initial commands
-and live post-exit waiting, launch and window geometry, working-directory and
-inheritance policy, the finalized child-environment override map, Linux cgroup
-resource isolation, application lifetime, typography and terminal appearance,
-scrollback, selection/clipboard/mouse/link behavior, resize-overlay
-presentation, included config files, and the finalized keybinding sets. The
-README and machine-checked parity ledger describe the individual keys. One
-strict schema-v1 document carries the whole slice, including nullable command
-objects, nullable values such as `quit-after-last-window-closed-delay`, and
-both cgroup limits; there is no version fallback, separate defaults merge, or
-partially populated snapshot.
+and live post-exit waiting, ordered initial-input sources, launch and window
+geometry, working-directory and inheritance policy, the finalized
+child-environment override map, Linux cgroup resource isolation, application
+lifetime, typography and terminal appearance, scrollback,
+selection/clipboard/mouse/link behavior, resize-overlay presentation, default
+and included config-file policy, and the finalized keybinding sets. The README
+and machine-checked parity ledger describe the individual keys. One strict
+schema-v1 document carries the whole slice, including nullable command
+objects, nullable values such as `quit-after-last-window-closed-delay`, the
+ordered clipboard replacement list, and both cgroup limits; there is no
+version fallback, separate defaults merge, or partially populated snapshot.
 Optional cgroup uint64 limits cross JSON as null or canonical decimal strings
 so the complete range remains exact despite Qt JSON's double representation.
 The finalized `env` map crosses as an ordered array of objects whose `key` and
 `value` members are byte arrays, avoiding both UTF-8 conversion and JSON object
 key normalization. The decoder rejects duplicate keys, empty values, `=` in a
 key, embedded NUL, and every noncanonical shape.
+Finalized `input` entries likewise cross as an ordered tagged raw/path array
+whose payloads are bytes rather than JSON strings. Each future pane snapshots
+that list. Immediately before launch, its worker resolves every path relative
+to the frontend process working directory, requires regular readable files,
+and reads no more than 10 MiB per source. Resolution completes for the entire
+list before pipes, cgroup work, or `fork`; one failure launches nothing.
+Successful chunks remain separate and ordered ahead of the worker's `started`
+publication, so ordinary GUI input cannot overtake startup input. Reload
+changes future panes only and cannot mutate a controller already waiting for
+deferred compositor geometry.
 Command objects retain an exact `shell`/`direct` tag, byte-array payloads, and
 whether the finalized ordinary shell came from Ghostty's default lookup.
 Canonical enum tags, optional include markers, working-directory inheritance,
@@ -1777,6 +1801,8 @@ only to panes created afterward.
 The config helper exposes a project-private JSON v1 envelope containing
 application lifetime, `initial-window`, the unused raw `gtk-single-instance`
 compatibility field, the finalized non-empty raw-byte child terminal identity,
+the CLI-only default-config-file policy, the finalized ordered tagged
+raw-byte initial-input sources,
 the finalized ordered raw-byte child-environment override map, the finalized
 raw-byte `enquiry-response`, the exact
 default-true scrollback-compression Boolean, the exact scrollbar policy, all
@@ -1788,7 +1814,8 @@ finalized finite precision/discrete mouse-scroll multipliers, the exact
 whole-millisecond `click-repeat-interval`, and the lossless resize-overlay
 mode, position, and whole-millisecond duration, the finalized
 `scroll-to-bottom` object with its default-true `keystroke` and default-false
-`output` fields, plus Ghostty's finalized
+`output` fields, the ordered clipboard u21 range and codepoint/text replacement
+list, plus Ghostty's finalized
 binding sets after
 defaults, includes, `clear`, overrides, chains, and `unbind` have been resolved
 by the pinned Zig implementation. It
@@ -2515,22 +2542,24 @@ The default CTest suite has focused layers for each ownership boundary:
   content item, workspace, and split panes across live reparenting.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including tagged nullable command objects and their raw
-  bytes, finalized non-empty byte-valued `term`, the ordered raw-byte `env`
-  pairs and their closed validity rules, shell-integration mode and exact
-  feature object, the cgroup enum/boolean and exact
-  nullable uint64 limits, exact shapes, four role-family lists, tagged
+  bytes, finalized non-empty byte-valued `term`, ordered tagged raw/path input,
+  the ordered raw-byte `env` pairs and their closed validity rules,
+  shell-integration mode and exact feature object, the cgroup enum/boolean and
+  exact nullable uint64 limits, exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
   canonical colors, clamped background opacity and exact cell-opacity boolean,
   the finalized optional image path and all four image policies, two exact
   padding-point pairs, balance and padding-color enums, the fixed 256-color
-  palette, the full unsigned scrollback range, and binding trees.
+  palette, the full unsigned scrollback range, finalized clipboard u21 ranges
+  and codepoint/text alternatives, and binding trees.
 - `ghostty-config-process-loader` verifies the four-process
   validation/JSON/post-validation/JSON transaction, byte consistency,
   deterministic process failure paths, warning preservation, and real-parser
   `clear`/`unbind` resolution, including canonical byte-string action export
   plus exact trailing font CLI arguments and role finalization,
   ordinary/initial shell and direct command export plus wait finalization,
+  default-file suppression and ordered raw/path input finalization,
   default/custom/empty and non-UTF-8 `term` finalization, repeated `env`
   replacement, configured-map removal/reset, include precedence, and raw-byte
   environment transport, default/forced/reset shell-integration policy and
@@ -2639,7 +2668,9 @@ The default CTest suite has focused layers for each ownership boundary:
 
 Clipboard and selection-lifecycle tests cover trim policy, copy destinations
 and primary fallback, explicit copy-and-clear ordering, automatic selection
-commits, select-all, live reload, middle-click source/ignore policy,
+commits, select-all, ordered/ranged/overlapping clipboard codepoint
+replacements, non-BMP input and output, expansion, deletion, invalid-u21
+replacement behavior, live reload, middle-click source/ignore policy,
 clear-on-typing key traits, sequence replay exclusions, IME/preedit
 transitions, finalized ASCII/NUL/non-BMP word boundaries, double-click
 selection, checked timestamp conversion, inclusive consecutive-time and

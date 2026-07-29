@@ -413,6 +413,42 @@ Once the API is present in an official, publicly reachable Ghostty commit:
 Shell-script injection, command notifications, and prompt-aware close
 detection are separate parity stages and are not implied by prompt navigation.
 
+## Semantic prompt cursor click movement
+
+**Status:** blocked on an upstream public API.
+
+`cursor-click-to-move` is not ordinary mouse-to-cell cursor placement.
+Ghostty's private `Surface.maybePromptClick` first checks the terminal's live
+OSC 133 semantic-click mode, whether the cursor is at a prompt input area,
+prompt ordering, selection/drag state, and the current cursor-key mode. It then
+either emits Kitty-compatible SGR click events or asks
+`Screen.promptClickMove` for exact left/right input counts across input cells,
+soft wraps, and prompt continuations.
+
+Official `libghostty-vt` exposes semantic row/cell metadata, but it does not
+expose the live semantic-click mode, `cursorIsAtPrompt`, the prompt-relative
+movement calculation, or a composite prompt-click operation. Reconstructing
+those decisions from a public grid would duplicate terminal-owned navigation
+and could race terminal mutation or diverge as the shell protocol evolves.
+This was verified against official upstream commit
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-29.
+
+The preferred append-only contract is one terminal operation that receives the
+released click cell and returns either:
+
+- not handled;
+- an owned byte sequence for the host to queue to the PTY; or
+- a normalized list/count of cursor-key movements whose normal/application
+  encoding is already resolved by Ghostty.
+
+It must retain Ghostty's checks for disabled/none mode, cursor-at-prompt,
+selection and drag suppression, clicks before the current prompt,
+absolute/relative click-events, soft-wrapped input, continuation rows, clicks
+beyond the current input, and live cursor-key mode. After such an API reaches
+an official commit, ghostty-qt can transport the finalized boolean live and
+invoke the operation from its existing worker-ordered left-release path
+without adding a second OSC 133 state machine.
+
 ## Semantic screen clearing
 
 **Status:** blocked on an upstream public API.
@@ -645,9 +681,8 @@ Once this contract exists in an official, publicly reachable Ghostty commit:
 
 ## Exact clipboard selection formatting
 
-**Status:** unmapped plain copying is supported; mapped plain output and exact
-VT, HTML, and mixed clipboard payloads are blocked on an upstream public
-formatter contract.
+**Status:** mapped plain copying is supported; exact VT, HTML, and mixed
+clipboard payloads are blocked on an upstream public formatter contract.
 
 Ghostty's internal `Surface.copySelectionToClipboards` does not use the public
 terminal formatter defaults. It constructs a screen formatter with clipboard-
@@ -687,7 +722,7 @@ of its formatter paths can express that clipboard contract:
   `ghostty_terminal_get`, but the public formatter cannot consume them.
 
 This was verified against the official pinned submodule commit
-`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-18.
+`c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3` on 2026-07-29.
 
 ### Why ghostty-qt does not approximate styled copies
 
@@ -698,14 +733,20 @@ would duplicate Ghostty's private formatter policy. It would also remain
 fragile as palette resolution, hyperlink styling, formatter envelopes, and
 codepoint mapping evolve upstream.
 
-ghostty-qt therefore keeps the exact plain path for the currently supported
-configuration slice, where `clipboard-codepoint-map` is unavailable and thus
-empty. It does not advertise mapped plain output or the public terminal
-formatter's different styled output as clipboard parity. The current
-destination routing, primary-selection fallback, live trimming, and worker-
-atomic copy/clear lifecycle remain useful partial behavior. The parity ledger
-records that automatic copies currently contain plain text rather than
-Ghostty's required mixed plain-plus-HTML payload.
+ghostty-qt therefore keeps the public plain selection formatter and applies
+the finalized ordered map to its Unicode output on `SessionWorker`. That local
+post-format pass is byte-equivalent to pinned `PageFormatter` for plain text:
+it visits Unicode codepoints once, searches entries newest-first, permits
+string expansion or deletion, and emits U+FFFD for non-scalar u21 replacement
+values. Every plain selection-copy route shares the result, while title, URL,
+search, and terminal-file consumers remain outside the map.
+
+This does not choose a styled policy. ghostty-qt does not advertise the public
+terminal formatter's different VT/HTML output as clipboard parity, and
+automatic copies still contain mapped plain text rather than Ghostty's
+required mixed plain-plus-HTML payload. Destination routing,
+primary-selection fallback, live trimming/mapping, and worker-atomic
+copy/clear remain implemented independently of that upstream blocker.
 
 ### Required upstream contract
 

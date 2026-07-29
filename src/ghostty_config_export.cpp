@@ -139,6 +139,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("bell-audio-volume"),
     QLatin1StringView("confirm-close-surface"),
     QLatin1StringView("clipboard-trim-trailing-spaces"),
+    QLatin1StringView("clipboard-codepoint-map"),
     QLatin1StringView("clipboard-write"),
     QLatin1StringView("clipboard-paste-protection"),
     QLatin1StringView("clipboard-paste-bracketed-safe"),
@@ -229,6 +230,16 @@ constexpr auto CodepointFontMapFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("last"),
     QLatin1StringView("family"),
 });
+constexpr auto ClipboardCodepointMapFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("first"),
+    QLatin1StringView("last"),
+    QLatin1StringView("replacement"),
+});
+constexpr auto ClipboardCodepointReplacementFields =
+    std::to_array<QLatin1StringView>({
+        QLatin1StringView("kind"),
+        QLatin1StringView("value"),
+    });
 constexpr auto SyntheticStyleFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("bold"),
     QLatin1StringView("italic"),
@@ -983,6 +994,81 @@ readCodepointFontMap(const QJsonValue &value, const QString &context)
             .first = *first,
             .last = *last,
             .family = std::move(*family),
+        });
+    }
+    return result;
+}
+
+ParseResult<TerminalClipboardCodepointReplacement>
+readClipboardCodepointReplacement(const QJsonValue &value,
+                                  const QString &context)
+{
+    auto object =
+        readExactObject(value, context, ClipboardCodepointReplacementFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    auto kind = readString(object->value(QLatin1StringView("kind")),
+                           childContext(context, QLatin1StringView("kind")));
+    if (!kind) return std::unexpected(std::move(kind.error()));
+    if (*kind == QLatin1StringView("codepoint")) {
+        constexpr quint32 MaximumU21 = 0x1fffffU;
+        auto codepoint = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("value")),
+            childContext(context, QLatin1StringView("value")), MaximumU21);
+        if (!codepoint) {
+            return std::unexpected(std::move(codepoint.error()));
+        }
+        return TerminalClipboardCodepointReplacement{*codepoint};
+    }
+    if (*kind == QLatin1StringView("text")) {
+        auto text =
+            readString(object->value(QLatin1StringView("value")),
+                       childContext(context, QLatin1StringView("value")));
+        if (!text) return std::unexpected(std::move(text.error()));
+        return TerminalClipboardCodepointReplacement{std::move(*text)};
+    }
+    return std::unexpected(QStringLiteral("%1.kind has unsupported value '%2'")
+                               .arg(context, *kind));
+}
+
+ParseResult<TerminalClipboardCodepointMap>
+readClipboardCodepointMap(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    constexpr quint32 MaximumU21 = 0x1fffffU;
+    TerminalClipboardCodepointMap result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      ClipboardCodepointMapFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto first = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("first")),
+            childContext(entryContext, QLatin1StringView("first")), MaximumU21);
+        if (!first) return std::unexpected(std::move(first.error()));
+        auto last = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("last")),
+            childContext(entryContext, QLatin1StringView("last")), MaximumU21);
+        if (!last) return std::unexpected(std::move(last.error()));
+        if (*first > *last) {
+            return std::unexpected(
+                QStringLiteral("%1.first must not exceed last")
+                    .arg(entryContext));
+        }
+        auto replacement = readClipboardCodepointReplacement(
+            object->value(QLatin1StringView("replacement")),
+            childContext(entryContext, QLatin1StringView("replacement")));
+        if (!replacement) {
+            return std::unexpected(std::move(replacement.error()));
+        }
+        result.append({
+            .first = *first,
+            .last = *last,
+            .replacement = std::move(*replacement),
         });
     }
     return result;
@@ -1928,6 +2014,13 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                    result.splitAppearance.dividerColor, readOptionalRgb);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+
+    if (auto parsed = assign(QLatin1StringView("clipboard-codepoint-map"),
+                             result.selectionClipboard.codepointMap,
+                             readClipboardCodepointMap);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
 
     for (const auto [name, destination] :
          std::to_array<std::pair<QLatin1StringView, bool *>>({

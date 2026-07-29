@@ -4,6 +4,7 @@
 #include "ghostty_shell_integration.h"
 #include "ghostty_vt_adapter.h"
 #include "linux_cgroup.h"
+#include "terminal_clipboard.h"
 #include "terminal_osc8_index.h"
 #include "terminfo_paths.h"
 #include "zig_string_escape.h"
@@ -2219,9 +2220,7 @@ void SessionWorker::copySelectionAction(quint64 requestId)
         return;
     }
 
-    const QString text = vt_->selectedText(
-        options_.runtime.selectionClipboard.trimTrailingSpaces);
-    scheduleRestoredPageCompression();
+    const QString text = clipboardSelectionText();
     if (text.isNull()) {
         Q_EMIT errorOccurred(
             QStringLiteral("Failed to format terminal selection"));
@@ -2394,9 +2393,7 @@ void SessionWorker::copySelectionTo(TerminalClipboardDestination destination,
         return;
     }
 
-    const QString text = vt_->selectedText(
-        options_.runtime.selectionClipboard.trimTrailingSpaces);
-    scheduleRestoredPageCompression();
+    const QString text = clipboardSelectionText();
     if (text.isNull()) {
         return;
     }
@@ -2405,6 +2402,19 @@ void SessionWorker::copySelectionTo(TerminalClipboardDestination destination,
     if (clearAfterCopy) {
         clearSelectionState();
     }
+}
+
+QString SessionWorker::clipboardSelectionText()
+{
+    QString text = vt_->selectedText(
+        options_.runtime.selectionClipboard.trimTrailingSpaces);
+    scheduleRestoredPageCompression();
+    if (text.isNull()) {
+        return {};
+    }
+    return applyTerminalClipboardCodepointMap(
+        std::move(text),
+        std::span{options_.runtime.selectionClipboard.codepointMap});
 }
 
 void SessionWorker::copySelectionOnSelect()
@@ -2519,9 +2529,7 @@ void SessionWorker::selectAllAction(quint64 requestId)
         break;
     }
     if (destination.has_value()) {
-        const QString text = vt_->selectedText(
-            options_.runtime.selectionClipboard.trimTrailingSpaces);
-        scheduleRestoredPageCompression();
+        const QString text = clipboardSelectionText();
         if (!text.isNull()) {
             result.effect = TerminalActionEffect::Clipboard;
             result.payload = text;

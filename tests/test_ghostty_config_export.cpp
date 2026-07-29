@@ -359,6 +359,24 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.bellAudioVolume, 0.625);
     QCOMPARE(values.confirmCloseMode, ConfirmCloseMode::Always);
     QVERIFY(!values.selectionClipboard.trimTrailingSpaces);
+    const TerminalClipboardCodepointMap &clipboardMap =
+        values.selectionClipboard.codepointMap;
+    QCOMPARE(clipboardMap.size(), qsizetype{5});
+    QCOMPARE(clipboardMap.at(0).first, quint32{0x2500});
+    QCOMPARE(clipboardMap.at(0).last, quint32{0x257f});
+    QCOMPARE(std::get<quint32>(clipboardMap.at(0).replacement),
+             quint32{static_cast<unsigned char>('-')});
+    QCOMPARE(clipboardMap.at(1).first, quint32{0x2500});
+    QCOMPARE(std::get<QString>(clipboardMap.at(1).replacement),
+             QStringLiteral("line"));
+    QCOMPARE(clipboardMap.at(2).first, quint32{0x1f642});
+    QCOMPARE(std::get<quint32>(clipboardMap.at(2).replacement),
+             quint32{0x1f47b});
+    QVERIFY(std::get<QString>(clipboardMap.at(3).replacement).isEmpty());
+    QCOMPARE(clipboardMap.at(4).first, quint32{0x110000});
+    QCOMPARE(clipboardMap.at(4).last, quint32{0x1fffff});
+    QCOMPARE(std::get<quint32>(clipboardMap.at(4).replacement),
+             quint32{0x1fffff});
     QCOMPARE(values.selectionClipboard.copyOnSelect,
              TerminalCopyOnSelectMode::PrimaryAndClipboard);
     QVERIFY(!values.selectionClipboard.clearOnTyping);
@@ -660,6 +678,9 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
                   QStringLiteral("key-remap"), QJsonArray{});
     emptyApplicationCollections =
         withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("clipboard-codepoint-map"), QJsonArray{});
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
                   QStringLiteral("command-palette-entry"), QJsonArray{});
     emptyApplicationCollections =
         withValue(std::move(emptyApplicationCollections),
@@ -673,6 +694,7 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
              qPrintable(errorMessage(emptyApplication)));
     QVERIFY(emptyApplication->values.initialInput.isEmpty());
     QVERIFY(emptyApplication->values.modifierRemaps.isEmpty());
+    QVERIFY(emptyApplication->values.selectionClipboard.codepointMap.isEmpty());
     QVERIFY(emptyApplication->values.applicationShell.commandPalette.isEmpty());
     QVERIFY(!emptyApplication->values.applicationShell.quickTerminal.size
                  .primary.has_value());
@@ -1256,6 +1278,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     for (const QString &field : {
              QStringLiteral("input"),
              QStringLiteral("key-remap"),
+             QStringLiteral("clipboard-codepoint-map"),
              QStringLiteral("config-default-files"),
              QStringLiteral("quick-terminal-position"),
              QStringLiteral("quick-terminal-size"),
@@ -2359,6 +2382,117 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                      }})
         << QStringLiteral(
                "values.font-codepoint-map[0].family must be a string");
+    QTest::newRow("clipboard-codepoint-map-type")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"), true)
+        << QStringLiteral("values.clipboard-codepoint-map must be an array");
+    QTest::newRow("clipboard-codepoint-map-entry-type")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{true})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0] must be an object");
+    QTest::newRow("clipboard-codepoint-map-missing-field")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("first"), 0},
+                         {QStringLiteral("last"), 1},
+                     }})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0] is missing field 'replacement'");
+    QTest::newRow("clipboard-codepoint-map-extra-field")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("first"), 0},
+                         {QStringLiteral("last"), 1},
+                         {QStringLiteral("replacement"),
+                          clipboardCodepointReplacement(2)},
+                         {QStringLiteral("future"), true},
+                     }})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0] has unexpected field 'future'");
+    QTest::newRow("clipboard-codepoint-map-u21-range")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 0x200000U, clipboardCodepointReplacement(0))})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].last must be an unsigned integer in range");
+    QTest::newRow("clipboard-codepoint-map-reversed")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         2, 1, clipboardCodepointReplacement(0))})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].first must not exceed last");
+    QTest::newRow("clipboard-codepoint-map-replacement-type")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("first"), 0},
+                         {QStringLiteral("last"), 1},
+                         {QStringLiteral("replacement"), true},
+                     }})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement must be an object");
+    QTest::newRow("clipboard-codepoint-map-replacement-missing-kind")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 1, QJsonObject{{QStringLiteral("value"), 2}})})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement is missing field 'kind'");
+    QTest::newRow("clipboard-codepoint-map-replacement-extra-field")
+        << withValue(
+               object(), QStringLiteral("clipboard-codepoint-map"),
+               QJsonArray{clipboardCodepointMap(
+                   0, 1,
+                   QJsonObject{
+                       {QStringLiteral("kind"), QStringLiteral("codepoint")},
+                       {QStringLiteral("value"), 2},
+                       {QStringLiteral("future"), true},
+                   })})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement has unexpected field 'future'");
+    QTest::newRow("clipboard-codepoint-map-replacement-kind-type")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 1,
+                         QJsonObject{{QStringLiteral("kind"), true},
+                                     {QStringLiteral("value"), 2}})})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement.kind must be a string");
+    QTest::newRow("clipboard-codepoint-map-replacement-kind")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 1,
+                         QJsonObject{
+                             {QStringLiteral("kind"), QStringLiteral("future")},
+                             {QStringLiteral("value"), 2},
+                         })})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement.kind has unsupported value 'future'");
+    QTest::newRow("clipboard-codepoint-map-codepoint-fractional")
+        << withValue(
+               object(), QStringLiteral("clipboard-codepoint-map"),
+               QJsonArray{clipboardCodepointMap(
+                   0, 1,
+                   QJsonObject{
+                       {QStringLiteral("kind"), QStringLiteral("codepoint")},
+                       {QStringLiteral("value"), 1.5},
+                   })})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement.value must be an unsigned integer");
+    QTest::newRow("clipboard-codepoint-map-codepoint-u21-range")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 1, clipboardCodepointReplacement(0x200000U))})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement.value must be an unsigned integer in range");
+    QTest::newRow("clipboard-codepoint-map-text-type")
+        << withValue(object(), QStringLiteral("clipboard-codepoint-map"),
+                     QJsonArray{clipboardCodepointMap(
+                         0, 1,
+                         QJsonObject{
+                             {QStringLiteral("kind"), QStringLiteral("text")},
+                             {QStringLiteral("value"), true},
+                         })})
+        << QStringLiteral(
+               "values.clipboard-codepoint-map[0].replacement.value must be a string");
     QTest::newRow("font-synthetic-style-missing-field")
         << withValue(object(), QStringLiteral("font-synthetic-style"),
                      QJsonObject{{QStringLiteral("bold"), true},

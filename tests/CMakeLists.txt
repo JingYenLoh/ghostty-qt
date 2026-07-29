@@ -496,6 +496,7 @@ qt_add_executable(test-terminal-types
     test_terminal_types.cpp
     ../src/terminal_actions.h
     ../src/terminal_clipboard.h
+    ../src/terminal_clipboard_codepoint_map.h
     ../src/terminal_osc8_index.h
     ../src/terminal_session_options.h
     ../src/terminal_types.h
@@ -507,6 +508,7 @@ target_link_libraries(test-terminal-types PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Test
+    ghostty-qt-terminal-foundation
 )
 add_test(NAME terminal-types COMMAND test-terminal-types)
 set_tests_properties(terminal-types PROPERTIES TIMEOUT 10)

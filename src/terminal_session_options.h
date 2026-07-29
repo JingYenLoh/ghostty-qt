@@ -2,6 +2,7 @@
 
 #include "linux_cgroup_config.h"
 #include "terminal_appearance.h"
+#include "terminal_clipboard_codepoint_map.h"
 #include "terminal_color_scheme.h"
 #include "terminal_command.h"
 #include "terminal_initial_input.h"
@@ -86,6 +87,9 @@ struct TerminalSelectionClipboardOptions {
     TerminalCopyOnSelectMode copyOnSelect = TerminalCopyOnSelectMode::Primary;
     bool clearOnTyping = true;
     bool clearOnCopy = false;
+    // Entries retain configuration order because the last overlapping range
+    // wins. Ghostty expects few entries and intentionally uses a linear scan.
+    TerminalClipboardCodepointMap codepointMap;
 
     bool operator==(const TerminalSelectionClipboardOptions &) const = default;
 };

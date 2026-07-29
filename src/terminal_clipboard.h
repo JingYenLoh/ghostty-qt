@@ -8,6 +8,7 @@
 #include <QtGlobal>
 
 #include <optional>
+#include <span>
 
 class QClipboard;
 
@@ -108,3 +109,8 @@ std::optional<QString> readTerminalClipboard(QClipboard *clipboard,
                                              TerminalClipboardSource source);
 QString readMiddleClickClipboard(QClipboard *clipboard,
                                  TerminalCopyOnSelectMode copyOnSelect);
+
+// Applies Ghostty's finalized ordered map to plain selection text. This is
+// worker-safe and independent of QClipboard; GUI adapters remain below.
+[[nodiscard]] QString applyTerminalClipboardCodepointMap(
+    QString text, std::span<const TerminalClipboardCodepointMapEntry> mappings);

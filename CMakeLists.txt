@@ -765,6 +765,7 @@ ghostty_qt_add_internal_library(ghostty-qt-launch-options
     src/launch_options.cpp
     src/launch_options.h
     src/terminal_appearance.h
+    src/terminal_clipboard_codepoint_map.h
     src/terminal_color_scheme.h
     src/terminal_session_options.h
 )
@@ -782,6 +783,7 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_cell_metrics.h
     src/terminal_clipboard.cpp
     src/terminal_clipboard.h
+    src/terminal_clipboard_codepoint_map.h
     src/terminal_font_resolver.cpp
     src/terminal_font_resolver.h
     src/terminal_geometry.cpp
@@ -801,6 +803,7 @@ ghostty_qt_add_internal_library(ghostty-qt-session-worker
     src/session_worker.cpp
     src/session_worker.h
     src/terminal_action_result.h
+    src/terminal_clipboard_codepoint_map.h
     src/terminal_osc8_index.h
     src/terminal_session_options.h
     src/terminal_types.h
@@ -821,6 +824,7 @@ target_link_libraries(ghostty-qt-session-worker
         ghostty-qt-link-matcher
         ghostty-qt-runtime-paths
         ghostty-qt-shell-integration
+        ghostty-qt-terminal-foundation
         ghostty-qt-vt-adapter
         util
 )

@@ -238,6 +238,7 @@ struct GhosttyConfigValues {
         .copyOnSelect = TerminalCopyOnSelectMode::Disabled,
         .clearOnTyping = false,
         .clearOnCopy = false,
+        .codepointMap = {},
     };
     QVector<quint32> selectionWordChars;
     quint32 clickRepeatIntervalMilliseconds = 500;

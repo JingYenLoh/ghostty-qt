@@ -5186,6 +5186,11 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
 
     options.runtime.selectionClipboard.trimTrailingSpaces = false;
     options.runtime.selectionClipboard.clearOnCopy = true;
+    options.runtime.selectionClipboard.codepointMap = {
+        {.first = 'a', .last = 'a', .replacement = QStringLiteral("A!")},
+        {.first = 'c', .last = 'c', .replacement = QString{}},
+        {.first = ' ', .last = ' ', .replacement = quint32{'_'}},
+    };
     worker.applyRuntimeOptions(options.runtime);
     clipboardSpy.clear();
     selectionSpy.clear();
@@ -5212,7 +5217,7 @@ void SessionWorkerTest::copiesSelectionWithRuntimeFormattingAndAtomicClear()
     QCOMPARE(copiedResult.outcome, TerminalActionOutcome::Success);
     QCOMPARE(copiedResult.effect, TerminalActionEffect::Clipboard);
     QVERIFY(copiedResult.performed);
-    QCOMPARE(copiedResult.payload, QStringLiteral("abc   "));
+    QCOMPARE(copiedResult.payload, QStringLiteral("A!b___"));
     QCOMPARE(copiedResult.clipboardDestination,
              TerminalClipboardDestination::Standard);
     QCOMPARE(lifecycle,
@@ -5428,13 +5433,17 @@ void SessionWorkerTest::resolvesConfiguredRightClickActions()
 
     options.runtime.selectionClipboard.copyOnSelect =
         TerminalCopyOnSelectMode::Primary;
+    options.runtime.selectionClipboard.codepointMap = {
+        {.first = 'a', .last = 'a', .replacement = quint32{'A'}},
+        {.first = '-', .last = '-', .replacement = QString::fromUtf8("→")},
+    };
     worker.applyRuntimeOptions(options.runtime);
     clipboardSpy.clear();
     result = resolve(6);
     QVERIFY(result.selectionAvailable);
     QCOMPARE(clipboardSpy.size(), 1);
     QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
-             QStringLiteral("beta"));
+             QStringLiteral("betA"));
     QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
                  clipboardSpy.constFirst().at(1)),
              TerminalClipboardDestination::Primary);
@@ -5488,6 +5497,10 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     selectionSpy.clear();
     options.runtime.selectionClipboard.copyOnSelect =
         TerminalCopyOnSelectMode::Primary;
+    options.runtime.selectionClipboard.codepointMap = {
+        {.first = 'a', .last = 'a', .replacement = quint32{'A'}},
+        {.first = '-', .last = '-', .replacement = QString::fromUtf8("→")},
+    };
     worker.applyRuntimeOptions(options.runtime);
     QCOMPARE(clipboardSpy.count(), 0);
 
@@ -5497,7 +5510,7 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     worker.endSelection(9, 0);
     QCOMPARE(clipboardSpy.count(), 1);
     QCOMPARE(clipboardSpy.constFirst().at(0).toString(),
-             QStringLiteral("auto-copy"));
+             QString::fromUtf8("Auto→copy"));
     QCOMPARE(qvariant_cast<TerminalClipboardDestination>(
                  clipboardSpy.constFirst().at(1)),
              TerminalClipboardDestination::Primary);
@@ -5528,8 +5541,8 @@ void SessionWorkerTest::autoCopiesOnlyCommittedSelectionsAndSelectAll()
     QCOMPARE(selectAllResult.outcome, TerminalActionOutcome::Success);
     QCOMPARE(selectAllResult.effect, TerminalActionEffect::Clipboard);
     QVERIFY(selectAllResult.performed);
-    QVERIFY(selectAllResult.payload.contains(
-        QStringLiteral("auto-copy")));
+    QVERIFY(selectAllResult.payload.contains(QString::fromUtf8("Auto→copy")));
+    QVERIFY(!selectAllResult.payload.contains(QStringLiteral("auto-copy")));
     QCOMPARE(selectAllResult.clipboardDestination,
              TerminalClipboardDestination::PrimaryAndStandard);
     QVERIFY(spyContainsBool(selectionSpy, true));

@@ -1184,37 +1184,43 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     ConfigFixture::writeFile(fixture.legacyPath, {});
     ConfigFixture::writeFile(
         fixture.preferredPath,
-        QByteArrayLiteral("unfocused-split-opacity = -1\n"
-                          "background-opacity = -1\n"
-                          "background-opacity-cells = true\n"
-                          "unfocused-split-fill = AliceBlue\n"
-                          "palette = 42=#123456\n"
-                          "split-divider-color = AliceBlue\n"
-                          "selection-foreground = cell-background\n"
-                          "selection-background = #334455\n"
-                          "search-foreground = cell-background\n"
-                          "search-background = #123456\n"
-                          "search-selected-foreground = cell-foreground\n"
-                          "search-selected-background = #654321\n"
-                          "cursor-color = #abcdef\n"
-                          "cursor-opacity = 0.4\n"
-                          "cursor-style = block_hollow\n"
-                          "cursor-style-blink = false\n"
-                          "cursor-text = cell-foreground\n"
-                          "bold-color = bright\n"
-                          "faint-opacity = 0.25\n"
-                          "minimum-contrast = 99\n"
-                          "clipboard-trim-trailing-spaces = 0\n"
-                          "clipboard-paste-protection = 0\n"
-                          "clipboard-paste-bracketed-safe = t\n"
-                          "copy-on-select = clipboard\n"
-                          "selection-clear-on-typing = 0\n"
-                          "selection-clear-on-copy = t\n"
-                          "middle-click-action = ignore\n"
-                          "keybind = clear\n"
-                          "keybind = ctrl+a=ignore\n"
-                          "keybind = ctrl+a=unbind\n"
-                          "keybind = ctrl+b=new_tab\n"));
+        QByteArrayLiteral(
+            "unfocused-split-opacity = -1\n"
+            "background-opacity = -1\n"
+            "background-opacity-cells = true\n"
+            "unfocused-split-fill = AliceBlue\n"
+            "palette = 42=#123456\n"
+            "split-divider-color = AliceBlue\n"
+            "selection-foreground = cell-background\n"
+            "selection-background = #334455\n"
+            "search-foreground = cell-background\n"
+            "search-background = #123456\n"
+            "search-selected-foreground = cell-foreground\n"
+            "search-selected-background = #654321\n"
+            "cursor-color = #abcdef\n"
+            "cursor-opacity = 0.4\n"
+            "cursor-style = block_hollow\n"
+            "cursor-style-blink = false\n"
+            "cursor-text = cell-foreground\n"
+            "bold-color = bright\n"
+            "faint-opacity = 0.25\n"
+            "minimum-contrast = 99\n"
+            "clipboard-trim-trailing-spaces = 0\n"
+            "clipboard-codepoint-map = U+2500,U+2502-U+2503=U+002D\n"
+            "clipboard-codepoint-map = U+2500=overlap\n"
+            "clipboard-codepoint-map = U+03A3=SUM\n"
+            "clipboard-codepoint-map = U+200B=\n"
+            "clipboard-codepoint-map = U+1F642=U+1F47B\n"
+            "clipboard-paste-protection = 0\n"
+            "clipboard-paste-bracketed-safe = t\n"
+            "copy-on-select = clipboard\n"
+            "selection-clear-on-typing = 0\n"
+            "selection-clear-on-copy = t\n"
+            "middle-click-action = ignore\n"
+            "keybind = clear\n"
+            "keybind = ctrl+a=ignore\n"
+            "keybind = ctrl+a=unbind\n"
+            "keybind = ctrl+b=new_tab\n"));
 
     const GhosttyConfigLoadResult result = makeGhosttyConfigProcessLoader(
         realOptions(helperPath))(fixture.request());
@@ -1256,6 +1262,22 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QCOMPARE(result->values.appearance.faintOpacity, 0.25);
     QCOMPARE(result->values.appearance.minimumContrast, 21.0);
     QVERIFY(!result->values.selectionClipboard.trimTrailingSpaces);
+    const TerminalClipboardCodepointMap &clipboardMap =
+        result->values.selectionClipboard.codepointMap;
+    QCOMPARE(clipboardMap.size(), qsizetype{6});
+    QCOMPARE(clipboardMap.at(0).first, quint32{0x2500});
+    QCOMPARE(clipboardMap.at(0).last, quint32{0x2500});
+    QCOMPARE(std::get<quint32>(clipboardMap.at(0).replacement), quint32{0x2d});
+    QCOMPARE(clipboardMap.at(1).first, quint32{0x2502});
+    QCOMPARE(clipboardMap.at(1).last, quint32{0x2503});
+    QCOMPARE(std::get<quint32>(clipboardMap.at(1).replacement), quint32{0x2d});
+    QCOMPARE(std::get<QString>(clipboardMap.at(2).replacement),
+             QStringLiteral("overlap"));
+    QCOMPARE(std::get<QString>(clipboardMap.at(3).replacement),
+             QStringLiteral("SUM"));
+    QVERIFY(std::get<QString>(clipboardMap.at(4).replacement).isEmpty());
+    QCOMPARE(std::get<quint32>(clipboardMap.at(5).replacement),
+             quint32{0x1f47b});
     QVERIFY(!result->values.clipboardPaste.protection);
     QVERIFY(result->values.clipboardPaste.bracketedSafe);
     QCOMPARE(result->values.selectionClipboard.copyOnSelect,
@@ -1270,6 +1292,7 @@ void GhosttyConfigProcessLoaderTest::realHelperFinalizesAppearanceAndUnbinds()
     QCOMPARE(defaults->values.background.opacity, 1.0);
     QVERIFY(!defaults->values.background.opacityCells);
     QCOMPARE(defaults->values.appearance.minimumContrast, 1.0);
+    QVERIFY(defaults->values.selectionClipboard.codepointMap.isEmpty());
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()

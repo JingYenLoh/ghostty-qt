@@ -55,6 +55,7 @@ private Q_SLOTS:
     void ordersSearchCellsByRowThenColumn();
     void resolvesClipboardRoutingWithoutPlatformAssumptions();
     void validatesTerminalOriginatedClipboardWrites();
+    void mapsPlainClipboardCodepointsInOneOrderedPass();
 };
 
 void TerminalTypesTest::appliesFullAndPartialUpdates()
@@ -514,6 +515,40 @@ void TerminalTypesTest::validatesTerminalOriginatedClipboardWrites()
     QVERIFY(!validTerminalClipboardWritePayload(multiple));
     multiple.contents[0].mime = QByteArray::fromRawData("text/\0plain", 11);
     QVERIFY(!validTerminalClipboardWritePayload(multiple));
+}
+
+void TerminalTypesTest::mapsPlainClipboardCodepointsInOneOrderedPass()
+{
+    const TerminalClipboardCodepointMap mappings{
+        {.first = 'a', .last = 'z', .replacement = QStringLiteral("lower")},
+        {.first = 'b', .last = 'b', .replacement = quint32{'B'}},
+        {.first = 0x2500, .last = 0x257f, .replacement = quint32{'-'}},
+        {.first = 0x2500, .last = 0x2500, .replacement = QStringLiteral("=")},
+        {.first = 0x1f642,
+         .last = 0x1f642,
+         .replacement = QStringLiteral("face")},
+        {.first = 0x03a3, .last = 0x03a3, .replacement = QStringLiteral("SUM")},
+        {.first = 0x200b, .last = 0x200b, .replacement = QString{}},
+        {.first = 'X', .last = 'X', .replacement = quint32{0x110000}},
+        {.first = 'Y', .last = 'Y', .replacement = quint32{0xd800}},
+        {.first = 'Z', .last = 'Z', .replacement = quint32{0x1f47b}},
+    };
+
+    const QString mapped = applyTerminalClipboardCodepointMap(
+        QString::fromUtf8("ab─│🙂Σ\u200bXYZ!"), std::span{mappings});
+    QCOMPARE(mapped, QString::fromUtf8("lowerB=-faceSUM\uFFFD\uFFFD👻!"));
+
+    const QString unchanged =
+        applyTerminalClipboardCodepointMap(QStringLiteral("plain"), {});
+    QCOMPARE(unchanged, QStringLiteral("plain"));
+
+    const TerminalClipboardCodepointMap deletion{
+        {.first = 'x', .last = 'x', .replacement = QString{}},
+    };
+    const QString deleted = applyTerminalClipboardCodepointMap(
+        QStringLiteral("x"), std::span{deletion});
+    QVERIFY(!deleted.isNull());
+    QVERIFY(deleted.isEmpty());
 }
 
 QTEST_APPLESS_MAIN(TerminalTypesTest)

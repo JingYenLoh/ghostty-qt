@@ -3,9 +3,14 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QMimeData>
+#include <QStringView>
 #include <QThread>
 
 #include <memory>
+#include <optional>
+#include <ranges>
+#include <type_traits>
+#include <utility>
 
 namespace {
 
@@ -17,6 +22,74 @@ void assertGuiThread()
 }
 
 } // namespace
+
+QString applyTerminalClipboardCodepointMap(
+    QString text, std::span<const TerminalClipboardCodepointMapEntry> mappings)
+{
+    if (mappings.empty() || text.isEmpty()) {
+        return text;
+    }
+
+    const QStringView source(text);
+    std::optional<QString> result;
+    const auto reversedMappings = mappings | std::views::reverse;
+    qsizetype unchangedStart = 0;
+    for (qsizetype offset = 0; offset < text.size();) {
+        const QChar first = source.at(offset);
+        qsizetype width = 1;
+        quint32 codepoint = first.unicode();
+        if (first.isHighSurrogate() && offset + 1 < text.size()) {
+            const QChar second = source.at(offset + 1);
+            if (second.isLowSurrogate()) {
+                codepoint =
+                    static_cast<quint32>(QChar::surrogateToUcs4(first, second));
+                width = 2;
+            }
+        }
+
+        const auto mapping = std::ranges::find_if(
+            reversedMappings, [codepoint](const auto &entry) {
+                return entry.first <= codepoint && codepoint <= entry.last;
+            });
+        if (mapping == reversedMappings.end()) {
+            offset += width;
+            continue;
+        }
+
+        if (!result.has_value()) {
+            // Keep an all-deleted result distinct from a null QString, which
+            // callers use to identify formatter failure.
+            result.emplace(QStringLiteral(""));
+            result->reserve(text.size());
+        }
+        result->append(source.sliced(unchangedStart, offset - unchangedStart));
+        std::visit(
+            [&result](const auto &replacement) {
+                using Replacement = std::remove_cvref_t<decltype(replacement)>;
+                if constexpr (std::is_same_v<Replacement, quint32>) {
+                    constexpr quint32 MaximumUnicodeScalar = 0x10ffffU;
+                    const char32_t replacementCodepoint =
+                        static_cast<char32_t>(replacement);
+                    if (replacement > MaximumUnicodeScalar
+                        || QChar::isSurrogate(replacementCodepoint)) {
+                        result->append(QChar::ReplacementCharacter);
+                    } else {
+                        result->append(QChar::fromUcs4(replacementCodepoint));
+                    }
+                } else {
+                    result->append(replacement);
+                }
+            },
+            mapping->replacement);
+        offset += width;
+        unchangedStart = offset;
+    }
+    if (!result.has_value()) {
+        return text;
+    }
+    result->append(source.sliced(unchangedStart));
+    return std::move(*result);
+}
 
 bool writeTerminalClipboard(QClipboard *clipboard,
                             const TerminalClipboardWrite &write)
