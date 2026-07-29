@@ -938,7 +938,9 @@
           "scope": "macos"
         },
         "quick-terminal-animation-duration": {
-          "scope": "wayland"
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Upstream implements quick-terminal enter/exit animation only on macOS. The Linux Wayland layer surface is presented and hidden directly, so this duration has no behavior to reproduce."
         },
         "quick-terminal-autohide": {
           "status": "supported",
@@ -966,7 +968,9 @@
           "note": "The exact nullable percentage-or-pixel primary and secondary extents use pinned f32 truncation, axis selection, full-output logical geometry, and saturation. Desired layer-shell size updates for position, output, geometry, and live size changes without recreating the window, panes, or PTYs."
         },
         "quick-terminal-space-behavior": {
-          "scope": "wayland"
+          "status": "not_applicable",
+          "scope": "macos",
+          "note": "Upstream implements this choice only for macOS Spaces and documents Linux as always equivalent to move. Wayland output placement remains compositor-owned, so there is no Linux runtime option to apply."
         },
         "scroll-to-bottom": {
           "status": "supported",
