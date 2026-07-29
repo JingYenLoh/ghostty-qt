@@ -36,6 +36,7 @@ GhosttyConfigSnapshot snapshotWithMarker(int marker,
 {
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     snapshot.values.windowWidth = static_cast<quint32>(marker);
+    snapshot.values.configDefaultFiles = true;
     if (!sourcePath.isEmpty()) {
         snapshot.sourcePaths.append(sourcePath);
     }
@@ -52,6 +53,7 @@ private Q_SLOTS:
     void passesInitialColorScheme();
     void reloadsOnlyWhenColorSchemeChanges();
     void watchesAbsentFilesAndReaddsAtomicReplacements();
+    void ignoresDefaultCandidatesWhenDisabled();
     void watchesLoadedIncludePaths();
     void watchesMissingOptionalIncludeCreation();
     void watchesExistingAndMissingThemePaths();
@@ -224,6 +226,71 @@ void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
                               1000);
     QVERIFY(loads > afterFirstReplacement);
     QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(primary), 1000);
+}
+
+void GhosttyConfigServiceTest::ignoresDefaultCandidatesWhenDisabled()
+{
+    const QString localTemporaryRoot =
+        QDir::current().filePath(QStringLiteral("tmp"));
+    QVERIFY(QDir().mkpath(localTemporaryRoot));
+    QTemporaryDir temporary(
+        QDir(localTemporaryRoot)
+            .filePath(QStringLiteral("config-watch-policy-XXXXXX")));
+    QVERIFY(temporary.isValid());
+
+    const QString ghosttyDirectory =
+        QDir(temporary.path()).filePath(QStringLiteral("ghostty"));
+    const QString sharedDirectory =
+        QDir(temporary.path()).filePath(QStringLiteral("shared"));
+    QVERIFY(QDir().mkpath(ghosttyDirectory));
+    QVERIFY(QDir().mkpath(sharedDirectory));
+    const QString legacy =
+        QDir(ghosttyDirectory).filePath(QStringLiteral("config"));
+    const QString preferred =
+        QDir(ghosttyDirectory).filePath(QStringLiteral("config.ghostty"));
+    const QString explicitConfig =
+        QDir(sharedDirectory).filePath(QStringLiteral("included.ghostty"));
+    QVERIFY(replaceFile(legacy, QByteArrayLiteral("legacy")));
+    QVERIFY(replaceFile(preferred, QByteArrayLiteral("preferred")));
+    QVERIFY(replaceFile(explicitConfig, QByteArrayLiteral("included")));
+
+    bool fail = true;
+    QStringList observedCandidatePaths;
+    GhosttyConfigService service(
+        {legacy, preferred},
+        [&fail, &legacy, &preferred, &explicitConfig,
+         &observedCandidatePaths](const GhosttyConfigLoadRequest &request)
+            -> GhosttyConfigLoadResult {
+            observedCandidatePaths = request.candidatePaths;
+            if (fail) {
+                return std::unexpected(QStringLiteral("startup failure"));
+            }
+            GhosttyConfigSnapshot snapshot = snapshotWithMarker(1);
+            snapshot.values.configDefaultFiles = false;
+            snapshot.values.configFiles = {
+                GhosttyConfigFile{.path = explicitConfig},
+            };
+            // A defensive custom loader may still report default candidates.
+            // The startup policy must filter those while retaining the
+            // explicitly loaded dependency.
+            snapshot.sourcePaths = {legacy, preferred, explicitConfig};
+            return snapshot;
+        },
+        20, TerminalColorScheme::Light, false);
+
+    QCOMPARE(observedCandidatePaths, QStringList({legacy, preferred}));
+    QVERIFY(!service.hasSnapshot());
+    QVERIFY(!service.watchedFiles().contains(legacy));
+    QVERIFY(!service.watchedFiles().contains(preferred));
+    QVERIFY(!service.watchedDirectories().contains(ghosttyDirectory));
+
+    fail = false;
+    service.reloadNow();
+    QVERIFY(service.hasSnapshot());
+    QVERIFY(service.watchedFiles().contains(explicitConfig));
+    QVERIFY(!service.watchedFiles().contains(legacy));
+    QVERIFY(!service.watchedFiles().contains(preferred));
+    QVERIFY(!service.watchedDirectories().contains(ghosttyDirectory));
 }
 
 void GhosttyConfigServiceTest::watchesLoadedIncludePaths()

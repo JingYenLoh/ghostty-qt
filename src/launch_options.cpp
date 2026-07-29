@@ -86,6 +86,7 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
         .configuredTitle = options.configuredTitle,
         .command = options.ordinaryCommand,
         .program = options.program,
+        .initialInput = options.initialInput,
         .scrollbackLimit = options.scrollbackLimit,
         .hold = options.hold,
         .initialGeometry = std::nullopt,
@@ -109,6 +110,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.ordinaryCommand = config.ordinaryCommand.value_or(
         TerminalCommand::shell(QByteArrayLiteral("sh"), true));
     result.initialCommand = config.initialCommand;
+    result.initialInput = config.initialInput;
     result.abnormalCommandExitRuntimeMilliseconds =
         config.abnormalCommandExitRuntimeMilliseconds;
     result.waitAfterCommand = config.waitAfterCommand;
@@ -127,6 +129,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         }
     }
     result.typography = config.typography;
+    result.applicationClass = config.applicationClass;
+    result.configDefaultFiles = config.configDefaultFiles;
     // Pinned Ghostty's generic f32 parser accepts zero and negative values,
     // but they do not form a usable font face. Preserve the previous
     // frontend contract by retaining the launch/default size for those
@@ -197,6 +201,8 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.vtKamAllowed = config.vtKamAllowed;
     result.linkUrl = config.linkUrl;
     result.linkPreviews = config.linkPreviews;
+    result.applicationShell = config.applicationShell;
+    result.modifierRemaps = config.modifierRemaps;
     result.keybindSource =
         GhosttyKeybindSource::structured(snapshot.keybindings);
 
@@ -286,6 +292,15 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("font-size"),
         QStringLiteral("Use a font size of <points>."),
         QStringLiteral("points"));
+    const QCommandLineOption applicationClassOption(
+        QStringLiteral("class"),
+        QStringLiteral("Use <id> as the application identity."),
+        QStringLiteral("id"));
+    const QCommandLineOption configDefaultFilesOption(
+        QStringLiteral("config-default-files"),
+        QStringLiteral(
+            "Load Ghostty's standard configuration files (true or false)."),
+        QStringLiteral("boolean"));
     const QCommandLineOption scrollbackLinesOption(
         QStringLiteral("scrollback-lines"),
         QStringLiteral("Estimate scrollback capacity for <lines> rows."),
@@ -315,6 +330,7 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("Show version information."));
 
     parser.addOptions({workingDirectoryOption, fontFamilyOption, fontSizeOption,
+                       applicationClassOption, configDefaultFilesOption,
                        scrollbackLinesOption, holdOption, singleInstanceOption,
                        legacySingleInstanceOption, initialWindowOption,
                        helpOption, versionOption});
@@ -375,6 +391,32 @@ parseLaunchOptions(const QStringList &arguments)
         // override through a double-versus-float rounding difference.
         parsed.typography.pointSize = static_cast<double>(ghosttyFontSize);
         parsed.fontSizeExplicit = true;
+    }
+
+    if (parser.isSet(applicationClassOption)) {
+        for (const QString &value : parser.values(applicationClassOption)) {
+            if (value.isEmpty()) {
+                parsed.applicationClass.reset();
+            } else {
+                parsed.applicationClass = value.toUtf8();
+            }
+        }
+        parsed.applicationClassExplicit = true;
+    }
+
+    if (parser.isSet(configDefaultFilesOption)) {
+        for (const QString &value : parser.values(configDefaultFilesOption)) {
+            const std::optional<bool> configDefaultFiles =
+                parseGhosttyBoolean(value);
+            if (!configDefaultFiles.has_value()) {
+                return std::unexpected(
+                    QStringLiteral(
+                        "Invalid config-default-files value '%1': expected true or false.")
+                        .arg(value));
+            }
+            parsed.configDefaultFiles = *configDefaultFiles;
+        }
+        parsed.configDefaultFilesExplicit = true;
     }
 
     if (parser.isSet(scrollbackLinesOption)) {
@@ -443,15 +485,17 @@ parseLaunchOptions(const QStringList &arguments)
     return parsed;
 }
 
-QStringList ghosttyConfigCliFontArguments(const LaunchOptions &options)
+QStringList ghosttyConfigurationArguments(const LaunchOptions &options)
 {
     QStringList result;
     const QStringList &families =
         options.typography.face(TerminalFontRole::Regular).families;
-    result.reserve((options.fontFamilyExplicit
-                        ? std::max<qsizetype>(1, families.size())
-                        : 0)
-                   + static_cast<qsizetype>(options.fontSizeExplicit));
+    result.reserve(
+        (options.fontFamilyExplicit ? std::max<qsizetype>(1, families.size())
+                                    : 0)
+        + static_cast<qsizetype>(options.fontSizeExplicit)
+        + static_cast<qsizetype>(options.applicationClassExplicit)
+        + static_cast<qsizetype>(options.configDefaultFilesExplicit));
 
     if (options.fontFamilyExplicit) {
         if (families.isEmpty()) {
@@ -467,6 +511,17 @@ QStringList ghosttyConfigCliFontArguments(const LaunchOptions &options)
             QStringLiteral("--font-size=")
             + QString::number(options.typography.pointSize, 'g',
                               std::numeric_limits<float>::max_digits10));
+    }
+    if (options.applicationClassExplicit) {
+        const QString value = options.applicationClass
+            ? QString::fromUtf8(*options.applicationClass)
+            : QString{};
+        result.append(QStringLiteral("--class=") + value);
+    }
+    if (options.configDefaultFilesExplicit) {
+        result.append(options.configDefaultFiles
+                          ? QStringLiteral("--config-default-files=true")
+                          : QStringLiteral("--config-default-files=false"));
     }
 
     return result;

@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <utility>
+#include <variant>
 
 enum class CloseTabMode {
     This,
@@ -66,6 +67,69 @@ struct WorkspaceActionRequest {
                            const WorkspaceActionRequest &) = default;
 };
 
+// Frontend-owned surface actions are kept separate from topology actions.
+// Every variant alternative owns exactly its valid payload, so parameterized
+// actions cannot accidentally be dispatched with an unrelated context value
+// or string payload.
+namespace WorkspaceFrontendActions {
+
+struct ToggleCommandPalette {
+    bool operator==(const ToggleCommandPalette &) const = default;
+};
+
+struct ToggleTabOverview {
+    bool operator==(const ToggleTabOverview &) const = default;
+};
+
+struct ShowOnScreenKeyboard {
+    bool operator==(const ShowOnScreenKeyboard &) const = default;
+};
+
+enum class InspectorMode : quint8 {
+    Toggle,
+    Show,
+    Hide,
+};
+
+struct Inspector {
+    InspectorMode mode = InspectorMode::Toggle;
+    bool operator==(const Inspector &) const = default;
+};
+
+enum class CrashTarget : quint8 {
+    Main,
+    Io,
+    Render,
+};
+
+struct Crash {
+    CrashTarget target = CrashTarget::Main;
+    bool operator==(const Crash &) const = default;
+};
+
+} // namespace WorkspaceFrontendActions
+
+using WorkspaceFrontendAction =
+    std::variant<WorkspaceFrontendActions::ToggleCommandPalette,
+                 WorkspaceFrontendActions::ToggleTabOverview,
+                 WorkspaceFrontendActions::ShowOnScreenKeyboard,
+                 WorkspaceFrontendActions::Inspector,
+                 WorkspaceFrontendActions::Crash>;
+
+struct WorkspaceFrontendActionRequest {
+    WorkspaceFrontendAction action;
+    WorkspaceActionContext context;
+
+    friend bool operator==(const WorkspaceFrontendActionRequest &,
+                           const WorkspaceFrontendActionRequest &) = default;
+
+    template <typename Action>
+    [[nodiscard]] const Action *getIf() const noexcept
+    {
+        return std::get_if<Action>(&action);
+    }
+};
+
 class WorkspaceActionDispatcher final {
 public:
     using Handler = std::function<bool(const WorkspaceActionRequest &)>;
@@ -96,3 +160,7 @@ Q_DECLARE_METATYPE(WorkspaceAction)
 Q_DECLARE_METATYPE(CloseTabMode)
 Q_DECLARE_METATYPE(WorkspaceActionContext)
 Q_DECLARE_METATYPE(WorkspaceActionRequest)
+Q_DECLARE_METATYPE(WorkspaceFrontendActions::InspectorMode)
+Q_DECLARE_METATYPE(WorkspaceFrontendActions::CrashTarget)
+Q_DECLARE_METATYPE(WorkspaceFrontendAction)
+Q_DECLARE_METATYPE(WorkspaceFrontendActionRequest)

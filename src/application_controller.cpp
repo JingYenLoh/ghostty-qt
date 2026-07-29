@@ -519,6 +519,7 @@ bool ApplicationController::dispatch(ApplicationAction action,
     case ApplicationAction::ReloadConfig:
         Q_EMIT configReloadRequested();
         return true;
+    case ApplicationAction::ToggleQuickTerminal: return false;
     case ApplicationAction::NewWindow: {
         if (quitState_ != QuitState::Idle || lifetime_.hasRequestedQuit()) {
             return false;
@@ -625,6 +626,7 @@ void ApplicationController::dispatchRequestedAction(
         return;
     case ApplicationAction::OpenConfig:
     case ApplicationAction::ReloadConfig:
+    case ApplicationAction::ToggleQuickTerminal:
     case ApplicationAction::Quit: break;
     }
 

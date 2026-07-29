@@ -61,7 +61,15 @@ GhosttyConfigService::GhosttyConfigService(
     QObject *parent)
     : GhosttyConfigService(standardConfigPaths(), std::move(loader),
                            DefaultDebounceMilliseconds, initialColorScheme,
-                           true, parent)
+                           true, true, parent)
+{}
+
+GhosttyConfigService::GhosttyConfigService(
+    GhosttyConfigLoader loader, TerminalColorScheme initialColorScheme,
+    bool watchDefaultConfigCandidates, QObject *parent)
+    : GhosttyConfigService(standardConfigPaths(), std::move(loader),
+                           DefaultDebounceMilliseconds, initialColorScheme,
+                           true, watchDefaultConfigCandidates, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
@@ -70,7 +78,7 @@ GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, TerminalColorScheme::Light,
-                           parent)
+                           false, true, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
@@ -79,16 +87,27 @@ GhosttyConfigService::GhosttyConfigService(
     QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
                            debounceMilliseconds, initialColorScheme, false,
-                           parent)
+                           true, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(
     QStringList candidatePaths, GhosttyConfigLoader loader,
     int debounceMilliseconds, TerminalColorScheme initialColorScheme,
-    bool asynchronousReloads, QObject *parent)
+    bool watchDefaultConfigCandidates, QObject *parent)
+    : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
+                           debounceMilliseconds, initialColorScheme, false,
+                           watchDefaultConfigCandidates, parent)
+{}
+
+GhosttyConfigService::GhosttyConfigService(
+    QStringList candidatePaths, GhosttyConfigLoader loader,
+    int debounceMilliseconds, TerminalColorScheme initialColorScheme,
+    bool asynchronousReloads, bool watchDefaultConfigCandidates,
+    QObject *parent)
     : QObject(parent)
     , colorScheme_(initialColorScheme)
     , loader_(std::move(loader))
+    , watchDefaultConfigCandidates_(watchDefaultConfigCandidates)
     , asynchronousReloads_(asynchronousReloads)
 {
     candidatePaths_.reserve(candidatePaths.size());
@@ -343,9 +362,20 @@ void GhosttyConfigService::refreshWatchPaths()
     QStringList desiredFiles;
     QStringList desiredDirectories;
 
-    QStringList watchedSources = candidatePaths_;
+    QStringList watchedSources;
+    const bool watchDefaultCandidates = watchDefaultConfigCandidates_
+        && (!snapshot_.has_value() || snapshot_->values.configDefaultFiles);
+    if (watchDefaultCandidates) {
+        watchedSources = candidatePaths_;
+    }
     if (snapshot_.has_value()) {
-        watchedSources.append(snapshot_->sourcePaths);
+        for (const QString &path : snapshot_->sourcePaths) {
+            const QString normalized = normalizedAbsolutePath(path);
+            if (watchDefaultCandidates
+                || !candidatePaths_.contains(normalized)) {
+                watchedSources.append(normalized);
+            }
+        }
         for (const GhosttyConfigFile &file : snapshot_->values.configFiles) {
             watchedSources.append(normalizedAbsolutePath(file.path));
         }

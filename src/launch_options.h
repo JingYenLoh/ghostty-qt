@@ -1,8 +1,11 @@
 #pragma once
 
+#include "application_shell_options.h"
 #include "frontend_config.h"
 #include "ghostty_config_snapshot.h"
 #include "ghostty_config_values.h"
+#include "modifier_remap_types.h"
+#include "terminal_initial_input.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
@@ -29,6 +32,9 @@ struct LaunchOptions {
     // whose terminal initialization reaches the coordinator first.
     std::optional<TerminalCommand> ordinaryCommand;
     std::optional<TerminalCommand> initialCommand;
+    // Finalized launch input is sampled when a future pane is constructed.
+    // Reloading never injects newly configured bytes into a running child.
+    QVector<TerminalInitialInput> initialInput;
     // Live Linux threshold for retaining and presenting a quickly failed
     // child. The worker samples the newest value when it observes the exit.
     quint32 abnormalCommandExitRuntimeMilliseconds = 250;
@@ -61,6 +67,11 @@ struct LaunchOptions {
     // options; window chrome remains on the GUI thread.
     TerminalColorScheme colorScheme = TerminalColorScheme::Light;
     std::optional<QString> configuredTitle;
+    // Startup-only application identity. The explicit bit distinguishes an
+    // omitted CLI option from `--class=`, which clears the configured value
+    // back to the frontend fallback.
+    std::optional<QByteArray> applicationClass;
+    bool applicationClassExplicit = false;
     WindowAppearanceOptions windowAppearance;
     // These bits distinguish parser defaults from an explicit command-line
     // override. The process helper receives those overrides before recursive
@@ -68,6 +79,12 @@ struct LaunchOptions {
     // snapshot; the bits remain launch/forwarding metadata.
     bool fontFamilyExplicit = false;
     bool fontSizeExplicit = false;
+    // This Ghostty CLI-only switch controls whether its standard config files
+    // participate in the effective generation. Preserve both the value and
+    // explicitness so the helper sees the original startup policy and
+    // single-instance arbitration never drops an unforwardable override.
+    bool configDefaultFiles = true;
+    bool configDefaultFilesExplicit = false;
     TerminalAppearance appearance;
     // Qt-only compositing policy. This deliberately does not enter
     // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
@@ -165,7 +182,8 @@ struct LaunchOptions {
     [[nodiscard]] bool hasUnforwardedLaunchPayload() const noexcept
     {
         return workingDirectoryExplicit || fontFamilyExplicit
-            || fontSizeExplicit || scrollbackLimitExplicit || hold
+            || fontSizeExplicit || applicationClassExplicit
+            || configDefaultFilesExplicit || scrollbackLimitExplicit || hold
             || !program.isEmpty();
     }
     // Detect additionally excludes launches from a terminal advertising
@@ -206,6 +224,12 @@ struct LaunchOptions {
     // Controls whether matched link destinations are shown before activation.
     // Ghostty defaults to previews for both regex and OSC 8 links.
     LinkPreviewMode linkPreviews = LinkPreviewMode::Always;
+    // Process/window UI state is grouped so application-only reloads can
+    // update retained window controllers without waking terminal workers.
+    ApplicationShellOptions applicationShell;
+    // Finalized, ordered modifier rewrites are live input policy. Their
+    // first-match ordering is significant for both root and pane input.
+    QVector<ModifierRemap> modifierRemaps;
     // The helper publishes Ghostty's finalized structured set. The tagged
     // text alternative is retained for focused action/keybinding injection in
     // tests; the unavailable alternative enables built-in emergency shortcuts
@@ -267,12 +291,11 @@ bool shouldConfirmClose(ConfirmCloseMode mode, bool childIsRunning,
 [[nodiscard]] std::expected<LaunchOptions, QString>
 parseLaunchOptions(const QStringList &arguments);
 
-// Project the frontend's explicit font overrides back into Ghostty CLI
+// Project every explicit Ghostty configuration override back into Ghostty CLI
 // spelling. The config helper receives these after its action so pinned
-// Ghostty performs repeatable-family replacement and styled-face inheritance
-// before exporting the finalized typography.
+// Ghostty owns parsing, recursive-file loading, precedence, and finalization.
 [[nodiscard]] QStringList
-ghosttyConfigCliFontArguments(const LaunchOptions &options);
+ghosttyConfigurationArguments(const LaunchOptions &options);
 
 // Pure startup policy used before creating QML or terminal runtime objects.
 [[nodiscard]] bool shouldUseSingleInstance(const LaunchOptions &options,

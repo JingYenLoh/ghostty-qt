@@ -121,6 +121,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     ShaderTools
     Widgets
 )
+find_package(LayerShellQt REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -510,6 +511,43 @@ ghostty_qt_add_internal_library(ghostty-qt-pty-write-buffer
 )
 target_link_libraries(ghostty-qt-pty-write-buffer PUBLIC Qt6::Core)
 
+ghostty_qt_add_internal_library(ghostty-qt-application-identity
+    src/application_identity.cpp
+    src/application_identity.h
+)
+target_link_libraries(ghostty-qt-application-identity PUBLIC Qt6::Core)
+
+ghostty_qt_add_internal_library(ghostty-qt-quick-terminal
+    src/quick_terminal.cpp
+    src/quick_terminal.h
+    src/quick_terminal_surface.cpp
+    src/quick_terminal_surface.h
+)
+target_link_libraries(ghostty-qt-quick-terminal PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    LayerShellQt::Interface
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-window-ui
+    src/window_ui_controller.cpp
+    src/window_ui_controller.h
+)
+target_link_libraries(ghostty-qt-window-ui PUBLIC
+    Qt6::Core
+    Qt6::Qml
+)
+
+ghostty_qt_add_internal_library(ghostty-qt-modifier-remap
+    src/modifier_remap.cpp
+    src/modifier_remap.h
+    src/modifier_remap_types.h
+)
+target_link_libraries(ghostty-qt-modifier-remap PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+
 add_library(ghostty-qt-runtime-paths STATIC
     src/terminfo_paths.cpp
     src/terminfo_paths.h
@@ -828,6 +866,7 @@ target_link_libraries(ghostty-qt-application-keybindings
         Qt6::Gui
         ghostty-qt-action-pipeline
         ghostty-qt-launch-options
+        ghostty-qt-modifier-remap
     PRIVATE
         Qt6::DBus
         Qt6::Qml
@@ -851,7 +890,9 @@ target_link_libraries(ghostty-qt-application-controller
         Qt6::Qml
         Qt6::Quick
         ghostty-qt-application-keybindings
+        ghostty-qt-quick-terminal
         ghostty-qt-terminal-foundation
+        ghostty-qt-window-ui
 )
 
 ghostty_qt_add_internal_library(ghostty-qt-config-runtime
@@ -888,11 +929,15 @@ target_link_libraries(ghostty-qt-single-instance-activation PUBLIC
 
 qt_add_executable(ghostty-qt
     src/main.cpp
+    src/application_identity.h
     src/application_action.h
     src/ghostty_config_export.h
     src/ghostty_config_values.h
     src/ghostty_keybind_config.h
     src/key_event_snapshot.h
+    src/modifier_remap_types.h
+    src/quick_terminal.h
+    src/quick_terminal_surface.h
     src/revision_counter.h
     src/terminal_action_result.h
     src/terminal_appearance.h
@@ -903,6 +948,7 @@ qt_add_executable(ghostty-qt
     src/terminal_pane_renderer.cpp
     src/terminal_pane_renderer.h
     src/terminal_session_options.h
+    src/terminal_initial_input.h
     src/terminal_typography.h
     src/terminal_types.h
     src/terminal_write_file_action.h
@@ -919,11 +965,14 @@ qt_add_qml_module(ghostty-qt
     QML_FILES
         qml/AbnormalExitOverlay.qml
         qml/BellBorderOverlay.qml
+        qml/CommandPalette.qml
         qml/Main.qml
         qml/ReadOnlyOverlay.qml
         qml/ResizeOverlay.qml
         qml/SearchOverlay.qml
+        qml/TabOverview.qml
         qml/TerminalScrollBar.qml
+        qml/AppToast.qml
 )
 
 target_link_libraries(ghostty-qt PRIVATE
@@ -936,6 +985,7 @@ target_link_libraries(ghostty-qt PRIVATE
     Qt6::Widgets
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
+    ghostty-qt-application-identity
     ghostty-qt-application-controller
     ghostty-qt-cli-delegation
     ghostty-qt-config-export
@@ -945,6 +995,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-launch-options
     ghostty-qt-linux-cgroup
     ghostty-qt-link-matcher
+    ghostty-qt-quick-terminal
     ghostty-qt-runtime-paths
     ghostty-qt-single-instance-activation
     ghostty-qt-shell-integration
@@ -954,6 +1005,7 @@ target_link_libraries(ghostty-qt PRIVATE
     ghostty-qt-terminal-rendering
     ghostty-qt-terminal-bell
     ghostty-qt-vt-adapter
+    ghostty-qt-window-ui
     util
 )
 

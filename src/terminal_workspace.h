@@ -237,6 +237,7 @@ Q_SIGNALS:
                                     PaneId sourcePaneId);
     void windowNavigationRequested(WindowNavigationAction action,
                                    PaneId sourcePaneId);
+    void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void workspaceActivated();
     void toggleFullscreenRequested();

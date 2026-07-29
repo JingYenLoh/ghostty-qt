@@ -10,6 +10,7 @@ enum class ApplicationAction {
     NewWindow,
     OpenConfig,
     ReloadConfig,
+    ToggleQuickTerminal,
     Quit,
 };
 

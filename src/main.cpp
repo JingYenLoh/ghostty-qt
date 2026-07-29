@@ -1710,9 +1710,9 @@ int main(int argc, char *argv[])
     GhosttyConfigService configService(
         makeGhosttyConfigProcessLoader({
             .helperPath = configHelperPath,
-            .configurationArguments = ghosttyConfigCliFontArguments(options),
+            .configurationArguments = ghosttyConfigurationArguments(options),
         }),
-        appearance.colorScheme());
+        appearance.colorScheme(), options.configDefaultFiles);
     if (!configService.hasSnapshot()) {
         qWarning().noquote()
             << "Ghostty configuration is unavailable; using built-in and command-line defaults"

@@ -1360,6 +1360,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
                 if (paneForId(paneId) != pane) return;
                 Q_EMIT windowNavigationRequested(action, paneId);
             });
+    connect(pane, &TerminalPane::frontendActionRequested, this,
+            [this, paneId, pane](WorkspaceFrontendActionRequest request) {
+                if (paneForId(paneId) != pane) return;
+                request.context.tabId = tabIdForPane(paneId);
+                request.context.paneId = paneId;
+                Q_EMIT frontendActionRequested(request);
+            });
     connect(pane, &TerminalPane::broadActionsRequested, this,
             &TerminalWorkspace::broadActionsRequested);
     connect(pane, &TerminalPane::unsafePasteRequested, this,

@@ -2619,6 +2619,10 @@ bool TerminalPane::performConfiguredAction(
             [this](const WorkspaceActionRequest &request) {
                 return performWorkspaceAction(request);
             },
+            [this](const WorkspaceFrontendActionRequest &request) {
+                Q_EMIT frontendActionRequested(request);
+                return true;
+            },
         },
         action);
 }

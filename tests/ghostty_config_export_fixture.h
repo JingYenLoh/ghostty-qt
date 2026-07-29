@@ -46,6 +46,76 @@ inline QJsonObject environmentEntry(QByteArrayView key, QByteArrayView value)
     };
 }
 
+inline QJsonObject initialInput(const QString &kind, QByteArrayView value)
+{
+    return {
+        {QStringLiteral("kind"), kind},
+        {QStringLiteral("value"), bytes(value)},
+    };
+}
+
+inline QJsonObject sidedModifier(const QString &modifier, const QString &side)
+{
+    return {
+        {QStringLiteral("modifier"), modifier},
+        {QStringLiteral("side"), side},
+    };
+}
+
+inline QJsonObject modifierRemap(QJsonObject from, QJsonObject to)
+{
+    return {
+        {QStringLiteral("from"), std::move(from)},
+        {QStringLiteral("to"), std::move(to)},
+    };
+}
+
+inline QJsonObject quickTerminalPixels(quint32 value)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("pixels")},
+        {QStringLiteral("value"), static_cast<qint64>(value)},
+    };
+}
+
+inline QJsonObject quickTerminalPercentage(const QString &valueBits)
+{
+    return {
+        {QStringLiteral("kind"), QStringLiteral("percentage")},
+        {QStringLiteral("value-bits"), valueBits},
+    };
+}
+
+inline QJsonObject quickTerminalSize(QJsonValue primary = QJsonValue::Null,
+                                     QJsonValue secondary = QJsonValue::Null)
+{
+    return {
+        {QStringLiteral("primary"), std::move(primary)},
+        {QStringLiteral("secondary"), std::move(secondary)},
+    };
+}
+
+inline QJsonObject commandPaletteEntry(const QString &title,
+                                       const QString &description,
+                                       const QString &actionKey,
+                                       const QString &action)
+{
+    return {
+        {QStringLiteral("title"), title},
+        {QStringLiteral("description"), description},
+        {QStringLiteral("action-key"), actionKey},
+        {QStringLiteral("action"), action},
+    };
+}
+
+inline QJsonObject appNotifications(bool clipboardCopy, bool configReload)
+{
+    return {
+        {QStringLiteral("clipboard-copy"), clipboardCopy},
+        {QStringLiteral("config-reload"), configReload},
+    };
+}
+
 inline QJsonObject flags(bool consumed = true, bool all = false,
                          bool global = false, bool performable = false)
 {
@@ -273,6 +343,27 @@ inline QJsonObject values()
          directCommand({bytes(QByteArrayLiteral("/bin/printf")),
                         bytes(QByteArray::fromHex("80ff")),
                         bytes(QByteArrayView{})})},
+        {QStringLiteral("input"),
+         QJsonArray{
+             initialInput(QStringLiteral("raw"),
+                          QByteArray::fromHex("68656c6c6f0a00ff")),
+             initialInput(QStringLiteral("path"),
+                          QByteArray::fromHex("2f776f726b2f696e707574ff")),
+         }},
+        {QStringLiteral("key-remap"),
+         QJsonArray{
+             modifierRemap(
+                 sidedModifier(QStringLiteral("ctrl"), QStringLiteral("right")),
+                 sidedModifier(QStringLiteral("super"),
+                               QStringLiteral("left"))),
+             modifierRemap(
+                 sidedModifier(QStringLiteral("ctrl"), QStringLiteral("left")),
+                 sidedModifier(QStringLiteral("alt"), QStringLiteral("right"))),
+             modifierRemap(
+                 sidedModifier(QStringLiteral("shift"), QStringLiteral("left")),
+                 sidedModifier(QStringLiteral("ctrl"),
+                               QStringLiteral("right"))),
+         }},
         {QStringLiteral("wait-after-command"), true},
         {QStringLiteral("abnormal-command-exit-runtime"), 731},
         {QStringLiteral("shell-integration"), QStringLiteral("fish")},
@@ -294,6 +385,8 @@ inline QJsonObject values()
         {QStringLiteral("linux-cgroup-hard-fail"), true},
         {QStringLiteral("working-directory"), QStringLiteral("/work/ghostty")},
         {QStringLiteral("title"), QString{}},
+        {QStringLiteral("class"),
+         bytes(QByteArray::fromHex("636f6d2e6578616d706c652eff"))},
         {QStringLiteral("font-family"),
          QJsonArray{QStringLiteral("Mono One"), QStringLiteral("Emoji")}},
         {QStringLiteral("font-family-bold"),
@@ -457,6 +550,7 @@ inline QJsonObject values()
         {QStringLiteral("config-file"),
          QJsonArray{QStringLiteral("/work/include.ghostty"),
                     QStringLiteral("?/work/optional.ghostty")}},
+        {QStringLiteral("config-default-files"), false},
         {QStringLiteral("theme-files"),
          QJsonArray{QStringLiteral("/work/themes/light"),
                     QStringLiteral("/work/themes/dark")}},
@@ -469,6 +563,25 @@ inline QJsonObject values()
          QStringLiteral("bottom-right")},
         {QStringLiteral("resize-overlay-duration"), 1250},
         {QStringLiteral("gtk-single-instance"), QStringLiteral("detect")},
+        {QStringLiteral("quick-terminal-position"), QStringLiteral("center")},
+        {QStringLiteral("quick-terminal-size"),
+         quickTerminalSize(
+             quickTerminalPercentage(QStringLiteral("1108738048")),
+             quickTerminalPixels(640))},
+        {QStringLiteral("quick-terminal-screen"), QStringLiteral("mouse")},
+        {QStringLiteral("quick-terminal-autohide"), true},
+        {QStringLiteral("quick-terminal-keyboard-interactivity"),
+         QStringLiteral("exclusive")},
+        {QStringLiteral("command-palette-entry"),
+         QJsonArray{
+             commandPaletteEntry(
+                 QStringLiteral("Reset"), QStringLiteral("Reset everything"),
+                 QStringLiteral("reset"), QStringLiteral("reset")),
+             commandPaletteEntry(QStringLiteral("Say 👻"), QString{},
+                                 QStringLiteral("text"),
+                                 QStringLiteral("text:hello, world")),
+         }},
+        {QStringLiteral("app-notifications"), appNotifications(false, true)},
     };
 }
 

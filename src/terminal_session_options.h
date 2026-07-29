@@ -4,6 +4,7 @@
 #include "terminal_appearance.h"
 #include "terminal_color_scheme.h"
 #include "terminal_command.h"
+#include "terminal_initial_input.h"
 
 #include <QByteArray>
 #include <QMetaType>
@@ -247,6 +248,10 @@ struct TerminalSessionLaunchOptions {
     // its process-wide first-session lease is resolved. When present it takes
     // precedence over `command`.
     QStringList program;
+    // Future-session input is resolved atomically before the child exists.
+    // Raw entries preserve arbitrary bytes; path entries are read relative to
+    // the frontend process working directory, matching pinned Ghostty.
+    QVector<TerminalInitialInput> initialInput;
     ScrollbackLimit scrollbackLimit;
     // Initial-only frontend override. Shared wait-after-command remains in the
     // live runtime options so a reload can affect an existing child.

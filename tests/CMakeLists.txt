@@ -84,6 +84,84 @@ target_link_libraries(test-launch-options PRIVATE
 )
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-application-identity
+    test_application_identity.cpp
+)
+target_include_directories(test-application-identity PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-application-identity PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-application-identity
+)
+add_test(NAME application-identity COMMAND test-application-identity)
+set_tests_properties(application-identity PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-quick-terminal
+    test_quick_terminal.cpp
+)
+target_include_directories(test-quick-terminal PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-quick-terminal PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-quick-terminal
+)
+add_test(NAME quick-terminal COMMAND test-quick-terminal)
+set_tests_properties(quick-terminal PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-quick-terminal-surface
+    test_quick_terminal_surface.cpp
+)
+target_include_directories(test-quick-terminal-surface PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-quick-terminal-surface PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-quick-terminal
+)
+add_test(NAME quick-terminal-surface COMMAND test-quick-terminal-surface)
+set_tests_properties(quick-terminal-surface PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
+qt_add_executable(test-window-ui-controller
+    test_window_ui_controller.cpp
+)
+target_include_directories(test-window-ui-controller PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-window-ui-controller PRIVATE
+    Qt6::Core
+    Qt6::Test
+    ghostty-qt-window-ui
+)
+add_test(NAME window-ui-controller COMMAND test-window-ui-controller)
+set_tests_properties(window-ui-controller PROPERTIES TIMEOUT 10)
+
+qt_add_executable(test-modifier-remap
+    test_modifier_remap.cpp
+)
+target_include_directories(test-modifier-remap PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-modifier-remap PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-application-keybindings
+    ghostty-qt-modifier-remap
+    ghostty-qt-render-test-support
+)
+add_test(NAME modifier-remap COMMAND test-modifier-remap)
+set_tests_properties(modifier-remap PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-application-appearance
     test_application_appearance.cpp
 )

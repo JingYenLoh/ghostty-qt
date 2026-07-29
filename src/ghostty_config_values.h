@@ -1,6 +1,9 @@
 #pragma once
 
+#include "application_shell_options.h"
 #include "ghostty_config_path.h"
+#include "modifier_remap_types.h"
+#include "terminal_initial_input.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
 
@@ -175,6 +178,9 @@ struct GhosttyConfigValues {
     // successfully initializes.
     std::optional<TerminalCommand> ordinaryCommand;
     std::optional<TerminalCommand> initialCommand;
+    // Finalized startup input retains raw bytes and paths separately. Path
+    // reads remain deferred until the future session starts.
+    QVector<TerminalInitialInput> initialInput;
     bool waitAfterCommand = false;
     // Ghostty stores this threshold as an exact u32 millisecond count rather
     // than Config.Duration. It remains live policy for a running surface.
@@ -193,6 +199,9 @@ struct GhosttyConfigValues {
     std::optional<QString> workingDirectoryPath;
     TerminalTypography typography;
     std::optional<QString> title;
+    // Startup-only application identity bytes. Keep this lossless so invalid
+    // configured IDs can be diagnosed without UTF-8 replacement.
+    std::optional<QByteArray> applicationClass;
 
     // Store the frontend's runtime-ready value types directly. This keeps the
     // finalized 256-color palette in QVector's implicitly shared storage and
@@ -250,6 +259,14 @@ struct GhosttyConfigValues {
     bool vtKamAllowed = false;
     bool linkUrl = false;
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;
+
+    ApplicationShellOptions applicationShell;
+    // This reflects Ghostty's CLI-only source policy for the finalized
+    // generation; a config-file assignment cannot change it.
+    bool configDefaultFiles = true;
+    // Ghostty's finalized ordering is semantic: the first matching sided
+    // mapping wins, so preserve the compact vector without reindexing it.
+    QVector<ModifierRemap> modifierRemaps;
 
     QVector<GhosttyConfigFile> configFiles;
     // Existing and potential theme sources are watched independently of the

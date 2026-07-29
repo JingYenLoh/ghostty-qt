@@ -9,12 +9,14 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <concepts>
 #include <limits>
 #include <ranges>
 #include <span>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -36,6 +38,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("enquiry-response"),
     QLatin1StringView("command"),
     QLatin1StringView("initial-command"),
+    QLatin1StringView("input"),
+    QLatin1StringView("key-remap"),
     QLatin1StringView("wait-after-command"),
     QLatin1StringView("abnormal-command-exit-runtime"),
     QLatin1StringView("env"),
@@ -47,6 +51,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("linux-cgroup-hard-fail"),
     QLatin1StringView("working-directory"),
     QLatin1StringView("title"),
+    QLatin1StringView("class"),
     QLatin1StringView("font-family"),
     QLatin1StringView("font-family-bold"),
     QLatin1StringView("font-family-italic"),
@@ -153,6 +158,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("link-url"),
     QLatin1StringView("link-previews"),
     QLatin1StringView("config-file"),
+    QLatin1StringView("config-default-files"),
     QLatin1StringView("theme-files"),
     QLatin1StringView("quit-after-last-window-closed"),
     QLatin1StringView("quit-after-last-window-closed-delay"),
@@ -161,6 +167,13 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("resize-overlay-position"),
     QLatin1StringView("resize-overlay-duration"),
     QLatin1StringView("gtk-single-instance"),
+    QLatin1StringView("quick-terminal-position"),
+    QLatin1StringView("quick-terminal-size"),
+    QLatin1StringView("quick-terminal-screen"),
+    QLatin1StringView("quick-terminal-autohide"),
+    QLatin1StringView("quick-terminal-keyboard-interactivity"),
+    QLatin1StringView("command-palette-entry"),
+    QLatin1StringView("app-notifications"),
 });
 
 constexpr auto KeybindingFields = std::to_array<QLatin1StringView>({
@@ -276,6 +289,41 @@ constexpr auto DirectCommandFields = std::to_array<QLatin1StringView>({
 constexpr auto MouseScrollMultiplierFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("precision"),
     QLatin1StringView("discrete"),
+});
+constexpr auto InitialInputFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"),
+    QLatin1StringView("value"),
+});
+constexpr auto ModifierRemapFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("from"),
+    QLatin1StringView("to"),
+});
+constexpr auto SidedModifierFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("modifier"),
+    QLatin1StringView("side"),
+});
+constexpr auto QuickTerminalSizeFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("primary"),
+    QLatin1StringView("secondary"),
+});
+constexpr auto QuickTerminalPixelsFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("kind"),
+    QLatin1StringView("value"),
+});
+constexpr auto QuickTerminalPercentageFields =
+    std::to_array<QLatin1StringView>({
+        QLatin1StringView("kind"),
+        QLatin1StringView("value-bits"),
+    });
+constexpr auto CommandPaletteEntryFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("title"),
+    QLatin1StringView("description"),
+    QLatin1StringView("action-key"),
+    QLatin1StringView("action"),
+});
+constexpr auto AppNotificationFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("clipboard-copy"),
+    QLatin1StringView("config-reload"),
 });
 
 constexpr auto FontFamilyFields =
@@ -1101,6 +1149,234 @@ readEnum(const QJsonValue &value, const QString &context,
     return match->second;
 }
 
+ParseResult<QVector<TerminalInitialInput>>
+readInitialInput(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<TerminalInitialInput> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object =
+            readExactObject(array->at(index), entryContext, InitialInputFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+
+        auto kind =
+            readString(object->value(QLatin1StringView("kind")),
+                       childContext(entryContext, QLatin1StringView("kind")));
+        if (!kind) return std::unexpected(std::move(kind.error()));
+        auto bytes = readByteArray(
+            object->value(QLatin1StringView("value")),
+            childContext(entryContext, QLatin1StringView("value")));
+        if (!bytes) return std::unexpected(std::move(bytes.error()));
+
+        if (*kind == QLatin1StringView("raw")) {
+            result.append(TerminalInitialInputs::Raw{
+                .bytes = std::move(*bytes),
+            });
+        } else if (*kind == QLatin1StringView("path")) {
+            result.append(TerminalInitialInputs::Path{
+                .path = std::move(*bytes),
+            });
+        } else {
+            return std::unexpected(
+                QStringLiteral("%1.kind has unsupported value '%2'")
+                    .arg(entryContext, *kind));
+        }
+    }
+    return result;
+}
+
+ParseResult<SidedModifier> readSidedModifier(const QJsonValue &value,
+                                             const QString &context)
+{
+    auto object = readExactObject(value, context, SidedModifierFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    constexpr auto Keys =
+        std::to_array<std::pair<QLatin1StringView, ModifierKey>>({
+            {QLatin1StringView("shift"), ModifierKey::Shift},
+            {QLatin1StringView("ctrl"), ModifierKey::Ctrl},
+            {QLatin1StringView("alt"), ModifierKey::Alt},
+            {QLatin1StringView("super"), ModifierKey::Super},
+        });
+    constexpr auto Sides =
+        std::to_array<std::pair<QLatin1StringView, ModifierSide>>({
+            {QLatin1StringView("left"), ModifierSide::Left},
+            {QLatin1StringView("right"), ModifierSide::Right},
+        });
+
+    auto key =
+        readEnum(object->value(QLatin1StringView("modifier")),
+                 childContext(context, QLatin1StringView("modifier")), Keys);
+    if (!key) return std::unexpected(std::move(key.error()));
+    auto side =
+        readEnum(object->value(QLatin1StringView("side")),
+                 childContext(context, QLatin1StringView("side")), Sides);
+    if (!side) return std::unexpected(std::move(side.error()));
+    return SidedModifier{.key = *key, .side = *side};
+}
+
+ParseResult<QVector<ModifierRemap>> readModifierRemaps(const QJsonValue &value,
+                                                       const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<ModifierRemap> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      ModifierRemapFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+
+        auto from = readSidedModifier(
+            object->value(QLatin1StringView("from")),
+            childContext(entryContext, QLatin1StringView("from")));
+        if (!from) return std::unexpected(std::move(from.error()));
+        auto to = readSidedModifier(
+            object->value(QLatin1StringView("to")),
+            childContext(entryContext, QLatin1StringView("to")));
+        if (!to) return std::unexpected(std::move(to.error()));
+        if (std::ranges::any_of(result, [&from](const ModifierRemap &remap) {
+                return remap.from == *from;
+            })) {
+            return std::unexpected(
+                QStringLiteral("%1 contains duplicate source modifier")
+                    .arg(entryContext));
+        }
+        result.append({.from = *from, .to = *to});
+    }
+    return result;
+}
+
+ParseResult<QVector<CommandPaletteEntry>>
+readCommandPalette(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<CommandPaletteEntry> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      CommandPaletteEntryFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+
+        CommandPaletteEntry entry;
+        for (const auto &[name, destination, allowEmpty] :
+             std::to_array<std::tuple<QLatin1StringView, QString *, bool>>({
+                 {QLatin1StringView("title"), &entry.title, true},
+                 {QLatin1StringView("description"), &entry.description, true},
+                 {QLatin1StringView("action-key"), &entry.actionKey, false},
+                 {QLatin1StringView("action"), &entry.action, false},
+             })) {
+            auto parsed = allowEmpty
+                ? readString(object->value(name),
+                             childContext(entryContext, name))
+                : readNonEmptyString(object->value(name),
+                                     childContext(entryContext, name));
+            if (!parsed) return std::unexpected(std::move(parsed.error()));
+            *destination = std::move(*parsed);
+        }
+        result.append(std::move(entry));
+    }
+    return result;
+}
+
+ParseResult<AppNotificationOptions>
+readAppNotifications(const QJsonValue &value, const QString &context)
+{
+    return readBooleanObject<AppNotificationOptions>(
+        value, context, AppNotificationFields,
+        std::to_array<
+            std::pair<QLatin1StringView, bool AppNotificationOptions::*>>({
+            {QLatin1StringView("clipboard-copy"),
+             &AppNotificationOptions::clipboardCopy},
+            {QLatin1StringView("config-reload"),
+             &AppNotificationOptions::configReload},
+        }));
+}
+
+ParseResult<std::optional<QuickTerminalExtent>>
+readOptionalQuickTerminalExtent(const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::optional<QuickTerminalExtent>{};
+    if (!value.isObject()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be an object or null").arg(context));
+    }
+
+    const QJsonObject candidate = value.toObject();
+    auto kind = readString(candidate.value(QLatin1StringView("kind")),
+                           childContext(context, QLatin1StringView("kind")));
+    if (!kind) return std::unexpected(std::move(kind.error()));
+
+    if (*kind == QLatin1StringView("pixels")) {
+        auto object =
+            readExactObject(value, context, QuickTerminalPixelsFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto pixels = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("value")),
+            childContext(context, QLatin1StringView("value")));
+        if (!pixels) return std::unexpected(std::move(pixels.error()));
+        return QuickTerminalExtent{QuickTerminalPixels{.value = *pixels}};
+    }
+    if (*kind == QLatin1StringView("percentage")) {
+        auto object =
+            readExactObject(value, context, QuickTerminalPercentageFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto bits = readDecimalUint64(
+            object->value(QLatin1StringView("value-bits")),
+            childContext(context, QLatin1StringView("value-bits")));
+        if (!bits) return std::unexpected(std::move(bits.error()));
+        if (*bits > std::numeric_limits<quint32>::max()) {
+            return std::unexpected(
+                QStringLiteral("%1.value-bits exceeds the uint32 range")
+                    .arg(context));
+        }
+        const float percentage =
+            std::bit_cast<float>(static_cast<quint32>(*bits));
+        if (!std::isfinite(percentage) || percentage < 0.0F) {
+            return std::unexpected(
+                QStringLiteral("%1.value-bits is not a finite nonnegative f32")
+                    .arg(context));
+        }
+        return QuickTerminalExtent{
+            QuickTerminalPercentage{.value = percentage}};
+    }
+    return std::unexpected(QStringLiteral("%1.kind has unsupported value '%2'")
+                               .arg(context, *kind));
+}
+
+ParseResult<QuickTerminalSize> readQuickTerminalSize(const QJsonValue &value,
+                                                     const QString &context)
+{
+    auto object = readExactObject(value, context, QuickTerminalSizeFields);
+    if (!object) return std::unexpected(std::move(object.error()));
+
+    QuickTerminalSize result;
+    for (const auto [name, destination] :
+         std::to_array<std::pair<QLatin1StringView,
+                                 std::optional<QuickTerminalExtent> *>>({
+             {QLatin1StringView("primary"), &result.primary},
+             {QLatin1StringView("secondary"), &result.secondary},
+         })) {
+        auto parsed = readOptionalQuickTerminalExtent(
+            object->value(name), childContext(context, name));
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        *destination = std::move(*parsed);
+    }
+    return result;
+}
+
 ParseResult<std::optional<QColor>> readOptionalRgb(const QJsonValue &value,
                                                    const QString &context)
 {
@@ -1371,6 +1647,16 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         if (!parsed) return std::unexpected(std::move(parsed.error()));
         result.initialCommand = std::move(*parsed);
     }
+    if (auto parsed = assign(QLatin1StringView("input"), result.initialInput,
+                             readInitialInput);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("key-remap"),
+                             result.modifierRemaps, readModifierRemaps);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     if (auto parsed = assignBoolean(QLatin1StringView("wait-after-command"),
                                     result.waitAfterCommand);
         !parsed) {
@@ -1408,6 +1694,17 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         auto parsed = readOptionalString(fieldValue(name), context(name), true);
         if (!parsed) return std::unexpected(std::move(parsed.error()));
         result.title = std::move(*parsed);
+    }
+    {
+        constexpr QLatin1StringView name("class");
+        const QJsonValue encoded = fieldValue(name);
+        if (encoded.isNull()) {
+            result.applicationClass.reset();
+        } else {
+            auto parsed = readByteArray(encoded, context(name));
+            if (!parsed) return std::unexpected(std::move(parsed.error()));
+            result.applicationClass = std::move(*parsed);
+        }
     }
     for (const auto &[name, role] : FontFamilyFields) {
         if (auto parsed = assign(name, result.typography.face(role).families,
@@ -1665,6 +1962,10 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
              {QLatin1StringView("quit-after-last-window-closed"),
               &result.quitAfterLastWindowClosed},
              {QLatin1StringView("initial-window"), &result.initialWindow},
+             {QLatin1StringView("config-default-files"),
+              &result.configDefaultFiles},
+             {QLatin1StringView("quick-terminal-autohide"),
+              &result.applicationShell.quickTerminal.autohide},
              {QLatin1StringView("linux-cgroup-hard-fail"),
               &result.linuxCgroup.hardFail},
          })) {
@@ -1847,6 +2148,29 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("single-instance"),
              LinuxCgroupMode::SingleInstance},
         });
+    constexpr auto QuickTerminalPositions =
+        std::to_array<std::pair<QLatin1StringView, QuickTerminalPosition>>({
+            {QLatin1StringView("top"), QuickTerminalPosition::Top},
+            {QLatin1StringView("bottom"), QuickTerminalPosition::Bottom},
+            {QLatin1StringView("left"), QuickTerminalPosition::Left},
+            {QLatin1StringView("right"), QuickTerminalPosition::Right},
+            {QLatin1StringView("center"), QuickTerminalPosition::Center},
+        });
+    constexpr auto QuickTerminalScreens =
+        std::to_array<std::pair<QLatin1StringView, QuickTerminalScreen>>({
+            {QLatin1StringView("main"), QuickTerminalScreen::Main},
+            {QLatin1StringView("mouse"), QuickTerminalScreen::Mouse},
+            {QLatin1StringView("macos-menu-bar"),
+             QuickTerminalScreen::MacosMenuBar},
+        });
+    constexpr auto QuickTerminalKeyboardModes = std::to_array<
+        std::pair<QLatin1StringView, QuickTerminalKeyboardInteractivity>>({
+        {QLatin1StringView("none"), QuickTerminalKeyboardInteractivity::None},
+        {QLatin1StringView("on-demand"),
+         QuickTerminalKeyboardInteractivity::OnDemand},
+        {QLatin1StringView("exclusive"),
+         QuickTerminalKeyboardInteractivity::Exclusive},
+    });
     constexpr auto ShellIntegrationModes = std::to_array<
         std::pair<QLatin1StringView, GhosttyShellIntegrationMode>>({
         {QLatin1StringView("none"), GhosttyShellIntegrationMode::None},
@@ -1948,6 +2272,25 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                  result.linuxCgroup.mode, LinuxCgroupModes);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("quick-terminal-position"),
+                                 result.applicationShell.quickTerminal.position,
+                                 QuickTerminalPositions);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assignEnum(QLatin1StringView("quick-terminal-screen"),
+                                 result.applicationShell.quickTerminal.screen,
+                                 QuickTerminalScreens);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assignEnum(
+            QLatin1StringView("quick-terminal-keyboard-interactivity"),
+            result.applicationShell.quickTerminal.keyboardInteractivity,
+            QuickTerminalKeyboardModes);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     if (auto parsed =
             assignEnum(QLatin1StringView("shell-integration"),
                        result.shellIntegration, ShellIntegrationModes);
@@ -1966,6 +2309,12 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                              result.appearance.palette, readPalette);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("quick-terminal-size"),
+                             result.applicationShell.quickTerminal.size,
+                             readQuickTerminalSize);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     {
         constexpr QLatin1StringView name("window-title-font-family");
         auto parsed =
@@ -2071,6 +2420,18 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
         return std::unexpected(std::move(parsed.error()));
     if (auto parsed = assign(QLatin1StringView("theme-files"),
                              result.themeFiles, readAbsolutePathList);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("command-palette-entry"),
+                   result.applicationShell.commandPalette, readCommandPalette);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("app-notifications"),
+                   result.applicationShell.notifications, readAppNotifications);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

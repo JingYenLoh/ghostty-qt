@@ -491,6 +491,10 @@ fn writeValues(
     try writeOptionalCommand(json, config.command, command_uses_default_shell);
     try json.objectField("initial-command");
     try writeOptionalCommand(json, config.@"initial-command", false);
+    try json.objectField("input");
+    try writeInitialInput(json, &config.input);
+    try json.objectField("key-remap");
+    try writeKeyRemaps(json, &config.@"key-remap");
     try json.objectField("wait-after-command");
     try json.write(config.@"wait-after-command");
     try json.objectField("abnormal-command-exit-runtime");
@@ -528,6 +532,11 @@ fn writeValues(
     try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
     try json.objectField("title");
     if (config.title) |title| try json.write(title) else try json.write(null);
+    try json.objectField("class");
+    if (config.class) |class|
+        try writeByteArray(json, class)
+    else
+        try json.write(null);
     inline for (.{
         .{ "font-family", &config.@"font-family" },
         .{ "font-family-bold", &config.@"font-family-bold" },
@@ -780,6 +789,8 @@ fn writeValues(
     try json.write(@tagName(config.@"link-previews"));
     try json.objectField("config-file");
     try writeConfigFiles(json, &config.@"config-file");
+    try json.objectField("config-default-files");
+    try json.write(config.@"config-default-files");
     try json.objectField("theme-files");
     try writeThemeFiles(json, config.theme);
     try json.objectField("quit-after-last-window-closed");
@@ -803,6 +814,25 @@ fn writeValues(
     try json.write(config.@"resize-overlay-duration".asMilliseconds());
     try json.objectField("gtk-single-instance");
     try json.write(@tagName(config.@"gtk-single-instance"));
+    try json.objectField("quick-terminal-position");
+    try json.write(@tagName(config.@"quick-terminal-position"));
+    try json.objectField("quick-terminal-size");
+    try writeQuickTerminalSize(json, config.@"quick-terminal-size");
+    try json.objectField("quick-terminal-screen");
+    try json.write(@tagName(config.@"quick-terminal-screen"));
+    try json.objectField("quick-terminal-autohide");
+    try json.write(config.@"quick-terminal-autohide");
+    try json.objectField("quick-terminal-keyboard-interactivity");
+    try json.write(@tagName(config.@"quick-terminal-keyboard-interactivity"));
+    try json.objectField("command-palette-entry");
+    try writeCommandPalette(json, &config.@"command-palette-entry");
+    try json.objectField("app-notifications");
+    try json.beginObject();
+    inline for (.{ "clipboard-copy", "config-reload" }) |name| {
+        try json.objectField(name);
+        try json.write(@field(config.@"app-notifications", name));
+    }
+    try json.endObject();
     try json.endObject();
 }
 
@@ -900,6 +930,116 @@ fn writeOptionalCommand(
     try json.objectField("default-shell");
     try json.write(default_shell and command == .shell);
     try json.endObject();
+}
+
+fn writeInitialInput(json: *std.json.Stringify, value: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    try json.beginArray();
+    for (value.list.items) |source| {
+        const parsed = try source.cloneParsed(alloc);
+        try json.beginObject();
+        try json.objectField("kind");
+        switch (parsed) {
+            inline else => |bytes, tag| {
+                try json.write(@tagName(tag));
+                try json.objectField("value");
+                try writeByteArray(json, bytes);
+            },
+        }
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn writeSidedModifier(json: *std.json.Stringify, mods: inputpkg.Mods) !void {
+    try json.beginObject();
+    inline for (.{ "shift", "ctrl", "alt", "super" }) |name| {
+        if (@field(mods, name)) {
+            try json.objectField("modifier");
+            try json.write(name);
+            try json.objectField("side");
+            try json.write(@tagName(@field(mods.sides, name)));
+            try json.endObject();
+            return;
+        }
+    }
+    return error.InvalidFinalizedKeyRemap;
+}
+
+fn writeKeyRemaps(json: *std.json.Stringify, value: anytype) !void {
+    try json.beginArray();
+    var iterator = value.map.iterator();
+    while (iterator.next()) |entry| {
+        try json.beginObject();
+        try json.objectField("from");
+        try writeSidedModifier(json, entry.key_ptr.*);
+        try json.objectField("to");
+        try writeSidedModifier(json, entry.value_ptr.*);
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn writeOptionalQuickTerminalSize(
+    json: *std.json.Stringify,
+    value: ?Config.QuickTerminalSize.Size,
+) !void {
+    const size = value orelse {
+        try json.write(null);
+        return;
+    };
+
+    try json.beginObject();
+    try json.objectField("kind");
+    switch (size) {
+        .pixels => |pixels| {
+            try json.write("pixels");
+            try json.objectField("value");
+            try json.write(pixels);
+        },
+        .percentage => |percentage| {
+            try json.write("percentage");
+            try json.objectField("value-bits");
+            try writeDecimalUint64(json, @as(u32, @bitCast(percentage)));
+        },
+    }
+    try json.endObject();
+}
+
+fn writeQuickTerminalSize(
+    json: *std.json.Stringify,
+    value: Config.QuickTerminalSize,
+) !void {
+    try json.beginObject();
+    try json.objectField("primary");
+    try writeOptionalQuickTerminalSize(json, value.primary);
+    try json.objectField("secondary");
+    try writeOptionalQuickTerminalSize(json, value.secondary);
+    try json.endObject();
+}
+
+fn writeCommandPalette(json: *std.json.Stringify, value: anytype) !void {
+    try json.beginArray();
+    for (value.value.items) |command| {
+        var formatted: std.Io.Writer.Allocating = .init(state.alloc);
+        defer formatted.deinit();
+        try command.action.format(&formatted.writer);
+
+        try json.beginObject();
+        try json.objectField("title");
+        try json.write(command.title);
+        try json.objectField("description");
+        try json.write(command.description);
+        try json.objectField("action-key");
+        try json.write(@tagName(command.action));
+        try json.objectField("action");
+        try json.write(formatted.written());
+        try json.endObject();
+    }
+    try json.endArray();
 }
 
 fn writeEnvironment(json: *std.json.Stringify, value: anytype) !void {

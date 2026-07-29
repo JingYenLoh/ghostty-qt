@@ -266,15 +266,19 @@ void populateSourcePaths(GhosttyConfigSnapshot &snapshot,
                          const QStringList &candidatePaths)
 {
     QSet<QString> seen;
-    // Ghostty loads the legacy file before config.ghostty regardless of which
-    // candidate supplied the XDG root. Preserve that order for watchers.
-    appendExistingSource(
-        snapshot.sourcePaths, seen,
-        candidateNamed(candidatePaths, QString::fromLatin1(LegacyConfigName)));
-    appendExistingSource(
-        snapshot.sourcePaths, seen,
-        candidateNamed(candidatePaths,
-                       QString::fromLatin1(PreferredConfigName)));
+    if (snapshot.values.configDefaultFiles) {
+        // Ghostty loads the legacy file before config.ghostty regardless of
+        // which candidate supplied the XDG root. Preserve that order for
+        // watchers only when those default sources participated.
+        appendExistingSource(
+            snapshot.sourcePaths, seen,
+            candidateNamed(candidatePaths,
+                           QString::fromLatin1(LegacyConfigName)));
+        appendExistingSource(
+            snapshot.sourcePaths, seen,
+            candidateNamed(candidatePaths,
+                           QString::fromLatin1(PreferredConfigName)));
+    }
     for (const GhosttyConfigFile &file : snapshot.values.configFiles) {
         appendExistingSource(snapshot.sourcePaths, seen, file.path);
     }
@@ -323,8 +327,7 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
         QDeadlineTimer overallDeadline(
             std::max(1, options.overallTimeoutMilliseconds));
         int operationTimeout = std::max(1, options.timeoutMilliseconds);
-        const auto run = [&](QStringList arguments,
-                             bool includeConfigurationArguments = false) {
+        const auto run = [&](const QStringList &arguments) {
             const qint64 remaining = overallDeadline.remainingTime();
             if (remaining <= 0) {
                 operationTimeout = 0;
@@ -337,9 +340,6 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
             }
             operationTimeout = static_cast<int>(std::min<qint64>(
                 remaining, std::max(1, options.timeoutMilliseconds)));
-            if (includeConfigurationArguments) {
-                arguments.append(options.configurationArguments);
-            }
             return runHelper(options, arguments, *xdgConfigHome,
                              operationTimeout);
         };
@@ -355,27 +355,18 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
             return result;
         };
 
-        auto validation =
-            requireSuccess(QStringLiteral("validation"),
-                           run({QStringLiteral("+validate-config")}));
-        if (!validation) return std::unexpected(std::move(validation.error()));
-
         const QString schemeArgument = colorSchemeArgument(request.colorScheme);
-        auto config = requireSuccess(
-            QStringLiteral("config query"),
-            run({QStringLiteral("+show-config-json"), schemeArgument}, true));
+        QStringList queryArguments{
+            QStringLiteral("+show-config-json"),
+            schemeArgument,
+        };
+        queryArguments.append(options.configurationArguments);
+        auto config =
+            requireSuccess(QStringLiteral("config query"), run(queryArguments));
         if (!config) return std::unexpected(std::move(config.error()));
 
-        auto postValidation =
-            requireSuccess(QStringLiteral("post-query validation"),
-                           run({QStringLiteral("+validate-config")}));
-        if (!postValidation) {
-            return std::unexpected(std::move(postValidation.error()));
-        }
-
         auto verifiedConfig = requireSuccess(
-            QStringLiteral("config consistency query"),
-            run({QStringLiteral("+show-config-json"), schemeArgument}, true));
+            QStringLiteral("config consistency query"), run(queryArguments));
         if (!verifiedConfig) {
             return std::unexpected(std::move(verifiedConfig.error()));
         }
@@ -399,21 +390,11 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
                                           defaultKeybindings);
         populateSourcePaths(snapshot, request.candidatePaths);
 
-        // Successful validator output and the first exporter stderr may carry
-        // warnings from Ghostty. The consistency query is intentionally silent
-        // so re-sampling cannot duplicate a warning.
-        appendProcessDiagnostics(snapshot, QStringLiteral("validation"),
-                                 validation->standardOutput);
-        appendProcessDiagnostics(snapshot, QStringLiteral("validation"),
-                                 validation->standardError);
+        // The first exporter stderr may carry warnings from Ghostty. The
+        // consistency query is intentionally silent so re-sampling cannot
+        // duplicate a warning.
         appendProcessDiagnostics(snapshot, QStringLiteral("config query"),
                                  config->standardError);
-        appendProcessDiagnostics(snapshot,
-                                 QStringLiteral("post-query validation"),
-                                 postValidation->standardOutput);
-        appendProcessDiagnostics(snapshot,
-                                 QStringLiteral("post-query validation"),
-                                 postValidation->standardError);
         return snapshot;
     };
 }

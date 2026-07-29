@@ -23,11 +23,23 @@ public:
     GhosttyConfigService(GhosttyConfigLoader loader,
                          TerminalColorScheme initialColorScheme,
                          QObject *parent = nullptr);
+    // Startup-only CLI policy. False suppresses standard candidate watches
+    // even before the first successful load; explicit recursive and theme
+    // dependencies from later snapshots remain watched.
+    GhosttyConfigService(GhosttyConfigLoader loader,
+                         TerminalColorScheme initialColorScheme,
+                         bool watchDefaultConfigCandidates,
+                         QObject *parent = nullptr);
     GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
                          int debounceMilliseconds, QObject *parent = nullptr);
     GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
                          int debounceMilliseconds,
                          TerminalColorScheme initialColorScheme,
+                         QObject *parent = nullptr);
+    GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
+                         int debounceMilliseconds,
+                         TerminalColorScheme initialColorScheme,
+                         bool watchDefaultConfigCandidates,
                          QObject *parent = nullptr);
     ~GhosttyConfigService() override;
 
@@ -68,7 +80,8 @@ private:
     GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
                          int debounceMilliseconds,
                          TerminalColorScheme initialColorScheme,
-                         bool asynchronousReloads, QObject *parent);
+                         bool asynchronousReloads,
+                         bool watchDefaultConfigCandidates, QObject *parent);
     GhosttyConfigLoadRequest loadRequest() const;
     static QString normalizedAbsolutePath(const QString &path);
     static QString closestExistingDirectory(const QString &path);
@@ -80,6 +93,7 @@ private:
     QStringList candidatePaths_;
     TerminalColorScheme colorScheme_;
     GhosttyConfigLoader loader_;
+    const bool watchDefaultConfigCandidates_;
     // reloadNow() is intentionally synchronous, but it may supersede an
     // already-running watched reload. Serialize calls into an injected loader
     // so its captures do not need to be independently thread-safe.

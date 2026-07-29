@@ -240,7 +240,7 @@ using GhosttyDirectSurfaceActionParseResult =
 
 using GhosttyConfiguredAction =
     std::variant<ApplicationAction, WindowNavigationAction, GhosttyPaneAction,
-                 WorkspaceActionRequest>;
+                 WorkspaceActionRequest, WorkspaceFrontendActionRequest>;
 
 // One positional entry is retained for every serialized chain member,
 // including unsupported and malformed actions. Scope is an upstream property
@@ -328,11 +328,18 @@ public:
     [[nodiscard]] static GhosttyDirectSurfaceActionParseResult
     parseDirectSurfaceAction(QStringView serializedAction);
 
-    // Parse the exact parameterless application actions supported by this
-    // frontend. The optional is empty for malformed spellings as well as
-    // application actions that are not implemented yet.
+    // Parse the exact parameterless application action vocabulary. This is a
+    // grammar boundary independent of runtime support: for example, the quick
+    // terminal remains typed even when the platform backend cannot execute it.
     [[nodiscard]] static std::optional<ApplicationAction>
     parseApplicationAction(QStringView serializedAction);
+
+    // Parse frontend-owned surface actions into payload-safe request types.
+    // This grammar boundary deliberately includes Inspector and Crash even
+    // while they remain blocked from executable configured-action chains.
+    [[nodiscard]] static std::optional<WorkspaceFrontendActionRequest>
+    parseFrontendAction(QStringView serializedAction,
+                        WorkspaceActionContext context = {});
 
     // Parse the exact previous/next goto_window payload. The action remains
     // surface-scoped even though execution is relayed to the application

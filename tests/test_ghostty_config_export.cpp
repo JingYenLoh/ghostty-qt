@@ -9,6 +9,7 @@
 #include <QTest>
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <expected>
@@ -86,6 +87,31 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.initialCommand->directArguments.at(2).isEmpty());
     QVERIFY(values.initialCommand->shellCommand.isEmpty());
     QVERIFY(!values.initialCommand->defaultShell);
+    QCOMPARE(values.initialInput.size(), qsizetype{2});
+    const auto *rawInput =
+        std::get_if<TerminalInitialInputs::Raw>(&values.initialInput.at(0));
+    QVERIFY(rawInput != nullptr);
+    QCOMPARE(rawInput->bytes, QByteArray::fromHex("68656c6c6f0a00ff"));
+    const auto *pathInput =
+        std::get_if<TerminalInitialInputs::Path>(&values.initialInput.at(1));
+    QVERIFY(pathInput != nullptr);
+    QCOMPARE(pathInput->path, QByteArray::fromHex("2f776f726b2f696e707574ff"));
+
+    const QVector<ModifierRemap> expectedRemaps{
+        {
+            .from = {.key = ModifierKey::Ctrl, .side = ModifierSide::Right},
+            .to = {.key = ModifierKey::Super, .side = ModifierSide::Left},
+        },
+        {
+            .from = {.key = ModifierKey::Ctrl, .side = ModifierSide::Left},
+            .to = {.key = ModifierKey::Alt, .side = ModifierSide::Right},
+        },
+        {
+            .from = {.key = ModifierKey::Shift, .side = ModifierSide::Left},
+            .to = {.key = ModifierKey::Ctrl, .side = ModifierSide::Right},
+        },
+    };
+    QVERIFY(values.modifierRemaps == expectedRemaps);
     QVERIFY(values.waitAfterCommand);
     QCOMPARE(values.abnormalCommandExitRuntimeMilliseconds, quint32{731});
     QCOMPARE(values.shellIntegration, GhosttyShellIntegrationMode::Fish);
@@ -114,6 +140,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
     QCOMPARE(values.title, std::optional<QString>(QString{}));
+    QCOMPARE(values.applicationClass,
+             std::optional(QByteArray::fromHex("636f6d2e6578616d706c652eff")));
     const TerminalTypography &typography = values.typography;
     QCOMPARE(
         typography.face(TerminalFontRole::Regular).families,
@@ -368,6 +396,41 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!values.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(!values.initialWindow);
     QCOMPARE(values.singleInstanceMode, SingleInstanceMode::Detect);
+    QVERIFY(!values.configDefaultFiles);
+
+    const ApplicationShellOptions &application = values.applicationShell;
+    QCOMPARE(application.quickTerminal.position, QuickTerminalPosition::Center);
+    QCOMPARE(application.quickTerminal.screen, QuickTerminalScreen::Mouse);
+    QVERIFY(application.quickTerminal.autohide);
+    QCOMPARE(application.quickTerminal.keyboardInteractivity,
+             QuickTerminalKeyboardInteractivity::Exclusive);
+    QVERIFY(application.quickTerminal.size.primary.has_value());
+    const auto *percentage = std::get_if<QuickTerminalPercentage>(
+        &*application.quickTerminal.size.primary);
+    QVERIFY(percentage != nullptr);
+    QCOMPARE(std::bit_cast<quint32>(percentage->value), quint32{1108738048});
+    QVERIFY(application.quickTerminal.size.secondary.has_value());
+    const auto *pixels = std::get_if<QuickTerminalPixels>(
+        &*application.quickTerminal.size.secondary);
+    QVERIFY(pixels != nullptr);
+    QCOMPARE(pixels->value, quint32{640});
+    const QVector<CommandPaletteEntry> expectedCommands{
+        {
+            .title = QStringLiteral("Reset"),
+            .description = QStringLiteral("Reset everything"),
+            .actionKey = QStringLiteral("reset"),
+            .action = QStringLiteral("reset"),
+        },
+        {
+            .title = QStringLiteral("Say 👻"),
+            .description = {},
+            .actionKey = QStringLiteral("text"),
+            .action = QStringLiteral("text:hello, world"),
+        },
+    };
+    QVERIFY(application.commandPalette == expectedCommands);
+    QVERIFY(!application.notifications.clipboardCopy);
+    QVERIFY(application.notifications.configReload);
 
     // Exercise both states of every nullable value. The primary fixture mixes
     // null and configured values; this inverse fixture ensures neither state
@@ -413,6 +476,8 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     }
     inverseNullability = withValue(std::move(inverseNullability),
                                    QStringLiteral("wait-after-command"), false);
+    inverseNullability = withValue(std::move(inverseNullability),
+                                   QStringLiteral("class"), QJsonValue::Null);
 
     const auto inverse = parseGhosttyConfigExportJson(json(inverseNullability));
     QVERIFY2(inverse.has_value(), qPrintable(errorMessage(inverse)));
@@ -437,6 +502,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!inverse->values.ordinaryCommand.has_value());
     QVERIFY(!inverse->values.initialCommand.has_value());
     QVERIFY(!inverse->values.title.has_value());
+    QVERIFY(!inverse->values.applicationClass.has_value());
     QVERIFY(!inverse->values.windowAppearance.titleFontFamily.has_value());
     QVERIFY(!inverse->values.windowAppearance.titlebarBackground.has_value());
     QVERIFY(!inverse->values.windowAppearance.titlebarForeground.has_value());
@@ -584,6 +650,54 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
              std::numeric_limits<quint32>::max());
     QCOMPARE(high->values.abnormalCommandExitRuntimeMilliseconds,
              std::numeric_limits<quint32>::max());
+
+    QJsonObject emptyApplicationCollections = object();
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("input"), QJsonArray{});
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("key-remap"), QJsonArray{});
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("command-palette-entry"), QJsonArray{});
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("quick-terminal-size"), quickTerminalSize());
+    emptyApplicationCollections =
+        withValue(std::move(emptyApplicationCollections),
+                  QStringLiteral("config-default-files"), true);
+    const auto emptyApplication =
+        parseGhosttyConfigExportJson(json(emptyApplicationCollections));
+    QVERIFY2(emptyApplication.has_value(),
+             qPrintable(errorMessage(emptyApplication)));
+    QVERIFY(emptyApplication->values.initialInput.isEmpty());
+    QVERIFY(emptyApplication->values.modifierRemaps.isEmpty());
+    QVERIFY(emptyApplication->values.applicationShell.commandPalette.isEmpty());
+    QVERIFY(!emptyApplication->values.applicationShell.quickTerminal.size
+                 .primary.has_value());
+    QVERIFY(!emptyApplication->values.applicationShell.quickTerminal.size
+                 .secondary.has_value());
+    QVERIFY(emptyApplication->values.configDefaultFiles);
+
+    const auto signedZeroPercentage = parseGhosttyConfigExportJson(
+        json(withValue(object(), QStringLiteral("quick-terminal-size"),
+                       quickTerminalSize(quickTerminalPercentage(
+                           QStringLiteral("2147483648"))))));
+    QVERIFY2(signedZeroPercentage.has_value(),
+             qPrintable(errorMessage(signedZeroPercentage)));
+    const auto *signedZero = std::get_if<QuickTerminalPercentage>(
+        &*signedZeroPercentage->values.applicationShell.quickTerminal.size
+              .primary);
+    QVERIFY(signedZero != nullptr);
+    QCOMPARE(std::bit_cast<quint32>(signedZero->value), quint32{0x80000000U});
+
+    const auto emptyApplicationClass = parseGhosttyConfigExportJson(
+        json(withValue(object(), QStringLiteral("class"), QJsonArray{})));
+    QVERIFY2(emptyApplicationClass.has_value(),
+             qPrintable(errorMessage(emptyApplicationClass)));
+    QVERIFY(emptyApplicationClass->values.applicationClass.has_value());
+    QVERIFY(emptyApplicationClass->values.applicationClass->isEmpty());
 
     const auto zeroRuntime = parseGhosttyConfigExportJson(json(withValue(
         object(), QStringLiteral("abnormal-command-exit-runtime"), 0)));
@@ -883,6 +997,43 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         [](const GhosttyConfigValues &values) {
             return values.linuxCgroup.mode;
         });
+    verifyMappings(
+        QLatin1StringView("quick-terminal-position"),
+        std::to_array<std::pair<QLatin1StringView, QuickTerminalPosition>>({
+            {QLatin1StringView("top"), QuickTerminalPosition::Top},
+            {QLatin1StringView("bottom"), QuickTerminalPosition::Bottom},
+            {QLatin1StringView("left"), QuickTerminalPosition::Left},
+            {QLatin1StringView("right"), QuickTerminalPosition::Right},
+            {QLatin1StringView("center"), QuickTerminalPosition::Center},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.applicationShell.quickTerminal.position;
+        });
+    verifyMappings(
+        QLatin1StringView("quick-terminal-screen"),
+        std::to_array<std::pair<QLatin1StringView, QuickTerminalScreen>>({
+            {QLatin1StringView("main"), QuickTerminalScreen::Main},
+            {QLatin1StringView("mouse"), QuickTerminalScreen::Mouse},
+            {QLatin1StringView("macos-menu-bar"),
+             QuickTerminalScreen::MacosMenuBar},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.applicationShell.quickTerminal.screen;
+        });
+    verifyMappings(
+        QLatin1StringView("quick-terminal-keyboard-interactivity"),
+        std::to_array<
+            std::pair<QLatin1StringView, QuickTerminalKeyboardInteractivity>>({
+            {QLatin1StringView("none"),
+             QuickTerminalKeyboardInteractivity::None},
+            {QLatin1StringView("on-demand"),
+             QuickTerminalKeyboardInteractivity::OnDemand},
+            {QLatin1StringView("exclusive"),
+             QuickTerminalKeyboardInteractivity::Exclusive},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.applicationShell.quickTerminal.keyboardInteractivity;
+        });
 }
 
 void GhosttyConfigExportTest::parsesEveryTypographyAlternative()
@@ -1102,6 +1253,333 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-initial-command")
         << withoutValue(object(), QStringLiteral("initial-command"))
         << QStringLiteral("values is missing field 'initial-command'");
+    for (const QString &field : {
+             QStringLiteral("input"),
+             QStringLiteral("key-remap"),
+             QStringLiteral("config-default-files"),
+             QStringLiteral("quick-terminal-position"),
+             QStringLiteral("quick-terminal-size"),
+             QStringLiteral("quick-terminal-screen"),
+             QStringLiteral("quick-terminal-autohide"),
+             QStringLiteral("quick-terminal-keyboard-interactivity"),
+             QStringLiteral("command-palette-entry"),
+             QStringLiteral("app-notifications"),
+             QStringLiteral("class"),
+         }) {
+        const QByteArray row = QStringLiteral("missing-%1").arg(field).toUtf8();
+        QTest::newRow(row.constData())
+            << withoutValue(object(), field)
+            << QStringLiteral("values is missing field '%1'").arg(field);
+    }
+    QTest::newRow("input-type")
+        << withValue(object(), QStringLiteral("input"), true)
+        << QStringLiteral("values.input must be an array");
+    QTest::newRow("input-entry-type")
+        << withValue(object(), QStringLiteral("input"), QJsonArray{true})
+        << QStringLiteral("values.input[0] must be an object");
+    QTest::newRow("input-missing-kind")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("value"), QJsonArray{}},
+                     }})
+        << QStringLiteral("values.input[0] is missing field 'kind'");
+    QTest::newRow("input-missing-value")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("raw")},
+                     }})
+        << QStringLiteral("values.input[0] is missing field 'value'");
+    QTest::newRow("input-extra-field")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("raw")},
+                         {QStringLiteral("value"), QJsonArray{}},
+                         {QStringLiteral("path"), QStringLiteral("ignored")},
+                     }})
+        << QStringLiteral("values.input[0] has unexpected field 'path'");
+    QTest::newRow("input-kind-type")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("kind"), true},
+                         {QStringLiteral("value"), QJsonArray{}},
+                     }})
+        << QStringLiteral("values.input[0].kind must be a string");
+    QTest::newRow("input-kind-value")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{initialInput(QStringLiteral("socket"),
+                                             QByteArrayLiteral("value"))})
+        << QStringLiteral(
+               "values.input[0].kind has unsupported value 'socket'");
+    QTest::newRow("input-byte-range")
+        << withValue(object(), QStringLiteral("input"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("raw")},
+                         {QStringLiteral("value"), QJsonArray{256}},
+                     }})
+        << QStringLiteral(
+               "values.input[0].value[0] must be an unsigned integer in range");
+
+    QTest::newRow("key-remap-type")
+        << withValue(object(), QStringLiteral("key-remap"), true)
+        << QStringLiteral("values.key-remap must be an array");
+    QTest::newRow("key-remap-entry-type")
+        << withValue(object(), QStringLiteral("key-remap"), QJsonArray{true})
+        << QStringLiteral("values.key-remap[0] must be an object");
+    QTest::newRow("key-remap-missing-from") << withValue(
+        object(), QStringLiteral("key-remap"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("to"),
+             sidedModifier(QStringLiteral("alt"), QStringLiteral("left"))},
+        }}) << QStringLiteral("values.key-remap[0] is missing field 'from'");
+    QTest::newRow("key-remap-extra-field")
+        << withValue(object(), QStringLiteral("key-remap"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("from"),
+                          sidedModifier(QStringLiteral("ctrl"),
+                                        QStringLiteral("left"))},
+                         {QStringLiteral("to"),
+                          sidedModifier(QStringLiteral("alt"),
+                                        QStringLiteral("left"))},
+                         {QStringLiteral("transitive"), false},
+                     }})
+        << QStringLiteral(
+               "values.key-remap[0] has unexpected field 'transitive'");
+    QTest::newRow("key-remap-sided-type") << withValue(
+        object(), QStringLiteral("key-remap"),
+        QJsonArray{QJsonObject{
+            {QStringLiteral("from"), true},
+            {QStringLiteral("to"),
+             sidedModifier(QStringLiteral("alt"), QStringLiteral("left"))},
+        }}) << QStringLiteral("values.key-remap[0].from must be an object");
+    QTest::newRow("key-remap-sided-missing-side")
+        << withValue(object(), QStringLiteral("key-remap"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("from"),
+                          QJsonObject{{QStringLiteral("modifier"),
+                                       QStringLiteral("ctrl")}}},
+                         {QStringLiteral("to"),
+                          sidedModifier(QStringLiteral("alt"),
+                                        QStringLiteral("left"))},
+                     }})
+        << QStringLiteral("values.key-remap[0].from is missing field 'side'");
+    QTest::newRow("key-remap-sided-extra-field")
+        << withValue(
+               object(), QStringLiteral("key-remap"),
+               QJsonArray{QJsonObject{
+                   {QStringLiteral("from"),
+                    QJsonObject{
+                        {QStringLiteral("modifier"), QStringLiteral("ctrl")},
+                        {QStringLiteral("side"), QStringLiteral("left")},
+                        {QStringLiteral("physical"), true},
+                    }},
+                   {QStringLiteral("to"),
+                    sidedModifier(QStringLiteral("alt"),
+                                  QStringLiteral("left"))},
+               }})
+        << QStringLiteral(
+               "values.key-remap[0].from has unexpected field 'physical'");
+    QTest::newRow("key-remap-modifier-value")
+        << withValue(
+               object(), QStringLiteral("key-remap"),
+               QJsonArray{modifierRemap(sidedModifier(QStringLiteral("meta"),
+                                                      QStringLiteral("left")),
+                                        sidedModifier(QStringLiteral("alt"),
+                                                      QStringLiteral("left")))})
+        << QStringLiteral(
+               "values.key-remap[0].from.modifier has unsupported value");
+    QTest::newRow("key-remap-side-value")
+        << withValue(
+               object(), QStringLiteral("key-remap"),
+               QJsonArray{modifierRemap(sidedModifier(QStringLiteral("ctrl"),
+                                                      QStringLiteral("both")),
+                                        sidedModifier(QStringLiteral("alt"),
+                                                      QStringLiteral("left")))})
+        << QStringLiteral(
+               "values.key-remap[0].from.side has unsupported value");
+    QTest::newRow("key-remap-duplicate-source") << withValue(
+        object(), QStringLiteral("key-remap"),
+        QJsonArray{
+            modifierRemap(
+                sidedModifier(QStringLiteral("ctrl"), QStringLiteral("left")),
+                sidedModifier(QStringLiteral("alt"), QStringLiteral("left"))),
+            modifierRemap(
+                sidedModifier(QStringLiteral("ctrl"), QStringLiteral("left")),
+                sidedModifier(QStringLiteral("super"),
+                              QStringLiteral("right"))),
+        }) << QStringLiteral("contains duplicate source modifier");
+
+    QTest::newRow("quick-terminal-size-type")
+        << withValue(object(), QStringLiteral("quick-terminal-size"), true)
+        << QStringLiteral("values.quick-terminal-size must be an object");
+    QTest::newRow("quick-terminal-size-missing-secondary")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     QJsonObject{{QStringLiteral("primary"), QJsonValue::Null}})
+        << QStringLiteral(
+               "values.quick-terminal-size is missing field 'secondary'");
+    QTest::newRow("quick-terminal-size-extra-field")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     QJsonObject{
+                         {QStringLiteral("primary"), QJsonValue::Null},
+                         {QStringLiteral("secondary"), QJsonValue::Null},
+                         {QStringLiteral("tertiary"), QJsonValue::Null},
+                     })
+        << QStringLiteral(
+               "values.quick-terminal-size has unexpected field 'tertiary'");
+    QTest::newRow("quick-terminal-extent-type")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(true))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary must be an object or null");
+    QTest::newRow("quick-terminal-extent-missing-kind")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(QJsonObject{}))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary.kind must be a string");
+    QTest::newRow("quick-terminal-pixels-missing-value")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("pixels")}}))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary is missing field 'value'");
+    QTest::newRow("quick-terminal-pixels-extra-field")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("pixels")},
+                         {QStringLiteral("value"), 20},
+                         {QStringLiteral("value-bits"), QStringLiteral("0")},
+                     }))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary has unexpected field 'value-bits'");
+    QTest::newRow("quick-terminal-pixels-value-type")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(QJsonObject{
+                         {QStringLiteral("kind"), QStringLiteral("pixels")},
+                         {QStringLiteral("value"), QStringLiteral("20")},
+                     }))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary.value must be an unsigned integer");
+    QTest::newRow("quick-terminal-percentage-missing-bits")
+        << withValue(
+               object(), QStringLiteral("quick-terminal-size"),
+               quickTerminalSize(QJsonObject{
+                   {QStringLiteral("kind"), QStringLiteral("percentage")}}))
+        << QStringLiteral(
+               "values.quick-terminal-size.primary is missing field 'value-bits'");
+    QTest::newRow("quick-terminal-percentage-bits-noncanonical")
+        << withValue(
+               object(), QStringLiteral("quick-terminal-size"),
+               quickTerminalSize(quickTerminalPercentage(QStringLiteral("01"))))
+        << QStringLiteral("canonical unsigned decimal string");
+    QTest::newRow("quick-terminal-percentage-bits-overflow")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(
+                         quickTerminalPercentage(QStringLiteral("4294967296"))))
+        << QStringLiteral("value-bits exceeds the uint32 range");
+    QTest::newRow("quick-terminal-percentage-infinite")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(
+                         quickTerminalPercentage(QStringLiteral("2139095040"))))
+        << QStringLiteral("is not a finite nonnegative f32");
+    QTest::newRow("quick-terminal-percentage-negative")
+        << withValue(object(), QStringLiteral("quick-terminal-size"),
+                     quickTerminalSize(
+                         quickTerminalPercentage(QStringLiteral("3212836864"))))
+        << QStringLiteral("is not a finite nonnegative f32");
+
+    QTest::newRow("command-palette-type")
+        << withValue(object(), QStringLiteral("command-palette-entry"), true)
+        << QStringLiteral("values.command-palette-entry must be an array");
+    QTest::newRow("command-palette-entry-type")
+        << withValue(object(), QStringLiteral("command-palette-entry"),
+                     QJsonArray{true})
+        << QStringLiteral("values.command-palette-entry[0] must be an object");
+    QTest::newRow("command-palette-missing-action-key")
+        << withValue(object(), QStringLiteral("command-palette-entry"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("title"), QStringLiteral("Title")},
+                         {QStringLiteral("description"), QString{}},
+                         {QStringLiteral("action"), QStringLiteral("ignore")},
+                     }})
+        << QStringLiteral(
+               "values.command-palette-entry[0] is missing field 'action-key'");
+    QTest::newRow("command-palette-extra-field")
+        << withValue(
+               object(), QStringLiteral("command-palette-entry"),
+               QJsonArray{QJsonObject{
+                   {QStringLiteral("title"), QStringLiteral("Title")},
+                   {QStringLiteral("description"), QString{}},
+                   {QStringLiteral("action-key"), QStringLiteral("ignore")},
+                   {QStringLiteral("action"), QStringLiteral("ignore")},
+                   {QStringLiteral("shortcut"), QStringLiteral("Ctrl+I")},
+               }})
+        << QStringLiteral(
+               "values.command-palette-entry[0] has unexpected field 'shortcut'");
+    QTest::newRow("command-palette-title-type")
+        << withValue(
+               object(), QStringLiteral("command-palette-entry"),
+               QJsonArray{QJsonObject{
+                   {QStringLiteral("title"), true},
+                   {QStringLiteral("description"), QString{}},
+                   {QStringLiteral("action-key"), QStringLiteral("ignore")},
+                   {QStringLiteral("action"), QStringLiteral("ignore")},
+               }})
+        << QStringLiteral(
+               "values.command-palette-entry[0].title must be a string");
+    QTest::newRow("command-palette-empty-action-key")
+        << withValue(object(), QStringLiteral("command-palette-entry"),
+                     QJsonArray{commandPaletteEntry(QStringLiteral("Title"),
+                                                    QString{}, QString{},
+                                                    QStringLiteral("ignore"))})
+        << QStringLiteral(
+               "values.command-palette-entry[0].action-key must be a non-empty string");
+    QTest::newRow("command-palette-empty-action")
+        << withValue(object(), QStringLiteral("command-palette-entry"),
+                     QJsonArray{commandPaletteEntry(
+                         QStringLiteral("Title"), QString{},
+                         QStringLiteral("ignore"), QString{})})
+        << QStringLiteral(
+               "values.command-palette-entry[0].action must be a non-empty string");
+
+    QTest::newRow("app-notifications-type")
+        << withValue(object(), QStringLiteral("app-notifications"), true)
+        << QStringLiteral("values.app-notifications must be an object");
+    QTest::newRow("app-notifications-missing-field")
+        << withValue(object(), QStringLiteral("app-notifications"),
+                     QJsonObject{{QStringLiteral("clipboard-copy"), true}})
+        << QStringLiteral(
+               "values.app-notifications is missing field 'config-reload'");
+    QTest::newRow("app-notifications-extra-field")
+        << withValue(object(), QStringLiteral("app-notifications"),
+                     QJsonObject{
+                         {QStringLiteral("clipboard-copy"), true},
+                         {QStringLiteral("config-reload"), true},
+                         {QStringLiteral("future"), true},
+                     })
+        << QStringLiteral(
+               "values.app-notifications has unexpected field 'future'");
+    QTest::newRow("app-notifications-field-type")
+        << withValue(
+               object(), QStringLiteral("app-notifications"),
+               QJsonObject{
+                   {QStringLiteral("clipboard-copy"), QStringLiteral("true")},
+                   {QStringLiteral("config-reload"), true},
+               })
+        << QStringLiteral(
+               "values.app-notifications.clipboard-copy must be a boolean");
+    QTest::newRow("config-default-files-type")
+        << withValue(object(), QStringLiteral("config-default-files"), 1)
+        << QStringLiteral("values.config-default-files must be a boolean");
+    QTest::newRow("quick-terminal-autohide-type")
+        << withValue(object(), QStringLiteral("quick-terminal-autohide"), 1)
+        << QStringLiteral("values.quick-terminal-autohide must be a boolean");
+    QTest::newRow("class-type")
+        << withValue(object(), QStringLiteral("class"),
+                     QStringLiteral("com.example.Ghostty"))
+        << QStringLiteral("values.class must be an array");
+    QTest::newRow("class-byte-range")
+        << withValue(object(), QStringLiteral("class"), QJsonArray{256})
+        << QStringLiteral(
+               "values.class[0] must be an unsigned integer in range");
     QTest::newRow("missing-wait-after-command")
         << withoutValue(object(), QStringLiteral("wait-after-command"))
         << QStringLiteral("values is missing field 'wait-after-command'");
@@ -1404,8 +1882,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << QStringLiteral("values is missing field 'background-opacity'");
     QTest::newRow("missing-background-opacity-cells")
         << withoutValue(object(), QStringLiteral("background-opacity-cells"))
-        << QStringLiteral(
-               "values is missing field 'background-opacity-cells'");
+        << QStringLiteral("values is missing field 'background-opacity-cells'");
     for (const QString &field : {
              QStringLiteral("background-image"),
              QStringLiteral("background-image-opacity"),
@@ -2065,8 +2542,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << QStringLiteral("values.background-opacity must be a finite number");
     QTest::newRow("background-opacity-cells-type")
         << withValue(object(), QStringLiteral("background-opacity-cells"), 1)
-        << QStringLiteral(
-               "values.background-opacity-cells must be a boolean");
+        << QStringLiteral("values.background-opacity-cells must be a boolean");
     QTest::newRow("background-image-object")
         << withValue(object(), QStringLiteral("background-image"),
                      QJsonObject{})
@@ -2236,6 +2712,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("gtk-single-instance"),
              QStringLiteral("linux-cgroup"),
              QStringLiteral("shell-integration"),
+             QStringLiteral("quick-terminal-position"),
+             QStringLiteral("quick-terminal-screen"),
+             QStringLiteral("quick-terminal-keyboard-interactivity"),
          }) {
         const QByteArray row = QStringLiteral("enum-%1").arg(enumName).toUtf8();
         QTest::newRow(row.constData())

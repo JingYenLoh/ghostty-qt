@@ -22,6 +22,7 @@ namespace {
 using Error = GhosttyActionTranslationError;
 using OptionalView = std::optional<QStringView>;
 namespace PaneAction = GhosttyPaneActions;
+namespace FrontendAction = WorkspaceFrontendActions;
 
 locale_t cNumericLocale()
 {
@@ -347,24 +348,29 @@ constexpr std::array<QLatin1StringView, 8> kParameterizedWorkspaceActions{{
 
 struct ApplicationActionSpec {
     QLatin1StringView name;
-    std::optional<ApplicationAction> implementedAction;
+    std::optional<ApplicationAction> parsedAction;
+    bool executable = false;
 };
 
 // Binding.Action.scope() classifies all of these as application actions even
-// when GTK does not implement them. `unbind` is a configuration-finalization
-// directive and therefore deliberately has no runtime ApplicationAction.
+// when the current frontend cannot execute them. `unbind` is a
+// configuration-finalization directive and therefore deliberately has no
+// runtime ApplicationAction. Parsing and execution are separate so a
+// platform-blocked action such as toggle_quick_terminal retains its exact
+// typed identity without activating its default/global binding.
 constexpr std::array<ApplicationActionSpec, 13> kApplicationActions{{
-    {QLatin1StringView("ignore"), ApplicationAction::Ignore},
+    {QLatin1StringView("ignore"), ApplicationAction::Ignore, true},
     {QLatin1StringView("unbind"), std::nullopt},
-    {QLatin1StringView("open_config"), ApplicationAction::OpenConfig},
-    {QLatin1StringView("reload_config"), ApplicationAction::ReloadConfig},
+    {QLatin1StringView("open_config"), ApplicationAction::OpenConfig, true},
+    {QLatin1StringView("reload_config"), ApplicationAction::ReloadConfig, true},
     {QLatin1StringView("close_all_windows"), std::nullopt},
-    {QLatin1StringView("quit"), ApplicationAction::Quit},
-    {QLatin1StringView("toggle_quick_terminal"), std::nullopt},
+    {QLatin1StringView("quit"), ApplicationAction::Quit, true},
+    {QLatin1StringView("toggle_quick_terminal"),
+     ApplicationAction::ToggleQuickTerminal},
     {QLatin1StringView("toggle_visibility"), std::nullopt},
     {QLatin1StringView("check_for_updates"), std::nullopt},
     {QLatin1StringView("show_gtk_inspector"), std::nullopt},
-    {QLatin1StringView("new_window"), ApplicationAction::NewWindow},
+    {QLatin1StringView("new_window"), ApplicationAction::NewWindow, true},
     {QLatin1StringView("undo"), std::nullopt},
     {QLatin1StringView("redo"), std::nullopt},
 }};
@@ -697,6 +703,78 @@ parseDirectSurfaceActionView(GhosttySerializedActionView parsed)
     return std::move(*action);
 }
 
+std::optional<WorkspaceFrontendActionRequest>
+parseFrontendActionView(GhosttySerializedActionView parsed,
+                        WorkspaceActionContext context)
+{
+    const auto request = [&context](WorkspaceFrontendAction action) {
+        return WorkspaceFrontendActionRequest{
+            .action = std::move(action),
+            .context = context,
+        };
+    };
+
+    if (parsed.name == QLatin1StringView("toggle_command_palette")
+        || parsed.name == QLatin1StringView("toggle_tab_overview")
+        || parsed.name == QLatin1StringView("show_on_screen_keyboard")) {
+        // These are void Binding.Action fields: the presence of any colon is
+        // invalid, including an explicitly empty parameter.
+        if (parsed.parameter.has_value()) return std::nullopt;
+        if (parsed.name == QLatin1StringView("toggle_command_palette")) {
+            return request(FrontendAction::ToggleCommandPalette{});
+        }
+        if (parsed.name == QLatin1StringView("toggle_tab_overview")) {
+            return request(FrontendAction::ToggleTabOverview{});
+        }
+        return request(FrontendAction::ShowOnScreenKeyboard{});
+    }
+
+    if (parsed.name == QLatin1StringView("inspector")) {
+        if (!parsed.parameter.has_value()) return std::nullopt;
+
+        FrontendAction::InspectorMode mode;
+        if (*parsed.parameter == QLatin1StringView("toggle")) {
+            mode = FrontendAction::InspectorMode::Toggle;
+        } else if (*parsed.parameter == QLatin1StringView("show")) {
+            mode = FrontendAction::InspectorMode::Show;
+        } else if (*parsed.parameter == QLatin1StringView("hide")) {
+            mode = FrontendAction::InspectorMode::Hide;
+        } else {
+            return std::nullopt;
+        }
+        return request(FrontendAction::Inspector{.mode = mode});
+    }
+
+    if (parsed.name == QLatin1StringView("crash")) {
+        if (!parsed.parameter.has_value()) return std::nullopt;
+
+        FrontendAction::CrashTarget target;
+        if (*parsed.parameter == QLatin1StringView("main")) {
+            target = FrontendAction::CrashTarget::Main;
+        } else if (*parsed.parameter == QLatin1StringView("io")) {
+            target = FrontendAction::CrashTarget::Io;
+        } else if (*parsed.parameter == QLatin1StringView("render")) {
+            target = FrontendAction::CrashTarget::Render;
+        } else {
+            return std::nullopt;
+        }
+        return request(FrontendAction::Crash{.target = target});
+    }
+
+    return std::nullopt;
+}
+
+bool isExecutableFrontendAction(
+    const WorkspaceFrontendActionRequest &request) noexcept
+{
+    return std::holds_alternative<FrontendAction::ToggleCommandPalette>(
+               request.action)
+        || std::holds_alternative<FrontendAction::ToggleTabOverview>(
+               request.action)
+        || std::holds_alternative<FrontendAction::ShowOnScreenKeyboard>(
+               request.action);
+}
+
 std::optional<ApplicationAction>
 parseApplicationActionView(GhosttySerializedActionView parsed)
 {
@@ -704,7 +782,7 @@ parseApplicationActionView(GhosttySerializedActionView parsed)
 
     const ApplicationActionSpec *const spec =
         findActionSpec(parsed.name, kApplicationActions);
-    return spec != nullptr ? spec->implementedAction : std::nullopt;
+    return spec != nullptr ? spec->parsedAction : std::nullopt;
 }
 
 std::optional<WindowNavigationAction>
@@ -968,11 +1046,17 @@ parseConfiguredActionView(GhosttySerializedActionView parsed,
     // action through a surface parser.
     if (const ApplicationActionSpec *const spec =
             findActionSpec(parsed.name, kApplicationActions)) {
-        if (!parsed.parameter.has_value()
-            && spec->implementedAction.has_value()) {
-            return GhosttyConfiguredAction{*spec->implementedAction};
+        if (!parsed.parameter.has_value() && spec->parsedAction.has_value()
+            && spec->executable) {
+            return GhosttyConfiguredAction{*spec->parsedAction};
         }
         return std::nullopt;
+    }
+
+    if (std::optional<WorkspaceFrontendActionRequest> action =
+            parseFrontendActionView(parsed, context);
+        action.has_value() && isExecutableFrontendAction(*action)) {
+        return GhosttyConfiguredAction{std::move(*action)};
     }
 
     if (std::optional<WindowNavigationAction> action =
@@ -1034,6 +1118,14 @@ GhosttyActionCatalog::parseApplicationAction(QStringView serializedAction)
     return parseApplicationActionView(parseSerializedAction(serializedAction));
 }
 
+std::optional<WorkspaceFrontendActionRequest>
+GhosttyActionCatalog::parseFrontendAction(QStringView serializedAction,
+                                          WorkspaceActionContext context)
+{
+    return parseFrontendActionView(parseSerializedAction(serializedAction),
+                                   context);
+}
+
 std::optional<WindowNavigationAction>
 GhosttyActionCatalog::parseWindowNavigationAction(QStringView serializedAction)
 {
@@ -1055,6 +1147,9 @@ GhosttyActionInputEffect GhosttyActionCatalog::inputEffect(
             : GhosttyActionInputEffect::None;
     }
     if (std::holds_alternative<WindowNavigationAction>(action)) {
+        return GhosttyActionInputEffect::None;
+    }
+    if (std::holds_alternative<WorkspaceFrontendActionRequest>(action)) {
         return GhosttyActionInputEffect::None;
     }
     if (const auto *pane = std::get_if<GhosttyPaneAction>(&action)) {

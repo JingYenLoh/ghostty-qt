@@ -8,6 +8,7 @@
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
+#include <QStringView>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QThread>
@@ -239,6 +240,9 @@ private Q_SLOTS:
     void reportsTerminalInitializationFailure();
     void initializesGeometryBeforeSpawningChild();
     void resizesPtyWithPaddingExcludedPixels();
+    void injectsInitialInputAtomicallyInOrder();
+    void rejectsInvalidInitialInputBeforeSpawning();
+    void enforcesInitialInputFileSizeLimit();
     void injectsRawTerminalIdentity();
     void usesConfiguredTerminalEnvironment();
     void appliesConfiguredEnvironmentPwdPrecedence();
@@ -1415,9 +1419,255 @@ void SessionWorkerTest::stripsDesktopActivationFromChildEnvironment()
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     const QString contents = frameText(accumulatedFrame(updateSpy));
-    QVERIFY2(contents.contains(QStringLiteral(
-                 "xdg=unset startup=unset sentinel=preserved")),
+    QVERIFY2(contents.contains(
+                 QStringLiteral("xdg=unset startup=unset sentinel=preserved")),
              qPrintable(contents));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::injectsInitialInputAtomicallyInOrder()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir processDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/initial-input-cwd-XXXXXX")));
+    QTemporaryDir childDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/initial-input-child-cwd-XXXXXX")));
+    QVERIFY(processDirectory.isValid());
+    QVERIFY(childDirectory.isValid());
+
+    const QByteArray pathBytes = QByteArray::fromHex("002d706174682dff");
+    QFile source(processDirectory.filePath(QStringLiteral("source.bin")));
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QCOMPARE(source.write(pathBytes), pathBytes.size());
+    source.close();
+
+    const QByteArray expectedInput =
+        QByteArrayLiteral("raw") + pathBytes + QByteArrayLiteral("tail\n");
+    const QString od = QStandardPaths::findExecutable(QStringLiteral("od"));
+    const QString tr = QStandardPaths::findExecutable(QStringLiteral("tr"));
+    QVERIFY(!od.isEmpty());
+    QVERIFY(!tr.isEmpty());
+
+    CurrentDirectoryRestore restoreDirectory;
+    QVERIFY(QDir::setCurrent(processDirectory.path()));
+
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    // Path input intentionally resolves against the process directory above,
+    // not this distinct child directory.
+    options.workingDirectory = childDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "hex=$(\"$1\" -An -tx1 -N \"$3\" | \"$2\" -d ' \\n'); "
+                       "printf 'initial-input:%s\\n' \"$hex\"; "
+                       "printf 'ordinary-ready\\n'; "
+                       "next=$(\"$1\" -An -tx1 -N 8 | \"$2\" -d ' \\n'); "
+                       "stty sane; "
+                       "printf 'ordinary-input:%s\\n' \"$next\""),
+        QStringLiteral("initial-input-test"),
+        od,
+        tr,
+        QString::number(expectedInput.size()),
+    };
+    options.initialInput = {
+        TerminalInitialInputs::Raw{QByteArrayLiteral("raw")},
+        TerminalInitialInputs::Path{QByteArrayLiteral("source.bin")},
+        TerminalInitialInputs::Raw{QByteArrayLiteral("tail\n")},
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QCOMPARE(startedSpy.count(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("ordinary-ready")), 5000);
+
+    // This ordinary input is submitted after startup; the worker must have
+    // already queued every configured chunk exactly once.
+    worker.sendInputMethod({.commitText = QStringLiteral("ordinary")});
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("initial-input:%1")
+                           .arg(QString::fromLatin1(expectedInput.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("ordinary-input:%1")
+                           .arg(QString::fromLatin1(
+                               QByteArrayLiteral("ordinary").toHex()))),
+        5000);
+    const QString contents = frameText(accumulatedFrame(updateSpy));
+    QCOMPARE(contents.count(QStringLiteral("initial-input:")), 1);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    worker.shutdown();
+}
+
+void SessionWorkerTest::rejectsInvalidInitialInputBeforeSpawning()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/initial-input-invalid-XXXXXX")));
+    QVERIFY(directory.isValid());
+
+    const QString validPath =
+        directory.filePath(QStringLiteral("valid-input.bin"));
+    QFile valid(validPath);
+    QVERIFY(valid.open(QIODevice::WriteOnly));
+    QCOMPARE(valid.write("valid\n"), qint64(6));
+    valid.close();
+
+    const QString touch =
+        QStandardPaths::findExecutable(QStringLiteral("touch"));
+    QVERIFY(!touch.isEmpty());
+    const QString fifoPath =
+        directory.filePath(QStringLiteral("non-regular-input"));
+    const QByteArray encodedFifoPath = QFile::encodeName(fifoPath);
+    QCOMPARE(::mkfifo(encodedFifoPath.constData(), 0600), 0);
+
+    const auto rejects = [&](QByteArray invalidPath,
+                             QStringView expectedDiagnostic) {
+        const QString marker = directory.filePath(
+            QStringLiteral("child-%1")
+                .arg(
+                    QFileInfo(QString::fromLocal8Bit(invalidPath)).fileName()));
+        QFile::remove(marker);
+
+        int cgroupMoveCalls = 0;
+        SessionWorker worker(
+            [&](qint64, const LinuxCgroupConfig &,
+                bool) -> std::expected<void, QString> {
+                ++cgroupMoveCalls;
+                return {};
+            },
+            nullptr);
+        QSignalSpy startedSpy(&worker, &SessionWorker::started);
+        QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = directory.path();
+        options.program = {touch, marker};
+        options.linuxCgroup.mode = LinuxCgroupMode::Always;
+        options.linuxCgroup.hardFail = true;
+        options.initialInput = {
+            TerminalInitialInputs::Raw{QByteArrayLiteral("prefix")},
+            TerminalInitialInputs::Path{QFile::encodeName(validPath)},
+            TerminalInitialInputs::Path{std::move(invalidPath)},
+            TerminalInitialInputs::Raw{QByteArrayLiteral("suffix\n")},
+        };
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+
+        QCOMPARE(startedSpy.count(), 0);
+        QCOMPARE(cgroupMoveCalls, 0);
+        QCOMPARE(exitSpy.count(), 1);
+        QCOMPARE(exitSpy.constFirst().at(0).toInt(), 127);
+        QCOMPARE(errorSpy.count(), 1);
+        QVERIFY2(errorSpy.constFirst().constFirst().toString().contains(
+                     expectedDiagnostic, Qt::CaseInsensitive),
+                 qPrintable(errorSpy.constFirst().constFirst().toString()));
+        QVERIFY(!QFileInfo::exists(marker));
+        worker.shutdown();
+    };
+
+    rejects(QFile::encodeName(
+                directory.filePath(QStringLiteral("missing-input.bin"))),
+            u"open");
+    rejects(encodedFifoPath, u"regular file");
+    // This procfs file is regular and openable by the current process, but a
+    // sequential read at offset zero deterministically fails with EIO.
+    rejects(QByteArrayLiteral("/proc/self/mem"), u"read");
+}
+
+void SessionWorkerTest::enforcesInitialInputFileSizeLimit()
+{
+    constexpr qint64 maximumBytes = 10 * 1024 * 1024;
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/initial-input-limits-XXXXXX")));
+    QVERIFY(directory.isValid());
+
+    const QString maximumPath =
+        directory.filePath(QStringLiteral("exactly-10-mib.bin"));
+    QFile maximum(maximumPath);
+    QVERIFY(maximum.open(QIODevice::WriteOnly));
+    QVERIFY(maximum.resize(maximumBytes));
+    maximum.close();
+
+    {
+        SessionWorker worker;
+        QSignalSpy startedSpy(&worker, &SessionWorker::started);
+        QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+        TerminalSessionLaunchOptions options;
+        options.workingDirectory = directory.path();
+        // Keep the child alive without consuming input. The acceptance
+        // boundary is observable synchronously through `started`; shutdown
+        // then discards any remaining nonblocking PTY queue.
+        options.program = {
+            QStringLiteral("/bin/sh"),
+            QStringLiteral("-c"),
+            QStringLiteral("sleep 30"),
+        };
+        options.initialInput = {
+            TerminalInitialInputs::Path{QFile::encodeName(maximumPath)},
+        };
+        options.hold = true;
+        QVERIFY(worker.initialize(options));
+        QCOMPARE(startedSpy.count(), 1);
+        QVERIFY2(
+            errorSpy.isEmpty(),
+            errorSpy.isEmpty()
+                ? ""
+                : qPrintable(errorSpy.constFirst().constFirst().toString()));
+        worker.shutdown();
+    }
+
+    const QString oversizedPath =
+        directory.filePath(QStringLiteral("over-10-mib.bin"));
+    QFile oversized(oversizedPath);
+    QVERIFY(oversized.open(QIODevice::WriteOnly));
+    QVERIFY(oversized.resize(maximumBytes + 1));
+    oversized.close();
+
+    const QString marker =
+        directory.filePath(QStringLiteral("oversized-child-started"));
+    const QString touch =
+        QStandardPaths::findExecutable(QStringLiteral("touch"));
+    QVERIFY(!touch.isEmpty());
+
+    SessionWorker worker;
+    QSignalSpy startedSpy(&worker, &SessionWorker::started);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = directory.path();
+    options.program = {touch, marker};
+    options.initialInput = {
+        TerminalInitialInputs::Path{QFile::encodeName(oversizedPath)},
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+
+    QCOMPARE(startedSpy.count(), 0);
+    QCOMPARE(exitSpy.count(), 1);
+    QCOMPARE(errorSpy.count(), 1);
+    QVERIFY(errorSpy.constFirst().constFirst().toString().contains(
+        QStringLiteral("10 MiB")));
+    QVERIFY(!QFileInfo::exists(marker));
     worker.shutdown();
 }
 

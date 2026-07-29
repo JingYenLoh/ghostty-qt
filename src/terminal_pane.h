@@ -222,6 +222,7 @@ Q_SIGNALS:
     void requestCloseWindow();
     void applicationActionRequested(ApplicationAction action);
     void windowNavigationRequested(WindowNavigationAction action);
+    void frontendActionRequested(const WorkspaceFrontendActionRequest &request);
     void broadActionsRequested(const GhosttyCompiledActionChain &actions);
     void contextMenuRequested(const QPointF &windowPosition,
                               bool selectionAvailable);

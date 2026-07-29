@@ -60,6 +60,149 @@ constexpr int kSearchRowsPerChunk = 8;
 constexpr int kSearchChunkBudgetMilliseconds = 2;
 constexpr int kSearchPublishIntervalMilliseconds = 33;
 constexpr quint64 kSearchRowsPerCompressionPass = 64;
+constexpr qsizetype kMaximumInitialInputFileSize = 10 * 1024 * 1024;
+
+class ScopedFileDescriptor final {
+public:
+    explicit ScopedFileDescriptor(int descriptor) noexcept
+        : descriptor_(descriptor)
+    {}
+
+    ~ScopedFileDescriptor()
+    {
+        if (descriptor_ >= 0) {
+            (void)::close(descriptor_);
+        }
+    }
+
+    ScopedFileDescriptor(const ScopedFileDescriptor &) = delete;
+    ScopedFileDescriptor &operator=(const ScopedFileDescriptor &) = delete;
+    ScopedFileDescriptor(ScopedFileDescriptor &&) = delete;
+    ScopedFileDescriptor &operator=(ScopedFileDescriptor &&) = delete;
+
+    [[nodiscard]] int get() const noexcept { return descriptor_; }
+
+private:
+    int descriptor_;
+};
+
+QString initialInputPathLabel(QByteArrayView path)
+{
+    return QString::fromLocal8Bit(path.data(), path.size());
+}
+
+std::expected<QByteArray, QString> readInitialInputFile(QByteArrayView path,
+                                                        qsizetype index)
+{
+    if (path.contains('\0')) {
+        return std::unexpected(
+            QStringLiteral(
+                "Initial input path at entry %1 contains a NUL byte.")
+                .arg(index));
+    }
+
+    const QByteArray nullTerminatedPath(path.data(), path.size());
+    int descriptor = -1;
+    do {
+        // Nonblocking open lets us inspect and reject FIFOs without waiting
+        // for an unrelated writer. It has no effect on regular-file reads.
+        descriptor = ::open(nullTerminatedPath.constData(),
+                            O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+    } while (descriptor < 0 && errno == EINTR);
+    if (descriptor < 0) {
+        return std::unexpected(
+            QStringLiteral("Unable to open initial input path \"%1\" at entry "
+                           "%2: %3")
+                .arg(initialInputPathLabel(path))
+                .arg(index)
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
+    }
+    ScopedFileDescriptor file(descriptor);
+
+    struct stat status{};
+    if (::fstat(file.get(), &status) != 0) {
+        return std::unexpected(
+            QStringLiteral("Unable to inspect initial input path \"%1\" at "
+                           "entry %2: %3")
+                .arg(initialInputPathLabel(path))
+                .arg(index)
+                .arg(QString::fromLocal8Bit(std::strerror(errno))));
+    }
+    if (!S_ISREG(status.st_mode)) {
+        return std::unexpected(
+            QStringLiteral("Initial input path \"%1\" at entry %2 is not a "
+                           "regular file.")
+                .arg(initialInputPathLabel(path))
+                .arg(index));
+    }
+    if (status.st_size < 0
+        || static_cast<quint64>(status.st_size)
+            > static_cast<quint64>(kMaximumInitialInputFileSize)) {
+        return std::unexpected(
+            QStringLiteral("Initial input path \"%1\" at entry %2 exceeds the "
+                           "10 MiB limit.")
+                .arg(initialInputPathLabel(path))
+                .arg(index));
+    }
+
+    QByteArray contents;
+    contents.reserve(static_cast<qsizetype>(status.st_size));
+    std::array<char, 64 * 1024> buffer{};
+    while (true) {
+        // Read one byte beyond the remaining allowance so a file that grows
+        // after fstat cannot bypass the same 10 MiB boundary.
+        const qsizetype remaining =
+            kMaximumInitialInputFileSize - contents.size();
+        const size_t requestSize = static_cast<size_t>(
+            std::min<qsizetype>(buffer.size(), remaining + 1));
+        ssize_t count = -1;
+        do {
+            count = ::read(file.get(), buffer.data(), requestSize);
+        } while (count < 0 && errno == EINTR);
+        if (count < 0) {
+            return std::unexpected(
+                QStringLiteral("Unable to read initial input path \"%1\" at "
+                               "entry %2: %3")
+                    .arg(initialInputPathLabel(path))
+                    .arg(index)
+                    .arg(QString::fromLocal8Bit(std::strerror(errno))));
+        }
+        if (count == 0) break;
+        if (count > remaining) {
+            return std::unexpected(
+                QStringLiteral(
+                    "Initial input path \"%1\" at entry %2 exceeds the 10 MiB "
+                    "limit.")
+                    .arg(initialInputPathLabel(path))
+                    .arg(index));
+        }
+        contents.append(buffer.data(), static_cast<qsizetype>(count));
+    }
+    return contents;
+}
+
+std::expected<QVector<QByteArray>, QString>
+prepareInitialInput(QVector<TerminalInitialInput> sources)
+{
+    QVector<QByteArray> chunks;
+    chunks.reserve(sources.size());
+    for (qsizetype index = 0; index < sources.size(); ++index) {
+        TerminalInitialInput &source = sources[index];
+        if (auto *raw = std::get_if<TerminalInitialInputs::Raw>(&source)) {
+            chunks.push_back(std::move(raw->bytes));
+            continue;
+        }
+
+        const auto &path = std::get<TerminalInitialInputs::Path>(source);
+        std::expected<QByteArray, QString> contents =
+            readInitialInputFile(path.path, index);
+        if (!contents.has_value()) {
+            return std::unexpected(std::move(contents.error()));
+        }
+        chunks.push_back(std::move(*contents));
+    }
+    return chunks;
+}
 
 int openChildExitFd(pid_t pid)
 {
@@ -895,6 +1038,16 @@ void SessionWorker::applyRuntimeOptions(
 
 bool SessionWorker::spawnChild()
 {
+    // Resolve every source before creating launch pipes or a child. Keeping
+    // the ordered chunks distinct avoids a second aggregate allocation while
+    // still making the operation all-or-nothing.
+    std::expected<QVector<QByteArray>, QString> initialInput =
+        prepareInitialInput(std::exchange(options_.initialInput, {}));
+    if (!initialInput.has_value()) {
+        Q_EMIT errorOccurred(initialInput.error());
+        return false;
+    }
+
     const QString processWorkingDirectory = QDir::currentPath();
     const QString requestedWorkingDirectory = options_.workingDirectory;
     QString childWorkingDirectory = processWorkingDirectory;
@@ -1366,6 +1519,13 @@ bool SessionWorker::spawnChild()
     writeNotifier_->setEnabled(false);
     connect(writeNotifier_, &QSocketNotifier::activated, this,
             &SessionWorker::flushPtyWrites);
+
+    // Initial input precedes `started`, so direct signal handlers and queued
+    // GUI input cannot overtake it. queuePtyWrite bypasses the runtime
+    // read-only policy because these bytes are launch configuration.
+    for (const QByteArray &chunk : std::as_const(*initialInput)) {
+        queuePtyWrite(chunk);
+    }
 
     childTimer_->start();
     if (!options_.inheritWorkingDirectory) {

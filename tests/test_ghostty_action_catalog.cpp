@@ -7,6 +7,7 @@
 #include <limits>
 
 namespace PaneAction = GhosttyPaneActions;
+namespace FrontendAction = WorkspaceFrontendActions;
 
 class GhosttyActionCatalogTest : public QObject {
     Q_OBJECT
@@ -34,6 +35,7 @@ private Q_SLOTS:
     void rejectsMalformedFontSizePaneActions();
     void rejectsMalformedSearchPaneActions();
     void parsesApplicationActionsExactly();
+    void parsesFrontendActionsExactly();
     void parsesWindowNavigationActionsExactly();
     void classifiesPinnedActionScopes();
     void recognizesKeyTableActions();
@@ -43,24 +45,20 @@ void GhosttyActionCatalogTest::tokenizesSerializedActions()
 {
     const QString parameterlessSource = QStringLiteral("reload_config");
     const GhosttySerializedActionView parameterless =
-        GhosttyActionCatalog::parseSerializedAction(
-            parameterlessSource);
+        GhosttyActionCatalog::parseSerializedAction(parameterlessSource);
     QCOMPARE(parameterless.name.toString(), QStringLiteral("reload_config"));
     QVERIFY(!parameterless.parameter.has_value());
 
     const QString emptyParameterSource = QStringLiteral("reload_config:");
     const GhosttySerializedActionView emptyParameter =
-        GhosttyActionCatalog::parseSerializedAction(
-            emptyParameterSource);
+        GhosttyActionCatalog::parseSerializedAction(emptyParameterSource);
     QCOMPARE(emptyParameter.name.toString(), QStringLiteral("reload_config"));
     QVERIFY(emptyParameter.parameter.has_value());
     QVERIFY(emptyParameter.parameter->isEmpty());
 
-    const QString embeddedColonsSource =
-        QStringLiteral("csi:38:2:255:0:0m");
+    const QString embeddedColonsSource = QStringLiteral("csi:38:2:255:0:0m");
     const GhosttySerializedActionView embeddedColons =
-        GhosttyActionCatalog::parseSerializedAction(
-            embeddedColonsSource);
+        GhosttyActionCatalog::parseSerializedAction(embeddedColonsSource);
     QCOMPARE(embeddedColons.name.toString(), QStringLiteral("csi"));
     QVERIFY(embeddedColons.parameter.has_value());
     QCOMPARE(embeddedColons.parameter->toString(),
@@ -79,8 +77,7 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
              GhosttyActionInputEffect::None);
 
     const std::optional<GhosttyConfiguredAction> ignored =
-        GhosttyActionCatalog::parseConfiguredAction(
-            QStringLiteral("ignore"));
+        GhosttyActionCatalog::parseConfiguredAction(QStringLiteral("ignore"));
     QVERIFY(ignored.has_value());
     QCOMPARE(GhosttyActionCatalog::inputEffect(*ignored),
              GhosttyActionInputEffect::Ignore);
@@ -89,12 +86,13 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
         GhosttyActionCatalog::parseConfiguredAction(
             QStringLiteral("scroll_to_row:12"));
     QVERIFY(pane.has_value());
-    QCOMPARE(std::get<PaneAction::ScrollToRow>(
-                 std::get<GhosttyPaneAction>(*pane)).row,
-             quint64(12));
+    QCOMPARE(
+        std::get<PaneAction::ScrollToRow>(std::get<GhosttyPaneAction>(*pane))
+            .row,
+        quint64(12));
 
-    const WorkspaceActionContext context{
-        TabId(7), PaneId(11), 13, 17, CloseTabMode::Other};
+    const WorkspaceActionContext context{TabId(7), PaneId(11), 13, 17,
+                                         CloseTabMode::Other};
     const std::optional<GhosttyConfiguredAction> workspace =
         GhosttyActionCatalog::parseConfiguredAction(
             QStringLiteral("new_split:left"), context);
@@ -111,7 +109,7 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
              QStringLiteral("unbind"),
          }) {
         QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(
-                     unsupportedApplication));
+            unsupportedApplication));
         QCOMPARE(GhosttyActionCatalog::scope(unsupportedApplication),
                  GhosttyActionScope::Application);
     }
@@ -125,8 +123,8 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
     const auto closeWindow = GhosttyActionCatalog::parseConfiguredAction(
         QStringLiteral("close_window"));
     QVERIFY(closePane && closeThis && closeOther && closeWindow);
-    for (const GhosttyConfiguredAction *closing : {
-             &*closePane, &*closeThis, &*closeOther, &*closeWindow}) {
+    for (const GhosttyConfiguredAction *closing :
+         {&*closePane, &*closeThis, &*closeOther, &*closeWindow}) {
         QCOMPARE(GhosttyActionCatalog::inputEffect(*closing),
                  GhosttyActionInputEffect::ClosingAction);
     }
@@ -134,16 +132,14 @@ void GhosttyActionCatalogTest::parsesOwningConfiguredActions()
     QVERIFY(GhosttyActionCatalog::shouldCoalesceBroadClose(*closeThis));
     QVERIFY(!GhosttyActionCatalog::shouldCoalesceBroadClose(*closeOther));
     QVERIFY(GhosttyActionCatalog::shouldCoalesceBroadClose(*closeWindow));
+    QCOMPARE(
+        GhosttyActionCatalog::combinedInputEffect({QStringLiteral("ignore")}),
+        GhosttyActionInputEffect::Ignore);
     QCOMPARE(GhosttyActionCatalog::combinedInputEffect(
-                 {QStringLiteral("ignore")}),
-             GhosttyActionInputEffect::Ignore);
-    QCOMPARE(GhosttyActionCatalog::combinedInputEffect(
-                 {QStringLiteral("close_tab:right"),
-                  QStringLiteral("ignore")}),
+                 {QStringLiteral("close_tab:right"), QStringLiteral("ignore")}),
              GhosttyActionInputEffect::ClosingAction);
     QCOMPARE(GhosttyActionCatalog::combinedInputEffect(
-                 {QStringLiteral("unsupported"),
-                  QStringLiteral("new_tab")}),
+                 {QStringLiteral("unsupported"), QStringLiteral("new_tab")}),
              GhosttyActionInputEffect::None);
 }
 
@@ -188,8 +184,7 @@ void GhosttyActionCatalogTest::compilesOwningActionChains()
              ApplicationAction::ReloadConfig);
 
     const GhosttyCompiledAction &pane = compiled.entries[1];
-    QCOMPARE(pane.serialized,
-             QStringLiteral("search:needle:with:colons"));
+    QCOMPARE(pane.serialized, QStringLiteral("search:needle:with:colons"));
     QCOMPARE(pane.scope, GhosttyActionScope::Surface);
     QVERIFY(pane.action.has_value());
     const GhosttyPaneAction &paneAction =
@@ -210,8 +205,7 @@ void GhosttyActionCatalogTest::compilesOwningActionChains()
     QCOMPARE(unsupportedSurface.scope, GhosttyActionScope::Surface);
     QVERIFY(!unsupportedSurface.action.has_value());
 
-    const GhosttyCompiledAction &unsupportedApplication =
-        compiled.entries[4];
+    const GhosttyCompiledAction &unsupportedApplication = compiled.entries[4];
     QCOMPARE(unsupportedApplication.serialized,
              QStringLiteral("toggle_visibility"));
     QCOMPARE(unsupportedApplication.scope, GhosttyActionScope::Application);
@@ -276,14 +270,11 @@ void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
         GhosttyPaneAction expected;
     } accepted[] = {
         {"copy_to_clipboard",
-         PaneAction::CopyToClipboard{
-             .format = PaneAction::CopyFormat::Mixed}},
+         PaneAction::CopyToClipboard{.format = PaneAction::CopyFormat::Mixed}},
         {"copy_to_clipboard:mixed",
-         PaneAction::CopyToClipboard{
-             .format = PaneAction::CopyFormat::Mixed}},
+         PaneAction::CopyToClipboard{.format = PaneAction::CopyFormat::Mixed}},
         {"copy_to_clipboard:plain",
-         PaneAction::CopyToClipboard{
-             .format = PaneAction::CopyFormat::Plain}},
+         PaneAction::CopyToClipboard{.format = PaneAction::CopyFormat::Plain}},
         {"paste_from_clipboard",
          PaneAction::Paste{.source = PaneAction::PasteSource::Clipboard}},
         {"paste_from_selection",
@@ -308,8 +299,7 @@ void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
         const std::optional<GhosttyConfiguredAction> configured =
             GhosttyActionCatalog::parseConfiguredAction(serialized);
         QVERIFY(configured.has_value());
-        QVERIFY(std::get<GhosttyPaneAction>(*configured)
-                == testCase.expected);
+        QVERIFY(std::get<GhosttyPaneAction>(*configured) == testCase.expected);
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
         QCOMPARE(GhosttyActionCatalog::scope(serialized),
                  GhosttyActionScope::Surface);
@@ -331,10 +321,8 @@ void GhosttyActionCatalogTest::diagnosesDirectSurfaceActions()
          GhosttyActionTranslationError::UnsupportedParameter},
         {"copy_to_clipboard:html",
          GhosttyActionTranslationError::UnsupportedParameter},
-        {"Copy_to_clipboard",
-         GhosttyActionTranslationError::UnsupportedAction},
-        {"paste_from_clipboard:",
-         GhosttyActionTranslationError::InvalidFormat},
+        {"Copy_to_clipboard", GhosttyActionTranslationError::UnsupportedAction},
+        {"paste_from_clipboard:", GhosttyActionTranslationError::InvalidFormat},
         {"close_window:now", GhosttyActionTranslationError::InvalidFormat},
         {"new_tab", GhosttyActionTranslationError::UnsupportedAction},
     };
@@ -378,22 +366,18 @@ void GhosttyActionCatalogTest::parsesWriteFileActionsExactly()
         for (const auto &disposition : dispositions) {
             for (const QString &formatSuffix :
                  {QString{}, QStringLiteral(",plain")}) {
-                const QString serialized =
-                    QString::fromLatin1(location.name) + u':'
-                    + QString::fromLatin1(disposition.name)
+                const QString serialized = QString::fromLatin1(location.name)
+                    + u':' + QString::fromLatin1(disposition.name)
                     + formatSuffix;
                 const GhosttyDirectSurfaceActionParseResult direct =
-                    GhosttyActionCatalog::parseDirectSurfaceAction(
-                        serialized);
+                    GhosttyActionCatalog::parseDirectSurfaceAction(serialized);
                 QVERIFY2(direct.has_value(), qPrintable(serialized));
                 const auto *writeFile =
                     std::get_if<TerminalWriteFileAction>(&*direct);
                 QVERIFY2(writeFile != nullptr, qPrintable(serialized));
                 QCOMPARE(writeFile->location, location.location);
-                QCOMPARE(writeFile->disposition,
-                         disposition.disposition);
-                QCOMPARE(writeFile->format,
-                         TerminalFileFormat::Plain);
+                QCOMPARE(writeFile->disposition, disposition.disposition);
+                QCOMPARE(writeFile->format, TerminalFileFormat::Plain);
 
                 const std::optional<GhosttyPaneAction> pane =
                     GhosttyActionCatalog::parsePaneAction(serialized);
@@ -401,11 +385,9 @@ void GhosttyActionCatalogTest::parsesWriteFileActionsExactly()
                 QVERIFY(*pane == *direct);
 
                 const std::optional<GhosttyConfiguredAction> configured =
-                    GhosttyActionCatalog::parseConfiguredAction(
-                        serialized);
+                    GhosttyActionCatalog::parseConfiguredAction(serialized);
                 QVERIFY2(configured.has_value(), qPrintable(serialized));
-                QVERIFY(std::get<GhosttyPaneAction>(*configured)
-                        == *direct);
+                QVERIFY(std::get<GhosttyPaneAction>(*configured) == *direct);
                 QCOMPARE(GhosttyActionCatalog::inputEffect(*configured),
                          GhosttyActionInputEffect::None);
                 QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
@@ -413,14 +395,12 @@ void GhosttyActionCatalogTest::parsesWriteFileActionsExactly()
                          GhosttyActionScope::Surface);
 
                 const GhosttyCompiledActionChain compiled =
-                    GhosttyActionCatalog::compileActionChain(
-                        {serialized});
+                    GhosttyActionCatalog::compileActionChain({serialized});
                 QCOMPARE(compiled.entries.size(), 1);
                 QCOMPARE(compiled.entries.constFirst().scope,
                          GhosttyActionScope::Surface);
                 QVERIFY(compiled.entries.constFirst().action.has_value());
-                QCOMPARE(compiled.inputEffect,
-                         GhosttyActionInputEffect::None);
+                QCOMPARE(compiled.inputEffect, GhosttyActionInputEffect::None);
                 QVERIFY(!compiled.applicationOnly);
             }
         }
@@ -452,32 +432,25 @@ void GhosttyActionCatalogTest::rejectsMalformedWriteFileActions()
         const GhosttyDirectSurfaceActionParseResult result =
             GhosttyActionCatalog::parseDirectSurfaceAction(serialized);
         QVERIFY2(!result.has_value(), qPrintable(serialized));
-        QCOMPARE(result.error(),
-                 GhosttyActionTranslationError::InvalidFormat);
+        QCOMPARE(result.error(), GhosttyActionTranslationError::InvalidFormat);
         QVERIFY(!GhosttyActionCatalog::parsePaneAction(serialized));
-        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(
-            serialized));
+        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
         QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
     }
 
-    for (const QString &name :
-         {QStringLiteral("write_screen_file"),
-          QStringLiteral("write_scrollback_file"),
-          QStringLiteral("write_selection_file")}) {
+    for (const QString &name : {QStringLiteral("write_screen_file"),
+                                QStringLiteral("write_scrollback_file"),
+                                QStringLiteral("write_selection_file")}) {
         for (const QString &format :
              {QStringLiteral("vt"), QStringLiteral("html")}) {
-            const QString serialized =
-                name + QStringLiteral(":copy,") + format;
+            const QString serialized = name + QStringLiteral(":copy,") + format;
             const GhosttyDirectSurfaceActionParseResult result =
-                GhosttyActionCatalog::parseDirectSurfaceAction(
-                    serialized);
+                GhosttyActionCatalog::parseDirectSurfaceAction(serialized);
             QVERIFY2(!result.has_value(), qPrintable(serialized));
             QCOMPARE(result.error(),
-                     GhosttyActionTranslationError::
-                         UnsupportedParameter);
+                     GhosttyActionTranslationError::UnsupportedParameter);
             QVERIFY(!GhosttyActionCatalog::parsePaneAction(serialized));
-            QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(
-                serialized));
+            QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
             QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
         }
     }
@@ -523,8 +496,7 @@ void GhosttyActionCatalogTest::translatesParameterlessActions()
         QCOMPARE(result.request->context.value, testCase.value);
         QCOMPARE(result.request->context.amount, source.amount);
         if (testCase.action == WorkspaceAction::CloseTab) {
-            QCOMPARE(result.request->context.closeTabMode,
-                     CloseTabMode::This);
+            QCOMPARE(result.request->context.closeTabMode, CloseTabMode::This);
         }
         QCOMPARE(result.actionName, serialized);
         QVERIFY(!result.parameter.has_value());
@@ -583,9 +555,8 @@ void GhosttyActionCatalogTest::translatesParameterizedActions_data()
     QTest::newRow("split-right")
         << QStringLiteral("new_split:right") << WorkspaceAction::SplitRight
         << qint64(700) << 0;
-    QTest::newRow("split-up")
-        << QStringLiteral("new_split:up") << WorkspaceAction::SplitUp
-        << qint64(700) << 0;
+    QTest::newRow("split-up") << QStringLiteral("new_split:up")
+                              << WorkspaceAction::SplitUp << qint64(700) << 0;
     QTest::newRow("split-down")
         << QStringLiteral("new_split:down") << WorkspaceAction::SplitDown
         << qint64(700) << 0;
@@ -655,8 +626,7 @@ void GhosttyActionCatalogTest::translatesParameterizedActions()
     QCOMPARE(result.request->context.value, value);
     QCOMPARE(result.request->context.amount, amount);
     const CloseTabMode closeTabMode =
-        serialized == QLatin1StringView("close_tab:other")
-        ? CloseTabMode::Other
+        serialized == QLatin1StringView("close_tab:other") ? CloseTabMode::Other
         : serialized == QLatin1StringView("close_tab:right")
         ? CloseTabMode::Right
         : CloseTabMode::This;
@@ -667,8 +637,8 @@ void GhosttyActionCatalogTest::translatesParameterizedActions()
 void GhosttyActionCatalogTest::preservesRawParametersAndTargetContext()
 {
     const WorkspaceActionContext source{TabId(41), PaneId(73), 0, 22};
-    const GhosttyActionTranslation result =
-        GhosttyActionCatalog::translate(QStringLiteral("goto_split:top"), source);
+    const GhosttyActionTranslation result = GhosttyActionCatalog::translate(
+        QStringLiteral("goto_split:top"), source);
 
     QVERIFY(result.accepted());
     QCOMPARE(result.actionName, QStringLiteral("goto_split"));
@@ -692,10 +662,8 @@ void GhosttyActionCatalogTest::translatesTitleActions()
         {QStringLiteral("project:main"), QStringLiteral("project:main")},
         {QStringLiteral(R"(\xf0\x9f\x91\xbb workspace)"),
          QStringLiteral("👻 workspace")},
-        {QStringLiteral(R"(path\\quoted\")"),
-         QStringLiteral("path\\quoted\"")},
-        {QStringLiteral(R"(line\nnext)"),
-         QStringLiteral("line\nnext")},
+        {QStringLiteral(R"(path\\quoted\")"), QStringLiteral("path\\quoted\"")},
+        {QStringLiteral(R"(line\nnext)"), QStringLiteral("line\nnext")},
         {QStringLiteral(R"(left\x00right)"),
          QString::fromUtf8("left\0right", 10)},
         {QStringLiteral("直接"), QStringLiteral("直接")},
@@ -705,8 +673,7 @@ void GhosttyActionCatalogTest::translatesTitleActions()
         QString name;
         WorkspaceAction action;
     } actions[] = {
-        {QStringLiteral("set_surface_title"),
-         WorkspaceAction::SetSurfaceTitle},
+        {QStringLiteral("set_surface_title"), WorkspaceAction::SetSurfaceTitle},
         {QStringLiteral("set_tab_title"), WorkspaceAction::SetTabTitle},
     };
 
@@ -754,7 +721,8 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
 
     using Error = GhosttyActionTranslationError;
     QTest::newRow("empty") << QString{} << Error::InvalidFormat;
-    QTest::newRow("empty-name") << QStringLiteral(":right") << Error::InvalidFormat;
+    QTest::newRow("empty-name")
+        << QStringLiteral(":right") << Error::InvalidFormat;
     QTest::newRow("void-empty-parameter")
         << QStringLiteral("new_tab:") << Error::InvalidFormat;
     QTest::newRow("close-surface-empty-parameter")
@@ -802,8 +770,7 @@ void GhosttyActionCatalogTest::rejectsMalformedAndUnsupportedStrings_data()
     QTest::newRow("resize-amount-overflow")
         << QStringLiteral("resize_split:up,65536") << Error::InvalidFormat;
     QTest::newRow("binary-resize-amount")
-        << QStringLiteral("resize_split:right,0b1010")
-        << Error::InvalidFormat;
+        << QStringLiteral("resize_split:right,0b1010") << Error::InvalidFormat;
     QTest::newRow("void-layout-parameter")
         << QStringLiteral("equalize_splits:") << Error::InvalidFormat;
     QTest::newRow("fullscreen-empty-parameter")
@@ -851,10 +818,28 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
     }
 
+    // Quick terminal has an exact application-level identity, but remains
+    // absent from executable chains until a layer-shell-capable backend is
+    // available. In particular, a configured global binding must not be
+    // silently consumed by an ordinary window fallback.
+    constexpr auto quickTerminal = ApplicationAction::ToggleQuickTerminal;
+    QCOMPARE(GhosttyActionCatalog::parseApplicationAction(
+                 QStringLiteral("toggle_quick_terminal")),
+             std::optional{quickTerminal});
+    QVERIFY(!GhosttyActionCatalog::isImplemented(
+        QStringLiteral("toggle_quick_terminal")));
+    const GhosttyCompiledActionChain quickTerminalBinding =
+        GhosttyActionCatalog::compileActionChain(
+            {QStringLiteral("toggle_quick_terminal")});
+    QVERIFY(quickTerminalBinding.applicationOnly);
+    QCOMPARE(quickTerminalBinding.entries.size(), 1);
+    QCOMPARE(quickTerminalBinding.entries.constFirst().scope,
+             GhosttyActionScope::Application);
+    QVERIFY(!quickTerminalBinding.entries.constFirst().action.has_value());
+
     for (const QString &unsupported : {
              QStringLiteral("unbind"),
              QStringLiteral("close_all_windows"),
-             QStringLiteral("toggle_quick_terminal"),
              QStringLiteral("toggle_visibility"),
              QStringLiteral("check_for_updates"),
              QStringLiteral("show_gtk_inspector"),
@@ -876,12 +861,160 @@ void GhosttyActionCatalogTest::parsesApplicationActionsExactly()
              QStringLiteral("open_config:now"),
              QStringLiteral("reload_config:"),
              QStringLiteral("reload_config:soft"),
+             QStringLiteral("toggle_quick_terminal:"),
+             QStringLiteral("toggle_quick_terminal:now"),
              QStringLiteral("quit:"),
              QStringLiteral("quit:now"),
              QStringLiteral("Quit"),
          }) {
         QVERIFY(!GhosttyActionCatalog::parseApplicationAction(rejected));
         QVERIFY(!GhosttyActionCatalog::isImplemented(rejected));
+    }
+}
+
+void GhosttyActionCatalogTest::parsesFrontendActionsExactly()
+{
+    const WorkspaceActionContext source{
+        .tabId = TabId(4),
+        .paneId = PaneId(9),
+        .value = 17,
+        .amount = 3,
+        .closeTabMode = CloseTabMode::Right,
+    };
+
+    const QStringList executableVoidActions{
+        QStringLiteral("toggle_command_palette"),
+        QStringLiteral("toggle_tab_overview"),
+        QStringLiteral("show_on_screen_keyboard"),
+    };
+    for (const QString &serialized : executableVoidActions) {
+        const std::optional<WorkspaceFrontendActionRequest> request =
+            GhosttyActionCatalog::parseFrontendAction(serialized, source);
+        QVERIFY2(request.has_value(), qPrintable(serialized));
+        QCOMPARE(request->context, source);
+
+        if (serialized == QStringLiteral("toggle_command_palette")) {
+            QVERIFY(request->getIf<FrontendAction::ToggleCommandPalette>()
+                    != nullptr);
+        } else if (serialized == QStringLiteral("toggle_tab_overview")) {
+            QVERIFY(request->getIf<FrontendAction::ToggleTabOverview>()
+                    != nullptr);
+        } else {
+            QVERIFY(request->getIf<FrontendAction::ShowOnScreenKeyboard>()
+                    != nullptr);
+        }
+
+        const std::optional<GhosttyConfiguredAction> configured =
+            GhosttyActionCatalog::parseConfiguredAction(serialized, source);
+        QVERIFY2(configured.has_value(), qPrintable(serialized));
+        QCOMPARE(std::get<WorkspaceFrontendActionRequest>(*configured),
+                 *request);
+        QVERIFY2(GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
+        QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                 GhosttyActionScope::Surface);
+    }
+
+    // The pinned default Ctrl/Super+Shift+P command-palette binding becomes
+    // executable only because its typed frontend route is present.
+    const GhosttyCompiledActionChain defaultPaletteBinding =
+        GhosttyActionCatalog::compileActionChain(
+            {QStringLiteral("toggle_command_palette")});
+    QVERIFY(!defaultPaletteBinding.applicationOnly);
+    QCOMPARE(defaultPaletteBinding.entries.size(), 1);
+    const WorkspaceFrontendActionRequest *const compiledPalette =
+        defaultPaletteBinding.entries.constFirst()
+            .getIf<WorkspaceFrontendActionRequest>();
+    QVERIFY(compiledPalette != nullptr);
+    QVERIFY(compiledPalette->getIf<FrontendAction::ToggleCommandPalette>()
+            != nullptr);
+    const GhosttyConfiguredAction configuredPalette{*compiledPalette};
+    QCOMPARE(GhosttyActionCatalog::inputEffect(configuredPalette),
+             GhosttyActionInputEffect::None);
+    QVERIFY(!GhosttyActionCatalog::shouldCoalesceBroadClose(configuredPalette));
+
+    const struct {
+        const char *serialized;
+        FrontendAction::InspectorMode mode;
+    } inspectorActions[] = {
+        {"inspector:toggle", FrontendAction::InspectorMode::Toggle},
+        {"inspector:show", FrontendAction::InspectorMode::Show},
+        {"inspector:hide", FrontendAction::InspectorMode::Hide},
+    };
+    for (const auto &testCase : inspectorActions) {
+        const QString serialized = QString::fromLatin1(testCase.serialized);
+        const std::optional<WorkspaceFrontendActionRequest> request =
+            GhosttyActionCatalog::parseFrontendAction(serialized, source);
+        QVERIFY(request.has_value());
+        const auto *const inspector =
+            request->getIf<FrontendAction::Inspector>();
+        QVERIFY(inspector != nullptr);
+        QCOMPARE(inspector->mode, testCase.mode);
+        QCOMPARE(request->context, source);
+
+        // libghostty-vt does not expose Ghostty's inspector state, so retain
+        // typed diagnostics without claiming the action is executable.
+        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+        QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                 GhosttyActionScope::Surface);
+    }
+
+    const struct {
+        const char *serialized;
+        FrontendAction::CrashTarget target;
+    } crashActions[] = {
+        {"crash:main", FrontendAction::CrashTarget::Main},
+        {"crash:io", FrontendAction::CrashTarget::Io},
+        {"crash:render", FrontendAction::CrashTarget::Render},
+    };
+    for (const auto &testCase : crashActions) {
+        const QString serialized = QString::fromLatin1(testCase.serialized);
+        const std::optional<WorkspaceFrontendActionRequest> request =
+            GhosttyActionCatalog::parseFrontendAction(serialized, source);
+        QVERIFY(request.has_value());
+        const auto *const crash = request->getIf<FrontendAction::Crash>();
+        QVERIFY(crash != nullptr);
+        QCOMPARE(crash->target, testCase.target);
+        QCOMPARE(request->context, source);
+
+        // A crash request is intentionally not admitted into normal action
+        // chains until each target thread has an explicit dispatcher.
+        QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(serialized));
+        QVERIFY(!GhosttyActionCatalog::isImplemented(serialized));
+        QCOMPARE(GhosttyActionCatalog::scope(serialized),
+                 GhosttyActionScope::Surface);
+    }
+
+    const QStringList rejected{
+        QStringLiteral("toggle_command_palette:"),
+        QStringLiteral("toggle_command_palette:now"),
+        QStringLiteral("Toggle_command_palette"),
+        QStringLiteral("toggle_tab_overview:"),
+        QStringLiteral("toggle_tab_overview:now"),
+        QStringLiteral("Toggle_tab_overview"),
+        QStringLiteral("show_on_screen_keyboard:"),
+        QStringLiteral("show_on_screen_keyboard:now"),
+        QStringLiteral("Show_on_screen_keyboard"),
+        QStringLiteral("inspector"),
+        QStringLiteral("inspector:"),
+        QStringLiteral("inspector:toggle:extra"),
+        QStringLiteral("inspector:Toggle"),
+        QStringLiteral("inspector:unknown"),
+        QStringLiteral("Inspector:toggle"),
+        QStringLiteral("crash"),
+        QStringLiteral("crash:"),
+        QStringLiteral("crash:main:extra"),
+        QStringLiteral("crash:Main"),
+        QStringLiteral("crash:unknown"),
+        QStringLiteral("Crash:main"),
+        QStringLiteral("toggle_quick_terminal"),
+    };
+    for (const QString &serialized : rejected) {
+        QVERIFY2(!GhosttyActionCatalog::parseFrontendAction(serialized),
+                 qPrintable(serialized));
+        QVERIFY2(!GhosttyActionCatalog::isImplemented(serialized),
+                 qPrintable(serialized));
     }
 }
 
@@ -895,17 +1028,14 @@ void GhosttyActionCatalogTest::parsesWindowNavigationActionsExactly()
         {"goto_window:next", WindowNavigationAction::Next},
     };
     for (const auto &testCase : accepted) {
-        const QString serialized =
-            QString::fromLatin1(testCase.serialized);
-        QCOMPARE(
-            GhosttyActionCatalog::parseWindowNavigationAction(serialized),
-            std::optional{testCase.action});
+        const QString serialized = QString::fromLatin1(testCase.serialized);
+        QCOMPARE(GhosttyActionCatalog::parseWindowNavigationAction(serialized),
+                 std::optional{testCase.action});
         const std::optional<GhosttyConfiguredAction> configured =
             GhosttyActionCatalog::parseConfiguredAction(serialized);
         QVERIFY(configured.has_value());
-        QCOMPARE(
-            std::get<WindowNavigationAction>(*configured),
-            testCase.action);
+        QCOMPARE(std::get<WindowNavigationAction>(*configured),
+                 testCase.action);
         QVERIFY(GhosttyActionCatalog::isImplemented(serialized));
         QCOMPARE(GhosttyActionCatalog::scope(serialized),
                  GhosttyActionScope::Surface);
@@ -921,8 +1051,7 @@ void GhosttyActionCatalogTest::parsesWindowNavigationActionsExactly()
              QStringLiteral("goto_window:Previous"),
              QStringLiteral("Goto_window:next"),
          }) {
-        QVERIFY(
-            !GhosttyActionCatalog::parseWindowNavigationAction(rejected));
+        QVERIFY(!GhosttyActionCatalog::parseWindowNavigationAction(rejected));
         QVERIFY(!GhosttyActionCatalog::parseConfiguredAction(rejected));
         QVERIFY(!GhosttyActionCatalog::isImplemented(rejected));
     }
@@ -932,12 +1061,10 @@ void GhosttyActionCatalogTest::parsesWindowNavigationActionsExactly()
             QStringLiteral("goto_window:next"),
         });
     QCOMPARE(compiled.entries.size(), 1);
-    QCOMPARE(compiled.entries.constFirst().scope,
-             GhosttyActionScope::Surface);
+    QCOMPARE(compiled.entries.constFirst().scope, GhosttyActionScope::Surface);
     QVERIFY(!compiled.applicationOnly);
-    QCOMPARE(
-        *compiled.entries.constFirst().getIf<WindowNavigationAction>(),
-        WindowNavigationAction::Next);
+    QCOMPARE(*compiled.entries.constFirst().getIf<WindowNavigationAction>(),
+             WindowNavigationAction::Next);
 }
 
 void GhosttyActionCatalogTest::matchesPinnedIntegerParsing_data()
@@ -948,32 +1075,32 @@ void GhosttyActionCatalogTest::matchesPinnedIntegerParsing_data()
     QTest::addColumn<int>("amount");
 
     QTest::newRow("unsigned-plus")
-        << QStringLiteral("goto_tab:+12")
-        << WorkspaceAction::ActivateTabByIndex << qint64(12) << 0;
+        << QStringLiteral("goto_tab:+12") << WorkspaceAction::ActivateTabByIndex
+        << qint64(12) << 0;
     QTest::newRow("unsigned-negative-zero")
-        << QStringLiteral("goto_tab:-0")
-        << WorkspaceAction::ActivateTabByIndex << qint64(0) << 0;
+        << QStringLiteral("goto_tab:-0") << WorkspaceAction::ActivateTabByIndex
+        << qint64(0) << 0;
     QTest::newRow("unsigned-interior-underscores")
         << QStringLiteral("goto_tab:1__2")
         << WorkspaceAction::ActivateTabByIndex << qint64(12) << 0;
     QTest::newRow("unsigned-linux-max")
         << QStringLiteral("goto_tab:")
-               + QString::number(std::numeric_limits<quintptr>::max())
+            + QString::number(std::numeric_limits<quintptr>::max())
         << WorkspaceAction::ActivateTabByIndex
         << static_cast<qint64>(std::numeric_limits<quintptr>::max()
-                                  > static_cast<quintptr>(
-                                      std::numeric_limits<qint64>::max())
-                              ? std::numeric_limits<qint64>::max()
-                              : std::numeric_limits<quintptr>::max())
+                                       > static_cast<quintptr>(
+                                           std::numeric_limits<qint64>::max())
+                                   ? std::numeric_limits<qint64>::max()
+                                   : std::numeric_limits<quintptr>::max())
         << 0;
     QTest::newRow("signed-linux-min")
         << QStringLiteral("move_tab:")
-               + QString::number(std::numeric_limits<qintptr>::min())
+            + QString::number(std::numeric_limits<qintptr>::min())
         << WorkspaceAction::MoveTab
         << static_cast<qint64>(std::numeric_limits<qintptr>::min()) << 0;
     QTest::newRow("signed-linux-max")
         << QStringLiteral("move_tab:+")
-               + QString::number(std::numeric_limits<qintptr>::max())
+            + QString::number(std::numeric_limits<qintptr>::max())
         << WorkspaceAction::MoveTab
         << static_cast<qint64>(std::numeric_limits<qintptr>::max()) << 0;
     QTest::newRow("resize-u16-max")
@@ -1038,8 +1165,7 @@ void GhosttyActionCatalogTest::parsesPaneActions()
 
     const GhosttyPaneAction row = parse("scroll_to_row:+1__2");
     QCOMPARE(std::get<PaneAction::ScrollToRow>(row).row, quint64(12));
-    QCOMPARE(std::get<PaneAction::ScrollToRow>(
-                 parse("scroll_to_row:-0")).row,
+    QCOMPARE(std::get<PaneAction::ScrollToRow>(parse("scroll_to_row:-0")).row,
              quint64(0));
 
     QVERIFY(std::holds_alternative<PaneAction::ScrollPageUp>(
@@ -1047,64 +1173,60 @@ void GhosttyActionCatalogTest::parsesPaneActions()
     QVERIFY(std::holds_alternative<PaneAction::ScrollPageDown>(
         parse("scroll_page_down")));
 
-    const GhosttyPaneAction fraction =
-        parse("scroll_page_fractional:+0.5");
+    const GhosttyPaneAction fraction = parse("scroll_page_fractional:+0.5");
     QCOMPARE(std::get<PaneAction::ScrollPageFractional>(fraction).fraction,
              0.5F);
     QCOMPARE(std::get<PaneAction::ScrollPageFractional>(
-                 parse("scroll_page_fractional:0x1p-1")).fraction,
+                 parse("scroll_page_fractional:0x1p-1"))
+                 .fraction,
              0.5F);
     QCOMPARE(std::get<PaneAction::ScrollPageFractional>(
-                 parse("scroll_page_fractional:1e-1000")).fraction,
+                 parse("scroll_page_fractional:1e-1000"))
+                 .fraction,
              0.0F);
 
     const GhosttyPaneAction lines = parse("scroll_page_lines:-32_768");
     QCOMPARE(std::get<PaneAction::ScrollPageLines>(lines).lines,
              qint16(-32768));
     QCOMPARE(std::get<PaneAction::ScrollPageLines>(
-                 parse("scroll_page_lines:+32_767")).lines,
+                 parse("scroll_page_lines:+32_767"))
+                 .lines,
              qint16(32767));
 
-    QVERIFY(std::holds_alternative<PaneAction::SelectAll>(
-        parse("select_all")));
+    QVERIFY(std::holds_alternative<PaneAction::SelectAll>(parse("select_all")));
 
     const GhosttyPaneAction csi = parse("csi:38:2:255:0:0m");
     QCOMPARE(std::get<PaneAction::SendCsi>(csi).serializedBytes,
              QByteArrayLiteral("38:2:255:0:0m"));
-    QCOMPARE(std::get<PaneAction::SendCsi>(
-                 parse("csi:")).serializedBytes,
+    QCOMPARE(std::get<PaneAction::SendCsi>(parse("csi:")).serializedBytes,
              QByteArray{});
 
     const GhosttyPaneAction esc = parse("esc:]0:title:detail\a");
     QCOMPARE(std::get<PaneAction::SendEscape>(esc).serializedBytes,
              QByteArrayLiteral("]0:title:detail\a"));
-    QCOMPARE(std::get<PaneAction::SendEscape>(
-                 parse("esc:")).serializedBytes,
+    QCOMPARE(std::get<PaneAction::SendEscape>(parse("esc:")).serializedBytes,
              QByteArray{});
 
     const GhosttyPaneAction text = parse(R"(text:hello\n\x00world)");
     QCOMPARE(std::get<PaneAction::SendText>(text).serializedBytes,
              QByteArrayLiteral(R"(hello\n\x00world)"));
-    QCOMPARE(std::get<PaneAction::SendText>(
-                 parse("text:")).serializedBytes,
+    QCOMPARE(std::get<PaneAction::SendText>(parse("text:")).serializedBytes,
              QByteArray{});
 
     // Binding.Action.parse intentionally defers Zig-literal validation until
     // action execution, where a malformed literal is consumed but writes no
     // bytes.
-    QCOMPARE(std::get<PaneAction::SendText>(
-                 parse(R"(text:\q)")).serializedBytes,
-             QByteArrayLiteral(R"(\q)"));
-    QVERIFY(std::holds_alternative<PaneAction::ResetTerminal>(
-        parse("reset")));
+    QCOMPARE(
+        std::get<PaneAction::SendText>(parse(R"(text:\q)")).serializedBytes,
+        QByteArrayLiteral(R"(\q)"));
+    QVERIFY(std::holds_alternative<PaneAction::ResetTerminal>(parse("reset")));
 
     const GhosttyPaneAction readOnly = parse("toggle_readonly");
     QVERIFY(std::holds_alternative<PaneAction::ToggleReadOnly>(readOnly));
-    QVERIFY(GhosttyActionCatalog::isImplemented(
-        QStringLiteral("toggle_readonly")));
+    QVERIFY(
+        GhosttyActionCatalog::isImplemented(QStringLiteral("toggle_readonly")));
 
-    const GhosttyPaneAction mouseReporting =
-        parse("toggle_mouse_reporting");
+    const GhosttyPaneAction mouseReporting = parse("toggle_mouse_reporting");
     QVERIFY(std::holds_alternative<PaneAction::ToggleMouseReporting>(
         mouseReporting));
     QVERIFY(GhosttyActionCatalog::isImplemented(
@@ -1113,17 +1235,14 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         QStringLiteral("toggle_mouse_reporting:")));
     QVERIFY(!GhosttyActionCatalog::isImplemented(
         QStringLiteral("toggle_mouse_reporting:false")));
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("toggle_mouse_reporting")),
-             GhosttyActionScope::Surface);
+    QCOMPARE(
+        GhosttyActionCatalog::scope(QStringLiteral("toggle_mouse_reporting")),
+        GhosttyActionScope::Surface);
 
     const QStringList implementedControls{
-        QStringLiteral("csi:"),
-        QStringLiteral("csi:0m"),
-        QStringLiteral("esc:"),
-        QStringLiteral("esc:]0:title"),
-        QStringLiteral("text:"),
-        QStringLiteral(R"(text:\q)"),
+        QStringLiteral("csi:"),  QStringLiteral("csi:0m"),
+        QStringLiteral("esc:"),  QStringLiteral("esc:]0:title"),
+        QStringLiteral("text:"), QStringLiteral(R"(text:\q)"),
         QStringLiteral("reset"),
     };
     for (const QString &serialized : implementedControls) {
@@ -1161,15 +1280,15 @@ void GhosttyActionCatalogTest::parsesPaneActions()
         {"end_of_line", TerminalSelectionAdjustment::EndOfLine},
     };
     for (const auto &testCase : adjustments) {
-        const QByteArray serialized = QByteArrayLiteral("adjust_selection:")
-            + testCase.parameter;
+        const QByteArray serialized =
+            QByteArrayLiteral("adjust_selection:") + testCase.parameter;
         const GhosttyPaneAction action = parse(serialized.constData());
         QCOMPARE(std::get<PaneAction::AdjustSelection>(action).adjustment,
                  testCase.adjustment);
     }
 
-    QVERIFY(!GhosttyActionCatalog::parsePaneAction(
-        QStringLiteral("new_tab")).has_value());
+    QVERIFY(!GhosttyActionCatalog::parsePaneAction(QStringLiteral("new_tab"))
+                 .has_value());
 }
 
 void GhosttyActionCatalogTest::parsesFontSizePaneActions()
@@ -1195,8 +1314,7 @@ void GhosttyActionCatalogTest::parsesFontSizePaneActions()
         parse(QStringLiteral("set_font_size:0x1.8p1"));
     QCOMPARE(std::get<PaneAction::SetFontSize>(set).points, 3.0F);
 
-    const GhosttyPaneAction reset =
-        parse(QStringLiteral("reset_font_size"));
+    const GhosttyPaneAction reset = parse(QStringLiteral("reset_font_size"));
     QVERIFY(std::holds_alternative<PaneAction::ResetFontSize>(reset));
 
     const GhosttyPaneAction infinity =
@@ -1215,11 +1333,10 @@ void GhosttyActionCatalogTest::parsesFontSizePaneActions()
 
     const GhosttyPaneAction overflow =
         parse(QStringLiteral("decrease_font_size:1e999"));
-    QVERIFY(std::isinf(
-        std::get<PaneAction::DecreaseFontSize>(overflow).points));
+    QVERIFY(
+        std::isinf(std::get<PaneAction::DecreaseFontSize>(overflow).points));
 
-    const GhosttyPaneAction nan =
-        parse(QStringLiteral("set_font_size:-nAn"));
+    const GhosttyPaneAction nan = parse(QStringLiteral("set_font_size:-nAn"));
     const float nanPoints = std::get<PaneAction::SetFontSize>(nan).points;
     QVERIFY(std::isnan(nanPoints));
     QVERIFY(!std::signbit(nanPoints));
@@ -1414,40 +1531,47 @@ void GhosttyActionCatalogTest::classifiesPinnedActionScopes()
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("close_tab:right")),
              GhosttyActionScope::Surface);
+    for (const QString &action : {
+             QStringLiteral("toggle_command_palette"),
+             QStringLiteral("toggle_tab_overview"),
+             QStringLiteral("show_on_screen_keyboard"),
+             QStringLiteral("inspector"),
+             QStringLiteral("crash"),
+         }) {
+        QCOMPARE(GhosttyActionCatalog::scope(action),
+                 GhosttyActionScope::Surface);
+        QCOMPARE(GhosttyActionCatalog::scope(action + u':'),
+                 GhosttyActionScope::Surface);
+    }
     QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("goto_tab:2")),
              GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("toggle_split_zoom")),
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("toggle_split_zoom")),
              GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("toggle_fullscreen")),
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("toggle_fullscreen")),
              GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("toggle_maximize")),
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("toggle_maximize")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("toggle_window_decorations")),
              GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("activate_key_table:copy")),
-             GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("toggle_readonly")),
+    QCOMPARE(
+        GhosttyActionCatalog::scope(QStringLiteral("activate_key_table:copy")),
+        GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("toggle_readonly")),
              GhosttyActionScope::Surface);
     QCOMPARE(GhosttyActionCatalog::scope(
                  QStringLiteral("set_surface_title:project")),
              GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("prompt_surface_title")),
-             GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("copy_title_to_clipboard")),
-             GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("set_tab_title:project")),
-             GhosttyActionScope::Surface);
-    QCOMPARE(GhosttyActionCatalog::scope(
-                 QStringLiteral("prompt_tab_title")),
+    QCOMPARE(
+        GhosttyActionCatalog::scope(QStringLiteral("prompt_surface_title")),
+        GhosttyActionScope::Surface);
+    QCOMPARE(
+        GhosttyActionCatalog::scope(QStringLiteral("copy_title_to_clipboard")),
+        GhosttyActionScope::Surface);
+    QCOMPARE(
+        GhosttyActionCatalog::scope(QStringLiteral("set_tab_title:project")),
+        GhosttyActionScope::Surface);
+    QCOMPARE(GhosttyActionCatalog::scope(QStringLiteral("prompt_tab_title")),
              GhosttyActionScope::Surface);
 
     const QStringList searchActions{
@@ -1475,25 +1599,24 @@ void GhosttyActionCatalogTest::recognizesKeyTableActions()
     QCOMPARE(std::get<PaneAction::ActivateKeyTable>(activate).name,
              QStringLiteral("copy:mode"));
 
-    const GhosttyPaneAction escaped = parse(QStringLiteral(
-        R"(activate_key_table:\xc3\xa9\\quoted\")"));
+    const GhosttyPaneAction escaped =
+        parse(QStringLiteral(R"(activate_key_table:\xc3\xa9\\quoted\")"));
     QCOMPARE(std::get<PaneAction::ActivateKeyTable>(escaped).name,
              QStringLiteral("é\\quoted\""));
 
-    const GhosttyPaneAction leadingBom = parse(QStringLiteral(
-        R"(activate_key_table:\xef\xbb\xbfedit)"));
+    const GhosttyPaneAction leadingBom =
+        parse(QStringLiteral(R"(activate_key_table:\xef\xbb\xbfedit)"));
     QCOMPARE(std::get<PaneAction::ActivateKeyTable>(leadingBom).name,
              QString(QChar(0xfeff)) + QStringLiteral("edit"));
 
     const GhosttyPaneAction activateOnce =
         parse(QStringLiteral("activate_key_table_once:"));
-    QVERIFY(std::get<PaneAction::ActivateKeyTableOnce>(
-                activateOnce).name.isEmpty());
+    QVERIFY(std::get<PaneAction::ActivateKeyTableOnce>(activateOnce)
+                .name.isEmpty());
 
     const GhosttyPaneAction deactivate =
         parse(QStringLiteral("deactivate_key_table"));
-    QVERIFY(std::holds_alternative<PaneAction::DeactivateKeyTable>(
-        deactivate));
+    QVERIFY(std::holds_alternative<PaneAction::DeactivateKeyTable>(deactivate));
 
     const GhosttyPaneAction deactivateAll =
         parse(QStringLiteral("deactivate_all_key_tables"));

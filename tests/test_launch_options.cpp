@@ -117,6 +117,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
     values.workingDirectoryPath = QStringLiteral("/work/ghostty");
     values.typography = completeTypography();
+    values.configDefaultFiles = false;
     values.title = QStringLiteral("Configured title");
 
     values.appearance = {
@@ -273,7 +274,7 @@ private Q_SLOTS:
     void rejectsInvalidFontSize_data();
     void rejectsInvalidFontSize();
     void normalizesFontSizeToGhosttyPrecision();
-    void buildsGhosttyFontCliArguments();
+    void buildsGhosttyConfigurationArguments();
     void rejectsInvalidScrollbackLines_data();
     void rejectsInvalidScrollbackLines();
     void rejectsUnknownOption();
@@ -357,8 +358,12 @@ void LaunchOptionsTest::defaults()
         }));
     QVERIFY(!options.fontFamilyExplicit);
     QVERIFY(!options.fontSizeExplicit);
+    QVERIFY(options.configDefaultFiles);
+    QVERIFY(!options.configDefaultFilesExplicit);
     QCOMPARE(options.colorScheme, TerminalColorScheme::Light);
     QVERIFY(!options.configuredTitle.has_value());
+    QVERIFY(!options.applicationClass.has_value());
+    QVERIFY(!options.applicationClassExplicit);
     QCOMPARE(options.windowAppearance.theme, WindowTheme::Auto);
     QVERIFY(!options.windowAppearance.titleFontFamily.has_value());
     QVERIFY(!options.windowAppearance.titlebarBackground.has_value());
@@ -556,6 +561,39 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
     QVERIFY2(payload.has_value(), qPrintable(errorMessage(payload)));
     QVERIFY(payload->hasUnforwardedLaunchPayload());
     QVERIFY(!shouldUseSingleInstance(*payload, QByteArrayView{}));
+
+    const auto noDefaultConfig = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--config-default-files=true"),
+        QStringLiteral("--config-default-files=f"),
+    });
+    QVERIFY2(noDefaultConfig.has_value(),
+             qPrintable(errorMessage(noDefaultConfig)));
+    QVERIFY(!noDefaultConfig->configDefaultFiles);
+    QVERIFY(noDefaultConfig->configDefaultFilesExplicit);
+    QVERIFY(noDefaultConfig->hasUnforwardedLaunchPayload());
+    QCOMPARE(ghosttyConfigurationArguments(*noDefaultConfig),
+             QStringList{QStringLiteral("--config-default-files=false")});
+
+    const auto explicitDefaultConfig = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--config-default-files=T"),
+    });
+    QVERIFY2(explicitDefaultConfig.has_value(),
+             qPrintable(errorMessage(explicitDefaultConfig)));
+    QVERIFY(explicitDefaultConfig->configDefaultFiles);
+    QVERIFY(explicitDefaultConfig->configDefaultFilesExplicit);
+    QVERIFY(explicitDefaultConfig->hasUnforwardedLaunchPayload());
+    QCOMPARE(ghosttyConfigurationArguments(*explicitDefaultConfig),
+             QStringList{QStringLiteral("--config-default-files=true")});
+
+    const auto invalidDefaultConfig = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--config-default-files=yes"),
+    });
+    QVERIFY(!invalidDefaultConfig.has_value());
+    QVERIFY(invalidDefaultConfig.error().contains(
+        QStringLiteral("Invalid config-default-files")));
 }
 
 void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
@@ -570,6 +608,8 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
         QStringLiteral("--font-family"),
         QStringLiteral("Iosevka Term"),
         QStringLiteral("--font-size=15.5"),
+        QString::fromUtf8("--class=com.example.\xE5\xAE\xB6\xF0\x9F\x91\xBB"),
+        QStringLiteral("--config-default-files=false"),
         QStringLiteral("--scrollback-lines"),
         QStringLiteral("250000"),
         QStringLiteral("--hold"),
@@ -591,6 +631,14 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
     QCOMPARE(options.typography.pointSize, 15.5);
     QVERIFY(options.fontFamilyExplicit);
     QVERIFY(options.fontSizeExplicit);
+    QCOMPARE(options.applicationClass,
+             std::optional<QByteArray>(QByteArray::fromHex(
+                 "636f6d2e6578616d706c652ee5aeb6f09f91bb")));
+    QVERIFY(options.applicationClassExplicit);
+    QVERIFY(ghosttyConfigurationArguments(options).contains(
+        QString::fromUtf8("--class=com.example.\xE5\xAE\xB6\xF0\x9F\x91\xBB")));
+    QVERIFY(!options.configDefaultFiles);
+    QVERIFY(options.configDefaultFilesExplicit);
     QCOMPARE(options.scrollbackLimit.value, quint64(250'000));
     QCOMPARE(options.scrollbackLimit.unit, ScrollbackLimitUnit::Lines);
     QVERIFY(options.scrollbackLimitExplicit);
@@ -704,14 +752,13 @@ void LaunchOptionsTest::normalizesFontSizeToGhosttyPrecision()
     const double expected =
         static_cast<double>(static_cast<float>(13.123456789));
     QCOMPARE(result->typography.pointSize, expected);
-    QCOMPARE(
-        ghosttyConfigCliFontArguments(*result),
-        QStringList{QStringLiteral("--font-size=13.123457")});
+    QCOMPARE(ghosttyConfigurationArguments(*result),
+             QStringList{QStringLiteral("--font-size=13.123457")});
 }
 
-void LaunchOptionsTest::buildsGhosttyFontCliArguments()
+void LaunchOptionsTest::buildsGhosttyConfigurationArguments()
 {
-    QCOMPARE(ghosttyConfigCliFontArguments({}), QStringList{});
+    QCOMPARE(ghosttyConfigurationArguments({}), QStringList{});
 
     const QString unicodeFamily =
         QString::fromUtf8("家族 = --font \"with spaces\" \xE2\x98\x83");
@@ -723,7 +770,7 @@ void LaunchOptionsTest::buildsGhosttyFontCliArguments()
     QVERIFY2(family.has_value(), qPrintable(errorMessage(family)));
     QCOMPARE(regularFamilies(*family), QStringList{unicodeFamily});
     QCOMPARE(regularFamilies(*family).size(), qsizetype(1));
-    QCOMPARE(ghosttyConfigCliFontArguments(*family),
+    QCOMPARE(ghosttyConfigurationArguments(*family),
              QStringList{QStringLiteral("--font-family=") + unicodeFamily});
 
     const auto repeatedFamilies = parseLaunchOptions({
@@ -738,10 +785,9 @@ void LaunchOptionsTest::buildsGhosttyFontCliArguments()
     QCOMPARE(regularFamilies(*repeatedFamilies),
              QStringList({QStringLiteral("Primary"),
                           QStringLiteral("Fallback")}));
-    QCOMPARE(
-        ghosttyConfigCliFontArguments(*repeatedFamilies),
-        QStringList({QStringLiteral("--font-family=Primary"),
-                     QStringLiteral("--font-family=Fallback")}));
+    QCOMPARE(ghosttyConfigurationArguments(*repeatedFamilies),
+             QStringList({QStringLiteral("--font-family=Primary"),
+                          QStringLiteral("--font-family=Fallback")}));
 
     const auto emptyFamily = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
@@ -749,8 +795,20 @@ void LaunchOptionsTest::buildsGhosttyFontCliArguments()
     });
     QVERIFY2(emptyFamily.has_value(), qPrintable(errorMessage(emptyFamily)));
     QVERIFY(regularFamilies(*emptyFamily).isEmpty());
-    QCOMPARE(ghosttyConfigCliFontArguments(*emptyFamily),
+    QCOMPARE(ghosttyConfigurationArguments(*emptyFamily),
              QStringList{QStringLiteral("--font-family=")});
+
+    const auto resetClass = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--class=com.example.before"),
+        QStringLiteral("--class="),
+    });
+    QVERIFY2(resetClass.has_value(), qPrintable(errorMessage(resetClass)));
+    QVERIFY(!resetClass->applicationClass.has_value());
+    QVERIFY(resetClass->applicationClassExplicit);
+    QVERIFY(resetClass->hasUnforwardedLaunchPayload());
+    QCOMPARE(ghosttyConfigurationArguments(*resetClass),
+             QStringList{QStringLiteral("--class=")});
 
     LaunchOptions defensive;
     defensive.fontFamilyExplicit = true;
@@ -760,17 +818,28 @@ void LaunchOptionsTest::buildsGhosttyFontCliArguments()
     };
     defensive.fontSizeExplicit = true;
     defensive.typography.pointSize = 15.5;
-    QCOMPARE(ghosttyConfigCliFontArguments(defensive),
+    defensive.applicationClass =
+        QByteArray::fromHex("636f6d2e6578616d706c652ee5aeb6");
+    defensive.applicationClassExplicit = true;
+    defensive.configDefaultFiles = false;
+    defensive.configDefaultFilesExplicit = true;
+    QCOMPARE(ghosttyConfigurationArguments(defensive),
              QStringList({
                  QStringLiteral("--font-family=First"),
                  QStringLiteral("--font-family=Second"),
                  QStringLiteral("--font-size=15.5"),
+                 QString::fromUtf8("--class=com.example.\xE5\xAE\xB6"),
+                 QStringLiteral("--config-default-files=false"),
              }));
 
     defensive.typography.face(TerminalFontRole::Regular).families.clear();
     defensive.fontSizeExplicit = false;
-    QCOMPARE(ghosttyConfigCliFontArguments(defensive),
-             QStringList{QStringLiteral("--font-family=")});
+    QCOMPARE(ghosttyConfigurationArguments(defensive),
+             QStringList({
+                 QStringLiteral("--font-family="),
+                 QString::fromUtf8("--class=com.example.\xE5\xAE\xB6"),
+                 QStringLiteral("--config-default-files=false"),
+             }));
 }
 
 void LaunchOptionsTest::rejectsInvalidScrollbackLines_data()
@@ -857,6 +926,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
     QVERIFY(cliResult.processUsesSingleInstance);
     QVERIFY(cliResult.typography == completeTypography());
+    QCOMPARE(cliResult.applicationClass, snapshot.values.applicationClass);
+    QVERIFY(!cliResult.configDefaultFiles);
     QCOMPARE(cliResult.configuredTitle, snapshot.values.title);
     QCOMPARE(cliResult.windowAppearance, snapshot.values.windowAppearance);
     QCOMPARE(cliResult.appearance.foregroundColor,
