@@ -2042,7 +2042,7 @@ void SessionWorker::sendMouse(const TerminalMouseInput &input)
 
 void SessionWorker::sendWheel(const TerminalWheelInput &input)
 {
-    if (vt_ == nullptr || input.rows == 0) {
+    if (vt_ == nullptr || (input.rows == 0 && input.columns == 0)) {
         return;
     }
 
@@ -2051,29 +2051,47 @@ void SessionWorker::sendWheel(const TerminalWheelInput &input)
     // request cannot be mistaken for a local viewport scroll.
     if (const auto sequence = vt_->alternateScrollSequence(input.rows);
         sequence.has_value()) {
-        clearSelectionState();
+        if (input.rows != 0) {
+            clearSelectionState();
+        }
         // As with every other surface-originated input path, terminal-local
         // side effects precede the read-only PTY-write policy boundary.
-        queueInputWrite(*sequence);
+        if (!sequence->isEmpty()) {
+            queueInputWrite(*sequence);
+        }
         return;
     }
 
     if (input.mouseReportingEnabled && vt_->mouseTracking()) {
         TerminalMouseInput mouse;
         mouse.action = TerminalMouseInput::Press;
-        mouse.button = input.rows > 0 ? 4 : 5;
         mouse.modifiers = input.modifiers;
         mouse.x = input.x;
         mouse.y = input.y;
-        const quint64 magnitude = input.rows > 0
-            ? static_cast<quint64>(input.rows)
-            : static_cast<quint64>(-(input.rows + 1)) + 1U;
-        for (quint64 remaining = magnitude; remaining > 0; --remaining) {
-            sendMouse(mouse);
-        }
+        const auto reportAxis = [this, &mouse](qint64 amount,
+                                               int positiveButton,
+                                               int negativeButton) {
+            if (amount == 0) {
+                return;
+            }
+            mouse.button = amount > 0 ? positiveButton : negativeButton;
+            const quint64 magnitude = amount > 0
+                ? static_cast<quint64>(amount)
+                : static_cast<quint64>(-(amount + 1)) + 1U;
+            for (quint64 remaining = magnitude; remaining > 0; --remaining) {
+                sendMouse(mouse);
+            }
+        };
+        // Match Ghostty's stable axis ordering for a diagonal gesture.
+        reportAxis(input.rows, 4, 5);
+        reportAxis(input.columns, 6, 7);
         return;
     }
 
+    if (input.rows == 0) {
+        // Horizontal wheel movement has no local viewport equivalent.
+        return;
+    }
     TerminalViewportRequest request;
     request.kind = TerminalViewportRequest::Kind::Delta;
     request.delta = input.rows == std::numeric_limits<qint64>::min()

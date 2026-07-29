@@ -384,9 +384,12 @@ environment override order, concrete `PWD` precedence, parent-`PATH`
 executable lookup, invalid raw environment rejection, pre-exec cgroup gating,
 soft/hard scope failures, full/fractional/line/absolute viewport movement,
 selection-target scrolling, default and configured discrete wheel movement,
-precision pixel scrolling, fractional/reversing accumulation, identical local
-and DEC-captured row counts, worker-rechecked fractional-capture selection
-clearing, bounded extreme dispatch with retained debt, live multiplier reload,
+precision pixel scrolling, independent horizontal pixel and discrete-step
+normalization, simultaneous-axis routing, DEC buttons 6/7 with vertical-first
+ordering, fractional/reversing accumulation, identical local and DEC-captured
+row counts, worker-rechecked fractional-capture selection clearing,
+horizontal-only alternate-scroll consumption, bounded per-axis extreme
+dispatch with retained precision debt, live multiplier reload,
 four-state shift-capture defaults and live reload, exact override-independent
 `always`/`never` routing, configured `true`/`false` fallback, and consistent
 press/release/held-drag/middle/right/link decisions with wheel and buttonless

@@ -1989,8 +1989,8 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     QVERIFY(adapter != nullptr);
     QVERIFY(!adapter->mouseTracking());
 
-    adapter->writeVt(QByteArrayLiteral(
-        "\033[?2004h\033[?1004h\033[?1002h"));
+    adapter->writeVt(
+        QByteArrayLiteral("\033[?2004h\033[?1004h\033[?1002h\033[?1006h"));
     adapter->synchronizeInputModes();
     QVERIFY(adapter->mouseTracking());
     QCOMPARE(adapter->encodePaste(QStringLiteral("one\ntwo")),
@@ -2047,6 +2047,15 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
     QVERIFY(!encodedRelease.modifier);
     QVERIFY(!encodedRelease.escape);
 
+    TerminalMouseInput horizontalWheel;
+    horizontalWheel.action = TerminalMouseInput::Press;
+    horizontalWheel.button = 6;
+    QCOMPARE(adapter->encodeMouse(horizontalWheel),
+             QByteArrayLiteral("\033[<66;1;1M"));
+    horizontalWheel.button = 7;
+    QCOMPARE(adapter->encodeMouse(horizontalWheel),
+             QByteArrayLiteral("\033[<67;1;1M"));
+
     adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
     QVERIFY(!adapter->mouseTracking());
 }
@@ -2059,8 +2068,12 @@ void GhosttyVtAdapterTest::encodesAlternateScreenWheelRows()
     // DECSET 1007 defaults on, but the primary screen never converts wheel
     // rows to cursor keys.
     QVERIFY(!adapter->alternateScrollSequence(1).has_value());
+    QVERIFY(!adapter->alternateScrollSequence(0).has_value());
 
     adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    const auto horizontalOnly = adapter->alternateScrollSequence(0);
+    QVERIFY(horizontalOnly.has_value());
+    QVERIFY(horizontalOnly->isEmpty());
     const auto normalUp = adapter->alternateScrollSequence(2);
     QVERIFY(normalUp.has_value());
     QCOMPARE(*normalUp, QByteArrayLiteral("\033[A\033[A"));

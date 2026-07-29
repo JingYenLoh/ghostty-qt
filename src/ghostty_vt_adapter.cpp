@@ -1500,7 +1500,7 @@ public:
 
     std::optional<QByteArray> alternateScrollSequence(qint64 rows) const
     {
-        if (rows == 0 || mouseTracking()) {
+        if (mouseTracking()) {
             return std::nullopt;
         }
 
@@ -1515,6 +1515,10 @@ public:
                 != GHOSTTY_SUCCESS
             || !alternateScroll) {
             return std::nullopt;
+        }
+
+        if (rows == 0) {
+            return QByteArray{};
         }
 
         bool applicationCursorKeys = false;

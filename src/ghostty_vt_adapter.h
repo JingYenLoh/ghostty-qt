@@ -299,8 +299,9 @@ public:
     QByteArray encodeMouse(const TerminalMouseInput &input);
     // A present value means DECSET 1007 owns this wheel input. The bytes use
     // the terminal's current DECCKM mode and contain exactly one cursor-key
-    // sequence per signed row. Absence leaves ordinary mouse/viewport routing
-    // to the worker.
+    // sequence per signed row. A horizontal-only input therefore produces a
+    // present empty value: alternate scroll consumes it without generating
+    // bytes. Absence leaves ordinary mouse/viewport routing to the worker.
     std::optional<QByteArray> alternateScrollSequence(qint64 rows) const;
     QByteArray encodeFocus(bool focused) const;
     QByteArray encodePaste(const QString &text) const;

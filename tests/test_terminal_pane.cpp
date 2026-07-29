@@ -446,6 +446,7 @@ private Q_SLOTS:
     void routesConfiguredRightClickPolicy();
     void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
+    void normalizesHorizontalWheelInputIndependently();
     void forwardsTypedSelectionPointerMetadataOnce();
     void cancelsSelectionWhenMouseGrabIsRevoked();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
@@ -4115,6 +4116,85 @@ void TerminalPaneTest::prefersPrecisionPixelsAndRetainsPhysicalWheelDistance()
     QVERIFY(sendPixel(-logicalPixelDelta, 120));
     QCOMPARE(wheel.count(), 3);
     QCOMPARE(requestAt(2).rows, qint64{-1});
+
+    delete pane;
+}
+
+void TerminalPaneTest::normalizesHorizontalWheelInputIndependently()
+{
+    qRegisterMetaType<TerminalWheelInput>();
+
+    QQuickWindow window;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+    // This multiplier must affect only vertical precision movement.
+    options.mouseScrollMultiplier.precision = 10'000.0;
+
+    const qreal dpr = window.devicePixelRatio();
+    const TerminalCellMetrics metrics =
+        terminalCellMetrics(options.typography, dpr);
+    const qint32 physicalCellWidth = qRound(metrics.cellWidth * dpr);
+    QVERIFY(physicalCellWidth > dpr);
+    const int horizontalPiece =
+        static_cast<int>(std::floor((physicalCellWidth - 1) / dpr));
+    QVERIFY(horizontalPiece > 0);
+
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(QSizeF(320.0, 160.0));
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy wheel(controller, &TerminalController::wheelRequested);
+    const auto requestAt = [&wheel](int index) {
+        return qvariant_cast<TerminalWheelInput>(wheel.at(index).constFirst());
+    };
+
+    // Precision X retains raw physical distance against cell width. The
+    // deliberately extreme vertical multiplier and contrary angle delta do
+    // not affect it.
+    QVERIFY(
+        sendWheelEvent(*pane, QPoint(horizontalPiece, 0), QPoint(-120, 120)));
+    QCOMPARE(wheel.count(), 0);
+    QVERIFY(
+        sendWheelEvent(*pane, QPoint(horizontalPiece, 0), QPoint(-120, 120)));
+    QCOMPARE(wheel.count(), 1);
+    QCOMPARE(requestAt(0).rows, qint64{0});
+    QCOMPARE(requestAt(0).columns, qint64{1});
+    QVERIFY(sendWheelEvent(*pane, QPoint(-horizontalPiece, 0), QPoint{}));
+    QCOMPARE(wheel.count(), 1);
+    QVERIFY(sendWheelEvent(*pane, QPoint(-horizontalPiece, 0), QPoint{}));
+    QCOMPARE(wheel.count(), 2);
+    QCOMPARE(requestAt(1).columns, qint64{-1});
+
+    // Discrete X rounds each event independently rather than accumulating
+    // fractional ticks, and remains independent of the vertical multiplier.
+    QVERIFY(sendWheelEvent(*pane, QPoint{}, QPoint(59, 0)));
+    QCOMPARE(wheel.count(), 2);
+    QVERIFY(sendWheelEvent(*pane, QPoint{}, QPoint(60, 0)));
+    QCOMPARE(wheel.count(), 3);
+    QCOMPARE(requestAt(2).rows, qint64{0});
+    QCOMPARE(requestAt(2).columns, qint64{1});
+    QVERIFY(sendWheelEvent(*pane, QPoint{}, QPoint(-60, 0)));
+    QCOMPARE(wheel.count(), 4);
+    QCOMPARE(requestAt(3).columns, qint64{-1});
+
+    // A diagonal discrete event crosses the session boundary once with both
+    // independently normalized axes. Synthesized X extremes remain bounded.
+    LaunchOptions ordinary = options;
+    ordinary.mouseScrollMultiplier.discrete = 1.0;
+    pane->applyRuntimeOptions(ordinary);
+    QVERIFY(sendWheelEvent(*pane, QPoint{}, QPoint(120, 120)));
+    QCOMPARE(wheel.count(), 5);
+    QCOMPARE(requestAt(4).rows, qint64{1});
+    QCOMPARE(requestAt(4).columns, qint64{1});
+    QVERIFY(sendWheelEvent(*pane, QPoint{},
+                           QPoint(std::numeric_limits<int>::max(), 0)));
+    QCOMPARE(wheel.count(), 6);
+    QCOMPARE(requestAt(5).rows, qint64{0});
+    QCOMPARE(requestAt(5).columns, qint64{10'000});
 
     delete pane;
 }

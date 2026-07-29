@@ -456,11 +456,12 @@ private:
     QString preedit_;
     QString statusMessage_;
     bool selecting_ = false;
-    // Ghostty accumulates vertical wheel input in physical pixels so
-    // precision devices and fractional discrete ticks share one row
-    // threshold. Keep this pane-local across live configuration and
-    // cell-metric changes.
+    // Ghostty accumulates wheel input in physical pixels. Vertical precision
+    // and fractional discrete input share a row threshold; horizontal
+    // precision input has an independent cell-width threshold. Keep both
+    // pane-local across live configuration and cell-metric changes.
     double pendingWheelVerticalPixels_ = 0.0;
+    double pendingWheelHorizontalPixels_ = 0.0;
     bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;

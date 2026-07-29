@@ -283,6 +283,7 @@ private Q_SLOTS:
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
     void convertsAlternateScreenWheelRowsAtomically();
+    void reportsHorizontalWheelButtonsInStableOrder();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
     void resolvesConfiguredRightClickActions();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
@@ -5191,7 +5192,18 @@ void SessionWorkerTest::convertsAlternateScreenWheelRowsAtomically()
         updatesContain(updateSpy, QStringLiteral("alt-normal-ready")), 5000);
     selectVisibleText();
     worker.sendWheel({
+        .columns = 1,
+        .modifiers = Qt::AltModifier,
+        .x = 12.0F,
+        .y = 20.0F,
+        .mouseReportingEnabled = false,
+    });
+    // DECSET 1007 owns and discards horizontal-only travel without applying
+    // the vertical alternate-scroll selection side effect.
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+    worker.sendWheel({
         .rows = 2,
+        .columns = -3,
         .modifiers = Qt::ShiftModifier,
         .x = 12.0F,
         .y = 20.0F,
@@ -5228,6 +5240,92 @@ void SessionWorkerTest::convertsAlternateScreenWheelRowsAtomically()
     worker.sendRawText(QByteArrayLiteral("x"));
     QTRY_VERIFY_WITH_TIMEOUT(
         updatesContain(updateSpy, QStringLiteral("wheel-done")), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::reportsHorizontalWheelButtonsInStableOrder()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[?1002h\\033[?1006hwheel-report-ready'; "
+            "payload=$(dd bs=1 count=30 2>/dev/null); "
+            "printf '\\033[?1002l\\033[?1006l\\r\\nwheel-report:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "dd bs=1 count=1 of=/dev/null 2>/dev/null; "
+            "stty sane; printf '\\r\\nwheel-report-done\\r\\n'")};
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    QVERIFY(worker.initialize(options));
+
+    const auto selectVisibleText = [&] {
+        worker.clearSelection();
+        selectionSpy.clear();
+        worker.beginSelection(selectionPress(0, 0));
+        worker.updateSelection(selectionDrag(8, 0));
+        QVERIFY(spyContainsBool(selectionSpy, true));
+        selectionSpy.clear();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("wheel-report-ready")), 5000);
+
+    // A pane-disabled report ignores horizontal movement locally and keeps
+    // selection state even though the terminal's raw DEC mode is active.
+    selectVisibleText();
+    worker.sendWheel({
+        .columns = 1,
+        .mouseReportingEnabled = false,
+    });
+    QVERIFY(!spyContainsBool(selectionSpy, false));
+
+    // Read-only suppresses only bytes: reported horizontal wheel selection
+    // semantics still run before the queue policy boundary.
+    worker.setReadOnly(true);
+    worker.sendWheel({
+        .columns = 1,
+        .mouseReportingEnabled = true,
+    });
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    worker.setReadOnly(false);
+
+    // A diagonal request reports all vertical events before horizontal ones.
+    // Positive Y is button 4 and negative X is button 7.
+    worker.sendWheel({
+        .rows = 2,
+        .columns = -1,
+        .x = 0.0F,
+        .y = 0.0F,
+        .mouseReportingEnabled = true,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy,
+                       QStringLiteral("wheel-report:"
+                                      "1b5b3c36343b313b314d"
+                                      "1b5b3c36343b313b314d"
+                                      "1b5b3c36373b313b314d")),
+        5000);
+    worker.sendRawText(QByteArrayLiteral("x"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("wheel-report-done")), 1000);
     QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
     QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     QVERIFY2(errorSpy.isEmpty(),

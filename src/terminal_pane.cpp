@@ -53,7 +53,7 @@ constexpr float kMaximumActionFontSize = 255.0F;
 constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr double kMinimumMouseScrollMultiplier = 0.01;
 constexpr double kMaximumMouseScrollMultiplier = 10'000.0;
-constexpr qint64 kMaximumMouseScrollRowsPerEvent = 10'000;
+constexpr qint64 kMaximumMouseScrollStepsPerAxis = 10'000;
 
 [[nodiscard]] double normalizedMouseScrollMultiplier(double value,
                                                      double fallback) noexcept
@@ -3499,88 +3499,124 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 void TerminalPane::wheelEvent(QWheelEvent *event)
 {
     revealMouseAfterActivity();
+    qreal logicalCellWidth = 0.0;
     qreal logicalCellHeight = 0.0;
     {
         QMutexLocker locker(&renderMutex_);
+        logicalCellWidth = metrics_.cellWidth;
         logicalCellHeight = metrics_.cellHeight;
     }
     const qreal devicePixelRatio =
         TerminalPaneRenderer::normalizedDevicePixelRatio(
             window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const double physicalCellWidth =
+        static_cast<double>(TerminalPaneRenderer::physicalPixels(
+            logicalCellWidth, devicePixelRatio));
     const double physicalCellHeight =
         static_cast<double>(TerminalPaneRenderer::physicalPixels(
             logicalCellHeight, devicePixelRatio));
-    if (!std::isfinite(physicalCellHeight) || physicalCellHeight <= 0.0) {
-        event->ignore();
-        return;
-    }
 
-    double physicalOffset = 0.0;
     const QPoint pixelDelta = event->pixelDelta();
-    if (!pixelDelta.isNull()) {
-        if (pixelDelta.y() == 0) {
-            event->ignore();
-            return;
+    const QPoint angleDelta = event->angleDelta();
+    const bool precision = !pixelDelta.isNull();
+    const QPoint effectiveDelta = precision ? pixelDelta : angleDelta;
+    if (effectiveDelta.isNull()) {
+        event->ignore();
+        return;
+    }
+
+    const auto boundedWholeSteps = [](long double amount) {
+        const long double maximum =
+            static_cast<long double>(kMaximumMouseScrollStepsPerAxis);
+        if (amount >= maximum) {
+            return kMaximumMouseScrollStepsPerAxis;
         }
-        const double multiplier = normalizedMouseScrollMultiplier(
-            options_.mouseScrollMultiplier.precision, 1.0);
-        physicalOffset =
-            static_cast<double>(pixelDelta.y()) * devicePixelRatio * multiplier;
+        if (amount <= -maximum) {
+            return -kMaximumMouseScrollStepsPerAxis;
+        }
+        return static_cast<qint64>(amount);
+    };
+    const auto accumulatePrecisionAxis =
+        [&boundedWholeSteps](double offset, double cellSize, double &pending) {
+            if (!std::isfinite(offset) || !std::isfinite(cellSize)
+                || cellSize <= 0.0) {
+                pending = 0.0;
+                return qint64{0};
+            }
+            const double accumulated = pending + offset;
+            if (!std::isfinite(accumulated)) {
+                pending = 0.0;
+                return qint64{0};
+            }
+
+            const long double amount = static_cast<long double>(accumulated)
+                / static_cast<long double>(cellSize);
+            if (std::abs(amount) < 1.0L) {
+                pending = accumulated;
+                return qint64{0};
+            }
+
+            const qint64 steps = boundedWholeSteps(std::trunc(amount));
+            // Bound one GUI dispatch without dropping coalesced or synthesized
+            // precision movement. An extreme event carries its undispatched
+            // whole-cell debt into the next event.
+            pending = accumulated - static_cast<double>(steps) * cellSize;
+            if (!std::isfinite(pending)) {
+                pending = 0.0;
+            }
+            return steps;
+        };
+
+    qint64 rows = 0;
+    qint64 columns = 0;
+    if (precision) {
+        if (pixelDelta.y() != 0) {
+            const double multiplier = normalizedMouseScrollMultiplier(
+                options_.mouseScrollMultiplier.precision, 1.0);
+            rows = accumulatePrecisionAxis(static_cast<double>(pixelDelta.y())
+                                               * devicePixelRatio * multiplier,
+                                           physicalCellHeight,
+                                           pendingWheelVerticalPixels_);
+        }
+        if (pixelDelta.x() != 0) {
+            // Horizontal precision scrolling follows Ghostty's physical
+            // cell-width threshold and intentionally ignores the vertical
+            // mouse-scroll multiplier.
+            columns = accumulatePrecisionAxis(
+                static_cast<double>(pixelDelta.x()) * devicePixelRatio,
+                physicalCellWidth, pendingWheelHorizontalPixels_);
+        }
     } else {
-        const double ticks =
-            static_cast<double>(event->angleDelta().y()) / 120.0;
-        if (ticks == 0.0) {
-            event->ignore();
-            return;
+        if (angleDelta.y() != 0 && std::isfinite(physicalCellHeight)
+            && physicalCellHeight > 0.0) {
+            const double ticks = static_cast<double>(angleDelta.y()) / 120.0;
+            const double multiplier = normalizedMouseScrollMultiplier(
+                options_.mouseScrollMultiplier.discrete, 3.0);
+            rows = accumulatePrecisionAxis(
+                ticks * physicalCellHeight * multiplier, physicalCellHeight,
+                pendingWheelVerticalPixels_);
         }
-        const double multiplier = normalizedMouseScrollMultiplier(
-            options_.mouseScrollMultiplier.discrete, 3.0);
-        physicalOffset = ticks * physicalCellHeight * multiplier;
+        if (angleDelta.x() != 0) {
+            // Unlike vertical discrete input, Ghostty rounds horizontal ticks
+            // independently and does not apply a scroll multiplier.
+            const long double ticks =
+                static_cast<long double>(angleDelta.x()) / 120.0L;
+            columns = boundedWholeSteps(std::round(ticks));
+        }
     }
 
-    if (!std::isfinite(physicalOffset) || physicalOffset == 0.0) {
-        pendingWheelVerticalPixels_ = 0.0;
-        event->ignore();
-        return;
-    }
-    const double accumulated = pendingWheelVerticalPixels_ + physicalOffset;
-    if (!std::isfinite(accumulated)) {
-        pendingWheelVerticalPixels_ = 0.0;
-        event->ignore();
-        return;
-    }
-
-    const long double rowAmount = static_cast<long double>(accumulated)
-        / static_cast<long double>(physicalCellHeight);
-    if (std::abs(rowAmount) < 1.0L) {
-        pendingWheelVerticalPixels_ = accumulated;
+    if (rows == 0 && columns == 0) {
         if (controller_->mouseTracking()) {
             controller_->clearSelectionIfMouseTracking();
         }
         event->accept();
         return;
     }
-
-    const long double truncatedRows = std::trunc(rowAmount);
-    const long double maximumRows =
-        static_cast<long double>(kMaximumMouseScrollRowsPerEvent);
-    const qint64 rows = truncatedRows >= maximumRows
-        ? kMaximumMouseScrollRowsPerEvent
-        : truncatedRows <= -maximumRows ? -kMaximumMouseScrollRowsPerEvent
-                                        : static_cast<qint64>(truncatedRows);
-    // Bound one GUI dispatch without dropping coalesced or synthesized
-    // movement. Ordinary input retains only a sub-row remainder; an extreme
-    // event carries its undispatched whole-row debt into the next event.
-    pendingWheelVerticalPixels_ =
-        accumulated - static_cast<double>(rows) * physicalCellHeight;
-    if (!std::isfinite(pendingWheelVerticalPixels_)) {
-        pendingWheelVerticalPixels_ = 0.0;
-    }
-
     const Qt::KeyboardModifiers modifiers =
         effectivePointerModifiers(event->modifiers());
     controller_->sendWheel({
         .rows = rows,
+        .columns = columns,
         .modifiers = static_cast<int>(modifiers),
         .x = static_cast<float>(event->position().x() * devicePixelRatio),
         .y = static_cast<float>(event->position().y() * devicePixelRatio),

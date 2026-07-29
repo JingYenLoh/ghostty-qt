@@ -419,12 +419,13 @@ struct TerminalMouseInput {
     bool anyButtonPressed = false;
 };
 
-// Whole vertical wheel rows cross the session boundary as one value so the
+// Whole wheel rows and columns cross the session boundary as one value so the
 // worker can choose alternate-scroll, DEC mouse reporting, or viewport
 // movement against one current terminal-state snapshot. The frontend policy
 // remains explicit because it is pane-owned rather than a terminal mode.
 struct TerminalWheelInput {
     qint64 rows = 0;
+    qint64 columns = 0;
     int modifiers = 0;
     float x = 0.0F;
     float y = 0.0F;
