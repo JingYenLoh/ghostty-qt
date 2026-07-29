@@ -96,6 +96,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::resetTerminal);
     relayWorkerRequest(&TerminalController::mouseRequested,
                        &SessionWorker::sendMouse);
+    relayWorkerRequest(&TerminalController::wheelRequested,
+                       &SessionWorker::sendWheel);
     relayWorkerRequest(&TerminalController::rightClickRequested,
                        &SessionWorker::resolveRightClick);
     relayWorkerRequest(&TerminalController::focusRequested,
@@ -184,12 +186,12 @@ TerminalController::TerminalController(
         TerminalUpdate, TerminalHyperlinkState, TerminalLinkKind,
         TerminalSearchDirection, TerminalSearchUpdate, TerminalViewportRequest,
         TerminalSelectionAdjustment, TerminalKeyInput, TerminalInputMethodInput,
-        TerminalSequenceResolution, TerminalMouseInput, TerminalRightClickInput,
-        TerminalRightClickResult, TerminalSelectionPressInput,
-        TerminalSelectionDragInput, QVector<QPoint>,
-        TerminalSessionRuntimeOptions, TerminalClipboardDestination,
-        TerminalClipboardWriteRequest, TerminalActionResult,
-        TerminalWriteFileAction>();
+        TerminalSequenceResolution, TerminalMouseInput, TerminalWheelInput,
+        TerminalRightClickInput, TerminalRightClickResult,
+        TerminalSelectionPressInput, TerminalSelectionDragInput,
+        QVector<QPoint>, TerminalSessionRuntimeOptions,
+        TerminalClipboardDestination, TerminalClipboardWriteRequest,
+        TerminalActionResult, TerminalWriteFileAction>();
 
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
@@ -825,6 +827,11 @@ void TerminalController::resetTerminal()
 void TerminalController::sendMouse(const TerminalMouseInput &input)
 {
     Q_EMIT mouseRequested(input);
+}
+
+void TerminalController::sendWheel(const TerminalWheelInput &input)
+{
+    Q_EMIT wheelRequested(input);
 }
 
 quint64 TerminalController::nextRightClickRequestId()

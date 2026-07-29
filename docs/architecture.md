@@ -857,24 +857,29 @@ signals:
   inactive screen leaves that screen's independent selection untouched.
   Hyperlink commit checks libghostty's release-stable dragged state as well,
   covering an immediate Shift extension that produced no GUI motion event.
-- Vertical wheel input is normalized once on the GUI thread before choosing
-  local or captured routing. A non-null Qt pixel delta is precision input;
+- Vertical wheel input is normalized once on the GUI thread. A non-null Qt
+  pixel delta is precision input;
   otherwise the angle delta remains fractional in 120-unit wheel ticks.
   Ghostty's independently finalized multipliers convert either form to pixel
   distance against the pane's current cell height. Each pane retains signed
   pending physical distance, so high-resolution input and direction reversals
-  are not lost. Whole rows become one typed viewport delta when local, or the
-  same number of repeated DEC buttons 4/5 when captured. A live multiplier or
-  cell metric change applies to new input while the already accumulated
+  are not lost. Whole rows cross once as a value request carrying the
+  pane-owned reporting policy, modifiers, and physical pointer position. The
+  worker chooses against current ordered VT state: alternate screen plus no
+  raw DEC mouse mode plus DECSET 1007 becomes one DECCKM-aware Up/Down sequence
+  per row and clears selection; effective raw reporting becomes repeated DEC
+  buttons 4/5; otherwise one typed viewport delta is applied. Read-only
+  suppresses only the cursor-key or mouse bytes after terminal-local selection
+  effects, while local viewport movement remains available. A live multiplier
+  or cell metric change applies to new input while the already accumulated
   physical distance remains valid. Captured input queues a worker-rechecked
   selection clear even while its distance is below one row, without resetting
   repeat-click history. One event dispatches at most 10,000 rows and retains
-  any excess distance. This makes synthesized extremes finite, though a
-  captured maximum dispatch may still briefly occupy the GUI thread. Pinned
-  `Surface.zig` documents retaining the post-row remainder but currently
-  subtracts the untruncated amount and clears it; this frontend intentionally
-  follows that documented accumulator contract so high-resolution motion is
-  not discarded.
+  any excess distance. This makes synthesized extremes finite and keeps their
+  repetition off the GUI thread. Pinned `Surface.zig` documents retaining the
+  post-row remainder but currently subtracts the untruncated amount and clears
+  it; this frontend intentionally follows that documented accumulator contract
+  so high-resolution motion is not discarded.
 - `mouse-hide-while-typing` is evaluated only after keybinding routing decides
   that a nonempty, non-repeating text press will reach the terminal. Ordinary
   pass-through keys, invalid-sequence flush-and-send-current, and an

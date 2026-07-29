@@ -1498,6 +1498,51 @@ public:
             && tracking;
     }
 
+    std::optional<QByteArray> alternateScrollSequence(qint64 rows) const
+    {
+        if (rows == 0 || mouseTracking()) {
+            return std::nullopt;
+        }
+
+        GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+        bool alternateScroll = false;
+        if (ghostty_terminal_get(terminal_, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN,
+                                 &screen)
+                != GHOSTTY_SUCCESS
+            || screen != GHOSTTY_TERMINAL_SCREEN_ALTERNATE
+            || ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_ALT_SCROLL,
+                                         &alternateScroll)
+                != GHOSTTY_SUCCESS
+            || !alternateScroll) {
+            return std::nullopt;
+        }
+
+        bool applicationCursorKeys = false;
+        (void)ghostty_terminal_mode_get(terminal_, GHOSTTY_MODE_DECCKM,
+                                        &applicationCursorKeys);
+        const QByteArrayView sequence = rows > 0 ? applicationCursorKeys
+                ? QByteArrayView("\033OA", 3)
+                : QByteArrayView("\033[A", 3)
+            : applicationCursorKeys              ? QByteArrayView("\033OB", 3)
+                                                 : QByteArrayView("\033[B", 3);
+        const quint64 magnitude = rows > 0
+            ? static_cast<quint64>(rows)
+            : static_cast<quint64>(-(rows + 1)) + 1U;
+        if (magnitude
+            > static_cast<quint64>(std::numeric_limits<qsizetype>::max())
+                / static_cast<quint64>(sequence.size())) {
+            return QByteArray{};
+        }
+
+        QByteArray encoded;
+        encoded.reserve(static_cast<qsizetype>(
+            magnitude * static_cast<quint64>(sequence.size())));
+        for (quint64 remaining = magnitude; remaining > 0; --remaining) {
+            encoded.append(sequence);
+        }
+        return encoded;
+    }
+
     QByteArray encodeFocus(bool focused) const
     {
         bool reportFocus = false;
@@ -4752,6 +4797,12 @@ bool GhosttyVtAdapter::mouseTracking() const
 QByteArray GhosttyVtAdapter::encodeMouse(const TerminalMouseInput &input)
 {
     return impl_->encodeMouse(input);
+}
+
+std::optional<QByteArray>
+GhosttyVtAdapter::alternateScrollSequence(qint64 rows) const
+{
+    return impl_->alternateScrollSequence(rows);
 }
 
 QByteArray GhosttyVtAdapter::encodeFocus(bool focused) const

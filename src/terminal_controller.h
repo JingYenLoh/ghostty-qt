@@ -147,6 +147,7 @@ public:
     void sendRawText(const QByteArray &serializedText);
     void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
+    void sendWheel(const TerminalWheelInput &input);
     // Returns a non-zero correlation ID retained until the worker resolves
     // this request. Multiple presses remain independently in flight because
     // paste is non-idempotent; popup supersession belongs to TerminalPane.
@@ -249,6 +250,7 @@ Q_SIGNALS:
     void rawTextRequested(const QByteArray &serializedText);
     void resetTerminalRequested();
     void mouseRequested(const TerminalMouseInput &input);
+    void wheelRequested(const TerminalWheelInput &input);
     void rightClickRequested(const TerminalRightClickInput &input);
     void focusRequested(bool focused);
     void pasteRequested(const QString &text);

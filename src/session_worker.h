@@ -90,6 +90,7 @@ public Q_SLOTS:
     void sendRawText(const QByteArray &serializedText);
     void resetTerminal();
     void sendMouse(const TerminalMouseInput &input);
+    void sendWheel(const TerminalWheelInput &input);
     void resolveRightClick(const TerminalRightClickInput &input);
     void setFocused(bool focused);
     void paste(const QString &text);

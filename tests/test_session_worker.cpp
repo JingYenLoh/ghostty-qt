@@ -282,6 +282,7 @@ private Q_SLOTS:
     void extendsSelectionUsingReloadedClickInterval();
     void clearsSelectionOnlyForUpstreamTypingPaths();
     void clearsSelectionForReportedMouseButtonsAndWheels();
+    void convertsAlternateScreenWheelRowsAtomically();
     void copiesSelectionWithRuntimeFormattingAndAtomicClear();
     void resolvesConfiguredRightClickActions();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
@@ -5134,6 +5135,101 @@ void SessionWorkerTest::clearsSelectionForReportedMouseButtonsAndWheels()
     worker.clearSelectionIfMouseTracking();
     QVERIFY(!spyContainsBool(selectionSpy, false));
 
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::convertsAlternateScreenWheelRowsAtomically()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(32, 4, 8, 16, 256, 64);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"), QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf 'wheel-primary-ready'; "
+            "dd bs=1 count=1 of=/dev/null 2>/dev/null; "
+            "printf '\\033[?1049halt-normal-ready\\r\\n'; "
+            "payload=$(dd bs=1 count=6 2>/dev/null); "
+            "printf '\\r\\nnormal-wheel:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\033[?1h\\r\\nalt-application-ready'; "
+            "payload=$(dd bs=1 count=3 2>/dev/null); "
+            "printf '\\r\\napplication-wheel:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "dd bs=1 count=1 of=/dev/null 2>/dev/null; "
+            "stty sane; printf '\\033[?1049l\\r\\nwheel-done\\r\\n'")};
+    options.hold = true;
+    options.runtime.selectionClipboard.copyOnSelect =
+        TerminalCopyOnSelectMode::Disabled;
+    QVERIFY(worker.initialize(options));
+
+    const auto selectVisibleText = [&] {
+        worker.clearSelection();
+        selectionSpy.clear();
+        worker.beginSelection(selectionPress(0, 0));
+        worker.updateSelection(selectionDrag(8, 0));
+        QVERIFY(spyContainsBool(selectionSpy, true));
+        selectionSpy.clear();
+    };
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("wheel-primary-ready")), 5000);
+    worker.sendRawText(QByteArrayLiteral("x"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alt-normal-ready")), 5000);
+    selectVisibleText();
+    worker.sendWheel({
+        .rows = 2,
+        .modifiers = Qt::ShiftModifier,
+        .x = 12.0F,
+        .y = 20.0F,
+        .mouseReportingEnabled = false,
+    });
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("normal-wheel:1b5b411b5b41")),
+        5000);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("alt-application-ready")),
+        1000);
+    selectVisibleText();
+    worker.setReadOnly(true);
+    worker.sendWheel({
+        .rows = -1,
+        .mouseReportingEnabled = true,
+    });
+    // Alternate-scroll selection semantics run before the ordinary input
+    // write boundary even though read-only suppresses the cursor-key bytes.
+    QVERIFY(spyContainsBool(selectionSpy, false));
+    QTest::qWait(100);
+    QVERIFY(!updatesContain(updateSpy, QStringLiteral("application-wheel:")));
+
+    worker.setReadOnly(false);
+    worker.sendWheel({
+        .rows = -1,
+        .mouseReportingEnabled = true,
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("application-wheel:1b4f42")),
+        5000);
+    worker.sendRawText(QByteArrayLiteral("x"));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("wheel-done")), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    QCOMPARE(exitSpy.constFirst().at(0).toInt(), 0);
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty()
                  ? ""

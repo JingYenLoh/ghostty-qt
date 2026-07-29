@@ -3579,23 +3579,13 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
 
     const Qt::KeyboardModifiers modifiers =
         effectivePointerModifiers(event->modifiers());
-    if (controller_->mouseTracking()) {
-        TerminalMouseInput input;
-        input.action = TerminalMouseInput::Press;
-        input.button = rows > 0 ? 4 : 5;
-        input.modifiers = static_cast<int>(modifiers);
-        input.x = static_cast<float>(event->position().x() * devicePixelRatio);
-        input.y = static_cast<float>(event->position().y() * devicePixelRatio);
-        for (quint64 remaining = static_cast<quint64>(rows < 0 ? -rows : rows);
-             remaining > 0; --remaining) {
-            controller_->sendMouse(input);
-        }
-    } else {
-        TerminalViewportRequest request;
-        request.kind = TerminalViewportRequest::Kind::Delta;
-        request.delta = -rows;
-        controller_->scrollViewport(request);
-    }
+    controller_->sendWheel({
+        .rows = rows,
+        .modifiers = static_cast<int>(modifiers),
+        .x = static_cast<float>(event->position().x() * devicePixelRatio),
+        .y = static_cast<float>(event->position().y() * devicePixelRatio),
+        .mouseReportingEnabled = controller_->mouseReportingEnabled(),
+    });
     event->accept();
 }
 

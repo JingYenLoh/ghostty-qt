@@ -144,6 +144,7 @@ private Q_SLOTS:
     void queriesKeyboardActionMode();
     void marksMinimumContrastExemptGlyphs();
     void encodesUsingTerminalModes();
+    void encodesAlternateScreenWheelRows();
     void preparesPasteUsingExactSafetyPolicy();
     void clearsSelectionWithoutCancellingGesture();
     void resetsAllTerminalStateAndPublishesFullFrame();
@@ -2048,6 +2049,47 @@ void GhosttyVtAdapterTest::encodesUsingTerminalModes()
 
     adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
     QVERIFY(!adapter->mouseTracking());
+}
+
+void GhosttyVtAdapterTest::encodesAlternateScreenWheelRows()
+{
+    auto adapter = GhosttyVtAdapter::create({});
+    QVERIFY(adapter != nullptr);
+
+    // DECSET 1007 defaults on, but the primary screen never converts wheel
+    // rows to cursor keys.
+    QVERIFY(!adapter->alternateScrollSequence(1).has_value());
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h"));
+    const auto normalUp = adapter->alternateScrollSequence(2);
+    QVERIFY(normalUp.has_value());
+    QCOMPARE(*normalUp, QByteArrayLiteral("\033[A\033[A"));
+    const auto normalDown = adapter->alternateScrollSequence(-1);
+    QVERIFY(normalDown.has_value());
+    QCOMPARE(*normalDown, QByteArrayLiteral("\033[B"));
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1h"));
+    const auto applicationUp = adapter->alternateScrollSequence(1);
+    QVERIFY(applicationUp.has_value());
+    QCOMPARE(*applicationUp, QByteArrayLiteral("\033OA"));
+    const auto applicationDown = adapter->alternateScrollSequence(-2);
+    QVERIFY(applicationDown.has_value());
+    QCOMPARE(*applicationDown, QByteArrayLiteral("\033OB\033OB"));
+
+    // Either an explicit raw DEC mouse mode or DECRST 1007 restores ordinary
+    // wheel routing. Disabling the mouse mode alone makes conversion active
+    // again without leaving the alternate screen.
+    adapter->writeVt(QByteArrayLiteral("\033[?1002h"));
+    QVERIFY(adapter->mouseTracking());
+    QVERIFY(!adapter->alternateScrollSequence(1).has_value());
+    adapter->writeVt(QByteArrayLiteral("\033[?1002l"));
+    QVERIFY(!adapter->mouseTracking());
+    QVERIFY(adapter->alternateScrollSequence(1).has_value());
+    adapter->writeVt(QByteArrayLiteral("\033[?1007l"));
+    QVERIFY(!adapter->alternateScrollSequence(1).has_value());
+
+    adapter->writeVt(QByteArrayLiteral("\033[?1007h\033[?1049l"));
+    QVERIFY(!adapter->alternateScrollSequence(1).has_value());
 }
 
 void GhosttyVtAdapterTest::preparesPasteUsingExactSafetyPolicy()

@@ -2040,6 +2040,48 @@ void SessionWorker::sendMouse(const TerminalMouseInput &input)
     queueInputWrite(encodeMouse(input));
 }
 
+void SessionWorker::sendWheel(const TerminalWheelInput &input)
+{
+    if (vt_ == nullptr || input.rows == 0) {
+        return;
+    }
+
+    // DECSET 1007 is terminal-owned. Resolve it before frontend mouse policy
+    // so an alternate-screen transition ordered immediately before this
+    // request cannot be mistaken for a local viewport scroll.
+    if (const auto sequence = vt_->alternateScrollSequence(input.rows);
+        sequence.has_value()) {
+        clearSelectionState();
+        // As with every other surface-originated input path, terminal-local
+        // side effects precede the read-only PTY-write policy boundary.
+        queueInputWrite(*sequence);
+        return;
+    }
+
+    if (input.mouseReportingEnabled && vt_->mouseTracking()) {
+        TerminalMouseInput mouse;
+        mouse.action = TerminalMouseInput::Press;
+        mouse.button = input.rows > 0 ? 4 : 5;
+        mouse.modifiers = input.modifiers;
+        mouse.x = input.x;
+        mouse.y = input.y;
+        const quint64 magnitude = input.rows > 0
+            ? static_cast<quint64>(input.rows)
+            : static_cast<quint64>(-(input.rows + 1)) + 1U;
+        for (quint64 remaining = magnitude; remaining > 0; --remaining) {
+            sendMouse(mouse);
+        }
+        return;
+    }
+
+    TerminalViewportRequest request;
+    request.kind = TerminalViewportRequest::Kind::Delta;
+    request.delta = input.rows == std::numeric_limits<qint64>::min()
+        ? std::numeric_limits<qint64>::max()
+        : -input.rows;
+    scrollViewport(request);
+}
+
 void SessionWorker::resolveRightClick(const TerminalRightClickInput &input)
 {
     TerminalRightClickResult result{
