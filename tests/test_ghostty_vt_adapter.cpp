@@ -135,6 +135,7 @@ private Q_SLOTS:
     void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
     void translatesCellStylesAndAppearanceMetadata();
+    void preservesAuthoritativeCellCodepointsForShaping();
     void preservesTerminalAppearanceOverrides();
     void queriesSemanticPromptStateFromPublicTerminalData();
     void queriesKeyboardActionMode();
@@ -1659,6 +1660,38 @@ void GhosttyVtAdapterTest::translatesCellStylesAndAppearanceMetadata()
     QVERIFY(contentBackground.text.isEmpty());
     QVERIFY(contentBackground.backgroundExplicit);
     QCOMPARE(contentBackground.background, QColor::fromRgb(1, 2, 3));
+}
+
+void GhosttyVtAdapterTest::preservesAuthoritativeCellCodepointsForShaping()
+{
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 10;
+    options.geometry.rows = 2;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QStringLiteral("fi e\u0301 \U0001f600").toUtf8());
+
+    GhosttyVtAdapter::RenderSnapshot snapshot;
+    QCOMPARE(adapter->renderFrame(&snapshot),
+             GhosttyVtAdapter::RenderResult::Ready);
+    const TerminalFrame frame = applyUpdate(snapshot.update);
+
+    QCOMPARE(frame.cells.at(0).text, QStringLiteral("f"));
+    QCOMPARE(frame.cells.at(0).baseCodepoint, quint32{U'f'});
+    QVERIFY(frame.cells.at(0).plainCodepoint);
+    QCOMPARE(frame.cells.at(1).baseCodepoint, quint32{U'i'});
+    QVERIFY(frame.cells.at(1).plainCodepoint);
+    QCOMPARE(frame.cells.at(3).text, QStringLiteral("e\u0301"));
+    QCOMPARE(frame.cells.at(3).baseCodepoint, quint32{U'e'});
+    QVERIFY(!frame.cells.at(3).plainCodepoint);
+    QVERIFY(frame.cells.at(3).extendedGrapheme);
+    QCOMPARE(frame.cells.at(5).text, QStringLiteral("\U0001f600"));
+    QCOMPARE(frame.cells.at(5).baseCodepoint, quint32{0x1f600});
+    QVERIFY(frame.cells.at(5).plainCodepoint);
+    QVERIFY(!frame.cells.at(5).extendedGrapheme);
+    QVERIFY(frame.cells.at(6).spacer);
+    QVERIFY(!frame.cells.at(6).plainCodepoint);
+    QVERIFY(!frame.cells.at(6).extendedGrapheme);
 }
 
 void GhosttyVtAdapterTest::preservesTerminalAppearanceOverrides()

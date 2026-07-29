@@ -139,6 +139,48 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(boldItalicStyle != nullptr);
     QCOMPARE(boldItalicStyle->name, QStringLiteral("Extra Bold Italic"));
 
+    const QVector<TerminalFontFeature> expectedFeatures{
+        {.tag = 1818847073U, .value = 1U},
+        {.tag = 1667329140U, .value = 0U},
+        {.tag = 1668689969U, .value = 2U},
+        {.tag = 1667329140U, .value = 1U},
+    };
+    QCOMPARE(typography.features, expectedFeatures);
+    const QVector<TerminalFontVariation> expectedRegularVariations{
+        {.tag = 2003265652U, .valueBits = 4636737291354636288ULL},
+        {.tag = 2003265652U, .valueBits = 4641240890982006784ULL},
+    };
+    QCOMPARE(typography.face(TerminalFontRole::Regular).variations,
+             expectedRegularVariations);
+    QCOMPARE(typography.face(TerminalFontRole::Bold).variations,
+             QVector<TerminalFontVariation>({
+                 {.tag = 2003265652U, .valueBits = 4649368480934526976ULL},
+             }));
+    QCOMPARE(typography.face(TerminalFontRole::Italic).variations,
+             QVector<TerminalFontVariation>({
+                 {.tag = 1936486004U, .valueBits = 13846598529327300608ULL},
+             }));
+    QVERIFY(typography.face(TerminalFontRole::BoldItalic).variations.isEmpty());
+    QCOMPARE(typography.codepointMap,
+             QVector<TerminalCodepointFontMap>({
+                 {.first = 0x2500U,
+                  .last = 0x257fU,
+                  .family = QStringLiteral("Symbols One")},
+                 {.first = 0x2500U,
+                  .last = 0x2500U,
+                  .family = QStringLiteral("Symbols Override")},
+                 {.first = 0x110000U, .last = 0x1fffffU, .family = QString{}},
+             }));
+    QVERIFY(!typography.syntheticStyle.bold);
+    QVERIFY(typography.syntheticStyle.italic);
+    QVERIFY(!typography.syntheticStyle.boldItalic);
+    QVERIFY(!typography.shapingBreakCursor);
+    QVERIFY(!typography.freetypeLoadFlags.hinting);
+    QVERIFY(typography.freetypeLoadFlags.forceAutohint);
+    QVERIFY(typography.freetypeLoadFlags.monochrome);
+    QVERIFY(!typography.freetypeLoadFlags.autohint);
+    QVERIFY(!typography.freetypeLoadFlags.light);
+
     const auto absoluteModifier = [&typography](TerminalMetric metric) {
         const auto &value = typography.metricModifiers[metric];
         return value ? std::get_if<TerminalMetricModifiers::Absolute>(&*value)
@@ -1370,6 +1412,15 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("background-image-position"),
              QStringLiteral("background-image-fit"),
              QStringLiteral("background-image-repeat"),
+             QStringLiteral("font-feature"),
+             QStringLiteral("font-variation"),
+             QStringLiteral("font-variation-bold"),
+             QStringLiteral("font-variation-italic"),
+             QStringLiteral("font-variation-bold-italic"),
+             QStringLiteral("font-codepoint-map"),
+             QStringLiteral("font-synthetic-style"),
+             QStringLiteral("font-shaping-break"),
+             QStringLiteral("freetype-load-flags"),
              QStringLiteral("window-padding-x"),
              QStringLiteral("window-padding-y"),
              QStringLiteral("window-padding-balance"),
@@ -1758,6 +1809,126 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
         << withValue(object(), QStringLiteral("font-style"),
                      namedFontStyle(QString{}))
         << QStringLiteral("values.font-style.name must be a non-empty string");
+    QTest::newRow("font-feature-type")
+        << withValue(object(), QStringLiteral("font-feature"), true)
+        << QStringLiteral("values.font-feature must be an array");
+    QTest::newRow("font-feature-entry-type")
+        << withValue(object(), QStringLiteral("font-feature"), QJsonArray{true})
+        << QStringLiteral("values.font-feature[0] must be an object");
+    QTest::newRow("font-feature-missing-value")
+        << withValue(object(), QStringLiteral("font-feature"),
+                     QJsonArray{QJsonObject{{QStringLiteral("tag"), 1}}})
+        << QStringLiteral("values.font-feature[0] is missing field 'value'");
+    QTest::newRow("font-feature-extra-field")
+        << withValue(object(), QStringLiteral("font-feature"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("tag"), 1},
+                         {QStringLiteral("value"), 1},
+                         {QStringLiteral("future"), true},
+                     }})
+        << QStringLiteral(
+               "values.font-feature[0] has unexpected field 'future'");
+    QTest::newRow("font-feature-tag-range")
+        << withValue(object(), QStringLiteral("font-feature"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("tag"), 4294967296.0},
+                         {QStringLiteral("value"), 1},
+                     }})
+        << QStringLiteral(
+               "values.font-feature[0].tag must be an unsigned integer in range");
+    QTest::newRow("font-feature-value-fractional")
+        << withValue(object(), QStringLiteral("font-feature"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("tag"), 1},
+                         {QStringLiteral("value"), 1.5},
+                     }})
+        << QStringLiteral(
+               "values.font-feature[0].value must be an unsigned integer");
+    QTest::newRow("font-variation-type")
+        << withValue(object(), QStringLiteral("font-variation"), true)
+        << QStringLiteral("values.font-variation must be an array");
+    QTest::newRow("font-variation-bits-type")
+        << withValue(object(), QStringLiteral("font-variation"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("tag"), 1},
+                         {QStringLiteral("value-bits"), 1},
+                     }})
+        << QStringLiteral(
+               "values.font-variation[0].value-bits must be a string");
+    QTest::newRow("font-variation-bits-noncanonical")
+        << withValue(object(), QStringLiteral("font-variation"),
+                     QJsonArray{fontVariation(1, QStringLiteral("01"))})
+        << QStringLiteral("canonical unsigned decimal string");
+    QTest::newRow("font-codepoint-map-type")
+        << withValue(object(), QStringLiteral("font-codepoint-map"), true)
+        << QStringLiteral("values.font-codepoint-map must be an array");
+    QTest::newRow("font-codepoint-map-u21-range")
+        << withValue(object(), QStringLiteral("font-codepoint-map"),
+                     QJsonArray{
+                         codepointFontMap(0, 0x200000U, QStringLiteral("Map"))})
+        << QStringLiteral(
+               "values.font-codepoint-map[0].last must be an unsigned integer in range");
+    QTest::newRow("font-codepoint-map-reversed")
+        << withValue(object(), QStringLiteral("font-codepoint-map"),
+                     QJsonArray{codepointFontMap(2, 1, QStringLiteral("Map"))})
+        << QStringLiteral(
+               "values.font-codepoint-map[0].first must not exceed last");
+    QTest::newRow("font-codepoint-map-family-type")
+        << withValue(object(), QStringLiteral("font-codepoint-map"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("first"), 0},
+                         {QStringLiteral("last"), 1},
+                         {QStringLiteral("family"), true},
+                     }})
+        << QStringLiteral(
+               "values.font-codepoint-map[0].family must be a string");
+    QTest::newRow("font-synthetic-style-missing-field")
+        << withValue(object(), QStringLiteral("font-synthetic-style"),
+                     QJsonObject{{QStringLiteral("bold"), true},
+                                 {QStringLiteral("italic"), true}})
+        << QStringLiteral(
+               "values.font-synthetic-style is missing field 'bold-italic'");
+    QTest::newRow("font-synthetic-style-field-type")
+        << withValue(object(), QStringLiteral("font-synthetic-style"),
+                     QJsonObject{
+                         {QStringLiteral("bold"), 1},
+                         {QStringLiteral("italic"), true},
+                         {QStringLiteral("bold-italic"), true},
+                     })
+        << QStringLiteral("values.font-synthetic-style.bold must be a boolean");
+    QTest::newRow("font-shaping-break-extra-field")
+        << withValue(object(), QStringLiteral("font-shaping-break"),
+                     QJsonObject{{QStringLiteral("cursor"), true},
+                                 {QStringLiteral("future"), true}})
+        << QStringLiteral(
+               "values.font-shaping-break has unexpected field 'future'");
+    QTest::newRow("font-shaping-break-field-type")
+        << withValue(
+               object(), QStringLiteral("font-shaping-break"),
+               QJsonObject{{QStringLiteral("cursor"), QStringLiteral("true")}})
+        << QStringLiteral("values.font-shaping-break.cursor must be a boolean");
+    QTest::newRow("freetype-load-flags-missing-field")
+        << withValue(object(), QStringLiteral("freetype-load-flags"),
+                     QJsonObject{
+                         {QStringLiteral("hinting"), true},
+                         {QStringLiteral("force-autohint"), false},
+                         {QStringLiteral("monochrome"), false},
+                         {QStringLiteral("autohint"), true},
+                     })
+        << QStringLiteral(
+               "values.freetype-load-flags is missing field 'light'");
+    QTest::newRow("freetype-load-flags-field-type")
+        << withValue(
+               object(), QStringLiteral("freetype-load-flags"),
+               QJsonObject{
+                   {QStringLiteral("hinting"), true},
+                   {QStringLiteral("force-autohint"), false},
+                   {QStringLiteral("monochrome"), QStringLiteral("false")},
+                   {QStringLiteral("autohint"), true},
+                   {QStringLiteral("light"), true},
+               })
+        << QStringLiteral(
+               "values.freetype-load-flags.monochrome must be a boolean");
     QTest::newRow("metric-modifier-type")
         << withValue(object(), QStringLiteral("adjust-cell-width"), true)
         << QStringLiteral("values.adjust-cell-width must be an object");

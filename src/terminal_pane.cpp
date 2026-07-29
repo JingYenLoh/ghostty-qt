@@ -1112,8 +1112,16 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         : static_cast<qreal>(clampFontActionValue(
               static_cast<float>(updated.typography.pointSize),
               kMinimumActionFontSize));
+    TerminalTypography previousEffectiveTypography = options_.typography;
+    previousEffectiveTypography.pointSize = previousPointSize;
+    TerminalTypography reloadedEffectiveTypography = updated.typography;
+    reloadedEffectiveTypography.pointSize = reloadedFontSize;
+    // Font database discovery and mapped-face construction are relatively
+    // expensive GUI-thread work. Unrelated live reloads retain the resolved
+    // generation verbatim.
     const bool metricsChanged =
-        updateMetrics(updated.typography, reloadedFontSize);
+        previousEffectiveTypography != reloadedEffectiveTypography
+        && updateMetrics(updated.typography, reloadedFontSize);
     bool terminalGeometryChanged = false;
     bool pointSizeChanged = false;
     {

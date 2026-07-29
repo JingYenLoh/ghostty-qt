@@ -734,9 +734,13 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_cell_metrics.h
     src/terminal_clipboard.cpp
     src/terminal_clipboard.h
+    src/terminal_font_resolver.cpp
+    src/terminal_font_resolver.h
     src/terminal_geometry.cpp
     src/terminal_geometry.h
     src/terminal_session_options.h
+    src/terminal_text_runs.cpp
+    src/terminal_text_runs.h
     src/terminal_typography.h
     src/terminal_types.h
 )

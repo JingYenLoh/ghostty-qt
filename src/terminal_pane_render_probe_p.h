@@ -38,6 +38,10 @@ struct TerminalPaneRenderProbeSnapshot {
     QVector<quint64> rowNodeSerials;
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
+    // Layouts in each row's latest rebuild. A compatible shaped run counts
+    // once; a rejected run counts once per exact-position fallback cell.
+    QVector<quint64> rowLayoutCounts;
+    QVector<quint64> rowFallbackCellCounts;
     TerminalCellMetrics metrics;
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> renderFonts;
     std::array<quint64, terminalEnumIndex(TerminalFontRole::Count)>

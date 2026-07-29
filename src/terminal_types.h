@@ -108,6 +108,14 @@ struct TerminalSearchUpdate {
 
 struct TerminalCell {
     QString text;
+    // Preserve the terminal's authoritative base cell content separately
+    // from its UTF-16 grapheme. Renderer shaping rules must distinguish a
+    // plain `f` from a grapheme that merely begins with `f`.
+    quint32 baseCodepoint = 0;
+    bool plainCodepoint = false;
+    // Ghostty's cursor shaping rule keeps cells with extra grapheme
+    // codepoints joined, but still breaks around plain and empty cells.
+    bool extendedGrapheme = false;
     QColor foreground;
     QColor background;
     QColor underlineColor;

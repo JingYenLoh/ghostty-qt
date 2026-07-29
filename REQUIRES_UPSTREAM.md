@@ -496,6 +496,149 @@ commit:
 6. Promote `clear_screen` in `docs/ghostty-parity.json` only after the public
    adapter and PTY-ordering tests pass.
 
+## Exact font resolution and terminal shaping
+
+**Status:** the finalized typography configuration, Qt-owned face resolution,
+maximal compatible row shaping, and device-pixel-safe fallback are implemented.
+Exact Ghostty face selection, FreeType behavior, synthesis, run construction,
+and positioned glyph output require a public renderer-neutral font contract.
+
+The standalone public VT API exposes the authoritative row cells, styles,
+selection range, base codepoint, grapheme length, and complete grapheme bytes.
+That is sufficient for ghostty-qt to preserve terminal contents and to build a
+safe frontend shaping plan. It does not expose the font system used by
+Ghostty's generic renderer:
+
+- `font.SharedGridSet` and `font.Collection`, including the embedded fallback
+  stack, concrete face indexes, variation coordinates, codepoint resolver,
+  native-versus-synthetic role decisions, and FreeType load options;
+- `font.shape.RunIterator`, including its exact style, selection, cursor,
+  grapheme, spacer, and fallback boundaries;
+- `font.Shaper`, its feature application, and its shaping cache; or
+- each shaped cell's font index, glyph index, terminal-relative x position,
+  and x/y glyph offsets.
+
+The broader `ghostty.h` application runtime owns a complete renderer and
+surface model, but adopting it would replace ghostty-qt's Qt scene graph,
+session worker, pane, split, and PTY ownership. It is not an incremental public
+font API for the standalone terminal.
+
+At official revision `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`,
+ghostty-qt therefore implements the largest safe frontend-owned subset:
+
+- schema v1 transports Ghostty's finalized ordered feature list, four ordered
+  variation lists as exact f64 bit patterns, u21 codepoint maps, three
+  synthesis booleans, cursor shaping-break policy, and five FreeType flags;
+- one GUI-thread database pass resolves a metric face array, shaping-feature
+  face array, and sorted disjoint later-entry-wins codepoint-map table;
+- unrelated live reloads skip font discovery by comparing effective
+  typography before resolution;
+- a pure planner forms maximal row runs at every observable text-style,
+  selection, font, invisible-cell, defensive ligature, and configured cursor
+  boundary while retaining wide spacers with their head;
+- Qt shapes those runs with `QTextLayout`; and
+- every run boundary is checked against the terminal grid in device pixels,
+  with exact per-cell placement when the result does not fit.
+
+This gives visible feature and ligature support without allowing a platform
+shaper to move later cells off-grid. The parity ledger remains conservative:
+`font-feature`, the four `font-variation*` keys, `font-codepoint-map`,
+`font-synthetic-style`, `font-shaping-break`, and `freetype-load-flags` are
+partial rather than exact.
+
+### Why ghostty-qt does not copy Ghostty's private font stack
+
+Importing `src/font` or `src/renderer/generic.zig` into the project-private
+configuration helper would turn an intentionally narrow parser subprocess into
+a second renderer runtime with private ABI coupling. The returned face indexes
+are meaningful only with the matching `SharedGrid`, and the shaped glyph
+indexes require matching face and rasterization state. Reimplementing those
+types in C++ would duplicate Ghostty's font discovery, fallback classification,
+synthetic transformations, variation validation, HarfBuzz cluster logic,
+sprite selection, glyph caching, and backend-specific load policy.
+
+Patching the Ghostty submodule to export those internals would create an
+unpublishable local dependency and violate this repository's
+official-submodule policy. The submodule therefore remains the unmodified
+`https://github.com/ghostty-org/ghostty.git`; the project-private Zig overlay
+only reads finalized configuration and does not add a Ghostty commit.
+
+### Required upstream contract
+
+Official Ghostty needs a stable, append-only font and shaping API that can be
+used with public standalone render-state cells. The exact ownership and naming
+remain upstream decisions, but an embedding renderer needs:
+
+1. An opaque font-grid handle constructed from finalized font family, style,
+   size, feature, variation, codepoint-map, synthesis, and backend load
+   settings, plus an explicit reload/replacement lifecycle.
+2. Authoritative cell metrics at a requested device scale, including width,
+   height, baseline, and decoration metrics, derived from the same regular face
+   that will shape and rasterize text.
+3. A row-shaping operation that accepts the public render-state row, its
+   selection range, and an optional logical cursor column, then returns
+   immutable run records and shaped glyph records. Each result must identify
+   its stable font face, glyph index, terminal cell x, x/y offset, and any
+   required presentation flags.
+4. A renderer-neutral way to consume each face/glyph pair. This may be a
+   public rasterization API with explicit alpha/RGBA bitmap ownership and
+   bearings, or another stable contract that does not require a frontend to
+   reinterpret Ghostty-private face indexes.
+5. A cache-generation identifier so a frontend can safely reuse rasterized
+   glyphs and discard them after a font-grid reload without retaining dangling
+   handles.
+
+The shaping operation must use Ghostty's existing `RunIterator`, codepoint
+resolver, `Shaper`, synthesis policy, and backend load configuration rather
+than introducing a second public approximation. Returned storage may be
+borrowed for the duration of one call or explicitly owned, but the lifetime,
+thread-affinity, and invalidation rules must be unambiguous. Existing public
+enum ordinals and struct layouts must remain ABI-compatible.
+
+### Upstream acceptance evidence
+
+Public C tests should compare the new result with Ghostty's generic renderer
+for:
+
+- default and repeated feature tags, including implicit defaults and
+  later-tag replacement;
+- every role's variation list, duplicate tags, unsupported tags, out-of-range
+  values, and non-finite values;
+- overlapping and missing codepoint-map faces, complete graphemes, ZWJ,
+  variation selectors, and regular-face use from bold or italic cells;
+- native, disabled, named, and each permitted or forbidden synthetic role;
+- every FreeType flag combination supported by the Linux backend;
+- selection and all style boundaries, invisible and wide cells, defensive
+  `fi`, `fl`, and `st` cases, and cursor-break enabled versus disabled;
+- ASCII ligatures, combining clusters, Arabic or other complex shaping,
+  bidirectional codepoints on the physical terminal grid, and color glyphs;
+- one-shot and fragmented terminal input producing identical row shaping; and
+- font reload invalidating old face/glyph handles while a no-op reload
+  preserves reusable cache generation.
+
+The tests should assert run offsets, font identity, glyph indexes, cell x
+positions, glyph offsets, metrics, and raster bounds—not only the rendered
+string.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once this contract exists in an official, publicly reachable Ghostty commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Replace `TerminalFontResolver` and Qt-owned feature/variation/map/synthesis
+   decisions with the opaque upstream grid while retaining value-only config
+   snapshots.
+3. Feed the existing worker-authoritative render rows directly into the public
+   run shaper; do not expose the terminal handle across threads.
+4. Add a retained QSG glyph atlas around the public raster result, keyed by
+   upstream grid generation, face, glyph, and device scale.
+5. Keep the current dirty-row and scene-node lifetime architecture, but remove
+   the `QTextLayout` grid-validation fallback once every glyph comes from the
+   authoritative plan.
+6. Compare screenshots and structured glyph records across DPRs, splits,
+   cursor movement, selection, search, live reload, missing fonts, and complex
+   scripts before promoting the affected parity entries to supported.
+
 ## Exact clipboard selection formatting
 
 **Status:** unmapped plain copying is supported; mapped plain output and exact

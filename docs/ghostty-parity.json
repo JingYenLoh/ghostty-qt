@@ -467,15 +467,9 @@
       "status": "supported",
       "note": "The exact default-false boolean reloads live per pane. Accepted hover and button-drag motion focuses an unfocused pane only while its existing Qt window is active, so an inactive host is never raised and retains its current focus item. The shared physical-pixel filter rejects synthetic same-position motion and accumulates subpixel movement against the last accepted position. Focus publication is guarded against synchronous pane or workspace destruction."
     },
-    "font-thicken": {
-      "status": "not_applicable",
-      "scope": "macos",
-      "note": "Upstream implements stroke thickening only in its macOS CoreText renderer."
-    },
-    "font-thicken-strength": {
-      "status": "not_applicable",
-      "scope": "macos",
-      "note": "This value only controls the macOS-only font-thicken renderer path."
+    "font-codepoint-map": {
+      "status": "partial",
+      "note": "The strict schema preserves finalized u21 ranges and family strings. GUI-thread resolution normalizes overlaps into a sorted disjoint later-entry-wins table, including an unavailable latest face masking an older entry; lookup is logarithmic, always selects the mapped regular face, requires complete grapheme coverage, and ignores ZWJ plus text/emoji variation selectors for coverage. Live reload replaces the table without pane or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's resolved face collection, codepoint resolver, or face coverage decisions, so Qt owns platform discovery and glyph support."
     },
     "font-family": {
       "status": "partial",
@@ -492,6 +486,14 @@
     "font-family-italic": {
       "status": "supported",
       "note": "The finalized ordered family list selects the italic rendering role independently and reloads live; an unavailable styled face falls back to the regular role."
+    },
+    "font-feature": {
+      "status": "partial",
+      "note": "The pinned feature parser supplies the complete ordered list, including implicit defaults and duplicate tags; later tags overwrite earlier ones in Qt's shaping font while a feature such as pwid cannot alter the regular face's authoritative grid metrics. Compatible cells are shaped together and reload replaces the typography without pane, terminal, or PTY recreation. Status remains partial because public libghostty-vt does not expose Ghostty's HarfBuzz feature application, selected faces, or positioned glyph plan, so QTextLayout owns the final shaping result."
+    },
+    "font-shaping-break": {
+      "status": "partial",
+      "note": "The finalized cursor break flag reloads live. Maximal row runs break at font, foreground, complete style, selection, invisible cells, defensive plain fi/fl/st pairs, and optionally the logical cursor cell; wide spacers stay attached to their head. Every QTextLayout boundary is validated in physical pixels and a mismatching run falls back to exact per-cell placement. Status remains partial because Ghostty's private run iterator and shaped cell positions are not available through public libghostty-vt."
     },
     "font-size": {
       "status": "supported",
@@ -513,9 +515,44 @@
       "status": "supported",
       "note": "Ghostty's automatic, disabled, and named style alternatives select the italic role; disabled or unavailable styled faces fall back to the regular role."
     },
+    "font-synthetic-style": {
+      "status": "partial",
+      "note": "The finalized bold, italic, and bold-italic synthesis permissions cross the typed schema and reload live. Native role faces are preferred, an unavailable exact named style falls back to regular, and only an allowed missing automatic role requests Qt synthesis. Status remains partial because Qt does not expose Ghostty's backend-specific FreeType synthetic-face construction or its exact bold and italic transforms."
+    },
+    "font-thicken": {
+      "status": "not_applicable",
+      "scope": "macos",
+      "note": "Upstream implements stroke thickening only in its macOS CoreText renderer."
+    },
+    "font-thicken-strength": {
+      "status": "not_applicable",
+      "scope": "macos",
+      "note": "This value only controls the macOS-only font-thicken renderer path."
+    },
+    "font-variation": {
+      "status": "partial",
+      "note": "The finalized ordered regular-face axis list crosses schema v1 as exact f64 bit patterns, including non-finite values. The first matching tag is consumed before validity and range checks, matching the pinned FreeType duplicate policy, and valid axes reload live. Status remains partial because Qt narrows applied values to its float axis API and does not expose Ghostty's selected FreeType face and variation-coordinate pipeline."
+    },
+    "font-variation-bold": {
+      "status": "partial",
+      "note": "The finalized bold-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+    },
+    "font-variation-bold-italic": {
+      "status": "partial",
+      "note": "The finalized bold-italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+    },
+    "font-variation-italic": {
+      "status": "partial",
+      "note": "The finalized italic-face variation list preserves exact f64 bits, order, and first-matching-tag semantics before Qt applies supported in-range axes. Final face selection and variation coordinates remain Qt-owned rather than Ghostty-owned."
+    },
     "foreground": {
       "status": "supported",
       "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
+    },
+    "freetype-load-flags": {
+      "status": "partial",
+      "scope": "linux",
+      "note": "All five finalized booleans cross the strict typed schema and reload live. Qt maps disabled hinting, light versus full hinting, and monochrome antialias policy to its public QFont controls. Status remains partial because public Qt cannot request Ghostty's exact FreeType force-autohint and autohint load flags or expose the resulting face load options."
     },
     "fullscreen": {
       "status": "supported",

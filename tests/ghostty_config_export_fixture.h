@@ -123,6 +123,53 @@ inline QJsonObject namedFontStyle(const QString &name)
     };
 }
 
+inline QJsonObject fontFeature(quint32 tag, quint32 value)
+{
+    return {
+        {QStringLiteral("tag"), static_cast<qint64>(tag)},
+        {QStringLiteral("value"), static_cast<qint64>(value)},
+    };
+}
+
+inline QJsonObject fontVariation(quint32 tag, const QString &valueBits)
+{
+    return {
+        {QStringLiteral("tag"), static_cast<qint64>(tag)},
+        {QStringLiteral("value-bits"), valueBits},
+    };
+}
+
+inline QJsonObject codepointFontMap(quint32 first, quint32 last,
+                                    const QString &family)
+{
+    return {
+        {QStringLiteral("first"), static_cast<qint64>(first)},
+        {QStringLiteral("last"), static_cast<qint64>(last)},
+        {QStringLiteral("family"), family},
+    };
+}
+
+inline QJsonObject syntheticStyle(bool bold, bool italic, bool boldItalic)
+{
+    return {
+        {QStringLiteral("bold"), bold},
+        {QStringLiteral("italic"), italic},
+        {QStringLiteral("bold-italic"), boldItalic},
+    };
+}
+
+inline QJsonObject freetypeLoadFlags(bool hinting, bool forceAutohint,
+                                     bool monochrome, bool autohint, bool light)
+{
+    return {
+        {QStringLiteral("hinting"), hinting},
+        {QStringLiteral("force-autohint"), forceAutohint},
+        {QStringLiteral("monochrome"), monochrome},
+        {QStringLiteral("autohint"), autohint},
+        {QStringLiteral("light"), light},
+    };
+}
+
 inline QJsonObject absoluteMetricModifier(int pixels)
 {
     return {
@@ -262,6 +309,38 @@ inline QJsonObject values()
          namedFontStyle(QStringLiteral("Book Italic"))},
         {QStringLiteral("font-style-bold-italic"),
          namedFontStyle(QStringLiteral("Extra Bold Italic"))},
+        {QStringLiteral("font-feature"),
+         QJsonArray{
+             fontFeature(1818847073U, 1U),
+             fontFeature(1667329140U, 0U),
+             fontFeature(1668689969U, 2U),
+             fontFeature(1667329140U, 1U),
+         }},
+        {QStringLiteral("font-variation"),
+         QJsonArray{
+             fontVariation(2003265652U, QStringLiteral("4636737291354636288")),
+             fontVariation(2003265652U, QStringLiteral("4641240890982006784")),
+         }},
+        {QStringLiteral("font-variation-bold"),
+         QJsonArray{fontVariation(2003265652U,
+                                  QStringLiteral("4649368480934526976"))}},
+        {QStringLiteral("font-variation-italic"),
+         QJsonArray{fontVariation(1936486004U,
+                                  QStringLiteral("13846598529327300608"))}},
+        {QStringLiteral("font-variation-bold-italic"), QJsonArray{}},
+        {QStringLiteral("font-codepoint-map"),
+         QJsonArray{
+             codepointFontMap(0x2500U, 0x257fU, QStringLiteral("Symbols One")),
+             codepointFontMap(0x2500U, 0x2500U,
+                              QStringLiteral("Symbols Override")),
+             codepointFontMap(0x110000U, 0x1fffffU, QString{}),
+         }},
+        {QStringLiteral("font-synthetic-style"),
+         syntheticStyle(false, true, false)},
+        {QStringLiteral("font-shaping-break"),
+         QJsonObject{{QStringLiteral("cursor"), false}}},
+        {QStringLiteral("freetype-load-flags"),
+         freetypeLoadFlags(false, true, true, false, false)},
         {QStringLiteral("adjust-cell-width"), absoluteMetricModifier(2)},
         {QStringLiteral("adjust-cell-height"), absoluteMetricModifier(-3)},
         {QStringLiteral("adjust-font-baseline"),

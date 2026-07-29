@@ -231,6 +231,7 @@ private Q_SLOTS:
     void reportsValidationFailureDeterministically();
     void reportsTimeoutCrashAndStartFailureDeterministically();
     void realHelperAppliesConfigurationArgumentPrecedence();
+    void realHelperExportsTypographyShaping();
     void realHelperRejectsInvalidConfigurationArgumentsDeterministically();
     void realHelperAppliesSelectedConditionalThemeAndWindowAppearance();
     void realHelperRejectsDiagnosticsFromSelectedConditionalTheme();
@@ -756,6 +757,78 @@ void GhosttyConfigProcessLoaderTest::
     QCOMPARE(validation->exitStatus, QProcess::NormalExit);
     QCOMPARE(validation->exitCode, 0);
     QVERIFY(validation->standardError.isEmpty());
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsTypographyShaping()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral(
+            "font-feature = -calt, cv01=2\n"
+            "font-feature = calt=1\n"
+            "font-variation = wght=100\n"
+            "font-variation = wght=200\n"
+            "font-variation-bold = wght=700\n"
+            "font-variation-italic = slnt=-12.5\n"
+            "font-codepoint-map = U+2500-U+257F=Symbols One\n"
+            "font-codepoint-map = U+2500=Symbols Override\n"
+            "font-codepoint-map = U+110000-U+1FFFFF=\n"
+            "font-synthetic-style = no-bold,italic,no-bold-italic\n"
+            "font-shaping-break = no-cursor\n"
+            "freetype-load-flags = no-hinting,force-autohint,monochrome,"
+            "no-autohint,no-light\n"));
+
+    const auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    const TerminalTypography &typography = result->values.typography;
+    QCOMPARE(typography.features,
+             QVector<TerminalFontFeature>({
+                 {.tag = 1818847073U, .value = 1U},
+                 {.tag = 1667329140U, .value = 0U},
+                 {.tag = 1668689969U, .value = 2U},
+                 {.tag = 1667329140U, .value = 1U},
+             }));
+    QCOMPARE(typography.face(TerminalFontRole::Regular).variations,
+             QVector<TerminalFontVariation>({
+                 TerminalFontVariation::fromValue(2003265652U, 100.0),
+                 TerminalFontVariation::fromValue(2003265652U, 200.0),
+             }));
+    QCOMPARE(typography.face(TerminalFontRole::Bold).variations,
+             QVector<TerminalFontVariation>({
+                 TerminalFontVariation::fromValue(2003265652U, 700.0),
+             }));
+    QCOMPARE(typography.face(TerminalFontRole::Italic).variations,
+             QVector<TerminalFontVariation>({
+                 TerminalFontVariation::fromValue(1936486004U, -12.5),
+             }));
+    QVERIFY(typography.face(TerminalFontRole::BoldItalic).variations.isEmpty());
+    QCOMPARE(typography.codepointMap,
+             QVector<TerminalCodepointFontMap>({
+                 {.first = 0x2500U,
+                  .last = 0x257fU,
+                  .family = QStringLiteral("Symbols One")},
+                 {.first = 0x2500U,
+                  .last = 0x2500U,
+                  .family = QStringLiteral("Symbols Override")},
+                 {.first = 0x110000U, .last = 0x1fffffU, .family = {}},
+             }));
+    QVERIFY(!typography.syntheticStyle.bold);
+    QVERIFY(typography.syntheticStyle.italic);
+    QVERIFY(!typography.syntheticStyle.boldItalic);
+    QVERIFY(!typography.shapingBreakCursor);
+    QVERIFY(!typography.freetypeLoadFlags.hinting);
+    QVERIFY(typography.freetypeLoadFlags.forceAutohint);
+    QVERIFY(typography.freetypeLoadFlags.monochrome);
+    QVERIFY(!typography.freetypeLoadFlags.autohint);
+    QVERIFY(!typography.freetypeLoadFlags.light);
 }
 
 void GhosttyConfigProcessLoaderTest::

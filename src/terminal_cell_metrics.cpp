@@ -1,8 +1,6 @@
 #include "terminal_cell_metrics.h"
 
 #include <QByteArrayView>
-#include <QFontDatabase>
-#include <QFontInfo>
 #include <QFontMetricsF>
 #include <QRawFont>
 
@@ -39,238 +37,6 @@ constexpr auto kMetrics = std::to_array({
 [[nodiscard]] qreal normalizedDpr(qreal value) noexcept
 {
     return std::isfinite(value) && value > 0.0 ? value : 1.0;
-}
-
-[[nodiscard]] double normalizedPointSize(double value) noexcept
-{
-    return std::isfinite(value) && value > 0.0 ? value : 12.0;
-}
-
-void appendUnique(QStringList &destination, const QStringList &families)
-{
-    for (const QString &family : families) {
-        if (family.isEmpty()) {
-            continue;
-        }
-        const bool duplicate = std::ranges::any_of(
-            destination, [&family](const QString &existing) {
-                return existing.compare(family, Qt::CaseInsensitive) == 0;
-            });
-        if (!duplicate) {
-            destination.append(family);
-        }
-    }
-}
-
-[[nodiscard]] QStringList requestedFamilies(const QStringList &families)
-{
-    QStringList result;
-    appendUnique(result, families);
-    return result;
-}
-
-[[nodiscard]] QStringList fixedFamilies()
-{
-    const QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    QStringList result;
-    // Generic system aliases such as "monospace" are intentionally absent
-    // from QFontDatabase::families(), but remain valid QFont fallbacks.
-    appendUnique(result, fixed.families());
-    if (result.isEmpty() && !fixed.family().isEmpty()) {
-        result.append(fixed.family());
-    }
-    if (result.isEmpty()) {
-        const QStringList databaseFamilies = QFontDatabase::families();
-        const auto fixedPitch =
-            std::ranges::find_if(databaseFamilies, [](const QString &family) {
-                return QFontDatabase::isFixedPitch(family);
-            });
-        if (fixedPitch != databaseFamilies.end()) {
-            result.append(*fixedPitch);
-        } else if (!databaseFamilies.isEmpty()) {
-            result.append(databaseFamilies.front());
-        }
-    }
-    if (result.isEmpty()) {
-        result.append(QStringLiteral("monospace"));
-    }
-    return result;
-}
-
-[[nodiscard]] QFont baseFont(const QStringList &families, double pointSize)
-{
-    QFont result = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    if (!families.isEmpty()) {
-        result.setFamilies(families);
-    }
-    result.setPointSizeF(normalizedPointSize(pointSize));
-    result.setFixedPitch(true);
-    result.setStyleHint(QFont::Monospace,
-                        static_cast<QFont::StyleStrategy>(
-                            QFont::PreferDefault | QFont::ContextFontMerging));
-    result.setStyleName({});
-    result.setWeight(QFont::Normal);
-    result.setStyle(QFont::StyleNormal);
-    return result;
-}
-
-[[nodiscard]] bool sameFamily(const QString &left, const QString &right)
-{
-    return left.compare(right, Qt::CaseInsensitive) == 0;
-}
-
-[[nodiscard]] std::optional<QString> databaseFamily(const QString &family)
-{
-    const QStringList families = QFontDatabase::families();
-    const auto match =
-        std::ranges::find_if(families, [&family](const QString &candidate) {
-            return sameFamily(candidate, family);
-        });
-    return match == families.end() ? std::nullopt
-                                   : std::optional<QString>{*match};
-}
-
-[[nodiscard]] bool isGenericFamily(const QString &family)
-{
-    // These generic families are recognized by Qt's platform font backends
-    // and fontconfig, but are not necessarily concrete database families.
-    static const QStringList genericFamilies{
-        QStringLiteral("serif"),     QStringLiteral("sans-serif"),
-        QStringLiteral("monospace"), QStringLiteral("cursive"),
-        QStringLiteral("fantasy"),   QStringLiteral("system-ui"),
-        QStringLiteral("emoji"),     QStringLiteral("math"),
-        QStringLiteral("fangsong"),
-    };
-    return genericFamilies.contains(family, Qt::CaseInsensitive);
-}
-
-[[nodiscard]] std::optional<QString> canonicalFamily(const QString &family,
-                                                     double pointSize)
-{
-    // A configured QFont substitution is also a real alias. Do not accept
-    // every unknown family: QFontInfo would silently resolve those through
-    // the fallback font and make a typo look valid.
-    if (!databaseFamily(family) && !isGenericFamily(family)
-        && QFont::substitutes(family).isEmpty()) {
-        return std::nullopt;
-    }
-
-    // QFontDatabase can expose platform aliases as family entries. Resolve
-    // even a listed name so style discovery uses the concrete face.
-    const QFontInfo resolved(baseFont({family}, pointSize));
-    return databaseFamily(resolved.family());
-}
-
-[[nodiscard]] std::optional<QString> familyWithNamedStyle(const QString &family,
-                                                          const QString &style,
-                                                          double pointSize)
-{
-    const auto canonical = canonicalFamily(family, pointSize);
-    if (!canonical || !QFontDatabase::styles(*canonical).contains(style)) {
-        return std::nullopt;
-    }
-
-    QFont probe = baseFont({*canonical}, pointSize);
-    probe.setStyleName(style);
-    const QFontInfo resolved(probe);
-    return sameFamily(resolved.family(), *canonical)
-            && resolved.styleName() == style
-        ? canonical
-        : std::nullopt;
-}
-
-[[nodiscard]] std::optional<QFont>
-namedFont(const QStringList &specificFamilies,
-          const QStringList &regularFamilies, const QString &style,
-          double pointSize)
-{
-    if (specificFamilies.isEmpty() || style.isEmpty()) {
-        return std::nullopt;
-    }
-
-    QStringList exactFamilies;
-    for (const QString &family : specificFamilies) {
-        if (const auto canonical =
-                familyWithNamedStyle(family, style, pointSize)) {
-            appendUnique(exactFamilies, {*canonical});
-        }
-    }
-    if (exactFamilies.isEmpty()) {
-        return std::nullopt;
-    }
-    appendUnique(exactFamilies, regularFamilies);
-
-    QFont result = baseFont(exactFamilies, pointSize);
-    result.setStyleName(style);
-    const QFontInfo resolved(result);
-    if (!sameFamily(resolved.family(), exactFamilies.front())
-        || resolved.styleName() != style) {
-        return std::nullopt;
-    }
-    return result;
-}
-
-[[nodiscard]] QFont automaticFont(QStringList families,
-                                  const QStringList &regularFamilies,
-                                  TerminalFontRole role, double pointSize)
-{
-    appendUnique(families, regularFamilies);
-    QFont result = baseFont(families, pointSize);
-    result.setBold(role == TerminalFontRole::Bold
-                   || role == TerminalFontRole::BoldItalic);
-    result.setItalic(role == TerminalFontRole::Italic
-                     || role == TerminalFontRole::BoldItalic);
-    return result;
-}
-
-[[nodiscard]] std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)>
-resolveFonts(const TerminalTypography &typography)
-{
-    QStringList regularFamilies =
-        requestedFamilies(typography.face(TerminalFontRole::Regular).families);
-    const QStringList configuredRegularFamilies = regularFamilies;
-    appendUnique(regularFamilies, fixedFamilies());
-
-    QFont regular = baseFont(regularFamilies, typography.pointSize);
-    const TerminalFontStyle &regularStyle =
-        typography.face(TerminalFontRole::Regular).style;
-    if (const auto *named =
-            std::get_if<TerminalFontStyles::Named>(&regularStyle)) {
-        // Like Ghostty, a style without its corresponding family is ignored.
-        if (const auto resolved =
-                namedFont(configuredRegularFamilies, regularFamilies,
-                          named->name, typography.pointSize)) {
-            regular = *resolved;
-        }
-    }
-
-    std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> result;
-    result[terminalEnumIndex(TerminalFontRole::Regular)] = regular;
-    for (const TerminalFontRole role :
-         {TerminalFontRole::Bold, TerminalFontRole::Italic,
-          TerminalFontRole::BoldItalic}) {
-        const TerminalFontFace &face = typography.face(role);
-        const QStringList specificFamilies = requestedFamilies(face.families);
-        result[terminalEnumIndex(role)] = std::visit(
-            [&](const auto &style) -> QFont {
-                using Style = std::decay_t<decltype(style)>;
-                if constexpr (std::same_as<Style,
-                                           TerminalFontStyles::Disabled>) {
-                    return regular;
-                } else if constexpr (std::same_as<Style,
-                                                  TerminalFontStyles::Named>) {
-                    const auto resolved =
-                        namedFont(specificFamilies, regularFamilies, style.name,
-                                  typography.pointSize);
-                    return resolved.value_or(regular);
-                } else {
-                    return automaticFont(specificFamilies, regularFamilies,
-                                         role, typography.pointSize);
-                }
-            },
-            face.style);
-    }
-    return result;
 }
 
 template <typename Integer>
@@ -612,9 +378,9 @@ TerminalCellMetrics terminalCellMetrics(const TerminalTypography &typography,
                                         qreal devicePixelRatio)
 {
     const qreal dpr = normalizedDpr(devicePixelRatio);
-    auto fonts = resolveFonts(typography);
-    PhysicalMetrics physical =
-        baseMetrics(fonts[terminalEnumIndex(TerminalFontRole::Regular)], dpr);
+    TerminalResolvedFonts fonts = resolveTerminalFonts(typography);
+    PhysicalMetrics physical = baseMetrics(
+        fonts.metricFonts[terminalEnumIndex(TerminalFontRole::Regular)], dpr);
     applyModifiers(physical, typography.metricModifiers);
 
     const qint64 baselineFromTop = static_cast<qint64>(physical.cellHeight)
@@ -632,7 +398,9 @@ TerminalCellMetrics terminalCellMetrics(const TerminalTypography &typography,
     const qint64 overlineMinimumPosition =
         -static_cast<qint64>(physical.cellHeight / 4);
     return {
-        .fonts = std::move(fonts),
+        .fonts = std::move(fonts.fonts),
+        .mappedFonts = std::move(fonts.mappedFonts),
+        .shapingBreakCursor = typography.shapingBreakCursor,
         .cellWidth = logical(physical.cellWidth, dpr),
         .cellHeight = logical(physical.cellHeight, dpr),
         .baseline = static_cast<qreal>(baselineFromTop) / dpr,

@@ -6,6 +6,7 @@
 //! adds the structured configuration boundary needed by the Qt frontend.
 
 const std = @import("std");
+const font_feature = @import("../font/shaper/feature.zig");
 const inputpkg = @import("../input.zig");
 const Metrics = @import("../font/Metrics.zig");
 const shell_integration = @import("../termio/shell_integration.zig");
@@ -547,6 +548,38 @@ fn writeValues(
         try json.objectField(entry[0]);
         try writeFontStyle(json, entry[1]);
     }
+    try json.objectField("font-feature");
+    try writeFontFeatures(json, &config.@"font-feature");
+    inline for (.{
+        .{ "font-variation", &config.@"font-variation" },
+        .{ "font-variation-bold", &config.@"font-variation-bold" },
+        .{ "font-variation-italic", &config.@"font-variation-italic" },
+        .{ "font-variation-bold-italic", &config.@"font-variation-bold-italic" },
+    }) |entry| {
+        try json.objectField(entry[0]);
+        try writeFontVariations(json, entry[1]);
+    }
+    try json.objectField("font-codepoint-map");
+    try writeFontCodepointMap(json, &config.@"font-codepoint-map");
+    try json.objectField("font-synthetic-style");
+    try json.beginObject();
+    inline for (.{ "bold", "italic", "bold-italic" }) |name| {
+        try json.objectField(name);
+        try json.write(@field(config.@"font-synthetic-style", name));
+    }
+    try json.endObject();
+    try json.objectField("font-shaping-break");
+    try json.beginObject();
+    try json.objectField("cursor");
+    try json.write(config.@"font-shaping-break".cursor);
+    try json.endObject();
+    try json.objectField("freetype-load-flags");
+    try json.beginObject();
+    inline for (.{ "hinting", "force-autohint", "monochrome", "autohint", "light" }) |name| {
+        try json.objectField(name);
+        try json.write(@field(config.@"freetype-load-flags", name));
+    }
+    try json.endObject();
     inline for (metric_config_descriptors) |descriptor| {
         if (descriptor.exported) {
             try json.objectField(descriptor.name);
@@ -824,15 +857,18 @@ fn appendThemeFile(
     try json.write(path);
 }
 
+fn writeDecimalUint64(json: *std.json.Stringify, number: u64) !void {
+    // Qt's JSON representation is double-valued. Use canonical decimal text
+    // so every u64, including maxInt(u64), crosses schema v1 exactly.
+    var buffer: [32]u8 = undefined;
+    try json.write(try std.fmt.bufPrint(&buffer, "{d}", .{number}));
+}
+
 fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {
-    if (value) |number| {
-        // Qt's JSON representation is double-valued. Use canonical decimal
-        // text so every u64, including maxInt(u64), crosses schema v1 exactly.
-        var buffer: [32]u8 = undefined;
-        try json.write(try std.fmt.bufPrint(&buffer, "{d}", .{number}));
-    } else {
+    if (value) |number|
+        try writeDecimalUint64(json, number)
+    else
         try json.write(null);
-    }
 }
 
 fn writeOptionalCommand(
@@ -939,6 +975,76 @@ fn writeFontStyle(json: *std.json.Stringify, style: Config.FontStyle) !void {
         },
     }
     try json.endObject();
+}
+
+fn openTypeTag(bytes: [4]u8) u32 {
+    return (@as(u32, bytes[0]) << 24) |
+        (@as(u32, bytes[1]) << 16) |
+        (@as(u32, bytes[2]) << 8) |
+        @as(u32, bytes[3]);
+}
+
+fn writeOpenTypeSetting(
+    json: *std.json.Stringify,
+    tag: [4]u8,
+    value: anytype,
+) !void {
+    try json.beginObject();
+    try json.objectField("tag");
+    try json.write(openTypeTag(tag));
+    try json.objectField("value");
+    try json.write(value);
+    try json.endObject();
+}
+
+fn writeFontFeatures(
+    json: *std.json.Stringify,
+    configured: *const Config.RepeatableString,
+) !void {
+    var features: font_feature.FeatureList = .{};
+    defer features.deinit(state.alloc);
+    try features.features.appendSlice(state.alloc, &font_feature.default_features);
+    for (configured.list.items) |value|
+        try features.appendFromString(state.alloc, value);
+
+    try json.beginArray();
+    for (features.features.items) |feature|
+        try writeOpenTypeSetting(json, feature.tag, feature.value);
+    try json.endArray();
+}
+
+fn writeFontVariations(json: *std.json.Stringify, variations: anytype) !void {
+    try json.beginArray();
+    for (variations.list.items) |variation| {
+        const tag = variation.id.str();
+        try json.beginObject();
+        try json.objectField("tag");
+        try json.write(openTypeTag(tag));
+        try json.objectField("value-bits");
+        try writeDecimalUint64(json, @as(u64, @bitCast(variation.value)));
+        try json.endObject();
+    }
+    try json.endArray();
+}
+
+fn writeFontCodepointMap(
+    json: *std.json.Stringify,
+    mappings: *const Config.RepeatableCodepointMap,
+) !void {
+    try json.beginArray();
+    const ranges = mappings.map.list.items(.range);
+    const descriptors = mappings.map.list.items(.descriptor);
+    for (ranges, descriptors) |range, descriptor| {
+        try json.beginObject();
+        try json.objectField("first");
+        try json.write(range[0]);
+        try json.objectField("last");
+        try json.write(range[1]);
+        try json.objectField("family");
+        try json.write(descriptor.family orelse "");
+        try json.endObject();
+    }
+    try json.endArray();
 }
 
 fn writeOptionalMetricModifier(json: *std.json.Stringify, modifier: anytype) !void {

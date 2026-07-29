@@ -1404,16 +1404,42 @@ on the session thread.
 Typography remains entirely on the GUI/render side as a value-only
 `TerminalTypography`. It carries one ordered family list and one style
 alternative for each of the regular, bold, italic, and bold-italic roles, the
-f32-derived point size, and eleven optional metric modifiers. The regular face
-defines the grid. Qt's context font merging consumes each ordered family list;
-disabled or unresolved styled roles fall back to the regular face, while
-Ghostty's pinned runtime treats a disabled regular style as automatic. This
-maps the configured lists without claiming Ghostty's embedded production
-fallback stack: that resolver is not part of public `libghostty-vt`, so final
-fallback selection remains Qt-owned and `font-family` remains partial. The
-style-family, style, size, and exposed metric controls are otherwise complete.
-Ghostty's private generated-box sprite and icon/Nerd Font classification paths
-also keep `adjust-box-thickness` and `adjust-icon-height` planned.
+f32-derived point size, the complete ordered feature list, four ordered
+variation lists, u21 codepoint-to-family ranges, three synthesis permissions,
+the cursor shaping-break flag, five FreeType load booleans, and eleven optional
+metric modifiers. Variation values retain their finalized f64 bit pattern in
+schema v1, including negative zero and non-finite values, instead of relying on
+non-standard JSON numbers.
+
+`resolveTerminalFonts` takes one GUI-thread font-database snapshot per changed
+effective typography generation. The regular metric face defines the grid,
+and a second shaping-face array applies OpenType features so a proportional
+feature cannot silently redefine terminal geometry. Qt's context font merging
+consumes each ordered family list. A native role face is preferred before
+allowed synthesis; disabled roles and unresolved exact named styles use the
+regular face. Variation processing consumes the first matching tag before
+validity and range checks, matching the pinned FreeType duplicate behavior.
+Codepoint-map overlays are normalized once into sorted disjoint intervals, so
+the renderer performs logarithmic later-entry-wins lookup instead of scanning
+the configuration for every cell. A mapped regular face must cover the entire
+cell grapheme, ignoring only ZWJ and text/emoji variation selectors.
+
+Dirty rows are converted into maximal compatible text runs by a renderer-free
+planner. Font, foreground, text style, selection, invisible cells, defensive
+plain `fi`/`fl`/`st` boundaries, and—when configured—the logical cursor split
+runs; wide spacer records remain attached to their head cell. `QTextLayout`
+shapes each run left-to-right on the physical terminal grid. Fixed-pitch,
+single-UTF-16-unit runs can receive one constant letter-spacing correction,
+but every text boundary is still checked in device pixels. A mismatch falls
+back to exact per-cell layout for that run. This preserves grid correctness
+while allowing ligatures and avoiding one layout per ordinary cell.
+
+These mappings do not claim Ghostty's embedded production fallback stack,
+FreeType load and synthesis internals, or HarfBuzz positioned-glyph plan:
+those contracts are not part of public `libghostty-vt`, so final selection and
+shaping remain Qt-owned and the affected entries stay partial. Ghostty's
+private generated-box sprite and icon/Nerd Font classification paths also keep
+`adjust-box-thickness` and `adjust-icon-height` planned.
 
 The helper receives explicit `--font-family` and `--font-size` arguments before
 Ghostty finalizes configuration, rather than overlaying them afterward. This
@@ -1427,7 +1453,10 @@ Live reload replaces the complete typography and appearance values on existing
 panes without overriding a pane's manual font zoom. A manually zoomed pane
 keeps only its local point size while adopting new family, style, and metric
 values; resetting the size uses the newest configured default and resumes size
-reloads. Directory and font inheritance booleans plus tab
+reloads. The pane compares the old and new effective typography—including its
+local zoom—before resolving fonts, so appearance-only and other unrelated
+reloads do not rescan the font database or rebuild codepoint-map faces.
+Directory and font inheritance booleans plus tab
 insertion position are workspace-owned creation policy: they affect future
 tabs/splits without moving existing tabs or processes or marking an inherited
 child as manually zoomed. Tab-strip visibility is workspace-owned presentation
@@ -2228,7 +2257,8 @@ The contract remains conservative: only the typed configuration slice,
 including the four-role typography and exposed physical metric controls, four
 search colors, `link-url`, `link-previews`, and all five `bell-features`, is
 marked partial or supported.
-The regular family key alone stays partial because final fallback resolution is
+The regular family, feature, variation, codepoint-map, synthesis, shaping-break,
+and FreeType settings stay partial because final face and glyph resolution is
 Qt-owned; the three styled-family keys, four style keys, font size, and eleven
 exposed metric keys are supported. Search actions remain partial because the
 public library artifact cannot expose Ghostty's `xev`-dependent search thread,
@@ -2254,10 +2284,16 @@ The default CTest suite has focused layers for each ownership boundary:
   feature dispatch, playback-time volume clamping, source caching and retry,
   invalid-media recovery, device replacement, and per-pane isolation.
 - `terminal-cell-metrics` verifies four-role face selection and regular-face
-  grid ownership, absolute and percentage modifiers, physical-pixel
-  rounding/clamping, pinned sparse-map order, cell-height recentering,
-  independent centered cursor geometry including over-cell height, and DPR
-  projection.
+  grid ownership, ordered feature replacement without grid mutation,
+  first-matching variation semantics, later-entry-wins mapped regular faces
+  with complete-grapheme coverage, public FreeType approximations, absolute
+  and percentage modifiers, physical-pixel rounding/clamping, pinned
+  sparse-map order, cell-height recentering, independent centered cursor
+  geometry including over-cell height, and DPR projection.
+- `terminal-text-runs` tests the renderer-independent maximal-run planner:
+  font, color, style, selection, invisible, defensive ligature, and optional
+  logical-cursor boundaries; wide spacer handling; interior placeholders;
+  edge trimming; and exact fallback-cell coordinates.
 - `terminal-geometry` verifies point-to-physical padding conversion, explicit
   padding before grid selection, equal and capped balance modes, projected
   grid origin, padding-aware hit testing, full-surface versus terminal extents,
@@ -2451,6 +2487,10 @@ The default CTest suite has focused layers for each ownership boundary:
   placeholder is replaced plus four-role font selection, physical-pixel cell,
   decoration, and cursor metrics at multiple DPRs, selection/cursor/text
   appearance, and the rounded pane versus truncated explicit-cell alpha rules.
+  It also verifies compatible-row layout coalescing, device-pixel grid
+  validation, old/new logical cursor row invalidation, live cursor-break
+  changes without scene-root replacement, and the absence of cursor-only row
+  rebuilds when that break is disabled.
   The same probe covers default and explicit-same-RGB backgrounds, opaque
   selection/search/inverse layers, zero opacity, live in-place reload, and
   premultiplied minimum-contrast composition. It also exercises
@@ -2553,14 +2593,17 @@ be checked interactively in a real Wayland session.
 ## Deliberate renderer-v1 limits
 
 - Dirty-row value updates keep the thread boundary small for ordinary output,
-  and persistent row text nodes keep per-cell `QTextLayout` work local to those
-  rows. Solid-layer generation still scans the visible grid, although retained
-  batches skip unchanged uploads and reuse all established capacity. Larger
-  compatible text runs and row-epoch-based solid-geometry generation remain
-  future optimizations.
-- Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends, but
-  there is no ligature shaping across terminal cells, color-emoji pipeline, or
-  Kitty graphics/inline-image renderer.
+  and persistent row text nodes restrict `QTextLayout` work to those rows.
+  Maximal compatible text runs replace ordinary per-cell layouts, with
+  boundary validation and per-cell fallback for unsafe runs. Solid-layer
+  generation still scans the visible grid, although retained batches skip
+  unchanged uploads and reuse established capacity. Row-epoch-based
+  solid-geometry generation remains a future optimization.
+- Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends and
+  shapes compatible cells together. It cannot consume Ghostty's private
+  selected-face and positioned-glyph plan, so exact fallback, synthesis,
+  FreeType flags, and cluster placement remain Qt-owned approximations. There
+  is no color-emoji pipeline or Kitty graphics/inline-image renderer.
 - `alpha-blending` remains planned. Qt Quick owns text and primitive blending,
   and the current public scene-graph path does not expose an exact mapping for
   Ghostty's `native`, `linear`, and `linear-corrected` modes. The implemented

@@ -196,8 +196,12 @@ and the canonical `current`/`end` new-tab position plus the
 256-entry palette after Ghostty's exact generation gate and derivation, the
 canonical `navigation`/`no-navigation` split-preserve-zoom policy,
 four ordered regular/bold/italic/bold-italic family lists and their tagged
-automatic/disabled/named styles, the f32 font size, eleven nullable tagged
-absolute-pixel/percentage metric modifiers, selection colors, cursor
+automatic/disabled/named styles, the ordered OpenType feature list, four
+ordered variation lists whose f64 values use exact decimal-encoded bit
+patterns, finalized u21 codepoint-map ranges, the three synthetic-style
+permissions, cursor shaping-break policy, five FreeType load booleans, the f32
+font size, eleven nullable tagged absolute-pixel/percentage metric modifiers,
+selection colors, cursor
 color/style/blink/opacity/text, bold-color, faint-opacity, the finalized
 minimum-contrast threshold, the nullable
 frontend-only unfocused-split fill, finalized unfocused-split opacity,
@@ -215,9 +219,9 @@ default-false `output` fields,
 `selection-word-chars` numeric Unicode-scalar array including Ghostty's
 mandatory U+0000 boundary, the exact live `ask`/`allow`/`deny`
 `clipboard-write` policy, the exact five-state `right-click-action`, the raw
-false/true/detect `gtk-single-instance` mode as an unused schema-v1
-compatibility field, the boolean `initial-window` startup decision, and the exact
-boolean/nullable-millisecond application lifetime policy. The
+false/true/detect `gtk-single-instance` startup mode, the boolean
+`initial-window` startup decision, and the exact boolean/nullable-millisecond
+application lifetime policy. The
 export and process-loader tests verify exact wire validation, typed semantic
 values, nullable alternatives, Unicode scalar range/surrogate rejection,
 transaction consistency, and default-aware keybinding diagnostics;
@@ -227,8 +231,11 @@ font CLI arguments enter both structured queries before Ghostty finalization,
 preserving f32 and styled-role defaults while the public
 `+validate-config` action retains its exact action-specific grammar.
 Terminal-cell-metric and
-pane tests verify four-role selection, physical-pixel/DPR projection,
-decoration and cursor geometry, live reload, and manual zoom. Adapter tests
+pane tests verify four-role selection, ordered features, first-tag variation
+semantics, later-entry-wins codepoint maps, FreeType approximations, maximal
+compatible row shaping, device-pixel boundary fallback, physical-pixel/DPR
+projection, decoration and cursor geometry, live reload, and manual zoom.
+Adapter tests
 verify binary ENQ callbacks at the empty, 255-byte, and public-bridge
 256-byte boundaries as well as config-default changes preserving
 OSC/DECSCUSR terminal overrides; and
@@ -280,8 +287,10 @@ The five focused config tests have distinct boundaries:
   ordered raw-byte `env` key/value pairs and their duplicate/empty/equals/NUL
   rejection, empty and binary `enquiry-response` values, the exact cgroup
   enum/boolean and nullable canonical-decimal uint64 limits, typography role
-  lists, tagged style and metric alternatives, fields and types, the full
-  unsigned scrollback range, nullable values, and malformed keybinding trees.
+  lists, tagged style and metric alternatives, feature/variation ordering and
+  exact variation bits, u21 codepoint ranges, synthesis/shaping/FreeType
+  objects, fields and types, the full unsigned scrollback range, nullable
+  values, and malformed keybinding trees.
 - `ghostty-config-process-loader` uses a fake helper to make protocol ordering,
   post-query validation, byte-for-byte consistency, warnings, timeouts,
   crashes, and failures deterministic; real-helper cases verify finalized
@@ -289,9 +298,10 @@ The five focused config tests have distinct boundaries:
   finalization, repeated `env` replacement, configured-map removal/reset,
   include precedence and raw-byte transport, empty/custom binary
   `enquiry-response` finalization, default/custom/empty Linux cgroup settings
-  and maximum-width limits, exact font CLI forwarding and role
-  finalization, Ghostty's effective `clear`/`unbind` result, and structured
-  sequences, chains, catch-all triggers, flags, and named-table transport.
+  and maximum-width limits, exact font CLI forwarding and role finalization,
+  real-parser typography feature/variation/map policies, Ghostty's effective
+  `clear`/`unbind` result, and structured sequences, chains, catch-all
+  triggers, flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
   parser with an isolated `XDG_CONFIG_HOME`.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a

@@ -421,6 +421,7 @@ private Q_SLOTS:
     void rendersMinimumContrastAndReloadsLive();
     void runsCursorBlinkTimerOnlyWhenNeeded();
     void retainsMainTextRowsAcrossIncrementalUpdates();
+    void reloadsShapingAndTracksLogicalCursorRows();
     void retainsTextWhileDimmingUnfocusedSplits();
     void rebuildsMainTextRowsAfterWindowChange();
     void rendersConfiguredCellCursorAndDecorationAppearance();
@@ -1720,6 +1721,141 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
         terminalPaneRenderProbe(pane);
     QCOMPARE(resized.rootSerial, reloadedFont.rootSerial);
     QVERIFY(allVisibleRowsRebuilt(reloadedFont, resized));
+
+    window.close();
+    delete pane;
+}
+
+void TerminalPaneTest::reloadsShapingAndTracksLogicalCursorRows()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+    options.appearance.foregroundColor = Qt::white;
+    options.appearance.backgroundColor = Qt::black;
+
+    constexpr int columns = 6;
+    constexpr int rows = 2;
+    const TerminalCellMetrics metrics = terminalCellMetrics(options.typography);
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(qCeil(metrics.cellWidth * columns),
+                  qCeil(metrics.cellHeight * rows));
+    auto *pane = new TerminalPane(options, window.contentItem());
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy sessionEnded(pane, &TerminalPane::sessionEnded);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(sessionEnded.count(), 1, 5000);
+    pane->forceActiveFocus();
+
+    TerminalUpdate full;
+    full.columns = columns;
+    full.rows = rows;
+    full.fullFrame = true;
+    full.cursorChanged = true;
+    full.cursorVisible = true;
+    full.cursorBlinking = true;
+    full.cursorStyle = 0; // Bar cursors do not recolor retained text.
+    full.cursorColumn = 2;
+    full.cursorRow = 0;
+    full.contentRevision = 1;
+    for (int row = 0; row < rows; ++row) {
+        TerminalRowUpdate rowUpdate;
+        rowUpdate.row = row;
+        rowUpdate.cells.resize(columns);
+        for (int column = 0; column < columns; ++column) {
+            TerminalCell &cell = rowUpdate.cells[column];
+            const QChar codepoint(
+                static_cast<char16_t>(u'a' + row * columns + column));
+            cell.text = QString(codepoint);
+            cell.baseCodepoint = codepoint.unicode();
+            cell.plainCodepoint = true;
+            cell.foreground = Qt::white;
+            cell.background = Qt::black;
+        }
+        full.dirtyRows.append(std::move(rowUpdate));
+    }
+    controller->terminalUpdated(full);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot initial =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(initial.rowLayoutCounts.size(), rows);
+    QCOMPARE(initial.rowFallbackCellCounts.size(), rows);
+    for (int row = 0; row < rows; ++row) {
+        QVERIFY(initial.rowLayoutCounts.at(row) > 0);
+        QVERIFY(initial.rowLayoutCounts.at(row) <= columns);
+        QVERIFY(initial.rowFallbackCellCounts.at(row)
+                <= initial.rowLayoutCounts.at(row));
+    }
+    // The cursor-free row must exercise the combined-layout fast path in the
+    // deterministic offscreen test backend.
+    QVERIFY(initial.rowLayoutCounts.at(1) < columns);
+    QCOMPARE(initial.rowFallbackCellCounts.at(1), quint64{0});
+
+    TerminalUpdate cursor;
+    cursor.columns = columns;
+    cursor.rows = rows;
+    cursor.cursorChanged = true;
+    cursor.cursorVisible = true;
+    cursor.cursorBlinking = true;
+    cursor.cursorStyle = 0;
+    cursor.cursorColumn = 3;
+    cursor.cursorRow = 1;
+    cursor.contentRevision = 2;
+    controller->terminalUpdated(cursor);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot moved = terminalPaneRenderProbe(pane);
+    QCOMPARE(moved.rowBuildCounts.at(0), initial.rowBuildCounts.at(0) + 1);
+    QCOMPARE(moved.rowBuildCounts.at(1), initial.rowBuildCounts.at(1) + 1);
+
+    cursor.cursorColumn = 4;
+    cursor.contentRevision = 3;
+    controller->terminalUpdated(cursor);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot movedWithinRow =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(movedWithinRow.rowBuildCounts.at(0), moved.rowBuildCounts.at(0));
+    QCOMPARE(movedWithinRow.rowBuildCounts.at(1),
+             moved.rowBuildCounts.at(1) + 1);
+
+    LaunchOptions reloaded = options;
+    reloaded.typography.shapingBreakCursor = false;
+    constexpr quint32 Calt = 0x63616c74U;
+    reloaded.typography.features = {
+        {.tag = Calt, .value = 0},
+    };
+    pane->applyRuntimeOptions(reloaded);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot shapingDisabled =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(shapingDisabled.rootSerial, initial.rootSerial);
+    QVERIFY(allVisibleRowsRebuilt(movedWithinRow, shapingDisabled));
+    const auto calt = QFont::Tag::fromValue(Calt);
+    QVERIFY(calt.has_value());
+    QVERIFY(shapingDisabled.renderFonts
+                .at(terminalEnumIndex(TerminalFontRole::Regular))
+                .isFeatureSet(*calt));
+    QCOMPARE(shapingDisabled.renderFonts
+                 .at(terminalEnumIndex(TerminalFontRole::Regular))
+                 .featureValue(*calt),
+             quint32{0});
+
+    cursor.cursorColumn = 1;
+    cursor.cursorRow = 0;
+    cursor.contentRevision = 4;
+    controller->terminalUpdated(cursor);
+    QVERIFY(!window.grabWindow().isNull());
+    const TerminalPaneRenderProbeSnapshot movedWhileDisabled =
+        terminalPaneRenderProbe(pane);
+    QCOMPARE(movedWhileDisabled.rowBuildCounts, shapingDisabled.rowBuildCounts);
 
     window.close();
     delete pane;

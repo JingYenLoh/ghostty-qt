@@ -56,6 +56,15 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("font-style-bold"),
     QLatin1StringView("font-style-italic"),
     QLatin1StringView("font-style-bold-italic"),
+    QLatin1StringView("font-feature"),
+    QLatin1StringView("font-variation"),
+    QLatin1StringView("font-variation-bold"),
+    QLatin1StringView("font-variation-italic"),
+    QLatin1StringView("font-variation-bold-italic"),
+    QLatin1StringView("font-codepoint-map"),
+    QLatin1StringView("font-synthetic-style"),
+    QLatin1StringView("font-shaping-break"),
+    QLatin1StringView("freetype-load-flags"),
     QLatin1StringView("adjust-cell-width"),
     QLatin1StringView("adjust-cell-height"),
     QLatin1StringView("adjust-font-baseline"),
@@ -194,6 +203,34 @@ constexpr auto NamedFontStyleFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("kind"),
     QLatin1StringView("name"),
 });
+constexpr auto OpenTypeFeatureFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("tag"),
+    QLatin1StringView("value"),
+});
+constexpr auto FontVariationFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("tag"),
+    QLatin1StringView("value-bits"),
+});
+constexpr auto CodepointFontMapFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("first"),
+    QLatin1StringView("last"),
+    QLatin1StringView("family"),
+});
+constexpr auto SyntheticStyleFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("bold"),
+    QLatin1StringView("italic"),
+    QLatin1StringView("bold-italic"),
+});
+constexpr auto ShapingBreakFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("cursor"),
+});
+constexpr auto FreetypeLoadFlagFields = std::to_array<QLatin1StringView>({
+    QLatin1StringView("hinting"),
+    QLatin1StringView("force-autohint"),
+    QLatin1StringView("monochrome"),
+    QLatin1StringView("autohint"),
+    QLatin1StringView("light"),
+});
 constexpr auto MetricModifierFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("kind"),
     QLatin1StringView("value"),
@@ -255,6 +292,14 @@ constexpr auto FontStyleValueFields =
         {QLatin1StringView("font-style-bold"), TerminalFontRole::Bold},
         {QLatin1StringView("font-style-italic"), TerminalFontRole::Italic},
         {QLatin1StringView("font-style-bold-italic"),
+         TerminalFontRole::BoldItalic},
+    });
+constexpr auto FontVariationValueFields =
+    std::to_array<std::pair<QLatin1StringView, TerminalFontRole>>({
+        {QLatin1StringView("font-variation"), TerminalFontRole::Regular},
+        {QLatin1StringView("font-variation-bold"), TerminalFontRole::Bold},
+        {QLatin1StringView("font-variation-italic"), TerminalFontRole::Italic},
+        {QLatin1StringView("font-variation-bold-italic"),
          TerminalFontRole::BoldItalic},
     });
 constexpr auto MetricModifierValueFields =
@@ -335,72 +380,70 @@ ParseResult<bool> readBoolean(const QJsonValue &value, const QString &context)
     return value.toBool();
 }
 
-ParseResult<BellFeatures> readBellFeatures(const QJsonValue &value,
-                                           const QString &context)
+template <typename Value, std::size_t Size>
+ParseResult<Value> readBooleanObject(
+    const QJsonValue &value, const QString &context, Fields expected,
+    const std::array<std::pair<QLatin1StringView, bool Value::*>, Size> &fields)
 {
-    auto object = readExactObject(value, context, BellFeatureFields);
+    auto object = readExactObject(value, context, expected);
     if (!object) return std::unexpected(std::move(object.error()));
 
-    BellFeatures result;
-    for (const auto [name, destination] :
-         std::to_array<std::pair<QLatin1StringView, bool *>>({
-             {QLatin1StringView("system"), &result.system},
-             {QLatin1StringView("audio"), &result.audio},
-             {QLatin1StringView("attention"), &result.attention},
-             {QLatin1StringView("title"), &result.title},
-             {QLatin1StringView("border"), &result.border},
-         })) {
+    Value result;
+    for (const auto &[name, member] : fields) {
         auto parsed =
             readBoolean(object->value(name), childContext(context, name));
         if (!parsed) return std::unexpected(std::move(parsed.error()));
-        *destination = *parsed;
+        result.*member = *parsed;
     }
     return result;
+}
+
+ParseResult<BellFeatures> readBellFeatures(const QJsonValue &value,
+                                           const QString &context)
+{
+    return readBooleanObject<BellFeatures>(
+        value, context, BellFeatureFields,
+        std::to_array<std::pair<QLatin1StringView, bool BellFeatures::*>>({
+            {QLatin1StringView("system"), &BellFeatures::system},
+            {QLatin1StringView("audio"), &BellFeatures::audio},
+            {QLatin1StringView("attention"), &BellFeatures::attention},
+            {QLatin1StringView("title"), &BellFeatures::title},
+            {QLatin1StringView("border"), &BellFeatures::border},
+        }));
 }
 
 ParseResult<GhosttyShellIntegrationFeatures>
 readShellIntegrationFeatures(const QJsonValue &value, const QString &context)
 {
-    auto object =
-        readExactObject(value, context, ShellIntegrationFeatureFields);
-    if (!object) return std::unexpected(std::move(object.error()));
-
-    GhosttyShellIntegrationFeatures result;
-    for (const auto [name, destination] :
-         std::to_array<std::pair<QLatin1StringView, bool *>>({
-             {QLatin1StringView("cursor"), &result.cursor},
-             {QLatin1StringView("sudo"), &result.sudo},
-             {QLatin1StringView("title"), &result.title},
-             {QLatin1StringView("ssh-env"), &result.sshEnvironment},
-             {QLatin1StringView("ssh-terminfo"), &result.sshTerminfo},
-             {QLatin1StringView("path"), &result.path},
-         })) {
-        auto parsed =
-            readBoolean(object->value(name), childContext(context, name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        *destination = *parsed;
-    }
-    return result;
+    return readBooleanObject<GhosttyShellIntegrationFeatures>(
+        value, context, ShellIntegrationFeatureFields,
+        std::to_array<std::pair<QLatin1StringView,
+                                bool GhosttyShellIntegrationFeatures::*>>({
+            {QLatin1StringView("cursor"),
+             &GhosttyShellIntegrationFeatures::cursor},
+            {QLatin1StringView("sudo"), &GhosttyShellIntegrationFeatures::sudo},
+            {QLatin1StringView("title"),
+             &GhosttyShellIntegrationFeatures::title},
+            {QLatin1StringView("ssh-env"),
+             &GhosttyShellIntegrationFeatures::sshEnvironment},
+            {QLatin1StringView("ssh-terminfo"),
+             &GhosttyShellIntegrationFeatures::sshTerminfo},
+            {QLatin1StringView("path"), &GhosttyShellIntegrationFeatures::path},
+        }));
 }
 
 ParseResult<TerminalScrollToBottomOptions>
 readScrollToBottom(const QJsonValue &value, const QString &context)
 {
-    auto object = readExactObject(value, context, ScrollToBottomFields);
-    if (!object) return std::unexpected(std::move(object.error()));
-
-    TerminalScrollToBottomOptions result;
-    for (const auto [name, destination] :
-         std::to_array<std::pair<QLatin1StringView, bool *>>({
-             {QLatin1StringView("keystroke"), &result.keystroke},
-             {QLatin1StringView("output"), &result.output},
-         })) {
-        auto parsed =
-            readBoolean(object->value(name), childContext(context, name));
-        if (!parsed) return std::unexpected(std::move(parsed.error()));
-        *destination = *parsed;
-    }
-    return result;
+    return readBooleanObject<TerminalScrollToBottomOptions>(
+        value, context, ScrollToBottomFields,
+        std::to_array<std::pair<QLatin1StringView,
+                                bool TerminalScrollToBottomOptions::*>>({
+            {QLatin1StringView("keystroke"),
+             &TerminalScrollToBottomOptions::keystroke},
+            {QLatin1StringView("output"),
+             &TerminalScrollToBottomOptions::output},
+        }));
 }
 
 ParseResult<QString> readString(const QJsonValue &value, const QString &context)
@@ -790,6 +833,143 @@ readOptionalDecimalUint64(const QJsonValue &value, const QString &context)
     auto parsed = readDecimalUint64(value, context);
     if (!parsed) return std::unexpected(std::move(parsed.error()));
     return std::optional<quint64>{*parsed};
+}
+
+ParseResult<QVector<TerminalFontFeature>>
+readFontFeatures(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<TerminalFontFeature> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      OpenTypeFeatureFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto tag = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("tag")),
+            childContext(entryContext, QLatin1StringView("tag")));
+        if (!tag) return std::unexpected(std::move(tag.error()));
+        auto featureValue = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("value")),
+            childContext(entryContext, QLatin1StringView("value")));
+        if (!featureValue) {
+            return std::unexpected(std::move(featureValue.error()));
+        }
+        result.append({
+            .tag = *tag,
+            .value = *featureValue,
+        });
+    }
+    return result;
+}
+
+ParseResult<QVector<TerminalFontVariation>>
+readFontVariations(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<TerminalFontVariation> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      FontVariationFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto tag = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("tag")),
+            childContext(entryContext, QLatin1StringView("tag")));
+        if (!tag) return std::unexpected(std::move(tag.error()));
+        auto valueBits = readDecimalUint64(
+            object->value(QLatin1StringView("value-bits")),
+            childContext(entryContext, QLatin1StringView("value-bits")));
+        if (!valueBits) {
+            return std::unexpected(std::move(valueBits.error()));
+        }
+        result.append({
+            .tag = *tag,
+            .valueBits = *valueBits,
+        });
+    }
+    return result;
+}
+
+ParseResult<QVector<TerminalCodepointFontMap>>
+readCodepointFontMap(const QJsonValue &value, const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    constexpr quint32 MaximumU21 = 0x1fffffU;
+    QVector<TerminalCodepointFontMap> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto object = readExactObject(array->at(index), entryContext,
+                                      CodepointFontMapFields);
+        if (!object) return std::unexpected(std::move(object.error()));
+        auto first = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("first")),
+            childContext(entryContext, QLatin1StringView("first")), MaximumU21);
+        if (!first) return std::unexpected(std::move(first.error()));
+        auto last = readUnsignedInteger<quint32>(
+            object->value(QLatin1StringView("last")),
+            childContext(entryContext, QLatin1StringView("last")), MaximumU21);
+        if (!last) return std::unexpected(std::move(last.error()));
+        if (*first > *last) {
+            return std::unexpected(
+                QStringLiteral("%1.first must not exceed last")
+                    .arg(entryContext));
+        }
+        auto family =
+            readString(object->value(QLatin1StringView("family")),
+                       childContext(entryContext, QLatin1StringView("family")));
+        if (!family) return std::unexpected(std::move(family.error()));
+        result.append({
+            .first = *first,
+            .last = *last,
+            .family = std::move(*family),
+        });
+    }
+    return result;
+}
+
+ParseResult<TerminalSyntheticStyle> readSyntheticStyle(const QJsonValue &value,
+                                                       const QString &context)
+{
+    return readBooleanObject<TerminalSyntheticStyle>(
+        value, context, SyntheticStyleFields,
+        std::to_array<
+            std::pair<QLatin1StringView, bool TerminalSyntheticStyle::*>>({
+            {QLatin1StringView("bold"), &TerminalSyntheticStyle::bold},
+            {QLatin1StringView("italic"), &TerminalSyntheticStyle::italic},
+            {QLatin1StringView("bold-italic"),
+             &TerminalSyntheticStyle::boldItalic},
+        }));
+}
+
+ParseResult<TerminalFreetypeLoadFlags>
+readFreetypeLoadFlags(const QJsonValue &value, const QString &context)
+{
+    return readBooleanObject<TerminalFreetypeLoadFlags>(
+        value, context, FreetypeLoadFlagFields,
+        std::to_array<
+            std::pair<QLatin1StringView, bool TerminalFreetypeLoadFlags::*>>({
+            {QLatin1StringView("hinting"), &TerminalFreetypeLoadFlags::hinting},
+            {QLatin1StringView("force-autohint"),
+             &TerminalFreetypeLoadFlags::forceAutohint},
+            {QLatin1StringView("monochrome"),
+             &TerminalFreetypeLoadFlags::monochrome},
+            {QLatin1StringView("autohint"),
+             &TerminalFreetypeLoadFlags::autohint},
+            {QLatin1StringView("light"), &TerminalFreetypeLoadFlags::light},
+        }));
 }
 
 int hexDigit(QChar value)
@@ -1242,6 +1422,49 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             !parsed) {
             return std::unexpected(std::move(parsed.error()));
         }
+    }
+    if (auto parsed = assign(QLatin1StringView("font-feature"),
+                             result.typography.features, readFontFeatures);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    for (const auto &[name, role] : FontVariationValueFields) {
+        if (auto parsed = assign(name, result.typography.face(role).variations,
+                                 readFontVariations);
+            !parsed) {
+            return std::unexpected(std::move(parsed.error()));
+        }
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("font-codepoint-map"),
+                   result.typography.codepointMap, readCodepointFontMap);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("font-synthetic-style"),
+                   result.typography.syntheticStyle, readSyntheticStyle);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("font-shaping-break");
+        auto shaping = readExactObject(fieldValue(name), context(name),
+                                       ShapingBreakFields);
+        if (!shaping) {
+            return std::unexpected(std::move(shaping.error()));
+        }
+        auto cursor = readBoolean(
+            shaping->value(QLatin1StringView("cursor")),
+            childContext(context(name), QLatin1StringView("cursor")));
+        if (!cursor) return std::unexpected(std::move(cursor.error()));
+        result.typography.shapingBreakCursor = *cursor;
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("freetype-load-flags"),
+                   result.typography.freetypeLoadFlags, readFreetypeLoadFlags);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
     }
     for (const auto &[name, metric] : MetricModifierValueFields) {
         if (auto parsed =

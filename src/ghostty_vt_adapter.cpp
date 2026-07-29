@@ -3466,13 +3466,16 @@ public:
                     GhosttyCell rawCell = 0;
                     GhosttyStyle style{};
                     style.size = sizeof(style);
+                    uint32_t graphemeCount = 0;
                     constexpr std::array fields{
                         GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
                         GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                        GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
                     };
                     std::array<void *, fields.size()> values{
                         &rawCell,
                         &style,
+                        &graphemeCount,
                     };
                     if (ghostty_render_state_row_cells_get_multi(
                             rowCells_, fields.size(), fields.data(),
@@ -3551,6 +3554,9 @@ public:
                             reinterpret_cast<const char *>(graphemeBuffer.ptr),
                             static_cast<qsizetype>(graphemeBuffer.len));
                     }
+                    cell.baseCodepoint = codepoint;
+                    cell.plainCodepoint = graphemeCount == 1;
+                    cell.extendedGrapheme = graphemeCount > 1;
 
                     GhosttyColorRgb foreground = colors.foreground;
                     GhosttyColorRgb background = colors.background;

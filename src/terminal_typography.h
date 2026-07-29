@@ -2,9 +2,11 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 #include <QtGlobal>
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -41,11 +43,75 @@ using TerminalFontStyle =
     std::variant<TerminalFontStyles::Automatic, TerminalFontStyles::Disabled,
                  TerminalFontStyles::Named>;
 
+template <typename Value> struct TerminalOpenTypeSetting {
+    // OpenType tags use the same big-endian integer representation as
+    // QFont::Tag: `wght` is 0x77676874.
+    quint32 tag = 0;
+    Value value{};
+
+    bool operator==(const TerminalOpenTypeSetting &) const = default;
+};
+
+using TerminalFontFeature = TerminalOpenTypeSetting<quint32>;
+
+struct TerminalFontVariation {
+    quint32 tag = 0;
+    // Store the finalized f64 bit pattern so -0, infinities, and NaNs can
+    // cross the strict JSON schema without relying on non-standard numbers.
+    quint64 valueBits = 0;
+
+    [[nodiscard]] static TerminalFontVariation fromValue(quint32 settingTag,
+                                                         double value) noexcept
+    {
+        return {
+            .tag = settingTag,
+            .valueBits = std::bit_cast<quint64>(value),
+        };
+    }
+
+    [[nodiscard]] double value() const noexcept
+    {
+        return std::bit_cast<double>(valueBits);
+    }
+
+    bool operator==(const TerminalFontVariation &) const = default;
+};
+
 struct TerminalFontFace {
     QStringList families;
     TerminalFontStyle style = TerminalFontStyles::Automatic{};
+    QVector<TerminalFontVariation> variations;
 
     bool operator==(const TerminalFontFace &) const = default;
+};
+
+struct TerminalCodepointFontMap {
+    // Pinned Ghostty parses these as u21 ranges rather than restricting them
+    // to Unicode scalar values. Values outside Unicode simply never match a
+    // QString cell.
+    quint32 first = 0;
+    quint32 last = 0;
+    QString family;
+
+    bool operator==(const TerminalCodepointFontMap &) const = default;
+};
+
+struct TerminalSyntheticStyle {
+    bool bold = true;
+    bool italic = true;
+    bool boldItalic = true;
+
+    bool operator==(const TerminalSyntheticStyle &) const = default;
+};
+
+struct TerminalFreetypeLoadFlags {
+    bool hinting = true;
+    bool forceAutohint = false;
+    bool monochrome = false;
+    bool autohint = true;
+    bool light = true;
+
+    bool operator==(const TerminalFreetypeLoadFlags &) const = default;
 };
 
 namespace TerminalMetricModifiers {
@@ -116,6 +182,11 @@ struct TerminalTypography {
     std::array<TerminalFontFace, terminalEnumIndex(TerminalFontRole::Count)>
         faces;
     double pointSize = 12.0;
+    QVector<TerminalFontFeature> features;
+    QVector<TerminalCodepointFontMap> codepointMap;
+    TerminalSyntheticStyle syntheticStyle;
+    bool shapingBreakCursor = true;
+    TerminalFreetypeLoadFlags freetypeLoadFlags;
     TerminalMetricModifierSet metricModifiers;
 
     [[nodiscard]] TerminalFontFace &face(TerminalFontRole role) noexcept

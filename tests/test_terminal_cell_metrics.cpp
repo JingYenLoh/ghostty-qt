@@ -3,6 +3,7 @@
 #include <QFontDatabase>
 #include <QFontInfo>
 #include <QFontMetricsF>
+#include <QFontVariableAxis>
 #include <QRawFont>
 #include <QTest>
 
@@ -204,6 +205,11 @@ private Q_SLOTS:
     void resolvesNamedStyleThroughGenericAlias();
     void resolvesNamedStylesForRegularAndItalicRoles();
     void fallsBackFromInvalidNamedStyle();
+    void appliesOrderedFeaturesWithoutChangingGrid();
+    void appliesFirstMatchingVariation();
+    void resolvesCodepointMapsWithLaterEntryPolicy();
+    void obeysSyntheticStylePermissions();
+    void approximatesFreetypeLoadFlags();
     void projectsBaseMetricsToPhysicalPixels_data();
     void projectsBaseMetricsToPhysicalPixels();
     void usesIndependentFontStrokeThicknesses();
@@ -458,6 +464,192 @@ void TerminalCellMetricsTest::fallsBackFromInvalidNamedStyle()
         QCOMPARE(
             missingFamily.font(TerminalFontRole::Bold),
             missingFamily.font(TerminalFontRole::Regular));
+    }
+}
+
+void TerminalCellMetricsTest::appliesOrderedFeaturesWithoutChangingGrid()
+{
+    const QString family =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    TerminalTypography typography = typographyFor({family});
+    const TerminalCellMetrics baseline = terminalCellMetrics(typography);
+    constexpr quint32 Liga = 0x6c696761U;
+    constexpr quint32 Calt = 0x63616c74U;
+    typography.features = {
+        {.tag = Liga, .value = 1},
+        {.tag = Calt, .value = 0},
+        {.tag = Calt, .value = 3},
+    };
+
+    const TerminalCellMetrics actual = terminalCellMetrics(typography);
+    const auto liga = QFont::Tag::fromValue(Liga);
+    const auto calt = QFont::Tag::fromValue(Calt);
+    QVERIFY(liga.has_value());
+    QVERIFY(calt.has_value());
+    for (const TerminalFontRole role : kRoles) {
+        const QFont &font = actual.font(role);
+        QVERIFY(font.isFeatureSet(*liga));
+        QCOMPARE(font.featureValue(*liga), quint32{1});
+        QVERIFY(font.isFeatureSet(*calt));
+        QCOMPARE(font.featureValue(*calt), quint32{3});
+    }
+    QCOMPARE(actual.cellWidth, baseline.cellWidth);
+    QCOMPARE(actual.cellHeight, baseline.cellHeight);
+    QCOMPARE(actual.baseline, baseline.baseline);
+}
+
+void TerminalCellMetricsTest::appliesFirstMatchingVariation()
+{
+    const QString path = QFINDTESTDATA("../ghostty/src/font/res/Lilex-VF.ttf");
+    QVERIFY2(!path.isEmpty(), "Bundled variable test font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+    QVERIFY(!families.isEmpty());
+
+    TerminalTypography typography = typographyFor({families.front()});
+    const QFont probe({families.front()}, 12);
+    const QList<QFontVariableAxis> axes = QFontInfo(probe).variableAxes();
+    if (axes.isEmpty()) {
+        QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+        QSKIP("Bundled font exposes no variable axes through this Qt backend");
+    }
+    const QFontVariableAxis &axis = axes.front();
+    const double first = axis.minimumValue();
+    const double second = axis.maximumValue();
+    typography.face(TerminalFontRole::Regular).variations = {
+        TerminalFontVariation::fromValue(axis.tag().value(), first),
+        TerminalFontVariation::fromValue(axis.tag().value(), second),
+    };
+
+    TerminalCellMetrics actual = terminalCellMetrics(typography);
+    QVERIFY(
+        actual.font(TerminalFontRole::Regular).isVariableAxisSet(axis.tag()));
+    QCOMPARE(
+        actual.font(TerminalFontRole::Regular).variableAxisValue(axis.tag()),
+        static_cast<float>(first));
+
+    typography.face(TerminalFontRole::Regular).variations = {
+        TerminalFontVariation::fromValue(
+            axis.tag().value(), std::numeric_limits<double>::infinity()),
+        TerminalFontVariation::fromValue(axis.tag().value(), second),
+    };
+    actual = terminalCellMetrics(typography);
+    QVERIFY(
+        !actual.font(TerminalFontRole::Regular).isVariableAxisSet(axis.tag()));
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+}
+
+void TerminalCellMetricsTest::resolvesCodepointMapsWithLaterEntryPolicy()
+{
+    const QString basePath = QFINDTESTDATA(
+        "../ghostty/src/font/res/JetBrainsMonoNerdFont-Regular.ttf");
+    const QString mappedPath =
+        QFINDTESTDATA("../ghostty/src/font/res/CodeNewRoman-Regular.otf");
+    QVERIFY(!basePath.isEmpty());
+    QVERIFY(!mappedPath.isEmpty());
+    const int baseId = QFontDatabase::addApplicationFont(basePath);
+    const int mappedId = QFontDatabase::addApplicationFont(mappedPath);
+    QVERIFY(baseId >= 0);
+    QVERIFY(mappedId >= 0);
+    const QString baseFamily =
+        QFontDatabase::applicationFontFamilies(baseId).value(0);
+    const QString mappedFamily =
+        QFontDatabase::applicationFontFamilies(mappedId).value(0);
+    QVERIFY(!baseFamily.isEmpty());
+    QVERIFY(!mappedFamily.isEmpty());
+
+    TerminalTypography typography = typographyFor({baseFamily});
+    typography.codepointMap = {
+        {.first = U'A', .last = U'Z', .family = baseFamily},
+        {.first = U'M', .last = U'M', .family = mappedFamily},
+    };
+    TerminalCellMetrics metrics = terminalCellMetrics(typography);
+    const QFont &mapped =
+        metrics.fontForText(TerminalFontRole::Bold, QStringLiteral("M"));
+    QVERIFY(
+        QFontInfo(mapped).family().compare(mappedFamily, Qt::CaseInsensitive)
+        == 0);
+    QVERIFY(!mapped.bold());
+    // The broad earlier mapping remains active on both sides of the later
+    // single-codepoint overlay. A bold request still resolves its regular
+    // mapped face rather than the ordinary bold role.
+    for (const QString &text : {QStringLiteral("A"), QStringLiteral("Z")}) {
+        const QFont &remainingBroadMap =
+            metrics.fontForText(TerminalFontRole::Bold, text);
+        QVERIFY(QFontInfo(remainingBroadMap)
+                    .family()
+                    .compare(baseFamily, Qt::CaseInsensitive)
+                == 0);
+        QVERIFY(!remainingBroadMap.bold());
+    }
+
+    // The latest overlapping declaration owns the range even when its face
+    // cannot be loaded; Ghostty then falls back normally instead of retrying
+    // an earlier mapping.
+    typography.codepointMap.append(
+        {.first = U'M',
+         .last = U'M',
+         .family = QStringLiteral("ghostty-qt-missing-map")});
+    metrics = terminalCellMetrics(typography);
+    QCOMPARE(
+        metrics.fontForText(TerminalFontRole::Regular, QStringLiteral("M")),
+        metrics.font(TerminalFontRole::Regular));
+
+    typography.codepointMap.removeLast();
+    metrics = terminalCellMetrics(typography);
+    QCOMPARE(metrics.fontForText(TerminalFontRole::Regular,
+                                 QString::fromUtf8("M\xf0\x9f\x98\x80")),
+             metrics.font(TerminalFontRole::Regular));
+    const QString ignoredModifiers =
+        QStringLiteral("M") + QChar(0x200d) + QChar(0xfe0f);
+    QVERIFY(QFontInfo(metrics.fontForText(TerminalFontRole::Regular,
+                                          ignoredModifiers))
+                .family()
+                .compare(mappedFamily, Qt::CaseInsensitive)
+            == 0);
+
+    QVERIFY(QFontDatabase::removeApplicationFont(mappedId));
+    QVERIFY(QFontDatabase::removeApplicationFont(baseId));
+}
+
+void TerminalCellMetricsTest::obeysSyntheticStylePermissions()
+{
+    const QString family =
+        QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    TerminalTypography typography = typographyFor({family});
+    typography.syntheticStyle = {
+        .bold = false,
+        .italic = false,
+        .boldItalic = false,
+    };
+
+    const TerminalCellMetrics disabled = terminalCellMetrics(typography);
+    const QFont &regular = disabled.font(TerminalFontRole::Regular);
+    QCOMPARE(disabled.font(TerminalFontRole::Bold), regular);
+    QCOMPARE(disabled.font(TerminalFontRole::Italic), regular);
+    QCOMPARE(disabled.font(TerminalFontRole::BoldItalic), regular);
+
+    typography.syntheticStyle = {};
+    const TerminalCellMetrics enabled = terminalCellMetrics(typography);
+    QVERIFY(enabled.font(TerminalFontRole::Bold).bold());
+    QVERIFY(enabled.font(TerminalFontRole::Italic).italic());
+    QVERIFY(enabled.font(TerminalFontRole::BoldItalic).bold());
+    QVERIFY(enabled.font(TerminalFontRole::BoldItalic).italic());
+}
+
+void TerminalCellMetricsTest::approximatesFreetypeLoadFlags()
+{
+    TerminalTypography typography;
+    typography.freetypeLoadFlags.hinting = false;
+    typography.freetypeLoadFlags.monochrome = true;
+    const TerminalCellMetrics metrics = terminalCellMetrics(typography);
+
+    for (const TerminalFontRole role : kRoles) {
+        const QFont &font = metrics.font(role);
+        QCOMPARE(font.hintingPreference(), QFont::PreferNoHinting);
+        QVERIFY(static_cast<int>(font.styleStrategy())
+                & static_cast<int>(QFont::NoAntialias));
     }
 }
 

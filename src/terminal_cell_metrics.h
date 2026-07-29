@@ -1,14 +1,18 @@
 #pragma once
 
+#include "terminal_font_resolver.h"
 #include "terminal_typography.h"
 
 #include <QFont>
+#include <QStringView>
 #include <QtTypes>
 
 #include <array>
 
 struct TerminalCellMetrics {
     std::array<QFont, terminalEnumIndex(TerminalFontRole::Count)> fonts;
+    QVector<TerminalMappedFont> mappedFonts;
+    bool shapingBreakCursor = true;
 
     // All geometry is expressed in logical scene units. Each value is derived
     // from an integral number of physical pixels at the requested DPR.
@@ -36,6 +40,12 @@ struct TerminalCellMetrics {
     [[nodiscard]] const QFont &font(TerminalFontRole role) const noexcept
     {
         return fonts[terminalEnumIndex(role)];
+    }
+
+    [[nodiscard]] const QFont &fontForText(TerminalFontRole role,
+                                           QStringView text) const noexcept
+    {
+        return terminalFontForText(fonts, mappedFonts, role, text);
     }
 
     bool operator==(const TerminalCellMetrics &) const = default;

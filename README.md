@@ -353,6 +353,11 @@ The current compatibility slice applies these keys:
 | `font-family` | Preserves the configured order as a Qt fallback list for the regular face. Explicit `--font-family` is passed into Ghostty's parser before finalization, so it also participates correctly in role defaults. Qt cannot reproduce Ghostty's embedded production fallback stack and resolver through public `libghostty-vt`, so the final platform fallback remains intentionally partial. |
 | `font-family-bold`, `font-family-italic`, `font-family-bold-italic` | Supply independent ordered family lists for bold, italic, and bold-italic cells. The GUI owns all four resolved faces; a disabled or unavailable styled face safely uses the regular face. Reload replaces the complete role set. |
 | `font-style`, `font-style-bold`, `font-style-italic`, `font-style-bold-italic` | Preserve Ghostty's `default`, `false`, and named-style alternatives. `default` selects the corresponding automatic Qt role; pinned runtime semantics treat regular `font-style=false` as automatic, while `false` on a styled role uses the regular face. A named value requests that style and falls back safely when unavailable. |
+| `font-feature` | Preserves Ghostty's finalized ordered feature list, including implicit defaults and duplicate tags; the later value for a tag wins. Features apply only to shaping fonts so proportional-width features cannot change the authoritative terminal grid. Qt `QTextLayout` owns final shaping because public `libghostty-vt` exposes cells, not Ghostty's positioned-glyph plan. |
+| `font-variation`, `font-variation-bold`, `font-variation-italic`, `font-variation-bold-italic` | Preserve each ordered axis list as exact f64 bits in schema v1. The first occurrence of a supported tag is consumed even when invalid or out of range, matching the pinned FreeType duplicate policy. Qt's public variable-axis API narrows an applied value to float and owns final face resolution, so exact Ghostty rendering remains partial. |
+| `font-codepoint-map` | Preserves finalized u21 ranges and later-entry-wins overlap, including an unavailable latest mapping masking an older one. Resolution produces a sorted disjoint interval table for logarithmic cell lookup, uses the mapped regular face for every cell style, and requires that face to cover the complete grapheme except ZWJ and text/emoji variation selectors. Qt owns face discovery and coverage because Ghostty's resolver is not public. |
+| `font-synthetic-style`, `freetype-load-flags` | Native faces are preferred before the three synthesis permissions are considered. Hinting, light/full hinting, and monochrome map to public Qt font controls; Qt has no exact equivalent for Ghostty's FreeType force-autohint/autohint flags or backend-specific synthetic-face transforms, so those settings remain conservative partial implementations. |
+| `font-shaping-break` | Applies the finalized cursor-break policy to logical cursor position rather than blink visibility. Maximal compatible row runs also break across font, foreground, complete style, selection, invisible cells, and defensive plain `fi`, `fl`, and `st` pairs; wide spacers stay with their head. Each shaped boundary is checked in device pixels and a run that leaves the terminal grid falls back to exact per-cell placement. |
 | `font-size` | Preserves Ghostty's f32 value and exact CLI precedence, drives initial window and PTY geometry, and reloads unadjusted panes. New tabs may initially inherit their source's actual size as described above. A manually zoomed pane retains its local point size while still adopting family, style, and metric changes; `reset_font_size` restores the newest configured size and resumes following reloads. |
 | `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline` | Apply Ghostty's signed absolute-pixel or percentage alternatives after projecting regular-face metrics to the pane's current physical-pixel DPR. The adjusted cell dimensions drive rendering, window sizing, and authoritative PTY rows/columns. Ghostty's pinned sparse-map application order is preserved, including cell-height-dependent recentering when that step runs. |
 | `adjust-underline-position`, `adjust-underline-thickness`, `adjust-strikethrough-position`, `adjust-strikethrough-thickness`, `adjust-overline-position`, `adjust-overline-thickness` | Apply in rounded physical pixels and drive the corresponding scene-graph decoration geometry, including every underline style. Underline and strike positions are unsigned and saturate at zero; overline position remains signed, and drawable thicknesses are bounded safely. |
@@ -858,12 +863,15 @@ path is for CI/smoke diagnostics only; normal use remains Wayland-only.
   and terminal input. Shifted-punctuation fallback matching is currently
   US-layout-oriented because public `QKeyEvent` data does not include the
   compositor keymap's unmodified layout level.
-- No Kitty graphics/inline images, color-emoji pipeline, or terminal-cell
-  ligature shaping. Four configured font roles and ordered Qt fallback lists
-  are supported, but Ghostty's embedded production fallback stack, generated
-  box sprites, and icon/Nerd Font glyph classification are not exposed through
-  public `libghostty-vt`; `font-family` therefore remains partial and
-  `adjust-box-thickness`/`adjust-icon-height` remain planned.
+- Text is shaped in maximal compatible terminal-row runs and checked at every
+  device-pixel cell boundary, with exact per-cell fallback when Qt's result
+  leaves the grid. Public `libghostty-vt` does not expose Ghostty's selected
+  faces, HarfBuzz runs, or positioned glyph cells, so Qt still owns the final
+  platform result. There is no color-emoji pipeline or Kitty graphics/inline
+  image renderer. Ghostty's embedded fallback stack, generated box sprites,
+  and icon/Nerd Font glyph classification are likewise unavailable;
+  `font-family` stays partial and
+  `adjust-box-thickness`/`adjust-icon-height` stay planned.
 - Hyperlink interaction covers explicit OSC 8 destinations and the built-in
   default matcher controlled by `link-url`, including the configured preview
   policy. User-defined `link` expressions and arbitrary link actions remain
