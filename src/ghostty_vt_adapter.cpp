@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <climits>
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <cstring>
@@ -1016,6 +1017,10 @@ public:
                    GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG)
                 != GHOSTTY_SUCCESS
             || ghostty_selection_gesture_event_new(
+                   nullptr, &selectionAutoscrollTickEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_new(
                    nullptr, &selectionReleaseEvent_,
                    GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE)
                 != GHOSTTY_SUCCESS) {
@@ -1151,6 +1156,10 @@ public:
         if (selectionReleaseEvent_ != nullptr) {
             ghostty_selection_gesture_event_free(selectionReleaseEvent_);
             selectionReleaseEvent_ = nullptr;
+        }
+        if (selectionAutoscrollTickEvent_ != nullptr) {
+            ghostty_selection_gesture_event_free(selectionAutoscrollTickEvent_);
+            selectionAutoscrollTickEvent_ = nullptr;
         }
         if (selectionDragEvent_ != nullptr) {
             ghostty_selection_gesture_event_free(selectionDragEvent_);
@@ -1763,11 +1772,16 @@ public:
                              nullptr);
     }
 
+    void resetSelectionGesture()
+    {
+        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
+        lastSelectionPressTimestampNanoseconds_.reset();
+    }
+
     void clearSelectionAndResetGesture()
     {
         clearSelection();
-        ghostty_selection_gesture_reset(selectionGesture_, terminal_);
-        lastSelectionPressTimestampNanoseconds_.reset();
+        resetSelectionGesture();
     }
 
     bool pointToGridRef(int column, int row, GhosttyGridRef *out) const
@@ -2715,7 +2729,12 @@ public:
         QVector<uint32_t> replacementWordChars = wordBoundaryCodepoints;
         GhosttySelectionGestureEvent replacementPressEvent = nullptr;
         GhosttySelectionGestureEvent replacementDragEvent = nullptr;
+        GhosttySelectionGestureEvent replacementAutoscrollTickEvent = nullptr;
         const auto replacementGuard = qScopeGuard([&] {
+            if (replacementAutoscrollTickEvent != nullptr) {
+                ghostty_selection_gesture_event_free(
+                    replacementAutoscrollTickEvent);
+            }
             if (replacementDragEvent != nullptr) {
                 ghostty_selection_gesture_event_free(replacementDragEvent);
             }
@@ -2730,18 +2749,26 @@ public:
             || ghostty_selection_gesture_event_new(
                    nullptr, &replacementDragEvent,
                    GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_new(
+                   nullptr, &replacementAutoscrollTickEvent,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK)
                 != GHOSTTY_SUCCESS) {
             return false;
         }
         if (!setSelectionWordBoundaries(replacementPressEvent,
                                         wordBoundaryCodepoints)
             || !setSelectionWordBoundaries(replacementDragEvent,
+                                           wordBoundaryCodepoints)
+            || !setSelectionWordBoundaries(replacementAutoscrollTickEvent,
                                            wordBoundaryCodepoints)) {
             return false;
         }
 
         std::swap(selectionPressEvent_, replacementPressEvent);
         std::swap(selectionDragEvent_, replacementDragEvent);
+        std::swap(selectionAutoscrollTickEvent_,
+                  replacementAutoscrollTickEvent);
         selectionWordChars_.swap(replacementWordChars);
         return true;
     }
@@ -2946,6 +2973,118 @@ public:
                 == GHOSTTY_SUCCESS;
         }
         return false;
+    }
+
+    SelectionAutoscrollDirection selectionAutoscrollDirection() const
+    {
+        GhosttySelectionGestureAutoscroll direction =
+            GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_NONE;
+        if (ghostty_selection_gesture_get(
+                selectionGesture_, terminal_,
+                GHOSTTY_SELECTION_GESTURE_DATA_AUTOSCROLL, &direction)
+            != GHOSTTY_SUCCESS) {
+            return SelectionAutoscrollDirection::None;
+        }
+
+        switch (direction) {
+        case GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_UP:
+            return SelectionAutoscrollDirection::Up;
+        case GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_DOWN:
+            return SelectionAutoscrollDirection::Down;
+        case GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_NONE:
+        default: return SelectionAutoscrollDirection::None;
+        }
+    }
+
+    SelectionAutoscrollTickResult
+    selectionAutoscrollTick(const TerminalSelectionDragInput &input)
+    {
+        if (selectionAutoscrollDirection() == SelectionAutoscrollDirection::None
+            || !std::isfinite(input.surfaceX)
+            || !std::isfinite(input.surfaceY)) {
+            return SelectionAutoscrollTickResult::Unavailable;
+        }
+
+        const auto clampedCell = [](double surfacePosition, int padding,
+                                    int cellSize, int count) {
+            const double gridPosition =
+                std::max(0.0, surfacePosition - static_cast<double>(padding))
+                / static_cast<double>(cellSize);
+            if (!std::isfinite(gridPosition)
+                || gridPosition >= static_cast<double>(count)) {
+                return count - 1;
+            }
+            return static_cast<int>(gridPosition);
+        };
+        const GhosttyPointCoordinate viewport{
+            .x = static_cast<uint16_t>(
+                clampedCell(input.surfaceX, geometry_.padding.left,
+                            geometry_.cellWidthPixels, geometry_.columns)),
+            .y = static_cast<uint32_t>(
+                clampedCell(input.surfaceY, geometry_.padding.top,
+                            geometry_.cellHeightPixels, geometry_.rows)),
+        };
+        const GhosttySurfacePosition position{
+            .x = input.surfaceX,
+            .y = input.surfaceY,
+        };
+        const GhosttySelectionGestureGeometry geometry{
+            .columns = boundedU32(geometry_.columns),
+            .cell_width = boundedU32(geometry_.cellWidthPixels),
+            .padding_left = nonnegativeU32(geometry_.padding.left),
+            .screen_height = boundedU32(geometry_.surfaceHeightPixels),
+        };
+        if (ghostty_selection_gesture_event_set(
+                selectionAutoscrollTickEvent_,
+                GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT, &viewport)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionAutoscrollTickEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionAutoscrollTickEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY, &geometry)
+                != GHOSTTY_SUCCESS
+            || ghostty_selection_gesture_event_set(
+                   selectionAutoscrollTickEvent_,
+                   GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE,
+                   &input.rectangular)
+                != GHOSTTY_SUCCESS) {
+            return SelectionAutoscrollTickResult::Unavailable;
+        }
+
+        GhosttySelection selection{};
+        selection.size = sizeof(selection);
+        const GhosttyResult result = ghostty_selection_gesture_event(
+            selectionGesture_, terminal_, selectionAutoscrollTickEvent_,
+            &selection);
+        if (result == GHOSTTY_SUCCESS) {
+            // The tick has already applied its viewport operation. Preserve
+            // that mutation result even if installing the returned snapshot
+            // unexpectedly fails so the caller still publishes the viewport.
+            installSelection(selection);
+            return SelectionAutoscrollTickResult::Mutated;
+        }
+        if (result != GHOSTTY_NO_VALUE) {
+            return SelectionAutoscrollTickResult::Unavailable;
+        }
+
+        uint8_t clickCount = 0;
+        if (ghostty_selection_gesture_get(
+                selectionGesture_, terminal_,
+                GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT, &clickCount)
+                != GHOSTTY_SUCCESS
+            || clickCount == 0) {
+            // Ghostty resets an invalidated anchor without scrolling. Leave
+            // the previously installed selection intact.
+            return SelectionAutoscrollTickResult::Unavailable;
+        }
+
+        // A live gesture that produces no selection has still scrolled the
+        // viewport. Match Ghostty's Surface.setSelection(null) behavior.
+        clearSelection();
+        return SelectionAutoscrollTickResult::Mutated;
     }
 
     void endSelection(int column, int row)
@@ -4437,6 +4576,7 @@ private:
     GhosttySelectionGesture selectionGesture_ = nullptr;
     GhosttySelectionGestureEvent selectionPressEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionDragEvent_ = nullptr;
+    GhosttySelectionGestureEvent selectionAutoscrollTickEvent_ = nullptr;
     GhosttySelectionGestureEvent selectionReleaseEvent_ = nullptr;
     QVector<uint32_t> selectionWordChars_;
     quint32 clickRepeatIntervalMilliseconds_ = 500;
@@ -4652,6 +4792,11 @@ void GhosttyVtAdapter::clearSelection()
     impl_->clearSelection();
 }
 
+void GhosttyVtAdapter::resetSelectionGesture()
+{
+    impl_->resetSelectionGesture();
+}
+
 void GhosttyVtAdapter::clearSelectionAndResetGesture()
 {
     impl_->clearSelectionAndResetGesture();
@@ -4686,6 +4831,19 @@ void GhosttyVtAdapter::endSelection(int column, int row)
 bool GhosttyVtAdapter::selectionGestureDragged() const
 {
     return impl_->selectionGestureDragged();
+}
+
+GhosttyVtAdapter::SelectionAutoscrollDirection
+GhosttyVtAdapter::selectionAutoscrollDirection() const
+{
+    return impl_->selectionAutoscrollDirection();
+}
+
+GhosttyVtAdapter::SelectionAutoscrollTickResult
+GhosttyVtAdapter::selectionAutoscrollTick(
+    const TerminalSelectionDragInput &input)
+{
+    return impl_->selectionAutoscrollTick(input);
 }
 
 bool GhosttyVtAdapter::selectionContains(int column, int row) const

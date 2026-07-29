@@ -104,6 +104,7 @@ public Q_SLOTS:
     void beginSelection(const TerminalSelectionPressInput &input);
     void updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
+    void cancelSelectionGesture();
     void selectAll();
     void selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
@@ -181,6 +182,7 @@ private Q_SLOTS:
     void checkChild();
     void publishFrame();
     void compressScrollback();
+    void selectionAutoscrollTick();
     void processPendingHyperlinkQuery();
     void processSearchChunk();
 
@@ -219,6 +221,8 @@ private:
     void scrollToBottomForKeystroke(bool modifier);
     void clearSelectionState();
     void clearSelectionAndResetGestureState();
+    void syncSelectionAutoscroll();
+    void stopSelectionAutoscroll();
     void clearSelectionAfterKey(bool modifier, bool escape);
     bool keyboardInputSuppressed() const;
     void syncKeyboardActionMode();
@@ -245,6 +249,8 @@ private:
     QTimer *childTimer_ = nullptr;
     QTimer *frameTimer_ = nullptr;
     QTimer *compressionTimer_ = nullptr;
+    QTimer *selectionAutoscrollTimer_ = nullptr;
+    std::optional<TerminalSelectionDragInput> selectionAutoscrollInput_;
     PtyWriteBuffer pendingWrites_;
     QHash<quint64, QString> pendingPastes_;
     quint64 nextPasteRequestId_ = 0;

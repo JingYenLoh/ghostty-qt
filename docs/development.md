@@ -409,7 +409,9 @@ Ctrl+Alt rectangle mode, valid-anchor collapse versus inactive-screen
 preservation, raw-DEC-aware crosshair transitions, dragged-link suppression,
 distinct button/motion/wheel reporting side effects, word-drag
 behavior, live interval/boundary reload during an active pane, select-all,
-endpoint adjustment/autoscroll, worker-authoritative
+endpoint adjustment/autoscroll, continuous one-row selection edge autoscroll
+with deterministic timer ticks, capture-loss preservation, and lifecycle
+cancellation, worker-authoritative
 selection-dependent performability across stale-false and stale-true GUI
 cache windows, exact empty/nonempty selection-search effects, byte-exact
 CSI/ESC/text actions, binary/repeated ENQ responses through the protocol write

@@ -447,6 +447,7 @@ private Q_SLOTS:
     void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
     void forwardsTypedSelectionPointerMetadataOnce();
+    void cancelsSelectionWhenMouseGrabIsRevoked();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void appliesMouseShiftCaptureAcrossPointerRoutes();
     void routesAllPasteEntryPointsThroughController();
@@ -4155,6 +4156,56 @@ void TerminalPaneTest::forwardsTypedSelectionPointerMetadataOnce()
     QCOMPARE(pane->cursor().shape(), Qt::IBeamCursor);
 
     delete pane;
+}
+
+void TerminalPaneTest::cancelsSelectionWhenMouseGrabIsRevoked()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    useSystemFixedFont(options);
+
+    QQuickWindow window;
+    window.resize(320, 160);
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(window.size());
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy presses(controller,
+                       &TerminalController::beginSelectionRequested);
+    QSignalSpy drags(controller, &TerminalController::updateSelectionRequested);
+    QSignalSpy releases(controller, &TerminalController::endSelectionRequested);
+    QSignalSpy cancellations(
+        controller, &TerminalController::cancelSelectionGestureRequested);
+
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    const QPoint pressPosition(20, 20);
+    const QPoint dragPosition(40, 1);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, pressPosition);
+    QCOMPARE(presses.count(), 1);
+    QCOMPARE(window.mouseGrabberItem(), pane);
+    QTest::mouseMove(&window, dragPosition);
+    QCOMPARE(drags.count(), 1);
+
+    pane->ungrabMouse();
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QCOMPARE(cancellations.count(), 1);
+    QCOMPARE(releases.count(), 0);
+
+    // Delivery may resume under the pointer after the grab is gone, but the
+    // abandoned gesture must not accept more motion or turn a later physical
+    // release into a committed selection/copy boundary.
+    QTest::mouseMove(&window, QPoint(60, 1));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, QPoint(60, 1));
+    QCOMPARE(drags.count(), 1);
+    QCOMPARE(releases.count(), 0);
+    QCOMPARE(cancellations.count(), 1);
+
+    delete pane;
+    window.close();
 }
 
 void TerminalPaneTest::togglesMouseReportingPolicyAcrossGesturesAndReloads()

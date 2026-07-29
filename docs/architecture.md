@@ -984,18 +984,26 @@ signals:
   finalized numeric Unicode-scalar vector, including the parser-inserted
   U+0000 boundary. The source UTF-8 string is never reparsed by Qt. The
   value-only runtime snapshot reaches `SessionWorker`, which supplies the
-  current vector to both the press and drag events of libghostty's selection
-  gesture. Those C events copy the borrowed scalar array into event-owned
-  storage before executing beside the terminal. Reload therefore affects the
-  next libghostty-classified word press and every later word-drag update,
-  including an already active gesture, without retroactively changing an
-  installed selection.
+  current vector to the press, drag, and autoscroll-tick events of
+  libghostty's selection gesture. Those C events copy the borrowed scalar
+  array into event-owned storage before executing beside the terminal. Reload
+  therefore affects the next libghostty-classified word press and every later
+  word-drag or autoscroll update, including an already active gesture, without
+  retroactively changing an installed selection.
 - Typed viewport requests cover top, bottom, signed row deltas, absolute rows,
   and the current selection. Select-all and endpoint-adjustment operations run
   as single adapter calls on the session thread. Selection snapshots contain
   untracked Ghostty grid references, so fetch, adjustment, coordinate
   conversion, installation, and endpoint autoscroll are deliberately one
   transaction with no queued boundary between them.
+- Selection dragging at the outer physical pixel of the surface arms
+  libghostty's pinned autoscroll direction. A precise timer owned by
+  `SessionWorker` applies one public gesture tick every 15 ms; each tick scrolls
+  one row and resolves the stored physical pointer against the current
+  geometry. Interior motion, release, pointer-capture loss, gesture reset,
+  terminal reset or destruction, and worker shutdown cancel the timer.
+  Capture loss resets only gesture state and preserves the range reached so
+  far without invoking copy-on-select.
 
 The render update exposes only whether a cell has an OSC 8 hyperlink; regex
 text and matcher state never cross to the GUI. Lookup remains beside the

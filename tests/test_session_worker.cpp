@@ -286,6 +286,7 @@ private Q_SLOTS:
     void resolvesConfiguredRightClickActions();
     void autoCopiesOnlyCommittedSelectionsAndSelectAll();
     void retainsSelectionAvailabilityOutsideViewport();
+    void continuouslyAutoscrollsSelectionAtEdges();
     void routesTypedViewportAndSelectionOperations();
     void resolvesCorrelatedSelectionActions();
     void searchesIncrementallyAndNavigates();
@@ -5592,6 +5593,121 @@ void SessionWorkerTest::retainsSelectionAvailabilityOutsideViewport()
     worker.clearSelection();
     QVERIFY(spyContainsBool(selectionSpy, false));
     worker.shutdown();
+}
+
+void SessionWorkerTest::continuouslyAutoscrollsSelectionAtEdges()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    worker.resizeTerminal(16, 3, 8, 16, 128, 48);
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy selectionSpy(&worker, &SessionWorker::selectionAvailableChanged);
+    QSignalSpy clipboardSpy(&worker, &SessionWorker::clipboardTextReady);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "i=0; while [ $i -lt 40 ]; do printf 'edge-row-%03d\\n' $i; "
+            "i=$((i + 1)); done; printf 'edge-ready'; sleep 5"),
+    };
+    options.hold = true;
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("edge-ready")), 5000);
+
+    QTimer *const timer =
+        worker.findChild<QTimer *>(QStringLiteral("selectionAutoscrollTimer"));
+    QVERIFY(timer != nullptr);
+    QCOMPARE(timer->interval(), 15);
+    QCOMPARE(timer->timerType(), Qt::PreciseTimer);
+    // Invoke exact ticks below without a concurrent production timeout.
+    timer->setInterval(60'000);
+
+    worker.scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = 10,
+    });
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{10}, 1000);
+
+    worker.beginSelection(selectionPress(4, 1));
+    TerminalSelectionDragInput edge = selectionDrag(4, 0);
+    edge.surfaceY = 0.0;
+    worker.updateSelection(edge);
+    QVERIFY(timer->isActive());
+    QTRY_VERIFY_WITH_TIMEOUT(spyContainsBool(selectionSpy, true), 1000);
+
+    QVERIFY(QMetaObject::invokeMethod(&worker, "selectionAutoscrollTick",
+                                      Qt::DirectConnection));
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{9}, 1000);
+    QVERIFY(timer->isActive());
+
+    QVERIFY(QMetaObject::invokeMethod(&worker, "selectionAutoscrollTick",
+                                      Qt::DirectConnection));
+    QTRY_COMPARE_WITH_TIMEOUT(accumulatedFrame(updateSpy).scrollOffset,
+                              quint64{8}, 1000);
+
+    // Returning to the interior stops immediately. A queued or manually
+    // invoked stale timeout must not move the viewport.
+    worker.updateSelection(selectionDrag(4, 1));
+    QVERIFY(!timer->isActive());
+    QVERIFY(QMetaObject::invokeMethod(&worker, "selectionAutoscrollTick",
+                                      Qt::DirectConnection));
+    QTest::qWait(20);
+    QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{8});
+
+    worker.updateSelection(edge);
+    QVERIFY(timer->isActive());
+    worker.cancelSelectionGesture();
+    QVERIFY(!timer->isActive());
+    worker.copySelection();
+    QCOMPARE(clipboardSpy.count(), 1);
+    QVERIFY(!clipboardSpy.constFirst().constFirst().toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(&worker, "selectionAutoscrollTick",
+                                      Qt::DirectConnection));
+    QTest::qWait(20);
+    QCOMPARE(accumulatedFrame(updateSpy).scrollOffset, quint64{8});
+    worker.updateSelection(edge);
+    QVERIFY(!timer->isActive());
+
+    worker.beginSelection(selectionPress(4, 1));
+    worker.updateSelection(edge);
+    QVERIFY(timer->isActive());
+    worker.endSelection(edge.column, edge.row);
+    QVERIFY(!timer->isActive());
+
+    // A delayed Shift press extends the retained gesture inside beginSelection
+    // itself. It must arm the same timer even when there is no intervening
+    // mouse-move event.
+    constexpr quint64 firstPressNanoseconds = 1'000'000'000;
+    worker.beginSelection(selectionPress(2, 1, firstPressNanoseconds));
+    worker.updateSelection(selectionDrag(6, 1));
+    worker.endSelection(6, 1);
+    TerminalSelectionPressInput shiftEdge =
+        selectionPress(2, 0, firstPressNanoseconds + 600'000'000, false, true);
+    shiftEdge.surfaceY = 0.0;
+    worker.beginSelection(shiftEdge);
+    QVERIFY(timer->isActive());
+    worker.endSelection(shiftEdge.column, shiftEdge.row);
+    QVERIFY(!timer->isActive());
+
+    worker.beginSelection(selectionPress(4, 1));
+    worker.updateSelection(edge);
+    QVERIFY(timer->isActive());
+    worker.resetTerminal();
+    QVERIFY(!timer->isActive());
+
+    worker.shutdown();
+    QVERIFY(!timer->isActive());
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
 }
 
 void SessionWorkerTest::routesTypedViewportAndSelectionOperations()

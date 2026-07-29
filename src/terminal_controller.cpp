@@ -123,6 +123,8 @@ void TerminalController::connectWorkerRequestRelays()
                        &SessionWorker::updateSelection);
     relayWorkerRequest(&TerminalController::endSelectionRequested,
                        &SessionWorker::endSelection);
+    relayWorkerRequest(&TerminalController::cancelSelectionGestureRequested,
+                       &SessionWorker::cancelSelectionGesture);
     relayWorkerRequest(&TerminalController::selectAllRequested,
                        &SessionWorker::selectAll);
     relayWorkerRequest(&TerminalController::selectAllActionRequested,
@@ -959,6 +961,11 @@ void TerminalController::updateSelection(
 void TerminalController::endSelection(int column, int row)
 {
     Q_EMIT endSelectionRequested(column, row);
+}
+
+void TerminalController::cancelSelectionGesture()
+{
+    Q_EMIT cancelSelectionGestureRequested();
 }
 
 void TerminalController::selectAll()

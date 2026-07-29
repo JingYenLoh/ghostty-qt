@@ -188,6 +188,23 @@ public:
         AtPrompt,
     };
 
+    enum class SelectionAutoscrollDirection : quint8 {
+        None,
+        Up,
+        Down,
+    };
+
+    enum class SelectionAutoscrollTickResult : quint8 {
+        // No active autoscroll gesture was mutated. This also covers an
+        // anchor invalidated by a screen change; the installed selection must
+        // remain untouched in that case.
+        Unavailable,
+        // A valid one-row viewport tick was applied and the resulting
+        // selection was either installed or cleared according to Ghostty's
+        // gesture result. The viewport may already be at its scroll boundary.
+        Mutated,
+    };
+
     struct DeferredEffects {
         // A null QString means that the effect did not occur. An empty,
         // non-null QString remains a valid title or working directory value.
@@ -294,6 +311,7 @@ public:
     PlainFileSnapshot snapshotPlainFile(TerminalFileLocation location) const;
     bool hasSelection() const;
     void clearSelection();
+    void resetSelectionGesture();
     void clearSelectionAndResetGesture();
     bool setSelectionWordChars(const QVector<uint32_t> &wordBoundaryCodepoints);
     bool setClickRepeatIntervalMilliseconds(quint32 milliseconds);
@@ -301,6 +319,9 @@ public:
     bool updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
     bool selectionGestureDragged() const;
+    SelectionAutoscrollDirection selectionAutoscrollDirection() const;
+    SelectionAutoscrollTickResult
+    selectionAutoscrollTick(const TerminalSelectionDragInput &input);
     bool selectionContains(int column, int row) const;
     bool selectCell(int column, int row);
     bool selectWord(int column, int row);

@@ -3445,6 +3445,21 @@ void TerminalPane::mouseReleaseEvent(QMouseEvent *event)
     event->accept();
 }
 
+void TerminalPane::mouseUngrabEvent()
+{
+    QQuickItem::mouseUngrabEvent();
+
+    const QPointer<TerminalPane> guard(this);
+    if (std::exchange(selecting_, false)) {
+        // Qt revoked the implicit grab without delivering a release. Reset
+        // only the gesture: the selection reached so far remains installed,
+        // and capture loss must not trigger copy-on-select.
+        controller_->cancelSelectionGesture();
+        if (guard == nullptr) return;
+    }
+    cancelHyperlinkPress();
+}
+
 void TerminalPane::hoverMoveEvent(QHoverEvent *event)
 {
     if (!handlePointerMotion(event->position())) {

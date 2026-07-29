@@ -172,6 +172,7 @@ public:
     void beginSelection(const TerminalSelectionPressInput &input);
     void updateSelection(const TerminalSelectionDragInput &input);
     void endSelection(int column, int row);
+    void cancelSelectionGesture();
     void selectAll();
     [[nodiscard]] bool selectAllAction(quint64 requestId);
     void adjustSelection(TerminalSelectionAdjustment adjustment);
@@ -262,6 +263,7 @@ Q_SIGNALS:
     void beginSelectionRequested(const TerminalSelectionPressInput &input);
     void updateSelectionRequested(const TerminalSelectionDragInput &input);
     void endSelectionRequested(int column, int row);
+    void cancelSelectionGestureRequested();
     void selectAllRequested();
     void selectAllActionRequested(quint64 requestId);
     void selectionAdjustmentRequested(TerminalSelectionAdjustment adjustment);

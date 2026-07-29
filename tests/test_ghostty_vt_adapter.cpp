@@ -165,6 +165,8 @@ private Q_SLOTS:
     void classifiesRepeatedSelectionPresses();
     void extendsSelectionOnDelayedShiftPress();
     void appliesConfiguredWordBoundariesToPressAndDrag();
+    void classifiesSelectionAutoscrollEdges();
+    void ticksSelectionAutoscrollOneViewportRow();
     void snapshotsPlainWriteFileRanges();
     void snapshotsPlainWriteFileFormattingAndAlternateScreen();
     void adjustsSelectionAndScrollsLogicalEndpointIntoView();
@@ -2125,6 +2127,17 @@ void GhosttyVtAdapterTest::clearsSelectionWithoutCancellingGesture()
     QVERIFY(adapter->updateSelection(selectionDrag(options.geometry, 8, 0)));
     QVERIFY(adapter->hasSelection());
 
+    // Losing pointer capture resets only gesture state. The range reached so
+    // far remains available, but later motion cannot resume the abandoned
+    // drag or its autoscroll direction.
+    const QString retainedSelection = adapter->selectedText(false);
+    adapter->resetSelectionGesture();
+    QVERIFY(adapter->hasSelection());
+    QCOMPARE(adapter->selectedText(false), retainedSelection);
+    QVERIFY(!adapter->updateSelection(selectionDrag(options.geometry, 10, 0)));
+    QCOMPARE(adapter->selectionAutoscrollDirection(),
+             GhosttyVtAdapter::SelectionAutoscrollDirection::None);
+
     // Reported physical buttons clear the installed range and release the
     // gesture's tracked grid reference. A later drag cannot resurrect it.
     adapter->clearSelectionAndResetGesture();
@@ -2777,6 +2790,173 @@ void GhosttyVtAdapterTest::appliesConfiguredWordBoundariesToPressAndDrag()
     QVERIFY(adapter->setSelectionWordChars(QVector<uint32_t>{}));
     QVERIFY(beginFreshDoubleClick(adapter.get(), options.geometry, 7, 0));
     QCOMPARE(adapter->selectedText(false), QStringLiteral("beta"));
+}
+
+void GhosttyVtAdapterTest::classifiesSelectionAutoscrollEdges()
+{
+    using Direction = GhosttyVtAdapter::SelectionAutoscrollDirection;
+    using TickResult = GhosttyVtAdapter::SelectionAutoscrollTickResult;
+
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    options.geometry.cellWidthPixels = 8;
+    options.geometry.cellHeightPixels = 16;
+    options.geometry.surfaceWidthPixels = 64;
+    options.geometry.surfaceHeightPixels = 48;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(QByteArrayLiteral("row-000\r\nrow-001\r\nrow-002"));
+
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::None);
+    QVERIFY(!adapter->beginSelection(selectionPress(options.geometry, 2, 1)));
+
+    TerminalSelectionDragInput drag = selectionDrag(options.geometry, 4, 0);
+    drag.surfaceY = 1.0;
+    QVERIFY(adapter->updateSelection(drag));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::Up);
+
+    // The one-physical-pixel edge buffers are exact and asymmetric, matching
+    // Ghostty's surface gesture policy.
+    drag.surfaceY = 1.001;
+    QVERIFY(adapter->updateSelection(drag));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::None);
+
+    drag = selectionDrag(options.geometry, 4, 2);
+    drag.surfaceY =
+        static_cast<double>(options.geometry.surfaceHeightPixels) - 1.0;
+    QVERIFY(adapter->updateSelection(drag));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::None);
+
+    drag.surfaceY += 0.001;
+    QVERIFY(adapter->updateSelection(drag));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::Down);
+
+    adapter->endSelection(drag.column, drag.row);
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::None);
+    QCOMPARE(adapter->selectionAutoscrollTick(drag), TickResult::Unavailable);
+
+    // Invalidating the tracked press by switching screens cancels the timer
+    // signal without clearing an independent selection on the new screen.
+    adapter->clearSelectionAndResetGesture();
+    QVERIFY(!adapter->beginSelection(selectionPress(options.geometry, 2, 1)));
+    drag = selectionDrag(options.geometry, 4, 0);
+    drag.surfaceY = 1.0;
+    QVERIFY(adapter->updateSelection(drag));
+    adapter->writeVt(QByteArrayLiteral("\033[?1049h\033[Halternate"));
+    QVERIFY(adapter->selectCell(0, 0));
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("a"));
+    QCOMPARE(adapter->selectionAutoscrollTick(drag), TickResult::Unavailable);
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::None);
+    QCOMPARE(adapter->selectedText(false), QStringLiteral("a"));
+}
+
+void GhosttyVtAdapterTest::ticksSelectionAutoscrollOneViewportRow()
+{
+    using Direction = GhosttyVtAdapter::SelectionAutoscrollDirection;
+    using TickResult = GhosttyVtAdapter::SelectionAutoscrollTickResult;
+
+    GhosttyVtAdapter::Options options;
+    options.geometry.columns = 8;
+    options.geometry.rows = 3;
+    options.geometry.cellWidthPixels = 8;
+    options.geometry.cellHeightPixels = 16;
+    options.geometry.surfaceWidthPixels = 64;
+    options.geometry.surfaceHeightPixels = 48;
+    auto adapter = GhosttyVtAdapter::create(options);
+    QVERIFY(adapter != nullptr);
+    adapter->writeVt(
+        QByteArrayLiteral("row-000\r\nrow-001\r\nrow-002\r\nrow-003\r\n"
+                          "row-004\r\nrow-005\r\nrow-006\r\nrow-007"));
+    QVERIFY(adapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Top,
+    }));
+
+    TerminalFrame frame;
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{0});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-000"));
+
+    QVERIFY(!adapter->beginSelection(selectionPress(options.geometry, 0, 0)));
+    TerminalSelectionDragInput edge = selectionDrag(options.geometry, 6, 2);
+    edge.surfaceY = static_cast<double>(options.geometry.surfaceHeightPixels);
+    QVERIFY(adapter->updateSelection(edge));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::Down);
+
+    QCOMPARE(adapter->selectionAutoscrollTick(edge), TickResult::Mutated);
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{1});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-001"));
+    const QString firstTickSelection = adapter->selectedText(false);
+    QCOMPARE(firstTickSelection.count(QLatin1Char('\n')), 3);
+    QVERIFY(firstTickSelection.endsWith(QStringLiteral("row-00")));
+
+    // A live pixel-only resize must affect the next tick. The logical
+    // column/row below are intentionally stale: the adapter must convert the
+    // current physical pointer position using the new padding and cell size.
+    GhosttyVtAdapter::Geometry resized = options.geometry;
+    resized.cellWidthPixels = 10;
+    resized.cellHeightPixels = 20;
+    resized.padding.left = 5;
+    resized.padding.top = 7;
+    resized.surfaceWidthPixels = 90;
+    resized.surfaceHeightPixels = 67;
+    QVERIFY(adapter->resize(resized));
+
+    TerminalSelectionDragInput resizedEdge = edge;
+    resizedEdge.column = 0;
+    resizedEdge.row = 0;
+    resizedEdge.surfaceX = resized.padding.left + 6.5 * resized.cellWidthPixels;
+    resizedEdge.surfaceY = resized.surfaceHeightPixels;
+    QCOMPARE(adapter->selectionAutoscrollTick(resizedEdge),
+             TickResult::Mutated);
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{2});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-002"));
+    const QString resizedTickSelection = adapter->selectedText(false);
+    QCOMPARE(resizedTickSelection.count(QLatin1Char('\n')), 4);
+    QVERIFY(resizedTickSelection.endsWith(QStringLiteral("row-00")));
+
+    TerminalSelectionDragInput top = selectionDrag(resized, 6, 0);
+    top.surfaceY = 1.0;
+    QVERIFY(adapter->updateSelection(top));
+    QCOMPARE(adapter->selectionAutoscrollDirection(), Direction::Up);
+    QCOMPARE(adapter->selectionAutoscrollTick(top), TickResult::Mutated);
+    renderInto(adapter.get(), &frame);
+    QCOMPARE(frame.scrollOffset, quint64{1});
+    QCOMPARE(frameRowText(frame, 0), QStringLiteral("row-001"));
+
+    // The reusable tick event must carry live custom word boundaries. Drag
+    // upward from a double-clicked word so the lower endpoint exposes whether
+    // the semicolon was treated as a delimiter after the viewport moved.
+    GhosttyVtAdapter::Options wordOptions;
+    wordOptions.geometry.columns = 12;
+    wordOptions.geometry.rows = 2;
+    wordOptions.geometry.cellWidthPixels = 8;
+    wordOptions.geometry.cellHeightPixels = 16;
+    wordOptions.geometry.surfaceWidthPixels = 96;
+    wordOptions.geometry.surfaceHeightPixels = 32;
+    auto wordAdapter = GhosttyVtAdapter::create(wordOptions);
+    QVERIFY(wordAdapter != nullptr);
+    wordAdapter->writeVt(QByteArrayLiteral(
+        "alpha;beta\r\ngamma;delta\r\nomega;theta\r\nsigma;kappa"));
+    QVERIFY(wordAdapter->scrollViewport({
+        .kind = TerminalViewportRequest::Kind::Row,
+        .row = 2,
+    }));
+    QVERIFY(wordAdapter->setSelectionWordChars(
+        QVector<uint32_t>{0, uint32_t{' '}, uint32_t{';'}}));
+    QVERIFY(
+        beginFreshDoubleClick(wordAdapter.get(), wordOptions.geometry, 7, 1));
+    TerminalSelectionDragInput wordEdge =
+        selectionDrag(wordOptions.geometry, 7, 0);
+    wordEdge.surfaceY = 1.0;
+    QVERIFY(wordAdapter->updateSelection(wordEdge));
+    QCOMPARE(wordAdapter->selectionAutoscrollDirection(), Direction::Up);
+    QCOMPARE(wordAdapter->selectionAutoscrollTick(wordEdge),
+             TickResult::Mutated);
+    QCOMPARE(wordAdapter->selectedText(false),
+             QStringLiteral("delta\nomega;theta\nsigma;kappa"));
 }
 
 void GhosttyVtAdapterTest::snapshotsPlainWriteFileRanges()

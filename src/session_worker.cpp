@@ -54,6 +54,7 @@ constexpr qsizetype kMaximumFinalRead = 8 * 1024 * 1024;
 constexpr int kFrameCoalesceMilliseconds = 8;
 constexpr int kCompressionIdleMilliseconds = 250;
 constexpr int kCompressionStepMilliseconds = 1;
+constexpr int kSelectionAutoscrollMilliseconds = 15;
 constexpr int kCursorBlinkResetThrottleMilliseconds = 500;
 constexpr int kShutdownGraceMilliseconds = 2000;
 constexpr int kPotentialActivityGraceMilliseconds = 250;
@@ -880,6 +881,14 @@ bool SessionWorker::initialize(const TerminalSessionLaunchOptions &options,
     compressionTimer_->setInterval(kCompressionIdleMilliseconds);
     connect(compressionTimer_, &QTimer::timeout, this,
             &SessionWorker::compressScrollback);
+
+    selectionAutoscrollTimer_ = new QTimer(this);
+    selectionAutoscrollTimer_->setObjectName(
+        QStringLiteral("selectionAutoscrollTimer"));
+    selectionAutoscrollTimer_->setTimerType(Qt::PreciseTimer);
+    selectionAutoscrollTimer_->setInterval(kSelectionAutoscrollMilliseconds);
+    connect(selectionAutoscrollTimer_, &QTimer::timeout, this,
+            &SessionWorker::selectionAutoscrollTick);
 
     if (!createTerminal()) {
         if (observer) observer(false);
@@ -1944,6 +1953,7 @@ void SessionWorker::sendRawAction(const QByteArray &data)
 
 void SessionWorker::resetTerminal()
 {
+    stopSelectionAutoscroll();
     if (vt_ == nullptr) {
         return;
     }
@@ -1972,6 +1982,7 @@ void SessionWorker::clearSelectionState()
 
 void SessionWorker::clearSelectionAndResetGestureState()
 {
+    stopSelectionAutoscroll();
     if (vt_ == nullptr) {
         return;
     }
@@ -2464,7 +2475,24 @@ void SessionWorker::clearSelectionIfMouseTracking()
 
 void SessionWorker::beginSelection(const TerminalSelectionPressInput &input)
 {
-    if (vt_ != nullptr && vt_->beginSelection(input)) {
+    stopSelectionAutoscroll();
+    if (vt_ == nullptr) {
+        return;
+    }
+
+    // A delayed Shift press can be resolved by Ghostty as a continuation of
+    // the retained drag gesture. Preserve its pointer metadata so an edge
+    // extension can arm autoscroll without requiring another mouse move.
+    selectionAutoscrollInput_ = {
+        .column = input.column,
+        .row = input.row,
+        .surfaceX = input.surfaceX,
+        .surfaceY = input.surfaceY,
+        .rectangular = input.rectangular,
+    };
+    const bool selectionChanged = vt_->beginSelection(input);
+    syncSelectionAutoscroll();
+    if (selectionChanged) {
         syncSelectionAvailability();
         scheduleFrame();
     }
@@ -2472,9 +2500,15 @@ void SessionWorker::beginSelection(const TerminalSelectionPressInput &input)
 
 void SessionWorker::updateSelection(const TerminalSelectionDragInput &input)
 {
-    if (vt_ != nullptr && vt_->updateSelection(input)) {
-        // Selection dragging may scroll the viewport atomically inside
-        // libghostty, invalidating viewport-relative hyperlink coordinates.
+    if (vt_ == nullptr) {
+        stopSelectionAutoscroll();
+        return;
+    }
+
+    selectionAutoscrollInput_ = input;
+    const bool selectionChanged = vt_->updateSelection(input);
+    syncSelectionAutoscroll();
+    if (selectionChanged) {
         markTerminalContentChanged();
         if (searchState_->active) {
             rebuildSearchVisibleCells();
@@ -2490,8 +2524,69 @@ void SessionWorker::endSelection(int column, int row)
 {
     if (vt_ != nullptr) {
         vt_->endSelection(column, row);
+        stopSelectionAutoscroll();
         syncSelectionAvailability();
         copySelectionOnSelect();
+    } else {
+        stopSelectionAutoscroll();
+    }
+}
+
+void SessionWorker::cancelSelectionGesture()
+{
+    stopSelectionAutoscroll();
+    if (vt_ != nullptr) {
+        // Pointer capture was revoked without a release. Preserve the
+        // selection reached so far, but discard the tracked anchor and
+        // multi-click history so neither can resume on a later pointer event.
+        vt_->resetSelectionGesture();
+    }
+}
+
+void SessionWorker::selectionAutoscrollTick()
+{
+    if (vt_ == nullptr || !selectionAutoscrollInput_.has_value()
+        || vt_->selectionAutoscrollTick(*selectionAutoscrollInput_)
+            != GhosttyVtAdapter::SelectionAutoscrollTickResult::Mutated) {
+        stopSelectionAutoscroll();
+        return;
+    }
+
+    // Ghostty scrolls exactly one viewport row before resolving the selection
+    // endpoint against the newly visible content. Treat each accepted tick as
+    // both a viewport and selection mutation even when the installed range is
+    // unchanged at a scroll boundary.
+    markTerminalContentChanged();
+    if (searchState_->active) {
+        rebuildSearchVisibleCells();
+        publishSearchUpdate();
+    }
+    syncSelectionAvailability();
+    noteCompressionActivity();
+    scheduleFrame();
+    syncSelectionAutoscroll();
+}
+
+void SessionWorker::syncSelectionAutoscroll()
+{
+    const bool active = vt_ != nullptr && selectionAutoscrollInput_.has_value()
+        && vt_->selectionAutoscrollDirection()
+            != GhosttyVtAdapter::SelectionAutoscrollDirection::None;
+    if (!active) {
+        stopSelectionAutoscroll();
+        return;
+    }
+    if (selectionAutoscrollTimer_ != nullptr
+        && !selectionAutoscrollTimer_->isActive()) {
+        selectionAutoscrollTimer_->start();
+    }
+}
+
+void SessionWorker::stopSelectionAutoscroll()
+{
+    selectionAutoscrollInput_.reset();
+    if (selectionAutoscrollTimer_ != nullptr) {
+        selectionAutoscrollTimer_->stop();
     }
 }
 
@@ -3805,6 +3900,7 @@ void SessionWorker::shutdown()
     if (compressionTimer_ != nullptr) {
         compressionTimer_->stop();
     }
+    stopSelectionAutoscroll();
     compressionTraversalPending_ = false;
     compressionReplayPending_ = false;
 
@@ -3842,6 +3938,7 @@ void SessionWorker::shutdown()
 
 void SessionWorker::destroyTerminal()
 {
+    stopSelectionAutoscroll();
     // Tracked references mutate libghostty bookkeeping when freed. Keep that
     // work serialized on this worker and release every lease before the
     // terminal handle itself is destroyed.
