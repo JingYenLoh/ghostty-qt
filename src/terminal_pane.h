@@ -102,7 +102,9 @@ public:
             TerminalSessionStartMode::Immediate,
         std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator =
             {},
-        std::optional<GhosttyKeybindProgram> keybindProgram = std::nullopt);
+        std::optional<GhosttyKeybindProgram> keybindProgram = std::nullopt,
+        std::optional<TerminalCommand> firstSessionCommandOverride =
+            std::nullopt);
     ~TerminalPane() override;
 
     QString title() const;

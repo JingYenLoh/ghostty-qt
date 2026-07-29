@@ -1,4 +1,5 @@
 #include "ghostty_application_keybindings.h"
+#include "initial_session_coordinator.h"
 #include "launch_options.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_controller.h"
@@ -408,6 +409,9 @@ class TerminalWorkspaceTest : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
+    void firstSurfaceOverridesStayPaneLocalAndResolveInitialLease();
+    void closedDeferredFirstSurfaceDoesNotTransferOverrides();
+    void failedFirstSurfaceOverrideReleasesInitialLease();
     void projectsWindowAppearanceAndSubtitle();
     void typographyReloadReachesLiveAndFuturePanes();
     void backgroundOpacityReloadIsPaneLocalAndInherited();
@@ -562,6 +566,222 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
         third.pane->findChild<TerminalController *>();
     QVERIFY(thirdController != nullptr);
     QVERIFY(thirdController->sessionStarted());
+}
+
+void TerminalWorkspaceTest::
+    firstSurfaceOverridesStayPaneLocalAndResolveInitialLease()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir overrideDirectory(QDir::current().filePath(
+        QStringLiteral("tmp/first-surface-overrides-XXXXXX")));
+    QVERIFY(overrideDirectory.isValid());
+
+    const TerminalCommand ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("29"),
+    });
+    const TerminalCommand initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("28"),
+    });
+    const TerminalCommand remoteCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("30"),
+    });
+
+    LaunchOptions options = baseOptions();
+    const QString ordinaryDirectory = options.workingDirectory;
+    options.ordinaryCommand = ordinaryCommand;
+    options.tabInheritWorkingDirectory = false;
+    options.splitInheritWorkingDirectory = false;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const auto coordinator = std::make_shared<InitialSessionCoordinator>(
+        InitialSessionCoordinator::Payload{
+            .command = initialCommand,
+            .hold = true,
+        });
+    TerminalWorkspace workspace;
+    workspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(workspace.initialize(
+        options, TerminalSessionStartMode::Immediate, coordinator,
+        FirstSurfaceOverrides{
+            .command = remoteCommand,
+            .workingDirectory = overrideDirectory.path(),
+            .titleOverride = QString{},
+        }));
+
+    const CurrentTabProbe first = currentTabProbe(workspace);
+    QVERIFY(first.pane != nullptr);
+    const auto *firstController = first.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QCOMPARE(firstController->launchProgram(), QStringList{});
+    QCOMPARE(firstController->launchCommand(),
+             std::optional<TerminalCommand>(remoteCommand));
+    QVERIFY(!firstController->launchHold());
+    QCOMPARE(first.pane->currentDirectory(), overrideDirectory.path());
+    QCOMPARE(first.pane->surfaceTitleOverride(),
+             std::optional<QString>(QString{}));
+    QVERIFY(first.pane->title().isEmpty());
+    QCOMPARE(workspace.effectiveLaunchOptions(), options);
+    QTRY_COMPARE_WITH_TIMEOUT(coordinator->state(),
+                              InitialSessionCoordinator::State::Consumed, 2000);
+
+    workspace.newTab();
+    const CurrentTabProbe laterTab = currentTabProbe(workspace);
+    QVERIFY(laterTab.pane != nullptr);
+    QVERIFY(laterTab.pane != first.pane);
+    const auto *tabController =
+        laterTab.pane->findChild<TerminalController *>();
+    QVERIFY(tabController != nullptr);
+    QCOMPARE(tabController->launchCommand(),
+             std::optional<TerminalCommand>(ordinaryCommand));
+    QCOMPARE(laterTab.pane->currentDirectory(), ordinaryDirectory);
+    QVERIFY(!laterTab.pane->surfaceTitleOverride().has_value());
+
+    const CurrentTabProbe laterSplit = splitRightProbe(workspace);
+    QVERIFY(laterSplit.pane != nullptr);
+    const auto *splitController =
+        laterSplit.pane->findChild<TerminalController *>();
+    QVERIFY(splitController != nullptr);
+    QCOMPARE(splitController->launchCommand(),
+             std::optional<TerminalCommand>(ordinaryCommand));
+    QCOMPARE(laterSplit.pane->currentDirectory(), ordinaryDirectory);
+    QVERIFY(!laterSplit.pane->surfaceTitleOverride().has_value());
+}
+
+void TerminalWorkspaceTest::closedDeferredFirstSurfaceDoesNotTransferOverrides()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    const TerminalCommand ordinaryCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/true"),
+        QByteArrayLiteral("ordinary"),
+    });
+    const TerminalCommand initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/true"),
+        QByteArrayLiteral("process-initial"),
+    });
+    const TerminalCommand remoteCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/true"),
+        QByteArrayLiteral("remote-window"),
+    });
+
+    LaunchOptions options = baseOptions();
+    options.ordinaryCommand = ordinaryCommand;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    const auto coordinator = std::make_shared<InitialSessionCoordinator>(
+        InitialSessionCoordinator::Payload{
+            .command = initialCommand,
+        });
+    TerminalWorkspace deferredWorkspace;
+    deferredWorkspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(deferredWorkspace.initialize(
+        options, TerminalSessionStartMode::Deferred, coordinator,
+        FirstSurfaceOverrides{
+            .command = remoteCommand,
+            .workingDirectory = QStringLiteral("/"),
+            .titleOverride = QStringLiteral("remote"),
+        }));
+
+    const CurrentTabProbe first = currentTabProbe(deferredWorkspace);
+    QVERIFY(first.pane != nullptr);
+    const auto *firstController = first.pane->findChild<TerminalController *>();
+    QVERIFY(firstController != nullptr);
+    QVERIFY(!firstController->sessionStarted());
+    QCOMPARE(firstController->launchCommand(),
+             std::optional<TerminalCommand>(remoteCommand));
+    QCOMPARE(first.pane->currentDirectory(), QStringLiteral("/"));
+    QCOMPARE(first.pane->surfaceTitleOverride(),
+             std::optional<QString>(QStringLiteral("remote")));
+    QCOMPARE(coordinator->state(), InitialSessionCoordinator::State::Available);
+
+    deferredWorkspace.closeActivePane();
+    QCOMPARE(deferredWorkspace.tabCount(), 0);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(!deferredWorkspace.armInitialSessionStart());
+    QCOMPARE(coordinator->state(), InitialSessionCoordinator::State::Available);
+
+    TerminalWorkspace replacementWorkspace;
+    replacementWorkspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(replacementWorkspace.initialize(
+        options, TerminalSessionStartMode::Immediate, coordinator));
+    const CurrentTabProbe replacement = currentTabProbe(replacementWorkspace);
+    QVERIFY(replacement.pane != nullptr);
+    const auto *replacementController =
+        replacement.pane->findChild<TerminalController *>();
+    QVERIFY(replacementController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(replacementController->sessionStarted(), 2000);
+    QCOMPARE(replacementController->launchCommand(),
+             std::optional<TerminalCommand>(initialCommand));
+    QVERIFY(!replacement.pane->surfaceTitleOverride().has_value());
+    QTRY_COMPARE_WITH_TIMEOUT(coordinator->state(),
+                              InitialSessionCoordinator::State::Consumed, 2000);
+}
+
+void TerminalWorkspaceTest::failedFirstSurfaceOverrideReleasesInitialLease()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    const TerminalCommand initialCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/true"),
+        QByteArrayLiteral("process-initial"),
+    });
+    const TerminalCommand remoteCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/true"),
+        QByteArrayLiteral("remote-window"),
+    });
+    const auto coordinator = std::make_shared<InitialSessionCoordinator>(
+        InitialSessionCoordinator::Payload{
+            .command = initialCommand,
+        });
+    const InitialSessionCoordinator::RequestResult blocker =
+        coordinator->request();
+    QVERIFY(blocker.granted());
+
+    LaunchOptions invalid = baseOptions();
+    invalid.appearance.foregroundColor = QColor{};
+    invalid.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(invalid);
+    TerminalWorkspace rejectedWorkspace;
+    rejectedWorkspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(rejectedWorkspace.initialize(
+        invalid, TerminalSessionStartMode::Immediate, coordinator,
+        FirstSurfaceOverrides{.command = remoteCommand}));
+    const CurrentTabProbe rejected = currentTabProbe(rejectedWorkspace);
+    QVERIFY(rejected.pane != nullptr);
+    auto *rejectedController = rejected.pane->findChild<TerminalController *>();
+    QVERIFY(rejectedController != nullptr);
+    QVERIFY(!rejectedController->sessionStarted());
+    QCOMPARE(rejectedController->launchCommand(),
+             std::optional<TerminalCommand>(remoteCommand));
+    QSignalSpy rejectedErrors(rejectedController,
+                              &TerminalController::errorOccurred);
+
+    QVERIFY(coordinator->release(blocker.ticket));
+    QTRY_COMPARE_WITH_TIMEOUT(rejectedErrors.count(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(coordinator->state(),
+                              InitialSessionCoordinator::State::Available,
+                              2000);
+
+    LaunchOptions valid = baseOptions();
+    valid.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(valid);
+    TerminalWorkspace acceptedWorkspace;
+    acceptedWorkspace.setSize(QSizeF(640.0, 360.0));
+    QVERIFY(acceptedWorkspace.initialize(
+        valid, TerminalSessionStartMode::Immediate, coordinator));
+    const CurrentTabProbe accepted = currentTabProbe(acceptedWorkspace);
+    QVERIFY(accepted.pane != nullptr);
+    auto *acceptedController = accepted.pane->findChild<TerminalController *>();
+    QVERIFY(acceptedController != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(acceptedController->sessionStarted(), 2000);
+    QCOMPARE(acceptedController->launchCommand(),
+             std::optional<TerminalCommand>(initialCommand));
+    QTRY_COMPARE_WITH_TIMEOUT(coordinator->state(),
+                              InitialSessionCoordinator::State::Consumed, 2000);
 }
 
 void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()

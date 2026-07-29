@@ -68,6 +68,12 @@ selectGhosttyCliAction(std::span<char *const> arguments) noexcept
     }
 
     if (selected == nullptr) return {};
+    if (selected->isApplicationIpc()) {
+        return {
+            .disposition = GhosttyCliActionDisposition::ApplicationIpc,
+            .argument = selectedArgument,
+        };
+    }
     return {
         .disposition = selected->isDelegated()
             ? GhosttyCliActionDisposition::Delegate

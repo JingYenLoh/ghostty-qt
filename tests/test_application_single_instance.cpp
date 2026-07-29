@@ -176,6 +176,10 @@ private Q_SLOTS:
     void execFallbackForwardsLauncherPlatformData();
     void explicitZeroWindowHostSupportsStandardActivation();
     void dbusColdStartsZeroWindowHost();
+    void warmHostAcceptsGhosttyCliApplicationActions_data();
+    void warmHostAcceptsGhosttyCliApplicationActions();
+    void ghosttyCliActionColdStartsService_data();
+    void ghosttyCliActionColdStartsService();
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED
     void residentPrimaryIsReactivatedByBareSecondLaunch();
     void falseLauncherLeavesPrimaryAtZeroUntilTrueLauncherActivates();
@@ -338,6 +342,149 @@ void ApplicationSingleInstanceTest::dbusColdStartsZeroWindowHost()
         QVERIFY(reply.arguments().isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(!serviceHasOwner(bus), 10'000);
     }
+}
+
+void ApplicationSingleInstanceTest::
+    warmHostAcceptsGhosttyCliApplicationActions_data()
+{
+    QTest::addColumn<QStringList>("arguments");
+    QTest::newRow("new-window") << QStringList{
+        QStringLiteral("+new-window"), QStringLiteral("--title=remote title"),
+        QStringLiteral("-e"),          QStringLiteral("/bin/sleep"),
+        QStringLiteral("1"),
+    };
+    QTest::newRow("toggle-quick-terminal") << QStringList{
+        QStringLiteral("+toggle-quick-terminal"),
+        QStringLiteral("--class=org.example.DeliberatelyIgnored"),
+    };
+}
+
+void ApplicationSingleInstanceTest::
+    warmHostAcceptsGhosttyCliApplicationActions()
+{
+    QFETCH(QStringList, arguments);
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir configHome(QDir::current().filePath(
+        QStringLiteral("tmp/application-action-warm-XXXXXX")));
+    QVERIFY(configHome.isValid());
+    QVERIFY(writeGhosttyConfig(
+        configHome.path(),
+        QByteArrayLiteral("initial-window = true\n"
+                          "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome.path(), QByteArrayLiteral("single-instance = false\n")));
+
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(), qPrintable(bus.errorString()));
+    QProcessEnvironment environment =
+        applicationEnvironment(bus, configHome.path());
+    environment.insert(QStringLiteral("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION"),
+                       QStringLiteral("1"));
+
+    QProcess primary;
+    primary.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    primary.setArguments({QStringLiteral("--single-instance=true"),
+                          QStringLiteral("--initial-window=false")});
+    primary.setProcessEnvironment(environment);
+    primary.start();
+    QVERIFY(primary.waitForStarted(3000));
+    const auto cleanup = qScopeGuard([&primary] {
+        if (primary.state() == QProcess::NotRunning) return;
+        primary.kill();
+        primary.waitForFinished(3000);
+    });
+
+    QByteArray output;
+    QVERIFY2(waitForMarker(
+                 primary, output,
+                 QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_READY"), 10'000),
+             qPrintable(processFailure(primary, output)));
+    QVERIFY(serviceHasOwner(bus));
+
+    QProcess client;
+    client.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    client.setArguments(arguments);
+    client.setProcessEnvironment(environment);
+    client.start();
+    QVERIFY(client.waitForStarted(3000));
+    QVERIFY2(
+        client.waitForFinished(15'000),
+        qPrintable(processFailure(client, client.readAllStandardOutput())));
+    QCOMPARE(client.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(client.exitCode(), 0);
+
+    QVERIFY2(
+        waitForMarker(primary, output,
+                      QByteArrayView("GHOSTTY_QT_DESKTOP_ACTIVATION_CREATED"),
+                      10'000),
+        qPrintable(processFailure(primary, output)));
+    QVERIFY2(primary.waitForFinished(10'000),
+             qPrintable(processFailure(primary, output)));
+    QCOMPARE(primary.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(primary.exitCode(), 0);
+}
+
+void ApplicationSingleInstanceTest::ghosttyCliActionColdStartsService_data()
+{
+    QTest::addColumn<QStringList>("arguments");
+    QTest::newRow("new-window") << QStringList{
+        QStringLiteral("+new-window"),
+        QStringLiteral("--title=cold"),
+        QStringLiteral("-e"),
+        QStringLiteral("/bin/true"),
+    };
+    QTest::newRow("toggle-quick-terminal")
+        << QStringList{QStringLiteral("+toggle-quick-terminal")};
+}
+
+void ApplicationSingleInstanceTest::ghosttyCliActionColdStartsService()
+{
+    QFETCH(QStringList, arguments);
+    if (QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"))
+            .isEmpty()) {
+        QSKIP("dbus-daemon is unavailable");
+    }
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir activationRoot(QDir::current().filePath(
+        QStringLiteral("tmp/application-action-cold-XXXXXX")));
+    QVERIFY(activationRoot.isValid());
+    const QDir root(activationRoot.path());
+    const QString dataHome = root.filePath(QStringLiteral("data"));
+    const QString configHome = root.filePath(QStringLiteral("config"));
+    QVERIFY(writeActivationService(dataHome));
+    QVERIFY(writeGhosttyConfig(
+        configHome,
+        QByteArrayLiteral("initial-window = true\n"
+                          "confirm-close-surface = false\n")));
+    QVERIFY(writeFrontendConfig(
+        configHome, QByteArrayLiteral("single-instance = false\n")));
+
+    QProcessEnvironment daemonEnvironment =
+        headlessApplicationEnvironment(configHome);
+    daemonEnvironment.insert(QStringLiteral("XDG_DATA_HOME"), dataHome);
+    daemonEnvironment.insert(
+        QStringLiteral("GHOSTTY_QT_TEST_DESKTOP_ACTIVATION"),
+        QStringLiteral("1"));
+    PrivateSessionBus bus;
+    QVERIFY2(bus.start(daemonEnvironment), qPrintable(bus.errorString()));
+    QVERIFY(!serviceHasOwner(bus));
+
+    QProcess client;
+    client.setProgram(QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE));
+    client.setArguments(arguments);
+    client.setProcessEnvironment(applicationEnvironment(bus, configHome));
+    client.start();
+    QVERIFY(client.waitForStarted(3000));
+    QVERIFY2(
+        client.waitForFinished(15'000),
+        qPrintable(processFailure(client, client.readAllStandardOutput())));
+    QCOMPARE(client.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(client.exitCode(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(!serviceHasOwner(bus), 10'000);
 }
 
 #if GHOSTTY_QT_TEST_CONFIG_ENABLED

@@ -2,6 +2,7 @@
 
 #include "desktop_activation.h"
 #include "ghostty_action_catalog.h"
+#include "ghostty_application_ipc.h"
 #include "ghostty_application_keybindings.h"
 #include "initial_session_coordinator.h"
 #include "quick_terminal_surface.h"
@@ -336,10 +337,46 @@ bool ApplicationController::activateNoCommand(
     return false;
 }
 
-std::expected<ApplicationWindow, QString>
-ApplicationController::createWindow(LaunchOptions options,
-                                    const DesktopActivationContext &activation,
-                                    QScreen *preferredScreen, WindowRole role)
+bool ApplicationController::activateNewWindow(
+    GhosttyNewWindowTransportOverrides overrides,
+    DesktopActivationContext activation)
+{
+    if (!startupWindowHandled_) {
+        Q_EMIT windowCreationFailed(QStringLiteral(
+            "Application action arrived before the startup window decision"));
+        return false;
+    }
+
+    FirstSurfaceOverrides firstSurface{
+        .command = std::move(overrides.command),
+        .workingDirectory = std::move(overrides.workingDirectory),
+        .titleOverride = std::move(overrides.titleOverride),
+    };
+
+    const QPointer<ApplicationController> guard(this);
+    auto created = createWindow(effectiveOptions_, activation, nullptr,
+                                WindowRole::Normal, &firstSurface);
+    if (guard == nullptr) return false;
+    if (created.has_value()) return true;
+    Q_EMIT windowCreationFailed(created.error());
+    return false;
+}
+
+bool ApplicationController::activateQuickTerminal(
+    DesktopActivationContext activation)
+{
+    if (!startupWindowHandled_) {
+        Q_EMIT windowCreationFailed(QStringLiteral(
+            "Application action arrived before the startup window decision"));
+        return false;
+    }
+    return toggleQuickTerminal(activation);
+}
+
+std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
+    LaunchOptions options, const DesktopActivationContext &activation,
+    QScreen *preferredScreen, WindowRole role,
+    const FirstSurfaceOverrides *firstSurfaceOverrides)
 {
     if (windowCreationInProgress_) {
         return std::unexpected(QStringLiteral(
@@ -482,7 +519,9 @@ ApplicationController::createWindow(LaunchOptions options,
         : TerminalSessionStartMode::Immediate;
     const bool initialized = guardedWorkspace->initialize(
         withoutInitialCommand(options), initialSessionStartMode,
-        initialSessionCoordinator_, requestedKeybindProgram);
+        initialSessionCoordinator_, requestedKeybindProgram,
+        firstSurfaceOverrides != nullptr ? *firstSurfaceOverrides
+                                         : FirstSurfaceOverrides{});
     // The initial-window request and first successful session initialization
     // are independent one-shot decisions. Reaching workspace initialization
     // handles startup even if presentation later destroys the GUI pair.
@@ -646,7 +685,8 @@ QScreen *ApplicationController::quickTerminalSizingScreen() const
     return QGuiApplication::primaryScreen();
 }
 
-bool ApplicationController::toggleQuickTerminal()
+bool ApplicationController::toggleQuickTerminal(
+    const DesktopActivationContext &activation)
 {
     const QPointer<ApplicationController> guard(this);
     if (WindowRecord *record = quickTerminalRecord()) {
@@ -682,14 +722,15 @@ bool ApplicationController::toggleQuickTerminal()
             || record->workspace != workspace) {
             return false;
         }
-        showWindowWithActivation(*window, {}, WindowPresentationMode::Windowed);
+        showWindowWithActivation(*window, activation,
+                                 WindowPresentationMode::Windowed);
         if (guard == nullptr || window == nullptr || workspace == nullptr) {
             return true;
         }
         if (effectiveOptions_.applicationShell.quickTerminal
                 .keyboardInteractivity
             != QuickTerminalKeyboardInteractivity::None) {
-            window->requestActivate();
+            if (activation.isEmpty()) window->requestActivate();
             if (guard == nullptr || window == nullptr || workspace == nullptr) {
                 return true;
             }
@@ -703,8 +744,8 @@ bool ApplicationController::toggleQuickTerminal()
         return true;
     }
 
-    auto created =
-        createWindow(effectiveOptions_, {}, nullptr, WindowRole::QuickTerminal);
+    auto created = createWindow(effectiveOptions_, activation, nullptr,
+                                WindowRole::QuickTerminal);
     if (guard == nullptr) return false;
     if (!created.has_value()) {
         Q_EMIT windowCreationFailed(created.error());
@@ -727,10 +768,21 @@ ApplicationController::syncQuickTerminal(WindowRecord &record)
         return std::unexpected(
             QStringLiteral("No screen is available for the quick terminal"));
     }
-    auto synchronized = record.quickTerminalSurface->syncOptions(
-        effectiveOptions_.applicationShell.quickTerminal, *screen);
+    const WindowId windowId = record.id;
+    const QPointer<QuickTerminalSurface> surface(
+        record.quickTerminalSurface.get());
+    const QuickTerminalOptions options =
+        effectiveOptions_.applicationShell.quickTerminal;
+    const QPointer<ApplicationController> guard(this);
+    auto synchronized = surface->syncOptions(options, *screen);
+    if (guard == nullptr) return synchronized;
     if (!synchronized) return synchronized;
-    updateQuickTerminalAutohide(record);
+    WindowRecord *const current = recordForWindowId(windowId);
+    if (current == nullptr || current->quickTerminalSurface.get() != surface) {
+        return std::unexpected(QStringLiteral(
+            "The quick-terminal window was retired while applying options"));
+    }
+    updateQuickTerminalAutohide(*current);
     return {};
 }
 
@@ -1009,20 +1061,174 @@ void ApplicationController::syncApplicationShell()
         if (record == nullptr) continue;
 
         if (record->ui != nullptr) {
-            record->ui->replaceCommandPaletteEntries(palette);
+            if (record->ui->commandPaletteVisible()) {
+                const WindowId windowId = record->id;
+                refreshCommandPalette(windowId);
+            } else {
+                record->ui->replaceCommandPaletteEntries(palette);
+            }
             if (guard == nullptr) return;
             record = recordForWindow(window.window);
             if (record == nullptr) continue;
         }
 
         if (record->role == WindowRole::QuickTerminal) {
-            if (auto synchronized = syncQuickTerminal(*record); !synchronized) {
+            auto synchronized = syncQuickTerminal(*record);
+            if (guard == nullptr) return;
+            if (!synchronized) {
                 const QString error = synchronized.error();
                 Q_EMIT windowCreationFailed(error);
                 if (guard == nullptr) return;
             }
         }
     }
+}
+
+void ApplicationController::refreshCommandPalette(WindowId sourceWindowId)
+{
+    WindowRecord *source = recordForWindowId(sourceWindowId);
+    if (source == nullptr || source->ui == nullptr) return;
+
+    QVector<CommandPaletteEntry> configured =
+        executableCommandPaletteEntries(effectiveOptions_);
+    QVector<CommandPaletteRow> rows;
+    rows.reserve(configured.size());
+    for (CommandPaletteEntry &entry : configured) {
+        rows.append({
+            .title = std::move(entry.title),
+            .description = std::move(entry.description),
+            .actionKey = std::move(entry.actionKey),
+            .command = std::move(entry.action),
+        });
+    }
+
+    for (const WindowRecord &record : std::as_const(windows_)) {
+        if (record.window == nullptr || record.workspace == nullptr) continue;
+        const QVector<WorkspaceSurfaceSnapshot> surfaces =
+            record.workspace->surfaceSnapshot();
+        rows.reserve(rows.size() + surfaces.size());
+        for (const WorkspaceSurfaceSnapshot &surface : surfaces) {
+            const QString effective =
+                surface.effectiveTitle.value_or(QStringLiteral("Untitled"));
+            rows.append({
+                .title = QStringLiteral("Focus: ") + effective,
+                .description = !surface.currentDirectory.isEmpty()
+                        && !effective.contains(surface.currentDirectory,
+                                               Qt::CaseSensitive)
+                    ? surface.currentDirectory
+                    : QString{},
+                .actionKey = {},
+                .command =
+                    SurfaceTarget{
+                        .windowId = record.id,
+                        .paneId = surface.paneId,
+                    },
+            });
+        }
+    }
+
+    // Sampling titles/cwds is synchronous but may invoke user-observable Qt
+    // accessors in future implementations. Re-resolve the source before
+    // publishing the new model.
+    source = recordForWindowId(sourceWindowId);
+    if (source != nullptr && source->ui != nullptr) {
+        source->ui->replaceCommandPaletteRows(std::move(rows));
+    }
+}
+
+bool ApplicationController::executePaletteAction(WindowId sourceWindowId,
+                                                 const QString &action)
+{
+    WindowRecord *const source = recordForWindowId(sourceWindowId);
+    return source != nullptr && source->workspace != nullptr
+        && source->workspace->executeActiveConfiguredAction(action);
+}
+
+bool ApplicationController::presentSurface(SurfaceTarget target)
+{
+    if (!target.isValid()) return false;
+    const QPointer<ApplicationController> guard(this);
+    WindowRecord *record = recordForWindowId(target.windowId);
+    if (record == nullptr || record->window == nullptr
+        || record->workspace == nullptr
+        || !record->workspace->containsPane(target.paneId)) {
+        return false;
+    }
+
+    const QPointer<QQuickWindow> window(record->window);
+    const QPointer<TerminalWorkspace> workspace(record->workspace);
+    const bool initiallyFocused =
+        workspace->focusPaneForFrontend(target.paneId);
+    if (guard == nullptr) return initiallyFocused;
+    if (!initiallyFocused) return false;
+
+    record = recordForWindowId(target.windowId);
+    if (record == nullptr || record->window != window
+        || record->workspace != workspace || window == nullptr
+        || workspace == nullptr || !workspace->containsPane(target.paneId)) {
+        return false;
+    }
+
+    if (record->role == WindowRole::QuickTerminal) {
+        if (!window->isVisible()) {
+            record->quickTerminalActivationAcknowledged = false;
+            if (record->quickTerminalAutohideTimer != nullptr) {
+                record->quickTerminalAutohideTimer->stop();
+            }
+            auto synchronized = syncQuickTerminal(*record);
+            if (guard == nullptr) return synchronized.has_value();
+            if (!synchronized) {
+                Q_EMIT windowCreationFailed(synchronized.error());
+                return false;
+            }
+            record = recordForWindowId(target.windowId);
+            if (record == nullptr || record->window != window
+                || record->workspace != workspace || window == nullptr
+                || workspace == nullptr) {
+                return false;
+            }
+            showWindowWithActivation(*window, {},
+                                     WindowPresentationMode::Windowed);
+            if (guard == nullptr) return true;
+        }
+
+        if (window == nullptr || workspace == nullptr) return true;
+        if (effectiveOptions_.applicationShell.quickTerminal
+                .keyboardInteractivity
+            != QuickTerminalKeyboardInteractivity::None) {
+            window->requestActivate();
+            if (guard == nullptr || window == nullptr || workspace == nullptr) {
+                return true;
+            }
+            const bool refocused =
+                workspace->focusPaneForFrontend(target.paneId);
+            if (guard == nullptr) return refocused;
+        }
+        if (WindowRecord *const current = recordForWindowId(target.windowId)) {
+            updateQuickTerminalAutohide(*current);
+        }
+        return true;
+    }
+
+    if (window->windowStates().testFlag(Qt::WindowMinimized)) {
+        window->setWindowStates(window->windowStates() & ~Qt::WindowMinimized);
+        if (guard == nullptr || window == nullptr || workspace == nullptr) {
+            return true;
+        }
+    }
+    if (!window->isVisible()) {
+        window->show();
+        if (guard == nullptr || window == nullptr || workspace == nullptr) {
+            return true;
+        }
+    }
+    window->requestActivate();
+    if (guard == nullptr || window == nullptr || workspace == nullptr) {
+        return true;
+    }
+    const bool refocused = workspace->focusPaneForFrontend(target.paneId);
+    if (guard == nullptr) return refocused;
+    return true;
 }
 
 void ApplicationController::notifyConfigurationReloaded()
@@ -1124,6 +1330,14 @@ ApplicationController::recordForWorkspace(TerminalWorkspace *workspace)
 }
 
 ApplicationController::WindowRecord *
+ApplicationController::recordForWindowId(WindowId id)
+{
+    if (!id.isValid()) return nullptr;
+    const auto record = std::ranges::find(windows_, id, &WindowRecord::id);
+    return record == windows_.end() ? nullptr : std::addressof(*record);
+}
+
+ApplicationController::WindowRecord *
 ApplicationController::quickTerminalRecord()
 {
     const auto record =
@@ -1168,9 +1382,35 @@ void ApplicationController::registerWindow(
 {
     QQuickWindow *const window = applicationWindow.window;
     TerminalWorkspace *const workspace = applicationWindow.workspace;
+    const WindowId windowId(nextWindowId_++);
+    Q_ASSERT(windowId.isValid());
     auto ui = std::make_unique<WindowUiController>();
     ui->replaceCommandPaletteEntries(
         executableCommandPaletteEntries(effectiveOptions_));
+    const QPointer<ApplicationController> controller(this);
+    ui->setCommandPaletteRefreshCallback([controller, windowId] {
+        if (controller != nullptr) {
+            controller->refreshCommandPalette(windowId);
+        }
+    });
+    ui->setCommandPaletteActivationCallback(
+        [controller, windowId](CommandPaletteCommand command) {
+            if (controller == nullptr) return;
+            std::visit(Overloaded{
+                           [controller, windowId](const QString &action) {
+                               if (controller != nullptr) {
+                                   (void)controller->executePaletteAction(
+                                       windowId, action);
+                               }
+                           },
+                           [controller](SurfaceTarget target) {
+                               if (controller != nullptr) {
+                                   (void)controller->presentSurface(target);
+                               }
+                           },
+                       },
+                       std::move(command));
+        });
     QQmlEngine::setObjectOwnership(ui.get(), QQmlEngine::CppOwnership);
 
     QTimer *autohideTimer = nullptr;
@@ -1180,6 +1420,7 @@ void ApplicationController::registerWindow(
         autohideTimer->setSingleShot(true);
     }
     windows_.push_back({
+        .id = windowId,
         .role = role,
         .window = window,
         .workspace = workspace,

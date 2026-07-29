@@ -8,6 +8,7 @@
 
 enum class GhosttyCliFrontendSupport {
     Delegated,
+    ApplicationIpc,
     Unsupported,
 };
 
@@ -18,6 +19,11 @@ struct GhosttyCliActionCatalogEntry final {
     [[nodiscard]] constexpr bool isDelegated() const noexcept
     {
         return frontendSupport == GhosttyCliFrontendSupport::Delegated;
+    }
+
+    [[nodiscard]] constexpr bool isApplicationIpc() const noexcept
+    {
+        return frontendSupport == GhosttyCliFrontendSupport::ApplicationIpc;
     }
 
     bool operator==(const GhosttyCliActionCatalogEntry &) const = default;
@@ -44,13 +50,14 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+show-face", GhosttyCliFrontendSupport::Unsupported},
         {"+crash-report", GhosttyCliFrontendSupport::Unsupported},
         {"+boo", GhosttyCliFrontendSupport::Unsupported},
-        {"+new-window", GhosttyCliFrontendSupport::Unsupported},
-        {"+toggle-quick-terminal", GhosttyCliFrontendSupport::Unsupported},
+        {"+new-window", GhosttyCliFrontendSupport::ApplicationIpc},
+        {"+toggle-quick-terminal", GhosttyCliFrontendSupport::ApplicationIpc},
     });
 
 enum class GhosttyCliActionDisposition {
     None,
     Delegate,
+    ApplicationIpc,
     Unsupported,
     Multiple,
 };

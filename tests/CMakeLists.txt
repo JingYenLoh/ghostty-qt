@@ -329,6 +329,24 @@ set_tests_properties(ghostty-cli-delegation PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+qt_add_executable(test-ghostty-application-ipc
+    test_ghostty_application_ipc.cpp
+    private_session_bus.h
+)
+target_include_directories(test-ghostty-application-ipc PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-ghostty-application-ipc PRIVATE
+    Qt6::Core
+    Qt6::DBus
+    Qt6::Test
+    ghostty-qt-application-ipc
+)
+add_test(NAME ghostty-application-ipc
+    COMMAND test-ghostty-application-ipc)
+set_tests_properties(ghostty-application-ipc PROPERTIES TIMEOUT 25)
+
 qt_add_executable(test-desktop-activation
     test_desktop_activation.cpp
 )
@@ -439,6 +457,7 @@ target_compile_definitions(test-application-controller PRIVATE
 )
 target_link_libraries(test-application-controller PRIVATE
     Qt6::Core
+    Qt6::DBus
     Qt6::Gui
     Qt6::Quick
     Qt6::Test

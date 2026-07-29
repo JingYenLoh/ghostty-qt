@@ -1,4 +1,5 @@
 #include "application_controller.h"
+#include "ghostty_application_ipc.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_controller.h"
 #include "terminal_geometry.h"
@@ -259,6 +260,18 @@ WindowUiController *windowUiController(QQuickWindow *window)
         : nullptr;
 }
 
+int paletteRowWithTitle(const CommandPaletteModel &model, const QString &title)
+{
+    for (int row = 0; row < model.count(); ++row) {
+        if (model.data(model.index(row, 0), CommandPaletteModel::TitleRole)
+                .toString()
+            == title) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 std::optional<ApplicationWindow>
 quickTerminalWindow(const ApplicationController &controller)
 {
@@ -338,6 +351,9 @@ private Q_SLOTS:
     void integratesQuickTerminalLifecycleAndLiveShellReload();
     void quickTerminalAutohideRequiresActivationAndReloadsLive();
     void routesWindowUiActionsAndNotificationPolicy();
+    void remoteNewWindowOverridesOnlyItsFirstSurface();
+    void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
+    void paletteTargetFocusMayDestroyApplicationController();
     void sharesOneKeybindProgramGenerationAcrossWindows();
     void globalBindingWaitsForPaneReloadTransaction();
     void terminalBarrierWaitsForConfigurationTransaction();
@@ -653,6 +669,299 @@ void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
     // the live clipboard-copy policy on the originating window only.
     Q_EMIT firstPane->standardClipboardCommitted(true);
     QCOMPARE(ui->toastMessage(), QStringLiteral("Cleared clipboard"));
+}
+
+void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()
+{
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/application-remote-window-XXXXXX")));
+    QVERIFY(directory.isValid());
+
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.program = {
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"),
+    };
+    ApplicationController controller(options, harness.factory(), false);
+    QVERIFY(controller.startWithoutInitialWindow());
+
+    const TerminalCommand remoteCommand = TerminalCommand::direct({
+        QByteArrayLiteral("/bin/sleep"),
+        QByteArrayLiteral("30"),
+    });
+    QVERIFY(controller.activateNewWindow({
+        .command = remoteCommand,
+        .workingDirectory = directory.path(),
+        .titleOverride = QString{},
+    }));
+    QCOMPARE(controller.windowCount(), 1);
+    const ApplicationWindow first = controller.windows().constFirst();
+    TerminalPane *const firstPane = onlyPane(first.workspace);
+    TerminalController *const firstTerminal = onlyController(first.workspace);
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(firstTerminal != nullptr);
+    QCOMPARE(firstTerminal->launchProgram(), QStringList{});
+    QCOMPARE(firstTerminal->launchCommand(),
+             std::optional<TerminalCommand>{remoteCommand});
+    QVERIFY(!firstTerminal->launchHold());
+    QCOMPARE(firstTerminal->launchWorkingDirectory(), directory.path());
+    QVERIFY(!firstTerminal->launchInheritsWorkingDirectory());
+    QCOMPARE(firstPane->surfaceTitleOverride(),
+             std::optional<QString>{QString{}});
+
+    first.workspace->newTab();
+    QTRY_COMPARE_WITH_TIMEOUT(first.workspace->tabCount(), 2, 1000);
+    const QList<TerminalPane *> firstWindowPanes =
+        first.workspace->findChildren<TerminalPane *>();
+    QCOMPARE(firstWindowPanes.size(), 2);
+    const auto ordinary =
+        std::ranges::find_if(firstWindowPanes, [firstPane](TerminalPane *pane) {
+            return pane != firstPane;
+        });
+    QVERIFY(ordinary != firstWindowPanes.cend());
+    QCOMPARE((*ordinary)->surfaceTitleOverride(), std::nullopt);
+    TerminalController *const ordinaryTerminal =
+        (*ordinary)->findChild<TerminalController *>();
+    QVERIFY(ordinaryTerminal != nullptr);
+    QVERIFY(ordinaryTerminal->launchCommand() != remoteCommand);
+
+    QVERIFY(controller.activateNewWindow({
+        .command = remoteCommand,
+        .workingDirectory = QStringLiteral("inherit"),
+        .titleOverride = QStringLiteral("inherited"),
+    }));
+    QCOMPARE(controller.windowCount(), 2);
+    TerminalController *const literalInherit =
+        onlyController(controller.windows().constLast().workspace);
+    QVERIFY(literalInherit != nullptr);
+    QCOMPARE(literalInherit->launchWorkingDirectory(),
+             QStringLiteral("inherit"));
+    QVERIFY(!literalInherit->launchInheritsWorkingDirectory());
+    QCOMPARE(literalInherit->launchCommand(),
+             std::optional<TerminalCommand>{remoteCommand});
+
+    QVERIFY(controller.activateNewWindow({
+        .workingDirectory = QStringLiteral("home"),
+    }));
+    QCOMPARE(controller.windowCount(), 3);
+    TerminalController *const literalHome =
+        onlyController(controller.windows().constLast().workspace);
+    QVERIFY(literalHome != nullptr);
+    QCOMPARE(literalHome->launchWorkingDirectory(), QStringLiteral("home"));
+    QVERIFY(!literalHome->launchInheritsWorkingDirectory());
+}
+
+void ApplicationControllerTest::
+    paletteTargetsEveryLiveSurfaceByCompositeIdentity()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.program = {
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"),
+    };
+    options.applicationShell.commandPalette = {{
+        .title = QStringLiteral("Create tab"),
+        .description = QStringLiteral("Configured row"),
+        .actionKey = QStringLiteral("new_tab"),
+        .action = QStringLiteral("new_tab"),
+    }};
+
+    ApplicationController controller(options, harness.factory(), false);
+    const auto first = controller.createInitialWindow();
+    QVERIFY(first.has_value());
+    TerminalPane *const firstPane = onlyPane(first->workspace);
+    QVERIFY(firstPane != nullptr);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:Alpha")));
+    first->workspace->newTab();
+    QTRY_COMPARE_WITH_TIMEOUT(first->workspace->tabCount(), 2, 1000);
+    first->workspace->setCurrentIndex(0);
+
+    QVERIFY(controller.activateNewWindow(GhosttyNewWindowTransportOverrides{}));
+    QCOMPARE(controller.windowCount(), 2);
+    const ApplicationWindow second = controller.windows().constLast();
+    TerminalPane *const secondFirstPane = onlyPane(second.workspace);
+    QVERIFY(secondFirstPane != nullptr);
+    QVERIFY(secondFirstPane->executeConfiguredAction(
+        QStringLiteral("set_surface_title:Alpha")));
+    second.workspace->newTab();
+    QTRY_COMPARE_WITH_TIMEOUT(second.workspace->tabCount(), 2, 1000);
+    const QString targetTitle = QStringLiteral("Target ") + QDir::currentPath();
+    QVERIFY(second.workspace->executeActiveConfiguredAction(
+        QStringLiteral("set_surface_title:") + targetTitle));
+    second.workspace->setCurrentIndex(0);
+
+    QVERIFY(controller.activateNewWindow({
+        .titleOverride = QString{},
+    }));
+    const ApplicationWindow explicitEmpty = controller.windows().constLast();
+
+    QVERIFY(controller.activateQuickTerminal());
+    const std::optional<ApplicationWindow> quick =
+        quickTerminalWindow(controller);
+    QVERIFY(quick.has_value());
+    QVERIFY(quick->workspace->executeActiveConfiguredAction(
+        QStringLiteral("set_surface_title:Quick")));
+    QVERIFY(controller.activateQuickTerminal());
+    QVERIFY(!quick->window->isVisible());
+
+    WindowUiController *const ui = windowUiController(first->window);
+    QVERIFY(ui != nullptr);
+    QCOMPARE(ui->commandPaletteModel()->count(), 1);
+    ui->showCommandPalette();
+    CommandPaletteModel *const model = ui->commandPaletteModel();
+    QCOMPARE(model->count(), 7);
+
+    int alphaRows = 0;
+    for (int row = 0; row < model->count(); ++row) {
+        if (model->data(model->index(row, 0), CommandPaletteModel::TitleRole)
+                .toString()
+            == QStringLiteral("Focus: Alpha")) {
+            ++alphaRows;
+            const auto command = model->commandAt(row);
+            QVERIFY(command.has_value());
+            QVERIFY(std::holds_alternative<SurfaceTarget>(*command));
+        }
+    }
+    QCOMPARE(alphaRows, 2);
+
+    const int untitledRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: Untitled"));
+    QVERIFY(untitledRow >= 0);
+    QCOMPARE(model
+                 ->data(model->index(untitledRow, 0),
+                        CommandPaletteModel::DescriptionRole)
+                 .toString(),
+             QDir::currentPath());
+    const int emptyTitleRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: "));
+    QVERIFY(emptyTitleRow >= 0);
+    QCOMPARE(model
+                 ->data(model->index(emptyTitleRow, 0),
+                        CommandPaletteModel::DescriptionRole)
+                 .toString(),
+             QDir::currentPath());
+
+    LaunchOptions reloaded = options;
+    reloaded.applicationShell.commandPalette = {{
+        .title = QStringLiteral("Reloaded command"),
+        .description = QStringLiteral("Live configured row"),
+        .actionKey = QStringLiteral("new_tab"),
+        .action = QStringLiteral("new_tab"),
+    }};
+    controller.applyLaunchOptions(reloaded);
+    QCOMPARE(model->count(), 7);
+    QVERIFY(paletteRowWithTitle(*model, QStringLiteral("Reloaded command"))
+            >= 0);
+    QCOMPARE(paletteRowWithTitle(*model, QStringLiteral("Create tab")), -1);
+    QVERIFY(paletteRowWithTitle(*model, QStringLiteral("Focus: Untitled"))
+            >= 0);
+    QVERIFY(paletteRowWithTitle(*model, QStringLiteral("Focus: ")) >= 0);
+
+    const int targetRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: ") + targetTitle);
+    QVERIFY(targetRow >= 0);
+    QCOMPARE(model
+                 ->data(model->index(targetRow, 0),
+                        CommandPaletteModel::DescriptionRole)
+                 .toString(),
+             QString{});
+    model->setSelectedIndex(targetRow);
+    ui->closeModal();
+    QVERIFY(ui->activateSelectedCommand());
+    QCOMPARE(second.workspace->currentIndex(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(second.window->isActive(), 1000);
+
+    ui->showCommandPalette();
+    const int quickRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: Quick"));
+    QVERIFY(quickRow >= 0);
+    model->setSelectedIndex(quickRow);
+    ui->closeModal();
+    QVERIFY(ui->activateSelectedCommand());
+    QVERIFY(quick->window->isVisible());
+
+    // A captured target becomes inert when only that pane disappears. It must
+    // not fall through to the still-live pane selected in the same window.
+    second.workspace->newTab();
+    QTRY_COMPARE_WITH_TIMEOUT(second.workspace->tabCount(), 3, 1000);
+    QVERIFY(second.workspace->executeActiveConfiguredAction(
+        QStringLiteral("set_surface_title:Ephemeral")));
+    ui->showCommandPalette();
+    const int ephemeralRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: Ephemeral"));
+    QVERIFY(ephemeralRow >= 0);
+    model->setSelectedIndex(ephemeralRow);
+    ui->closeModal();
+    second.workspace->closeActivePane();
+    QTRY_COMPARE_WITH_TIMEOUT(second.workspace->tabCount(), 2, 2000);
+    second.workspace->setCurrentIndex(0);
+    QVERIFY(ui->activateSelectedCommand());
+    QCOMPARE(second.workspace->currentIndex(), 0);
+
+    // Capture a stable composite target, retire its whole window, then invoke
+    // it. A stale PaneId must not fall through to another window that happens
+    // to own the same workspace-local numeric ID.
+    QVERIFY(controller.activateQuickTerminal());
+    QVERIFY(!quick->window->isVisible());
+    ui->showCommandPalette();
+    const int staleRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: ") + targetTitle);
+    QVERIFY(staleRow >= 0);
+    model->setSelectedIndex(staleRow);
+    ui->closeModal();
+    QPointer<QQuickWindow> retired(second.window);
+    delete second.window;
+    QVERIFY(retired.isNull());
+    QCOMPARE(controller.windowCount(), 3);
+    QVERIFY(ui->activateSelectedCommand());
+    QVERIFY(first->window->isVisible());
+    QVERIFY(!quick->window->isVisible());
+    QVERIFY(explicitEmpty.window->isVisible());
+}
+
+void ApplicationControllerTest::
+    paletteTargetFocusMayDestroyApplicationController()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    options.program = {
+        QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"),
+    };
+
+    auto controller = std::make_unique<ApplicationController>(
+        options, harness.factory(), false);
+    const auto source = controller->createInitialWindow();
+    QVERIFY(source.has_value());
+    QVERIFY(controller->activateNewWindow({
+        .titleOverride = QStringLiteral("Keep controller"),
+    }));
+    const ApplicationWindow target = controller->windows().constLast();
+    target.workspace->newTab();
+    QTRY_COMPARE_WITH_TIMEOUT(target.workspace->tabCount(), 2, 1000);
+    QVERIFY(target.workspace->executeActiveConfiguredAction(
+        QStringLiteral("set_surface_title:Delete controller")));
+    target.workspace->setCurrentIndex(0);
+    WindowUiController *const ui = windowUiController(source->window);
+    QVERIFY(ui != nullptr);
+
+    ui->showCommandPalette();
+    CommandPaletteModel *const model = ui->commandPaletteModel();
+    const int targetRow =
+        paletteRowWithTitle(*model, QStringLiteral("Focus: Delete controller"));
+    QVERIFY(targetRow >= 0);
+    model->setSelectedIndex(targetRow);
+    ui->closeModal();
+
+    QObject::connect(
+        target.workspace, &TerminalWorkspace::currentIndexChanged,
+        target.workspace, [&controller] { controller.reset(); },
+        Qt::SingleShotConnection);
+    QVERIFY(ui->activateSelectedCommand());
+    QVERIFY(controller == nullptr);
 }
 
 void ApplicationControllerTest::configuresInitialWindowStateBeforePresentation_data()

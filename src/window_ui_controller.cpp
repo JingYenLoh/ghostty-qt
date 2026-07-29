@@ -1,5 +1,6 @@
 #include "window_ui_controller.h"
 
+#include <QPointer>
 #include <QVariant>
 
 #include <algorithm>
@@ -37,16 +38,15 @@ int CommandPaletteModel::rowCount(const QModelIndex &parent) const
 
 QVariant CommandPaletteModel::data(const QModelIndex &index, int role) const
 {
-    const CommandPaletteEntry *entry = entryAt(index.row());
-    if (entry == nullptr || index.column() != 0) {
+    const CommandPaletteRow *row = rowAt(index.row());
+    if (row == nullptr || index.column() != 0) {
         return {};
     }
 
     switch (role) {
-    case TitleRole: return entry->title;
-    case DescriptionRole: return entry->description;
-    case ActionKeyRole: return entry->actionKey;
-    case ActionRole: return entry->action;
+    case TitleRole: return row->title;
+    case DescriptionRole: return row->description;
+    case ActionKeyRole: return row->actionKey;
     default: return {};
     }
 }
@@ -57,7 +57,6 @@ QHash<int, QByteArray> CommandPaletteModel::roleNames() const
         {TitleRole, QByteArrayLiteral("title")},
         {DescriptionRole, QByteArrayLiteral("description")},
         {ActionKeyRole, QByteArrayLiteral("actionKey")},
-        {ActionRole, QByteArrayLiteral("action")},
     };
 }
 
@@ -66,10 +65,10 @@ void CommandPaletteModel::setFilter(const QString &filter)
     if (filter_ == filter) {
         return;
     }
-    const QString previousSelectedAction = selectedAction();
+    const auto previousSelection = selectedCommand();
     filter_ = filter;
     Q_EMIT filterChanged();
-    rebuildVisibleRows(previousSelectedAction, false);
+    rebuildVisibleRows(previousSelection, false);
 }
 
 void CommandPaletteModel::setSelectedIndex(int index)
@@ -78,39 +77,60 @@ void CommandPaletteModel::setSelectedIndex(int index)
     updateSelectedIndex(clamped);
 }
 
-QString CommandPaletteModel::selectedAction() const
-{
-    return actionAt(selectedIndex_);
-}
-
-void CommandPaletteModel::replaceEntries(QVector<CommandPaletteEntry> entries)
+void CommandPaletteModel::replaceRows(QVector<CommandPaletteRow> rows)
 {
     QVector<PreparedEntry> prepared;
-    prepared.reserve(entries.size());
+    prepared.reserve(rows.size());
     std::ranges::transform(
-        entries, std::back_inserter(prepared),
-        [](CommandPaletteEntry &entry) { return prepare(std::move(entry)); });
+        rows, std::back_inserter(prepared),
+        [](CommandPaletteRow &row) { return prepare(std::move(row)); });
     std::ranges::sort(prepared, lessThan);
     if (entries_ == prepared) {
         return;
     }
-    const QString preferredAction = selectedAction();
+    const auto preferredSelection = selectedCommand();
     entries_ = std::move(prepared);
-    rebuildVisibleRows(preferredAction, true);
+    rebuildVisibleRows(preferredSelection, true);
 }
 
-const CommandPaletteEntry *CommandPaletteModel::entryAt(int visibleRow) const
+void CommandPaletteModel::replaceEntries(QVector<CommandPaletteEntry> entries)
+{
+    QVector<CommandPaletteRow> rows;
+    rows.reserve(entries.size());
+    std::ranges::transform(entries, std::back_inserter(rows),
+                           [](CommandPaletteEntry &entry) {
+                               return CommandPaletteRow{
+                                   .title = std::move(entry.title),
+                                   .description = std::move(entry.description),
+                                   .actionKey = std::move(entry.actionKey),
+                                   .command = std::move(entry.action),
+                               };
+                           });
+    replaceRows(std::move(rows));
+}
+
+const CommandPaletteRow *CommandPaletteModel::rowAt(int visibleRow) const
 {
     if (visibleRow < 0 || visibleRow >= visibleRows_.size()) {
         return nullptr;
     }
-    return &entries_.at(visibleRows_.at(visibleRow)).entry;
+    return &entries_.at(visibleRows_.at(visibleRow)).row;
 }
 
-QString CommandPaletteModel::actionAt(int visibleRow) const
+std::optional<CommandPaletteCommand>
+CommandPaletteModel::commandAt(int visibleRow) const
 {
-    const CommandPaletteEntry *entry = entryAt(visibleRow);
-    return entry != nullptr ? entry->action : QString{};
+    const CommandPaletteRow *row = rowAt(visibleRow);
+    if (row == nullptr) {
+        return std::nullopt;
+    }
+    return row->command;
+}
+
+std::optional<CommandPaletteCommand>
+CommandPaletteModel::selectedCommand() const
+{
+    return commandAt(selectedIndex_);
 }
 
 void CommandPaletteModel::selectRelative(int delta)
@@ -129,13 +149,17 @@ void CommandPaletteModel::selectRelative(int delta)
 }
 
 CommandPaletteModel::PreparedEntry
-CommandPaletteModel::prepare(CommandPaletteEntry entry)
+CommandPaletteModel::prepare(CommandPaletteRow row)
 {
-    QString sortKey = commandSortKey(entry.title);
-    QString foldedTitle = entry.title.toCaseFolded();
-    QString foldedActionKey = entry.actionKey.toCaseFolded();
+    if (std::holds_alternative<SurfaceTarget>(row.command)) {
+        row.actionKey.clear();
+    }
+
+    QString sortKey = commandSortKey(row.title);
+    QString foldedTitle = row.title.toCaseFolded();
+    QString foldedActionKey = row.actionKey.toCaseFolded();
     return {
-        .entry = std::move(entry),
+        .row = std::move(row),
         .sortKey = std::move(sortKey),
         .foldedTitle = std::move(foldedTitle),
         .foldedActionKey = std::move(foldedActionKey),
@@ -150,28 +174,43 @@ bool CommandPaletteModel::lessThan(const PreparedEntry &left,
         return order < 0;
     }
 
-    // Ghostty's regular-command comparison treats case-insensitive title ties
-    // as equivalent. Complete that ordering so config replacement produces a
-    // deterministic model independent of parser/container iteration order.
-    if (const int order = compareStrings(left.entry.title, right.entry.title);
+    if (const int order = compareStrings(left.row.title, right.row.title);
         order != 0) {
         return order < 0;
     }
-    if (const int order = compareStrings(
-            left.entry.actionKey, right.entry.actionKey, Qt::CaseInsensitive);
-        order != 0) {
-        return order < 0;
+
+    if (left.row.command.index() != right.row.command.index()) {
+        return left.row.command.index() < right.row.command.index();
     }
-    if (const int order =
-            compareStrings(left.entry.actionKey, right.entry.actionKey);
-        order != 0) {
-        return order < 0;
+
+    if (const auto *leftAction = std::get_if<QString>(&left.row.command)) {
+        const auto &rightAction = std::get<QString>(right.row.command);
+        // Ghostty's regular-command comparison treats case-insensitive title
+        // ties as equivalent. Complete that ordering so config replacement is
+        // deterministic regardless of parser/container iteration order.
+        if (const int order = compareStrings(
+                left.row.actionKey, right.row.actionKey, Qt::CaseInsensitive);
+            order != 0) {
+            return order < 0;
+        }
+        if (const int order =
+                compareStrings(left.row.actionKey, right.row.actionKey);
+            order != 0) {
+            return order < 0;
+        }
+        if (const int order = compareStrings(*leftAction, rightAction);
+            order != 0) {
+            return order < 0;
+        }
+    } else {
+        const auto &leftTarget = std::get<SurfaceTarget>(left.row.command);
+        const auto &rightTarget = std::get<SurfaceTarget>(right.row.command);
+        if (leftTarget != rightTarget) {
+            return leftTarget < rightTarget;
+        }
     }
-    if (const int order = compareStrings(left.entry.action, right.entry.action);
-        order != 0) {
-        return order < 0;
-    }
-    return compareStrings(left.entry.description, right.entry.description) < 0;
+
+    return compareStrings(left.row.description, right.row.description) < 0;
 }
 
 bool CommandPaletteModel::matches(const PreparedEntry &entry,
@@ -182,7 +221,8 @@ bool CommandPaletteModel::matches(const PreparedEntry &entry,
 }
 
 void CommandPaletteModel::rebuildVisibleRows(
-    const QString &previousSelectedAction, bool preserveSelectedAction)
+    const std::optional<CommandPaletteCommand> &previousSelection,
+    bool preserveSelection)
 {
     const int previousCount = count();
     const int previousSelectedIndex = selectedIndex_;
@@ -198,10 +238,10 @@ void CommandPaletteModel::rebuildVisibleRows(
         }
     }
     selectedIndex_ = visibleRows_.isEmpty() ? -1 : 0;
-    if (preserveSelectedAction && !previousSelectedAction.isEmpty()) {
+    if (preserveSelection && previousSelection.has_value()) {
         const auto selected =
             std::ranges::find_if(std::as_const(visibleRows_), [&](int row) {
-                return entries_.at(row).entry.action == previousSelectedAction;
+                return entries_.at(row).row.command == *previousSelection;
             });
         if (selected != visibleRows_.cend()) {
             selectedIndex_ = static_cast<int>(
@@ -216,9 +256,6 @@ void CommandPaletteModel::rebuildVisibleRows(
     if (previousSelectedIndex != selectedIndex_) {
         Q_EMIT selectedIndexChanged();
     }
-    if (previousSelectedAction != selectedAction()) {
-        Q_EMIT selectedActionChanged();
-    }
 }
 
 void CommandPaletteModel::updateSelectedIndex(int selectedIndex)
@@ -228,7 +265,6 @@ void CommandPaletteModel::updateSelectedIndex(int selectedIndex)
     }
     selectedIndex_ = selectedIndex;
     Q_EMIT selectedIndexChanged();
-    Q_EMIT selectedActionChanged();
 }
 
 WindowUiController::WindowUiController(QObject *parent)
@@ -241,8 +277,33 @@ void WindowUiController::replaceCommandPaletteEntries(
     commandPaletteModel_.replaceEntries(std::move(entries));
 }
 
+void WindowUiController::replaceCommandPaletteRows(
+    QVector<CommandPaletteRow> rows)
+{
+    commandPaletteModel_.replaceRows(std::move(rows));
+}
+
+void WindowUiController::setCommandPaletteRefreshCallback(
+    CommandPaletteRefreshCallback callback)
+{
+    commandPaletteRefreshCallback_ = std::move(callback);
+}
+
+void WindowUiController::setCommandPaletteActivationCallback(
+    CommandPaletteActivationCallback callback)
+{
+    commandPaletteActivationCallback_ = std::move(callback);
+}
+
 void WindowUiController::showCommandPalette()
 {
+    if (commandPaletteVisible()) {
+        return;
+    }
+    clearPendingPaletteCommand();
+    if (!refreshCommandPalette()) {
+        return;
+    }
     setModal(Modal::CommandPalette);
 }
 
@@ -253,7 +314,12 @@ void WindowUiController::showTabOverview()
 
 void WindowUiController::toggleCommandPalette()
 {
-    setModal(commandPaletteVisible() ? Modal::None : Modal::CommandPalette);
+    if (commandPaletteVisible()) {
+        clearPendingPaletteCommand();
+        setModal(Modal::None);
+        return;
+    }
+    showCommandPalette();
 }
 
 void WindowUiController::toggleTabOverview()
@@ -263,7 +329,28 @@ void WindowUiController::toggleTabOverview()
 
 void WindowUiController::closeModal()
 {
+    if (commandPaletteVisible()) {
+        pendingPaletteCommand_ = commandPaletteModel_.selectedCommand();
+    }
     setModal(Modal::None);
+}
+
+bool WindowUiController::activateSelectedCommand()
+{
+    auto command = std::exchange(pendingPaletteCommand_, std::nullopt);
+    if (!command.has_value() && commandPaletteVisible()) {
+        command = commandPaletteModel_.selectedCommand();
+        setModal(Modal::None);
+    }
+    if (!command.has_value() || !commandPaletteActivationCallback_) {
+        return false;
+    }
+
+    // Copy the callback before invoking it: activation may synchronously close
+    // the window and destroy this controller.
+    auto callback = commandPaletteActivationCallback_;
+    callback(std::move(*command));
+    return true;
 }
 
 QString WindowUiController::toastMessage() const
@@ -360,6 +447,23 @@ QString WindowUiController::toastMessage(ToastKind kind)
         return QStringLiteral("Reloaded the configuration");
     }
     Q_UNREACHABLE_RETURN({});
+}
+
+bool WindowUiController::refreshCommandPalette()
+{
+    if (!commandPaletteRefreshCallback_) {
+        return true;
+    }
+
+    QPointer guard(this);
+    auto callback = commandPaletteRefreshCallback_;
+    callback();
+    return !guard.isNull();
+}
+
+void WindowUiController::clearPendingPaletteCommand()
+{
+    pendingPaletteCommand_.reset();
 }
 
 void WindowUiController::setModal(Modal modal)

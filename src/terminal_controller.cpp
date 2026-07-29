@@ -175,7 +175,8 @@ TerminalController::TerminalController(
     , currentDirectory_(options.inheritWorkingDirectory
                             ? QString{}
                             : options.workingDirectory)
-    , explicitProgram_(hasExplicitCommand(options))
+    , explicitProgram_(options.firstSessionCommandOverride.has_value()
+                       || hasExplicitCommand(options))
 {
     registerMetaTypesOnce<
         TerminalUpdate, TerminalHyperlinkState, TerminalLinkKind,
@@ -191,12 +192,11 @@ TerminalController::TerminalController(
     if (initialSessionCoordinator_ != nullptr) {
         launchOptions_.program.clear();
         launchOptions_.hold = false;
-        explicitProgram_ = launchOptions_.command.has_value()
-            && !launchOptions_.command->defaultShell;
         connect(initialSessionCoordinator_.get(),
                 &InitialSessionCoordinator::requestsChanged, this,
                 &TerminalController::tryStartSession, Qt::QueuedConnection);
     }
+    (void)applyFirstSessionCommandOverride();
     connectWorkerRequestRelays();
 }
 
@@ -517,6 +517,8 @@ void TerminalController::tryStartSession()
             return;
         }
     }
+    launchTitleChanged =
+        applyFirstSessionCommandOverride() || launchTitleChanged;
 
     sessionStartState_ = SessionStartState::Started;
     const bool notifyRunning = !running_;
@@ -560,6 +562,20 @@ bool TerminalController::applyInitialSessionPayload(
     explicitProgram_ = hasExplicitCommand(launchOptions_);
     return launchOptions_.program != previousProgram
         || launchOptions_.command != previousCommand;
+}
+
+bool TerminalController::applyFirstSessionCommandOverride()
+{
+    if (!launchOptions_.firstSessionCommandOverride.has_value()) return false;
+
+    const bool changed = !launchOptions_.program.isEmpty()
+        || launchOptions_.command != launchOptions_.firstSessionCommandOverride
+        || launchOptions_.hold;
+    launchOptions_.program.clear();
+    launchOptions_.command = launchOptions_.firstSessionCommandOverride;
+    launchOptions_.hold = false;
+    explicitProgram_ = true;
+    return changed;
 }
 
 QString TerminalController::launchTitle() const

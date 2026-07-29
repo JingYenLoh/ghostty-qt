@@ -297,11 +297,12 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
 
     for (const GhosttyCliActionCatalogEntry &entry
          : GhosttyPinnedCliActions) {
-        expect({"ghostty-qt", entry.argument},
-               entry.isDelegated()
-                   ? GhosttyCliActionDisposition::Delegate
-                   : GhosttyCliActionDisposition::Unsupported,
-               entry.argument);
+        const GhosttyCliActionDisposition disposition = entry.isDelegated()
+            ? GhosttyCliActionDisposition::Delegate
+            : (entry.isApplicationIpc()
+                   ? GhosttyCliActionDisposition::ApplicationIpc
+                   : GhosttyCliActionDisposition::Unsupported);
+        expect({"ghostty-qt", entry.argument}, disposition, entry.argument);
     }
     expect({"ghostty-qt", "--plain", "+list-colors"},
            GhosttyCliActionDisposition::Delegate, "+list-colors");
@@ -337,6 +338,13 @@ void GhosttyCliDelegationTest::classifiesRawArguments()
            GhosttyCliActionDisposition::Unsupported, "+unknown");
     expect({"ghostty-qt", "+ssh", "--", "destination"},
            GhosttyCliActionDisposition::Delegate, "+ssh");
+    expect({"ghostty-qt", "+new-window", "--title=remote"},
+           GhosttyCliActionDisposition::ApplicationIpc, "+new-window");
+    expect({"ghostty-qt", "+new-window", "-e", "+not-an-action"},
+           GhosttyCliActionDisposition::Multiple, "+not-an-action");
+    expect({"ghostty-qt", "+toggle-quick-terminal", "--class=ignored"},
+           GhosttyCliActionDisposition::ApplicationIpc,
+           "+toggle-quick-terminal");
 
     constexpr std::array InvalidActions{
         "+edit-config=now",

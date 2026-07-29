@@ -28,6 +28,8 @@ class QTimer;
 class QuickTerminalSurface;
 class TerminalWorkspace;
 class WindowUiController;
+struct FirstSurfaceOverrides;
+struct GhosttyNewWindowTransportOverrides;
 struct WorkspaceFrontendActionRequest;
 
 Q_MOC_INCLUDE("terminal_workspace.h")
@@ -69,6 +71,13 @@ public:
     // startWithoutInitialWindow.
     [[nodiscard]] bool
     activateNoCommand(DesktopActivationContext activation = {});
+    // Ghostty application actions are source-less. Their decoded launch
+    // overrides apply only to the newly created window's first surface.
+    [[nodiscard]] bool
+    activateNewWindow(GhosttyNewWindowTransportOverrides overrides,
+                      DesktopActivationContext activation = {});
+    [[nodiscard]] bool
+    activateQuickTerminal(DesktopActivationContext activation = {});
     [[nodiscard]] bool dispatch(ApplicationAction action,
                                 TerminalWorkspace *sourceWorkspace = nullptr,
                                 PaneId sourcePaneId = {});
@@ -107,6 +116,7 @@ private:
     };
 
     struct WindowRecord {
+        WindowId id;
         WindowRole role = WindowRole::Normal;
         QPointer<QQuickWindow> window;
         QPointer<TerminalWorkspace> workspace;
@@ -127,7 +137,8 @@ private:
     createWindow(LaunchOptions options,
                  const DesktopActivationContext &activation = {},
                  QScreen *preferredScreen = nullptr,
-                 WindowRole role = WindowRole::Normal);
+                 WindowRole role = WindowRole::Normal,
+                 const FirstSurfaceOverrides *firstSurfaceOverrides = nullptr);
     [[nodiscard]] LaunchOptions
     nextWindowOptions(TerminalWorkspace *sourceWorkspace,
                       PaneId sourcePaneId) const;
@@ -148,11 +159,17 @@ private:
     recordForWindow(QQuickWindow *window) const;
     [[nodiscard]] WindowRecord *
     recordForWorkspace(TerminalWorkspace *workspace);
+    [[nodiscard]] WindowRecord *recordForWindowId(WindowId id);
     [[nodiscard]] WindowRecord *quickTerminalRecord();
     [[nodiscard]] QScreen *quickTerminalSizingScreen() const;
-    [[nodiscard]] bool toggleQuickTerminal();
+    [[nodiscard]] bool
+    toggleQuickTerminal(const DesktopActivationContext &activation = {});
     [[nodiscard]] std::expected<void, QString>
     syncQuickTerminal(WindowRecord &record);
+    void refreshCommandPalette(WindowId sourceWindowId);
+    [[nodiscard]] bool executePaletteAction(WindowId sourceWindowId,
+                                            const QString &action);
+    [[nodiscard]] bool presentSurface(SurfaceTarget target);
     void updateQuickTerminalAutohide(WindowRecord &record);
     void syncApplicationShell();
     [[nodiscard]] bool
@@ -187,4 +204,5 @@ private:
     bool startingApplicationShutdown_ = false;
     bool quitRehostScheduled_ = false;
     bool destroying_ = false;
+    quint64 nextWindowId_ = 1;
 };

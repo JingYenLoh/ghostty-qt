@@ -32,8 +32,12 @@ the following ownership and data flow:
 ```text
 ghostty-qt raw CLI classifier (before Qt)
   -> exec sibling ghostty-qt-config-helper for the supported +action subset
+  -> QCore-only +new-window/+toggle-quick-terminal client
+     -> org.gtk.Actions on the session/starter D-Bus
 
 ApplicationController (UI thread, process lifetime)
+  <- SingleInstanceActivation
+     <- org.freedesktop.Application and org.gtk.Actions at one object path
   -> reusable Main.qml component -> zero or more primary windows
      -> TerminalWorkspace (UI thread, recursive tabs/splits)
         -> TerminalPane (QQuickItem with scene-graph contents)
@@ -443,24 +447,70 @@ to the runtime ID, desktop filename, service filename, and derived path, so a
 developer build cannot activate an installed Release build. The object is
 exported before an atomic, non-queued, non-replaceable name claim, preventing a
 cold request from observing an owner without its endpoint. `Activate(a{sv})`
-is functional; the complete standard `Open(as,a{sv})` and
-`ActivateAction(s,av,a{sv})` signatures are exported with stable
-`NotSupported` errors until their payload semantics are implemented.
+is functional. Standard `ActivateAction(s,av,a{sv})` and a sibling exact
+`org.gtk.Actions.Activate(s,av,a{sv})` accept typed `new-window`,
+`new-window-command`, and `toggle-quick-terminal` requests. Unknown names and
+malformed parameter variants are rejected before entering the queue.
+`Open(as,a{sv})` remains exported with a stable `NotSupported` error.
 
 The launching process's typed `initial-window` decision determines what
 happens when another owner exists: true sends standard source-less activation,
 while false unregisters its temporary endpoint and exits normally without
-contacting the owner. No activation forwards argv, cwd, shell text, or general
-environment state. The sole launcher-state exception is a typed
+contacting the owner. Ordinary bare activation forwards no argv, cwd, shell
+text, or general environment state. Its sole launcher-state exception is a typed
 `DesktopActivationContext`: exact string-valued `activation-token` and
 `desktop-startup-id` fields are retained with each request, while unknown
 fields, wrong variant types, and embedded NULs are discarded. Pending startup
 requests keep their message/context pairs in FIFO order. A process carrying
 `DBUS_STARTER_ADDRESS` connects through Qt's activation-bus alias; an ordinary
 process uses the session bus. Calls arriving before startup finishes retain
-delayed replies. The handler is installed only after controller,
-configuration, lifetime, and test wiring, and each success is acknowledged
-after synchronous window registration.
+delayed replies. Both action interfaces and bare activation share one bounded
+FIFO. The handler is installed only after controller, configuration, lifetime,
+and test wiring, and standard-interface success is acknowledged after
+synchronous window registration. The GTK interface preserves `GAction`'s void
+contract: a well-formed request is acknowledged after handler dispatch even
+when the UI operation reports failure.
+
+The `+new-window` and `+toggle-quick-terminal` clients branch before ordinary
+Qt option parsing, `QGuiApplication`, configuration loading, or native-surface
+creation. A minimal `QCoreApplication` exists only for the blocking D-Bus call.
+There is exactly one call, normal bus service activation is allowed, and an
+error never falls back to constructing a local window. The new-window sender
+operates on raw argv bytes: it validates UTF-8, strips pre-`-e` class targeting,
+canonicalizes concrete relative or tilde working directories, and preserves
+Ghostty's implicit caller-cwd plus later home/inherit quirk. After the
+top-level detector has enforced one `+` action, the action parser makes every
+post-`-e` argument opaque and sends one `as` variant to
+`new-window-command`. The toggle sender deliberately ignores all non-action
+operands and targets the default build application ID, matching the pinned
+executable rather than its broader help text.
+
+The receiver recognizes only command, working-directory, title, and `-e`
+forms; successful repeated values are last-wins and unknown options are inert.
+Direct argv after `-e` overrides an earlier command only when non-empty.
+Decoded values enter `TerminalWorkspace` as a one-shot creation payload and
+are never stored as workspace defaults. The requested command still reserves
+the process-wide initial-session lease; after lease arbitration it overrides
+the first pane's program and hold values. A concrete directory, or the pinned
+receiver's literal relative path text `home`/`inherit`, and an
+explicit-empty-capable persistent surface title are likewise installed before
+that pane is published. Later tabs, splits, and windows use the ordinary
+effective launch policy.
+
+Each registered top-level receives a monotonic `WindowId`; pane IDs remain
+workspace-local. The command palette retains configured commands as typed
+strings but rebuilds its runtime rows immediately before every opening by
+sampling committed pane trees from every window. A live-surface row stores
+`SurfaceTarget { WindowId, PaneId }`, never a `QObject` pointer or serialized
+QML action. Its label uses the raw effective surface title, with `Untitled`
+only for absence and not for an explicit empty title; cwd is shown only when it
+is non-empty and not already contained case-sensitively in that title. The
+combined model uses the existing colon-normalized case-folded order, with the
+composite identity as the deterministic tie-breaker for equal focus labels.
+Activation captures the typed value before modal teardown, re-resolves both
+IDs, selects the exact tab and split, then presents or deiconifies its normal
+window or shows the retained hidden quick terminal. Closing either identity
+between snapshot and invocation makes the row inert.
 
 For a direct launch, `main` captures and unsets `XDG_ACTIVATION_TOKEN` and
 `DESKTOP_STARTUP_ID` before constructing `QGuiApplication`; an existing-owner
@@ -505,9 +555,10 @@ fire-and-forget normal activation.
 
 The private structured config export retains Ghostty's boolean
 `initial-window` value and raw `gtk-single-instance` false/true/detect enum.
-The latter remains an unused schema-v1 compatibility field: process uniqueness
-belongs to the independent frontend `single-instance` setting. The GUI process
-resolves frontend `detect` from its real invocation and `TERM_PROGRAM`. Parsing
+The latter is an unused field in the sole accepted schema-v1 contract: process
+uniqueness belongs to the independent frontend `single-instance` setting. The
+GUI process resolves frontend `detect` from its real invocation and
+`TERM_PROGRAM`. Parsing
 records whether an invocation has unforwarded window/session payload, so the
 exact `--single-instance` and `--initial-window` coordination flags remain
 eligible while cwd, font, hold, scrollback, and program arguments stay
@@ -2411,6 +2462,14 @@ The default CTest suite has focused layers for each ownership boundary:
   coordinates while checking physical pixels.
 - `workspace-foundation` verifies stable tab identity after row removal and
   movement, tab model role updates, and typed action context dispatch.
+- `window-ui-controller` verifies configured and live-target rows in one typed
+  model, deterministic composite-target ties, case-folded filtering,
+  refresh-before-open, selection preservation by command identity, capture
+  before modal teardown, and callbacks that may destroy their controller.
+- `application-controller` verifies source-less first-pane command/cwd/title
+  overrides and initial-session lease resolution, duplicate workspace-local
+  pane IDs in different windows, cross-window and cross-tab focus, retained
+  hidden quick-terminal presentation, and stale composite-target rejection.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
   action-string parsing—including the five search actions, exact navigation
   grammar, payload-specific owning alternatives, compiled positional chains,
@@ -2525,11 +2584,12 @@ The default CTest suite has focused layers for each ownership boundary:
   quits; `application-lifetime-explicit-quit` exercises the real application
   wiring under a disabled last-window policy.
 - `single-instance-activation` runs owner arbitration, exact-once acceptance,
-  delayed pre-handler replies, FIFO typed platform-data retention,
-  creation-failure propagation, owner handoff, standard method/signature
-  rejection, release/reacquisition, unavailable-bus fallback, and ambiguous
-  timeout behavior against isolated session buses whose sockets and runtime
-  directories live under repository-local `./tmp`.
+  delayed pre-handler replies, mixed bare/standard/GTK action FIFO retention,
+  exact `s,av,a{sv}` signatures, typed platform data and string-array variants,
+  malformed-action rejection, interface-specific failure acknowledgement,
+  owner handoff, release/reacquisition, unavailable-bus fallback, and
+  ambiguous timeout behavior against isolated session buses whose sockets and
+  runtime directories live under repository-local `./tmp`.
 - `application-single-instance` starts two complete offscreen processes on an
   isolated bus, retires the primary's initial QML root to resident zero-window
   state, verifies the bare secondary exits successfully after recreating one
@@ -2540,7 +2600,15 @@ The default CTest suite has focused layers for each ownership boundary:
   also exercise an explicitly bootstrapped zero-window host plus real cold
   service discovery, activation, teardown, and restart on a private bus. A
   standard-endpoint fixture also verifies that a real fallback executable
-  forwards exact launcher token/startup-ID platform data.
+  forwards exact launcher token/startup-ID platform data. Separate warm and
+  cold flows run the real pre-GUI `+new-window` and
+  `+toggle-quick-terminal` clients through `org.gtk.Actions`, including D-Bus
+  service activation and primary teardown.
+- `ghostty-application-ipc` verifies raw-argv UTF-8 validation, exact
+  class/object targeting, caller-cwd insertion, concrete path and tilde
+  canonicalization, the pinned home/inherit quirk, opaque `-e` arguments,
+  command/title/cwd last-value decoding, exact variant transport, and
+  no-fallback bus failure.
 - `desktop-activation` verifies exact platform-dictionary filtering,
   pre-application launcher capture, scoped window-show projection, and
   one-shot cleanup. Controller and worker suites additionally cover

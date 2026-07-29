@@ -252,7 +252,8 @@ TerminalPane::TerminalPane(
     std::optional<TerminalSessionGeometry> initialGeometry,
     TerminalSessionStartMode startMode,
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
-    std::optional<GhosttyKeybindProgram> keybindProgram)
+    std::optional<GhosttyKeybindProgram> keybindProgram,
+    std::optional<TerminalCommand> firstSessionCommandOverride)
     : QQuickItem(parent)
     , options_(options)
     , appearance_(options.appearance)
@@ -309,6 +310,8 @@ TerminalPane::TerminalPane(
     TerminalSessionLaunchOptions sessionOptions =
         toTerminalSessionLaunchOptions(options);
     sessionOptions.initialGeometry = std::move(initialGeometry);
+    sessionOptions.firstSessionCommandOverride =
+        std::move(firstSessionCommandOverride);
     controller_ = new TerminalController(sessionOptions, this,
                                          std::move(initialSessionCoordinator));
     controller_->setMouseReportingEnabled(options.mouseReporting);

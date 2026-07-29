@@ -44,6 +44,25 @@ struct WorkspaceCloseAssessment {
     }
 };
 
+// Overrides delivered with a remote new-window request belong exclusively to
+// that window's first surface. Optional QString values preserve the
+// distinction between omission and an explicit empty value.
+struct FirstSurfaceOverrides {
+    std::optional<TerminalCommand> command;
+    std::optional<QString> workingDirectory;
+    std::optional<QString> titleOverride;
+
+    bool operator==(const FirstSurfaceOverrides &) const = default;
+};
+
+struct WorkspaceSurfaceSnapshot {
+    PaneId paneId;
+    std::optional<QString> effectiveTitle;
+    QString currentDirectory;
+
+    bool operator==(const WorkspaceSurfaceSnapshot &) const = default;
+};
+
 class TerminalWorkspace : public QQuickItem {
     Q_OBJECT
     QML_NAMED_ELEMENT(TerminalWorkspace)
@@ -96,12 +115,14 @@ public:
                     TerminalSessionStartMode initialSessionStartMode =
                         TerminalSessionStartMode::Immediate,
                     std::shared_ptr<InitialSessionCoordinator>
-                        initialSessionCoordinator = {});
+                        initialSessionCoordinator = {},
+                    FirstSurfaceOverrides firstSurfaceOverrides = {});
     bool initialize(
         const LaunchOptions &options,
         TerminalSessionStartMode initialSessionStartMode,
         std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
-        GhosttyKeybindProgram keybindProgram);
+        GhosttyKeybindProgram keybindProgram,
+        FirstSurfaceOverrides firstSurfaceOverrides = {});
     [[nodiscard]] bool armInitialSessionStart();
     void applyLaunchOptions(const LaunchOptions &options);
     void applyLaunchOptions(const LaunchOptions &options,
@@ -190,6 +211,9 @@ public:
     bool executeSurfaceActionOnAllPanes(const GhosttyConfiguredAction &action);
     [[nodiscard]] bool containsPane(PaneId paneId) const;
     [[nodiscard]] bool focusPaneForFrontend(PaneId paneId);
+    // Samples committed GUI-thread state and exposes stable identities rather
+    // than pane pointers to process-owned consumers such as the palette.
+    [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;
 
     Q_INVOKABLE void setCurrentIndex(int index);
     Q_INVOKABLE bool activateTabByStableId(quint64 tabId);
@@ -345,7 +369,10 @@ private:
         const LaunchOptions &options,
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
-            TerminalSessionStartMode::Immediate);
+            TerminalSessionStartMode::Immediate,
+        std::optional<TerminalCommand> firstSessionCommandOverride =
+            std::nullopt,
+        std::optional<QString> surfaceTitleOverride = std::nullopt);
     void setPaneOverlayComponent(PaneOverlaySlot &slot,
                                  QQmlComponent *component,
                                  const char *paneProperty,
@@ -362,7 +389,8 @@ private:
         PaneId sourcePaneId = {},
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
-            TerminalSessionStartMode::Immediate);
+            TerminalSessionStartMode::Immediate,
+        FirstSurfaceOverrides firstSurfaceOverrides = {});
     void activateTab(TabId id,
                      std::optional<QString> previousSubtitle = std::nullopt);
     bool activateTabByIndex(qint64 oneBasedIndex);

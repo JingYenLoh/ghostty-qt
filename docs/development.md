@@ -469,17 +469,27 @@ destruction during presentation and creation observers. Private session-D-Bus
 integration also covers a false launcher that leaves a false-started primary
 at zero windows,
 followed by a true launcher that creates exactly one primary-owned surface.
+The same isolated-bus suite invokes the real pre-Qt `+new-window` and
+`+toggle-quick-terminal` clients against both an already-running zero-window
+owner and a cold D-Bus service. Focused protocol tests cover exact
+`org.gtk.Actions` variants, sender path/class/`-e` rewriting, receiver
+last-value and command grammar, the sibling standard action interface,
+malformed-request rejection, FIFO queuing, and GTK-versus-standard failure
+acknowledgement.
 With shared Ghostty configuration enabled, the same suite forces the exact
 service bootstrap flags over a contradictory frontend file; the config-off
 build proves that activation does not depend on the parser helper. Both call
 the standard endpoint against a warm zero-window process and let the bus
 discover, start, activate, retire, and restart a cold service using only its
-starter-bus environment. Focused activation tests also verify exact D-Bus string filtering,
-FIFO platform-data retention, pre-Qt launcher capture, scoped window-show
-projection, cached race-free worker snapshots, fallback-executable forwarding,
-cleanup, removal from inherited terminal child environments, and explicit
-reintroduction through finalized `env` overrides. The DESTDIR-staged
-desktop integration test checks
+starter-bus environment. Focused activation tests also verify exact D-Bus
+string filtering, FIFO platform-data retention, pre-Qt launcher capture,
+scoped window-show projection, cached race-free worker snapshots,
+fallback-executable forwarding, cleanup, removal from inherited terminal child
+environments, and explicit reintroduction through finalized `env` overrides.
+Controller coverage adds first-surface-only command/cwd/title overrides,
+inherit mode, duplicate pane IDs in different windows, dynamic rows for hidden
+quick terminals, cross-tab focus, and stale composite-target rejection. The
+DESTDIR-staged desktop integration test checks
 configuration-specific IDs, relative or absolute final executable paths,
 distinct desktop fallback/service-host arguments, and config-helper presence.
 BEL coverage keeps the worker event and GUI presentation boundaries separate:

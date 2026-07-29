@@ -631,18 +631,21 @@ void TerminalWorkspace::setDefaultLaunchOptions(const LaunchOptions &options)
 bool TerminalWorkspace::initialize(
     const LaunchOptions &options,
     TerminalSessionStartMode initialSessionStartMode,
-    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator)
+    std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
+    FirstSurfaceOverrides firstSurfaceOverrides)
 {
     return initialize(
         options, initialSessionStartMode, std::move(initialSessionCoordinator),
-        GhosttyKeybindProgram::compile(options.keybindSource).program);
+        GhosttyKeybindProgram::compile(options.keybindSource).program,
+        std::move(firstSurfaceOverrides));
 }
 
 bool TerminalWorkspace::initialize(
     const LaunchOptions &options,
     TerminalSessionStartMode initialSessionStartMode,
     std::shared_ptr<InitialSessionCoordinator> initialSessionCoordinator,
-    GhosttyKeybindProgram keybindProgram)
+    GhosttyKeybindProgram keybindProgram,
+    FirstSurfaceOverrides firstSurfaceOverrides)
 {
     if (initialized_) return false;
     initialized_ = true;
@@ -661,7 +664,7 @@ bool TerminalWorkspace::initialize(
         terminalSessionGeometryForViewport(width(), height(), metrics.cellWidth,
                                            metrics.cellHeight, devicePixelRatio,
                                            initialOptions.padding),
-        initialSessionStartMode);
+        initialSessionStartMode, std::move(firstSurfaceOverrides));
     if (guard == nullptr) return true;
     if (!initialPane.isValid()) return false;
     if (initialSessionStartMode == TerminalSessionStartMode::Deferred) {
@@ -925,8 +928,25 @@ bool TerminalWorkspace::containsPane(PaneId paneId) const
     return paneForId(paneId) != nullptr;
 }
 
+QVector<WorkspaceSurfaceSnapshot> TerminalWorkspace::surfaceSnapshot() const
+{
+    if (windowCloseState_ != WindowCloseState::Open) return {};
+
+    QVector<WorkspaceSurfaceSnapshot> surfaces;
+    forEachPane([&surfaces](const PaneHandle &handle) {
+        if (handle.pane == nullptr) return;
+        surfaces.append({
+            .paneId = handle.id,
+            .effectiveTitle = handle.pane->effectiveSurfaceTitle(),
+            .currentDirectory = handle.pane->currentDirectory(),
+        });
+    });
+    return surfaces;
+}
+
 bool TerminalWorkspace::focusPaneForFrontend(PaneId paneId)
 {
+    if (windowCloseState_ != WindowCloseState::Open) return false;
     const QPointer<TerminalWorkspace> guard(this);
     const QPointer<TerminalPane> pane(paneForId(paneId));
     if (pane == nullptr) return false;
@@ -1230,13 +1250,19 @@ WorkspaceCloseAssessment TerminalWorkspace::closeAssessment() const
 TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     const LaunchOptions &options,
     std::optional<TerminalSessionGeometry> initialGeometry,
-    TerminalSessionStartMode startMode)
+    TerminalSessionStartMode startMode,
+    std::optional<TerminalCommand> firstSessionCommandOverride,
+    std::optional<QString> surfaceTitleOverride)
 {
     const PaneId paneId(nextPaneId_++);
     auto detachedPane = std::make_unique<TerminalPane>(
         options, nullptr, std::move(initialGeometry), startMode,
-        initialSessionCoordinator_, keybindProgram_);
+        initialSessionCoordinator_, keybindProgram_,
+        std::move(firstSessionCommandOverride));
     TerminalPane *const pane = detachedPane.get();
+    if (surfaceTitleOverride.has_value()) {
+        pane->setSurfaceTitleOverride(std::move(surfaceTitleOverride));
+    }
     const QPointer<TerminalWorkspace> workspaceGuard(this);
     const QPointer<TerminalPane> paneGuard(pane);
     pendingPanes_.append(paneGuard);
@@ -1442,7 +1468,8 @@ void TerminalWorkspace::newTab()
 
 TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
     PaneId sourcePaneId, std::optional<TerminalSessionGeometry> initialGeometry,
-    TerminalSessionStartMode startMode)
+    TerminalSessionStartMode startMode,
+    FirstSurfaceOverrides firstSurfaceOverrides)
 {
     if (topologyMutation_) return {};
     const QPointer<TerminalWorkspace> guard(this);
@@ -1465,6 +1492,13 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
         } else {
             options = withoutInitialCommand(std::move(options));
         }
+    } else if (firstSurfaceOverrides.workingDirectory.has_value()) {
+        options.workingDirectory =
+            std::move(*firstSurfaceOverrides.workingDirectory);
+        // Pinned Ghostty's receiver treats every value, including the literal
+        // strings "home" and "inherit", as a path at this stage.
+        options.inheritWorkingDirectory = false;
+        options.workingDirectoryExplicit = true;
     }
     const int insertionIndex =
         options.windowNewTabPosition == WindowNewTabPosition::Current
@@ -1473,7 +1507,9 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createNewTab(
         : static_cast<int>(tabs_.size());
 
     const PaneHandle pane =
-        createPane(options, std::move(initialGeometry), startMode);
+        createPane(options, std::move(initialGeometry), startMode,
+                   std::move(firstSurfaceOverrides.command),
+                   std::move(firstSurfaceOverrides.titleOverride));
     if (guard == nullptr || !pane.isValid()) return {};
     auto tab = std::make_unique<Tab>();
     tab->id = TabId(nextTabId_++);

@@ -86,6 +86,7 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
         .configuredTitle = options.configuredTitle,
         .command = options.ordinaryCommand,
         .program = options.program,
+        .firstSessionCommandOverride = std::nullopt,
         .initialInput = options.initialInput,
         .scrollbackLimit = options.scrollbackLimit,
         .hold = options.hold,

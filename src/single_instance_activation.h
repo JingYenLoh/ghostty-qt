@@ -16,12 +16,27 @@
 #include <cstddef>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <vector>
 
-// Coordinates no-payload application activation through the standard
-// org.freedesktop.Application endpoint on the user's session bus. It
-// carries only standard presentation context: never command-line payload,
-// general environment state, cwd, or shell text.
+struct ApplicationActivationRequest {
+    enum class Kind {
+        Activate,
+        NewWindow,
+        NewWindowCommand,
+        ToggleQuickTerminal,
+    };
+
+    Kind kind = Kind::Activate;
+    QStringList arguments;
+    DesktopActivationContext activation;
+};
+
+class GtkActionsAdaptor;
+
+// Coordinates application activation through the standard
+// org.freedesktop.Application endpoint and its org.gtk.Actions sibling on
+// the user's session bus.
 class SingleInstanceActivation final : public QObject, protected QDBusContext {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
@@ -54,9 +69,10 @@ public:
     };
 
     using ActivationHandler =
-        std::move_only_function<bool(DesktopActivationContext)>;
+        std::move_only_function<bool(ApplicationActivationRequest)>;
 
     static constexpr auto InterfaceName = "org.freedesktop.Application";
+    static constexpr auto GtkActionsInterfaceName = "org.gtk.Actions";
 
     [[nodiscard]] static QDBusConnection defaultConnection();
     explicit SingleInstanceActivation(
@@ -93,19 +109,39 @@ private:
     };
     struct PendingActivation {
         QDBusMessage request;
-        DesktopActivationContext activation;
+        ApplicationActivationRequest activation;
+        bool alwaysAcknowledgeAfterHandler = false;
     };
+
+    friend class GtkActionsAdaptor;
 
     [[nodiscard]] ClaimResult tryClaimService();
     [[nodiscard]] std::expected<QString, QString> currentOwner() const;
-    void completeActivation(const QDBusMessage &request, bool accepted);
+    void activateGtkAction(const QString &actionName,
+                           const QVariantList &parameter,
+                           const QVariantMap &platformData);
+    void activateAction(const QString &actionName,
+                        const QVariantList &parameter,
+                        const QVariantMap &platformData,
+                        const QDBusMessage *request,
+                        bool alwaysAcknowledgeAfterHandler);
+    void submit(ApplicationActivationRequest activation,
+                const QDBusMessage *request,
+                bool alwaysAcknowledgeAfterHandler);
+    static void completeActivation(const QDBusConnection &connection,
+                                   const QDBusMessage &request, bool accepted,
+                                   QStringView failure = {});
+    void rejectRequest(const QDBusMessage &request, QStringView errorName,
+                       QStringView diagnostic);
     void rejectUnsupported(QStringView methodName);
     void unregisterObject();
 
     QDBusConnection connection_;
     QString serviceName_;
     QString objectPath_;
-    ActivationHandler handler_;
+    // A local shared snapshot keeps the currently executing callable alive if
+    // it reentrantly replaces/releases this endpoint or destroys the owner.
+    std::shared_ptr<ActivationHandler> handler_;
     std::vector<PendingActivation> pendingActivations_;
     bool started_ = false;
     bool objectRegistered_ = false;

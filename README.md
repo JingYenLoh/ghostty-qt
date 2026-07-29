@@ -295,9 +295,10 @@ platform-default binding tries; the two complete documents must byte-match
 before publication.
 Syntax, file precedence, `config-file` includes, canonical values, nullable
 lifetime values, `initial-window`, and finalized bindings therefore come from
-the exact pinned Ghostty implementation. The private schema still carries raw
-`gtk-single-instance` for wire compatibility, but the Qt resolver deliberately
-does not consume it; use frontend `single-instance` instead. Qt strictly decodes
+the exact pinned Ghostty implementation. The private schema still carries the
+raw upstream `gtk-single-instance` value for source fidelity, but the Qt
+resolver deliberately does not consume it; use frontend `single-instance`
+instead. Qt strictly decodes
 owned typed values and does not parse or merge the human-oriented `+show-config`
 output. Font styles and metric modifiers remain tagged values in this strict
 schema-v1 boundary rather than being flattened into ambiguous strings or
@@ -475,6 +476,24 @@ Ordinary `--help` and `--version` remain the ghostty-qt frontend variants;
 unsupported `+` actions fail explicitly instead of being interpreted as
 terminal programs.
 
+A config-enabled or config-disabled build also implements Ghostty's two
+application-client actions directly:
+
+```text
++new-window      +toggle-quick-terminal
+```
+
+They are handled before `QGuiApplication` or any native surface exists.
+`+new-window` uses `--class` before `-e` to select the service, canonicalizes
+concrete working directories, injects the caller cwd when required, and
+forwards the remaining UTF-8 options plus opaque argv after `-e` through
+`org.gtk.Actions.Activate`; those overrides belong only to the requested
+window's first pane. `+toggle-quick-terminal` targets the default application
+identity and, matching the pinned implementation, ignores all extra operands
+including `--class`. Both send empty platform data, make one blocking D-Bus
+call, allow normal service activation, and fail without a retry or local
+in-process fallback.
+
 `+help` and `+list-actions` print pinned upstream catalogs, including entries
 that remain planned in ghostty-qt; appearing in those catalogs is not a claim
 that the frontend implements the item. `+show-config` and `+validate-config`
@@ -597,6 +616,17 @@ surface prompt is cancelled if its exact pane closes. Closing only the
 originating pane does not redirect a tab prompt when its tab survives, while
 deleting the target tab cancels its queued prompts and makes stale dialog
 completions inert.
+`toggle_command_palette` opens a window-local modal whose configured command
+rows are rebuilt on live reload. Each opening also snapshots one `Focus:`
+row for every live pane across all normal windows, tabs, splits, and the
+quick terminal, including while it is retained and hidden. Missing titles
+display `Untitled`; an explicit empty title remains empty. A non-empty cwd is
+the description unless the case-sensitive effective title already contains
+it. Configured and focus rows share deterministic colon-normalized sorting.
+Focus rows carry a stable window-plus-pane identity inside C++, so activation
+closes the modal, revalidates the target, selects its tab and split, and
+presents the exact window without sending a serialized target through QML. A
+pane or window removed after the snapshot is inert.
 Successful `goto_split` actions consult the live `split-preserve-zoom` policy:
 `navigation` transfers an existing zoom to the destination, while the default
 `no-navigation` clears it. An unsuccessful navigation is inert.
@@ -706,9 +736,15 @@ install directories remain absolute, while `DESTDIR` remains staging-only.
 An auto-started process connects to the starter bus supplied by the daemon;
 ordinary launches use the desktop session bus.
 
-The standard endpoint implements source-less `Activate(a{sv})`. It exports the
-required `Open(as,a{sv})` and `ActivateAction(s,av,a{sv})` method signatures but
-returns `NotSupported` until URI and action payload semantics are implemented.
+The standard endpoint implements source-less `Activate(a{sv})` and functional
+`ActivateAction(s,av,a{sv})` handling for `new-window`,
+`new-window-command`, and `toggle-quick-terminal`; a sibling
+`org.gtk.Actions.Activate(s,av,a{sv})` exposes Ghostty's application wire.
+Unknown actions and malformed variants fail before queuing.
+`Open(as,a{sv})` remains exported with a stable `NotSupported` reply. Both
+action interfaces share the bounded FIFO startup queue. Standard action replies
+propagate creation failure, while the GTK void-action interface acknowledges
+after dispatch, matching `GAction`.
 `activation-token` and `desktop-startup-id` are accepted only as exact D-Bus
 strings, carried with their request, and exposed as `XDG_ACTIVATION_TOKEN` and
 `DESKTOP_STARTUP_ID` only during the target window's `show()` call. A direct

@@ -248,6 +248,11 @@ struct TerminalSessionLaunchOptions {
     // its process-wide first-session lease is resolved. When present it takes
     // precedence over `command`.
     QStringList program;
+    // A remote new-window command is scoped to that window's first surface,
+    // but the surface must still resolve the process-wide initial-session
+    // lease. TerminalController applies this after lease arbitration so the
+    // global opportunity is consumed without replacing the remote command.
+    std::optional<TerminalCommand> firstSessionCommandOverride;
     // Future-session input is resolved atomically before the child exists.
     // Raw entries preserve arbitrary bytes; path entries are read relative to
     // the frontend process working directory, matching pinned Ghostty.

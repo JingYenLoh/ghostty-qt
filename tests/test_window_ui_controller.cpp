@@ -5,7 +5,10 @@
 #include <QTest>
 
 #include <chrono>
+#include <memory>
+#include <optional>
 #include <utility>
+#include <variant>
 
 using namespace std::chrono_literals;
 
@@ -22,10 +25,47 @@ CommandPaletteEntry command(QString title, QString actionKey, QString action,
     };
 }
 
+CommandPaletteRow configuredRow(QString title, QString actionKey,
+                                QString action, QString description = {})
+{
+    return {
+        .title = std::move(title),
+        .description = std::move(description),
+        .actionKey = std::move(actionKey),
+        .command = std::move(action),
+    };
+}
+
+CommandPaletteRow jumpRow(QString title, SurfaceTarget target,
+                          QString description = {},
+                          QString ignoredActionKey = {})
+{
+    return {
+        .title = std::move(title),
+        .description = std::move(description),
+        .actionKey = std::move(ignoredActionKey),
+        .command = target,
+    };
+}
+
 QString titleAt(const CommandPaletteModel &model, int row)
 {
     return model.data(model.index(row, 0), CommandPaletteModel::TitleRole)
         .toString();
+}
+
+QString actionKeyAt(const CommandPaletteModel &model, int row)
+{
+    return model.data(model.index(row, 0), CommandPaletteModel::ActionKeyRole)
+        .toString();
+}
+
+SurfaceTarget target(WindowId::Value window, PaneId::Value pane)
+{
+    return {
+        .windowId = WindowId{window},
+        .paneId = PaneId{pane},
+    };
 }
 
 } // namespace
@@ -36,7 +76,10 @@ class WindowUiControllerTest : public QObject {
 private Q_SLOTS:
     void commandPaletteUsesColonNormalizedDeterministicOrdering();
     void commandPaletteFiltersTitleAndActionKeyOnly();
-    void commandPaletteSelectionExposesCanonicalAction();
+    void commandPaletteSelectionIsTypedAndStable();
+    void commandPaletteActivationCapturesBeforeClose();
+    void commandPaletteRefreshesImmediatelyBeforeOpening();
+    void commandPaletteActivationMayDestroyController();
     void identicalCommandReplacementIsSilent();
     void modalsAreMutuallyExclusive();
     void notificationsHaveExactTextAndDuration();
@@ -49,52 +92,61 @@ void WindowUiControllerTest::
     commandPaletteUsesColonNormalizedDeterministicOrdering()
 {
     CommandPaletteModel model;
-    model.replaceEntries({
-        command(QStringLiteral("Foo Bar:"), QStringLiteral("third"),
-                QStringLiteral("text:third")),
-        command(QStringLiteral("foo:"), QStringLiteral("second"),
-                QStringLiteral("text:second")),
-        command(QStringLiteral("Foo:"), QStringLiteral("first"),
-                QStringLiteral("text:first")),
-        command(QStringLiteral("Alpha"), QStringLiteral("alpha"),
-                QStringLiteral("text:alpha")),
+    model.replaceRows({
+        configuredRow(QStringLiteral("Foo Bar:"), QStringLiteral("third"),
+                      QStringLiteral("text:third")),
+        jumpRow(QStringLiteral("foo:"), target(9, 2),
+                QStringLiteral("later target")),
+        jumpRow(QStringLiteral("foo:"), target(3, 7),
+                QStringLiteral("earlier target")),
+        configuredRow(QStringLiteral("Foo:"), QStringLiteral("first"),
+                      QStringLiteral("text:first")),
+        configuredRow(QStringLiteral("Alpha"), QStringLiteral("alpha"),
+                      QStringLiteral("text:alpha")),
     });
 
-    QCOMPARE(model.count(), 4);
+    QCOMPARE(model.count(), 5);
     QCOMPARE(titleAt(model, 0), QStringLiteral("Alpha"));
     // Replacing ':' with a tab for the comparison makes the category title
     // precede a longer title beginning with the same words.
     QCOMPARE(titleAt(model, 1), QStringLiteral("Foo:"));
     QCOMPARE(titleAt(model, 2), QStringLiteral("foo:"));
-    QCOMPARE(titleAt(model, 3), QStringLiteral("Foo Bar:"));
+    QCOMPARE(std::get<SurfaceTarget>(*model.commandAt(2)), target(3, 7));
+    QCOMPARE(std::get<SurfaceTarget>(*model.commandAt(3)), target(9, 2));
+    QCOMPARE(titleAt(model, 4), QStringLiteral("Foo Bar:"));
 
-    QVector<CommandPaletteEntry> reversed{
-        command(QStringLiteral("foo:"), QStringLiteral("second"),
-                QStringLiteral("text:second")),
-        command(QStringLiteral("Foo Bar:"), QStringLiteral("third"),
-                QStringLiteral("text:third")),
-        command(QStringLiteral("Alpha"), QStringLiteral("alpha"),
-                QStringLiteral("text:alpha")),
-        command(QStringLiteral("Foo:"), QStringLiteral("first"),
-                QStringLiteral("text:first")),
+    QVector<CommandPaletteRow> reversed{
+        jumpRow(QStringLiteral("foo:"), target(9, 2)),
+        configuredRow(QStringLiteral("Foo Bar:"), QStringLiteral("third"),
+                      QStringLiteral("text:third")),
+        configuredRow(QStringLiteral("Alpha"), QStringLiteral("alpha"),
+                      QStringLiteral("text:alpha")),
+        jumpRow(QStringLiteral("foo:"), target(3, 7)),
+        configuredRow(QStringLiteral("Foo:"), QStringLiteral("first"),
+                      QStringLiteral("text:first")),
     };
-    model.replaceEntries(std::move(reversed));
+    model.replaceRows(std::move(reversed));
     QCOMPARE(titleAt(model, 0), QStringLiteral("Alpha"));
     QCOMPARE(titleAt(model, 1), QStringLiteral("Foo:"));
     QCOMPARE(titleAt(model, 2), QStringLiteral("foo:"));
-    QCOMPARE(titleAt(model, 3), QStringLiteral("Foo Bar:"));
+    QCOMPARE(std::get<SurfaceTarget>(*model.commandAt(2)), target(3, 7));
+    QCOMPARE(std::get<SurfaceTarget>(*model.commandAt(3)), target(9, 2));
+    QCOMPARE(titleAt(model, 4), QStringLiteral("Foo Bar:"));
 }
 
 void WindowUiControllerTest::commandPaletteFiltersTitleAndActionKeyOnly()
 {
     CommandPaletteModel model;
-    model.replaceEntries({
-        command(QStringLiteral("Copy Selection"),
-                QStringLiteral("copy_to_clipboard"),
-                QStringLiteral("copy_to_clipboard:plain"),
-                QStringLiteral("A hidden needle")),
-        command(QStringLiteral("Reset Terminal"), QStringLiteral("reset"),
-                QStringLiteral("reset")),
+    model.replaceRows({
+        configuredRow(QStringLiteral("Copy Selection"),
+                      QStringLiteral("copy_to_clipboard"),
+                      QStringLiteral("copy_to_clipboard:plain"),
+                      QStringLiteral("A hidden needle")),
+        configuredRow(QStringLiteral("Reset Terminal"), QStringLiteral("reset"),
+                      QStringLiteral("reset")),
+        jumpRow(QStringLiteral("Jump to build"), target(1, 2),
+                QStringLiteral("A hidden destination"),
+                QStringLiteral("ignored_jump_key")),
     });
 
     model.setFilter(QStringLiteral("SELECTION"));
@@ -108,39 +160,46 @@ void WindowUiControllerTest::commandPaletteFiltersTitleAndActionKeyOnly()
     model.setFilter(QStringLiteral("needle"));
     QCOMPARE(model.count(), 0);
     QCOMPARE(model.selectedIndex(), -1);
-    QVERIFY(model.selectedAction().isEmpty());
+    QVERIFY(!model.selectedCommand().has_value());
+
+    model.setFilter(QStringLiteral("ignored_jump_key"));
+    QCOMPARE(model.count(), 0);
+
+    model.setFilter(QStringLiteral("BUILD"));
+    QCOMPARE(model.count(), 1);
+    QCOMPARE(titleAt(model, 0), QStringLiteral("Jump to build"));
+    QVERIFY(actionKeyAt(model, 0).isEmpty());
 
     model.setFilter({});
-    QCOMPARE(model.count(), 2);
+    QCOMPARE(model.count(), 3);
     QCOMPARE(model.selectedIndex(), 0);
 }
 
-void WindowUiControllerTest::commandPaletteSelectionExposesCanonicalAction()
+void WindowUiControllerTest::commandPaletteSelectionIsTypedAndStable()
 {
     CommandPaletteModel model;
-    model.replaceEntries({
-        command(QStringLiteral("Alpha"), QStringLiteral("alpha"),
-                QStringLiteral("text:exact escaped payload")),
-        command(QStringLiteral("Beta"), QStringLiteral("beta"),
-                QStringLiteral("goto_tab:2")),
-        command(QStringLiteral("Gamma"), QStringLiteral("gamma"),
-                QStringLiteral("reset")),
+    const SurfaceTarget betaTarget = target(4, 9);
+    model.replaceRows({
+        configuredRow(QStringLiteral("Alpha"), QStringLiteral("alpha"),
+                      QStringLiteral("text:exact escaped payload")),
+        jumpRow(QStringLiteral("Beta"), betaTarget),
+        configuredRow(QStringLiteral("Gamma"), QStringLiteral("gamma"),
+                      QStringLiteral("reset")),
     });
 
     QCOMPARE(model.selectedIndex(), 0);
-    QCOMPARE(model.selectedAction(),
+    QCOMPARE(std::get<QString>(*model.selectedCommand()),
              QStringLiteral("text:exact escaped payload"));
-    QCOMPARE(model.actionAt(1), QStringLiteral("goto_tab:2"));
+    QCOMPARE(std::get<SurfaceTarget>(*model.commandAt(1)), betaTarget);
+    QVERIFY(!model.commandAt(-1).has_value());
 
     QSignalSpy selectionChanged(&model,
                                 &CommandPaletteModel::selectedIndexChanged);
-    QSignalSpy actionChanged(&model,
-                             &CommandPaletteModel::selectedActionChanged);
     model.selectRelative(-1);
     QCOMPARE(model.selectedIndex(), 2);
-    QCOMPARE(model.selectedAction(), QStringLiteral("reset"));
+    QCOMPARE(std::get<QString>(*model.selectedCommand()),
+             QStringLiteral("reset"));
     QCOMPARE(selectionChanged.count(), 1);
-    QCOMPARE(actionChanged.count(), 1);
 
     model.selectRelative(1);
     QCOMPARE(model.selectedIndex(), 0);
@@ -151,7 +210,113 @@ void WindowUiControllerTest::commandPaletteSelectionExposesCanonicalAction()
 
     model.setFilter(QStringLiteral("beta"));
     QCOMPARE(model.selectedIndex(), 0);
-    QCOMPARE(model.selectedAction(), QStringLiteral("goto_tab:2"));
+    QCOMPARE(std::get<SurfaceTarget>(*model.selectedCommand()), betaTarget);
+
+    // A dynamic rebuild can reorder duplicate-looking rows without changing
+    // which stable surface target is selected.
+    model.replaceRows({
+        jumpRow(QStringLiteral("Beta"), target(2, 1)),
+        jumpRow(QStringLiteral("Beta"), betaTarget),
+        configuredRow(QStringLiteral("Alpha"), QStringLiteral("alpha"),
+                      QStringLiteral("text:exact escaped payload")),
+    });
+    QCOMPARE(model.selectedIndex(), 1);
+    QCOMPARE(std::get<SurfaceTarget>(*model.selectedCommand()), betaTarget);
+}
+
+void WindowUiControllerTest::commandPaletteActivationCapturesBeforeClose()
+{
+    WindowUiController controller;
+    const SurfaceTarget selectedTarget = target(7, 11);
+    controller.replaceCommandPaletteRows({
+        configuredRow(QStringLiteral("Alpha"), QStringLiteral("alpha"),
+                      QStringLiteral("text:alpha")),
+        jumpRow(QStringLiteral("Beta"), selectedTarget),
+    });
+    controller.commandPaletteModel()->setSelectedIndex(1);
+
+    std::optional<CommandPaletteCommand> activated;
+    WindowUiController::Modal modalDuringActivation =
+        WindowUiController::Modal::CommandPalette;
+    controller.setCommandPaletteActivationCallback(
+        [&](CommandPaletteCommand command) {
+            modalDuringActivation = controller.modal();
+            activated = std::move(command);
+        });
+
+    controller.showCommandPalette();
+    controller.closeModal();
+    // Simulate a dynamic catalog rebuild during popup focus restoration. The
+    // delayed activation still consumes the command captured on close.
+    controller.replaceCommandPaletteRows({
+        configuredRow(QStringLiteral("Other"), QStringLiteral("other"),
+                      QStringLiteral("text:other")),
+    });
+    QVERIFY(controller.activateSelectedCommand());
+    QCOMPARE(modalDuringActivation, WindowUiController::Modal::None);
+    QVERIFY(activated.has_value());
+    QCOMPARE(std::get<SurfaceTarget>(*activated), selectedTarget);
+    QVERIFY(!controller.activateSelectedCommand());
+}
+
+void WindowUiControllerTest::commandPaletteRefreshesImmediatelyBeforeOpening()
+{
+    WindowUiController controller;
+    int refreshCount = 0;
+    bool visibleDuringRefresh = true;
+    controller.setCommandPaletteRefreshCallback([&] {
+        ++refreshCount;
+        visibleDuringRefresh = controller.commandPaletteVisible();
+        controller.replaceCommandPaletteRows({
+            jumpRow(QStringLiteral("Live target"),
+                    target(1, static_cast<PaneId::Value>(refreshCount))),
+        });
+    });
+
+    controller.showCommandPalette();
+    QCOMPARE(refreshCount, 1);
+    QVERIFY(!visibleDuringRefresh);
+    QVERIFY(controller.commandPaletteVisible());
+    QCOMPARE(std::get<SurfaceTarget>(
+                 *controller.commandPaletteModel()->selectedCommand()),
+             target(1, 1));
+
+    // Showing an already-open palette is not another open operation.
+    controller.showCommandPalette();
+    QCOMPARE(refreshCount, 1);
+
+    controller.toggleCommandPalette();
+    QVERIFY(!controller.commandPaletteVisible());
+    QCOMPARE(refreshCount, 1);
+    controller.toggleCommandPalette();
+    QCOMPARE(refreshCount, 2);
+    QVERIFY(!visibleDuringRefresh);
+    QCOMPARE(std::get<SurfaceTarget>(
+                 *controller.commandPaletteModel()->selectedCommand()),
+             target(1, 2));
+}
+
+void WindowUiControllerTest::commandPaletteActivationMayDestroyController()
+{
+    auto controller = std::make_unique<WindowUiController>();
+    controller->replaceCommandPaletteRows({
+        configuredRow(QStringLiteral("Close window"), QStringLiteral("close"),
+                      QStringLiteral("close_surface")),
+    });
+    WindowUiController *const rawController = controller.get();
+    bool called = false;
+    controller->setCommandPaletteActivationCallback(
+        [&](CommandPaletteCommand command) {
+            called = true;
+            QCOMPARE(std::get<QString>(command),
+                     QStringLiteral("close_surface"));
+            controller.reset();
+        });
+    rawController->showCommandPalette();
+    rawController->closeModal();
+    QVERIFY(rawController->activateSelectedCommand());
+    QVERIFY(called);
+    QVERIFY(controller == nullptr);
 }
 
 void WindowUiControllerTest::identicalCommandReplacementIsSilent()
@@ -166,11 +331,8 @@ void WindowUiControllerTest::identicalCommandReplacementIsSilent()
     model.replaceEntries(commands);
 
     QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
-    QSignalSpy actionChanged(&model,
-                             &CommandPaletteModel::selectedActionChanged);
     model.replaceEntries(commands);
     QVERIFY(reset.isEmpty());
-    QVERIFY(actionChanged.isEmpty());
 }
 
 void WindowUiControllerTest::modalsAreMutuallyExclusive()

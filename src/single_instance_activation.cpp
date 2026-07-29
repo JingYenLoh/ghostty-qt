@@ -1,9 +1,12 @@
 #include "single_instance_activation.h"
 
+#include <QDBusAbstractAdaptor>
 #include <QDBusConnectionInterface>
 #include <QDBusError>
 #include <QDBusMessage>
 #include <QDBusReply>
+#include <QMetaType>
+#include <QPointer>
 #include <QVariantMap>
 
 #include <algorithm>
@@ -22,7 +25,85 @@ int boundedTimeout(std::chrono::milliseconds timeout)
         timeout.count(), 1, std::numeric_limits<int>::max()));
 }
 
+struct InvalidAction {
+    QString errorName;
+    QString diagnostic;
+};
+
+std::expected<ApplicationActivationRequest, InvalidAction>
+parseAction(const QString &actionName, const QVariantList &parameter,
+            const QVariantMap &platformData)
+{
+    using Kind = ApplicationActivationRequest::Kind;
+
+    ApplicationActivationRequest request{
+        .kind = Kind::Activate,
+        .arguments = {},
+        .activation = DesktopActivationContext::fromPlatformData(platformData),
+    };
+    if (actionName == QStringLiteral("new-window")) {
+        request.kind = Kind::NewWindow;
+    } else if (actionName == QStringLiteral("new-window-command")) {
+        request.kind = Kind::NewWindowCommand;
+    } else if (actionName == QStringLiteral("toggle-quick-terminal")) {
+        request.kind = Kind::ToggleQuickTerminal;
+    } else {
+        return std::unexpected(InvalidAction{
+            .errorName =
+                QStringLiteral("org.freedesktop.DBus.Error.NotSupported"),
+            .diagnostic = QStringLiteral("Unknown application action: %1")
+                              .arg(actionName),
+        });
+    }
+
+    if (request.kind != Kind::NewWindowCommand) {
+        if (parameter.isEmpty()) return request;
+        return std::unexpected(InvalidAction{
+            .errorName =
+                QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"),
+            .diagnostic =
+                QStringLiteral("%1 does not accept parameters").arg(actionName),
+        });
+    }
+
+    if (parameter.size() != 1
+        || parameter.front().metaType() != QMetaType::fromType<QStringList>()) {
+        return std::unexpected(InvalidAction{
+            .errorName =
+                QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"),
+            .diagnostic = QStringLiteral(
+                "new-window-command requires exactly one string-array parameter"),
+        });
+    }
+    request.arguments = parameter.front().toStringList();
+    return request;
+}
+
 } // namespace
+
+class GtkActionsAdaptor final : public QDBusAbstractAdaptor {
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.gtk.Actions")
+
+public:
+    explicit GtkActionsAdaptor(SingleInstanceActivation *activation)
+        : QDBusAbstractAdaptor(activation)
+        , activation_(activation)
+    {
+        setAutoRelaySignals(false);
+    }
+
+public Q_SLOTS:
+    Q_SCRIPTABLE void Activate(const QString &actionName,
+                               const QVariantList &parameter,
+                               const QVariantMap &platformData)
+    {
+        activation_->activateGtkAction(actionName, parameter, platformData);
+    }
+
+private:
+    SingleInstanceActivation *activation_;
+};
 
 SingleInstanceActivation::SingleInstanceActivation(QDBusConnection connection,
                                                    QString serviceName,
@@ -31,7 +112,9 @@ SingleInstanceActivation::SingleInstanceActivation(QDBusConnection connection,
     , connection_(std::move(connection))
     , serviceName_(std::move(serviceName))
     , objectPath_(objectPathForApplicationId(serviceName_))
-{}
+{
+    (void)new GtkActionsAdaptor(this);
+}
 
 SingleInstanceActivation::~SingleInstanceActivation()
 {
@@ -86,9 +169,10 @@ SingleInstanceActivation::start(StartOptions options)
     // Export under this connection's unique name before atomically claiming
     // the well-known name. A secondary may then call as soon as RequestName
     // reports that an owner exists without observing a missing object.
-    objectRegistered_ = connection_.registerObject(
-        objectPath_, QString::fromLatin1(InterfaceName), this,
-        QDBusConnection::ExportScriptableSlots);
+    objectRegistered_ =
+        connection_.registerObject(objectPath_, this,
+                                   QDBusConnection::ExportScriptableSlots
+                                       | QDBusConnection::ExportAdaptors);
     if (!objectRegistered_) {
         return {
             .role = Role::Failed,
@@ -190,20 +274,29 @@ SingleInstanceActivation::start(StartOptions options)
 
 void SingleInstanceActivation::setActivationHandler(ActivationHandler handler)
 {
-    handler_ = std::move(handler);
+    handler_ = handler ? std::make_shared<ActivationHandler>(std::move(handler))
+                       : nullptr;
     std::vector<PendingActivation> pending =
         std::exchange(pendingActivations_, {});
+    const QDBusConnection replyConnection = connection_;
+    const QPointer<SingleInstanceActivation> guard(this);
     for (PendingActivation &activation : pending) {
-        completeActivation(activation.request,
-                           handler_
-                               && handler_(std::move(activation.activation)));
+        const std::shared_ptr<ActivationHandler> currentHandler =
+            guard != nullptr && guard->ownsService_ ? guard->handler_ : nullptr;
+        const bool invoked =
+            currentHandler != nullptr && static_cast<bool>(*currentHandler);
+        const bool accepted =
+            invoked && (*currentHandler)(std::move(activation.activation));
+        completeActivation(
+            replyConnection, activation.request,
+            accepted || (invoked && activation.alwaysAcknowledgeAfterHandler));
     }
 }
 
 void SingleInstanceActivation::release()
 {
     for (const PendingActivation &activation : pendingActivations_) {
-        completeActivation(activation.request, false);
+        completeActivation(connection_, activation.request, false);
     }
     pendingActivations_.clear();
     if (ownsService_) {
@@ -219,12 +312,13 @@ void SingleInstanceActivation::release()
 
 void SingleInstanceActivation::Activate(const QVariantMap &platformData)
 {
-    DesktopActivationContext activation =
-        DesktopActivationContext::fromPlatformData(platformData);
+    ApplicationActivationRequest activation{
+        .kind = ApplicationActivationRequest::Kind::Activate,
+        .arguments = {},
+        .activation = DesktopActivationContext::fromPlatformData(platformData),
+    };
     if (!calledFromDBus()) {
-        if (ownsService_ && handler_) {
-            (void)handler_(std::move(activation));
-        }
+        submit(std::move(activation), nullptr, false);
         return;
     }
 
@@ -234,14 +328,7 @@ void SingleInstanceActivation::Activate(const QVariantMap &platformData)
     // corresponding window has actually been registered.
     setDelayedReply(true);
     const QDBusMessage request = message();
-    if (!ownsService_
-        || pendingActivations_.size() >= MaximumPendingActivations) {
-        completeActivation(request, false);
-    } else if (handler_) {
-        completeActivation(request, handler_(std::move(activation)));
-    } else {
-        pendingActivations_.push_back({request, std::move(activation)});
-    }
+    submit(std::move(activation), &request, false);
 }
 
 void SingleInstanceActivation::Open(const QStringList &uris,
@@ -256,10 +343,80 @@ void SingleInstanceActivation::ActivateAction(const QString &actionName,
                                               const QVariantList &parameter,
                                               const QVariantMap &platformData)
 {
-    Q_UNUSED(actionName);
-    Q_UNUSED(parameter);
-    Q_UNUSED(platformData);
-    rejectUnsupported(QStringLiteral("ActivateAction"));
+    if (!calledFromDBus()) {
+        activateAction(actionName, parameter, platformData, nullptr, false);
+        return;
+    }
+
+    setDelayedReply(true);
+    const QDBusMessage request = message();
+    activateAction(actionName, parameter, platformData, &request, false);
+}
+
+void SingleInstanceActivation::activateGtkAction(
+    const QString &actionName, const QVariantList &parameter,
+    const QVariantMap &platformData)
+{
+    // Qt dispatches adaptor slots within the registered parent's D-Bus call
+    // context. Keep delayed-reply handling here: QDBusContext on the adaptor
+    // itself does not observe that context.
+    if (!calledFromDBus()) {
+        activateAction(actionName, parameter, platformData, nullptr, true);
+        return;
+    }
+
+    setDelayedReply(true);
+    const QDBusMessage request = message();
+    activateAction(actionName, parameter, platformData, &request, true);
+}
+
+void SingleInstanceActivation::activateAction(
+    const QString &actionName, const QVariantList &parameter,
+    const QVariantMap &platformData, const QDBusMessage *request,
+    bool alwaysAcknowledgeAfterHandler)
+{
+    auto parsed = parseAction(actionName, parameter, platformData);
+    if (!parsed.has_value()) {
+        if (request != nullptr) {
+            rejectRequest(*request, parsed.error().errorName,
+                          parsed.error().diagnostic);
+        }
+        return;
+    }
+    submit(std::move(*parsed), request, alwaysAcknowledgeAfterHandler);
+}
+
+void SingleInstanceActivation::submit(ApplicationActivationRequest activation,
+                                      const QDBusMessage *request,
+                                      bool alwaysAcknowledgeAfterHandler)
+{
+    if (request == nullptr) {
+        const std::shared_ptr<ActivationHandler> currentHandler = handler_;
+        if (ownsService_ && currentHandler != nullptr
+            && static_cast<bool>(*currentHandler)) {
+            (void)(*currentHandler)(std::move(activation));
+        }
+        return;
+    }
+
+    if (!ownsService_
+        || pendingActivations_.size() >= MaximumPendingActivations) {
+        completeActivation(connection_, *request, false);
+    } else if (handler_) {
+        const QDBusConnection replyConnection = connection_;
+        const QDBusMessage replyRequest = *request;
+        const std::shared_ptr<ActivationHandler> currentHandler = handler_;
+        const bool invoked =
+            currentHandler != nullptr && static_cast<bool>(*currentHandler);
+        const bool accepted =
+            invoked && (*currentHandler)(std::move(activation));
+        completeActivation(replyConnection, replyRequest,
+                           accepted
+                               || (invoked && alwaysAcknowledgeAfterHandler));
+    } else {
+        pendingActivations_.push_back(
+            {*request, std::move(activation), alwaysAcknowledgeAfterHandler});
+    }
 }
 
 SingleInstanceActivation::ClaimResult
@@ -321,26 +478,37 @@ std::expected<QString, QString> SingleInstanceActivation::currentOwner() const
             .arg(reply.error().message()));
 }
 
-void SingleInstanceActivation::completeActivation(const QDBusMessage &request,
-                                                  bool accepted)
+void SingleInstanceActivation::completeActivation(
+    const QDBusConnection &connection, const QDBusMessage &request,
+    bool accepted, QStringView failure)
 {
+    const QString diagnostic = failure.isEmpty()
+        ? QStringLiteral("The application could not handle activation")
+        : failure.toString();
     QDBusMessage reply = accepted
         ? request.createReply()
         : request.createErrorReply(
-              QStringLiteral("org.freedesktop.DBus.Error.Failed"),
-              QStringLiteral("The application could not create a window"));
-    (void)connection_.send(reply);
+              QStringLiteral("org.freedesktop.DBus.Error.Failed"), diagnostic);
+    (void)connection.send(reply);
+}
+
+void SingleInstanceActivation::rejectRequest(const QDBusMessage &request,
+                                             QStringView errorName,
+                                             QStringView diagnostic)
+{
+    (void)connection_.send(
+        request.createErrorReply(errorName.toString(), diagnostic.toString()));
 }
 
 void SingleInstanceActivation::rejectUnsupported(QStringView methodName)
 {
     if (!calledFromDBus()) return;
     setDelayedReply(true);
-    (void)connection_.send(message().createErrorReply(
-        QStringLiteral("org.freedesktop.DBus.Error.NotSupported"),
+    rejectRequest(
+        message(), QStringLiteral("org.freedesktop.DBus.Error.NotSupported"),
         QStringLiteral(
             "%1 is not supported by this no-payload activation endpoint")
-            .arg(methodName)));
+            .arg(methodName));
 }
 
 void SingleInstanceActivation::unregisterObject()
@@ -349,3 +517,5 @@ void SingleInstanceActivation::unregisterObject()
     connection_.unregisterObject(objectPath_);
     objectRegistered_ = false;
 }
+
+#include "single_instance_activation.moc"

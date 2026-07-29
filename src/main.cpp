@@ -3,6 +3,7 @@
 #include "application_identity.h"
 #include "desktop_activation.h"
 #include "frontend_config_service.h"
+#include "ghostty_application_ipc.h"
 #include "ghostty_cli_delegation.h"
 #include "ghostty_config_edit.h"
 #include "ghostty_config_service.h"
@@ -18,6 +19,7 @@
 #endif
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QMetaEnum>
@@ -60,17 +62,20 @@ void printHelp()
               "      --single-instance MODE      Use false, true, or detect "
               "uniqueness.\n"
               "      --initial-window BOOLEAN    Request an initial window.\n";
-#if GHOSTTY_QT_CONFIG_ENABLED
     output << "\nPinned Ghostty CLI actions:\n";
     for (const GhosttyCliActionCatalogEntry &entry : GhosttyPinnedCliActions) {
-        if (!entry.isDelegated()) continue;
+        const bool available = entry.isApplicationIpc()
+#if GHOSTTY_QT_CONFIG_ENABLED
+            || entry.isDelegated()
+#endif
+            ;
+        if (!available) continue;
         const std::string_view action = entry.argument;
         output << "  "
                << QString::fromLatin1(action.data(),
                                       static_cast<qsizetype>(action.size()))
                << '\n';
     }
-#endif
 }
 
 #if GHOSTTY_QT_CONFIG_ENABLED
@@ -1606,6 +1611,34 @@ int main(int argc, char *argv[])
                      static_cast<int>(cliAction.argument.size()),
                      cliAction.argument.data());
         return 2;
+    case GhosttyCliActionDisposition::ApplicationIpc: {
+        const GhosttyApplicationIpcAction action =
+            cliAction.argument == std::string_view("+new-window")
+            ? GhosttyApplicationIpcAction::NewWindow
+            : GhosttyApplicationIpcAction::ToggleQuickTerminal;
+        auto request = parseGhosttyApplicationIpcRequest(
+            action, rawArguments,
+            GhosttyApplicationIpcParseContext::fromProcess(
+                QStringLiteral(GHOSTTY_QT_APPLICATION_ID)));
+        if (!request) {
+            QTextStream(stderr)
+                << "ghostty-qt: " << request.error().diagnostic << '\n';
+            return request.error().exitCode();
+        }
+
+        // The action client never constructs QGuiApplication or a native
+        // surface. QCoreApplication supplies Qt's D-Bus runtime while the
+        // blocking call lets service activation finish before this process
+        // exits.
+        QCoreApplication ipcApplication(argc, argv);
+        auto sent = sendGhosttyApplicationIpcRequest(*request);
+        if (!sent) {
+            QTextStream(stderr)
+                << "ghostty-qt: " << sent.error().diagnostic << '\n';
+            return sent.error().exitCode();
+        }
+        return 0;
+    }
     case GhosttyCliActionDisposition::Delegate:
 #if GHOSTTY_QT_CONFIG_ENABLED
     {
@@ -2055,9 +2088,34 @@ int main(int argc, char *argv[])
     if (activationEndpoint) {
         activationEndpoint->setActivationHandler(
             [controller = QPointer(&applicationController)](
-                DesktopActivationContext activation) {
-                return controller != nullptr
-                    && controller->activateNoCommand(std::move(activation));
+                ApplicationActivationRequest request) {
+                if (controller == nullptr) return false;
+                using Kind = ApplicationActivationRequest::Kind;
+                switch (request.kind) {
+                case Kind::Activate:
+                    return controller->activateNoCommand(
+                        std::move(request.activation));
+                case Kind::NewWindow:
+                    return controller->activateNewWindow(
+                        GhosttyNewWindowTransportOverrides{},
+                        std::move(request.activation));
+                case Kind::NewWindowCommand: {
+                    auto overrides =
+                        decodeGhosttyNewWindowArguments(request.arguments);
+                    if (!overrides) {
+                        qWarning().noquote()
+                            << "Rejected Ghostty new-window action:"
+                            << overrides.error().diagnostic;
+                        return false;
+                    }
+                    return controller->activateNewWindow(
+                        std::move(*overrides), std::move(request.activation));
+                }
+                case Kind::ToggleQuickTerminal:
+                    return controller->activateQuickTerminal(
+                        std::move(request.activation));
+                }
+                return false;
             });
     }
     const auto activationHandlerGuard = qScopeGuard([&activationEndpoint] {

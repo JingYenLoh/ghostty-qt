@@ -6,7 +6,6 @@ Popup {
     id: root
 
     required property var uiController
-    signal actionRequested(string action)
 
     objectName: "commandPalette"
     parent: Overlay.overlay
@@ -39,14 +38,14 @@ Popup {
     function activateSelected() {
         if (uiController === null)
             return
-        const action = uiController.commandPaletteModel.selectedAction
-        if (action.length === 0)
+        if (uiController.commandPaletteModel.selectedIndex < 0)
             return
         dismiss()
-        // Popup teardown and focus restoration must complete before a command
-        // is resolved against the window's current stable active pane.
+        // Popup teardown and focus restoration complete before C++ resolves
+        // the captured typed command.
         Qt.callLater(function() {
-            root.actionRequested(action)
+            if (root.uiController !== null)
+                root.uiController.activateSelectedCommand()
         })
     }
 

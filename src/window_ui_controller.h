@@ -1,6 +1,7 @@
 #pragma once
 
 #include "application_shell_options.h"
+#include "workspace_ids.h"
 
 #include <QAbstractListModel>
 #include <QObject>
@@ -11,6 +12,23 @@
 
 #include <chrono>
 #include <deque>
+#include <functional>
+#include <optional>
+#include <variant>
+
+using CommandPaletteCommand = std::variant<QString, SurfaceTarget>;
+
+// Runtime palette rows are deliberately separate from configuration entries:
+// some rows target a live surface and therefore have no serializable Ghostty
+// action or action key.
+struct CommandPaletteRow {
+    QString title;
+    QString description;
+    QString actionKey;
+    CommandPaletteCommand command;
+
+    bool operator==(const CommandPaletteRow &) const = default;
+};
 
 class CommandPaletteModel final : public QAbstractListModel {
     Q_OBJECT
@@ -19,15 +37,12 @@ class CommandPaletteModel final : public QAbstractListModel {
     Q_PROPERTY(QString filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(int selectedIndex READ selectedIndex WRITE setSelectedIndex
                    NOTIFY selectedIndexChanged)
-    Q_PROPERTY(
-        QString selectedAction READ selectedAction NOTIFY selectedActionChanged)
 
 public:
     enum Role {
         TitleRole = Qt::UserRole + 1,
         DescriptionRole,
         ActionKeyRole,
-        ActionRole,
     };
     Q_ENUM(Role)
 
@@ -42,22 +57,22 @@ public:
     void setFilter(const QString &filter);
     int selectedIndex() const { return selectedIndex_; }
     void setSelectedIndex(int index);
-    QString selectedAction() const;
 
+    void replaceRows(QVector<CommandPaletteRow> rows);
     void replaceEntries(QVector<CommandPaletteEntry> entries);
-    const CommandPaletteEntry *entryAt(int visibleRow) const;
-    Q_INVOKABLE QString actionAt(int visibleRow) const;
+    const CommandPaletteRow *rowAt(int visibleRow) const;
+    std::optional<CommandPaletteCommand> commandAt(int visibleRow) const;
+    std::optional<CommandPaletteCommand> selectedCommand() const;
     Q_INVOKABLE void selectRelative(int delta);
 
 Q_SIGNALS:
     void countChanged();
     void filterChanged();
     void selectedIndexChanged();
-    void selectedActionChanged();
 
 private:
     struct PreparedEntry {
-        CommandPaletteEntry entry;
+        CommandPaletteRow row;
         QString sortKey;
         QString foldedTitle;
         QString foldedActionKey;
@@ -65,11 +80,12 @@ private:
         bool operator==(const PreparedEntry &) const = default;
     };
 
-    static PreparedEntry prepare(CommandPaletteEntry entry);
+    static PreparedEntry prepare(CommandPaletteRow row);
     static bool lessThan(const PreparedEntry &left, const PreparedEntry &right);
     static bool matches(const PreparedEntry &entry, QStringView foldedFilter);
-    void rebuildVisibleRows(const QString &previousSelectedAction,
-                            bool preserveSelectedAction);
+    void rebuildVisibleRows(
+        const std::optional<CommandPaletteCommand> &previousSelection,
+        bool preserveSelection);
     void updateSelectedIndex(int selectedIndex);
 
     QVector<PreparedEntry> entries_;
@@ -97,6 +113,10 @@ class WindowUiController final : public QObject {
         int toastQueueDepth READ toastQueueDepth NOTIFY toastQueueDepthChanged)
 
 public:
+    using CommandPaletteRefreshCallback = std::function<void()>;
+    using CommandPaletteActivationCallback =
+        std::function<void(CommandPaletteCommand)>;
+
     enum class Modal {
         None,
         CommandPalette,
@@ -131,11 +151,17 @@ public:
     }
 
     void replaceCommandPaletteEntries(QVector<CommandPaletteEntry> entries);
+    void replaceCommandPaletteRows(QVector<CommandPaletteRow> rows);
+    void
+    setCommandPaletteRefreshCallback(CommandPaletteRefreshCallback callback);
+    void setCommandPaletteActivationCallback(
+        CommandPaletteActivationCallback callback);
     Q_INVOKABLE void showCommandPalette();
     Q_INVOKABLE void showTabOverview();
     Q_INVOKABLE void toggleCommandPalette();
     Q_INVOKABLE void toggleTabOverview();
     Q_INVOKABLE void closeModal();
+    Q_INVOKABLE bool activateSelectedCommand();
 
     bool toastVisible() const { return !toasts_.empty(); }
     QString toastMessage() const;
@@ -171,10 +197,15 @@ private:
     };
 
     static QString toastMessage(ToastKind kind);
+    bool refreshCommandPalette();
+    void clearPendingPaletteCommand();
     void setModal(Modal modal);
     void advanceToastRevision();
 
     CommandPaletteModel commandPaletteModel_{this};
+    CommandPaletteRefreshCallback commandPaletteRefreshCallback_;
+    CommandPaletteActivationCallback commandPaletteActivationCallback_;
+    std::optional<CommandPaletteCommand> pendingPaletteCommand_;
     std::deque<Toast> toasts_;
     quint64 toastRevision_ = 0;
     Modal modal_ = Modal::None;

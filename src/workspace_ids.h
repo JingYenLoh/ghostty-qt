@@ -3,6 +3,7 @@
 #include <QMetaType>
 #include <QtGlobal>
 
+#include <compare>
 #include <cstddef>
 #include <functional>
 
@@ -18,7 +19,7 @@ public:
     [[nodiscard]] constexpr bool isValid() const { return value_ != 0; }
     [[nodiscard]] constexpr Value value() const { return value_; }
 
-    friend constexpr bool operator==(WorkspaceId, WorkspaceId) = default;
+    friend constexpr auto operator<=>(WorkspaceId, WorkspaceId) = default;
 
 private:
     Value value_ = 0;
@@ -26,9 +27,24 @@ private:
 
 struct TabIdTag;
 struct PaneIdTag;
+struct WindowIdTag;
 
 using TabId = WorkspaceId<TabIdTag>;
 using PaneId = WorkspaceId<PaneIdTag>;
+using WindowId = WorkspaceId<WindowIdTag>;
+
+struct SurfaceTarget {
+    WindowId windowId;
+    PaneId paneId;
+
+    [[nodiscard]] constexpr bool isValid() const
+    {
+        return windowId.isValid() && paneId.isValid();
+    }
+
+    friend constexpr auto operator<=>(const SurfaceTarget &,
+                                      const SurfaceTarget &) = default;
+};
 
 template <typename Tag>
 constexpr size_t qHash(WorkspaceId<Tag> id, size_t seed = 0) noexcept
@@ -38,3 +54,5 @@ constexpr size_t qHash(WorkspaceId<Tag> id, size_t seed = 0) noexcept
 
 Q_DECLARE_METATYPE(TabId)
 Q_DECLARE_METATYPE(PaneId)
+Q_DECLARE_METATYPE(WindowId)
+Q_DECLARE_METATYPE(SurfaceTarget)

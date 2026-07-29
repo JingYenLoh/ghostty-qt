@@ -589,6 +589,16 @@ target_compile_options(ghostty-qt-cli-delegation PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
+ghostty_qt_add_internal_library(ghostty-qt-application-ipc
+    src/ghostty_application_ipc.cpp
+    src/ghostty_application_ipc.h
+)
+target_link_libraries(ghostty-qt-application-ipc PUBLIC
+    Qt6::Core
+    Qt6::DBus
+    ghostty-qt-application-identity
+)
+
 add_library(ghostty-qt-desktop-activation STATIC
     src/desktop_activation.cpp
     src/desktop_activation.h
@@ -889,6 +899,7 @@ target_link_libraries(ghostty-qt-application-controller
         Qt6::Gui
         Qt6::Qml
         Qt6::Quick
+        ghostty-qt-application-ipc
         ghostty-qt-application-keybindings
         ghostty-qt-quick-terminal
         ghostty-qt-terminal-foundation
@@ -986,6 +997,7 @@ target_link_libraries(ghostty-qt PRIVATE
     PkgConfig::XKBCommon
     ghostty-qt-action-pipeline
     ghostty-qt-application-identity
+    ghostty-qt-application-ipc
     ghostty-qt-application-controller
     ghostty-qt-cli-delegation
     ghostty-qt-config-export

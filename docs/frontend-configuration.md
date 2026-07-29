@@ -103,10 +103,19 @@ failures retain the last successful frontend snapshot and are retried
 periodically; at initial startup, where no last-good snapshot exists, built-in
 and explicit command-line values remain active.
 
-The pinned private JSON schema-v1 export still carries
-`gtk-single-instance` as an unused compatibility field. Keeping that exact wire
-field avoids an unrelated schema migration, but the Qt launch-option resolver
-deliberately ignores it.
+The pinned private JSON schema-v1 export carries the upstream
+`gtk-single-instance` value for source fidelity, but the Qt launch-option
+resolver deliberately ignores it. The decoder accepts schema v1 only; this is
+not a backwards-compatibility branch for an older frontend schema.
+
+The pre-GUI `+new-window` and `+toggle-quick-terminal` clients do not load the
+launching process's frontend file or consult its `single-instance` policy.
+They contact a D-Bus service through `org.gtk.Actions`, allowing an existing
+primary or the installed zero-window service host to handle the request with
+its latest live window and quick-terminal policy. `+new-window --class=...`
+selects a custom service identity; pinned `+toggle-quick-terminal` ignores
+`--class` and always uses the build identity. Neither client depends on the
+config-enabled Ghostty helper.
 
 ## Command-line migration
 

@@ -423,7 +423,7 @@
     "command-palette-entry": {
       "status": "supported",
       "scope": "qt_mapping",
-      "note": "Finalized title, description, action key, and canonical serialized action values populate a window-local Qt model after unsupported frontend actions are removed. Colon-normalized case-insensitive ordering is deterministic, title/action-key filtering is case-folded once per query, selection survives equivalent live replacements by action identity, and activation closes the modal before executing against the window's current active pane. Prepared sort and search keys are cached once per configuration generation."
+      "note": "Finalized title, description, action key, and canonical serialized action values populate each window-local Qt model after unsupported frontend actions are removed. On every palette opening they are combined with current typed surface-target rows, then prepared and deterministically sorted using colon-normalized case-insensitive keys. Filtering case-folds the query against cached keys for that row snapshot, equivalent replacement preserves selection by typed command identity, and configured actions close the modal before executing against the source window's then-current active pane."
     },
     "config-file": {
       "status": "supported",
@@ -1329,8 +1329,8 @@
           "note": "Local, QML, and broad triggers create and select a tab through the typed workspace, retain each original source pane for directory/font inheritance, and honor the live current/end insertion policy."
         },
         "new_window": {
-          "status": "partial",
-          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; application requests use the focused then last-active live pane, and zero-window requests use current process defaults. After suppressed startup, whichever session successfully initializes first receives the current one-shot program and hold values. Constructing, registering, presenting, or closing a deferred window before session start does not consume them; later sessions use ordinary launch defaults. Each window initializes one workspace before presentation, requires matching visual and QObject ownership, registers lifetime/keybindings/config fanout, checkpoints reentrant destruction, and can recreate a resident process after every old root and worker is retired. Bare-secondary and standard desktop Activate requests consume the same source-less path, including the pinned null-parent cwd/configured-font distinction and exact one-shot activation-token/startup-ID presentation. The +new-window/org.gtk.Actions payload and functional standard ActivateAction remain incomplete."
+          "status": "supported",
+          "note": "The exact void application action is routed above all workspaces and runs once for root, all, or global dispatch. Surface-originated requests retain the composite originating workspace and stable PaneId for working-directory/font inheritance; ordinary source-less Activate keeps the pinned focused-cwd/configured-font asymmetry. Standard org.freedesktop.Application ActivateAction and its org.gtk.Actions sibling accept exact new-window and new-window-command variants with typed parameters and one FIFO startup queue. The standard interface propagates creation failure after delayed dispatch, while the GTK void action acknowledges once its handler runs. A command request applies its decoded command, working-directory, and explicit-empty-capable persistent title only to the new window's first surface. That surface still resolves and consumes or releases the process-wide initial-session lease before its remote command wins; later tabs, splits, and windows retain ordinary launch policy. Every window remains a checked registration/presentation transaction and can recreate a resident zero-window process."
         },
         "next_tab": {
           "status": "supported",
@@ -1468,9 +1468,9 @@
           "scope": "macos"
         },
         "toggle_command_palette": {
-          "status": "partial",
+          "status": "supported",
           "scope": "qt_mapping",
-          "note": "The exact void action toggles one retained modal model per originating window, including live custom entries, keyboard navigation, filtering, and close-before-action execution. Pinned GTK also synthesizes one cross-window focus command for every live surface; the Qt palette currently omits those dynamic jump rows because tab overview and window navigation remain separate typed routes."
+          "note": "The exact void action toggles one retained modal per originating window with live custom entries, keyboard navigation, title/action-key filtering, deterministic Ghostty-style sorting, and close-before-action execution. Immediately before each open it adds one focus row for every committed live surface across normal and retained hidden quick-terminal windows, tabs, and splits. Rows preserve missing versus explicit-empty effective titles, suppress a cwd description only when the case-sensitive effective title already contains it, and carry a typed stable WindowId plus workspace-local PaneId rather than a QML string or pointer. Activation revalidates the composite target after closing, selects its exact tab and split, restores minimized or hidden presentation, and is inert after either the pane or whole window becomes stale."
         },
         "toggle_fullscreen": {
           "status": "supported",
@@ -1594,8 +1594,9 @@
           "note": "Delegates the pinned finalized keybinding formatter through the embedded-runtime helper."
         },
         "new-window": {
+          "status": "supported",
           "scope": "linux",
-          "note": "Ghostty's payload-capable +new-window/org.gtk.Actions protocol remains planned; ordinary bare-secondary and standard desktop source-less activation are tracked separately under the Qt-owned frontend single-instance setting and the new_window application action."
+          "note": "Before any GUI startup, the raw-argv client reproduces pinned Ghostty's class targeting, concrete cwd tilde/relative realpath normalization, implicit caller-cwd insertion, home/inherit forwarding quirk, opaque arguments after `-e`, UTF-8 validation, and exact org.gtk.Actions new-window-command string-array variant with empty platform data. It performs one blocking D-Bus call with service activation and no retry or local fallback. The primary decodes last-valid command/cwd/title values, including Ghostty's literal relative-path treatment of winning home/inherit values, unknown-option ignoring, direct/shell command grammar, and non-empty argv-after-`-e` precedence; overrides apply only to the registered first surface while preserving the global initial-session lease lifecycle. Warm and cold private-bus process tests cover the real executable path."
         },
         "show-config": {
           "status": "supported",
@@ -1610,7 +1611,9 @@
           "note": "Delegates the pinned +ssh-cache manager through the relocatable embedded-runtime helper before Qt starts. Ghostty owns the standard XDG-state path, list, exact and bare-host query, add/update, remove, prune, and clear grammar, validation, 0600 repair, atomic on-disk updates, streams, and exit status. Tests use an isolated repository-local state directory; no Qt cache namespace or frontend reimplementation is introduced."
         },
         "toggle-quick-terminal": {
-          "scope": "wayland"
+          "status": "supported",
+          "scope": "wayland",
+          "note": "The pre-Qt raw-argv client invokes exact org.gtk.Actions toggle-quick-terminal on the default application identity with empty platform data, performs one blocking call with D-Bus service activation, and never falls back locally. Matching the pinned revision's executable behavior, every extra argument, including --class, is ignored. The primary toggles its single retained compositor layer surface with live quick-terminal policy and no pane or PTY recreation; the separate standard ActivateAction path can carry desktop activation context. Warm and cold process tests exercise the real client and service."
         },
         "validate-config": {
           "status": "supported",

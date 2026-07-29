@@ -94,6 +94,14 @@ public:
     {
         return launchOptions_.environment;
     }
+    [[nodiscard]] const QString &launchWorkingDirectory() const
+    {
+        return launchOptions_.workingDirectory;
+    }
+    [[nodiscard]] bool launchInheritsWorkingDirectory() const
+    {
+        return launchOptions_.inheritWorkingDirectory;
+    }
     [[nodiscard]] const LinuxCgroupConfig &launchLinuxCgroup() const
     {
         return launchOptions_.linuxCgroup;
@@ -303,6 +311,7 @@ private:
     void tryStartSession();
     [[nodiscard]] bool applyInitialSessionPayload(
         const InitialSessionCoordinator::Payload &payload);
+    [[nodiscard]] bool applyFirstSessionCommandOverride();
     void cancelInitialSessionRequest();
     [[nodiscard]] bool beginTerminalActionRequest(quint64 requestId);
     void failPendingTerminalActions();

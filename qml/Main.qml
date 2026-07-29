@@ -259,9 +259,6 @@ ApplicationWindow {
     CommandPalette {
         id: commandPalette
         uiController: window.uiController
-        onActionRequested: function(action) {
-            workspace.executeActiveConfiguredAction(action)
-        }
     }
 
     TabOverview {
