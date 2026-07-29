@@ -92,6 +92,7 @@ void TerminalRectBatch::commit(bool softwareRenderer)
         hideSoftware();
     }
     committed_.swap(pending_);
+    ++commitGeneration_;
 }
 
 qsizetype TerminalRectBatch::size() const noexcept
@@ -102,6 +103,11 @@ qsizetype TerminalRectBatch::size() const noexcept
 quint64 TerminalRectBatch::allocationGeneration() const noexcept
 {
     return allocationGeneration_;
+}
+
+quint64 TerminalRectBatch::commitGeneration() const noexcept
+{
+    return commitGeneration_;
 }
 
 void TerminalRectBatch::commitHardware()

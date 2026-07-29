@@ -34,6 +34,7 @@ public:
 
     [[nodiscard]] qsizetype size() const noexcept;
     [[nodiscard]] quint64 allocationGeneration() const noexcept;
+    [[nodiscard]] quint64 commitGeneration() const noexcept;
 
 private:
     void commitHardware();
@@ -48,5 +49,6 @@ private:
     QVector<TerminalColoredRect> committed_;
     qsizetype vertexCapacity_ = 0;
     quint64 allocationGeneration_ = 0;
+    quint64 commitGeneration_ = 0;
     std::optional<bool> committedSoftwareRenderer_;
 };

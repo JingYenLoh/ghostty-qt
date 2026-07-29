@@ -66,10 +66,10 @@ for intentional upgrade procedure.
   Ghostty APIs that do not yet exist.
 - User-defined `link` expressions are not implemented because the pinned
   upstream parser does not implement their CLI grammar.
-- Renderer damage is retained per row, but a changed painter layer still
-  requires complete vector flattening and geometry upload. Production GPU and
-  compositor output also requires interactive qualification on real Wayland
-  systems.
+- Renderer damage and text nodes are retained per row, as is cell-derived solid
+  geometry on RHI backends; the software fallback uses pooled global nodes.
+  Production GPU and compositor output still requires interactive qualification
+  on real Wayland systems.
 - Saved sessions, a theme editor, systemd readiness notification, a project
   icon, AppStream metadata, and distribution packaging remain future work.
 

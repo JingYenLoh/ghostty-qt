@@ -816,6 +816,7 @@ struct TerminalSolidRenderState {
     int frameRows = 0;
     int visibleColumns = 0;
     int visibleRows = 0;
+    bool softwareRenderer = false;
 
     bool operator==(const TerminalSolidRenderState &) const = default;
 };
@@ -857,6 +858,13 @@ enum class RectLayer : quint8 {
     Count,
 };
 
+enum class SolidRowLayer : quint8 {
+    Background,
+    DecorationBeforeText,
+    DecorationAfterText,
+    Count,
+};
+
 class TerminalSceneNode final : public QSGNode {
 public:
     TerminalSceneNode()
@@ -880,13 +888,22 @@ public:
             rectLayers[terminalEnumIndex(layer)] = batch;
             parent->appendChildNode(batch);
         };
+        const auto appendSolidRowLayer = [this](SolidRowLayer layer,
+                                                QSGNode *parent) {
+            auto *const container = new QSGNode;
+            solidRowLayerContainers[terminalEnumIndex(layer)] = container;
+            parent->appendChildNode(container);
+        };
 
         appendChildNode(backdrop);
         gridTransform->appendChildNode(kittyBelowBackground);
+        appendSolidRowLayer(SolidRowLayer::Background, beforeMain);
         appendLayer(RectLayer::Background, beforeMain);
         beforeMain->appendChildNode(kittyBelowText);
         appendLayer(RectLayer::CursorBackground, beforeMain);
+        appendSolidRowLayer(SolidRowLayer::DecorationBeforeText, beforeMain);
         appendLayer(RectLayer::DecorationBeforeText, beforeMain);
+        appendSolidRowLayer(SolidRowLayer::DecorationAfterText, afterMain);
         appendLayer(RectLayer::DecorationAfterText, afterMain);
         appendLayer(RectLayer::CursorDecoration, afterMain);
         appendLayer(RectLayer::OverlayBackground, mainOverlay);
@@ -973,21 +990,72 @@ public:
 
     void clearSolidRows()
     {
+        for (QSGNode *container : solidRowLayerContainers) {
+            clearNodeChildren(container);
+        }
+        for (QVector<TerminalRectBatch *> &batches : solidRowLayers) {
+            batches.clear();
+        }
         solidRows.clear();
         solidState.reset();
+        retainedSolidRows = false;
         blockCursorTextState = {};
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         solidRowBuildCounts.clear();
 #endif
     }
 
-    void prepareSolidRows(int rowCount)
+    void prepareSolidRows(int rowCount, bool retainGeometry)
     {
+        if (solidRows.size() != rowCount
+            || retainedSolidRows != retainGeometry) {
+            for (std::size_t layer = 0; layer < solidRowLayers.size();
+                 ++layer) {
+                QSGNode *const container = solidRowLayerContainers[layer];
+                clearNodeChildren(container);
+                QVector<TerminalRectBatch *> &batches = solidRowLayers[layer];
+                batches.clear();
+                if (retainGeometry) {
+                    batches.reserve(rowCount);
+                    for (int row = 0; row < rowCount; ++row) {
+                        auto *const batch = new TerminalRectBatch;
+                        batches.append(batch);
+                        container->appendChildNode(batch);
+                    }
+                }
+            }
+        }
         solidRows.resize(rowCount);
+        retainedSolidRows = retainGeometry;
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
         solidRowBuildCounts.resize(rowCount);
 #endif
     }
+
+    void updateSolidRow(SolidRowLayer layer, int row,
+                        const QVector<ColoredRect> &rects,
+                        bool softwareRenderer) const
+    {
+        TerminalRectBatch *const batch =
+            solidRowLayers[terminalEnumIndex(layer)].at(row);
+        batch->beginUpdate() = rects;
+        batch->commit(softwareRenderer);
+    }
+
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    [[nodiscard]] QVector<quint64>
+    solidRowCommitGenerations(SolidRowLayer layer) const
+    {
+        QVector<quint64> result;
+        const QVector<TerminalRectBatch *> &batches =
+            solidRowLayers[terminalEnumIndex(layer)];
+        result.reserve(batches.size());
+        for (const TerminalRectBatch *batch : batches) {
+            result.append(batch->commitGeneration());
+        }
+        return result;
+    }
+#endif
 
     void resetTextRows(
         int rowCount,
@@ -1154,6 +1222,12 @@ public:
     QSGSimpleRectNode *unfocusedSplitOverlay = nullptr;
     std::array<TerminalRectBatch *, terminalEnumIndex(RectLayer::Count)>
         rectLayers{};
+    std::array<QSGNode *, terminalEnumIndex(SolidRowLayer::Count)>
+        solidRowLayerContainers{};
+    std::array<QVector<TerminalRectBatch *>,
+               terminalEnumIndex(SolidRowLayer::Count)>
+        solidRowLayers;
+    bool retainedSolidRows = false;
     QVector<QSGNode *> rowContainers;
     QVector<QSGTextNode *> rowTextNodes;
     QVector<quint64> builtRowEpochs;
@@ -1210,8 +1284,8 @@ QVector<TerminalPaneRenderLayer> renderLayerOrder(const TerminalSceneNode &root)
         if (node == root.kittyBelowBackground) {
             result.append(TerminalPaneRenderLayer::KittyBelowBackground);
         } else if (node
-                   == root.rectLayers[terminalEnumIndex(
-                       RectLayer::Background)]) {
+                   == root.solidRowLayerContainers[terminalEnumIndex(
+                       SolidRowLayer::Background)]) {
             result.append(TerminalPaneRenderLayer::CellBackground);
         } else if (node == root.kittyBelowText) {
             result.append(TerminalPaneRenderLayer::KittyBelowText);
@@ -1295,6 +1369,22 @@ void publishRenderProbe(
     snapshot.rowNodeSerials = root.rowNodeSerials;
     snapshot.rowBuildCounts = root.rowBuildCounts;
     snapshot.rowSolidBuildCounts = root.solidRowBuildCounts;
+    snapshot.retainedSolidRowGeometry = root.retainedSolidRows;
+    snapshot.rowBackgroundGeometryCommitCounts =
+        root.solidRowCommitGenerations(SolidRowLayer::Background);
+    snapshot.rowDecorationBeforeTextGeometryCommitCounts =
+        root.solidRowCommitGenerations(SolidRowLayer::DecorationBeforeText);
+    snapshot.rowDecorationAfterTextGeometryCommitCounts =
+        root.solidRowCommitGenerations(SolidRowLayer::DecorationAfterText);
+    snapshot.globalBackgroundGeometryCommitCount =
+        root.rectLayers[terminalEnumIndex(RectLayer::Background)]
+            ->commitGeneration();
+    snapshot.globalDecorationBeforeTextGeometryCommitCount =
+        root.rectLayers[terminalEnumIndex(RectLayer::DecorationBeforeText)]
+            ->commitGeneration();
+    snapshot.globalDecorationAfterTextGeometryCommitCount =
+        root.rectLayers[terminalEnumIndex(RectLayer::DecorationAfterText)]
+            ->commitGeneration();
     snapshot.solidCellVisitCount = root.solidCellVisitCount;
     snapshot.rowLayoutCounts = root.rowLayoutCounts;
     snapshot.rowFallbackCellCounts = root.rowFallbackCellCounts;
@@ -1618,11 +1708,12 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             .frameRows = frame.rows,
             .visibleColumns = visibleColumns,
             .visibleRows = visibleRows,
+            .softwareRenderer = softwareRenderer,
         };
         const bool rebuildAllSolids = !root->solidState.has_value()
             || *root->solidState != solidState
             || root->solidRows.size() != visibleRows;
-        root->prepareSolidRows(visibleRows);
+        root->prepareSolidRows(visibleRows, !softwareRenderer);
         root->solidState = solidState;
 
         BlockCursorTextState blockCursorTextState;
@@ -1971,11 +2062,23 @@ QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             }
             if (rebuildRowSolids) {
                 solidRow.builtEpoch = solidRowEpoch;
+                if (!softwareRenderer) {
+                    root->updateSolidRow(SolidRowLayer::Background, row,
+                                         solidRow.backgrounds,
+                                         softwareRenderer);
+                    root->updateSolidRow(SolidRowLayer::DecorationBeforeText,
+                                         row, solidRow.decorationsBeforeText,
+                                         softwareRenderer);
+                    root->updateSolidRow(SolidRowLayer::DecorationAfterText,
+                                         row, solidRow.decorationsAfterText,
+                                         softwareRenderer);
+                }
             }
-
-            backgrounds.append(solidRow.backgrounds);
-            decorationsBeforeText.append(solidRow.decorationsBeforeText);
-            decorationsAfterText.append(solidRow.decorationsAfterText);
+            if (softwareRenderer) {
+                backgrounds.append(solidRow.backgrounds);
+                decorationsBeforeText.append(solidRow.decorationsBeforeText);
+                decorationsAfterText.append(solidRow.decorationsAfterText);
+            }
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
             const qsizetype probeOffset =
                 static_cast<qsizetype>(row) * frame.columns;

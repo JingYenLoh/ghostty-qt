@@ -627,12 +627,17 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    solid-state key invalidates all rows for palette, appearance,
    cell-affecting opacity, geometry, or device-pixel changes. Block-cursor
    transitions rebuild only their old and new rows, while bar/underline cursor
-   movement and metadata/frontend-overlay updates reuse every row plan. Cached
-   rows are flattened in painter order into the existing nine
-   `TerminalRectBatch` layers; their two CPU vectors exchange storage instead
-   of copying, identical batches do not dirty the scene graph, RHI geometry
-   grows only when its retained capacity is insufficient, and the software
-   adaptation hides and reuses a pool of `QSGSimpleRectNode`s. Each nonempty
+   movement and metadata/frontend-overlay updates reuse every row plan. Each
+   row owns three persistent `TerminalRectBatch` instances on RHI backends, in
+   painter-ordered background, before-text-decoration, and
+   after-text-decoration containers. Only rebuilt rows begin and commit those
+   batches. Padding, cursor, terminal overlay, and pane overlay geometry
+   remains in small global batches. The software adaptation deliberately
+   flattens cached rows into its three global `QSGSimpleRectNode` pools,
+   avoiding the traversal cost of hundreds of empty row nodes where there is
+   no GPU upload to save. Each batch's two CPU vectors exchange storage instead
+   of copying, identical batches do not dirty the scene graph, and RHI geometry
+   grows only when its retained capacity is insufficient. Each nonempty
    cell in a rebuilt text row is shaped with `QTextLayout` and placed at an
    explicit grid coordinate. This avoids fallback-font and wide-cell advances
    shifting later cells. Cell values retain foreground provenance, a separate
@@ -700,11 +705,14 @@ operation rather than a deep cell copy. During ordinary sparse updates, the
 renderer resolves solid presentation and shapes text only for rows whose
 persistent epochs or derived block-cursor state changed. Metadata-only,
 frontend-overlay, and non-block cursor updates perform no cell-presentation
-scan. Cached solid rows are still flattened into whole painter-layer vectors,
-and a changed vector rewrites that layer's complete geometry; unchanged
-batches skip geometry updates and every batch reuses its CPU and scene-graph
-allocation capacity. Global text-state changes, including search-decoration
-mask replacement, still rebuild the complete text layer.
+scan. On an RHI backend, each cached solid row commits directly to its three
+persistent painter-layer batches, so a sparse update rewrites only geometry for
+rows whose presentation changed. The software fallback retains the row plans
+but flattens them into global node pools. Padding, cursor, and frontend overlays
+use independent global batches; unchanged batches skip geometry updates and
+every batch reuses its CPU and scene-graph allocation capacity. Global
+text-state changes, including search-decoration mask replacement, still rebuild
+the complete text layer.
 
 The renderer resolves configured selection, search, and cursor cell-relative
 aliases against each cell's visual colors, applies Ghostty's bold
@@ -2764,10 +2772,12 @@ be checked interactively in a real Wayland session.
   and persistent row text nodes restrict `QTextLayout` work to those rows.
   Maximal compatible text runs replace ordinary per-cell layouts, with
   boundary validation and per-cell fallback for unsafe runs. Solid
-  presentation is cached by row, so sparse output and cursor-only updates plan
-  only damaged rows. The cached rows are still flattened into each complete
-  painter-layer vector; when one row changes, the corresponding RHI geometry
-  upload is currently whole-layer rather than a dirty subrange.
+  presentation and its three cell-derived RHI geometry batches are retained by
+  row, so sparse output and cursor-only updates plan and commit only damaged
+  rows on the GPU path. The software fallback still flattens cached plans into
+  global node pools because per-row scene-node traversal costs more than it
+  saves there. A global appearance, geometry, palette, or renderer-backend
+  change still rebuilds every visible row by design.
 - Text uses Qt's GPU distance-field glyph atlas on hardware RHI backends and
   shapes compatible cells together. It cannot consume Ghostty's private
   selected-face and positioned-glyph plan, so exact fallback, synthesis,

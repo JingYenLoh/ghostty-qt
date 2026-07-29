@@ -59,8 +59,18 @@ struct TerminalPaneRenderProbeSnapshot {
     // Cumulative rebuilds by visible row for the current scene-graph root.
     QVector<quint64> rowBuildCounts;
     // Cumulative cell-derived solid-plan rebuilds by visible row. Flattening a
-    // cached row into a retained geometry batch does not increment this.
+    // cached row into its retained geometry batches does not increment this.
     QVector<quint64> rowSolidBuildCounts;
+    // Actual retained geometry commits by visible row and painter layer.
+    // Replanning a row to identical rectangles leaves these unchanged.
+    bool retainedSolidRowGeometry = false;
+    QVector<quint64> rowBackgroundGeometryCommitCounts;
+    QVector<quint64> rowDecorationBeforeTextGeometryCommitCounts;
+    QVector<quint64> rowDecorationAfterTextGeometryCommitCounts;
+    // The software renderer keeps one flattened batch per painter layer.
+    quint64 globalBackgroundGeometryCommitCount = 0;
+    quint64 globalDecorationBeforeTextGeometryCommitCount = 0;
+    quint64 globalDecorationAfterTextGeometryCommitCount = 0;
     quint64 solidCellVisitCount = 0;
     // Layouts in each row's latest rebuild. A compatible shaped run counts
     // once; a rejected run counts once per exact-position fallback cell.

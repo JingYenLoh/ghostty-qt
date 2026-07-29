@@ -55,6 +55,7 @@ void TerminalRectBatchTest::reusesHardwareGeometry()
 
     QCOMPARE(batch.size(), qsizetype{2});
     QCOMPARE(batch.allocationGeneration(), quint64{1});
+    QCOMPARE(batch.commitGeneration(), quint64{1});
     QCOMPARE(childCount(batch), qsizetype{1});
 
     QVector<TerminalColoredRect> &identical = batch.beginUpdate();
@@ -62,23 +63,27 @@ void TerminalRectBatchTest::reusesHardwareGeometry()
     appendRect(identical, 1);
     batch.commit(false);
     QCOMPARE(batch.allocationGeneration(), quint64{1});
+    QCOMPARE(batch.commitGeneration(), quint64{1});
 
     QVector<TerminalColoredRect> &smaller = batch.beginUpdate();
     appendRect(smaller, 0);
     batch.commit(false);
     QCOMPARE(batch.size(), qsizetype{1});
     QCOMPARE(batch.allocationGeneration(), quint64{1});
+    QCOMPARE(batch.commitGeneration(), quint64{2});
 
     QVector<TerminalColoredRect> &larger = batch.beginUpdate();
     for (int index = 0; index < 10; ++index) appendRect(larger, index);
     batch.commit(false);
     QCOMPARE(batch.size(), qsizetype{10});
     QCOMPARE(batch.allocationGeneration(), quint64{2});
+    QCOMPARE(batch.commitGeneration(), quint64{3});
 
     (void)batch.beginUpdate();
     batch.commit(false);
     QCOMPARE(batch.size(), qsizetype{0});
     QCOMPARE(batch.allocationGeneration(), quint64{2});
+    QCOMPARE(batch.commitGeneration(), quint64{4});
 }
 
 void TerminalRectBatchTest::reusesSoftwareNodePool()
@@ -90,6 +95,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
 
     QCOMPARE(batch.size(), qsizetype{3});
     QCOMPARE(batch.allocationGeneration(), quint64{3});
+    QCOMPARE(batch.commitGeneration(), quint64{1});
     QCOMPARE(childCount(batch), qsizetype{4});
     const QVector<QSGSimpleRectNode *> firstNodes = softwareNodes(batch);
     QCOMPARE(firstNodes.size(), 3);
@@ -102,6 +108,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     batch.commit(true);
     QCOMPARE(batch.size(), qsizetype{1});
     QCOMPARE(batch.allocationGeneration(), quint64{3});
+    QCOMPARE(batch.commitGeneration(), quint64{2});
     QCOMPARE(softwareNodes(batch), firstNodes);
     QVERIFY(firstNodes.at(1)->rect().isEmpty());
     QVERIFY(firstNodes.at(2)->rect().isEmpty());
@@ -110,6 +117,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     for (int index = 0; index < 5; ++index) appendRect(larger, index);
     batch.commit(true);
     QCOMPARE(batch.allocationGeneration(), quint64{5});
+    QCOMPARE(batch.commitGeneration(), quint64{3});
     QCOMPARE(childCount(batch), qsizetype{6});
     const QVector<QSGSimpleRectNode *> fiveNodes = softwareNodes(batch);
 
@@ -117,6 +125,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     for (int index = 0; index < 5; ++index) appendRect(hardware, index);
     batch.commit(false);
     QCOMPARE(batch.allocationGeneration(), quint64{6});
+    QCOMPARE(batch.commitGeneration(), quint64{4});
     for (QSGSimpleRectNode *node : softwareNodes(batch)) {
         QVERIFY(node->rect().isEmpty());
     }
@@ -125,6 +134,7 @@ void TerminalRectBatchTest::reusesSoftwareNodePool()
     for (int index = 0; index < 5; ++index) appendRect(software, index);
     batch.commit(true);
     QCOMPARE(batch.allocationGeneration(), quint64{6});
+    QCOMPARE(batch.commitGeneration(), quint64{5});
     QCOMPARE(softwareNodes(batch), fiveNodes);
 }
 

@@ -1495,8 +1495,12 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
             cell.foreground = color;
             cell.background = Qt::black;
         }
+        update.cells[1].background = color;
+        update.cells[1].backgroundExplicit = true;
+        update.cells[2].overline = true;
         if (withGlyph) {
             update.cells[0].text = QString(QChar(0x2588));
+            update.cells[3].strikeThrough = true;
         }
         return update;
     };
@@ -1534,6 +1538,31 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     for (quint64 count : initial.rowSolidBuildCounts) {
         QVERIFY(count > 0);
     }
+    if (initial.retainedSolidRowGeometry) {
+        QCOMPARE(initial.rowBackgroundGeometryCommitCounts.size(), rows);
+        QCOMPARE(initial.rowDecorationBeforeTextGeometryCommitCounts.size(),
+                 rows);
+        QCOMPARE(initial.rowDecorationAfterTextGeometryCommitCounts.size(),
+                 rows);
+        for (quint64 count : initial.rowBackgroundGeometryCommitCounts) {
+            QVERIFY(count > 0);
+        }
+        for (quint64 count :
+             initial.rowDecorationBeforeTextGeometryCommitCounts) {
+            QVERIFY(count > 0);
+        }
+        for (quint64 count :
+             initial.rowDecorationAfterTextGeometryCommitCounts) {
+            QVERIFY(count > 0);
+        }
+    } else {
+        QVERIFY(initial.rowBackgroundGeometryCommitCounts.isEmpty());
+        QVERIFY(initial.rowDecorationBeforeTextGeometryCommitCounts.isEmpty());
+        QVERIFY(initial.rowDecorationAfterTextGeometryCommitCounts.isEmpty());
+        QVERIFY(initial.globalBackgroundGeometryCommitCount > 0);
+        QVERIFY(initial.globalDecorationBeforeTextGeometryCommitCount > 0);
+        QVERIFY(initial.globalDecorationAfterTextGeometryCommitCount > 0);
+    }
     QVERIFY(initial.kittyBelowBackgroundNodeSerial != 0);
     QVERIFY(initial.kittyBelowTextNodeSerial != 0);
     QVERIFY(initial.kittyAboveTextNodeSerial != 0);
@@ -1564,6 +1593,18 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(metadata.rowNodeSerials, initial.rowNodeSerials);
     QCOMPARE(metadata.rowBuildCounts, initial.rowBuildCounts);
     QCOMPARE(metadata.rowSolidBuildCounts, initial.rowSolidBuildCounts);
+    QCOMPARE(metadata.rowBackgroundGeometryCommitCounts,
+             initial.rowBackgroundGeometryCommitCounts);
+    QCOMPARE(metadata.rowDecorationBeforeTextGeometryCommitCounts,
+             initial.rowDecorationBeforeTextGeometryCommitCounts);
+    QCOMPARE(metadata.rowDecorationAfterTextGeometryCommitCounts,
+             initial.rowDecorationAfterTextGeometryCommitCounts);
+    QCOMPARE(metadata.globalBackgroundGeometryCommitCount,
+             initial.globalBackgroundGeometryCommitCount);
+    QCOMPARE(metadata.globalDecorationBeforeTextGeometryCommitCount,
+             initial.globalDecorationBeforeTextGeometryCommitCount);
+    QCOMPARE(metadata.globalDecorationAfterTextGeometryCommitCount,
+             initial.globalDecorationAfterTextGeometryCommitCount);
     QCOMPARE(metadata.solidCellVisitCount, initial.solidCellVisitCount);
     QCOMPARE(metadata.kittyBelowBackgroundNodeSerial,
              initial.kittyBelowBackgroundNodeSerial);
@@ -1583,6 +1624,18 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(pixelResized.rowNodeSerials, metadata.rowNodeSerials);
     QCOMPARE(pixelResized.rowBuildCounts, metadata.rowBuildCounts);
     QCOMPARE(pixelResized.rowSolidBuildCounts, metadata.rowSolidBuildCounts);
+    QCOMPARE(pixelResized.rowBackgroundGeometryCommitCounts,
+             metadata.rowBackgroundGeometryCommitCounts);
+    QCOMPARE(pixelResized.rowDecorationBeforeTextGeometryCommitCounts,
+             metadata.rowDecorationBeforeTextGeometryCommitCounts);
+    QCOMPARE(pixelResized.rowDecorationAfterTextGeometryCommitCounts,
+             metadata.rowDecorationAfterTextGeometryCommitCounts);
+    QCOMPARE(pixelResized.globalBackgroundGeometryCommitCount,
+             metadata.globalBackgroundGeometryCommitCount);
+    QCOMPARE(pixelResized.globalDecorationBeforeTextGeometryCommitCount,
+             metadata.globalDecorationBeforeTextGeometryCommitCount);
+    QCOMPARE(pixelResized.globalDecorationAfterTextGeometryCommitCount,
+             metadata.globalDecorationAfterTextGeometryCommitCount);
     QCOMPARE(pixelResized.solidCellVisitCount, metadata.solidCellVisitCount);
 
     // GUI-only overlays rebuild transient layers without touching main text.
@@ -1594,6 +1647,18 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(overlay.rowNodeSerials, pixelResized.rowNodeSerials);
     QCOMPARE(overlay.rowBuildCounts, pixelResized.rowBuildCounts);
     QCOMPARE(overlay.rowSolidBuildCounts, pixelResized.rowSolidBuildCounts);
+    QCOMPARE(overlay.rowBackgroundGeometryCommitCounts,
+             pixelResized.rowBackgroundGeometryCommitCounts);
+    QCOMPARE(overlay.rowDecorationBeforeTextGeometryCommitCounts,
+             pixelResized.rowDecorationBeforeTextGeometryCommitCounts);
+    QCOMPARE(overlay.rowDecorationAfterTextGeometryCommitCounts,
+             pixelResized.rowDecorationAfterTextGeometryCommitCounts);
+    QCOMPARE(overlay.globalBackgroundGeometryCommitCount,
+             pixelResized.globalBackgroundGeometryCommitCount);
+    QCOMPARE(overlay.globalDecorationBeforeTextGeometryCommitCount,
+             pixelResized.globalDecorationBeforeTextGeometryCommitCount);
+    QCOMPARE(overlay.globalDecorationAfterTextGeometryCommitCount,
+             pixelResized.globalDecorationAfterTextGeometryCommitCount);
     QCOMPARE(overlay.solidCellVisitCount, pixelResized.solidCellVisitCount);
     QVERIFY(overlay.paneOverlayTextNodeSerial != 0);
     QVERIFY(overlay.paneOverlayTextBuildCount > 0);
@@ -1609,6 +1674,18 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(repeatedOverlay.rowNodeSerials, overlay.rowNodeSerials);
     QCOMPARE(repeatedOverlay.rowBuildCounts, overlay.rowBuildCounts);
     QCOMPARE(repeatedOverlay.rowSolidBuildCounts, overlay.rowSolidBuildCounts);
+    QCOMPARE(repeatedOverlay.rowBackgroundGeometryCommitCounts,
+             overlay.rowBackgroundGeometryCommitCounts);
+    QCOMPARE(repeatedOverlay.rowDecorationBeforeTextGeometryCommitCounts,
+             overlay.rowDecorationBeforeTextGeometryCommitCounts);
+    QCOMPARE(repeatedOverlay.rowDecorationAfterTextGeometryCommitCounts,
+             overlay.rowDecorationAfterTextGeometryCommitCounts);
+    QCOMPARE(repeatedOverlay.globalBackgroundGeometryCommitCount,
+             overlay.globalBackgroundGeometryCommitCount);
+    QCOMPARE(repeatedOverlay.globalDecorationBeforeTextGeometryCommitCount,
+             overlay.globalDecorationBeforeTextGeometryCommitCount);
+    QCOMPARE(repeatedOverlay.globalDecorationAfterTextGeometryCommitCount,
+             overlay.globalDecorationAfterTextGeometryCommitCount);
     QCOMPARE(repeatedOverlay.solidCellVisitCount, overlay.solidCellVisitCount);
 
     controller->errorOccurred(QStringLiteral("updated renderer overlay"));
@@ -1622,6 +1699,18 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(updatedOverlay.rowNodeSerials, overlay.rowNodeSerials);
     QCOMPARE(updatedOverlay.rowBuildCounts, overlay.rowBuildCounts);
     QCOMPARE(updatedOverlay.rowSolidBuildCounts, overlay.rowSolidBuildCounts);
+    QCOMPARE(updatedOverlay.rowBackgroundGeometryCommitCounts,
+             overlay.rowBackgroundGeometryCommitCounts);
+    QCOMPARE(updatedOverlay.rowDecorationBeforeTextGeometryCommitCounts,
+             overlay.rowDecorationBeforeTextGeometryCommitCounts);
+    QCOMPARE(updatedOverlay.rowDecorationAfterTextGeometryCommitCounts,
+             overlay.rowDecorationAfterTextGeometryCommitCounts);
+    QCOMPARE(updatedOverlay.globalBackgroundGeometryCommitCount,
+             overlay.globalBackgroundGeometryCommitCount);
+    QCOMPARE(updatedOverlay.globalDecorationBeforeTextGeometryCommitCount,
+             overlay.globalDecorationBeforeTextGeometryCommitCount);
+    QCOMPARE(updatedOverlay.globalDecorationAfterTextGeometryCommitCount,
+             overlay.globalDecorationAfterTextGeometryCommitCount);
     QCOMPARE(updatedOverlay.solidCellVisitCount, overlay.solidCellVisitCount);
 
     // Two updates coalesced before one render must retain both dirty rows.
@@ -1658,6 +1747,39 @@ void TerminalPaneTest::retainsMainTextRowsAcrossIncrementalUpdates()
     QCOMPARE(sparse.solidCellVisitCount,
              updatedOverlay.solidCellVisitCount
                  + static_cast<quint64>(2 * columns));
+    if (sparse.retainedSolidRowGeometry) {
+        QVector<quint64> sparseBackgroundCommits =
+            updatedOverlay.rowBackgroundGeometryCommitCounts;
+        ++sparseBackgroundCommits[0];
+        QCOMPARE(sparse.rowBackgroundGeometryCommitCounts,
+                 sparseBackgroundCommits);
+        QVector<quint64> sparseBeforeTextCommits =
+            updatedOverlay.rowDecorationBeforeTextGeometryCommitCounts;
+        ++sparseBeforeTextCommits[0];
+        QCOMPARE(sparse.rowDecorationBeforeTextGeometryCommitCounts,
+                 sparseBeforeTextCommits);
+        QVector<quint64> sparseAfterTextCommits =
+            updatedOverlay.rowDecorationAfterTextGeometryCommitCounts;
+        ++sparseAfterTextCommits[0];
+        ++sparseAfterTextCommits[2];
+        QCOMPARE(sparse.rowDecorationAfterTextGeometryCommitCounts,
+                 sparseAfterTextCommits);
+        QCOMPARE(sparse.globalBackgroundGeometryCommitCount,
+                 updatedOverlay.globalBackgroundGeometryCommitCount);
+        QCOMPARE(sparse.globalDecorationBeforeTextGeometryCommitCount,
+                 updatedOverlay.globalDecorationBeforeTextGeometryCommitCount);
+        QCOMPARE(sparse.globalDecorationAfterTextGeometryCommitCount,
+                 updatedOverlay.globalDecorationAfterTextGeometryCommitCount);
+    } else {
+        QCOMPARE(sparse.globalBackgroundGeometryCommitCount,
+                 updatedOverlay.globalBackgroundGeometryCommitCount + 1);
+        QCOMPARE(sparse.globalDecorationBeforeTextGeometryCommitCount,
+                 updatedOverlay.globalDecorationBeforeTextGeometryCommitCount
+                     + 1);
+        QCOMPARE(sparse.globalDecorationAfterTextGeometryCommitCount,
+                 updatedOverlay.globalDecorationAfterTextGeometryCommitCount
+                     + 1);
+    }
 
     const auto centerColor = [&](const QImage &image, int row) {
         const qreal xScale = static_cast<qreal>(image.width()) / window.width();

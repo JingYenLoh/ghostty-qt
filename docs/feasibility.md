@@ -67,10 +67,13 @@ effort. The main risks are renderer performance, the evolving libghostty API,
 advanced text/graphics support, and distribution:
 
 - Renderer-v1 has the intended QSG/GPU glyph path, dirty-row worker/UI
-  transport, and persistent main-text nodes per visible row. It still scans
-  the visible grid and rebuilds transient geometry for each presented update,
-  and a changed row still lays out text per cell. Larger compatible runs and
-  retained geometry are the remaining high-throughput CPU opportunities.
+  transport, persistent main-text nodes, and retained cell-derived RHI geometry
+  per visible row. Sparse updates plan and shape only damaged rows, and commit
+  only their GPU geometry; the software fallback keeps global node pools after
+  benchmarking showed that row-node traversal was counterproductive there.
+  Compatible text runs reduce layout count with exact-position fallback for
+  unsafe runs. Global invalidation cost and production GPU qualification remain
+  the principal renderer performance risks.
 - The libghostty revision should remain pinned; upgrades need focused ABI/API
   review and protocol regressions.
 - Color emoji and exact Ghostty font shaping still require explicit renderer

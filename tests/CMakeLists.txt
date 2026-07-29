@@ -605,6 +605,15 @@ set_tests_properties(terminal-pane-kitty-rhi PROPERTIES
     ENVIRONMENT
         "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
 )
+add_test(
+    NAME terminal-pane-retained-solids-rhi
+    COMMAND test-terminal-pane retainsMainTextRowsAcrossIncrementalUpdates
+)
+set_tests_properties(terminal-pane-retained-solids-rhi PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT
+        "GHOSTTY_QT_TERMINFO=${GHOSTTY_QT_TERMINFO_DIR};LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+)
 
 if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
     qt_add_executable(bench-terminal-pane-renderer
