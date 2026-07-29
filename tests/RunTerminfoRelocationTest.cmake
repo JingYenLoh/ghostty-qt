@@ -119,6 +119,7 @@ if(CONFIG_HELPER_NAME)
             --unset=LD_LIBRARY_PATH
             "XDG_CONFIG_HOME=${relocated_config_home}"
             "${relocated_config_helper}" +show-config-json
+            --ghostty-qt-color-scheme=light
         RESULT_VARIABLE structured_helper_result
         OUTPUT_VARIABLE structured_helper_output
         ERROR_VARIABLE structured_helper_error)

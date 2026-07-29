@@ -622,3 +622,133 @@ Once the contract is available in an official Ghostty commit:
    one `setMimeData` call.
 7. Add raw-byte, MIME, charset, trimming, destination, lifecycle, and failure-
    atomicity tests before promoting the affected parity entries.
+
+## Normalized standalone VT effects and policy controls
+
+**Status:** dynamic light/dark scheme reporting is implemented through the
+existing public callbacks and mode helpers. Title-report policy, desktop
+notifications, progress reports, command-finished notifications, color-report
+format, and initial grapheme-width policy remain blocked on standalone public
+`libghostty-vt` contracts.
+
+ghostty-qt links the public standalone terminal library described by
+`ghostty/vt/terminal.h`. Ghostty's broader embedded application API in
+`ghostty.h` has application-runtime action types for some of these events, but
+adopting that runtime would replace the project's terminal/session ownership
+model rather than extend the standalone terminal it already uses.
+
+At official revision `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`, the
+standalone stream has the following gaps:
+
+- It parses OSC 9 and OSC 777 desktop notifications, then discards the
+  normalized `show_desktop_notification` action without a host callback.
+- It parses ConEmu OSC 9;4 progress reports, then discards the normalized
+  progress action without exposing its state or percentage.
+- It records OSC 133 semantic prompt rows, but does not publish Ghostty's exact
+  command-start/command-finished lifecycle or its parser-owned C-to-D duration.
+- It answers CSI 21 t directly from the terminal's internal OSC title. The
+  frontend cannot apply Ghostty's default-false `title-report` security gate or
+  substitute the configured base title that full Ghostty reports.
+- It answers OSC 4, OSC 10, and OSC 11 color queries internally without a host
+  option for Ghostty's `none`, `8-bit`, or `16-bit` report formats.
+- Its construction options do not accept Ghostty's `legacy` versus `unicode`
+  grapheme-width policy for a new terminal. Mode 2027 remains terminal-owned,
+  so resolving widths later in Qt would not be equivalent.
+
+The affected configuration keys are:
+
+- `title-report`;
+- `desktop-notifications`;
+- `progress-style`;
+- `notify-on-command-finish`;
+- `notify-on-command-finish-action`;
+- `notify-on-command-finish-after`;
+- `osc-color-report-format`; and
+- `grapheme-width-method`.
+
+### Why ghostty-qt does not inspect PTY bytes
+
+A second parser in `SessionWorker` would need to duplicate Ghostty's fragmented
+OSC/CSI parsing, BEL and ST termination, cancellation, malformed-input
+handling, safe UTF-8 normalization, OSC 133 metadata, reset behavior, query
+reply ordering, and mode interactions. It could emit a duplicate reply after
+libghostty-vt already handled the same sequence, and it would silently diverge
+as Ghostty's parser evolves.
+
+Inferring command completion from rendered semantic rows is also insufficient.
+Rows do not preserve the exact C/D timer, missing-marker behavior, exit-code
+normalization, or ordering needed for the documented notification threshold.
+The project therefore keeps these items explicitly blocked rather than
+installing a parallel byte observer.
+
+### Required upstream contracts
+
+Official standalone `libghostty-vt` should add append-only, synchronous host
+effects for:
+
+1. A desktop notification with borrowed, explicit-length title and body bytes.
+2. A progress report with Ghostty's normalized remove, set, error,
+   indeterminate, and pause states plus an optional clamped percentage.
+3. Command started and command finished, with the finished effect carrying the
+   normalized optional exit status and parser-owned elapsed duration. Exposing
+   these two effects is narrower and more stable than exposing all OSC 133
+   syntax.
+
+These effects should follow the existing callback contract: they occur during
+`ghostty_terminal_vt_write`, are non-reentrant, retain borrowed data only for
+the callback, and preserve terminal input order.
+
+Title reporting additionally needs either:
+
+- a terminal option that gates CSI 21 t and a setter for the host-visible base
+  title; or
+- a normalized report-title callback that lets the host apply the gate and
+  return the exact base title synchronously.
+
+Color reporting needs a construction/runtime option matching Ghostty's
+`none`, `8-bit`, and `16-bit` enum before the internal OSC query path emits a
+reply. Grapheme width needs a construction-time `legacy`/`unicode` option that
+feeds the same terminal width logic as full Ghostty while retaining mode 2027
+as the terminal-owned override.
+
+Every new enum member, terminal option, callback, and value struct must follow
+the library's existing append-only ABI rules.
+
+### Upstream acceptance evidence
+
+Public C tests should cover:
+
+- OSC 9 and OSC 777, empty and non-empty titles, safe UTF-8 normalization,
+  BEL/ST termination, fragmentation, cancellation, and multiple ordered
+  notifications in one write;
+- every OSC 9;4 progress state, absent and overflowing percentages, removal,
+  fragmentation, and ordered replacement;
+- OSC 133 C/D pairing, repeated C, D without C, missing/malformed/out-of-range
+  exit status, exact duration ownership, reset, and interleaved terminal
+  output;
+- CSI 21 t disabled by default, enabled empty/non-empty base titles, a
+  configured title masking OSC updates, and exact response bytes;
+- OSC 4/10/11 under none, 8-bit, and 16-bit reporting, including palette and
+  current default-color changes; and
+- both initial grapheme-width methods, mode 2027 set/reset precedence,
+  combining clusters, emoji modifiers, and width-sensitive cursor movement.
+
+### ghostty-qt follow-up after upstream support lands
+
+Once the required contracts are present in an official, publicly reachable
+Ghostty commit:
+
+1. Update `GHOSTTY_REVISION` and the official submodule gitlink together.
+2. Copy effect payloads immediately on `SessionWorker` and associate them with
+   stable `PaneId` values; never expose a terminal handle or borrowed pointer
+   to the GUI thread.
+3. Keep focus, live configuration, duration thresholds, bell decisions, and
+   progress expiry atomic on the worker. Perform desktop notification and
+   presentation calls on the GUI thread.
+4. Resolve a notification click through the current `PaneId`, no-op after
+   closure, and otherwise select the correct tab/split, focus it, and activate
+   its existing window.
+5. Pass title-report, color-report, and grapheme-width policy through typed
+   adapter options rather than parsing terminal bytes.
+6. Add adapter, worker-ordering, pane-lifetime, live-reload, focus, rate-limit,
+   and activation tests before promoting the affected parity entries.

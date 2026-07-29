@@ -56,6 +56,12 @@ struct LaunchOptions {
     // override, which takes precedence over Ghostty's shared config.
     bool workingDirectoryExplicit = false;
     TerminalTypography typography;
+    // Resolved process/window appearance and selected Ghostty conditional
+    // state. All existing panes receive the latter through worker runtime
+    // options; window chrome remains on the GUI thread.
+    TerminalColorScheme colorScheme = TerminalColorScheme::Light;
+    std::optional<QString> configuredTitle;
+    WindowAppearanceOptions windowAppearance;
     // These bits distinguish parser defaults from an explicit command-line
     // override. The process helper receives those overrides before recursive
     // config files and finalization, then returns one authoritative typography

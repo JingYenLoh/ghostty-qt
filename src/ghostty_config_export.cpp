@@ -46,6 +46,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("linux-cgroup-processes-limit"),
     QLatin1StringView("linux-cgroup-hard-fail"),
     QLatin1StringView("working-directory"),
+    QLatin1StringView("title"),
     QLatin1StringView("font-family"),
     QLatin1StringView("font-family-bold"),
     QLatin1StringView("font-family-italic"),
@@ -87,6 +88,11 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("window-new-tab-position"),
     QLatin1StringView("window-show-tab-bar"),
     QLatin1StringView("window-decoration"),
+    QLatin1StringView("window-theme"),
+    QLatin1StringView("window-title-font-family"),
+    QLatin1StringView("window-titlebar-background"),
+    QLatin1StringView("window-titlebar-foreground"),
+    QLatin1StringView("window-subtitle"),
     QLatin1StringView("window-width"),
     QLatin1StringView("window-height"),
     QLatin1StringView("window-padding-x"),
@@ -138,6 +144,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("link-url"),
     QLatin1StringView("link-previews"),
     QLatin1StringView("config-file"),
+    QLatin1StringView("theme-files"),
     QLatin1StringView("quit-after-last-window-closed"),
     QLatin1StringView("quit-after-last-window-closed-delay"),
     QLatin1StringView("initial-window"),
@@ -414,6 +421,17 @@ ParseResult<QString> readNonEmptyString(const QJsonValue &value,
             QStringLiteral("%1 must be a non-empty string").arg(context));
     }
     return result;
+}
+
+ParseResult<std::optional<QString>> readOptionalString(const QJsonValue &value,
+                                                       const QString &context,
+                                                       bool allowEmpty)
+{
+    if (value.isNull()) return std::nullopt;
+    auto result = allowEmpty ? readString(value, context)
+                             : readNonEmptyString(value, context);
+    if (!result) return std::unexpected(std::move(result.error()));
+    return std::move(*result);
 }
 
 ParseResult<std::optional<GhosttyConfigPath>>
@@ -836,6 +854,32 @@ ParseResult<QStringList> readNonEmptyStringList(const QJsonValue &value,
     return result;
 }
 
+ParseResult<QStringList> readAbsolutePathList(const QJsonValue &value,
+                                              const QString &context)
+{
+    auto paths = readNonEmptyStringList(value, context);
+    if (!paths) return std::unexpected(std::move(paths.error()));
+
+    QStringList result;
+    result.reserve(paths->size());
+    for (qsizetype index = 0; index < paths->size(); ++index) {
+        QString path = std::move((*paths)[index]);
+        if (!QDir::isAbsolutePath(path)) {
+            return std::unexpected(
+                QStringLiteral("%1[%2] must be an absolute path")
+                    .arg(context)
+                    .arg(index));
+        }
+        if (result.contains(path)) {
+            return std::unexpected(
+                QStringLiteral("%1 contains duplicate path '%2'")
+                    .arg(context, path));
+        }
+        result.append(std::move(path));
+    }
+    return result;
+}
+
 ParseResult<QVector<GhosttyConfigFile>> readConfigFiles(const QJsonValue &value,
                                                         const QString &context)
 {
@@ -1179,6 +1223,12 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             result.workingDirectoryPath = std::move(*parsed);
         }
     }
+    {
+        constexpr QLatin1StringView name("title");
+        auto parsed = readOptionalString(fieldValue(name), context(name), true);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.title = std::move(*parsed);
+    }
     for (const auto &[name, role] : FontFamilyFields) {
         if (auto parsed = assign(name, result.typography.face(role).families,
                                  readNonEmptyStringList);
@@ -1459,6 +1509,20 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
             {QLatin1StringView("server"), WindowDecorationMode::Server},
             {QLatin1StringView("none"), WindowDecorationMode::None},
         });
+    constexpr auto WindowThemes =
+        std::to_array<std::pair<QLatin1StringView, WindowTheme>>({
+            {QLatin1StringView("auto"), WindowTheme::Auto},
+            {QLatin1StringView("system"), WindowTheme::System},
+            {QLatin1StringView("light"), WindowTheme::Light},
+            {QLatin1StringView("dark"), WindowTheme::Dark},
+            {QLatin1StringView("ghostty"), WindowTheme::Ghostty},
+        });
+    constexpr auto WindowSubtitles =
+        std::to_array<std::pair<QLatin1StringView, WindowSubtitleMode>>({
+            {QLatin1StringView("false"), WindowSubtitleMode::Disabled},
+            {QLatin1StringView("working-directory"),
+             WindowSubtitleMode::WorkingDirectory},
+        });
     constexpr auto FullscreenModes =
         std::to_array<std::pair<QLatin1StringView, GhosttyFullscreenMode>>({
             {QLatin1StringView("false"), GhosttyFullscreenMode::Disabled},
@@ -1590,6 +1654,17 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                                  result.windowDecoration, WindowDecorations);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assignEnum(QLatin1StringView("window-theme"),
+                                 result.windowAppearance.theme, WindowThemes);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed =
+            assignEnum(QLatin1StringView("window-subtitle"),
+                       result.windowAppearance.subtitle, WindowSubtitles);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
     if (auto parsed = assignEnum(QLatin1StringView("fullscreen"),
                                  result.fullscreen, FullscreenModes);
         !parsed)
@@ -1668,6 +1743,25 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                              result.appearance.palette, readPalette);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    {
+        constexpr QLatin1StringView name("window-title-font-family");
+        auto parsed =
+            readOptionalString(fieldValue(name), context(name), false);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.windowAppearance.titleFontFamily = std::move(*parsed);
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("window-titlebar-background"),
+                   result.windowAppearance.titlebarBackground, readOptionalRgb);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed =
+            assign(QLatin1StringView("window-titlebar-foreground"),
+                   result.windowAppearance.titlebarForeground, readOptionalRgb);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
 
     for (const auto [name, destination] :
          std::to_array<std::pair<QLatin1StringView, TerminalColorValue *>>({
@@ -1752,6 +1846,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                              readShellIntegrationFeatures);
         !parsed)
         return std::unexpected(std::move(parsed.error()));
+    if (auto parsed = assign(QLatin1StringView("theme-files"),
+                             result.themeFiles, readAbsolutePathList);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
 
     {
         constexpr QLatin1StringView name("quit-after-last-window-closed-delay");

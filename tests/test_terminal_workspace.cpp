@@ -408,6 +408,7 @@ class TerminalWorkspaceTest : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void initialGeometrySeedsOnlyFirstPane();
+    void projectsWindowAppearanceAndSubtitle();
     void typographyReloadReachesLiveAndFuturePanes();
     void backgroundOpacityReloadIsPaneLocalAndInherited();
     void backgroundImageAndPaddingReloadStayPaneLocalAndInherited();
@@ -481,6 +482,7 @@ private Q_SLOTS:
     void destroyedDeferredReleaseClearsGlobalConsumption();
     void broadViewportAndSelectionActionsReachEveryPane();
     void indexedLastAndMovedTabsPreserveStableIds();
+    void configuredTitleMasksOscUntilCleared();
     void surfaceBaseTitlesFollowStablePanesAndOscUpdates();
     void tabTitleOverridesFollowStableSourcesAndReset();
     void bellFeedbackRoutesAcrossPaneTabWindowAndReload();
@@ -560,6 +562,113 @@ void TerminalWorkspaceTest::initialGeometrySeedsOnlyFirstPane()
         third.pane->findChild<TerminalController *>();
     QVERIFY(thirdController != nullptr);
     QVERIFY(thirdController->sessionStarted());
+}
+
+void TerminalWorkspaceTest::projectsWindowAppearanceAndSubtitle()
+{
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.workingDirectory = QDir::currentPath();
+    options.inheritWorkingDirectory = false;
+    options.windowAppearance = {
+        .theme = WindowTheme::Ghostty,
+        .titleFontFamily = QStringLiteral("Configured Window Font"),
+        .titlebarBackground = QColor(0x10, 0x20, 0x30, 0x11),
+        .titlebarForeground = QColor(0xf0, 0xe0, 0xd0, 0x22),
+        .subtitle = WindowSubtitleMode::WorkingDirectory,
+    };
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options, TerminalSessionStartMode::Deferred));
+    QCOMPARE(workspace.chromeBackground(), QColor(0x10, 0x20, 0x30));
+    QCOMPARE(workspace.chromeForeground(), QColor(0xf0, 0xe0, 0xd0));
+    QCOMPARE(workspace.chromeBackground().alpha(), 255);
+    QCOMPARE(workspace.chromeForeground().alpha(), 255);
+    QCOMPARE(workspace.titleFontFamily(),
+             QStringLiteral("Configured Window Font"));
+    QCOMPARE(workspace.currentSubtitle(), options.workingDirectory);
+
+    QSignalSpy appearanceChanged(&workspace,
+                                 &TerminalWorkspace::windowAppearanceChanged);
+    QSignalSpy subtitleChanged(&workspace,
+                               &TerminalWorkspace::currentSubtitleChanged);
+
+    LaunchOptions dark = options;
+    dark.colorScheme = TerminalColorScheme::Dark;
+    dark.windowAppearance.theme = WindowTheme::Auto;
+    // Custom titlebar colors are meaningful only in ghostty mode.
+    dark.windowAppearance.titlebarBackground =
+        QColor(QStringLiteral("#ff0000"));
+    dark.windowAppearance.titlebarForeground =
+        QColor(QStringLiteral("#00ff00"));
+    workspace.applyLaunchOptions(dark);
+    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xff3b4252U));
+    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xffeceff4U));
+    QCOMPARE(appearanceChanged.count(), 1);
+
+    LaunchOptions ignoredCustomColors = dark;
+    ignoredCustomColors.windowAppearance.titlebarBackground =
+        QColor(QStringLiteral("#123456"));
+    ignoredCustomColors.windowAppearance.titlebarForeground =
+        QColor(QStringLiteral("#abcdef"));
+    workspace.applyLaunchOptions(ignoredCustomColors);
+    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xff3b4252U));
+    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xffeceff4U));
+    QCOMPARE(appearanceChanged.count(), 1);
+
+    LaunchOptions light = ignoredCustomColors;
+    light.colorScheme = TerminalColorScheme::Light;
+    light.windowAppearance.theme = WindowTheme::Light;
+    workspace.applyLaunchOptions(light);
+    QCOMPARE(workspace.chromeBackground(), QColor::fromRgba(0xffeceff4U));
+    QCOMPARE(workspace.chromeForeground(), QColor::fromRgba(0xff2e3440U));
+    QCOMPARE(appearanceChanged.count(), 2);
+
+    LaunchOptions noSubtitle = light;
+    noSubtitle.windowAppearance.subtitle = WindowSubtitleMode::Disabled;
+    workspace.applyLaunchOptions(noSubtitle);
+    QVERIFY(workspace.currentSubtitle().isEmpty());
+    QCOMPARE(subtitleChanged.count(), 1);
+
+    LaunchOptions inheritedDirectory = light;
+    inheritedDirectory.inheritWorkingDirectory = true;
+    inheritedDirectory.splitInheritWorkingDirectory = false;
+    inheritedDirectory.tabInheritWorkingDirectory = false;
+    workspace.applyLaunchOptions(inheritedDirectory);
+    QCOMPARE(workspace.currentSubtitle(), options.workingDirectory);
+    QCOMPARE(subtitleChanged.count(), 2);
+
+    const PaneId originalPaneId =
+        workspace.tabModel()->entryAt(workspace.currentIndex())->activePaneId;
+    workspace.splitRight();
+    const TabId splitTabId =
+        workspace.tabModel()->idAt(workspace.currentIndex());
+    const PaneId splitPaneId =
+        workspace.tabModel()->entryAt(workspace.currentIndex())->activePaneId;
+    QVERIFY(splitPaneId != originalPaneId);
+    QVERIFY(workspace.currentSubtitle().isEmpty());
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ActivatePane,
+        {splitTabId, originalPaneId, 0},
+    }));
+    QCOMPARE(workspace.currentSubtitle(), options.workingDirectory);
+    QVERIFY(workspace.dispatchAction({
+        WorkspaceAction::ClosePane,
+        {splitTabId, splitPaneId, 0},
+    }));
+    QCOMPARE(workspace.tabCount(), 1);
+
+    workspace.newTab();
+    QCOMPARE(workspace.tabCount(), 2);
+    QVERIFY(workspace.currentSubtitle().isEmpty());
+    const int beforeClose = subtitleChanged.count();
+    workspace.closeCurrentTab();
+    QCOMPARE(workspace.tabCount(), 1);
+    QCOMPARE(workspace.currentSubtitle(), options.workingDirectory);
+    QCOMPARE(subtitleChanged.count(), beforeClose + 1);
 }
 
 void TerminalWorkspaceTest::typographyReloadReachesLiveAndFuturePanes()
@@ -8207,6 +8316,100 @@ void TerminalWorkspaceTest::indexedLastAndMovedTabsPreserveStableIds()
         {},
     }));
     QCOMPARE(workspace.tabModel()->idAt(workspace.currentIndex()), first);
+}
+
+void TerminalWorkspaceTest::configuredTitleMasksOscUntilCleared()
+{
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir directory(QDir::current().filePath(
+        QStringLiteral("tmp/configured-title-XXXXXX")));
+    QVERIFY(directory.isValid());
+    const QString firstRelease =
+        directory.filePath(QStringLiteral("first-release"));
+    const QString firstAcknowledged =
+        directory.filePath(QStringLiteral("first-acknowledged"));
+    const QString secondRelease =
+        directory.filePath(QStringLiteral("second-release"));
+
+    ShellEnvironment shell(QByteArrayLiteral("/bin/sh"));
+    LaunchOptions options = baseOptions();
+    options.workingDirectory = directory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "while [ ! -e \"$1\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;masked-osc\\007'; sleep 0.1; : > \"$2\"; "
+            "while [ ! -e \"$3\" ]; do sleep 0.02; done; "
+            "printf '\\033]0;visible-osc\\007'; sleep 30"),
+        QStringLiteral("configured-title-test"),
+        firstRelease,
+        firstAcknowledged,
+        secondRelease,
+    };
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    options.configuredTitle = QStringLiteral("configured base");
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    TerminalWorkspace workspace;
+    QVERIFY(workspace.initialize(options));
+    QTRY_COMPARE_WITH_TIMEOUT(workspace.tabCount(), 1, 1000);
+    TerminalPane *const pane = workspace.findChild<TerminalPane *>();
+    QVERIFY(pane != nullptr);
+    TerminalController *const controller =
+        pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy runtimeRequests(controller,
+                               &TerminalController::runtimeOptionsRequested);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane->title(), QStringLiteral("configured base"));
+
+    pane->setSurfaceTitle(QStringLiteral("action base"));
+    QCOMPARE(controller->title(), QStringLiteral("action base"));
+    QFile release(firstRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(firstAcknowledged), 3000);
+    QTest::qWait(100);
+    QCOMPARE(controller->title(), QStringLiteral("action base"));
+
+    // Reapplying the same configured value is a base-title write, even though
+    // no worker-owned runtime setting changed.
+    workspace.applyLaunchOptions(options);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(runtimeRequests.count(), 0);
+
+    const QString surfaceOverride = QStringLiteral("surface override");
+    QVERIFY(pane->executeConfiguredAction(
+        QStringLiteral("set_tab_title:tab override")));
+    pane->setSurfaceTitleOverride(surfaceOverride);
+    pane->setSurfaceTitle(QStringLiteral("hidden action base"));
+    workspace.applyLaunchOptions(options);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane->title(), surfaceOverride);
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab override"));
+    QCOMPARE(runtimeRequests.count(), 0);
+
+    LaunchOptions cleared = options;
+    cleared.configuredTitle.reset();
+    workspace.applyLaunchOptions(cleared);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(runtimeRequests.count(), 0);
+
+    release.setFileName(secondRelease);
+    QVERIFY(release.open(QIODevice::WriteOnly));
+    release.close();
+    QTRY_COMPARE_WITH_TIMEOUT(controller->title(),
+                              QStringLiteral("visible-osc"), 3000);
+    QCOMPARE(pane->title(), surfaceOverride);
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab override"));
+
+    pane->setSurfaceTitleOverride(std::nullopt);
+    QCOMPARE(pane->title(), QStringLiteral("visible-osc"));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("tab override"));
+    QVERIFY(pane->executeConfiguredAction(QStringLiteral("set_tab_title:")));
+    QCOMPARE(workspace.currentTitle(), QStringLiteral("visible-osc"));
 }
 
 void TerminalWorkspaceTest::surfaceBaseTitlesFollowStablePanesAndOscUpdates()

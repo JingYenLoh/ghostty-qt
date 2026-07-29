@@ -52,8 +52,16 @@ void synchronizePaths(QFileSystemWatcher *watcher, const QStringList &current,
 
 GhosttyConfigService::GhosttyConfigService(GhosttyConfigLoader loader,
                                            QObject *parent)
+    : GhosttyConfigService(std::move(loader), TerminalColorScheme::Light,
+                           parent)
+{}
+
+GhosttyConfigService::GhosttyConfigService(
+    GhosttyConfigLoader loader, TerminalColorScheme initialColorScheme,
+    QObject *parent)
     : GhosttyConfigService(standardConfigPaths(), std::move(loader),
-                           DefaultDebounceMilliseconds, true, parent)
+                           DefaultDebounceMilliseconds, initialColorScheme,
+                           true, parent)
 {}
 
 GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
@@ -61,15 +69,25 @@ GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
                                            int debounceMilliseconds,
                                            QObject *parent)
     : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
-                           debounceMilliseconds, false, parent)
+                           debounceMilliseconds, TerminalColorScheme::Light,
+                           parent)
 {}
 
-GhosttyConfigService::GhosttyConfigService(QStringList candidatePaths,
-                                           GhosttyConfigLoader loader,
-                                           int debounceMilliseconds,
-                                           bool asynchronousReloads,
-                                           QObject *parent)
+GhosttyConfigService::GhosttyConfigService(
+    QStringList candidatePaths, GhosttyConfigLoader loader,
+    int debounceMilliseconds, TerminalColorScheme initialColorScheme,
+    QObject *parent)
+    : GhosttyConfigService(std::move(candidatePaths), std::move(loader),
+                           debounceMilliseconds, initialColorScheme, false,
+                           parent)
+{}
+
+GhosttyConfigService::GhosttyConfigService(
+    QStringList candidatePaths, GhosttyConfigLoader loader,
+    int debounceMilliseconds, TerminalColorScheme initialColorScheme,
+    bool asynchronousReloads, QObject *parent)
     : QObject(parent)
+    , colorScheme_(initialColorScheme)
     , loader_(std::move(loader))
     , asynchronousReloads_(asynchronousReloads)
 {
@@ -174,6 +192,20 @@ QStringList GhosttyConfigService::watchedDirectories() const
     return paths;
 }
 
+void GhosttyConfigService::setColorScheme(TerminalColorScheme colorScheme)
+{
+    if (colorScheme_ == colorScheme) {
+        return;
+    }
+
+    colorScheme_ = colorScheme;
+    // Invalidate a worker result immediately rather than waiting for the
+    // debounce timer. A blocked load must never publish a snapshot for a color
+    // scheme that is no longer current.
+    ++loadGeneration_;
+    requestReload();
+}
+
 void GhosttyConfigService::requestReload()
 {
     debounceTimer_.start();
@@ -195,9 +227,10 @@ void GhosttyConfigService::reloadNow()
         return;
     }
 
+    const GhosttyConfigLoadRequest request = loadRequest();
     GhosttyConfigLoadResult result = [&] {
         QMutexLocker locker(&loaderMutex_);
-        return loader_(candidatePaths_);
+        return loader_(request);
     }();
     applyLoadResult(std::move(result));
 }
@@ -248,13 +281,13 @@ void GhosttyConfigService::beginAsyncReload()
     loadInProgress_ = true;
     const quint64 generation = ++loadGeneration_;
     const GhosttyConfigLoader loader = loader_;
-    const QStringList candidates = candidatePaths_;
+    const GhosttyConfigLoadRequest request = loadRequest();
     GhosttyConfigService *const self = this;
     QMutex *const loaderMutex = &loaderMutex_;
-    reloadPool_.start([self, loader, candidates, generation, loaderMutex] {
+    reloadPool_.start([self, loader, request, generation, loaderMutex] {
         GhosttyConfigLoadResult result = [&] {
             QMutexLocker locker(loaderMutex);
-            return loader(candidates);
+            return loader(request);
         }();
         QMetaObject::invokeMethod(
             self,
@@ -274,6 +307,14 @@ void GhosttyConfigService::beginAsyncReload()
             },
             Qt::QueuedConnection);
     });
+}
+
+GhosttyConfigLoadRequest GhosttyConfigService::loadRequest() const
+{
+    return {
+        .candidatePaths = candidatePaths_,
+        .colorScheme = colorScheme_,
+    };
 }
 
 QString GhosttyConfigService::normalizedAbsolutePath(const QString &path)
@@ -307,6 +348,9 @@ void GhosttyConfigService::refreshWatchPaths()
         watchedSources.append(snapshot_->sourcePaths);
         for (const GhosttyConfigFile &file : snapshot_->values.configFiles) {
             watchedSources.append(normalizedAbsolutePath(file.path));
+        }
+        for (const QString &path : snapshot_->values.themeFiles) {
+            watchedSources.append(normalizedAbsolutePath(path));
         }
     }
     watchedSources = uniquePathsInOrder(watchedSources);

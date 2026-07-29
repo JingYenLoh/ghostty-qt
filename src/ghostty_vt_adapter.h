@@ -154,6 +154,7 @@ public:
         // libghostty's max_scrollback initialization option is byte-valued.
         quint64 scrollbackBytes = 10'000'000;
         TerminalAppearance appearance;
+        TerminalColorScheme colorScheme = TerminalColorScheme::Light;
         TerminalClipboardAccess clipboardWriteAccess =
             TerminalClipboardAccess::Allow;
         // The pinned public C bridge emits at most 255 response bytes. Retain
@@ -254,6 +255,7 @@ public:
 
     bool resize(const Geometry &geometry);
     bool setAppearance(const TerminalAppearance &appearance);
+    void setColorScheme(TerminalColorScheme scheme);
     void setClipboardWriteAccess(TerminalClipboardAccess access);
     void setEnquiryResponse(const QByteArray &response);
     void writeVt(QByteArrayView data);

@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -75,6 +76,29 @@ enum class WindowDecorationMode {
     Client,
     Server,
     None,
+};
+
+enum class WindowTheme {
+    Auto,
+    System,
+    Light,
+    Dark,
+    Ghostty,
+};
+
+enum class WindowSubtitleMode {
+    Disabled,
+    WorkingDirectory,
+};
+
+struct WindowAppearanceOptions {
+    WindowTheme theme = WindowTheme::Auto;
+    std::optional<QString> titleFontFamily;
+    std::optional<QColor> titlebarBackground;
+    std::optional<QColor> titlebarForeground;
+    WindowSubtitleMode subtitle = WindowSubtitleMode::Disabled;
+
+    bool operator==(const WindowAppearanceOptions &) const = default;
 };
 
 enum class ResizeOverlayMode {
@@ -168,6 +192,7 @@ struct GhosttyConfigValues {
     // concrete path whose lexical spelling must be preserved.
     std::optional<QString> workingDirectoryPath;
     TerminalTypography typography;
+    std::optional<QString> title;
 
     // Store the frontend's runtime-ready value types directly. This keeps the
     // finalized 256-color palette in QVector's implicitly shared storage and
@@ -185,6 +210,7 @@ struct GhosttyConfigValues {
     WindowNewTabPosition windowNewTabPosition = WindowNewTabPosition::Current;
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
     WindowDecorationMode windowDecoration = WindowDecorationMode::Auto;
+    WindowAppearanceOptions windowAppearance;
     quint32 windowWidth = 0;
     quint32 windowHeight = 0;
     bool maximize = false;
@@ -226,6 +252,10 @@ struct GhosttyConfigValues {
     LinkPreviewMode linkPreviews = LinkPreviewMode::Never;
 
     QVector<GhosttyConfigFile> configFiles;
+    // Existing and potential theme sources are watched independently of the
+    // currently selected light/dark branch so edits are observed before the
+    // next desktop-scheme transition.
+    QStringList themeFiles;
     bool quitAfterLastWindowClosed = false;
     std::optional<std::chrono::milliseconds> quitAfterLastWindowClosedDelay;
     bool initialWindow = false;

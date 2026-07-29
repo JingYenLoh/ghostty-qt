@@ -20,8 +20,15 @@ public:
 
     explicit GhosttyConfigService(GhosttyConfigLoader loader,
                                   QObject *parent = nullptr);
+    GhosttyConfigService(GhosttyConfigLoader loader,
+                         TerminalColorScheme initialColorScheme,
+                         QObject *parent = nullptr);
     GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
                          int debounceMilliseconds, QObject *parent = nullptr);
+    GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
+                         int debounceMilliseconds,
+                         TerminalColorScheme initialColorScheme,
+                         QObject *parent = nullptr);
     ~GhosttyConfigService() override;
 
     static QStringList
@@ -36,6 +43,8 @@ public:
                                 QProcessEnvironment::systemEnvironment());
 
     const QStringList &candidatePaths() const { return candidatePaths_; }
+    TerminalColorScheme colorScheme() const { return colorScheme_; }
+    void setColorScheme(TerminalColorScheme colorScheme);
     bool hasSnapshot() const { return snapshot_.has_value(); }
     const GhosttyConfigSnapshot &snapshot() const;
     const QString &lastError() const { return lastError_; }
@@ -57,8 +66,10 @@ Q_SIGNALS:
 
 private:
     GhosttyConfigService(QStringList candidatePaths, GhosttyConfigLoader loader,
-                         int debounceMilliseconds, bool asynchronousReloads,
-                         QObject *parent);
+                         int debounceMilliseconds,
+                         TerminalColorScheme initialColorScheme,
+                         bool asynchronousReloads, QObject *parent);
+    GhosttyConfigLoadRequest loadRequest() const;
     static QString normalizedAbsolutePath(const QString &path);
     static QString closestExistingDirectory(const QString &path);
     void refreshWatchPaths();
@@ -67,6 +78,7 @@ private:
     void applyLoadResult(GhosttyConfigLoadResult result);
 
     QStringList candidatePaths_;
+    TerminalColorScheme colorScheme_;
     GhosttyConfigLoader loader_;
     // reloadNow() is intentionally synchronous, but it may supersede an
     // already-running watched reload. Serialize calls into an injected loader

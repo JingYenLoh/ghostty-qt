@@ -399,6 +399,7 @@ private Q_SLOTS:
     void workspaceActionHandlerRetainsMutableState();
     void packagesInputMethodLifecycleAsOneWorkerRequest();
     void writesClipboardDestinations();
+    void configuredTitleReapplicationRestoresBaseLayer();
     void copiesRawEffectiveSurfaceTitle();
     void reloadsMiddleClickClipboardPolicy();
     void routesConfiguredRightClickPolicy();
@@ -2906,6 +2907,75 @@ void TerminalPaneTest::writesClipboardDestinations()
     if (supportsPrimary) {
         clipboard->clear(QClipboard::Selection);
     }
+}
+
+void TerminalPaneTest::configuredTitleReapplicationRestoresBaseLayer()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.configuredTitle = QStringLiteral("configured base");
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane.title(), QStringLiteral("configured base"));
+
+    QSignalSpy titleChanges(&pane, &TerminalPane::titleChanged);
+    pane.setSurfaceTitle(QStringLiteral("action base"));
+    QCOMPARE(controller->title(), QStringLiteral("action base"));
+    QCOMPARE(pane.title(), QStringLiteral("action base"));
+
+    // An identical successful reload is still a configured-title write and
+    // therefore replaces a base changed by set_surface_title.
+    pane.applyRuntimeOptions(options);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane.title(), QStringLiteral("configured base"));
+
+    const QString override = QStringLiteral("persistent override");
+    pane.setSurfaceTitleOverride(override);
+    pane.setSurfaceTitle(QStringLiteral("hidden action base"));
+    QCOMPARE(controller->title(), QStringLiteral("hidden action base"));
+    QCOMPARE(pane.title(), override);
+    pane.applyRuntimeOptions(options);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane.title(), override);
+
+    LaunchOptions cleared = options;
+    cleared.configuredTitle.reset();
+    pane.applyRuntimeOptions(cleared);
+    QCOMPARE(controller->title(), QStringLiteral("configured base"));
+    QCOMPARE(pane.title(), override);
+    pane.setSurfaceTitleOverride(std::nullopt);
+    QCOMPARE(pane.title(), QStringLiteral("configured base"));
+
+    LaunchOptions empty = cleared;
+    empty.configuredTitle = QString{};
+    pane.applyRuntimeOptions(empty);
+    QVERIFY(controller->hasTitle());
+    QVERIFY(controller->title().isEmpty());
+    QVERIFY(pane.title().isEmpty());
+    QVERIFY(titleChanges.count() >= 4);
+
+    LaunchOptions outer = empty;
+    outer.configuredTitle = QStringLiteral("outer title");
+    LaunchOptions nested = empty;
+    nested.configuredTitle = QStringLiteral("nested title");
+    bool reentered = false;
+    const QMetaObject::Connection connection =
+        connect(&pane, &TerminalPane::titleChanged, &pane, [&] {
+            if (reentered) return;
+            reentered = true;
+            pane.applyRuntimeOptions(nested);
+        });
+    pane.applyRuntimeOptions(outer);
+    disconnect(connection);
+    QVERIFY(reentered);
+    QCOMPARE(controller->title(), QStringLiteral("nested title"));
+    QCOMPARE(pane.title(), QStringLiteral("nested title"));
 }
 
 void TerminalPaneTest::copiesRawEffectiveSurfaceTitle()

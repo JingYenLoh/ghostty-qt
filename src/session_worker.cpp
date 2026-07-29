@@ -760,6 +760,7 @@ bool SessionWorker::createTerminal()
         .scrollbackBytes =
             scrollbackLimitInBytes(options_.scrollbackLimit, geometry_.columns),
         .appearance = options_.runtime.appearance,
+        .colorScheme = options_.runtime.colorScheme,
         .clipboardWriteAccess = options_.runtime.clipboardWrite,
         .enquiryResponse = options_.runtime.enquiryResponse,
     };
@@ -807,6 +808,7 @@ void SessionWorker::applyRuntimeOptions(
         || vt_->setClickRepeatIntervalMilliseconds(
             options.clickRepeatIntervalMilliseconds);
     if (vt_ != nullptr) {
+        vt_->setColorScheme(options.colorScheme);
         vt_->setClipboardWriteAccess(options.clipboardWrite);
         vt_->setEnquiryResponse(options.enquiryResponse);
     }

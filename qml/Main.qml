@@ -66,9 +66,15 @@ ApplicationWindow {
     // The process controller presents the window only after its workspace,
     // lifetime tracking, process actions, and retirement wiring are complete.
     visible: false
-    title: workspace.currentTitle.length > 0
-           ? workspace.currentTitle + " — ghostty-qt"
-           : "ghostty-qt"
+    title: workspace.currentTitle
+    palette.window: workspace.chromeBackground
+    palette.windowText: workspace.chromeForeground
+    palette.button: workspace.chromeBackground
+    palette.buttonText: workspace.chromeForeground
+    palette.base: workspace.chromeBackground
+    palette.text: workspace.chromeForeground
+    palette.highlight: workspace.chromeForeground
+    palette.highlightedText: workspace.chromeBackground
     // Terminal panes paint their own effective background. Keep the window's
     // clear color fully transparent so those pane-local alpha values reach the
     // compositor instead of blending onto an opaque QML backing color first.
@@ -120,7 +126,7 @@ ApplicationWindow {
         visible: !workspace.tabBarAtBottom
         // The terminal viewport may be translucent, but application chrome is
         // intentionally opaque.
-        color: "#3b4252"
+        color: workspace.chromeBackground
     }
 
     footer: Rectangle {
@@ -128,7 +134,7 @@ ApplicationWindow {
         objectName: "bottomToolbarSlot"
         implicitHeight: windowHeader.implicitHeight
         visible: workspace.tabBarAtBottom
-        color: "#3b4252"
+        color: workspace.chromeBackground
     }
 
     ToolBar {
@@ -141,6 +147,10 @@ ApplicationWindow {
         position: workspace.tabBarAtBottom
                   ? ToolBar.Footer
                   : ToolBar.Header
+        font.family: workspace.titleFontFamily
+        background: Rectangle {
+            color: workspace.chromeBackground
+        }
 
         RowLayout {
             anchors.fill: parent
@@ -167,6 +177,15 @@ ApplicationWindow {
                         onClicked: workspace.setCurrentIndex(index)
                     }
                 }
+            }
+
+            Label {
+                objectName: "windowSubtitle"
+                Layout.maximumWidth: 320
+                visible: workspace.currentSubtitle.length > 0
+                text: workspace.currentSubtitle
+                elide: Text.ElideMiddle
+                color: workspace.chromeForeground
             }
 
             ToolButton {

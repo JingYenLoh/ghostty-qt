@@ -5,9 +5,10 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QProcessEnvironment>
 #include <QPointer>
+#include <QProcessEnvironment>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -15,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <semaphore>
 #include <thread>
 
 namespace {
@@ -22,13 +24,15 @@ namespace {
 bool replaceFile(const QString &path, const QByteArray &contents)
 {
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(contents) != contents.size()) {
+    if (!file.open(QIODevice::WriteOnly)
+        || file.write(contents) != contents.size()) {
         return false;
     }
     return file.commit();
 }
 
-GhosttyConfigSnapshot snapshotWithMarker(int marker, const QString &sourcePath = {})
+GhosttyConfigSnapshot snapshotWithMarker(int marker,
+                                         const QString &sourcePath = {})
 {
     GhosttyConfigSnapshot snapshot = GhosttyConfigSnapshotFixture::snapshot();
     snapshot.values.windowWidth = static_cast<quint32>(marker);
@@ -45,14 +49,19 @@ class GhosttyConfigServiceTest : public QObject {
 
 private Q_SLOTS:
     void passesStandardPathsInPrecedenceOrder();
+    void passesInitialColorScheme();
+    void reloadsOnlyWhenColorSchemeChanges();
     void watchesAbsentFilesAndReaddsAtomicReplacements();
     void watchesLoadedIncludePaths();
     void watchesMissingOptionalIncludeCreation();
+    void watchesExistingAndMissingThemePaths();
     void debouncesReloadBursts();
     void standardServiceReloadsOffGuiThread();
     void synchronousReloadSupersedesOlderAsyncResult();
+    void colorSchemeChangeSupersedesBlockedAsyncResult();
     void publishesUnchangedSuccessfulReloads();
     void retainsLastGoodSnapshotAfterFailure();
+    void retainsRequestedColorSchemeAfterFailure();
     void changedSubscriberMayDeleteAsyncService();
     void failedSubscriberMayDeleteAsyncService();
 };
@@ -79,13 +88,14 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
 
     environment.insert(QStringLiteral("XDG_CONFIG_HOME"),
                        QStringLiteral("relative-xdg"));
-    QCOMPARE(GhosttyConfigService::standardConfigPaths(environment),
-             QStringList({
-                 QDir(environment.value(QStringLiteral("HOME")))
-                     .filePath(QStringLiteral(".config/ghostty/config")),
-                 QDir(environment.value(QStringLiteral("HOME")))
-                     .filePath(QStringLiteral(".config/ghostty/config.ghostty")),
-             }));
+    QCOMPARE(
+        GhosttyConfigService::standardConfigPaths(environment),
+        QStringList({
+            QDir(environment.value(QStringLiteral("HOME")))
+                .filePath(QStringLiteral(".config/ghostty/config")),
+            QDir(environment.value(QStringLiteral("HOME")))
+                .filePath(QStringLiteral(".config/ghostty/config.ghostty")),
+        }));
     QCOMPARE(GhosttyConfigService::standardConfigEditPaths(environment),
              QStringList({
                  QStringLiteral("relative-xdg/ghostty/config.ghostty"),
@@ -95,8 +105,8 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
     QStringList observed;
     GhosttyConfigService service(
         expected,
-        [&observed](const QStringList &paths) {
-            observed = paths;
+        [&observed](const GhosttyConfigLoadRequest &request) {
+            observed = request.candidatePaths;
             return snapshotWithMarker(1);
         },
         20);
@@ -106,16 +116,66 @@ void GhosttyConfigServiceTest::passesStandardPathsInPrecedenceOrder()
     const QString fallbackDirectory =
         QDir(environment.value(QStringLiteral("HOME")))
             .filePath(QStringLiteral(".config/ghostty"));
-    QCOMPARE(GhosttyConfigService::standardConfigPaths(environment),
-             QStringList({
-                 QDir(fallbackDirectory).filePath(QStringLiteral("config")),
-                 QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
-             }));
-    QCOMPARE(GhosttyConfigService::standardConfigEditPaths(environment),
-             QStringList({
-                 QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
-                 QDir(fallbackDirectory).filePath(QStringLiteral("config")),
-             }));
+    QCOMPARE(
+        GhosttyConfigService::standardConfigPaths(environment),
+        QStringList({
+            QDir(fallbackDirectory).filePath(QStringLiteral("config")),
+            QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
+        }));
+    QCOMPARE(
+        GhosttyConfigService::standardConfigEditPaths(environment),
+        QStringList({
+            QDir(fallbackDirectory).filePath(QStringLiteral("config.ghostty")),
+            QDir(fallbackDirectory).filePath(QStringLiteral("config")),
+        }));
+}
+
+void GhosttyConfigServiceTest::passesInitialColorScheme()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("ghostty/config"));
+
+    std::optional<GhosttyConfigLoadRequest> observed;
+    GhosttyConfigService service(
+        {path},
+        [&observed](const GhosttyConfigLoadRequest &request) {
+            observed = request;
+            return snapshotWithMarker(1);
+        },
+        20, TerminalColorScheme::Dark);
+
+    QVERIFY(observed.has_value());
+    QCOMPARE(observed->candidatePaths, QStringList{QDir::cleanPath(path)});
+    QVERIFY(observed->colorScheme == TerminalColorScheme::Dark);
+    QVERIFY(service.colorScheme() == TerminalColorScheme::Dark);
+}
+
+void GhosttyConfigServiceTest::reloadsOnlyWhenColorSchemeChanges()
+{
+    QList<TerminalColorScheme> observed;
+    GhosttyConfigService service(
+        {},
+        [&observed](const GhosttyConfigLoadRequest &request) {
+            observed.append(request.colorScheme);
+            return snapshotWithMarker(observed.size());
+        },
+        20);
+    QCOMPARE(observed.size(), 1);
+    QVERIFY(observed.constFirst() == TerminalColorScheme::Light);
+
+    service.setColorScheme(TerminalColorScheme::Light);
+    QTest::qWait(40);
+    QCOMPARE(observed.size(), 1);
+
+    service.setColorScheme(TerminalColorScheme::Dark);
+    service.setColorScheme(TerminalColorScheme::Dark);
+    QTRY_COMPARE_WITH_TIMEOUT(observed.size(), 2, 1000);
+    QVERIFY(observed.constLast() == TerminalColorScheme::Dark);
+    QVERIFY(service.colorScheme() == TerminalColorScheme::Dark);
+    QTest::qWait(40);
+    QCOMPARE(observed.size(), 2);
 }
 
 void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
@@ -131,9 +191,10 @@ void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
         QDir(ghosttyDirectory).filePath(QStringLiteral("config.ghostty"));
 
     int loads = 0;
-    auto loader = [&loads](const QStringList &paths) {
+    auto loader = [&loads](const GhosttyConfigLoadRequest &request) {
         ++loads;
         // Ghostty loads candidates in order, so the later file wins.
+        const QStringList &paths = request.candidatePaths;
         for (auto path = paths.crbegin(); path != paths.crend(); ++path) {
             QFile file(*path);
             if (file.open(QIODevice::ReadOnly)) {
@@ -153,12 +214,14 @@ void GhosttyConfigServiceTest::watchesAbsentFilesAndReaddsAtomicReplacements()
     QVERIFY(service.watchedDirectories().contains(ghosttyDirectory));
 
     QVERIFY(replaceFile(primary, QByteArrayLiteral("1")));
-    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{1}, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{1},
+                              1000);
     QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(primary), 1000);
     const int afterFirstReplacement = loads;
 
     QVERIFY(replaceFile(primary, QByteArrayLiteral("2")));
-    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2}, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2},
+                              1000);
     QVERIFY(loads > afterFirstReplacement);
     QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(primary), 1000);
 }
@@ -168,7 +231,8 @@ void GhosttyConfigServiceTest::watchesLoadedIncludePaths()
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     const QString mainPath =
-        QDir(temporary.path()).filePath(QStringLiteral("ghostty/config.ghostty"));
+        QDir(temporary.path())
+            .filePath(QStringLiteral("ghostty/config.ghostty"));
     const QString includePath =
         QDir(temporary.path()).filePath(QStringLiteral("shared/theme.ghostty"));
     QVERIFY(QDir().mkpath(QFileInfo(mainPath).absolutePath()));
@@ -179,7 +243,7 @@ void GhosttyConfigServiceTest::watchesLoadedIncludePaths()
     int loads = 0;
     GhosttyConfigService service(
         {mainPath},
-        [&loads, &includePath](const QStringList &) {
+        [&loads, &includePath](const GhosttyConfigLoadRequest &) {
             ++loads;
             GhosttyConfigSnapshot snapshot = snapshotWithMarker(loads);
             snapshot.sourcePaths.append(includePath);
@@ -192,7 +256,8 @@ void GhosttyConfigServiceTest::watchesLoadedIncludePaths()
     const int initialLoads = loads;
     QVERIFY(replaceFile(includePath, QByteArrayLiteral("changed")));
     QTRY_VERIFY_WITH_TIMEOUT(loads > initialLoads, 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(includePath), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(includePath),
+                             1000);
 }
 
 void GhosttyConfigServiceTest::watchesMissingOptionalIncludeCreation()
@@ -200,9 +265,11 @@ void GhosttyConfigServiceTest::watchesMissingOptionalIncludeCreation()
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     const QString mainPath =
-        QDir(temporary.path()).filePath(QStringLiteral("ghostty/config.ghostty"));
+        QDir(temporary.path())
+            .filePath(QStringLiteral("ghostty/config.ghostty"));
     const QString optionalPath =
-        QDir(temporary.path()).filePath(QStringLiteral("shared/optional.ghostty"));
+        QDir(temporary.path())
+            .filePath(QStringLiteral("shared/optional.ghostty"));
     QVERIFY(QDir().mkpath(QFileInfo(mainPath).absolutePath()));
     QVERIFY(QDir().mkpath(QFileInfo(optionalPath).absolutePath()));
     QVERIFY(replaceFile(mainPath, QByteArrayLiteral("main")));
@@ -210,7 +277,7 @@ void GhosttyConfigServiceTest::watchesMissingOptionalIncludeCreation()
     int loads = 0;
     GhosttyConfigService service(
         {mainPath},
-        [&loads, &optionalPath](const QStringList &) {
+        [&loads, &optionalPath](const GhosttyConfigLoadRequest &) {
             GhosttyConfigSnapshot snapshot = snapshotWithMarker(++loads);
             snapshot.values.configFiles.append(GhosttyConfigFile{
                 .path = optionalPath,
@@ -223,19 +290,63 @@ void GhosttyConfigServiceTest::watchesMissingOptionalIncludeCreation()
     const int initialLoads = loads;
     QVERIFY(replaceFile(optionalPath, QByteArrayLiteral("now-present")));
     QTRY_VERIFY_WITH_TIMEOUT(loads > initialLoads, 1000);
-    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(optionalPath), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(optionalPath),
+                             1000);
+}
+
+void GhosttyConfigServiceTest::watchesExistingAndMissingThemePaths()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString existingPath =
+        QDir(temporary.path()).filePath(QStringLiteral("themes/light/active"));
+    const QString missingPath =
+        QDir(temporary.path()).filePath(QStringLiteral("themes/dark/missing"));
+    const QString existingDirectory = QFileInfo(existingPath).absolutePath();
+    const QString missingDirectory = QFileInfo(missingPath).absolutePath();
+    QVERIFY(QDir().mkpath(existingDirectory));
+    QVERIFY(QDir().mkpath(missingDirectory));
+    QVERIFY(
+        replaceFile(existingPath, QByteArrayLiteral("background = ffffff")));
+
+    int loads = 0;
+    GhosttyConfigService service(
+        {},
+        [&loads, &existingPath,
+         &missingPath](const GhosttyConfigLoadRequest &) {
+            GhosttyConfigSnapshot snapshot = snapshotWithMarker(++loads);
+            snapshot.values.themeFiles = {existingPath, missingPath};
+            return snapshot;
+        },
+        30);
+
+    QVERIFY(service.watchedFiles().contains(existingPath));
+    QVERIFY(service.watchedDirectories().contains(existingDirectory));
+    QVERIFY(service.watchedDirectories().contains(missingDirectory));
+
+    const int initialLoads = loads;
+    QVERIFY(
+        replaceFile(existingPath, QByteArrayLiteral("background = eeeeeee")));
+    QTRY_VERIFY_WITH_TIMEOUT(loads > initialLoads, 1000);
+
+    const int afterExistingEdit = loads;
+    QVERIFY(replaceFile(missingPath, QByteArrayLiteral("background = 000000")));
+    QTRY_VERIFY_WITH_TIMEOUT(loads > afterExistingEdit, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(service.watchedFiles().contains(missingPath),
+                             1000);
 }
 
 void GhosttyConfigServiceTest::debouncesReloadBursts()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString path = QDir(temporary.path()).filePath(QStringLiteral("config"));
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("config"));
 
     int loads = 0;
     GhosttyConfigService service(
         {path},
-        [&loads](const QStringList &) {
+        [&loads](const GhosttyConfigLoadRequest &) {
             return snapshotWithMarker(++loads);
         },
         60);
@@ -252,7 +363,7 @@ void GhosttyConfigServiceTest::debouncesReloadBursts()
 void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
 {
     std::atomic<int> loads = 0;
-    GhosttyConfigService service([&loads](const QStringList &) {
+    GhosttyConfigService service([&loads](const GhosttyConfigLoadRequest &) {
         const int load = ++loads;
         if (load > 1) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -262,19 +373,19 @@ void GhosttyConfigServiceTest::standardServiceReloadsOffGuiThread()
     QCOMPARE(loads.load(), 1);
 
     bool guiTimerFired = false;
-    QTimer::singleShot(120, &service, [&guiTimerFired] {
-        guiTimerFired = true;
-    });
+    QTimer::singleShot(120, &service,
+                       [&guiTimerFired] { guiTimerFired = true; });
     service.requestReload();
     QTRY_VERIFY_WITH_TIMEOUT(guiTimerFired, 200);
     QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
-    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2}, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth, quint32{2},
+                              1000);
 }
 
 void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
 {
     std::atomic<int> loads = 0;
-    GhosttyConfigService service([&loads](const QStringList &) {
+    GhosttyConfigService service([&loads](const GhosttyConfigLoadRequest &) {
         const int load = ++loads;
         if (load == 2) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -294,12 +405,64 @@ void GhosttyConfigServiceTest::synchronousReloadSupersedesOlderAsyncResult()
     QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
 }
 
+void GhosttyConfigServiceTest::colorSchemeChangeSupersedesBlockedAsyncResult()
+{
+    std::atomic<int> loads = 0;
+    std::atomic<TerminalColorScheme> blockedScheme = TerminalColorScheme::Light;
+    std::binary_semaphore blockedLoadStarted{0};
+    std::binary_semaphore releaseBlockedLoad{0};
+    bool blockedLoadReleased = false;
+    GhosttyConfigService service(
+        [&loads, &blockedScheme, &blockedLoadStarted,
+         &releaseBlockedLoad](const GhosttyConfigLoadRequest &request) {
+            const int load = ++loads;
+            if (load == 2) {
+                blockedScheme.store(request.colorScheme);
+                blockedLoadStarted.release();
+                releaseBlockedLoad.acquire();
+            }
+            const int schemeMarker =
+                request.colorScheme == TerminalColorScheme::Dark ? 200 : 100;
+            return snapshotWithMarker(schemeMarker + load);
+        });
+    const auto unblockOnFailure = qScopeGuard([&] {
+        if (!blockedLoadReleased) {
+            releaseBlockedLoad.release();
+        }
+    });
+    QCOMPARE(loads.load(), 1);
+    QCOMPARE(service.snapshot().values.windowWidth, quint32{101});
+
+    QSignalSpy changed(&service, &GhosttyConfigService::changed);
+    service.setColorScheme(TerminalColorScheme::Dark);
+    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 2, 1000);
+    const bool started =
+        blockedLoadStarted.try_acquire_for(std::chrono::seconds(1));
+    QVERIFY2(started, "the asynchronous color-scheme reload did not start");
+    QVERIFY(blockedScheme.load() == TerminalColorScheme::Dark);
+
+    // Each update immediately invalidates the blocked result, while the
+    // debounce and single-worker queue collapse them to one final light load.
+    service.setColorScheme(TerminalColorScheme::Light);
+    service.setColorScheme(TerminalColorScheme::Dark);
+    service.setColorScheme(TerminalColorScheme::Light);
+    QTest::qWait(GhosttyConfigService::DefaultDebounceMilliseconds + 25);
+    blockedLoadReleased = true;
+    releaseBlockedLoad.release();
+
+    QTRY_COMPARE_WITH_TIMEOUT(loads.load(), 3, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(service.snapshot().values.windowWidth,
+                              quint32{103}, 2000);
+    QCOMPARE(changed.count(), 1);
+    QVERIFY(service.colorScheme() == TerminalColorScheme::Light);
+}
+
 void GhosttyConfigServiceTest::publishesUnchangedSuccessfulReloads()
 {
     int loads = 0;
     GhosttyConfigService service(
         {},
-        [&loads](const QStringList &) {
+        [&loads](const GhosttyConfigLoadRequest &) {
             ++loads;
             return snapshotWithMarker(17);
         },
@@ -323,12 +486,13 @@ void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
 {
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
-    const QString path = QDir(temporary.path()).filePath(QStringLiteral("config"));
+    const QString path =
+        QDir(temporary.path()).filePath(QStringLiteral("config"));
 
     bool fail = false;
     GhosttyConfigService service(
         {path},
-        [&fail](const QStringList &) -> GhosttyConfigLoadResult {
+        [&fail](const GhosttyConfigLoadRequest &) -> GhosttyConfigLoadResult {
             if (fail) {
                 return std::unexpected(QStringLiteral("invalid config"));
             }
@@ -344,25 +508,65 @@ void GhosttyConfigServiceTest::retainsLastGoodSnapshotAfterFailure()
     service.reloadNow();
 
     QCOMPARE(failed.count(), 1);
-    QCOMPARE(failed.constFirst().constFirst().toString(), QStringLiteral("invalid config"));
+    QCOMPARE(failed.constFirst().constFirst().toString(),
+             QStringLiteral("invalid config"));
     QCOMPARE(changed.count(), 0);
     QCOMPARE(service.snapshot(), lastGood);
     QCOMPARE(service.lastError(), QStringLiteral("invalid config"));
 }
 
+void GhosttyConfigServiceTest::retainsRequestedColorSchemeAfterFailure()
+{
+    int loads = 0;
+    bool failDark = true;
+    QList<GhosttyConfigLoadRequest> observed;
+    GhosttyConfigService service(
+        {},
+        [&loads, &failDark, &observed](const GhosttyConfigLoadRequest &request)
+            -> GhosttyConfigLoadResult {
+            observed.append(request);
+            ++loads;
+            if (failDark && request.colorScheme == TerminalColorScheme::Dark) {
+                return std::unexpected(
+                    QStringLiteral("dark configuration is invalid"));
+            }
+            return snapshotWithMarker(loads);
+        },
+        0);
+    const GhosttyConfigSnapshot lastGood = service.snapshot();
+
+    QSignalSpy changed(&service, &GhosttyConfigService::changed);
+    QSignalSpy failed(&service, &GhosttyConfigService::reloadFailed);
+    service.setColorScheme(TerminalColorScheme::Dark);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 1000);
+
+    QCOMPARE(changed.count(), 0);
+    QCOMPARE(service.snapshot(), lastGood);
+    QVERIFY(service.colorScheme() == TerminalColorScheme::Dark);
+    QVERIFY(observed.constLast().colorScheme == TerminalColorScheme::Dark);
+    QCOMPARE(service.lastError(),
+             QStringLiteral("dark configuration is invalid"));
+
+    failDark = false;
+    service.reloadNow();
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(service.snapshot().values.windowWidth, quint32{3});
+    QVERIFY(observed.constLast().colorScheme == TerminalColorScheme::Dark);
+    QVERIFY(service.lastError().isEmpty());
+}
+
 void GhosttyConfigServiceTest::changedSubscriberMayDeleteAsyncService()
 {
     std::atomic<int> loads = 0;
-    QPointer<GhosttyConfigService> service = new GhosttyConfigService(
-        [&loads](const QStringList &) {
+    QPointer<GhosttyConfigService> service =
+        new GhosttyConfigService([&loads](const GhosttyConfigLoadRequest &) {
             return snapshotWithMarker(++loads);
         });
     QCOMPARE(loads.load(), 1);
 
-    QObject::connect(service, &GhosttyConfigService::changed,
-                     service, [&service](const GhosttyConfigSnapshot &) {
-                         delete service.data();
-                     });
+    QObject::connect(
+        service, &GhosttyConfigService::changed, service,
+        [&service](const GhosttyConfigSnapshot &) { delete service.data(); });
     service->requestReload();
     QTRY_VERIFY_WITH_TIMEOUT(service.isNull(), 2000);
 }
@@ -371,7 +575,7 @@ void GhosttyConfigServiceTest::failedSubscriberMayDeleteAsyncService()
 {
     std::atomic<int> loads = 0;
     QPointer<GhosttyConfigService> service = new GhosttyConfigService(
-        [&loads](const QStringList &) -> GhosttyConfigLoadResult {
+        [&loads](const GhosttyConfigLoadRequest &) -> GhosttyConfigLoadResult {
             const int load = ++loads;
             if (load == 1) {
                 return snapshotWithMarker(load);
@@ -380,10 +584,8 @@ void GhosttyConfigServiceTest::failedSubscriberMayDeleteAsyncService()
         });
     QCOMPARE(loads.load(), 1);
 
-    QObject::connect(service, &GhosttyConfigService::reloadFailed,
-                     service, [&service](const QString &) {
-                         delete service.data();
-                     });
+    QObject::connect(service, &GhosttyConfigService::reloadFailed, service,
+                     [&service](const QString &) { delete service.data(); });
     service->requestReload();
     QTRY_VERIFY_WITH_TIMEOUT(service.isNull(), 2000);
 }

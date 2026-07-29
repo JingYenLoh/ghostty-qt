@@ -1,3 +1,4 @@
+#include "application_appearance.h"
 #include "application_controller.h"
 #include "desktop_activation.h"
 #include "frontend_config_service.h"
@@ -25,6 +26,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
+#include <QStyleHints>
 #include <QTextStream>
 #include <QTimer>
 
@@ -1673,6 +1675,9 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationName(QStringLiteral("ghostty-qt"));
     QGuiApplication::setDesktopFileName(
         QStringLiteral(GHOSTTY_QT_APPLICATION_ID));
+    QStyleHints *const styleHints = QGuiApplication::styleHints();
+    ApplicationAppearance appearance(
+        ApplicationAppearance::fromQtColorScheme(styleHints->colorScheme()));
 
     const bool allowNonWayland =
         qEnvironmentVariableIntValue("GHOSTTY_QT_ALLOW_NON_WAYLAND") == 1;
@@ -1702,17 +1707,17 @@ int main(int argc, char *argv[])
     const QString configHelperPath =
         QDir(QCoreApplication::applicationDirPath())
             .filePath(QStringLiteral(GHOSTTY_QT_CONFIG_HELPER_NAME));
-    GhosttyConfigService configService(makeGhosttyConfigProcessLoader({
-        .helperPath = configHelperPath,
-        .configurationArguments = ghosttyConfigCliFontArguments(options),
-    }));
+    GhosttyConfigService configService(
+        makeGhosttyConfigProcessLoader({
+            .helperPath = configHelperPath,
+            .configurationArguments = ghosttyConfigCliFontArguments(options),
+        }),
+        appearance.colorScheme());
     if (!configService.hasSnapshot()) {
         qWarning().noquote()
             << "Ghostty configuration is unavailable; using built-in and command-line defaults"
             << QStringLiteral("(helper: %1):").arg(configHelperPath)
             << configService.lastError();
-    } else {
-        reportConfigDiagnostics(configService.snapshot());
     }
     QObject::connect(
         &configService, &GhosttyConfigService::reloadFailed, &application,
@@ -1723,7 +1728,7 @@ int main(int argc, char *argv[])
         });
 #endif
 
-    const auto resolveCurrentOptions = [&] {
+    const auto resolveProjectedOptions = [&] {
 #if GHOSTTY_QT_CONFIG_ENABLED
         const GhosttyConfigSnapshot *const ghosttySnapshot =
             configService.hasSnapshot() ? &configService.snapshot() : nullptr;
@@ -1734,9 +1739,44 @@ int main(int argc, char *argv[])
             frontendConfigService.hasSnapshot()
             ? &frontendConfigService.snapshot()
             : nullptr;
-        return resolveLaunchOptions(options, ghosttySnapshot, frontendSnapshot);
+        LaunchOptions result =
+            resolveLaunchOptions(options, ghosttySnapshot, frontendSnapshot);
+        result.colorScheme = appearance.colorScheme();
+        return result;
     };
-    LaunchOptions effectiveApplicationOptions = resolveCurrentOptions();
+    const auto reconcileAppearance = [&]([[maybe_unused]] bool synchronous) {
+        LaunchOptions result;
+        // A forced window theme can select the opposite conditional theme.
+        // Settle startup before constructing QML controls; runtime changes use
+        // the same loop but leave the expensive helper work debounced.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            result = resolveProjectedOptions();
+            (void)appearance.apply(result.windowAppearance,
+                                   result.appearance.backgroundColor);
+            result.colorScheme = appearance.colorScheme();
+#if GHOSTTY_QT_CONFIG_ENABLED
+            if (configService.colorScheme() == appearance.colorScheme()) {
+                break;
+            }
+            configService.setColorScheme(appearance.colorScheme());
+            if (!synchronous) break;
+            configService.reloadNow();
+#else
+            break;
+#endif
+        }
+        result = resolveProjectedOptions();
+        (void)appearance.apply(result.windowAppearance,
+                               result.appearance.backgroundColor);
+        result.colorScheme = appearance.colorScheme();
+        return result;
+    };
+    LaunchOptions effectiveApplicationOptions = reconcileAppearance(true);
+#if GHOSTTY_QT_CONFIG_ENABLED
+    if (configService.hasSnapshot()) {
+        reportConfigDiagnostics(configService.snapshot());
+    }
+#endif
 
     std::unique_ptr<SingleInstanceActivation> activationEndpoint;
     if (shouldUseSingleInstance(effectiveApplicationOptions,
@@ -1804,7 +1844,7 @@ int main(int argc, char *argv[])
 
 #if GHOSTTY_QT_CONFIG_ENABLED
     const auto applyCurrentOptions = [&] {
-        applicationController.applyLaunchOptions(resolveCurrentOptions());
+        applicationController.applyLaunchOptions(reconcileAppearance(false));
     };
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &applicationController,
@@ -1818,7 +1858,7 @@ int main(int argc, char *argv[])
                      &configService, &GhosttyConfigService::requestReload);
 #else
     const auto applyCurrentOptions = [&] {
-        applicationController.applyLaunchOptions(resolveCurrentOptions());
+        applicationController.applyLaunchOptions(reconcileAppearance(false));
     };
 #endif
     QObject::connect(&frontendConfigService, &FrontendConfigService::changed,
@@ -1829,6 +1869,18 @@ int main(int argc, char *argv[])
     QObject::connect(
         &applicationController, &ApplicationController::configReloadRequested,
         &frontendConfigService, &FrontendConfigService::requestReload);
+    QObject::connect(
+        styleHints, &QStyleHints::colorSchemeChanged, &applicationController,
+        [&](Qt::ColorScheme scheme) {
+            if (!appearance.setSystemColorScheme(
+                    ApplicationAppearance::fromQtColorScheme(scheme))) {
+                return;
+            }
+#if GHOSTTY_QT_CONFIG_ENABLED
+            configService.setColorScheme(appearance.colorScheme());
+#endif
+            applyCurrentOptions();
+        });
 
     std::optional<ApplicationWindow> initialWindow;
     if (effectiveApplicationOptions.initialWindow) {

@@ -380,6 +380,13 @@ GhosttyColorRgb toGhosttyColor(const QColor &color)
     };
 }
 
+constexpr GhosttyColorScheme
+toGhosttyColorScheme(TerminalColorScheme scheme) noexcept
+{
+    return scheme == TerminalColorScheme::Dark ? GHOSTTY_COLOR_SCHEME_DARK
+                                               : GHOSTTY_COLOR_SCHEME_LIGHT;
+}
+
 GhosttyTerminalCursorStyle toGhosttyCursorStyle(TerminalCursorStyle style)
 {
     switch (style) {
@@ -826,6 +833,7 @@ public:
 
     bool initialize(const Options &adapterOptions)
     {
+        colorScheme_ = adapterOptions.colorScheme;
         clipboardWriteAccess_ = adapterOptions.clipboardWriteAccess;
         enquiryResponse_ = adapterOptions.enquiryResponse;
         const quint64 maximum =
@@ -982,6 +990,32 @@ public:
     void setClipboardWriteAccess(TerminalClipboardAccess access)
     {
         clipboardWriteAccess_ = access;
+    }
+
+    void setColorScheme(TerminalColorScheme scheme)
+    {
+        if (colorScheme_ == scheme) {
+            return;
+        }
+        colorScheme_ = scheme;
+
+        bool reportEnabled = false;
+        if (ghostty_terminal_mode_get(
+                terminal_, GHOSTTY_MODE_COLOR_SCHEME_REPORT, &reportEnabled)
+                != GHOSTTY_SUCCESS
+            || !reportEnabled || !callbacks_.writePty) {
+            return;
+        }
+
+        std::array<char, 16> report{};
+        size_t written = 0;
+        if (ghostty_color_scheme_report_encode(toGhosttyColorScheme(scheme),
+                                               report.data(), report.size(),
+                                               &written)
+            == GHOSTTY_SUCCESS) {
+            callbacks_.writePty(
+                QByteArray(report.data(), static_cast<qsizetype>(written)));
+        }
     }
 
     void setEnquiryResponse(const QByteArray &response)
@@ -3861,13 +3895,14 @@ private:
         return true;
     }
 
-    static bool colorSchemeCallback(GhosttyTerminal, void *,
+    static bool colorSchemeCallback(GhosttyTerminal, void *userdata,
                                     GhosttyColorScheme *scheme)
     {
-        if (scheme == nullptr) {
+        const auto *impl = static_cast<const Impl *>(userdata);
+        if (impl == nullptr || scheme == nullptr) {
             return false;
         }
-        *scheme = GHOSTTY_COLOR_SCHEME_DARK;
+        *scheme = toGhosttyColorScheme(impl->colorScheme_);
         return true;
     }
 
@@ -4025,6 +4060,7 @@ private:
     bool titleDirty_ = false;
     std::optional<QString> pendingCurrentDirectory_;
     bool bellPending_ = false;
+    TerminalColorScheme colorScheme_ = TerminalColorScheme::Light;
     TerminalClipboardAccess clipboardWriteAccess_ =
         TerminalClipboardAccess::Allow;
     QByteArray enquiryResponse_;
@@ -4120,6 +4156,11 @@ bool GhosttyVtAdapter::resize(const Geometry &geometry)
 bool GhosttyVtAdapter::setAppearance(const TerminalAppearance &appearance)
 {
     return impl_->setAppearance(appearance);
+}
+
+void GhosttyVtAdapter::setColorScheme(TerminalColorScheme scheme)
+{
+    impl_->setColorScheme(scheme);
 }
 
 void GhosttyVtAdapter::setClipboardWriteAccess(TerminalClipboardAccess access)

@@ -6,12 +6,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
-extern "C" ghostty_string_s ghostty_qt_config_json();
+extern "C" ghostty_string_s
+ghostty_qt_config_json(std::uint8_t colorScheme,
+                       ghostty_string_s *errorMessage);
 extern "C" ghostty_string_s
 ghostty_qt_shell_integration_json(const std::uint8_t *request,
                                   std::size_t requestLength);
@@ -20,7 +22,13 @@ namespace {
 
 constexpr auto kShowConfigJsonAction = "+show-config-json";
 constexpr auto kShellIntegrationJsonAction = "+shell-integration-json";
+constexpr std::string_view kColorSchemeOption = "--ghostty-qt-color-scheme=";
 constexpr std::size_t kMaximumShellIntegrationRequestBytes = 4U * 1024U * 1024U;
+
+enum class ConfigColorScheme : std::uint8_t {
+    Light,
+    Dark,
+};
 
 bool isShowConfigJsonAction(const char *argument)
 {
@@ -39,70 +47,88 @@ bool isPublicShowConfigOption(std::string_view argument)
         || argument == "--no-pager";
 }
 
-int validateEffectiveConfig()
-{
-    const std::unique_ptr<void, decltype(&ghostty_config_free)> config(
-        ghostty_config_new(), &ghostty_config_free);
-    if (!config) {
-        std::fputs(
-            "ghostty-qt-config-helper: failed to allocate config validation\n",
-            stderr);
-        return 1;
-    }
-
-    ghostty_config_load_default_files(config.get());
-    ghostty_config_load_cli_args(config.get());
-    ghostty_config_load_recursive_files(config.get());
-    ghostty_config_finalize(config.get());
-
-    const std::uint32_t diagnosticCount =
-        ghostty_config_diagnostics_count(config.get());
-    for (std::uint32_t index = 0; index < diagnosticCount; ++index) {
-        const ghostty_diagnostic_s diagnostic =
-            ghostty_config_get_diagnostic(config.get(), index);
-        if (diagnostic.message == nullptr) continue;
-        std::fputs(diagnostic.message, stderr);
-        std::fputc('\n', stderr);
-    }
-    return diagnosticCount == 0 ? 0 : 1;
-}
-
 int showConfigJson(std::span<char *const> arguments)
 {
+    std::optional<ConfigColorScheme> colorScheme;
+    std::vector<char *> configurationArguments;
+    configurationArguments.reserve(arguments.size());
+    configurationArguments.push_back(arguments.front());
+
+    char showConfigAction[] = "+show-config";
+    configurationArguments.push_back(showConfigAction);
     for (char *const argument : arguments.subspan(2)) {
-        if (argument != nullptr && isPublicShowConfigOption(argument)) {
+        if (argument == nullptr) continue;
+        const std::string_view value(argument);
+        if (value.starts_with(kColorSchemeOption)) {
+            const std::string_view scheme =
+                value.substr(kColorSchemeOption.size());
+            if (colorScheme.has_value() || scheme.empty()
+                || (scheme != "light" && scheme != "dark")) {
+                std::fputs(
+                    "ghostty-qt-config-helper: +show-config-json requires "
+                    "exactly one --ghostty-qt-color-scheme=light|dark option\n",
+                    stderr);
+                return 64;
+            }
+            colorScheme = scheme == "light" ? ConfigColorScheme::Light
+                                            : ConfigColorScheme::Dark;
+            continue;
+        }
+        if (value.starts_with("--ghostty-qt-color-scheme")) {
+            std::fputs(
+                "ghostty-qt-config-helper: +show-config-json requires "
+                "exactly one --ghostty-qt-color-scheme=light|dark option\n",
+                stderr);
+            return 64;
+        }
+        if (isPublicShowConfigOption(value)) {
             std::fputs(
                 "ghostty-qt-config-helper: +show-config-json takes no options "
                 "from +show-config; pass configuration --key=value arguments\n",
                 stderr);
             return 64;
         }
+        configurationArguments.push_back(argument);
+    }
+    if (!colorScheme.has_value()) {
+        std::fputs(
+            "ghostty-qt-config-helper: +show-config-json requires exactly one "
+            "--ghostty-qt-color-scheme=light|dark option\n",
+            stderr);
+        return 64;
     }
 
     // Ghostty doesn't know this project-private action. Give its global state
     // the recognized public action whose finalized values this export replaces.
-    // Keep every following config argument byte-for-byte so this query has the
-    // same explicit CLI precedence as the terminal surfaces.
-    char showConfigAction[] = "+show-config";
-    std::vector<char *> initializationArguments(arguments.begin(),
-                                                arguments.end());
-    initializationArguments[1] = showConfigAction;
+    // Keep every configuration argument byte-for-byte while stripping the
+    // helper-only color-scheme selector so this query has the same explicit
+    // CLI precedence as the terminal surfaces.
     const int initializationResult = ghostty_init(
-        initializationArguments.size(), initializationArguments.data());
+        configurationArguments.size(), configurationArguments.data());
     if (initializationResult != 0) {
         return initializationResult;
     }
-    if (const int validationResult = validateEffectiveConfig();
-        validationResult != 0) {
-        return validationResult;
-    }
 
-    const ghostty_string_s json = ghostty_qt_config_json();
+    ghostty_string_s errorMessage{};
+    const ghostty_string_s json = ghostty_qt_config_json(
+        static_cast<std::uint8_t>(*colorScheme), &errorMessage);
     if (json.ptr == nullptr) {
-        std::fputs(
-            "ghostty-qt-config-helper: failed to export structured config\n",
-            stderr);
+        if (errorMessage.ptr != nullptr) {
+            std::fwrite(errorMessage.ptr, 1, errorMessage.len, stderr);
+            if (errorMessage.len == 0
+                || errorMessage.ptr[errorMessage.len - 1] != '\n') {
+                std::fputc('\n', stderr);
+            }
+            ghostty_string_free(errorMessage);
+        } else {
+            std::fputs(
+                "ghostty-qt-config-helper: failed to export structured config\n",
+                stderr);
+        }
         return 1;
+    }
+    if (errorMessage.ptr != nullptr) {
+        ghostty_string_free(errorMessage);
     }
 
     const std::size_t written = std::fwrite(json.ptr, 1, json.len, stdout);

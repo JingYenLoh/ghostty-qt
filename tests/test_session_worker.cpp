@@ -270,6 +270,7 @@ private Q_SLOTS:
     void stagesSequenceKeysUsingModesAtStageTime();
     void gatesKeyboardAndImeWithLiveKamPolicy();
     void appliesReloadedAppearanceToExistingTerminal();
+    void ordersLiveColorSchemeReportsThroughPty();
     void appliesLiveScrollbackCompressionPolicy();
     void appliesLiveScrollToBottomPolicy();
     void appliesReloadedWordBoundariesToExistingGesture();
@@ -3924,6 +3925,57 @@ void SessionWorkerTest::appliesReloadedAppearanceToExistingTerminal()
     QVERIFY2(errorSpy.isEmpty(),
              errorSpy.isEmpty() ? ""
                                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::ordersLiveColorSchemeReportsThroughPty()
+{
+    qRegisterMetaType<TerminalUpdate>();
+    SessionWorker worker;
+    QSignalSpy updateSpy(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy exitSpy(&worker, &SessionWorker::sessionExited);
+    QSignalSpy errorSpy(&worker, &SessionWorker::errorOccurred);
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral("stty raw -echo; "
+                       "printf '\\033[?996n'; "
+                       "initial=$(dd bs=1 count=9 2>/dev/null); "
+                       "printf '\\033[?2031hcolor-scheme-ready'; "
+                       "reports=$(dd bs=1 count=18 2>/dev/null); "
+                       "stty sane; "
+                       "printf '\\r\\ncolor-scheme-bytes:'; "
+                       "printf '%s%s' \"$initial\" \"$reports\" "
+                       "| od -An -tx1 | tr -d ' \\n'; "
+                       "printf '\\r\\n'"),
+    };
+    options.hold = true;
+    options.runtime.colorScheme = TerminalColorScheme::Dark;
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updateSpy, QStringLiteral("color-scheme-ready")), 5000);
+
+    TerminalSessionRuntimeOptions runtime = options.runtime;
+    runtime.colorScheme = TerminalColorScheme::Light;
+    worker.applyRuntimeOptions(runtime);
+    worker.applyRuntimeOptions(runtime);
+    runtime.colorScheme = TerminalColorScheme::Dark;
+    worker.applyRuntimeOptions(runtime);
+
+    QTRY_COMPARE_WITH_TIMEOUT(exitSpy.count(), 1, 5000);
+    const QString finalContents = frameText(accumulatedFrame(updateSpy));
+    QVERIFY2(finalContents.contains(QStringLiteral("color-scheme-bytes:"
+                                                   "1b5b3f3939373b316e"
+                                                   "1b5b3f3939373b326e"
+                                                   "1b5b3f3939373b316e")),
+             qPrintable(finalContents));
+    QVERIFY2(errorSpy.isEmpty(),
+             errorSpy.isEmpty()
+                 ? ""
+                 : qPrintable(errorSpy.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

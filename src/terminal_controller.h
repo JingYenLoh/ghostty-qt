@@ -115,9 +115,14 @@ public:
     bool selectionAvailable() const { return selectionAvailable_; }
     bool readOnly() const { return readOnly_; }
     void resizeTerminal(const TerminalSessionGeometry &geometry);
+    // Apply the live configured base-title policy on the GUI thread. A present
+    // value is a write even when unchanged; clearing it retains the base until
+    // a later terminal title event.
+    void applyConfiguredTitle(const std::optional<QString> &title);
     void applyRuntimeOptions(const TerminalSessionRuntimeOptions &options);
     // Update the GUI-thread base-title cache. The next worker title event,
-    // including an empty value, replaces this action-originated value.
+    // including an empty value, replaces this action-originated value unless
+    // a configured title is currently masking terminal title updates.
     void setSurfaceTitle(QString title);
     // Queue graceful teardown without blocking the UI. Workspace-wide closes
     // call this for every pane first so their grace periods run concurrently.

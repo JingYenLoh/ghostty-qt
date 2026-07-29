@@ -43,6 +43,7 @@ toTerminalSessionRuntimeOptions(const LaunchOptions &options)
 {
     return {
         .appearance = options.appearance,
+        .colorScheme = options.colorScheme,
         .enquiryResponse = options.enquiryResponse,
         .selectionClipboard = options.selectionClipboard,
         .selectionWordChars = options.selectionWordChars,
@@ -82,6 +83,7 @@ toTerminalSessionLaunchOptions(const LaunchOptions &options)
         .processUsesSingleInstance = options.processUsesSingleInstance,
         .workingDirectory = options.workingDirectory,
         .inheritWorkingDirectory = options.inheritWorkingDirectory,
+        .configuredTitle = options.configuredTitle,
         .command = options.ordinaryCommand,
         .program = options.program,
         .scrollbackLimit = options.scrollbackLimit,
@@ -137,6 +139,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
         result.typography.pointSize = base.typography.pointSize;
     }
 
+    result.configuredTitle = config.title;
     result.appearance = config.appearance;
     result.background = config.background;
     result.padding = config.padding;
@@ -149,6 +152,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.windowNewTabPosition = config.windowNewTabPosition;
     result.windowShowTabBar = config.windowShowTabBar;
     result.windowDecoration = config.windowDecoration;
+    result.windowAppearance = config.windowAppearance;
     result.windowWidth = config.windowWidth;
     result.windowHeight = config.windowHeight;
     result.resizeOverlay = config.resizeOverlay;

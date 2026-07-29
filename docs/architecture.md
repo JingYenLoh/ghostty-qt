@@ -1273,23 +1273,26 @@ the Qt-side process adapter invokes, in order:
 
 ```text
 +validate-config
-+show-config-json
++show-config-json --ghostty-qt-color-scheme=<light|dark>
 +validate-config
-+show-config-json
++show-config-json --ghostty-qt-color-scheme=<light|dark>
 ```
 
 The helper runs with the selected `XDG_CONFIG_HOME`, so Ghostty itself owns
 standard-file discovery, legacy/preferred-file precedence, include handling,
-validation, defaults, and finalization. Each JSON document is one exact
-schema-v1 frontend projection containing all consumed values plus the finalized
-current and platform-default binding sets. The two JSON byte streams must
-match, preventing a valid A-to-B edit from publishing a mixed snapshot. The
-adapter strictly decodes the verified document into one complete, strongly
-typed `GhosttyConfigSnapshot`; it never parses or merges Ghostty's
-human-oriented `+show-config` output. Configuration absence remains service
-state rather than a contradictory flag inside a snapshot. This keeps the
-unstable application API and all of its state outside the long-lived Qt
-process without reimplementing Ghostty's configuration grammar.
+validation, defaults, and finalization. The private selector installs the
+current concrete desktop color scheme before parsing conditional theme state
+and is stripped before Ghostty processes ordinary configuration arguments.
+Each JSON document is one exact schema-v1 frontend projection containing all
+consumed values plus the finalized current and platform-default binding sets.
+The two JSON byte streams must match, preventing a valid A-to-B edit from
+publishing a mixed snapshot. The adapter strictly decodes the verified
+document into one complete, strongly typed `GhosttyConfigSnapshot`; it never
+parses or merges Ghostty's human-oriented `+show-config` output.
+Configuration absence remains service state rather than a contradictory flag
+inside a snapshot. This keeps the unstable application API and all of its
+state outside the long-lived Qt process without reimplementing Ghostty's
+configuration grammar.
 
 `GhosttyConfigService` watches the legacy `ghostty/config`, preferred
 `ghostty/config.ghostty`, their nearest existing directories, existing include

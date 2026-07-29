@@ -41,6 +41,15 @@ bool hasArgument(int argc, char **argv, const std::string &wanted)
     return false;
 }
 
+int argumentCount(int argc, char **argv, const std::string &wanted)
+{
+    int count = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == wanted) ++count;
+    }
+    return count;
+}
+
 int actionInvocationCount(const std::string &action)
 {
     const std::string logPath =
@@ -52,7 +61,9 @@ int actionInvocationCount(const std::string &action)
     int count = 0;
     std::string line;
     while (std::getline(log, line)) {
-        if (line == action) {
+        if (line == action
+            || (line.starts_with(action) && line.size() > action.size()
+                && line[action.size()] == ' ')) {
             ++count;
         }
     }
@@ -99,6 +110,13 @@ int main(int argc, char **argv)
     }
 
     if (action == "+show-config-json") {
+        const int schemeCount =
+            argumentCount(argc, argv, "--ghostty-qt-color-scheme=light")
+            + argumentCount(argc, argv, "--ghostty-qt-color-scheme=dark");
+        if (schemeCount != 1) {
+            std::cerr << "expected exactly one color scheme";
+            return 93;
+        }
         const int invocation = actionInvocationCount("+show-config-json");
         if (mode == "config-query-failure" && invocation == 1) {
             std::cerr << "config query failed";

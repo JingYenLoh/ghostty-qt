@@ -1016,6 +1016,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.fontFamilyExplicit = options.fontFamilyExplicit;
     updated.fontSizeExplicit = options.fontSizeExplicit;
     updated.appearance = options.appearance;
+    updated.colorScheme = options.colorScheme;
+    updated.configuredTitle = options.configuredTitle;
     updated.background = options.background;
     // Ghostty documents x/y as new-terminal-only. Balance and color remain
     // live while this pane retains its construction-time dimensions.
@@ -1051,9 +1053,24 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.resizeOverlay = options.resizeOverlay;
     updated.keybindSource = options.keybindSource;
 
+    controller_->applyConfiguredTitle(updated.configuredTitle);
+    // titleChanged observers may synchronously apply a newer snapshot. The
+    // keybind generation cannot participate in this guard because the matcher
+    // is deliberately replaced only after the pane snapshot becomes current.
+    if (guard == nullptr
+        || !guard->runtimeOptionsRevision_.isCurrent(revision)) {
+        return;
+    }
+
     const bool keybindGenerationChanged =
         !keybinds_.program().isSameGeneration(keybindProgram);
-    if (updated == options_ && !keybindGenerationChanged) {
+    LaunchOptions updatedWithoutTitle = updated;
+    updatedWithoutTitle.configuredTitle = options_.configuredTitle;
+    if (updatedWithoutTitle == options_ && !keybindGenerationChanged) {
+        // Keep GUI-only title changes on the fast path. A configuration reload
+        // must not recompute fonts, images, layout, or renderer state merely
+        // because its base-title policy changed.
+        options_.configuredTitle = updated.configuredTitle;
         if (!updated.mouseHideWhileTyping && mouseHiddenWhileTyping_) {
             setMouseHiddenWhileTyping(false);
             if (!stillCurrentUpdate()) return;
@@ -1138,9 +1155,9 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         (void)keybinds_.replaceProgram(keybindProgram);
     }
 
-    // The pane snapshot and matcher are now authoritative. Queue the worker
-    // policy before publishing any callback that may execute a new binding;
-    // the controller's worker relay is connected before external observers.
+    // The pane snapshot and matcher are now authoritative. Queue a changed
+    // worker policy before publishing any callback that may execute a new
+    // binding; GUI-only updates such as configured-title never wake it.
     if (previousRuntime != updatedRuntime) {
         controller_->applyRuntimeOptions(updatedRuntime);
         if (guard == nullptr) return;

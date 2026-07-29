@@ -113,6 +113,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(values.linuxCgroup.hardFail);
     QVERIFY(values.workingDirectoryPath.has_value());
     QCOMPARE(*values.workingDirectoryPath, QStringLiteral("/work/ghostty"));
+    QCOMPARE(values.title, std::optional<QString>(QString{}));
     const TerminalTypography &typography = values.typography;
     QCOMPARE(
         typography.face(TerminalFontRole::Regular).families,
@@ -251,6 +252,15 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.windowNewTabPosition, WindowNewTabPosition::End);
     QCOMPARE(values.windowShowTabBar, WindowShowTabBar::Always);
     QCOMPARE(values.windowDecoration, WindowDecorationMode::Server);
+    QCOMPARE(values.windowAppearance.theme, WindowTheme::Ghostty);
+    QCOMPARE(values.windowAppearance.titleFontFamily,
+             std::optional<QString>(QStringLiteral("Window Sans")));
+    QCOMPARE(values.windowAppearance.titlebarBackground,
+             std::optional<QColor>(QColor(QStringLiteral("#123456"))));
+    QCOMPARE(values.windowAppearance.titlebarForeground,
+             std::optional<QColor>(QColor(QStringLiteral("#fedcba"))));
+    QCOMPARE(values.windowAppearance.subtitle,
+             WindowSubtitleMode::WorkingDirectory);
     QCOMPARE(values.windowWidth, quint32{120});
     QCOMPARE(values.windowHeight, quint32{40});
     QCOMPARE(values.padding.horizontal,
@@ -309,6 +319,9 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(values.configFiles.at(1).path,
              QStringLiteral("/work/optional.ghostty"));
     QVERIFY(values.configFiles.at(1).optional);
+    QCOMPARE(values.themeFiles,
+             QStringList({QStringLiteral("/work/themes/light"),
+                          QStringLiteral("/work/themes/dark")}));
     QVERIFY(!values.quitAfterLastWindowClosed);
     QVERIFY(!values.quitAfterLastWindowClosedDelay.has_value());
     QVERIFY(!values.initialWindow);
@@ -347,6 +360,15 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     inverseNullability =
         withValue(std::move(inverseNullability),
                   QStringLiteral("initial-command"), QJsonValue::Null);
+    for (const QString &name : {
+             QStringLiteral("title"),
+             QStringLiteral("window-title-font-family"),
+             QStringLiteral("window-titlebar-background"),
+             QStringLiteral("window-titlebar-foreground"),
+         }) {
+        inverseNullability =
+            withValue(std::move(inverseNullability), name, QJsonValue::Null);
+    }
     inverseNullability = withValue(std::move(inverseNullability),
                                    QStringLiteral("wait-after-command"), false);
 
@@ -372,6 +394,10 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QVERIFY(!inverse->values.bellAudioPath.has_value());
     QVERIFY(!inverse->values.ordinaryCommand.has_value());
     QVERIFY(!inverse->values.initialCommand.has_value());
+    QVERIFY(!inverse->values.title.has_value());
+    QVERIFY(!inverse->values.windowAppearance.titleFontFamily.has_value());
+    QVERIFY(!inverse->values.windowAppearance.titlebarBackground.has_value());
+    QVERIFY(!inverse->values.windowAppearance.titlebarForeground.has_value());
     QVERIFY(!inverse->values.waitAfterCommand);
 }
 
@@ -642,6 +668,27 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
         }),
         [](const GhosttyConfigValues &values) {
             return values.windowDecoration;
+        });
+    verifyMappings(QLatin1StringView("window-theme"),
+                   std::to_array<std::pair<QLatin1StringView, WindowTheme>>({
+                       {QLatin1StringView("auto"), WindowTheme::Auto},
+                       {QLatin1StringView("system"), WindowTheme::System},
+                       {QLatin1StringView("light"), WindowTheme::Light},
+                       {QLatin1StringView("dark"), WindowTheme::Dark},
+                       {QLatin1StringView("ghostty"), WindowTheme::Ghostty},
+                   }),
+                   [](const GhosttyConfigValues &values) {
+                       return values.windowAppearance.theme;
+                   });
+    verifyMappings(
+        QLatin1StringView("window-subtitle"),
+        std::to_array<std::pair<QLatin1StringView, WindowSubtitleMode>>({
+            {QLatin1StringView("false"), WindowSubtitleMode::Disabled},
+            {QLatin1StringView("working-directory"),
+             WindowSubtitleMode::WorkingDirectory},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.windowAppearance.subtitle;
         });
     verifyMappings(
         QLatin1StringView("fullscreen"),
@@ -1327,6 +1374,13 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("window-padding-y"),
              QStringLiteral("window-padding-balance"),
              QStringLiteral("window-padding-color"),
+             QStringLiteral("title"),
+             QStringLiteral("window-theme"),
+             QStringLiteral("window-title-font-family"),
+             QStringLiteral("window-titlebar-background"),
+             QStringLiteral("window-titlebar-foreground"),
+             QStringLiteral("window-subtitle"),
+             QStringLiteral("theme-files"),
          }) {
         const QByteArray row =
             QStringLiteral("missing-%1").arg(field).toLatin1();
@@ -1612,6 +1666,36 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
                      QStringLiteral("home"))
         << QStringLiteral(
                "values.working-directory must be 'inherit' or a finalized path");
+    QTest::newRow("title-type")
+        << withValue(object(), QStringLiteral("title"), true)
+        << QStringLiteral("values.title must be a string");
+    QTest::newRow("window-title-font-family-empty")
+        << withValue(object(), QStringLiteral("window-title-font-family"),
+                     QString{})
+        << QStringLiteral(
+               "values.window-title-font-family must be a non-empty string");
+    QTest::newRow("window-titlebar-background-color")
+        << withValue(object(), QStringLiteral("window-titlebar-background"),
+                     QStringLiteral("#ABCDEF"))
+        << QStringLiteral(
+               "values.window-titlebar-background must be a canonical #rrggbb");
+    QTest::newRow("theme-files-type")
+        << withValue(object(), QStringLiteral("theme-files"), true)
+        << QStringLiteral("values.theme-files must be an array");
+    QTest::newRow("theme-files-empty-path")
+        << withValue(object(), QStringLiteral("theme-files"),
+                     QJsonArray{QString{}})
+        << QStringLiteral("values.theme-files[0] must be a non-empty string");
+    QTest::newRow("theme-files-relative-path")
+        << withValue(object(), QStringLiteral("theme-files"),
+                     QJsonArray{QStringLiteral("themes/light")})
+        << QStringLiteral("values.theme-files[0] must be an absolute path");
+    QTest::newRow("theme-files-duplicate-path")
+        << withValue(object(), QStringLiteral("theme-files"),
+                     QJsonArray{QStringLiteral("/themes/light"),
+                                QStringLiteral("/themes/light")})
+        << QStringLiteral(
+               "values.theme-files contains duplicate path '/themes/light'");
 
     QJsonObject extra = object();
     QJsonObject extraValues = extra.value(QStringLiteral("values")).toObject();
@@ -1964,6 +2048,8 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("window-new-tab-position"),
              QStringLiteral("window-show-tab-bar"),
              QStringLiteral("window-decoration"),
+             QStringLiteral("window-theme"),
+             QStringLiteral("window-subtitle"),
              QStringLiteral("fullscreen"),
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),

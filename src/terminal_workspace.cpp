@@ -34,6 +34,10 @@ namespace {
 constexpr qreal splitGap = 2.0;
 constexpr qreal splitDividerZ = 1.0;
 constexpr QRgb defaultSplitDividerRgb = 0xff3b4252U;
+constexpr QRgb darkChromeBackgroundRgb = 0xff3b4252U;
+constexpr QRgb darkChromeForegroundRgb = 0xffeceff4U;
+constexpr QRgb lightChromeBackgroundRgb = 0xffeceff4U;
+constexpr QRgb lightChromeForegroundRgb = 0xff2e3440U;
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
 constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
@@ -48,6 +52,13 @@ QColor effectiveSplitDividerColor(const std::optional<QColor> &configured)
     return configured.has_value() && configured->isValid()
         ? *configured
         : QColor::fromRgba(defaultSplitDividerRgb);
+}
+
+QColor opaqueColor(QColor color, QRgb fallback)
+{
+    if (!color.isValid()) color = QColor::fromRgba(fallback);
+    color.setAlpha(255);
+    return color;
 }
 
 quint64 nextNonzeroId(quint64 &counter) noexcept
@@ -721,6 +732,10 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     const bool wasTabBarVisible = tabBarVisible();
     const bool wasTabBarAtBottom = tabBarAtBottom();
     const WindowDecorationMode previousWindowDecoration = windowDecoration();
+    const QColor previousChromeBackground = chromeBackground();
+    const QColor previousChromeForeground = chromeForeground();
+    const QString previousTitleFontFamily = titleFontFamily();
+    const QString previousSubtitle = currentSubtitle();
     keybindProgram_ = std::move(keybindProgram);
     const GhosttyKeybindProgram appliedProgram = keybindProgram_;
     effectiveOptions_ = options;
@@ -730,6 +745,16 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
             && guard->launchOptionsRevision_.isCurrent(revision)
             && guard->keybindProgram().isSameGeneration(appliedProgram);
     };
+    if (chromeBackground() != previousChromeBackground
+        || chromeForeground() != previousChromeForeground
+        || titleFontFamily() != previousTitleFontFamily) {
+        Q_EMIT windowAppearanceChanged();
+        if (!stillCurrentUpdate()) return;
+    }
+    if (currentSubtitle() != previousSubtitle) {
+        Q_EMIT currentSubtitleChanged();
+        if (!stillCurrentUpdate()) return;
+    }
     if (windowDecoration() != previousWindowDecoration) {
         Q_EMIT windowDecorationChanged();
         if (!stillCurrentUpdate()) return;
@@ -782,6 +807,53 @@ QString TerminalWorkspace::currentTitle() const
     return tabModel_
         .data(tabModel_.index(currentIndex_, 0), TabListModel::TitleRole)
         .toString();
+}
+
+QString TerminalWorkspace::currentSubtitle() const
+{
+    if (effectiveOptions_.windowAppearance.subtitle
+        != WindowSubtitleMode::WorkingDirectory) {
+        return {};
+    }
+    const TabListEntry *const entry = tabModel_.entryAt(currentIndex_);
+    return entry != nullptr ? entry->currentDirectory : QString{};
+}
+
+QColor TerminalWorkspace::chromeBackground() const
+{
+    if (effectiveOptions_.windowAppearance.theme == WindowTheme::Ghostty) {
+        return opaqueColor(
+            effectiveOptions_.windowAppearance.titlebarBackground.value_or(
+                effectiveOptions_.appearance.backgroundColor),
+            darkChromeBackgroundRgb);
+    }
+    return QColor::fromRgba(effectiveOptions_.colorScheme
+                                    == TerminalColorScheme::Dark
+                                ? darkChromeBackgroundRgb
+                                : lightChromeBackgroundRgb);
+}
+
+QColor TerminalWorkspace::chromeForeground() const
+{
+    if (effectiveOptions_.windowAppearance.theme == WindowTheme::Ghostty) {
+        return opaqueColor(
+            effectiveOptions_.windowAppearance.titlebarForeground.value_or(
+                effectiveOptions_.appearance.foregroundColor),
+            darkChromeForegroundRgb);
+    }
+    return QColor::fromRgba(effectiveOptions_.colorScheme
+                                    == TerminalColorScheme::Dark
+                                ? darkChromeForegroundRgb
+                                : lightChromeForegroundRgb);
+}
+
+QString TerminalWorkspace::titleFontFamily() const
+{
+    const std::optional<QString> &configured =
+        effectiveOptions_.windowAppearance.titleFontFamily;
+    return configured.has_value() && !configured->isEmpty()
+        ? *configured
+        : QGuiApplication::font().family();
 }
 
 bool TerminalWorkspace::dispatchAction(const WorkspaceActionRequest &request)
@@ -1411,8 +1483,10 @@ void TerminalWorkspace::setCurrentIndex(int index)
                     {tabs_[static_cast<size_t>(index)]->id, PaneId{}, 0}});
 }
 
-void TerminalWorkspace::activateTab(TabId id)
+void TerminalWorkspace::activateTab(TabId id,
+                                    std::optional<QString> previousSubtitle)
 {
+    const QString subtitleBefore = previousSubtitle.value_or(currentSubtitle());
     int index = tabIndexForId(id);
     if (index < 0) {
         return;
@@ -1444,6 +1518,10 @@ void TerminalWorkspace::activateTab(TabId id)
     if (guard == nullptr) return;
     Q_EMIT currentTitleChanged();
     if (guard == nullptr) return;
+    if (currentSubtitle() != subtitleBefore) {
+        Q_EMIT currentSubtitleChanged();
+        if (guard == nullptr) return;
+    }
     if (TerminalPane *pane = paneForId(currentPaneId()); pane != nullptr) {
         pane->focusTerminal();
     }
@@ -1868,6 +1946,7 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
     const bool wasTabBarVisible = tabBarVisible();
     const TabId selectedTabId = currentTabId();
     const int selectedIndex = currentIndex_;
+    const QString selectedSubtitle = currentSubtitle();
     const auto survives = [this, &targetIds](TabId tabId) {
         return tabId.isValid() && !targetIds.contains(tabId)
             && tabById(tabId) != nullptr;
@@ -1964,13 +2043,18 @@ void TerminalWorkspace::removeTabs(PendingTabClose close)
             if (guard == nullptr) return;
             Q_EMIT currentTitleChanged();
             if (guard == nullptr) return;
+            if (currentSubtitle() != selectedSubtitle) {
+                Q_EMIT currentSubtitleChanged();
+                if (guard == nullptr) return;
+            }
             if (!std::holds_alternative<std::monostate>(pendingClose_)) {
                 (void)takePendingClose();
                 if (guard == nullptr) return;
             }
         } else if (nextSelectedTabId != selectedTabId) {
             currentIndex_ = -1;
-            activateTab(nextSelectedTabId);
+            activateTab(nextSelectedTabId,
+                        std::optional<QString>{selectedSubtitle});
         } else if (currentIndex_ != selectedIndex) {
             Q_EMIT currentIndexChanged();
         }
@@ -2984,13 +3068,19 @@ void TerminalWorkspace::refreshTab(TabId tabId)
     if (tab == nullptr) {
         return;
     }
+    const bool current = tabId == currentTabId();
+    const QString previousSubtitle = current ? currentSubtitle() : QString{};
     const QPointer<TerminalWorkspace> guard(this);
     tabModel_.replace(tabId, tabListEntry(*tab));
     if (guard == nullptr) return;
     Q_EMIT tabTitlesChanged();
     if (guard == nullptr) return;
-    if (tabId == currentTabId()) {
+    if (current) {
         Q_EMIT currentTitleChanged();
+        if (guard == nullptr) return;
+        if (currentSubtitle() != previousSubtitle) {
+            Q_EMIT currentSubtitleChanged();
+        }
     }
 }
 

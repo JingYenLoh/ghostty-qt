@@ -1173,10 +1173,67 @@ void GhosttyCliDelegationTest::enforcesBuildConfigurationBoundary()
     QCOMPARE(helperPrivateMix->exitCode, 64);
     QVERIFY(helperPrivateMix->standardOutput.isEmpty());
 
-    auto obsoletePrivateOption = runProcess(
+    auto helperPrivateMissingScheme = runProcess(
         QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
-        {QStringLiteral("+show-config-json"), QStringLiteral("--default")},
-        environment, temporary.path());
+        {QStringLiteral("+show-config-json")}, environment, temporary.path());
+    QVERIFY2(helperPrivateMissingScheme.has_value(),
+             qPrintable(helperPrivateMissingScheme.has_value()
+                            ? QString{}
+                            : helperPrivateMissingScheme.error()));
+    QCOMPARE(helperPrivateMissingScheme->exitStatus, QProcess::NormalExit);
+    QCOMPARE(helperPrivateMissingScheme->exitCode, 64);
+    QVERIFY(helperPrivateMissingScheme->standardOutput.isEmpty());
+    QVERIFY(helperPrivateMissingScheme->standardError.contains(
+        QByteArrayLiteral("exactly one --ghostty-qt-color-scheme=light|dark")));
+
+    auto helperPrivateInvalidScheme =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+show-config-json"),
+                    QStringLiteral("--ghostty-qt-color-scheme=sepia")},
+                   environment, temporary.path());
+    QVERIFY2(helperPrivateInvalidScheme.has_value(),
+             qPrintable(helperPrivateInvalidScheme.has_value()
+                            ? QString{}
+                            : helperPrivateInvalidScheme.error()));
+    QCOMPARE(helperPrivateInvalidScheme->exitStatus, QProcess::NormalExit);
+    QCOMPARE(helperPrivateInvalidScheme->exitCode, 64);
+    QVERIFY(helperPrivateInvalidScheme->standardOutput.isEmpty());
+    QVERIFY(helperPrivateInvalidScheme->standardError.contains(
+        QByteArrayLiteral("exactly one --ghostty-qt-color-scheme=light|dark")));
+
+    auto helperPrivateDuplicateScheme =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+show-config-json"),
+                    QStringLiteral("--ghostty-qt-color-scheme=light"),
+                    QStringLiteral("--ghostty-qt-color-scheme=dark")},
+                   environment, temporary.path());
+    QVERIFY2(helperPrivateDuplicateScheme.has_value(),
+             qPrintable(helperPrivateDuplicateScheme.has_value()
+                            ? QString{}
+                            : helperPrivateDuplicateScheme.error()));
+    QCOMPARE(helperPrivateDuplicateScheme->exitStatus, QProcess::NormalExit);
+    QCOMPARE(helperPrivateDuplicateScheme->exitCode, 64);
+    QVERIFY(helperPrivateDuplicateScheme->standardOutput.isEmpty());
+
+    auto helperPrivateValidScheme =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+show-config-json"),
+                    QStringLiteral("--ghostty-qt-color-scheme=dark")},
+                   environment, temporary.path());
+    QVERIFY2(helperPrivateValidScheme.has_value(),
+             qPrintable(helperPrivateValidScheme.has_value()
+                            ? QString{}
+                            : helperPrivateValidScheme.error()));
+    QCOMPARE(helperPrivateValidScheme->exitStatus, QProcess::NormalExit);
+    QCOMPARE(helperPrivateValidScheme->exitCode, 0);
+    QVERIFY(helperPrivateValidScheme->standardOutput.startsWith('{'));
+
+    auto obsoletePrivateOption =
+        runProcess(QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER),
+                   {QStringLiteral("+show-config-json"),
+                    QStringLiteral("--ghostty-qt-color-scheme=light"),
+                    QStringLiteral("--default")},
+                   environment, temporary.path());
     QVERIFY2(obsoletePrivateOption.has_value(),
              qPrintable(obsoletePrivateOption.has_value()
                  ? QString{} : obsoletePrivateOption.error()));

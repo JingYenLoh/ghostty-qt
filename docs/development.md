@@ -150,11 +150,12 @@ Configuration is enabled by default with
 parser is outside `libghostty-vt`, the build produces a private
 `ghostty-internal` shared library and links it only into
 `ghostty-qt-config-helper`. Each load is a four-process transaction: validate,
-request the private schema-v1 `+show-config-json` projection, validate again,
-and request the same projection again. The two JSON byte streams must match,
-so each document carries one finalized current configuration together with its
-platform-default keybinding baseline. The loader does not parse or merge the
-human-oriented `+show-config` output.
+request the private schema-v1 `+show-config-json` projection with the concrete
+light/dark scheme, validate again, and request the same scheme and projection
+again. The two JSON byte streams must match, so each document carries one
+finalized current configuration together with its platform-default keybinding
+baseline. The loader does not parse or merge the human-oriented
+`+show-config` output.
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,

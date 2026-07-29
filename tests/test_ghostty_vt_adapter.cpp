@@ -130,6 +130,7 @@ class GhosttyVtAdapterTest : public QObject {
 private Q_SLOTS:
     void rendersTerminalValuesAndEffects();
     void respondsToEnquiryWithConfiguredBytes();
+    void reportsConfiguredColorSchemeAndLiveChanges();
     void observesActiveScreenBottomAnchorChanges();
     void normalizesTerminalClipboardWritesAndPolicies();
     void validatesDynamicAndMacShapedOsc7Hostnames();
@@ -427,6 +428,52 @@ void GhosttyVtAdapterTest::respondsToEnquiryWithConfiguredBytes()
     adapter->setEnquiryResponse({});
     adapter->writeVt(QByteArray(1, '\x05'));
     QCOMPARE(writes.size(), 4);
+}
+
+void GhosttyVtAdapterTest::reportsConfiguredColorSchemeAndLiveChanges()
+{
+    QVector<QByteArray> writes;
+    GhosttyVtAdapter::Options options;
+    options.colorScheme = TerminalColorScheme::Dark;
+    auto adapter = GhosttyVtAdapter::create(
+        options, {.writePty = [&writes](const QByteArray &data) {
+            writes.append(data);
+        }});
+    QVERIFY(adapter != nullptr);
+
+    // Construction only supplies the value queried by the terminal. It must
+    // not synthesize an unsolicited report before the application enables
+    // mode 2031.
+    QVERIFY(writes.isEmpty());
+    adapter->writeVt(QByteArrayLiteral("\033[?996n"));
+    QCOMPARE(writes, QVector{QByteArrayLiteral("\033[?997;1n")});
+
+    writes.clear();
+    adapter->setColorScheme(TerminalColorScheme::Light);
+    QVERIFY(writes.isEmpty());
+    adapter->writeVt(QByteArrayLiteral("\033[?996n"));
+    QCOMPARE(writes, QVector{QByteArrayLiteral("\033[?997;2n")});
+
+    writes.clear();
+    adapter->writeVt(QByteArrayLiteral("\033[?2031h"));
+    adapter->setColorScheme(TerminalColorScheme::Dark);
+    QCOMPARE(writes, QVector{QByteArrayLiteral("\033[?997;1n")});
+    adapter->setColorScheme(TerminalColorScheme::Dark);
+    QCOMPARE(writes.size(), 1);
+
+    writes.clear();
+    adapter->writeVt(QByteArrayLiteral("\033[?2031l"));
+    adapter->setColorScheme(TerminalColorScheme::Light);
+    QVERIFY(writes.isEmpty());
+
+    // A terminal reset also disables mode 2031, without discarding the
+    // frontend-owned scheme subsequently returned to a direct query.
+    adapter->writeVt(QByteArrayLiteral("\033[?2031h"));
+    adapter->reset();
+    adapter->setColorScheme(TerminalColorScheme::Dark);
+    QVERIFY(writes.isEmpty());
+    adapter->writeVt(QByteArrayLiteral("\033[?996n"));
+    QCOMPARE(writes, QVector{QByteArrayLiteral("\033[?997;1n")});
 }
 
 void GhosttyVtAdapterTest::queriesSemanticPromptStateFromPublicTerminalData()

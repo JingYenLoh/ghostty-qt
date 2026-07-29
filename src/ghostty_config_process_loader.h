@@ -12,10 +12,11 @@
 struct GhosttyConfigProcessLoaderOptions {
     QString helperPath;
     // Already-encoded Ghostty configuration CLI arguments. Both structured
-    // queries receive their private action first followed by these values in
-    // their original order. Pinned +validate-config accepts only its own
-    // action options, so the separate file validators retain that exact public
-    // grammar; each structured query validates the effective CLI generation.
+    // queries receive their private action and selected color scheme first,
+    // followed by these values in their original order. Pinned
+    // +validate-config accepts only its own action options, so the separate
+    // file validators retain that exact public grammar; each structured query
+    // validates the effective CLI generation.
     QStringList configurationArguments;
     int timeoutMilliseconds = 5'000;
     // One load runs validation, a complete JSON query, post-query validation,

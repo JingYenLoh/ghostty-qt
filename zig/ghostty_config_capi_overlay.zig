@@ -10,6 +10,8 @@ const inputpkg = @import("../input.zig");
 const Metrics = @import("../font/Metrics.zig");
 const shell_integration = @import("../termio/shell_integration.zig");
 const terminal_color = @import("../terminal/color.zig");
+const conditional = @import("conditional.zig");
+const themepkg = @import("theme.zig");
 const state = &@import("../global.zig").state;
 const String = @import("../main_c.zig").String;
 
@@ -46,14 +48,30 @@ comptime {
 }
 
 /// Export one complete, finalized configuration generation as the
-/// project-private JSON v1 schema. The returned allocation follows
-/// ghostty_string_s ownership and is released by ghostty_string_free.
-export fn ghostty_qt_config_json() String {
-    return configJson() catch |err| {
-        std.log.err("error exporting structured config as JSON err={}", .{err});
+/// project-private JSON v1 schema. The returned JSON or companion diagnostic
+/// allocation follows ghostty_string_s ownership and is released by
+/// ghostty_string_free.
+export fn ghostty_qt_config_json(
+    color_scheme: u8,
+    error_message: *String,
+) String {
+    error_message.* = .empty;
+    const theme: ConfigConditionalTheme = switch (color_scheme) {
+        0 => .light,
+        1 => .dark,
+        else => {
+            error_message.* = errorMessage("invalid color scheme") catch .empty;
+            return .empty;
+        },
+    };
+    return configJson(theme, error_message) catch |err| {
+        if (error_message.ptr == null)
+            error_message.* = errorMessage(@errorName(err)) catch .empty;
         return .empty;
     };
 }
+
+const ConfigConditionalTheme = conditional.State.Theme;
 
 /// Apply Ghostty's pinned shell-integration command and environment setup to
 /// one frontend-provided launch request. This remains a project-private helper
@@ -331,7 +349,24 @@ fn shellIntegrationJson(request_json: []const u8) !String {
     return .fromSlice(try output.toOwnedSlice());
 }
 
-fn configJson() !String {
+fn errorMessage(message: []const u8) !String {
+    return .fromSlice(try state.alloc.dupe(u8, message));
+}
+
+fn configDiagnostics(config: *const Config) !String {
+    var output: std.Io.Writer.Allocating = .init(state.alloc);
+    errdefer output.deinit();
+    for (config._diagnostics.items(), 0..) |diagnostic, index| {
+        if (index > 0) try output.writer.writeByte('\n');
+        try output.writer.print("{f}", .{diagnostic});
+    }
+    return .fromSlice(try output.toOwnedSlice());
+}
+
+fn configJson(
+    color_scheme: ConfigConditionalTheme,
+    error_message: *String,
+) !String {
     var output: std.Io.Writer.Allocating = .init(state.alloc);
     errdefer output.deinit();
 
@@ -341,8 +376,13 @@ fn configJson() !String {
     try json.write(@as(u8, 1));
 
     {
-        var config = try Config.load(state.alloc);
+        var config = try loadSelectedConfig(color_scheme);
         defer config.deinit();
+        if (!config._diagnostics.empty()) {
+            error_message.* = try configDiagnostics(&config);
+            return error.InvalidConfig;
+        }
+
         const command_uses_default_shell = commandUsesDefaultShell(&config);
 
         try json.objectField("values");
@@ -365,6 +405,21 @@ fn configJson() !String {
     try json.endObject();
 
     return .fromSlice(try output.toOwnedSlice());
+}
+
+fn loadSelectedConfig(color_scheme: ConfigConditionalTheme) !Config {
+    // This is Config.load with the requested conditional state installed
+    // before any file is parsed. Selecting afterward is insufficient when
+    // the inactive theme contains diagnostics because pinned Ghostty
+    // deliberately replays diagnostic steps unconditionally.
+    var config = try Config.default(state.alloc);
+    errdefer config.deinit();
+    config._conditional_state.theme = color_scheme;
+    try config.loadDefaultFiles(state.alloc);
+    try config.loadCliArgs(state.alloc);
+    try config.loadRecursiveFiles(state.alloc);
+    try config.finalize();
+    return config;
 }
 
 /// Finalization replaces a missing ordinary command with the resolved login
@@ -470,6 +525,8 @@ fn writeValues(
     try json.write(config.@"linux-cgroup-hard-fail");
     try json.objectField("working-directory");
     try writeWorkingDirectory(json, config.@"working-directory" orelse return error.UnfinalizedConfig);
+    try json.objectField("title");
+    if (config.title) |title| try json.write(title) else try json.write(null);
     inline for (.{
         .{ "font-family", &config.@"font-family" },
         .{ "font-family-bold", &config.@"font-family-bold" },
@@ -541,6 +598,19 @@ fn writeValues(
     try json.write(@tagName(config.@"window-show-tab-bar"));
     try json.objectField("window-decoration");
     try json.write(@tagName(config.@"window-decoration"));
+    try json.objectField("window-theme");
+    try json.write(@tagName(config.@"window-theme"));
+    try json.objectField("window-title-font-family");
+    if (config.@"window-title-font-family") |family|
+        try json.write(family)
+    else
+        try json.write(null);
+    try json.objectField("window-titlebar-background");
+    try writeOptionalRgb(json, config.@"window-titlebar-background");
+    try json.objectField("window-titlebar-foreground");
+    try writeOptionalRgb(json, config.@"window-titlebar-foreground");
+    try json.objectField("window-subtitle");
+    try json.write(@tagName(config.@"window-subtitle"));
     try json.objectField("window-width");
     try json.write(config.@"window-width");
     try json.objectField("window-height");
@@ -677,6 +747,8 @@ fn writeValues(
     try json.write(@tagName(config.@"link-previews"));
     try json.objectField("config-file");
     try writeConfigFiles(json, &config.@"config-file");
+    try json.objectField("theme-files");
+    try writeThemeFiles(json, config.theme);
     try json.objectField("quit-after-last-window-closed");
     try json.write(config.@"quit-after-last-window-closed");
     try json.objectField("quit-after-last-window-closed-delay");
@@ -699,6 +771,57 @@ fn writeValues(
     try json.objectField("gtk-single-instance");
     try json.write(@tagName(config.@"gtk-single-instance"));
     try json.endObject();
+}
+
+fn writeThemeFiles(
+    json: *std.json.Stringify,
+    theme: ?Config.Theme,
+) !void {
+    try json.beginArray();
+    const value = theme orelse {
+        try json.endArray();
+        return;
+    };
+
+    var arena = std.heap.ArenaAllocator.init(state.alloc);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(alloc);
+
+    const names = [_][]const u8{ value.light, value.dark };
+    for (names) |name| {
+        if (std.fs.path.isAbsolute(name)) {
+            try appendThemeFile(json, alloc, &paths, name);
+            continue;
+        }
+
+        var locations: themepkg.LocationIterator = .{
+            .arena_alloc = alloc,
+        };
+        while (try locations.next()) |location| {
+            try appendThemeFile(
+                json,
+                alloc,
+                &paths,
+                try std.fs.path.join(alloc, &.{ location.dir, name }),
+            );
+        }
+    }
+    try json.endArray();
+}
+
+fn appendThemeFile(
+    json: *std.json.Stringify,
+    alloc: std.mem.Allocator,
+    paths: *std.ArrayList([]const u8),
+    path: []const u8,
+) !void {
+    for (paths.items) |existing| {
+        if (std.mem.eql(u8, existing, path)) return;
+    }
+    try paths.append(alloc, path);
+    try json.write(path);
 }
 
 fn writeOptionalDecimalUint64(json: *std.json.Stringify, value: ?u64) !void {

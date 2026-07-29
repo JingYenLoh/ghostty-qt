@@ -19,6 +19,17 @@ namespace {
 constexpr auto LegacyConfigName = "config";
 constexpr auto PreferredConfigName = "config.ghostty";
 
+QString colorSchemeArgument(TerminalColorScheme colorScheme)
+{
+    switch (colorScheme) {
+    case TerminalColorScheme::Light:
+        return QStringLiteral("--ghostty-qt-color-scheme=light");
+    case TerminalColorScheme::Dark:
+        return QStringLiteral("--ghostty-qt-color-scheme=dark");
+    }
+    Q_UNREACHABLE_RETURN({});
+}
+
 struct ProcessResult {
     enum class Status {
         Completed,
@@ -296,14 +307,15 @@ ghosttyConfigXdgHome(const QStringList &candidatePaths)
 GhosttyConfigLoader
 makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
 {
-    return [options = std::move(options)](
-               const QStringList &candidatePaths) -> GhosttyConfigLoadResult {
+    return [options =
+                std::move(options)](const GhosttyConfigLoadRequest &request)
+               -> GhosttyConfigLoadResult {
         if (options.helperPath.isEmpty()) {
             return std::unexpected(
                 QStringLiteral("Ghostty config helper path is empty"));
         }
 
-        auto xdgConfigHome = ghosttyConfigXdgHome(candidatePaths);
+        auto xdgConfigHome = ghosttyConfigXdgHome(request.candidatePaths);
         if (!xdgConfigHome) {
             return std::unexpected(std::move(xdgConfigHome.error()));
         }
@@ -348,9 +360,10 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
                            run({QStringLiteral("+validate-config")}));
         if (!validation) return std::unexpected(std::move(validation.error()));
 
-        auto config =
-            requireSuccess(QStringLiteral("config query"),
-                           run({QStringLiteral("+show-config-json")}, true));
+        const QString schemeArgument = colorSchemeArgument(request.colorScheme);
+        auto config = requireSuccess(
+            QStringLiteral("config query"),
+            run({QStringLiteral("+show-config-json"), schemeArgument}, true));
         if (!config) return std::unexpected(std::move(config.error()));
 
         auto postValidation =
@@ -360,9 +373,9 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
             return std::unexpected(std::move(postValidation.error()));
         }
 
-        auto verifiedConfig =
-            requireSuccess(QStringLiteral("config consistency query"),
-                           run({QStringLiteral("+show-config-json")}, true));
+        auto verifiedConfig = requireSuccess(
+            QStringLiteral("config consistency query"),
+            run({QStringLiteral("+show-config-json"), schemeArgument}, true));
         if (!verifiedConfig) {
             return std::unexpected(std::move(verifiedConfig.error()));
         }
@@ -384,7 +397,7 @@ makeGhosttyConfigProcessLoader(GhosttyConfigProcessLoaderOptions options)
         GhosttyConfigSnapshot snapshot(std::move(*exported));
         appendConfiguredActionDiagnostics(snapshot, snapshot.keybindings,
                                           defaultKeybindings);
-        populateSourcePaths(snapshot, candidatePaths);
+        populateSourcePaths(snapshot, request.candidatePaths);
 
         // Successful validator output and the first exporter stderr may carry
         // warnings from Ghostty. The consistency query is intentionally silent

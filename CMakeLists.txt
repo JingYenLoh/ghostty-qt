@@ -712,9 +712,12 @@ target_compile_options(ghostty-qt-vt-adapter PRIVATE
 )
 
 ghostty_qt_add_internal_library(ghostty-qt-launch-options
+    src/application_appearance.cpp
+    src/application_appearance.h
     src/launch_options.cpp
     src/launch_options.h
     src/terminal_appearance.h
+    src/terminal_color_scheme.h
     src/terminal_session_options.h
 )
 target_link_libraries(ghostty-qt-launch-options PUBLIC

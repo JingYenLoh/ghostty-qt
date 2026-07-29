@@ -2,6 +2,7 @@
 
 #include "linux_cgroup_config.h"
 #include "terminal_appearance.h"
+#include "terminal_color_scheme.h"
 #include "terminal_command.h"
 
 #include <QByteArray>
@@ -122,6 +123,7 @@ enum class RightClickAction {
 // boundary limited to state that SessionWorker actually owns at runtime.
 struct TerminalSessionRuntimeOptions {
     TerminalAppearance appearance;
+    TerminalColorScheme colorScheme = TerminalColorScheme::Light;
     // Raw protocol response for ENQ. QByteArray preserves embedded NUL and
     // non-UTF-8 bytes across queued runtime reloads.
     QByteArray enquiryResponse;
@@ -235,6 +237,9 @@ struct TerminalSessionLaunchOptions {
     bool processUsesSingleInstance = false;
     QString workingDirectory;
     bool inheritWorkingDirectory = false;
+    // GUI-owned initial base-title policy. TerminalController applies live
+    // reloads directly so title-only changes never wake SessionWorker.
+    std::optional<QString> configuredTitle;
     // Shared Ghostty command for this pane. The process one-shot coordinator
     // may replace it with initial-command immediately before worker creation.
     std::optional<TerminalCommand> command;

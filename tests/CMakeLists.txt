@@ -84,6 +84,21 @@ target_link_libraries(test-launch-options PRIVATE
 )
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-application-appearance
+    test_application_appearance.cpp
+)
+target_include_directories(test-application-appearance PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-application-appearance PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-launch-options
+)
+add_test(NAME application-appearance COMMAND test-application-appearance)
+set_tests_properties(application-appearance PROPERTIES TIMEOUT 10)
+
 qt_add_executable(test-terminal-cell-metrics
     test_terminal_cell_metrics.cpp
 )

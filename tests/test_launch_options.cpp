@@ -117,6 +117,7 @@ GhosttyConfigSnapshot completeSnapshot()
     };
     values.workingDirectoryPath = QStringLiteral("/work/ghostty");
     values.typography = completeTypography();
+    values.title = QStringLiteral("Configured title");
 
     values.appearance = {
         .foregroundColor = QColor(QStringLiteral("#112233")),
@@ -180,6 +181,13 @@ GhosttyConfigSnapshot completeSnapshot()
     values.windowNewTabPosition = WindowNewTabPosition::End;
     values.windowShowTabBar = WindowShowTabBar::Always;
     values.windowDecoration = WindowDecorationMode::Server;
+    values.windowAppearance = {
+        .theme = WindowTheme::Ghostty,
+        .titleFontFamily = QStringLiteral("Window Font"),
+        .titlebarBackground = QColor(QStringLiteral("#102030")),
+        .titlebarForeground = QColor(QStringLiteral("#f0e0d0")),
+        .subtitle = WindowSubtitleMode::WorkingDirectory,
+    };
     values.windowWidth = 120;
     values.windowHeight = 40;
     values.maximize = true;
@@ -289,6 +297,7 @@ private Q_SLOTS:
     void mapsNewTabPosition();
     void mapsWindowShowTabBar();
     void mapsWindowDecoration();
+    void mapsTitleAndWindowAppearance();
     void mapsWindowCellDimensions();
     void mapsResizeOverlay();
     void mapsStartupWindowState();
@@ -348,6 +357,13 @@ void LaunchOptionsTest::defaults()
         }));
     QVERIFY(!options.fontFamilyExplicit);
     QVERIFY(!options.fontSizeExplicit);
+    QCOMPARE(options.colorScheme, TerminalColorScheme::Light);
+    QVERIFY(!options.configuredTitle.has_value());
+    QCOMPARE(options.windowAppearance.theme, WindowTheme::Auto);
+    QVERIFY(!options.windowAppearance.titleFontFamily.has_value());
+    QVERIFY(!options.windowAppearance.titlebarBackground.has_value());
+    QVERIFY(!options.windowAppearance.titlebarForeground.has_value());
+    QCOMPARE(options.windowAppearance.subtitle, WindowSubtitleMode::Disabled);
     QCOMPARE(options.appearance.foregroundColor,
              QColor(QStringLiteral("#d8dee9")));
     QCOMPARE(options.appearance.backgroundColor,
@@ -841,6 +857,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.linuxCgroup, snapshot.values.linuxCgroup);
     QVERIFY(cliResult.processUsesSingleInstance);
     QVERIFY(cliResult.typography == completeTypography());
+    QCOMPARE(cliResult.configuredTitle, snapshot.values.title);
+    QCOMPARE(cliResult.windowAppearance, snapshot.values.windowAppearance);
     QCOMPARE(cliResult.appearance.foregroundColor,
              QColor(QStringLiteral("#112233")));
     QCOMPARE(cliResult.appearance.backgroundColor,
@@ -1373,6 +1391,31 @@ void LaunchOptionsTest::mapsWindowDecoration()
     }
 }
 
+void LaunchOptionsTest::mapsTitleAndWindowAppearance()
+{
+    LaunchOptions base;
+    base.configuredTitle = QStringLiteral("stale title");
+    base.windowAppearance = {
+        .theme = WindowTheme::Light,
+        .titleFontFamily = QStringLiteral("Stale Font"),
+        .titlebarBackground = QColor(QStringLiteral("#010203")),
+        .titlebarForeground = QColor(QStringLiteral("#fefdfc")),
+        .subtitle = WindowSubtitleMode::Disabled,
+    };
+
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    const LaunchOptions configured = applyGhosttyConfigSnapshot(base, snapshot);
+    QCOMPARE(configured.configuredTitle, snapshot.values.title);
+    QCOMPARE(configured.windowAppearance, snapshot.values.windowAppearance);
+
+    snapshot.values.title.reset();
+    snapshot.values.windowAppearance = {};
+    const LaunchOptions cleared =
+        applyGhosttyConfigSnapshot(configured, snapshot);
+    QVERIFY(!cleared.configuredTitle.has_value());
+    QCOMPARE(cleared.windowAppearance, WindowAppearanceOptions{});
+}
+
 void LaunchOptionsTest::mapsWindowCellDimensions()
 {
     LaunchOptions base;
@@ -1698,6 +1741,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.hold = true;
     options.appearance.foregroundColor = QColor(QStringLiteral("#123456"));
     options.appearance.palette = {QColor(QStringLiteral("#abcdef"))};
+    options.colorScheme = TerminalColorScheme::Dark;
+    options.configuredTitle = QStringLiteral("configured title");
     options.selectionClipboard = {
         .trimTrailingSpaces = false,
         .copyOnSelect = TerminalCopyOnSelectMode::PrimaryAndClipboard,
@@ -1733,6 +1778,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 
     QCOMPARE(runtime.appearance, options.appearance);
     QCOMPARE(runtime.appearance.minimumContrast, 7.25);
+    QCOMPARE(runtime.colorScheme, TerminalColorScheme::Dark);
     QCOMPARE(runtime.enquiryResponse, options.enquiryResponse);
     QCOMPARE(runtime.selectionClipboard, options.selectionClipboard);
     QCOMPARE(runtime.selectionWordChars, options.selectionWordChars);
@@ -1759,6 +1805,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
              options.processUsesSingleInstance);
     QCOMPARE(launch.inheritWorkingDirectory,
              options.inheritWorkingDirectory);
+    QCOMPARE(launch.configuredTitle, options.configuredTitle);
     QVERIFY(launch.command == options.ordinaryCommand);
     QCOMPARE(launch.program, options.program);
     QCOMPARE(launch.scrollbackLimit, options.scrollbackLimit);
@@ -1783,6 +1830,11 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QVERIFY(toTerminalSessionRuntimeOptions(enquiryResponseChanged) != runtime);
     QVERIFY(toTerminalSessionLaunchOptions(enquiryResponseChanged) != launch);
 
+    LaunchOptions configuredTitleChanged = options;
+    configuredTitleChanged.configuredTitle = QStringLiteral("replacement");
+    QCOMPARE(toTerminalSessionRuntimeOptions(configuredTitleChanged), runtime);
+    QVERIFY(toTerminalSessionLaunchOptions(configuredTitleChanged) != launch);
+
     LaunchOptions frontendOnlyChanged = options;
     frontendOnlyChanged.typography.face(TerminalFontRole::Regular).families = {
         QStringLiteral("Frontend Font"),
@@ -1801,6 +1853,13 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
     frontendOnlyChanged.windowDecoration = WindowDecorationMode::None;
+    frontendOnlyChanged.windowAppearance = {
+        .theme = WindowTheme::Ghostty,
+        .titleFontFamily = QStringLiteral("Frontend Window Font"),
+        .titlebarBackground = QColor(QStringLiteral("#102030")),
+        .titlebarForeground = QColor(QStringLiteral("#f0e0d0")),
+        .subtitle = WindowSubtitleMode::WorkingDirectory,
+    };
     frontendOnlyChanged.windowWidth = 132;
     frontendOnlyChanged.windowHeight = 43;
     frontendOnlyChanged.maximize = true;

@@ -9,6 +9,7 @@
 #include "window_navigation_action.h"
 #include "workspace_action.h"
 
+#include <QColor>
 #include <QHash>
 #include <QMetaObject>
 #include <QPointF>
@@ -50,6 +51,14 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(QStringList tabTitles READ tabTitles NOTIFY tabTitlesChanged)
     Q_PROPERTY(
         QString currentTitle READ currentTitle NOTIFY currentTitleChanged)
+    Q_PROPERTY(QString currentSubtitle READ currentSubtitle NOTIFY
+                   currentSubtitleChanged)
+    Q_PROPERTY(QColor chromeBackground READ chromeBackground NOTIFY
+                   windowAppearanceChanged)
+    Q_PROPERTY(QColor chromeForeground READ chromeForeground NOTIFY
+                   windowAppearanceChanged)
+    Q_PROPERTY(QString titleFontFamily READ titleFontFamily NOTIFY
+                   windowAppearanceChanged)
     Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY
                    currentIndexChanged)
     Q_PROPERTY(int tabCount READ tabCount NOTIFY tabTitlesChanged)
@@ -100,6 +109,10 @@ public:
 
     QStringList tabTitles() const;
     QString currentTitle() const;
+    QString currentSubtitle() const;
+    QColor chromeBackground() const;
+    QColor chromeForeground() const;
+    QString titleFontFamily() const;
     const TabListModel *tabModel() const { return &tabModel_; }
     int currentIndex() const { return currentIndex_; }
     int tabCount() const { return static_cast<int>(tabs_.size()); }
@@ -200,6 +213,8 @@ public:
 Q_SIGNALS:
     void tabTitlesChanged();
     void currentTitleChanged();
+    void currentSubtitleChanged();
+    void windowAppearanceChanged();
     void tabBarVisibleChanged();
     void tabsLocationChanged();
     void currentIndexChanged();
@@ -342,7 +357,8 @@ private:
         std::optional<TerminalSessionGeometry> initialGeometry = std::nullopt,
         TerminalSessionStartMode startMode =
             TerminalSessionStartMode::Immediate);
-    void activateTab(TabId id);
+    void activateTab(TabId id,
+                     std::optional<QString> previousSubtitle = std::nullopt);
     bool activateTabByIndex(qint64 oneBasedIndex);
     bool moveTab(TabId tabId, qint64 delta);
     void

@@ -171,6 +171,7 @@ TerminalController::TerminalController(
     : QObject(parent)
     , launchOptions_(options)
     , initialSessionCoordinator_(std::move(initialSessionCoordinator))
+    , baseTitle_(options.configuredTitle)
     , currentDirectory_(options.inheritWorkingDirectory
                             ? QString{}
                             : options.workingDirectory)
@@ -206,6 +207,10 @@ void TerminalController::connectWorkerResults(SessionWorker *worker)
     connect(
         worker, &SessionWorker::titleChanged, this,
         [this](const QString &title) {
+            // A configured title is a live policy, not merely an initial
+            // value. Keep consuming terminal metadata in the worker while
+            // preventing it from replacing the GUI's configured base layer.
+            if (launchOptions_.configuredTitle.has_value()) return;
             // Empty terminal metadata means no title and restores the
             // pane's launch fallback. set_surface_title: instead installs
             // an explicit empty optional until this worker event arrives.
@@ -625,9 +630,23 @@ void TerminalController::resizeTerminal(const TerminalSessionGeometry &geometry)
     Q_EMIT resizeRequested(normalized);
 }
 
+void TerminalController::applyConfiguredTitle(
+    const std::optional<QString> &title)
+{
+    // Reapplying a configured title is meaningful even when the value is
+    // unchanged: set_surface_title may have temporarily replaced the base.
+    // Clearing the policy deliberately leaves the current base intact until
+    // a later terminal title event replaces it.
+    launchOptions_.configuredTitle = title;
+    if (!title.has_value() || baseTitle_ == title) return;
+    baseTitle_ = title;
+    Q_EMIT titleChanged(this->title());
+}
+
 void TerminalController::applyRuntimeOptions(
     const TerminalSessionRuntimeOptions &options)
 {
+    if (launchOptions_.runtime == options) return;
     // Keep the GUI-side policy mirror current even after the worker starts.
     // KAM presentation routing combines this value with terminal-owned mode 2
     // while the worker independently applies the same authoritative snapshot.
