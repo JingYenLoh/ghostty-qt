@@ -29,7 +29,9 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QMutexLocker>
+#include <QQmlComponent>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QStyleHints>
 #include <QTimer>
 #include <QWheelEvent>
@@ -61,6 +63,52 @@ constexpr qint64 kMaximumMouseScrollStepsPerAxis = 10'000;
 constexpr double kHorizontalTabScrollThreshold = 120.0;
 constexpr auto kHorizontalTabScrollResetInterval =
     std::chrono::milliseconds(500);
+
+TerminalCustomShaderCompileBroker *customShaderCompileBroker()
+{
+    static TerminalCustomShaderCompileBroker *const broker =
+        new TerminalCustomShaderCompileBroker(qGuiApp);
+    return broker;
+}
+
+TerminalCustomShaderVec4 shaderColor(const QColor &color,
+                                     bool preserveAlpha = false)
+{
+    const QColor valid = color.isValid() ? color : QColor(Qt::transparent);
+    constexpr float byteScale = 1.0F / 255.0F;
+    return {
+        .x = static_cast<float>(valid.red()) * byteScale,
+        .y = static_cast<float>(valid.green()) * byteScale,
+        .z = static_cast<float>(valid.blue()) * byteScale,
+        .w = preserveAlpha ? static_cast<float>(valid.alpha()) * byteScale
+                           : 1.0F,
+    };
+}
+
+QColor shaderRelativeColor(const TerminalColorValue &configured,
+                           const QColor &cellForeground,
+                           const QColor &cellBackground, const QColor &fallback)
+{
+    switch (configured.kind) {
+    case TerminalColorKind::Color:
+        return configured.color.isValid() ? configured.color : fallback;
+    case TerminalColorKind::CellForeground: return cellForeground;
+    case TerminalColorKind::CellBackground: return cellBackground;
+    case TerminalColorKind::Unset: return fallback;
+    }
+    return fallback;
+}
+
+std::int32_t shaderCursorStyle(int terminalStyle)
+{
+    switch (terminalStyle) {
+    case 1: return 0; // block
+    case 3: return 1; // hollow block
+    case 0: return 2; // bar
+    case 2: return 3; // underline
+    default: return 0;
+    }
+}
 
 [[nodiscard]] double normalizedMouseScrollMultiplier(double value,
                                                      double fallback) noexcept
@@ -307,6 +355,10 @@ TerminalPane::TerminalPane(
             &TerminalPane::refreshResolvedFonts);
     itemWindowConnection_ = connect(this, &QQuickItem::windowChanged, this,
                                     &TerminalPane::watchWindow);
+    connect(this, &QQuickItem::visibleChanged, this, [this] {
+        requestRenderUpdate();
+        scheduleCustomShaderAnimationFrame();
+    });
     watchWindow(window());
     urlOpener_ = [](const QUrl &url) { return QDesktopServices::openUrl(url); };
 
@@ -322,7 +374,7 @@ TerminalPane::TerminalPane(
     cursorTimer_->setInterval(600);
     connect(cursorTimer_, &QTimer::timeout, this, [this] {
         cursorBlinkOn_ = !cursorBlinkOn_;
-        update();
+        requestRenderUpdate();
     });
     horizontalTabScrollResetTimer_ = new QChronoTimer(this);
     horizontalTabScrollResetTimer_->setSingleShot(true);
@@ -489,7 +541,7 @@ TerminalPane::TerminalPane(
                     QMutexLocker locker(&renderMutex_);
                     statusMessage_ = message;
                 }
-                update();
+                requestRenderUpdate();
             });
     connect(
         controller_, &TerminalController::sessionExited, this,
@@ -556,7 +608,7 @@ TerminalPane::TerminalPane(
             }
             failStaleTerminalActionCompletions();
             if (guard == nullptr) return;
-            update();
+            requestRenderUpdate();
             Q_EMIT sessionEnded(this, exitCode, signalNumber);
             if (guard == nullptr) return;
             if (!hold && !waitForKey && !abnormal && !hasError) {
@@ -571,6 +623,7 @@ TerminalPane::TerminalPane(
 
     syncPointerCursor();
     refreshBackgroundImage();
+    reloadCustomShaders(options_.customShaders);
     if (sessionStartMode_ == TerminalSessionStartMode::Immediate) {
         (void)controller_->startSession();
     }
@@ -585,10 +638,555 @@ TerminalPane::~TerminalPane()
     }
     QObject::disconnect(windowActiveConnection_);
     QObject::disconnect(windowScreenConnection_);
+    QObject::disconnect(windowSceneGraphInitializedConnection_);
+    QObject::disconnect(customShaderFrameSwappedConnection_);
     disconnectDeferredSessionWindowSignals();
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
     TerminalPaneRenderer::clearProbe(this);
 #endif
+}
+
+void TerminalPane::requestRenderUpdate()
+{
+    if (!customShaderStageItems_.isEmpty()) {
+        if (!customShaderFramePending_) {
+            customShaderFramePending_ = true;
+            prepareCustomShaderFrame();
+        }
+        refreshCustomShaderUniformBase();
+        (void)updateCustomShaderEffects();
+    }
+    if (renderItem_ != nullptr) {
+        renderItem_->update();
+    } else {
+        update();
+    }
+}
+
+TerminalCustomShaderUniformSnapshot
+TerminalPane::terminalCustomShaderUniformSnapshot(int) const
+{
+    QMutexLocker locker(&customShaderUniformMutex_);
+    return customShaderUniforms_;
+}
+
+void TerminalPane::terminalCustomShaderEffectAttached(
+    TerminalCustomShaderEffect *effect, int)
+{
+    if (effect == nullptr || customShaderEffects_.contains(effect)) {
+        return;
+    }
+    customShaderEffects_.append(effect);
+    requestRenderUpdate();
+}
+
+void TerminalPane::terminalCustomShaderEffectDetached(
+    TerminalCustomShaderEffect *effect, int)
+{
+    customShaderEffects_.removeIf(
+        [effect](const QPointer<TerminalCustomShaderEffect> &candidate) {
+            return candidate == nullptr || candidate == effect;
+        });
+}
+
+bool TerminalPane::shouldAnimateCustomShaders() const
+{
+    if (customShaderStageItems_.isEmpty() || customShaderEffects_.isEmpty()
+        || !isVisible() || width() <= 0.0 || height() <= 0.0
+        || window() == nullptr || !window()->isVisible()
+        || !window()->isExposed()) {
+        return false;
+    }
+    switch (options_.customShaders.animation) {
+    case TerminalCustomShaderAnimation::Never: return false;
+    case TerminalCustomShaderAnimation::Focused: return hasActiveFocus();
+    case TerminalCustomShaderAnimation::Always: return true;
+    }
+    return false;
+}
+
+void TerminalPane::prepareCustomShaderFrame()
+{
+    if (customShaderStages_.isEmpty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!customShaderFirstFrameTime_.has_value()) {
+        customShaderFirstFrameTime_ = now;
+    }
+    const auto previous = customShaderLastFrameTime_.value_or(now);
+    customShaderLastFrameTime_ = now;
+
+    QMutexLocker locker(&customShaderUniformMutex_);
+    auto next = acquireCustomShaderUniformSnapshotLocked();
+    next->time =
+        std::chrono::duration<float>(now - *customShaderFirstFrameTime_)
+            .count();
+    next->timeDelta = std::chrono::duration<float>(now - previous).count();
+    next->frame = next->frame == std::numeric_limits<std::int32_t>::max()
+        ? 1
+        : next->frame + 1;
+    customShaderUniforms_ = std::move(next);
+}
+
+std::shared_ptr<TerminalCustomShaderUniforms>
+TerminalPane::acquireCustomShaderUniformSnapshotLocked()
+{
+    for (const std::shared_ptr<TerminalCustomShaderUniforms> &candidate :
+         customShaderUniformPool_) {
+        if (candidate.use_count() == 1) {
+            *candidate = customShaderUniforms_ != nullptr
+                ? *customShaderUniforms_
+                : TerminalCustomShaderUniforms{};
+            return candidate;
+        }
+    }
+
+    auto next = std::make_shared<TerminalCustomShaderUniforms>(
+        customShaderUniforms_ != nullptr ? *customShaderUniforms_
+                                         : TerminalCustomShaderUniforms{});
+    // Two snapshots normally cover a render frame in flight. Keep a third for
+    // a content update that also advances the frame; if rendering falls
+    // further behind, transient allocations avoid mutating shared state.
+    constexpr qsizetype maximumPooledSnapshots = 3;
+    if (customShaderUniformPool_.size() < maximumPooledSnapshots) {
+        customShaderUniformPool_.append(next);
+    }
+    return next;
+}
+
+void TerminalPane::scheduleCustomShaderAnimationFrame()
+{
+    if (!shouldAnimateCustomShaders()) {
+        return;
+    }
+    if (!customShaderFramePending_) {
+        customShaderFramePending_ = true;
+        prepareCustomShaderFrame();
+    }
+    (void)updateCustomShaderEffects();
+}
+
+bool TerminalPane::updateCustomShaderEffects()
+{
+    bool updated = false;
+    customShaderEffects_.removeIf(
+        [&updated](const QPointer<TerminalCustomShaderEffect> &effect) {
+            if (effect == nullptr) {
+                return true;
+            }
+            if (effect->isActive()) {
+                effect->update();
+                updated = true;
+            }
+            return false;
+        });
+    return updated;
+}
+
+void TerminalPane::refreshCustomShaderUniformBase()
+{
+    if (customShaderStages_.isEmpty()) {
+        return;
+    }
+
+    QVector<QColor> palette;
+    QColor foreground;
+    QColor background;
+    QColor configuredCursor;
+    QColor cursorCellForeground;
+    QColor cursorCellBackground;
+    TerminalAppearance appearance;
+    TerminalPaddingOptions padding;
+    TerminalCellMetrics metrics;
+    int cursorColumn = 0;
+    int cursorRow = 0;
+    int cursorColumnSpan = 1;
+    int cursorStyle = 1;
+    bool cursorVisible = false;
+    bool cursorBlinking = false;
+    bool cursorColorExplicit = false;
+    bool hasFrame = false;
+    {
+        QMutexLocker locker(&renderMutex_);
+        palette =
+            frame_.palette.isEmpty() ? appearance_.palette : frame_.palette;
+        foreground = frame_.foreground;
+        background = frame_.background;
+        configuredCursor = frame_.cursorColor;
+        appearance = appearance_;
+        padding = paddingOptions_;
+        metrics = metrics_;
+        cursorColumn = frame_.cursorColumn;
+        cursorRow = frame_.cursorRow;
+        cursorColumnSpan = frame_.cursorColumnSpan;
+        cursorStyle = frame_.cursorStyle;
+        cursorVisible = frame_.cursorVisible;
+        cursorBlinking = frame_.cursorBlinking;
+        cursorColorExplicit = frame_.cursorColorExplicit;
+        hasFrame = hasFrame_;
+        const qsizetype cursorIndex =
+            static_cast<qsizetype>(cursorRow) * frame_.columns + cursorColumn;
+        if (cursorColumn >= 0 && cursorColumn < frame_.columns && cursorRow >= 0
+            && cursorRow < frame_.rows && cursorIndex >= 0
+            && cursorIndex < frame_.cells.size()) {
+            cursorCellForeground = frame_.cells.at(cursorIndex).foreground;
+            cursorCellBackground = frame_.cells.at(cursorIndex).background;
+        } else {
+            cursorCellForeground = foreground;
+            cursorCellBackground = background;
+        }
+    }
+
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    const qint64 physicalWidth =
+        TerminalPaneRenderer::physicalPixels(width(), devicePixelRatio);
+    const qint64 physicalHeight =
+        TerminalPaneRenderer::physicalPixels(height(), devicePixelRatio);
+    const std::optional<TerminalViewportLayout> layout =
+        terminalViewportLayout({
+            .surfaceSize = size(),
+            .cellSize = QSizeF(metrics.cellWidth, metrics.cellHeight),
+            .devicePixelRatio = devicePixelRatio,
+            .padding = padding,
+        });
+    const bool focused = hasActiveFocus();
+    const int effectiveStyle = focused ? cursorStyle : 3;
+    const bool effectiveCursorVisible = hasFrame && cursorVisible
+        && (!focused || !cursorBlinking || cursorBlinkOn_);
+
+    QColor renderedCursor = configuredCursor;
+    if (!cursorColorExplicit) {
+        renderedCursor =
+            shaderRelativeColor(appearance.cursorColor, cursorCellForeground,
+                                cursorCellBackground, foreground);
+    }
+    if (renderedCursor.isValid()) {
+        renderedCursor.setAlphaF(static_cast<float>(
+            focused ? std::clamp(appearance.cursorOpacity, 0.0, 1.0) : 1.0));
+    }
+    const QColor cursorText =
+        shaderRelativeColor(appearance.cursorTextColor, cursorCellForeground,
+                            cursorCellBackground, background);
+
+    QMutexLocker locker(&customShaderUniformMutex_);
+    auto next = acquireCustomShaderUniformSnapshotLocked();
+    next->resolution = {
+        static_cast<float>(physicalWidth),
+        static_cast<float>(physicalHeight),
+        1.0F,
+    };
+    next->channelResolution[0] = {
+        .x = static_cast<float>(physicalWidth),
+        .y = static_cast<float>(physicalHeight),
+        .z = 1.0F,
+    };
+    for (std::size_t index = 0; index < next->palette.size(); ++index) {
+        next->palette[index] = index < static_cast<std::size_t>(palette.size())
+            ? shaderColor(palette.at(static_cast<qsizetype>(index)))
+            : TerminalCustomShaderVec4{};
+    }
+    next->backgroundColor = shaderColor(background);
+    next->foregroundColor = shaderColor(foreground);
+    next->cursorColor = shaderColor(
+        configuredCursor.isValid() ? configuredCursor : renderedCursor);
+    next->cursorText = shaderColor(cursorText);
+    next->selectionForegroundColor =
+        appearance.selectionForeground.kind == TerminalColorKind::Color
+        ? shaderColor(appearance.selectionForeground.color)
+        : TerminalCustomShaderVec4{};
+    next->selectionBackgroundColor =
+        appearance.selectionBackground.kind == TerminalColorKind::Color
+        ? shaderColor(appearance.selectionBackground.color)
+        : TerminalCustomShaderVec4{};
+    // These two uniforms describe terminal state. Cursor blink/focus only
+    // affects the rendered cursor glyph and iCurrentCursor, as in Ghostty.
+    next->cursorVisible = hasFrame && cursorVisible ? 1 : 0;
+    const std::int32_t mappedStyle = shaderCursorStyle(cursorStyle);
+    if (next->currentCursorStyle != mappedStyle) {
+        next->previousCursorStyle = next->currentCursorStyle;
+        next->currentCursorStyle = mappedStyle;
+    }
+    next->focus = focused ? 1 : 0;
+    if (focused && customShaderUniforms_ != nullptr
+        && customShaderUniforms_->focus == 0) {
+        next->timeFocus = next->time;
+    }
+
+    if (layout.has_value() && effectiveCursorVisible && cursorColumn >= 0
+        && cursorColumn < layout->session.columns && cursorRow >= 0
+        && cursorRow < layout->session.rows) {
+        const qreal cellWidth =
+            layout->gridRect.width() / layout->session.columns;
+        const qreal cellHeight =
+            layout->gridRect.height() / layout->session.rows;
+        qreal left = layout->gridRect.x() + cursorColumn * cellWidth;
+        const qreal top = layout->gridRect.y() + cursorRow * cellHeight;
+        qreal cursorTop = top + metrics.cursorTop;
+        qreal cursorWidth =
+            cellWidth * static_cast<qreal>(std::max(1, cursorColumnSpan));
+        qreal cursorHeight = metrics.cursorHeight;
+        if (effectiveStyle == 0) {
+            left += metrics.cursorBarLeft;
+            cursorWidth = metrics.cursorThickness;
+        } else if (effectiveStyle == 2) {
+            cursorTop = top
+                + std::min(metrics.underlinePosition,
+                           metrics.underlineMaximumPosition);
+            cursorHeight = metrics.cursorThickness;
+        }
+        const TerminalCustomShaderVec4 cursor{
+            .x = static_cast<float>(left * devicePixelRatio),
+            .y = static_cast<float>(static_cast<qreal>(physicalHeight)
+                                    - cursorTop * devicePixelRatio),
+            .z = static_cast<float>(cursorWidth * devicePixelRatio),
+            .w = static_cast<float>(cursorHeight * devicePixelRatio),
+        };
+        const TerminalCustomShaderVec4 color =
+            shaderColor(renderedCursor, true);
+        if (cursor != next->currentCursor
+            || color != next->currentCursorColor) {
+            next->previousCursor = next->currentCursor;
+            next->previousCursorColor = next->currentCursorColor;
+            next->currentCursor = cursor;
+            next->currentCursorColor = color;
+            next->timeCursorChange = next->time;
+        }
+    }
+    customShaderUniforms_ = std::move(next);
+}
+
+void TerminalPane::setCustomShaderStageComponent(QQmlComponent *component)
+{
+    if (customShaderStageComponent_ == component) {
+        return;
+    }
+    customShaderStageComponent_ = component;
+    rebuildCustomShaderStages();
+}
+
+void TerminalPane::reloadCustomShaders(
+    const TerminalCustomShaderOptions &options)
+{
+    const quint64 generation = ++customShaderCompileGeneration_;
+    if (options.sources.isEmpty()) {
+        customShaderStages_.clear();
+        customShaderCompileDiagnostic_.clear();
+        customShaderRenderDiagnostic_.clear();
+        customShaderFramePending_ = false;
+        publishCustomShaderDiagnostic();
+        rebuildCustomShaderStages();
+        return;
+    }
+
+    const QPointer<TerminalPane> guard(this);
+    customShaderCompileBroker()->request(
+        options, this,
+        [guard, generation](TerminalCustomShaderCompileResult result) mutable {
+            if (guard == nullptr
+                || guard->customShaderCompileGeneration_ != generation) {
+                return;
+            }
+            bool rebuild = true;
+            if (result.succeeded()) {
+                rebuild = guard->customShaderStages_ != result.stages
+                    || (guard->customShaderStageItems_.isEmpty()
+                        && !result.stages.isEmpty()
+                        && guard->customShaderStageComponent_ != nullptr
+                        && guard->customShaderRenderingSupported());
+                guard->customShaderStages_ = std::move(result.stages);
+                guard->customShaderCompileDiagnostic_.clear();
+                if (rebuild) {
+                    guard->customShaderRenderDiagnostic_.clear();
+                }
+            } else {
+                guard->customShaderStages_.clear();
+                guard->customShaderCompileDiagnostic_ =
+                    std::move(result.diagnostic);
+                guard->customShaderRenderDiagnostic_.clear();
+                qWarning().noquote() << guard->customShaderCompileDiagnostic_;
+            }
+            guard->publishCustomShaderDiagnostic();
+            if (rebuild) {
+                guard->customShaderFramePending_ = false;
+                guard->rebuildCustomShaderStages();
+            }
+        });
+}
+
+void TerminalPane::publishCustomShaderDiagnostic()
+{
+    QString diagnostic = customShaderCompileDiagnostic_;
+    if (!customShaderRenderDiagnostic_.isEmpty()) {
+        if (!diagnostic.isEmpty()) {
+            diagnostic.append(QLatin1Char('\n'));
+        }
+        diagnostic.append(customShaderRenderDiagnostic_);
+    }
+    if (customShaderDiagnostic_ == diagnostic) {
+        return;
+    }
+    customShaderDiagnostic_ = std::move(diagnostic);
+    Q_EMIT customShaderDiagnosticChanged(customShaderDiagnostic_);
+}
+
+bool TerminalPane::customShaderRenderingSupported() const
+{
+    const QQuickWindow *const quickWindow = window();
+    if (quickWindow == nullptr || quickWindow->rendererInterface() == nullptr) {
+        return false;
+    }
+    const QSGRendererInterface::GraphicsApi api =
+        quickWindow->rendererInterface()->graphicsApi();
+    return api == QSGRendererInterface::OpenGL
+        || api == QSGRendererInterface::Vulkan;
+}
+
+void TerminalPane::clearCustomShaderStages()
+{
+    QObject::disconnect(customShaderFrameSwappedConnection_);
+    customShaderFrameSwappedConnection_ = {};
+    customShaderFramePending_ = false;
+    if (renderItem_ == nullptr) {
+        customShaderStageItems_.clear();
+        return;
+    }
+    renderItem_->setParentItem(this);
+    renderItem_->setParent(this);
+    renderItem_->setZ(-1'000.0);
+
+    QQuickItem *const outer = customShaderStageItems_.isEmpty()
+        ? nullptr
+        : customShaderStageItems_.constLast().data();
+    customShaderStageItems_.clear();
+    delete outer;
+    customShaderEffects_.removeIf(
+        [](const QPointer<TerminalCustomShaderEffect> &effect) {
+            return effect == nullptr;
+        });
+}
+
+void TerminalPane::useDirectTerminalRendering()
+{
+    if (renderItem_ != nullptr) {
+        delete renderItem_;
+        renderItem_ = nullptr;
+    }
+    // TerminalPane keeps ItemHasContents in both modes. While delegated,
+    // updatePaintNode() tears down its former direct node and returns null;
+    // switching back needs one content update to create that node again.
+    update();
+}
+
+void TerminalPane::rebuildCustomShaderStages()
+{
+    clearCustomShaderStages();
+    if (customShaderStages_.isEmpty()
+        || customShaderStageComponent_ == nullptr) {
+        useDirectTerminalRendering();
+        customShaderRenderDiagnostic_.clear();
+        publishCustomShaderDiagnostic();
+        requestRenderUpdate();
+        return;
+    }
+    if (!customShaderRenderingSupported()) {
+        useDirectTerminalRendering();
+        const QQuickWindow *const quickWindow = window();
+        const QSGRendererInterface *const renderer =
+            quickWindow != nullptr ? quickWindow->rendererInterface() : nullptr;
+        if (renderer != nullptr
+            && renderer->graphicsApi() != QSGRendererInterface::Unknown) {
+            customShaderRenderDiagnostic_ = QStringLiteral(
+                "custom-shader: the active Qt Quick graphics backend does not "
+                "support OpenGL or Vulkan RHI shader effects; terminal "
+                "rendering is unchanged");
+        } else {
+            customShaderRenderDiagnostic_.clear();
+        }
+        publishCustomShaderDiagnostic();
+        requestRenderUpdate();
+        return;
+    }
+    customShaderRenderDiagnostic_.clear();
+    publishCustomShaderDiagnostic();
+
+    if (renderItem_ == nullptr) {
+        renderItem_ = TerminalPaneRenderer::createRenderItem(this);
+        renderItem_->setSize(size());
+        // Schedule removal of any direct TerminalPane paint node. Merely
+        // clearing ItemHasContents does not dirty content and can leave the
+        // unfiltered node alive over the shader chain.
+        update();
+    }
+    QQuickItem *source = renderItem_;
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    for (qsizetype index = 0; index < customShaderStages_.size(); ++index) {
+        const TerminalCustomShaderStage &compiled =
+            customShaderStages_.at(index);
+        QObject *const created =
+            customShaderStageComponent_->createWithInitialProperties({
+                {QStringLiteral("fragmentShaderFileName"), compiled.qsbPath},
+                {QStringLiteral("fragmentShaderData"),
+                 compiled.serializedShader},
+                {QStringLiteral("uniformProvider"),
+                 QVariant::fromValue(static_cast<QObject *>(this))},
+                {QStringLiteral("stageIndex"),
+                 QVariant::fromValue(static_cast<int>(index))},
+                {QStringLiteral("sourceDevicePixelRatio"), devicePixelRatio},
+            });
+        auto *const stage = qobject_cast<QQuickItem *>(created);
+        if (stage == nullptr) {
+            if (customShaderStageComponent_ != nullptr) {
+                qWarning().noquote()
+                    << "Could not create terminal custom-shader stage:"
+                    << customShaderStageComponent_->errorString();
+            }
+            delete created;
+            clearCustomShaderStages();
+            useDirectTerminalRendering();
+            customShaderRenderDiagnostic_ =
+                QStringLiteral("custom-shader: unable to create Qt render "
+                               "stage; terminal rendering is unchanged");
+            publishCustomShaderDiagnostic();
+            return;
+        }
+
+        stage->setParent(this);
+        stage->setSize(size());
+        stage->setZ(-1'000.0);
+        source->setParent(stage);
+        source->setParentItem(stage);
+        source = stage;
+        customShaderStageItems_.append(stage);
+    }
+    source->setParent(this);
+    source->setParentItem(this);
+    source->setZ(-1'000.0);
+    if (QQuickWindow *const quickWindow = window()) {
+        customShaderFrameSwappedConnection_ =
+            connect(quickWindow, &QQuickWindow::frameSwapped, this, [this] {
+                customShaderFramePending_ = false;
+                scheduleCustomShaderAnimationFrame();
+            });
+    }
+    requestRenderUpdate();
+}
+
+void TerminalPane::syncCustomShaderStageGeometry()
+{
+    const qreal devicePixelRatio =
+        TerminalPaneRenderer::normalizedDevicePixelRatio(
+            window() != nullptr ? window()->devicePixelRatio() : 1.0);
+    for (const QPointer<QQuickItem> &stage : customShaderStageItems_) {
+        if (stage != nullptr) {
+            stage->setSize(size());
+            stage->setProperty("sourceDevicePixelRatio", devicePixelRatio);
+        }
+    }
 }
 
 bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
@@ -600,10 +1198,15 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
             (void)updateMetrics();
             updateTerminalSize();
             scheduleDeferredSessionStart();
-            update();
+            syncCustomShaderStageGeometry();
+            requestRenderUpdate();
             break;
         case QEvent::Expose:
         case QEvent::Show:
+            customShaderFramePending_ = false;
+            requestRenderUpdate();
+            scheduleCustomShaderAnimationFrame();
+            [[fallthrough]];
         case QEvent::Resize:
         case QEvent::WindowStateChange:
             deferredSessionStartCandidate_.reset();
@@ -622,24 +1225,33 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
     }
     QObject::disconnect(windowActiveConnection_);
     QObject::disconnect(windowScreenConnection_);
+    QObject::disconnect(windowSceneGraphInitializedConnection_);
+    QObject::disconnect(customShaderFrameSwappedConnection_);
     disconnectDeferredSessionWindowSignals();
     windowActiveConnection_ = {};
     windowScreenConnection_ = {};
+    windowSceneGraphInitializedConnection_ = {};
+    customShaderFrameSwappedConnection_ = {};
     observedWindow_ = quickWindow;
     deferredSessionStartCandidate_.reset();
     deferredSessionPresentedFrame_ = 0;
     deferredSessionCandidateFrame_ = 0;
     if (quickWindow != nullptr) {
         quickWindow->installEventFilter(this);
-        windowActiveConnection_ = connect(quickWindow, &QWindow::activeChanged,
-                                          this, [this] { update(); });
+        windowActiveConnection_ =
+            connect(quickWindow, &QWindow::activeChanged, this,
+                    [this] { requestRenderUpdate(); });
+        windowSceneGraphInitializedConnection_ =
+            connect(quickWindow, &QQuickWindow::sceneGraphInitialized, this,
+                    [this] { rebuildCustomShaderStages(); });
         windowScreenConnection_ = connect(
             quickWindow, &QWindow::screenChanged, this, [this](QScreen *) {
                 (void)updateMetrics();
                 updateTerminalSize();
                 deferredSessionStartCandidate_.reset();
                 scheduleDeferredSessionStart();
-                update();
+                syncCustomShaderStageGeometry();
+                requestRenderUpdate();
             });
         if (sessionStartMode_ == TerminalSessionStartMode::Deferred
             && (controller_ == nullptr || !controller_->sessionStarted())) {
@@ -673,7 +1285,8 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         (void)updateMetrics();
     }
     scheduleDeferredSessionStart();
-    update();
+    rebuildCustomShaderStages();
+    requestRenderUpdate();
 }
 
 void TerminalPane::disconnectDeferredSessionWindowSignals()
@@ -1093,6 +1706,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         options.abnormalCommandExitRuntimeMilliseconds;
     updated.waitAfterCommand = options.waitAfterCommand;
     updated.resizeOverlay = options.resizeOverlay;
+    updated.customShaders = options.customShaders;
     updated.keybindSource = options.keybindSource;
     updated.modifierRemaps = options.modifierRemaps;
 
@@ -1100,6 +1714,14 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     // titleChanged observers may synchronously apply a newer snapshot. The
     // keybind generation cannot participate in this guard because the matcher
     // is deliberately replaced only after the pane snapshot becomes current.
+    if (guard == nullptr
+        || !guard->runtimeOptionsRevision_.isCurrent(revision)) {
+        return;
+    }
+    // Re-read same-path shader edits on every successful configuration
+    // application. Content-addressed compilation makes unchanged sources a
+    // cheap cache hit while fixing Ghostty's pinned path-equality blind spot.
+    reloadCustomShaders(updated.customShaders);
     if (guard == nullptr
         || !guard->runtimeOptionsRevision_.isCurrent(revision)) {
         return;
@@ -1309,7 +1931,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     }
     refreshBackgroundImage();
     if (!stillCurrentUpdate()) return;
-    update();
+    requestRenderUpdate();
     if (pointSizeChanged) {
         Q_EMIT fontPointSizeChanged();
         if (!stillCurrentUpdate()) return;
@@ -1322,7 +1944,7 @@ void TerminalPane::setSplit(bool split)
         return;
     }
     split_ = split;
-    update();
+    requestRenderUpdate();
 }
 
 void TerminalPane::setWorkspaceActionHandler(
@@ -1417,7 +2039,7 @@ void TerminalPane::setSearchUiActive(bool active)
         return;
     }
     searchUiActive_ = active;
-    update();
+    requestRenderUpdate();
     Q_EMIT searchUiActiveChanged();
 }
 
@@ -1445,7 +2067,7 @@ void TerminalPane::endSearchUi()
         clearSearchDecorationsLocked();
     }
     controller_->cancelSearch();
-    update();
+    requestRenderUpdate();
     forceActiveFocus(Qt::ShortcutFocusReason);
 }
 
@@ -1547,7 +2169,7 @@ void TerminalPane::handleSearchUpdate(const TerminalSearchUpdate &searchUpdate)
             clearSearchDecorationsLocked();
         }
     }
-    update();
+    requestRenderUpdate();
 }
 
 void TerminalPane::geometryChange(const QRectF &newGeometry,
@@ -1556,13 +2178,17 @@ void TerminalPane::geometryChange(const QRectF &newGeometry,
     const bool previewWasPointerCaptured = linkPreviewPointerCaptured_;
     QQuickItem::geometryChange(newGeometry, oldGeometry);
     if (newGeometry.size() != oldGeometry.size()) {
+        if (renderItem_ != nullptr) {
+            renderItem_->setSize(newGeometry.size());
+        }
+        syncCustomShaderStageGeometry();
         Q_EMIT resizeOverlayRectChanged();
         deferredSessionStartCandidate_.reset();
         updateTerminalSize();
         scheduleDeferredSessionStart();
         refreshLinkPreview();
         reconcileReleasedLinkPreview(previewWasPointerCaptured);
-        update();
+        requestRenderUpdate();
     }
 }
 
@@ -1609,7 +2235,7 @@ void TerminalPane::refreshResolvedFonts()
     }
     refreshLinkPreview();
     reconcileReleasedLinkPreview(previewWasPointerCaptured);
-    update();
+    requestRenderUpdate();
     if (!qFuzzyCompare(previous.font(TerminalFontRole::Regular).pointSizeF(),
                        current.font(TerminalFontRole::Regular).pointSizeF())) {
         Q_EMIT fontPointSizeChanged();
@@ -1716,7 +2342,7 @@ void TerminalPane::refreshBackgroundImage()
             if (backgroundImageAsset_) {
                 backgroundImageAsset_.reset();
                 locker.unlock();
-                update();
+                requestRenderUpdate();
             }
             return;
         }
@@ -1754,7 +2380,7 @@ void TerminalPane::refreshBackgroundImage()
                 failedBackgroundImageSource_.reset();
                 backgroundImageAsset_ = std::move(*result);
             }
-            update();
+            requestRenderUpdate();
         });
 }
 
@@ -1775,7 +2401,7 @@ void TerminalPane::syncCursorBlink(bool resetPhase)
         cursorBlinkOn_ = true;
         cursorTimer_->start();
     }
-    update();
+    requestRenderUpdate();
 }
 
 void TerminalPane::updateTerminalSize()
@@ -3144,7 +3770,7 @@ void TerminalPane::inputMethodEvent(QInputMethodEvent *event)
             if (guard == nullptr) return;
         }
     }
-    update();
+    requestRenderUpdate();
     event->accept();
 }
 
@@ -4039,7 +4665,7 @@ void TerminalPane::refreshLinkPreview()
     }
     linkPreviewPointerCaptured_ = pointerCaptured;
     if (changed) {
-        update();
+        requestRenderUpdate();
         Q_EMIT linkPreviewChanged();
     }
 }
@@ -4092,7 +4718,7 @@ void TerminalPane::clearHyperlinkDecoration()
     linkPreviewPointerCaptured_ = false;
     syncPointerCursor();
     if (hadHighlight || previewChanged) {
-        update();
+        requestRenderUpdate();
     }
     if (previewChanged) {
         Q_EMIT linkPreviewChanged();
@@ -4272,7 +4898,7 @@ void TerminalPane::handleHyperlinkResult(quint64 contentRevision,
         return;
     }
     syncPointerCursor();
-    update();
+    requestRenderUpdate();
 }
 
 QUrl TerminalPane::hyperlinkUrl(const QByteArray &uri,
@@ -4392,7 +5018,7 @@ void TerminalPane::focusOutEvent(QFocusEvent *event)
     cancelPendingHyperlinkActivation();
     controller_->setFocused(false);
     QQuickItem::focusOutEvent(event);
-    update();
+    requestRenderUpdate();
 }
 
 void TerminalPane::focusTerminal()
@@ -4458,7 +5084,7 @@ void TerminalPane::setFontPointSize(qreal points)
     }
     refreshLinkPreview();
     reconcileReleasedLinkPreview(previewWasPointerCaptured);
-    update();
+    requestRenderUpdate();
     Q_EMIT fontPointSizeChanged();
 }
 

@@ -92,6 +92,8 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("background-image-position"),
     QLatin1StringView("background-image-fit"),
     QLatin1StringView("background-image-repeat"),
+    QLatin1StringView("custom-shader"),
+    QLatin1StringView("custom-shader-animation"),
     QLatin1StringView("unfocused-split-opacity"),
     QLatin1StringView("unfocused-split-fill"),
     QLatin1StringView("split-divider-color"),
@@ -538,11 +540,9 @@ ParseResult<std::optional<QString>> readOptionalString(const QJsonValue &value,
     return std::move(*result);
 }
 
-ParseResult<std::optional<GhosttyConfigPath>>
-readOptionalConfigPath(const QJsonValue &value, const QString &context)
+ParseResult<GhosttyConfigPath> readConfigPath(const QJsonValue &value,
+                                              const QString &context)
 {
-    if (value.isNull()) return std::nullopt;
-
     auto object = readExactObject(value, context, ConfigPathFields);
     if (!object) return std::unexpected(std::move(object.error()));
     auto path =
@@ -563,6 +563,33 @@ readOptionalConfigPath(const QJsonValue &value, const QString &context)
         .path = std::move(*path),
         .optional = *optional,
     };
+}
+
+ParseResult<std::optional<GhosttyConfigPath>>
+readOptionalConfigPath(const QJsonValue &value, const QString &context)
+{
+    if (value.isNull()) return std::nullopt;
+    auto parsed = readConfigPath(value, context);
+    if (!parsed) return std::unexpected(std::move(parsed.error()));
+    return std::move(*parsed);
+}
+
+ParseResult<QVector<GhosttyConfigPath>> readConfigPaths(const QJsonValue &value,
+                                                        const QString &context)
+{
+    auto array = readArray(value, context);
+    if (!array) return std::unexpected(std::move(array.error()));
+
+    QVector<GhosttyConfigPath> result;
+    result.reserve(array->size());
+    for (qsizetype index = 0; index < array->size(); ++index) {
+        const QString entryContext =
+            QStringLiteral("%1[%2]").arg(context).arg(index);
+        auto path = readConfigPath(array->at(index), entryContext);
+        if (!path) return std::unexpected(std::move(path.error()));
+        result.append(std::move(*path));
+    }
+    return result;
 }
 
 ParseResult<double>
@@ -2024,6 +2051,24 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
                           result.background.image.repeat);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("custom-shader"),
+                             result.customShaders.sources, readConfigPaths);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    {
+        constexpr QLatin1StringView name("custom-shader-animation");
+        constexpr auto allowed = std::to_array<
+            std::pair<QLatin1StringView, TerminalCustomShaderAnimation>>({
+            {QLatin1StringView("false"), TerminalCustomShaderAnimation::Never},
+            {QLatin1StringView("true"), TerminalCustomShaderAnimation::Focused},
+            {QLatin1StringView("always"),
+             TerminalCustomShaderAnimation::Always},
+        });
+        auto parsed = readEnum(fieldValue(name), context(name), allowed);
+        if (!parsed) return std::unexpected(std::move(parsed.error()));
+        result.customShaders.animation = *parsed;
     }
     {
         constexpr QLatin1StringView name("unfocused-split-opacity");

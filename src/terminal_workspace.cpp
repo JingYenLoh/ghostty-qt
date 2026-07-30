@@ -502,6 +502,35 @@ void TerminalWorkspace::setBellBorderComponent(QQmlComponent *component)
                             &TerminalWorkspace::bellBorderComponentChanged);
 }
 
+void TerminalWorkspace::setCustomShaderStageComponent(QQmlComponent *component)
+{
+    if (customShaderStageComponent_ == component) {
+        return;
+    }
+    QObject::disconnect(customShaderStageDestructionConnection_);
+    customShaderStageDestructionConnection_ = {};
+    customShaderStageComponent_ = component;
+    if (component != nullptr) {
+        customShaderStageDestructionConnection_ =
+            connect(component, &QObject::destroyed, this, [this] {
+                customShaderStageComponent_.clear();
+                customShaderStageDestructionConnection_ = {};
+                for (const QPointer<TerminalPane> &pane : paneSnapshot()) {
+                    if (pane != nullptr) {
+                        pane->setCustomShaderStageComponent(nullptr);
+                    }
+                }
+                Q_EMIT customShaderStageComponentChanged();
+            });
+    }
+    for (const QPointer<TerminalPane> &pane : paneSnapshot()) {
+        if (pane != nullptr) {
+            pane->setCustomShaderStageComponent(component);
+        }
+    }
+    Q_EMIT customShaderStageComponentChanged();
+}
+
 void TerminalWorkspace::setPaneOverlayComponent(
     PaneOverlaySlot &slot, QQmlComponent *component, const char *paneProperty,
     const char *description, void (TerminalWorkspace::*changedSignal)())
@@ -615,6 +644,20 @@ QVector<QPointer<TerminalPane>> TerminalWorkspace::paneSnapshot() const
         if (pane != nullptr && !panes.contains(pane)) panes.append(pane);
     }
     return panes;
+}
+
+QString TerminalWorkspace::customShaderDiagnostics() const
+{
+    QList<PaneId> paneIds = customShaderDiagnostics_.keys();
+    std::ranges::sort(paneIds);
+    QStringList diagnostics;
+    diagnostics.reserve(paneIds.size());
+    for (const PaneId paneId : paneIds) {
+        diagnostics.append(QStringLiteral("Pane %1: %2")
+                               .arg(paneId.value())
+                               .arg(customShaderDiagnostics_.value(paneId)));
+    }
+    return diagnostics.join(u'\n');
 }
 
 QVector<TerminalWorkspace::BroadPaneTarget>
@@ -1335,6 +1378,21 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
             refreshTab(tabId);
         }
     });
+    connect(pane, &TerminalPane::customShaderDiagnosticChanged, this,
+            [this, paneId](const QString &diagnostic) {
+                if (diagnostic.isEmpty()) {
+                    customShaderDiagnostics_.remove(paneId);
+                } else {
+                    customShaderDiagnostics_.insert(paneId, diagnostic);
+                }
+                Q_EMIT customShaderDiagnosticsChanged(
+                    customShaderDiagnostics());
+            });
+    connect(pane, &QObject::destroyed, this, [this, paneId] {
+        if (customShaderDiagnostics_.remove(paneId) > 0) {
+            Q_EMIT customShaderDiagnosticsChanged(customShaderDiagnostics());
+        }
+    });
     connect(pane, &TerminalPane::bellRang, this,
             [this, paneId, pane](TerminalPane *) {
                 if (paneForId(paneId) != pane) return;
@@ -1472,6 +1530,8 @@ TerminalWorkspace::PaneHandle TerminalWorkspace::createPane(
     pane->setParent(this);
     if (!validateOwnership(false)) return {};
     pane->setParentItem(this);
+    if (!validateOwnership(true)) return {};
+    pane->setCustomShaderStageComponent(customShaderStageComponent_);
     if (!validateOwnership(true)) return {};
     if (!attachPaneOverlays(paneGuard)) {
         (void)validateOwnership(true);

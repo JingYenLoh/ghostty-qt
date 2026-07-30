@@ -97,6 +97,9 @@ struct TerminalPaneRenderProbeSnapshot {
 [[nodiscard]] TerminalPaneRenderProbeSnapshot
 terminalPaneRenderProbe(const TerminalPane *pane);
 
+[[nodiscard]] bool
+terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+
 [[nodiscard]] QColor terminalMinimumContrastColorForTest(
     const QColor &foreground, const QColor &cellBackground,
     const QColor &globalBackground, double minimumContrast);

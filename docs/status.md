@@ -18,7 +18,8 @@ every Ghostty frontend feature.
 The project already covers the core terminal, renderer, tabs and splits,
 multiwindow lifecycle, quick terminal, configuration, keybindings, search,
 links, clipboard writes, shell integration, terminfo, desktop activation,
-ordinary Kitty graphics placements, and substantial appearance behavior.
+ordinary Kitty graphics placements, custom-shader post-processing, and
+substantial appearance behavior.
 
 ## Parity source of truth
 
@@ -70,6 +71,10 @@ for intentional upgrade procedure.
   geometry on RHI backends; the software fallback uses pooled global nodes.
   Production GPU and compositor output still requires interactive qualification
   on real Wayland systems.
+- Custom shaders require Qt Quick's OpenGL or Vulkan RHI backend. Other
+  backends keep terminal output unfiltered and expose a configuration
+  diagnostic; final multi-pass output and frame cost still require
+  qualification on the target GPU and Wayland compositor.
 - Saved sessions, a theme editor, systemd readiness notification, a project
   icon, AppStream metadata, and distribution packaging remain future work.
 

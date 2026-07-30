@@ -3,7 +3,9 @@
 The checked-in CMake presets are the supported developer entry points. Each
 preset uses the project-local Zig executable at `.local/bin/zig` and builds in
 its own directory. The top-level build requires C++23 for every C++ target and
-disables compiler-specific language extensions.
+disables compiler-specific language extensions. Custom-shader compilation uses
+Qt's versioned GuiPrivate and ShaderToolsPrivate interfaces, so their
+development headers must exactly match the Qt runtime used by the build.
 
 | Preset | C++ toolchain | Purpose |
 | --- | --- | --- |
@@ -33,23 +35,55 @@ cmake --build --preset dev -j"$(nproc)"
 ctest --preset dev -j"$(nproc)" --output-on-failure
 ```
 
-## Renderer microbenchmark
+## Rendering microbenchmarks
 
-The renderer benchmark is opt-in and deliberately excluded from CTest. It
-measures the end-to-end cost of installing a terminal update and grabbing the
-result through Qt's offscreen software scene graph. Damage counters assert
-that metadata, one-row, cursor, and full-frame cases visit the intended number
-of cells, preventing a faster result caused by accidentally skipping work.
+The rendering benchmarks are opt-in and deliberately excluded from CTest. The
+pane benchmark measures the end-to-end cost of installing a terminal update
+and grabbing the result through Qt's offscreen software scene graph. Damage
+counters assert that metadata, one-row, cursor, and full-frame cases visit the
+intended number of cells, preventing a faster result caused by accidentally
+skipping work.
 
 Use a Release build and compare results only on the same machine, Qt version,
 backend, dimensions, warmup, and iteration count:
 
 ```sh
 cmake --preset release -DGHOSTTY_QT_BUILD_RENDER_BENCHMARKS=ON
-cmake --build --preset release --target bench-terminal-pane-renderer -j"$(nproc)"
+cmake --build --preset release \
+    --target bench-terminal-pane-renderer \
+             bench-terminal-custom-shader-compiler \
+             bench-terminal-custom-shader-rhi \
+    -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
     --warmup 20 --iterations 200
+./build/release/tests/bench-terminal-custom-shader-compiler \
+    --cold-iterations 5 --warm-iterations 100
+LIBGL_ALWAYS_SOFTWARE=1 QSG_RHI_BACKEND=opengl \
+    ./build/release/tests/bench-terminal-custom-shader-rhi \
+    --width 1280 --height 720 --warmup 20 --iterations 100
 ```
+
+The custom-shader benchmark reports one-, two-, and four-pass cold
+`QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
+compiled/cache-hit counters guard the two paths against accidental
+misclassification. It measures configuration-time compilation and cache I/O,
+not GPU pass time.
+
+The custom-shader RHI benchmark measures zero, one, two, and four full-screen
+passes on the OpenGL RHI at one fixed viewport. Shader baking and graphics
+pipeline warm-up happen outside the timed samples. Every sample dirties the
+source and completes a `grabWindow()` readback; distinct affine color
+transforms in each pass validate that the returned frame ran the complete
+ordered chain.
+The readback cost is deliberately present in every case, so use the reported
+zero-pass baseline and deltas when evaluating pass overhead. Remove
+`LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU, and compare results only
+with the same platform plugin and framebuffer size. `LIBGL_ALWAYS_SOFTWARE=1`
+selects Mesa's software implementation behind the OpenGL RHI; it is not Qt
+Quick's unsupported software scene graph. The benchmark exits without results
+when the selected platform plugin cannot initialize an OpenGL RHI context.
+Run it inside a graphical Wayland or X11 session; Qt's `offscreen` platform
+often selects the software scene graph and is deliberately rejected.
 
 The current cases measure Kitty graphics' empty-image fast path. Image-specific
 benchmarks should distinguish first texture upload, retained redraw,

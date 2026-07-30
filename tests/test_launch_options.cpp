@@ -14,8 +14,7 @@
 
 namespace {
 
-QString errorMessage(
-    const std::expected<LaunchOptions, QString> &result)
+QString errorMessage(const std::expected<LaunchOptions, QString> &result)
 {
     return result ? QString{} : result.error();
 }
@@ -34,29 +33,33 @@ TerminalTypography completeTypography()
 {
     TerminalTypography typography;
     typography.face(TerminalFontRole::Regular) = {
-        .families = {
-            QStringLiteral("Config Primary"),
-            QStringLiteral("Config Fallback"),
-        },
+        .families =
+            {
+                QStringLiteral("Config Primary"),
+                QStringLiteral("Config Fallback"),
+            },
         .style = TerminalFontStyles::Named{QStringLiteral("Book")},
     };
     typography.face(TerminalFontRole::Bold) = {
-        .families = {
-            QStringLiteral("Config Bold"),
-            QStringLiteral("Config Bold Fallback"),
-        },
+        .families =
+            {
+                QStringLiteral("Config Bold"),
+                QStringLiteral("Config Bold Fallback"),
+            },
         .style = TerminalFontStyles::Disabled{},
     };
     typography.face(TerminalFontRole::Italic) = {
-        .families = {
-            QStringLiteral("Config Italic"),
-        },
+        .families =
+            {
+                QStringLiteral("Config Italic"),
+            },
         .style = TerminalFontStyles::Automatic{},
     };
     typography.face(TerminalFontRole::BoldItalic) = {
-        .families = {
-            QStringLiteral("Config Bold Italic"),
-        },
+        .families =
+            {
+                QStringLiteral("Config Bold Italic"),
+            },
         .style =
             TerminalFontStyles::Named{QStringLiteral("Extra Black Italic")},
     };
@@ -163,6 +166,15 @@ GhosttyConfigSnapshot completeSnapshot()
             },
     };
     values.backgroundBlur = 42;
+    values.customShaders = {
+        .sources =
+            {
+                {.path = QStringLiteral("/work/shaders/first.glsl")},
+                {.path = QStringLiteral("/work/shaders/second.glsl"),
+                 .optional = true},
+            },
+        .animation = TerminalCustomShaderAnimation::Always,
+    };
     values.padding = {
         .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
         .vertical = {.leadingPoints = 7, .trailingPoints = 11},
@@ -326,8 +338,7 @@ private Q_SLOTS:
 
 void LaunchOptionsTest::defaults()
 {
-    const auto result =
-        parseLaunchOptions({QStringLiteral("ghostty-qt")});
+    const auto result = parseLaunchOptions({QStringLiteral("ghostty-qt")});
     QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
     const LaunchOptions &options = *result;
     QCOMPARE(options.term, QByteArrayLiteral("xterm-ghostty"));
@@ -357,8 +368,8 @@ void LaunchOptionsTest::defaults()
     QCOMPARE(options.typography.pointSize, 12.0);
     for (const TerminalFontFace &face : options.typography.faces) {
         QVERIFY(face.families.isEmpty());
-        QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
-            face.style));
+        QVERIFY(
+            std::holds_alternative<TerminalFontStyles::Automatic>(face.style));
     }
     QVERIFY(std::ranges::all_of(
         options.typography.metricModifiers.values,
@@ -413,6 +424,9 @@ void LaunchOptionsTest::defaults()
              TerminalBackgroundImagePosition::Center);
     QCOMPARE(options.background.image.fit, TerminalBackgroundImageFit::Contain);
     QVERIFY(!options.background.image.repeat);
+    QVERIFY(options.customShaders.sources.isEmpty());
+    QCOMPARE(options.customShaders.animation,
+             TerminalCustomShaderAnimation::Focused);
     QCOMPARE(options.backgroundBlur, qint16{0});
     QCOMPARE(options.padding.horizontal.leadingPoints, quint32(0));
     QCOMPARE(options.padding.horizontal.trailingPoints, quint32(0));
@@ -458,8 +472,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(options.tabInheritWorkingDirectory);
     QVERIFY(options.windowInheritWorkingDirectory);
     QVERIFY(options.windowInheritFontSize);
-    QCOMPARE(options.windowNewTabPosition,
-             WindowNewTabPosition::Current);
+    QCOMPARE(options.windowNewTabPosition, WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.tabsLocation, TabsLocation::Top);
     QVERIFY(options.wideTabs);
@@ -562,8 +575,8 @@ void LaunchOptionsTest::parsesActivationBootstrapOptions()
              QStringLiteral("--single-instance=yes"),
              QStringLiteral("--initial-window=yes"),
          }) {
-        const auto invalid = parseLaunchOptions(
-            {QStringLiteral("ghostty-qt"), argument});
+        const auto invalid =
+            parseLaunchOptions({QStringLiteral("ghostty-qt"), argument});
         QVERIFY(!invalid.has_value());
         QVERIFY(invalid.error().contains(QStringLiteral("Invalid")));
     }
@@ -674,8 +687,7 @@ void LaunchOptionsTest::preservesSymlinkSensitiveExplicitWorkingDirectory()
     const QString base = root.filePath(QStringLiteral("base"));
     const QString linkedDirectory =
         root.filePath(QStringLiteral("other/directory"));
-    const QString actualTarget =
-        root.filePath(QStringLiteral("other/target"));
+    const QString actualTarget = root.filePath(QStringLiteral("other/target"));
     for (const QString &path : {base, linkedDirectory, actualTarget}) {
         QVERIFY(QDir().mkpath(path));
     }
@@ -702,8 +714,8 @@ void LaunchOptionsTest::rejectsInvalidWorkingDirectory()
     const QString missingPath = directory.filePath(QStringLiteral("missing"));
 
     const auto result = parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"),
-         QStringLiteral("--working-directory"), missingPath});
+        {QStringLiteral("ghostty-qt"), QStringLiteral("--working-directory"),
+         missingPath});
     QVERIFY(!result.has_value());
     QVERIFY(result.error().contains(
         QStringLiteral("does not exist or is not a directory")));
@@ -718,9 +730,9 @@ void LaunchOptionsTest::rejectsFileAsWorkingDirectory()
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.close();
 
-    const auto result = parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"),
-         QStringLiteral("--working-directory"), filePath});
+    const auto result =
+        parseLaunchOptions({QStringLiteral("ghostty-qt"),
+                            QStringLiteral("--working-directory"), filePath});
     QVERIFY(!result.has_value());
     QVERIFY(result.error().contains(
         QStringLiteral("does not exist or is not a directory")));
@@ -743,8 +755,7 @@ void LaunchOptionsTest::rejectsInvalidFontSize()
     QFETCH(QString, value);
 
     const auto result = parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"), QStringLiteral("--font-size"),
-         value});
+        {QStringLiteral("ghostty-qt"), QStringLiteral("--font-size"), value});
     QVERIFY(!result.has_value());
     QVERIFY(result.error().contains(QStringLiteral("Invalid font size")));
 }
@@ -797,9 +808,9 @@ void LaunchOptionsTest::buildsGhosttyConfigurationArguments()
     });
     QVERIFY2(repeatedFamilies.has_value(),
              qPrintable(errorMessage(repeatedFamilies)));
-    QCOMPARE(regularFamilies(*repeatedFamilies),
-             QStringList({QStringLiteral("Primary"),
-                          QStringLiteral("Fallback")}));
+    QCOMPARE(
+        regularFamilies(*repeatedFamilies),
+        QStringList({QStringLiteral("Primary"), QStringLiteral("Fallback")}));
     QCOMPARE(ghosttyConfigurationArguments(*repeatedFamilies),
              QStringList({QStringLiteral("--font-family=Primary"),
                           QStringLiteral("--font-family=Fallback")}));
@@ -871,9 +882,9 @@ void LaunchOptionsTest::rejectsInvalidScrollbackLines()
 {
     QFETCH(QString, value);
 
-    const auto result = parseLaunchOptions(
-        {QStringLiteral("ghostty-qt"),
-         QStringLiteral("--scrollback-lines"), value});
+    const auto result =
+        parseLaunchOptions({QStringLiteral("ghostty-qt"),
+                            QStringLiteral("--scrollback-lines"), value});
     QVERIFY(!result.has_value());
     QVERIFY(result.error().contains(
         QStringLiteral("Invalid scrollback line count")));
@@ -891,8 +902,9 @@ void LaunchOptionsTest::rejectsMissingApplicationName()
 {
     const auto result = parseLaunchOptions({});
     QVERIFY(!result.has_value());
-    QCOMPARE(result.error(),
-             QStringLiteral("The argument list must include the application name."));
+    QCOMPARE(
+        result.error(),
+        QStringLiteral("The argument list must include the application name."));
 }
 
 void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
@@ -960,6 +972,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              TerminalBackgroundImagePosition::BottomRight);
     QCOMPARE(cliResult.background.image.fit, TerminalBackgroundImageFit::Cover);
     QVERIFY(cliResult.background.image.repeat);
+    QCOMPARE(cliResult.customShaders, snapshot.values.customShaders);
     QCOMPARE(cliResult.backgroundBlur, qint16{42});
     QCOMPARE(cliResult.padding.horizontal.leadingPoints, quint32(3));
     QCOMPARE(cliResult.padding.horizontal.trailingPoints, quint32(5));
@@ -973,8 +986,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.splitAppearance.dividerColor,
              std::optional<QColor>(QColor(QStringLiteral("#a1b2c3"))));
     QCOMPARE(cliResult.appearance.palette.size(), 256);
-    QCOMPARE(cliResult.appearance.palette.at(42),
-             QColor::fromRgb(42, 213, 21));
+    QCOMPARE(cliResult.appearance.palette.at(42), QColor::fromRgb(42, 213, 21));
     QCOMPARE(cliResult.appearance.selectionForeground.kind,
              TerminalColorKind::CellForeground);
     QCOMPARE(cliResult.appearance.selectionBackground.kind,
@@ -1001,8 +1013,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(cliResult.appearance.cursorOpacity, 0.625);
     QCOMPARE(cliResult.appearance.cursorTextColor.kind,
              TerminalColorKind::CellForeground);
-    QCOMPARE(cliResult.appearance.boldColor.kind,
-             TerminalBoldColorKind::Color);
+    QCOMPARE(cliResult.appearance.boldColor.kind, TerminalBoldColorKind::Color);
     QCOMPARE(cliResult.appearance.boldColor.color,
              QColor(QStringLiteral("#abcdef")));
     QCOMPARE(cliResult.appearance.faintOpacity, 0.375);
@@ -1041,7 +1052,8 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     QCOMPARE(*cliResult.keybindSource.structured(), snapshot.keybindings);
 
     base.scrollbackLimitExplicit = false;
-    const LaunchOptions configResult = applyGhosttyConfigSnapshot(base, snapshot);
+    const LaunchOptions configResult =
+        applyGhosttyConfigSnapshot(base, snapshot);
     QVERIFY(configResult.typography == completeTypography());
     QCOMPARE(configResult.scrollbackLimit.value, quint64(50'000'000));
     QCOMPARE(configResult.scrollbackLimit.unit, ScrollbackLimitUnit::Bytes);
@@ -1050,8 +1062,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
     for (const double unusableSize : {0.0, -2.0}) {
         GhosttyConfigSnapshot unusable = snapshot;
         unusable.values.typography.pointSize = unusableSize;
-        const LaunchOptions result =
-            applyGhosttyConfigSnapshot(base, unusable);
+        const LaunchOptions result = applyGhosttyConfigSnapshot(base, unusable);
         TerminalTypography expected = completeTypography();
         expected.pointSize = base.typography.pointSize;
         QVERIFY(result.typography == expected);
@@ -1400,8 +1411,7 @@ void LaunchOptionsTest::mapsWorkingDirectoryAndSurfaceInheritance()
     snapshot.values.windowInheritFontSize = false;
 
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
-    QCOMPARE(result.workingDirectory,
-             QStringLiteral("/base/link/../target"));
+    QCOMPARE(result.workingDirectory, QStringLiteral("/base/link/../target"));
     QVERIFY(!result.inheritWorkingDirectory);
     QVERIFY(!result.splitInheritWorkingDirectory);
     QVERIFY(!result.tabInheritWorkingDirectory);
@@ -1431,8 +1441,8 @@ void LaunchOptionsTest::mapsSplitPreserveZoom()
 
     GhosttyConfigSnapshot snapshot = completeSnapshot();
     snapshot.values.splitPreserveZoom = true;
-    QVERIFY(applyGhosttyConfigSnapshot(base, snapshot)
-                .splitPreserveZoomNavigation);
+    QVERIFY(
+        applyGhosttyConfigSnapshot(base, snapshot).splitPreserveZoomNavigation);
 
     snapshot.values.splitPreserveZoom = false;
     QVERIFY(!applyGhosttyConfigSnapshot(base, snapshot)
@@ -1561,10 +1571,8 @@ void LaunchOptionsTest::mapsResizeOverlay()
     };
     LaunchOptions result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::Always);
-    QCOMPARE(result.resizeOverlay.position,
-             ResizeOverlayPosition::BottomRight);
-    QCOMPARE(result.resizeOverlay.duration,
-             std::chrono::milliseconds(1'234));
+    QCOMPARE(result.resizeOverlay.position, ResizeOverlayPosition::BottomRight);
+    QCOMPARE(result.resizeOverlay.duration, std::chrono::milliseconds(1'234));
 
     snapshot.values.resizeOverlay = {
         .mode = ResizeOverlayMode::AfterFirst,
@@ -1573,8 +1581,7 @@ void LaunchOptionsTest::mapsResizeOverlay()
     };
     result = applyGhosttyConfigSnapshot(base, snapshot);
     QCOMPARE(result.resizeOverlay.mode, ResizeOverlayMode::AfterFirst);
-    QCOMPARE(result.resizeOverlay.position,
-             ResizeOverlayPosition::TopCenter);
+    QCOMPARE(result.resizeOverlay.position, ResizeOverlayPosition::TopCenter);
     QCOMPARE(result.resizeOverlay.duration, std::chrono::milliseconds(250));
 }
 
@@ -1935,8 +1942,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     QCOMPARE(launch.linuxCgroup, options.linuxCgroup);
     QCOMPARE(launch.processUsesSingleInstance,
              options.processUsesSingleInstance);
-    QCOMPARE(launch.inheritWorkingDirectory,
-             options.inheritWorkingDirectory);
+    QCOMPARE(launch.inheritWorkingDirectory, options.inheritWorkingDirectory);
     QCOMPARE(launch.configuredTitle, options.configuredTitle);
     QVERIFY(launch.command == options.ordinaryCommand);
     QCOMPARE(launch.program, options.program);
@@ -1947,10 +1953,12 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
 
     QVERIFY(QMetaType::fromType<TerminalSessionLaunchOptions>().isValid());
     QVERIFY(QMetaType::fromType<TerminalSessionRuntimeOptions>().isValid());
-    QVERIFY(qvariant_cast<TerminalSessionLaunchOptions>(
-                QVariant::fromValue(launch)) == launch);
+    QVERIFY(
+        qvariant_cast<TerminalSessionLaunchOptions>(QVariant::fromValue(launch))
+        == launch);
     QVERIFY(qvariant_cast<TerminalSessionRuntimeOptions>(
-                QVariant::fromValue(runtime)) == runtime);
+                QVariant::fromValue(runtime))
+            == runtime);
 
     LaunchOptions workerPolicyChanged = options;
     workerPolicyChanged.rightClickAction = RightClickAction::Ignore;
@@ -1981,8 +1989,7 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.tabInheritWorkingDirectory = false;
     frontendOnlyChanged.windowInheritWorkingDirectory = false;
     frontendOnlyChanged.windowInheritFontSize = false;
-    frontendOnlyChanged.windowNewTabPosition =
-        WindowNewTabPosition::End;
+    frontendOnlyChanged.windowNewTabPosition = WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
     frontendOnlyChanged.wideTabs = false;
     frontendOnlyChanged.horizontalTabScroll = false;
@@ -2010,8 +2017,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.linkPreviews = LinkPreviewMode::Never;
     frontendOnlyChanged.middleClickAction = MiddleClickAction::PrimaryPaste;
     frontendOnlyChanged.mouseShiftCapture = MouseShiftCapture::Always;
-    frontendOnlyChanged.keybindSource = GhosttyKeybindSource::text(
-        {QStringLiteral("ctrl+x=ignore")});
+    frontendOnlyChanged.keybindSource =
+        GhosttyKeybindSource::text({QStringLiteral("ctrl+x=ignore")});
     frontendOnlyChanged.showHelp = true;
     frontendOnlyChanged.showVersion = true;
     QCOMPARE(toTerminalSessionLaunchOptions(frontendOnlyChanged), launch);
@@ -2115,9 +2122,9 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     options.linkUrl = true;
     QCOMPARE(launch.workingDirectory,
              QStringLiteral("/session/working-directory"));
-    QCOMPARE(launch.program,
-             QStringList({QStringLiteral("/bin/program"),
-                          QStringLiteral("arg")}));
+    QCOMPARE(
+        launch.program,
+        QStringList({QStringLiteral("/bin/program"), QStringLiteral("arg")}));
     QVERIFY(launch.command.has_value());
     QCOMPARE(launch.command->kind, TerminalCommandKind::Shell);
     QCOMPARE(launch.command->shellCommand,
@@ -2178,11 +2185,11 @@ void LaunchOptionsTest::convertsLegacyLineCapacityToLibghosttyBytes()
     QCOMPARE(scrollbackLimitInBytes(
                  {.value = 123, .unit = ScrollbackLimitUnit::Bytes}, 240),
              quint64(123));
-    QCOMPARE(scrollbackLimitInBytes(
-                 {.value = std::numeric_limits<quint64>::max(),
-                  .unit = ScrollbackLimitUnit::Lines},
-                 80),
-             std::numeric_limits<quint64>::max());
+    QCOMPARE(
+        scrollbackLimitInBytes({.value = std::numeric_limits<quint64>::max(),
+                                .unit = ScrollbackLimitUnit::Lines},
+                               80),
+        std::numeric_limits<quint64>::max());
 }
 
 void LaunchOptionsTest::removesOnlyTheInitialCommand()
@@ -2198,7 +2205,8 @@ void LaunchOptionsTest::removesOnlyTheInitialCommand()
     });
     options.waitAfterCommand = true;
     options.program = {
-        QStringLiteral("command"), QStringLiteral("argument"),
+        QStringLiteral("command"),
+        QStringLiteral("argument"),
     };
     options.hold = true;
 
@@ -2232,12 +2240,11 @@ void LaunchOptionsTest::mapsCloseConfirmationModes()
 {
     QVERIFY(!shouldConfirmClose(ConfirmCloseMode::Never, false, false));
     QVERIFY(!shouldConfirmClose(ConfirmCloseMode::Never, true, true));
-    QVERIFY(!shouldConfirmClose(ConfirmCloseMode::RunningProcesses,
-                                false, false));
-    QVERIFY(!shouldConfirmClose(ConfirmCloseMode::RunningProcesses,
-                                true, false));
-    QVERIFY(shouldConfirmClose(ConfirmCloseMode::RunningProcesses,
-                               true, true));
+    QVERIFY(
+        !shouldConfirmClose(ConfirmCloseMode::RunningProcesses, false, false));
+    QVERIFY(
+        !shouldConfirmClose(ConfirmCloseMode::RunningProcesses, true, false));
+    QVERIFY(shouldConfirmClose(ConfirmCloseMode::RunningProcesses, true, true));
     QVERIFY(!shouldConfirmClose(ConfirmCloseMode::Always, false, false));
     QVERIFY(shouldConfirmClose(ConfirmCloseMode::Always, true, false));
     QVERIFY(shouldConfirmClose(ConfirmCloseMode::Always, true, true));

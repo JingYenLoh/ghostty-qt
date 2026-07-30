@@ -237,6 +237,7 @@ private Q_SLOTS:
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsBackdropConfiguration();
+    void realHelperExportsCustomShaderConfiguration();
     void realHelperExportsBackgroundBlur_data();
     void realHelperExportsBackgroundBlur();
     void realHelperGeneratesEffectivePalette();
@@ -1428,6 +1429,61 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
         QVERIFY2(!invalid, key.constData());
         QVERIFY2(invalid.error().contains(QString::fromUtf8(key)),
                  qPrintable(invalid.error()));
+    }
+}
+
+void GhosttyConfigProcessLoaderTest::
+    realHelperExportsCustomShaderConfiguration()
+{
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    const QString first = fixture.filePath(QStringLiteral("first-shader.glsl"));
+    const QString optional =
+        fixture.filePath(QStringLiteral("optional-shader.glsl"));
+    ConfigFixture::writeFile(first, QByteArrayLiteral("void mainImage() {}\n"));
+    QVERIFY(!QFileInfo::exists(optional));
+
+    const auto load = makeGhosttyConfigProcessLoader(realOptions(helperPath));
+    ConfigFixture::writeFile(
+        fixture.preferredPath,
+        QByteArrayLiteral("custom-shader = first-shader.glsl\n"
+                          "custom-shader = ?optional-shader.glsl\n"
+                          "custom-shader = first-shader.glsl\n"
+                          "custom-shader-animation = always\n"));
+
+    GhosttyConfigLoadResult result = load(fixture.request());
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.customShaders.sources.size(), qsizetype{3});
+    QCOMPARE(result->values.customShaders.sources.at(0).path, first);
+    QVERIFY(!result->values.customShaders.sources.at(0).optional);
+    QCOMPARE(result->values.customShaders.sources.at(1).path, optional);
+    QVERIFY(result->values.customShaders.sources.at(1).optional);
+    QCOMPARE(result->values.customShaders.sources.at(2).path, first);
+    QVERIFY(!result->values.customShaders.sources.at(2).optional);
+    QCOMPARE(result->values.customShaders.animation,
+             TerminalCustomShaderAnimation::Always);
+
+    const auto spellings =
+        std::to_array<std::pair<QByteArray, TerminalCustomShaderAnimation>>({
+            {QByteArrayLiteral("false"), TerminalCustomShaderAnimation::Never},
+            {QByteArrayLiteral("true"), TerminalCustomShaderAnimation::Focused},
+            {QByteArrayLiteral("always"),
+             TerminalCustomShaderAnimation::Always},
+        });
+    for (const auto &[spelling, expected] : spellings) {
+        ConfigFixture::writeFile(fixture.preferredPath,
+                                 QByteArrayLiteral("custom-shader-animation = ")
+                                     + spelling + QByteArrayLiteral("\n"));
+        result = load(fixture.request());
+        QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+        QVERIFY(result->values.customShaders.sources.isEmpty());
+        QCOMPARE(result->values.customShaders.animation, expected);
     }
 }
 

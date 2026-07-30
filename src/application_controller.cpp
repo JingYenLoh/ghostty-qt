@@ -1320,6 +1320,27 @@ QString ApplicationController::configurationDiagnosticsText() const
     return sections.join(QStringLiteral("\n\n"));
 }
 
+namespace {
+
+QString diagnosticsForWorkspace(QString configuration,
+                                const TerminalWorkspace *workspace)
+{
+    if (workspace == nullptr) {
+        return configuration;
+    }
+    const QString shaderDiagnostics = workspace->customShaderDiagnostics();
+    if (shaderDiagnostics.isEmpty()) {
+        return configuration;
+    }
+    const QString section =
+        QStringLiteral("Custom shaders:\n") + shaderDiagnostics;
+    return configuration.isEmpty()
+        ? section
+        : configuration + QStringLiteral("\n\n") + section;
+}
+
+} // namespace
+
 void ApplicationController::syncConfigurationDiagnostics()
 {
     const QString diagnostics = configurationDiagnosticsText();
@@ -1328,7 +1349,8 @@ void ApplicationController::syncConfigurationDiagnostics()
     for (const ApplicationWindow &window : snapshot) {
         WindowRecord *const record = recordForWindow(window.window);
         if (record == nullptr || record->ui == nullptr) continue;
-        record->ui->setConfigurationDiagnostics(diagnostics);
+        record->ui->setConfigurationDiagnostics(
+            diagnosticsForWorkspace(diagnostics, record->workspace));
         if (guard == nullptr) return;
     }
 }
@@ -1503,7 +1525,8 @@ void ApplicationController::registerWindow(
             Q_EMIT controller->configReloadRequested();
         }
     });
-    ui->setConfigurationDiagnostics(configurationDiagnosticsText());
+    ui->setConfigurationDiagnostics(
+        diagnosticsForWorkspace(configurationDiagnosticsText(), workspace));
     QQmlEngine::setObjectOwnership(ui.get(), QQmlEngine::CppOwnership);
     auto blur = std::make_unique<WindowBlurController>(window);
     blur->setBlur(effectiveOptions_.backgroundBlur);
@@ -1564,6 +1587,8 @@ void ApplicationController::registerWindow(
              guardedWorkspace = QPointer(workspace)] {
                 syncWindowDecoration(guardedWindow, guardedWorkspace);
             });
+    connect(workspace, &TerminalWorkspace::customShaderDiagnosticsChanged, this,
+            [this](const QString &) { syncConfigurationDiagnostics(); });
     // Registration happens after workspace initialization but before the
     // first show. Applying the requested frame here avoids a decorated flash,
     // and the connection above keeps the same host in sync with reloads and

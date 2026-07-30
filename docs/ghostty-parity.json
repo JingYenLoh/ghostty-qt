@@ -469,6 +469,14 @@
       "status": "supported",
       "note": "Fixed, cell-foreground, and cell-background cursor text colors are resolved per rendered cursor cell with Ghostty's unset fallback."
     },
+    "custom-shader": {
+      "status": "supported",
+      "note": "Repeatable finalized required/optional paths preserve declaration order and empty-reset semantics. Sources up to 4 MiB are compiled asynchronously into validated SPIR-V, desktop GLSL, and GLES QSB variants; identical concurrent pane work coalesces and structurally validated outputs use a content-addressed disk cache, so same-path edits are detected without blocking the GUI or render thread. Nested physical-resolution Qt Quick layers apply each pass to the complete pane-local terminal and Kitty content through the pinned ShaderToy mainImage, iChannel0, cursor constants, bottom-left coordinates, and std140 uniform contract while leaving Qt chrome outside. Missing optional files are skipped; any missing required file, invalid program, or stage failure disables the new chain and publishes a visible diagnostic. Qt Quick's OpenGL or Vulkan RHI backend is required: other backends leave the terminal unfiltered and report that limitation, and final GPU/compositor presentation remains an interactive check."
+    },
+    "custom-shader-animation": {
+      "status": "supported",
+      "note": "The pinned false, true, and always values map to never, focused, and always animation. Frame-swapped pacing advances time, delta, and frame while retained immutable snapshots carry the latest cursor, focus, palette, and color state. Updating an animated effect does not rebuild terminal cells or dirty retained row caches. Animation stops when policy, pane visibility, focus, window exposure, or backend support makes another frame unnecessary."
+    },
     "desktop-notifications": {
       "status": "blocked_upstream",
       "note": "The standalone public libghostty-vt stream parses OSC 9 and OSC 777 but discards the normalized desktop-notification action. Exact frontend policy and delivery require a public effect callback; ghostty-qt does not parse PTY bytes a second time."
@@ -628,7 +636,7 @@
     },
     "minimum-contrast": {
       "status": "supported",
-      "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Color emoji and images remain outside the separately planned rendering pipelines; the existing Qt preedit overlay remains a frontend-owned approximation."
+      "note": "The finalized f64 threshold defaults to 1, is clamped to [1, 21] by Ghostty, and reloads every existing pane without terminal or PTY replacement. The Qt renderer mirrors Ghostty's Linux cell shader: bold, inverse, selection/search colors, and faint alpha resolve first; WCAG contrast then uses linear premultiplied color against the effective cell background, replacing a strictly lower ratio with opaque white or black according to the stronger extreme, with ties choosing black. Glyphs and decorations are evaluated independently, the five pinned terminal-graphics codepoint ranges exempt only their glyph, block cursor text overrides contrast last, and cursor sprites participate after cursor opacity. Background images and Kitty content are composed independently, and minimum contrast intentionally does not sample their pixels; color emoji remains unavailable and the existing Qt preedit overlay remains a frontend-owned approximation."
     },
     "notify-on-command-finish": {
       "status": "blocked_upstream",

@@ -600,9 +600,12 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    validates and transactionally merges it into its retained frame under a
    mutex, then schedules a scene-graph update. Dirty state is cleared only
    after the adapter successfully copies the complete update.
-6. `TerminalPane::updatePaintNode()` keeps fixed before-text/main-text/after-text
-   groups, three persistent Kitty-graphics insertion points, and frontend
-   overlays followed by one persistent full-pane unfocused-split rectangle.
+6. Without custom shaders, `TerminalPane` paints its scene-graph node directly.
+   An active custom-shader chain moves the same paint-node implementation into
+   a private `TerminalPaneRenderItem` so only terminal pixels enter the effect
+   layers. The node keeps fixed before-text/main-text/after-text groups, three
+   persistent Kitty-graphics insertion points, and frontend overlays followed
+   by one persistent full-pane unfocused-split rectangle.
    The image insertion points are ordered below cell backgrounds, between cell
    backgrounds and terminal foreground content, and above terminal foreground
    content but below input-method and pane overlays. Ordinary Kitty placements
@@ -694,11 +697,12 @@ prevents output-driven scrolling without advancing the anchor; enabling it
 live after intervening output may scroll on the first eligible frame when that
 stale anchor is compared.
 
-Renderer-v1 uses Qt's public scene-graph API throughout: text nodes supply the
-GPU glyph path and one retained vertex-colored `QSGGeometryNode` per painter
-layer supplies solid primitives on RHI backends. Qt's software adaptation does
-not render that public vertex-color material, so the test/fallback path retains
-one reusable `QSGSimpleRectNode` pool per layer for correctness.
+Renderer-v1's base terminal path uses Qt's public scene-graph API: text nodes
+supply the GPU glyph path and one retained vertex-colored `QSGGeometryNode` per
+painter layer supplies solid primitives on RHI backends. Qt's software
+adaptation does not render that public vertex-color material, so the
+test/fallback path retains one reusable `QSGSimpleRectNode` pool per layer for
+correctness.
 No intermediate raster-image upload sits between the frame and the scene
 graph. Qt's implicitly shared frame snapshot is normally an O(1) reference-count
 operation rather than a deep cell copy. During ordinary sparse updates, the
@@ -713,6 +717,37 @@ use independent global batches; unchanged batches skip geometry updates and
 every batch reuses its CPU and scene-graph allocation capacity. Global
 text-state changes, including search-decoration mask replacement, still rebuild
 the complete text layer.
+
+Custom shaders are pane-local post-processing stages around the private render
+item, so terminal pixels and Kitty graphics are filtered while Qt-owned pane
+chrome remains outside the effect. With no `custom-shader` entries,
+`TerminalPane` keeps its original direct paint-node path: no render child,
+layer texture, shader item, timer, or per-frame uniform update exists. With
+shaders configured, nested `Item.layer` stages preserve declaration order:
+each pass samples the previous pass through `iChannel0`, and only the final
+stage is composed into the pane. Every enabled pass therefore adds one
+full-pane physical-resolution layer texture and one full-screen draw.
+
+The pinned parser supplies finalized required/optional paths and the exact
+`custom-shader-animation` policy. A process-wide broker reads and bakes changed
+sources off the GUI and render threads, coalesces equivalent concurrent pane
+requests, and stores validated, content-addressed QSB files in the Qt cache
+location. The generated fragment wrapper accepts Ghostty's ShaderToy-style
+`mainImage`, bottom-left physical fragment coordinates, cursor constants,
+`iChannel0`, and std140 uniform layout. Compile and stage-creation failures are
+published through the configuration diagnostics surface; a missing optional
+file is skipped while any required or invalid source disables the new chain.
+Runtime baking and QSG shader injection use Qt's versioned `GuiPrivate` and
+`ShaderToolsPrivate` APIs. Builds therefore require private headers matching
+the installed Qt runtime, and Qt upgrades may require a rebuild or adaptation;
+the content cache key includes the Qt version.
+
+Animation is paced by `frameSwapped` and updates only the retained effect
+items and immutable uniform snapshot. It does not rebuild the terminal frame
+or dirty its row caches. `false`, `true`, and `always` map to never, focused,
+and always animation respectively. The pipeline requires Qt Quick's OpenGL or
+Vulkan RHI backend. Other backends leave the terminal unfiltered and report a
+diagnostic instead of attempting an approximate shader result.
 
 The renderer resolves configured selection, search, and cursor cell-relative
 aliases against each cell's visual colors, applies Ghostty's bold

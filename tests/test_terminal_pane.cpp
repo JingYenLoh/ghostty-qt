@@ -423,6 +423,8 @@ class TerminalPaneTest : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void disabledCustomShadersAvoidOffscreenRenderLayers();
+    void delegatedCustomShaderRenderingTearsDownDirectPaintNode();
     void presentsScrollbarFromRetainedMetadata();
     void routesWaitAfterCommandDismissalSeparatelyFromHold();
     void presentsAbnormalExitUntilExplicitDismissal();
@@ -530,6 +532,31 @@ private Q_SLOTS:
     void routesNamedKeyTablesAndClearsThemOnReload();
     void rejectsMalformedFrontendActionsWithoutSideEffects();
 };
+
+void TerminalPaneTest::disabledCustomShadersAvoidOffscreenRenderLayers()
+{
+    LaunchOptions options;
+    QVERIFY(options.customShaders.sources.isEmpty());
+
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+
+    QVERIFY(pane.flags().testFlag(QQuickItem::ItemHasContents));
+    for (QQuickItem *const child : pane.childItems()) {
+        QVERIFY(!child->flags().testFlag(QQuickItem::ItemHasContents));
+    }
+    QVERIFY(pane.findChildren<TerminalCustomShaderEffect *>().isEmpty());
+}
+
+void TerminalPaneTest::delegatedCustomShaderRenderingTearsDownDirectPaintNode()
+{
+    LaunchOptions options;
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+
+    QVERIFY(terminalPaneDelegatedPaintNodeTeardownForTest(&pane));
+    QVERIFY(pane.flags().testFlag(QQuickItem::ItemHasContents));
+}
 
 void TerminalPaneTest::routesWaitAfterCommandDismissalSeparatelyFromHold()
 {

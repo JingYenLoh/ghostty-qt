@@ -277,6 +277,15 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
              TerminalBackgroundImagePosition::BottomRight);
     QCOMPARE(values.background.image.fit, TerminalBackgroundImageFit::Cover);
     QVERIFY(values.background.image.repeat);
+    QCOMPARE(values.customShaders.sources.size(), qsizetype{2});
+    QCOMPARE(values.customShaders.sources.at(0).path,
+             QStringLiteral("/work/shaders/first.glsl"));
+    QVERIFY(!values.customShaders.sources.at(0).optional);
+    QCOMPARE(values.customShaders.sources.at(1).path,
+             QStringLiteral("/work/shaders/optional.glsl"));
+    QVERIFY(values.customShaders.sources.at(1).optional);
+    QCOMPARE(values.customShaders.animation,
+             TerminalCustomShaderAnimation::Always);
     QCOMPARE(appearance.palette.size(), qsizetype{256});
     for (qsizetype index = 0; index < appearance.palette.size(); ++index) {
         const int component = static_cast<int>(index);
@@ -791,6 +800,18 @@ void GhosttyConfigExportTest::parsesEveryEnumSpelling()
             }),
         [](const GhosttyConfigValues &values) {
             return values.background.image.fit;
+        });
+    verifyMappings(
+        QLatin1StringView("custom-shader-animation"),
+        std::to_array<
+            std::pair<QLatin1StringView, TerminalCustomShaderAnimation>>({
+            {QLatin1StringView("false"), TerminalCustomShaderAnimation::Never},
+            {QLatin1StringView("true"), TerminalCustomShaderAnimation::Focused},
+            {QLatin1StringView("always"),
+             TerminalCustomShaderAnimation::Always},
+        }),
+        [](const GhosttyConfigValues &values) {
+            return values.customShaders.animation;
         });
     verifyMappings(
         QLatin1StringView("window-padding-balance"),
@@ -1925,6 +1946,8 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("background-image-position"),
              QStringLiteral("background-image-fit"),
              QStringLiteral("background-image-repeat"),
+             QStringLiteral("custom-shader"),
+             QStringLiteral("custom-shader-animation"),
              QStringLiteral("font-feature"),
              QStringLiteral("font-variation"),
              QStringLiteral("font-variation-bold"),
@@ -2738,6 +2761,27 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("background-image-repeat-type")
         << withValue(object(), QStringLiteral("background-image-repeat"), 1)
         << QStringLiteral("values.background-image-repeat must be a boolean");
+    QTest::newRow("custom-shader-type")
+        << withValue(object(), QStringLiteral("custom-shader"), QJsonObject{})
+        << QStringLiteral("values.custom-shader must be an array");
+    QTest::newRow("custom-shader-member")
+        << withValue(object(), QStringLiteral("custom-shader"),
+                     QJsonArray{QJsonValue::Null})
+        << QStringLiteral("values.custom-shader[0] must be an object");
+    QTest::newRow("custom-shader-relative")
+        << withValue(object(), QStringLiteral("custom-shader"),
+                     QJsonArray{finalizedConfigPath(
+                         QStringLiteral("relative-shader.glsl"))})
+        << QStringLiteral(
+               "values.custom-shader[0].path must be a finalized absolute path");
+    QTest::newRow("custom-shader-optional-type")
+        << withValue(object(), QStringLiteral("custom-shader"),
+                     QJsonArray{QJsonObject{
+                         {QStringLiteral("path"),
+                          QStringLiteral("/work/shader.glsl")},
+                         {QStringLiteral("optional"), QStringLiteral("true")},
+                     }})
+        << QStringLiteral("values.custom-shader[0].optional must be a boolean");
     QTest::newRow("window-padding-x-type")
         << withValue(object(), QStringLiteral("window-padding-x"), true)
         << QStringLiteral("values.window-padding-x must be an array");
@@ -2872,6 +2916,7 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
              QStringLiteral("window-theme"),
              QStringLiteral("window-subtitle"),
              QStringLiteral("fullscreen"),
+             QStringLiteral("custom-shader-animation"),
              QStringLiteral("cursor-style"),
              QStringLiteral("confirm-close-surface"),
              QStringLiteral("copy-on-select"),

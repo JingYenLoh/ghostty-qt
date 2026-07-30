@@ -2,13 +2,14 @@
 
 #include <QtGlobal>
 
+class TerminalPane;
+class QQuickItem;
+
 #ifdef GHOSTTY_QT_RENDER_TEST_PROBE
 
 #include "terminal_session_options.h"
 
 #include <optional>
-
-class TerminalPane;
 
 #endif
 
@@ -22,6 +23,8 @@ void publishInitialGeometryProbe(
     const std::optional<TerminalSessionGeometry> &geometry);
 
 #endif
+
+[[nodiscard]] QQuickItem *createRenderItem(TerminalPane *pane);
 
 inline constexpr qreal linkPreviewHorizontalPadding = 8.0;
 inline constexpr qreal linkPreviewVerticalPadding = 4.0;

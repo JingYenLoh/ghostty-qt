@@ -148,6 +148,7 @@ LaunchOptions applyGhosttyConfigSnapshot(const LaunchOptions &base,
     result.configuredTitle = config.title;
     result.appearance = config.appearance;
     result.background = config.background;
+    result.customShaders = config.customShaders;
     result.backgroundBlur = config.backgroundBlur;
     result.padding = config.padding;
     result.splitAppearance = config.splitAppearance;

@@ -120,6 +120,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: terminalCustomShaderStageFactory
+        TerminalShaderStage {}
+    }
+
+    Component {
         id: terminalBellBorderFactory
         BellBorderOverlay {}
     }
@@ -286,6 +291,7 @@ ApplicationWindow {
         resizeOverlayComponent: terminalResizeOverlayFactory
         scrollbarComponent: terminalScrollBarFactory
         bellBorderComponent: terminalBellBorderFactory
+        customShaderStageComponent: terminalCustomShaderStageFactory
         onWindowAttentionRequested: window.alert(0)
     }
 

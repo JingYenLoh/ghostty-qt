@@ -494,6 +494,13 @@ inline QJsonObject values()
          QStringLiteral("bottom-right")},
         {QStringLiteral("background-image-fit"), QStringLiteral("cover")},
         {QStringLiteral("background-image-repeat"), true},
+        {QStringLiteral("custom-shader"),
+         QJsonArray{
+             finalizedConfigPath(QStringLiteral("/work/shaders/first.glsl")),
+             finalizedConfigPath(QStringLiteral("/work/shaders/optional.glsl"),
+                                 true),
+         }},
+        {QStringLiteral("custom-shader-animation"), QStringLiteral("always")},
         {QStringLiteral("unfocused-split-opacity"), 0.7},
         {QStringLiteral("unfocused-split-fill"), QJsonValue::Null},
         {QStringLiteral("split-divider-color"), QStringLiteral("#778899")},

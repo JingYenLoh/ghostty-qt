@@ -3,6 +3,7 @@
 #include "application_shell_options.h"
 #include "ghostty_config_path.h"
 #include "modifier_remap_types.h"
+#include "terminal_custom_shader_options.h"
 #include "terminal_initial_input.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
@@ -208,6 +209,9 @@ struct GhosttyConfigValues {
     // avoids rebuilding it whenever a snapshot is projected to LaunchOptions.
     TerminalAppearance appearance;
     TerminalBackgroundOptions background;
+    // Ordered, finalized paths and animation policy for the frontend-owned
+    // ShaderToy post-processing pipeline.
+    TerminalCustomShaderOptions customShaders;
     // Exact pinned Ghostty C value: -2/-1 select the macOS glass sentinels,
     // zero disables blur, and 1..255 retain the configured radius.
     qint16 backgroundBlur = 0;

@@ -125,6 +125,10 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     ShaderTools
     Widgets
 )
+find_package(Qt6 6.8 REQUIRED COMPONENTS
+    GuiPrivate
+    ShaderToolsPrivate
+)
 find_package(LayerShellQt REQUIRED)
 find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
@@ -743,6 +747,7 @@ add_library(ghostty-qt-config-export STATIC
     src/ghostty_config_export.h
     src/ghostty_config_values.h
     src/ghostty_keybind_config.h
+    src/terminal_custom_shader_options.h
     src/terminal_command.h
 )
 target_include_directories(ghostty-qt-config-export PUBLIC
@@ -776,6 +781,11 @@ target_compile_options(ghostty-qt-terminal-bell PRIVATE
 )
 
 add_library(ghostty-qt-terminal-rendering STATIC
+    src/terminal_custom_shader_compiler.cpp
+    src/terminal_custom_shader_compiler.h
+    src/terminal_custom_shader_options.h
+    src/terminal_custom_shader_qsg.cpp
+    src/terminal_custom_shader_qsg.h
     src/terminal_backdrop.cpp
     src/terminal_backdrop.h
     src/terminal_backdrop_qsg.cpp
@@ -795,6 +805,9 @@ target_link_libraries(ghostty-qt-terminal-rendering
         Qt6::Core
         Qt6::Gui
         Qt6::Quick
+        ghostty-qt-config-export
+    PRIVATE
+        Qt6::ShaderToolsPrivate
 )
 target_compile_options(ghostty-qt-terminal-rendering PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
@@ -815,6 +828,25 @@ qt_add_shaders(
     OUTPUTS
         terminal_backdrop.vert.qsb
         terminal_backdrop.frag.qsb
+)
+qt_add_shaders(
+    ghostty-qt-terminal-rendering
+    ghostty_qt_terminal_custom_shader_shaders
+
+    BATCHABLE
+    NOHLSL
+    NOMSL
+    GLSL
+        "300 es,330,430"
+
+    PREFIX
+        "/ghostty-qt/shaders"
+
+    FILES
+        shaders/terminal_custom_shader.vert
+
+    OUTPUTS
+        terminal_custom_shader.vert.qsb
 )
 qt_add_shaders(
     ghostty-qt-terminal-rendering
@@ -860,6 +892,7 @@ ghostty_qt_add_internal_library(ghostty-qt-launch-options
     src/terminal_appearance.h
     src/terminal_clipboard_codepoint_map.h
     src/terminal_color_scheme.h
+    src/terminal_custom_shader_options.h
     src/terminal_session_options.h
 )
 target_link_libraries(ghostty-qt-launch-options PUBLIC
@@ -1053,6 +1086,8 @@ qt_add_executable(ghostty-qt
     src/terminal_action_result.h
     src/terminal_appearance.h
     src/terminal_command.h
+    src/terminal_custom_shader_qml.h
+    src/terminal_custom_shader_options.h
     src/terminal_osc8_index.h
     src/terminal_pane.cpp
     src/terminal_pane.h
@@ -1085,6 +1120,7 @@ qt_add_qml_module(ghostty-qt
         qml/SearchOverlay.qml
         qml/TabOverview.qml
         qml/TerminalScrollBar.qml
+        qml/TerminalShaderStage.qml
         qml/AppToast.qml
 )
 

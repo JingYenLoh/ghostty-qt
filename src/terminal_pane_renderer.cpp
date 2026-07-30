@@ -37,6 +37,30 @@
 #include <span>
 #include <utility>
 
+class TerminalPaneRenderItem final : public QQuickItem {
+public:
+    explicit TerminalPaneRenderItem(TerminalPane *pane)
+        : QQuickItem(pane)
+        , pane_(pane)
+    {
+        setFlag(QQuickItem::ItemHasContents, true);
+        setAcceptedMouseButtons(Qt::NoButton);
+        setZ(-1'000.0);
+    }
+
+protected:
+    QSGNode *updatePaintNode(QSGNode *oldNode,
+                             UpdatePaintNodeData *updateData) override
+    {
+        return pane_ != nullptr
+            ? pane_->updateTerminalPaintNode(oldNode, updateData)
+            : oldNode;
+    }
+
+private:
+    TerminalPane *pane_ = nullptr;
+};
+
 qreal TerminalPaneRenderer::normalizedDevicePixelRatio(qreal value) noexcept
 {
     return std::isfinite(value) && value > 0.0 ? value : 1.0;
@@ -55,6 +79,11 @@ qint64 TerminalPaneRenderer::physicalPixels(qreal logicalPixels,
         return std::numeric_limits<qint64>::max();
     }
     return std::max<qint64>(0, qRound64(physical));
+}
+
+QQuickItem *TerminalPaneRenderer::createRenderItem(TerminalPane *pane)
+{
+    return pane != nullptr ? new TerminalPaneRenderItem(pane) : nullptr;
 }
 
 namespace {
@@ -1432,6 +1461,31 @@ terminalPaneRenderProbe(const TerminalPane *pane)
     return renderProbes.value(pane);
 }
 
+bool terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane)
+{
+    if (pane == nullptr || pane->renderItem_ != nullptr) return false;
+
+    class LifetimeNode final : public QSGNode {
+    public:
+        explicit LifetimeNode(bool *destroyed)
+            : destroyed_(destroyed)
+        {}
+
+        ~LifetimeNode() override { *destroyed_ = true; }
+
+    private:
+        bool *destroyed_ = nullptr;
+    };
+
+    bool destroyed = false;
+    pane->renderItem_ = TerminalPaneRenderer::createRenderItem(pane);
+    QSGNode *const result =
+        pane->updatePaintNode(new LifetimeNode(&destroyed), nullptr);
+    pane->useDirectTerminalRendering();
+    return result == nullptr && destroyed && pane->renderItem_ == nullptr
+        && pane->flags().testFlag(QQuickItem::ItemHasContents);
+}
+
 QColor terminalMinimumContrastColorForTest(const QColor &foreground,
                                            const QColor &cellBackground,
                                            const QColor &globalBackground,
@@ -1442,7 +1496,18 @@ QColor terminalMinimumContrastColorForTest(const QColor &foreground,
 }
 #endif
 
-QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
+QSGNode *TerminalPane::updatePaintNode(QSGNode *oldNode,
+                                       UpdatePaintNodeData *updateData)
+{
+    if (renderItem_ != nullptr) {
+        delete oldNode;
+        return nullptr;
+    }
+    return updateTerminalPaintNode(oldNode, updateData);
+}
+
+QSGNode *TerminalPane::updateTerminalPaintNode(QSGNode *oldNode,
+                                               UpdatePaintNodeData *)
 {
     auto *root = oldNode != nullptr ? static_cast<TerminalSceneNode *>(oldNode)
                                     : new TerminalSceneNode;

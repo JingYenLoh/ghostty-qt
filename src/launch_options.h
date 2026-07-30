@@ -5,6 +5,7 @@
 #include "ghostty_config_snapshot.h"
 #include "ghostty_config_values.h"
 #include "modifier_remap_types.h"
+#include "terminal_custom_shader_options.h"
 #include "terminal_initial_input.h"
 #include "terminal_session_options.h"
 #include "terminal_typography.h"
@@ -90,6 +91,9 @@ struct LaunchOptions {
     // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
     // without waking SessionWorker or mutating libghostty terminal state.
     TerminalBackgroundOptions background;
+    // Live frontend-only post-processing. This deliberately stays outside
+    // TerminalSessionRuntimeOptions because no libghostty state is involved.
+    TerminalCustomShaderOptions customShaders;
     // Frontend-owned pinned Ghostty blur value. Keep its two negative glass
     // sentinels intact even though Linux treats either as an enabled blur.
     qint16 backgroundBlur = 0;

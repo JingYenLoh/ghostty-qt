@@ -84,6 +84,77 @@ target_link_libraries(test-launch-options PRIVATE
 )
 add_test(NAME launch-options COMMAND test-launch-options)
 
+qt_add_executable(test-terminal-custom-shader-compiler
+    test_terminal_custom_shader_compiler.cpp
+)
+target_include_directories(test-terminal-custom-shader-compiler PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-custom-shader-compiler PRIVATE
+    Qt6::Core
+    Qt6::GuiPrivate
+    Qt6::ShaderToolsPrivate
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-custom-shader-compiler
+    COMMAND test-terminal-custom-shader-compiler)
+set_tests_properties(terminal-custom-shader-compiler PROPERTIES TIMEOUT 30)
+
+qt_add_executable(test-terminal-custom-shader-qsg
+    test_terminal_custom_shader_qsg.cpp
+)
+target_include_directories(test-terminal-custom-shader-qsg PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-custom-shader-qsg PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-custom-shader-qsg
+    COMMAND test-terminal-custom-shader-qsg)
+set_tests_properties(terminal-custom-shader-qsg PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+)
+
+qt_add_executable(test-terminal-custom-shader-rhi
+    test_terminal_custom_shader_rhi.cpp
+)
+target_include_directories(test-terminal-custom-shader-rhi PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-terminal-custom-shader-rhi PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::GuiPrivate
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::Test
+    ghostty-qt-terminal-rendering
+)
+add_test(NAME terminal-custom-shader-rhi
+    COMMAND test-terminal-custom-shader-rhi)
+set_tests_properties(terminal-custom-shader-rhi PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT
+        "LIBGL_ALWAYS_SOFTWARE=1;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=opengl;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
+)
+add_test(NAME terminal-custom-shader-vulkan-rhi
+    COMMAND test-terminal-custom-shader-rhi)
+set_tests_properties(terminal-custom-shader-vulkan-rhi PROPERTIES
+    TIMEOUT 30
+    ENVIRONMENT
+        "GHOSTTY_QT_SHADER_TEST_BACKEND=vulkan;QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=vulkan;QT_SCALE_FACTOR=1"
+    SKIP_REGULAR_EXPRESSION
+        "SKIP.*platform cannot initialize the requested RHI context"
+)
+
 qt_add_executable(test-application-identity
     test_application_identity.cpp
 )
@@ -637,6 +708,34 @@ set_tests_properties(terminal-pane-retained-solids-rhi PROPERTIES
 )
 
 if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
+    qt_add_executable(bench-terminal-custom-shader-compiler
+        bench_terminal_custom_shader_compiler.cpp
+    )
+    target_include_directories(
+        bench-terminal-custom-shader-compiler PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-custom-shader-compiler PRIVATE
+        Qt6::Core
+        ghostty-qt-terminal-rendering
+    )
+
+    qt_add_executable(bench-terminal-custom-shader-rhi
+        bench_terminal_custom_shader_rhi.cpp
+    )
+    target_include_directories(
+        bench-terminal-custom-shader-rhi PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    )
+    target_link_libraries(bench-terminal-custom-shader-rhi PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::Test
+        ghostty-qt-terminal-rendering
+    )
+
     qt_add_executable(bench-terminal-pane-renderer
         bench_terminal_pane_renderer.cpp
         ../src/terminal_pane_render_probe_p.h

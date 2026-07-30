@@ -620,6 +620,10 @@ fn writeValues(
     try json.write(@tagName(config.@"background-image-fit"));
     try json.objectField("background-image-repeat");
     try json.write(config.@"background-image-repeat");
+    try json.objectField("custom-shader");
+    try writeConfigPaths(json, &config.@"custom-shader");
+    try json.objectField("custom-shader-animation");
+    try json.write(@tagName(config.@"custom-shader-animation"));
     try json.objectField("unfocused-split-opacity");
     try json.write(config.@"unfocused-split-opacity");
     try json.objectField("unfocused-split-fill");
@@ -1305,6 +1309,10 @@ fn writeOptionalConfigPath(json: *std.json.Stringify, path: ?Config.Path) !void 
         try json.write(null);
         return;
     };
+    try writeConfigPath(json, value);
+}
+
+fn writeConfigPath(json: *std.json.Stringify, value: Config.Path) !void {
     const encoded, const optional = switch (value) {
         .optional => |optional| .{ optional, true },
         .required => |required| .{ required, false },
@@ -1315,6 +1323,12 @@ fn writeOptionalConfigPath(json: *std.json.Stringify, path: ?Config.Path) !void 
     try json.objectField("optional");
     try json.write(optional);
     try json.endObject();
+}
+
+fn writeConfigPaths(json: *std.json.Stringify, paths: *const Config.RepeatablePath) !void {
+    try json.beginArray();
+    for (paths.value.items) |path| try writeConfigPath(json, path);
+    try json.endArray();
 }
 
 fn writeConfigFiles(json: *std.json.Stringify, paths: *const Config.RepeatablePath) !void {

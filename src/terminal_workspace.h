@@ -106,6 +106,10 @@ class TerminalWorkspace : public QQuickItem {
                    setScrollbarComponent NOTIFY scrollbarComponentChanged)
     Q_PROPERTY(QQmlComponent *bellBorderComponent READ bellBorderComponent WRITE
                    setBellBorderComponent NOTIFY bellBorderComponentChanged)
+    Q_PROPERTY(
+        QQmlComponent *customShaderStageComponent READ
+            customShaderStageComponent WRITE setCustomShaderStageComponent
+                NOTIFY customShaderStageComponentChanged)
 
 public:
     explicit TerminalWorkspace(QQuickItem *parent = nullptr);
@@ -215,6 +219,11 @@ public:
         return bellBorder_.component.data();
     }
     void setBellBorderComponent(QQmlComponent *component);
+    QQmlComponent *customShaderStageComponent() const
+    {
+        return customShaderStageComponent_.data();
+    }
+    void setCustomShaderStageComponent(QQmlComponent *component);
 
     bool dispatchAction(const WorkspaceActionRequest &request);
     bool executeSurfaceActionOnAllPanes(QStringView action);
@@ -224,6 +233,7 @@ public:
     // Samples committed GUI-thread state and exposes stable identities rather
     // than pane pointers to process-owned consumers such as the palette.
     [[nodiscard]] QVector<WorkspaceSurfaceSnapshot> surfaceSnapshot() const;
+    [[nodiscard]] QString customShaderDiagnostics() const;
 
     Q_INVOKABLE void setCurrentIndex(int index);
     Q_INVOKABLE bool activateTabByStableId(quint64 tabId);
@@ -294,6 +304,8 @@ Q_SIGNALS:
     void resizeOverlayComponentChanged();
     void scrollbarComponentChanged();
     void bellBorderComponentChanged();
+    void customShaderStageComponentChanged();
+    void customShaderDiagnosticsChanged(const QString &diagnostics);
 
 protected:
     void geometryChange(const QRectF &newGeometry,
@@ -563,4 +575,7 @@ private:
     PaneOverlaySlot resizeOverlay_;
     PaneOverlaySlot scrollbar_;
     PaneOverlaySlot bellBorder_;
+    QPointer<QQmlComponent> customShaderStageComponent_;
+    QMetaObject::Connection customShaderStageDestructionConnection_;
+    QHash<PaneId, QString> customShaderDiagnostics_;
 };

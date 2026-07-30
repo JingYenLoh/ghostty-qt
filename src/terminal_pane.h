@@ -10,6 +10,8 @@
 #include "terminal_backdrop.h"
 #include "terminal_bell.h"
 #include "terminal_cell_metrics.h"
+#include "terminal_custom_shader_compiler.h"
+#include "terminal_custom_shader_qsg.h"
 #include "terminal_geometry.h"
 #include "terminal_types.h"
 #include "window_navigation_action.h"
@@ -53,12 +55,22 @@ class QSGNode;
 class QTimer;
 class QWheelEvent;
 class QQuickWindow;
+class QQmlComponent;
 class GhosttyApplicationKeybindings;
 class InitialSessionCoordinator;
 class TerminalController;
+class TerminalPane;
+class TerminalPaneRenderItem;
 
-class TerminalPane final : public QQuickItem {
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+[[nodiscard]] bool
+terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+#endif
+
+class TerminalPane final : public QQuickItem,
+                           public TerminalCustomShaderUniformProvider {
     Q_OBJECT
+    Q_INTERFACES(TerminalCustomShaderUniformProvider)
     QML_NAMED_ELEMENT(TerminalPane)
     QML_UNCREATABLE("TerminalPane instances are owned by TerminalWorkspace")
     Q_PROPERTY(QString title READ title NOTIFY titleChanged)
@@ -178,6 +190,13 @@ public:
     // not interrupt one another. Injection keeps audio devices out of tests.
     void setBellPlaybackDevice(std::unique_ptr<TerminalBellDevice> device);
 
+    [[nodiscard]] TerminalCustomShaderUniformSnapshot
+    terminalCustomShaderUniformSnapshot(int stageIndex) const override;
+    void terminalCustomShaderEffectAttached(TerminalCustomShaderEffect *effect,
+                                            int stageIndex) override;
+    void terminalCustomShaderEffectDetached(TerminalCustomShaderEffect *effect,
+                                            int stageIndex) override;
+
     void focusTerminal();
     void setSurfaceTitle(QString title);
     void setSurfaceTitleOverride(std::optional<QString> title);
@@ -223,6 +242,7 @@ Q_SIGNALS:
     void scrollbarChanged();
     void bellChanged();
     void bellRang(TerminalPane *pane);
+    void customShaderDiagnosticChanged(const QString &diagnostic);
     void requestNewTab();
     void requestSplit(WorkspaceAction action);
     void requestClose();
@@ -270,7 +290,12 @@ protected:
 
 private:
     friend class GhosttyApplicationKeybindings;
+    friend class TerminalPaneRenderItem;
     friend class TerminalWorkspace;
+#ifdef GHOSTTY_QT_RENDER_TEST_PROBE
+    friend bool
+    terminalPaneDelegatedPaintNodeTeardownForTest(TerminalPane *pane);
+#endif
 
     enum class KeyHandling {
         PassThrough,
@@ -430,6 +455,24 @@ private:
     void clearSearchDecorationsLocked();
     void updateScrollbarState();
     void setBellRinging(bool ringing);
+    void setCustomShaderStageComponent(QQmlComponent *component);
+    void reloadCustomShaders(const TerminalCustomShaderOptions &options);
+    void publishCustomShaderDiagnostic();
+    void rebuildCustomShaderStages();
+    void clearCustomShaderStages();
+    void useDirectTerminalRendering();
+    void syncCustomShaderStageGeometry();
+    [[nodiscard]] bool customShaderRenderingSupported() const;
+    [[nodiscard]] std::shared_ptr<TerminalCustomShaderUniforms>
+    acquireCustomShaderUniformSnapshotLocked();
+    void refreshCustomShaderUniformBase();
+    void prepareCustomShaderFrame();
+    [[nodiscard]] bool updateCustomShaderEffects();
+    void scheduleCustomShaderAnimationFrame();
+    [[nodiscard]] bool shouldAnimateCustomShaders() const;
+    QSGNode *updateTerminalPaintNode(QSGNode *oldNode,
+                                     UpdatePaintNodeData *updateData);
+    void requestRenderUpdate();
 
     LaunchOptions options_;
     // Mirrored separately so the render thread can take a value-only snapshot
@@ -442,6 +485,27 @@ private:
     ModifierRemapTracker modifierRemaps_;
     RevisionCounter runtimeOptionsRevision_;
     TerminalController *controller_ = nullptr;
+    // Terminal pixels live in a dedicated child so custom post-processing
+    // never captures pane-local QML overlays or input affordances.
+    QQuickItem *renderItem_ = nullptr;
+    QPointer<QQmlComponent> customShaderStageComponent_;
+    QVector<QPointer<QQuickItem>> customShaderStageItems_;
+    QVector<TerminalCustomShaderStage> customShaderStages_;
+    quint64 customShaderCompileGeneration_ = 0;
+    QString customShaderCompileDiagnostic_;
+    QString customShaderRenderDiagnostic_;
+    QString customShaderDiagnostic_;
+    mutable QMutex customShaderUniformMutex_;
+    TerminalCustomShaderUniformSnapshot customShaderUniforms_ =
+        std::make_shared<const TerminalCustomShaderUniforms>();
+    QVector<std::shared_ptr<TerminalCustomShaderUniforms>>
+        customShaderUniformPool_;
+    QVector<QPointer<TerminalCustomShaderEffect>> customShaderEffects_;
+    std::optional<std::chrono::steady_clock::time_point>
+        customShaderFirstFrameTime_;
+    std::optional<std::chrono::steady_clock::time_point>
+        customShaderLastFrameTime_;
+    bool customShaderFramePending_ = false;
     std::optional<QString> surfaceTitleOverride_;
     TerminalCellMetrics metrics_;
     double defaultFontPointSize_ = 12.0;
@@ -503,6 +567,8 @@ private:
     QMetaObject::Connection windowVisibilityConnection_;
     QMetaObject::Connection windowStateConnection_;
     QMetaObject::Connection windowFrameSwappedConnection_;
+    QMetaObject::Connection windowSceneGraphInitializedConnection_;
+    QMetaObject::Connection customShaderFrameSwappedConnection_;
     QPointer<QQuickWindow> observedWindow_;
     TerminalSessionStartMode sessionStartMode_ =
         TerminalSessionStartMode::Immediate;

@@ -36,7 +36,8 @@ current compatibility boundary.
 
 - Linux with a Wayland session and the Qt Wayland platform plugin.
 - Qt 6.8 or newer with Core, D-Bus, Gui, Multimedia, Qml, Quick,
-  Quick Controls 2, ShaderTools, Widgets, and Qt Test development components.
+  Quick Controls 2, ShaderTools, Widgets, and Qt Test development components,
+  including matching GuiPrivate and ShaderToolsPrivate headers.
 - LayerShellQt.
 - KF6 WindowSystem is optional; when present, it enables `background-blur` on
   KDE Plasma Wayland.
