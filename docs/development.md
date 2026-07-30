@@ -197,11 +197,10 @@ baseline. The loader does not parse or merge the human-oriented
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, and
-`+validate-config`. One shared catalog records every pinned action spelling
-and its explicit frontend support decision, so known-but-unsupported actions
-remain distinguishable from invalid spellings without maintaining parallel
-allowlists.
+`+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`, `+validate-config`, and
+`+version`. One shared catalog records every pinned action spelling and its
+explicit frontend support decision, so known-but-unsupported actions remain
+distinguishable from invalid spellings without maintaining parallel allowlists.
 The frontend classifies raw arguments and uses Linux `execv` before QString
 conversion or Qt initialization; it does not reuse the buffered, timeout-bound
 `QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
@@ -341,7 +340,8 @@ The five focused config tests have distinct boundaries:
   `clear`/`unbind` result, and structured sequences, chains, catch-all
   triggers, flags, and named-table transport.
 - `ghostty-config-helper-smoke` runs the actual helper against the exact pinned
-  parser with an isolated `XDG_CONFIG_HOME`.
+  parser with an isolated `XDG_CONFIG_HOME`; the delegation matrix compares
+  `+version` byte-for-byte between direct-helper and frontend execution.
 - `ghostty-cli-delegation` combines allocation-free classifier cases with a
   byte-framed fake helper, every delegated real action, invalid and reordered
   action options, the pinned editor exec and selection contract, deterministic

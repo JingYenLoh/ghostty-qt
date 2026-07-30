@@ -283,6 +283,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/Entry.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/show_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/validate_config.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/version.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"

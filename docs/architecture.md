@@ -2421,7 +2421,8 @@ the frontend classifies raw `argv`. The frontend's documented `--` command delim
 detection before its terminal payload. An exact earlier `-e` also suppresses
 delegation to match pinned Ghostty's detector ordering, although `-e` itself
 remains unsupported by the frontend launch parser. Standalone frontend
-help/version remain separate, deferred actions and the private
+`--help`/`--version` remain separate while pinned `+version` is delegated,
+deferred actions and the private
 `+show-config-json` protocol are rejected, and multiple actions fail closed.
 The helper repeats the same allowlist check, while accepting the private export
 only in its canonical first-argument form, so a mixed invocation cannot select
@@ -2764,7 +2765,8 @@ The default CTest suite has focused layers for each ownership boundary:
   process replacement; byte-exact argv, stdin, stdout, and stderr; environment,
   working-directory, and exit-status preservation; missing/unexecutable-helper
   and config-disabled failures; every delegated real pinned action;
-  action-option order; pre-Qt operation; direct-helper equivalence; the
+  action-option order; pre-Qt operation; direct-helper equivalence, including
+  the detailed `+version` report; the
   `+edit-config` editor exec, preferred-file creation, path escaping, and
   environment precedence; plus SSH child argv/streams/status, terminfo fallback
   and cache suppression, and isolated SSH-cache lifecycle and file-mode repair.

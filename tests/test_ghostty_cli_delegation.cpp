@@ -451,6 +451,8 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
     QTest::addColumn<QByteArray>("marker");
     QTest::addColumn<int>("expectedExitCode");
 
+    QTest::newRow("version") << QStringList{QStringLiteral("+version")}
+                             << QByteArrayLiteral("Build Config") << 0;
     QTest::newRow("help")
         << QStringList{QStringLiteral("+help")}
         << QByteArrayLiteral("Available actions:") << 0;

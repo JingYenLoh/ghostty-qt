@@ -1644,8 +1644,8 @@
           "note": "Delegates the pinned validation implementation with raw arguments, streams, and exit status preserved."
         },
         "version": {
-          "status": "partial",
-          "note": "--version exists; Ghostty +version details do not."
+          "status": "supported",
+          "note": "Delegates the pinned detailed version report through the relocatable helper before Qt starts. It reports the exact Ghostty revision and release channel; its Zig mode, app-runtime=none, FreeType backend, OpenGL renderer type, and libxev backend describe the embedded helper build, not ghostty-qt's Qt runtime or renderer. The frontend's ordinary --version remains a separate concise ghostty-qt version."
         }
       }
     }

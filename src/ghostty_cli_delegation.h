@@ -34,7 +34,7 @@ struct GhosttyCliActionCatalogEntry final {
 // an action can be valid Ghostty syntax without being handled by ghostty-qt.
 inline constexpr auto GhosttyPinnedCliActions =
     std::to_array<GhosttyCliActionCatalogEntry>({
-        {"+version", GhosttyCliFrontendSupport::Unsupported},
+        {"+version", GhosttyCliFrontendSupport::Delegated},
         {"+help", GhosttyCliFrontendSupport::Delegated},
         {"+list-fonts", GhosttyCliFrontendSupport::Unsupported},
         {"+list-keybinds", GhosttyCliFrontendSupport::Delegated},
