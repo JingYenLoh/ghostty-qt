@@ -1175,8 +1175,10 @@ visibility, `search_selection` copies the current untrimmed selection into the
 overlay, `navigate_search:next|previous` changes the selected result, and
 `end_search` stops the engine and hides the overlay. The entry debounces edits,
 shows progressive selected/total status, and maps Enter, Shift+Enter, and
-Escape to next, previous, and end. It is anchored at the top-right and is not
-draggable yet.
+Escape to next, previous, and end. It defaults to the top-right. A dedicated
+non-focusing grip drags within the pane and snaps the overlay to the nearest
+corner on release; that corner remains local to the pane across hide/show
+cycles.
 
 Search, read-only, resize, scrollbar, and bell-border overlays use the same
 guarded factory lifecycle.

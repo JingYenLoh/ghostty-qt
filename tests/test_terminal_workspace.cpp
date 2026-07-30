@@ -452,6 +452,7 @@ private Q_SLOTS:
     void abnormalExitOverlayPresentsHeldFailureAndCloses();
     void overlayComponentsShareOneLifecycle();
     void keyStateOverlayPresentsAndRetainsPerPaneDragPosition();
+    void searchOverlaySnapsAndRetainsPerPaneCorner();
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void scrollbarOverlayIsPaneLocalAndReloadable();
@@ -4569,6 +4570,128 @@ void TerminalWorkspaceTest::
     QCOMPARE(firstOverlay->property("alignTop").toBool(), true);
 
     workspace.reset();
+    window.close();
+}
+
+void TerminalWorkspaceTest::searchOverlaySnapsAndRetainsPerPaneCorner()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+    const auto coordinator = std::make_shared<InitialSessionCoordinator>();
+    const InitialSessionCoordinator::RequestResult reservation =
+        coordinator->request();
+    QVERIFY(reservation.granted());
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/SearchOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    QVERIFY(workspace->initialize(options, TerminalSessionStartMode::Immediate,
+                                  coordinator));
+    workspace->setSearchOverlayComponent(&overlayComponent);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *const firstOverlay = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalSearchOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(firstOverlay != nullptr);
+    QVERIFY(!firstOverlay->isVisible());
+
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("start_search")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QCOMPARE(firstOverlay->property("alignLeft").toBool(), false);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), true);
+    QVERIFY(qAbs(firstOverlay->x()
+                 - (firstPane->width() - firstOverlay->width() - 8.0))
+            < 0.01);
+    QVERIFY(qAbs(firstOverlay->y() - 8.0) < 0.01);
+
+    QQuickItem *const dragArea = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalSearchDragArea"));
+    QQuickItem *const searchField = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalSearchField"));
+    QVERIFY(dragArea != nullptr);
+    QVERIFY(searchField != nullptr);
+    searchField->forceActiveFocus();
+    QTRY_COMPARE_WITH_TIMEOUT(window.activeFocusItem(), searchField, 1000);
+    QQuickItem *const focusBeforeDrag = window.activeFocusItem();
+    const QPoint dragStart = dragArea
+                                 ->mapToScene(QPointF(dragArea->width() / 2.0,
+                                                      dragArea->height() / 2.0))
+                                 .toPoint();
+    const QPoint dragEnd =
+        firstPane
+            ->mapToScene(
+                QPointF(12.0, std::max(12.0, firstPane->height() - 12.0)))
+            .toPoint();
+    const QPoint dragMidpoint((dragStart.x() + dragEnd.x()) / 2,
+                              (dragStart.y() + dragEnd.y()) / 2);
+    QVERIFY(dragArea->width() > 0.0);
+    QVERIFY(dragArea->height() > 0.0);
+    QTest::mouseMove(&window, dragStart);
+    QVERIFY(window.mouseGrabberItem() == nullptr);
+    QVERIFY(firstOverlay->isVisible());
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, dragStart);
+    QVERIFY(firstOverlay->property("dragging").toBool());
+    QCOMPARE(window.mouseGrabberItem(), dragArea);
+    QTest::mouseMove(&window, dragMidpoint, 20);
+    QTest::mouseMove(&window, dragEnd, 20);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, dragEnd);
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->property("alignLeft").toBool(),
+                             1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->property("alignTop").toBool(),
+                             1000);
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(firstOverlay->x() - 8.0) < 0.01, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        qAbs(firstOverlay->y()
+             - (firstPane->height() - firstOverlay->height() - 8.0))
+            < 0.01,
+        1000);
+    QCOMPARE(window.activeFocusItem(), focusBeforeDrag);
+
+    firstPane->endSearchUi();
+    QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
+    QVERIFY(firstPane->executeConfiguredAction(QStringLiteral("start_search")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QCOMPARE(firstOverlay->property("alignLeft").toBool(), true);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), false);
+
+    workspace->splitRight();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 1000);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *const secondOverlay = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalSearchOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(secondOverlay != nullptr);
+    QVERIFY(
+        secondPane->executeConfiguredAction(QStringLiteral("start_search")));
+    QTRY_VERIFY_WITH_TIMEOUT(secondOverlay->isVisible(), 1000);
+    QCOMPARE(secondOverlay->property("alignLeft").toBool(), false);
+    QCOMPARE(secondOverlay->property("alignTop").toBool(), true);
+    QCOMPARE(firstOverlay->property("alignLeft").toBool(), true);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), false);
+
+    workspace.reset();
+    QVERIFY(coordinator->cancel(reservation.ticket));
     window.close();
 }
 
