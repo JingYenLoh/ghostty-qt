@@ -226,6 +226,9 @@ private:
     void stopSelectionAutoscroll();
     void clearSelectionAfterKey(bool modifier, bool escape);
     bool keyboardInputSuppressed() const;
+    [[nodiscard]] Qt::KeyboardModifiers
+    modifiersAfterTerminalKey(const TerminalKeyInput &input) const;
+    void releaseHeldTerminalModifiers();
     void syncKeyboardActionMode();
     [[nodiscard]] QString clipboardSelectionText();
     void copySelectionTo(TerminalClipboardDestination destination,
@@ -256,6 +259,7 @@ private:
     QHash<quint64, QString> pendingPastes_;
     quint64 nextPasteRequestId_ = 0;
     QByteArray stagedSequenceBytes_;
+    Qt::KeyboardModifiers stagedSequenceModifiers_ = Qt::NoModifier;
     quint64 newestSequenceToken_ = 0;
     quint64 activeSequenceToken_ = 0;
     bool stagedSequencePotentialActivity_ = false;
@@ -276,6 +280,7 @@ private:
     bool activeProcess_ = false;
     bool selectionAvailable_ = false;
     bool readOnly_ = false;
+    Qt::KeyboardModifiers heldTerminalModifiers_ = Qt::NoModifier;
     QElapsedTimer childRuntimeTimer_;
     QElapsedTimer potentialActivityTimer_;
     QElapsedTimer cursorBlinkResetTimer_;

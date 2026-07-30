@@ -1,3 +1,4 @@
+#include "ghostty_vt_adapter.h"
 #include "session_worker.h"
 #include "terminal_types.h"
 #include "terminfo_paths.h"
@@ -269,6 +270,7 @@ private Q_SLOTS:
     void sendsTerminalControlActionsThroughPty();
     void pastesTerminalFilePathAsRawOrderedInput();
     void readOnlyBlocksSurfaceInputButPreservesProtocolReplies();
+    void releasesHeldModifiersBeforeFocusOut();
     void appliesLiveEnquiryResponse();
     void stagesAndResolvesSequenceBytes();
     void stagesSequenceKeysUsingModesAtStageTime();
@@ -3820,6 +3822,148 @@ void SessionWorkerTest::readOnlyBlocksSurfaceInputButPreservesProtocolReplies()
              errorSpy.isEmpty()
                  ? ""
                  : qPrintable(errorSpy.constFirst().constFirst().toString()));
+    worker.shutdown();
+}
+
+void SessionWorkerTest::releasesHeldModifiersBeforeFocusOut()
+{
+    qRegisterMetaType<TerminalUpdate>();
+
+    auto expectedAdapter = GhosttyVtAdapter::create({});
+    QVERIFY(expectedAdapter != nullptr);
+    expectedAdapter->writeVt(QByteArrayLiteral("\033[>11u\033[?1004h"));
+
+    TerminalKeyInput control;
+    control.key = Qt::Key_Control;
+    control.modifiers = Qt::ControlModifier;
+    control.nativeScanCode = KEY_LEFTCTRL + 8U;
+    control.pressed = true;
+
+    TerminalKeyInput shift;
+    shift.key = Qt::Key_Shift;
+    shift.modifiers = Qt::ControlModifier | Qt::ShiftModifier;
+    shift.nativeScanCode = KEY_LEFTSHIFT + 8U;
+    shift.pressed = true;
+
+    QByteArray expected = expectedAdapter->encodeKey(control).bytes;
+    expected.append(expectedAdapter->encodeKey(shift).bytes);
+    const auto appendRelease =
+        [&expected, &expectedAdapter](int key, quint32 scanCode,
+                                      Qt::KeyboardModifiers modifiers) {
+            TerminalKeyInput input;
+            input.key = key;
+            input.modifiers = modifiers;
+            input.nativeScanCode = scanCode;
+            input.pressed = false;
+            expected.append(expectedAdapter->encodeKey(input).bytes);
+        };
+    appendRelease(Qt::Key_Shift, KEY_RIGHTSHIFT + 8U, Qt::ControlModifier);
+    appendRelease(Qt::Key_Shift, KEY_LEFTSHIFT + 8U, Qt::ControlModifier);
+    appendRelease(Qt::Key_Control, KEY_RIGHTCTRL + 8U, Qt::NoModifier);
+    appendRelease(Qt::Key_Control, KEY_LEFTCTRL + 8U, Qt::NoModifier);
+    const QByteArray focusOnly = expectedAdapter->encodeFocus(false);
+    expected.append(focusOnly);
+    QVERIFY(!focusOnly.isEmpty());
+    QVERIFY(!expected.isEmpty());
+
+    QVERIFY(QDir().mkpath(QDir::current().filePath(QStringLiteral("tmp"))));
+    QTemporaryDir controlDirectory(
+        QDir::current().filePath(QStringLiteral("tmp/focus-mods-XXXXXX")));
+    QVERIFY(controlDirectory.isValid());
+    const QString readyMarker =
+        QDir(controlDirectory.path()).filePath(QStringLiteral("ready"));
+
+    TerminalSessionLaunchOptions options;
+    options.workingDirectory = controlDirectory.path();
+    options.program = {
+        QStringLiteral("/bin/sh"),
+        QStringLiteral("-c"),
+        QStringLiteral(
+            "stty raw -echo; "
+            "printf '\\033[>11u\\033[?1004h\\033[2hkam-ready'; "
+            ": > \"$3\"; "
+            "payload=$(dd bs=1 count=\"$1\" 2>/dev/null); "
+            "printf '\\r\\nkam-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\n\\033[2lreadonly-ready'; "
+            "payload=$(dd bs=1 count=\"$1\" 2>/dev/null); "
+            "printf '\\r\\nreadonly-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nsequence-ready'; "
+            "payload=$(dd bs=1 count=\"$1\" 2>/dev/null); "
+            "printf '\\r\\nsequence-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nmodifier-ready'; "
+            "payload=$(dd bs=1 count=\"$2\" 2>/dev/null); "
+            "printf '\\r\\nmodifier-bytes:'; "
+            "printf '%s' \"$payload\" | od -An -v -tx1 | tr -d ' \\n'; "
+            "printf '\\r\\nmodifier-done\\r\\n'"),
+        QStringLiteral("focus-modifier-test"),
+        QString::number(focusOnly.size()),
+        QString::number(expected.size()),
+        readyMarker,
+    };
+    options.hold = true;
+    options.runtime.vtKamAllowed = true;
+
+    SessionWorker worker;
+    QSignalSpy updates(&worker, &SessionWorker::terminalUpdated);
+    QSignalSpy errors(&worker, &SessionWorker::errorOccurred);
+    QVERIFY(worker.initialize(options));
+    QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(readyMarker), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("kam-ready")), 5000);
+
+    // KAM, read-only input, and a dropped leader never reached the terminal,
+    // so none may manufacture a later modifier release.
+    worker.sendKey(control);
+    worker.setFocused(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates,
+                       QStringLiteral("kam-bytes:%1")
+                           .arg(QString::fromLatin1(focusOnly.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("readonly-ready")), 1000);
+
+    worker.setReadOnly(true);
+    worker.sendKey(control);
+    worker.setReadOnly(false);
+    worker.setFocused(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates,
+                       QStringLiteral("readonly-bytes:%1")
+                           .arg(QString::fromLatin1(focusOnly.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("sequence-ready")), 1000);
+
+    worker.stageSequenceKey(1, control);
+    worker.resolveSequence(1, TerminalSequenceResolution::Drop, false, {});
+    worker.setFocused(false);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates,
+                       QStringLiteral("sequence-bytes:%1")
+                           .arg(QString::fromLatin1(focusOnly.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("modifier-ready")), 1000);
+
+    worker.sendKey(control);
+    worker.sendKey(shift);
+    worker.setFocused(false);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates,
+                       QStringLiteral("modifier-bytes:%1")
+                           .arg(QString::fromLatin1(expected.toHex()))),
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        updatesContain(updates, QStringLiteral("modifier-done")), 1000);
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty()
+                 ? ""
+                 : qPrintable(errors.constFirst().constFirst().toString()));
     worker.shutdown();
 }
 

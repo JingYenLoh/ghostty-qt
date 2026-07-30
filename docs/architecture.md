@@ -932,6 +932,14 @@ signals:
   destinations. This presentation policy does not change link detection,
   underline, copy, or activation behavior.
 - Focus changes are encoded only when the terminal requests focus reporting.
+  The worker also retains the post-remap Shift, Control, Alt, and Super
+  families from terminal-directed key events whose bytes actually crossed the
+  read-only and KAM input gates. Before a focus-out report it clears that
+  state and encodes Kitty releases in Ghostty's stable
+  Shift/Control/Alt/Super, right/left order, preventing a dropped physical
+  release from leaving a keyboard-reporting application stuck. Consumed
+  bindings and unresolved or dropped trie leaders never create held state;
+  leaders become observable only when their staged bytes are flushed.
 - Paste classification, retained unsafe text, and encoding stay on
   `SessionWorker`. One adapter operation snapshots Ghostty's current
   bracketed-paste mode for both the exact safety decision and encoding.
