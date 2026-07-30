@@ -1246,6 +1246,76 @@ void ApplicationController::notifyConfigurationReloaded()
     }
 }
 
+void ApplicationController::reportConfigurationFailure(
+    ConfigurationSource source, const QString &message)
+{
+    QString *failure = nullptr;
+    switch (source) {
+    case ConfigurationSource::Ghostty:
+        failure = &ghosttyConfigurationFailure_;
+        break;
+    case ConfigurationSource::Frontend:
+        failure = &frontendConfigurationFailure_;
+        break;
+    }
+
+    const QString next = message.isEmpty()
+        ? QStringLiteral("Configuration reload failed")
+        : message;
+    if (*failure == next) {
+        return;
+    }
+    *failure = next;
+    syncConfigurationDiagnostics();
+}
+
+void ApplicationController::clearConfigurationFailure(
+    ConfigurationSource source)
+{
+    QString *failure = nullptr;
+    switch (source) {
+    case ConfigurationSource::Ghostty:
+        failure = &ghosttyConfigurationFailure_;
+        break;
+    case ConfigurationSource::Frontend:
+        failure = &frontendConfigurationFailure_;
+        break;
+    }
+
+    if (failure->isEmpty()) {
+        return;
+    }
+    failure->clear();
+    syncConfigurationDiagnostics();
+}
+
+QString ApplicationController::configurationDiagnosticsText() const
+{
+    QStringList sections;
+    if (!ghosttyConfigurationFailure_.isEmpty()) {
+        sections.append(QStringLiteral("Ghostty configuration:\n%1")
+                            .arg(ghosttyConfigurationFailure_));
+    }
+    if (!frontendConfigurationFailure_.isEmpty()) {
+        sections.append(QStringLiteral("ghostty-qt frontend configuration:\n%1")
+                            .arg(frontendConfigurationFailure_));
+    }
+    return sections.join(QStringLiteral("\n\n"));
+}
+
+void ApplicationController::syncConfigurationDiagnostics()
+{
+    const QString diagnostics = configurationDiagnosticsText();
+    const QVector<ApplicationWindow> snapshot = windows();
+    const QPointer<ApplicationController> guard(this);
+    for (const ApplicationWindow &window : snapshot) {
+        WindowRecord *const record = recordForWindow(window.window);
+        if (record == nullptr || record->ui == nullptr) continue;
+        record->ui->setConfigurationDiagnostics(diagnostics);
+        if (guard == nullptr) return;
+    }
+}
+
 TerminalWorkspace *ApplicationController::activeWorkspace() const
 {
     if (TerminalWorkspace *const focused = focusedWorkspace()) {
@@ -1411,6 +1481,12 @@ void ApplicationController::registerWindow(
                        },
                        std::move(command));
         });
+    ui->setConfigurationRetryCallback([controller] {
+        if (controller != nullptr) {
+            Q_EMIT controller->configReloadRequested();
+        }
+    });
+    ui->setConfigurationDiagnostics(configurationDiagnosticsText());
     QQmlEngine::setObjectOwnership(ui.get(), QQmlEngine::CppOwnership);
 
     QTimer *autohideTimer = nullptr;

@@ -295,6 +295,32 @@ void WindowUiController::setCommandPaletteActivationCallback(
     commandPaletteActivationCallback_ = std::move(callback);
 }
 
+void WindowUiController::setConfigurationRetryCallback(
+    ConfigurationRetryCallback callback)
+{
+    configurationRetryCallback_ = std::move(callback);
+}
+
+void WindowUiController::setConfigurationDiagnostics(QString diagnostics)
+{
+    if (configurationDiagnosticsText_ == diagnostics) {
+        return;
+    }
+
+    configurationDiagnosticsText_ = std::move(diagnostics);
+    const QPointer<WindowUiController> guard(this);
+    Q_EMIT configurationDiagnosticsChanged();
+    if (guard == nullptr) return;
+
+    if (configurationDiagnosticsText_.isEmpty()) {
+        if (configurationDiagnosticsVisible()) {
+            setModal(Modal::None);
+        }
+        return;
+    }
+    setModal(Modal::ConfigurationDiagnostics);
+}
+
 void WindowUiController::showCommandPalette()
 {
     if (commandPaletteVisible()) {
@@ -351,6 +377,29 @@ bool WindowUiController::activateSelectedCommand()
     auto callback = commandPaletteActivationCallback_;
     callback(std::move(*command));
     return true;
+}
+
+void WindowUiController::ignoreConfigurationDiagnostics()
+{
+    if (configurationDiagnosticsVisible()) {
+        setModal(Modal::None);
+    }
+}
+
+bool WindowUiController::retryConfigurationDiagnostics()
+{
+    if (!configurationDiagnosticsVisible()
+        || configurationDiagnosticsText_.isEmpty()
+        || !configurationRetryCallback_) {
+        return false;
+    }
+
+    // A retry is only a request. Keep the current errors visible until the
+    // corresponding successful service publications clear them.
+    const QPointer<WindowUiController> guard(this);
+    auto callback = configurationRetryCallback_;
+    callback();
+    return guard != nullptr;
 }
 
 QString WindowUiController::toastMessage() const
@@ -474,6 +523,7 @@ void WindowUiController::setModal(Modal modal)
 
     const bool paletteWasVisible = commandPaletteVisible();
     const bool overviewWasVisible = tabOverviewVisible();
+    const bool diagnosticsWereVisible = configurationDiagnosticsVisible();
     modal_ = modal;
     Q_EMIT modalChanged();
     if (paletteWasVisible != commandPaletteVisible()) {
@@ -481,6 +531,9 @@ void WindowUiController::setModal(Modal modal)
     }
     if (overviewWasVisible != tabOverviewVisible()) {
         Q_EMIT tabOverviewVisibleChanged();
+    }
+    if (diagnosticsWereVisible != configurationDiagnosticsVisible()) {
+        Q_EMIT configurationDiagnosticsVisibleChanged();
     }
 }
 

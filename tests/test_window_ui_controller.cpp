@@ -82,6 +82,7 @@ private Q_SLOTS:
     void commandPaletteActivationMayDestroyController();
     void identicalCommandReplacementIsSilent();
     void modalsAreMutuallyExclusive();
+    void configurationDiagnosticsDeduplicateAndRetryInPlace();
     void notificationsHaveExactTextAndDuration();
     void toastExpiryIsExplicitFifo();
     void toastQueueIsBoundedWithoutInterruptingCurrentToast();
@@ -364,6 +365,69 @@ void WindowUiControllerTest::modalsAreMutuallyExclusive()
     QCOMPARE(modalChanged.count(), 5);
     QCOMPARE(paletteChanged.count(), 4);
     QCOMPARE(overviewChanged.count(), 2);
+}
+
+void WindowUiControllerTest::
+    configurationDiagnosticsDeduplicateAndRetryInPlace()
+{
+    WindowUiController controller;
+    QSignalSpy diagnosticsChanged(
+        &controller, &WindowUiController::configurationDiagnosticsChanged);
+    QSignalSpy visibilityChanged(
+        &controller,
+        &WindowUiController::configurationDiagnosticsVisibleChanged);
+    int retries = 0;
+    controller.setConfigurationRetryCallback([&retries] { ++retries; });
+
+    const QString first =
+        QStringLiteral("Ghostty configuration:\ninvalid shared option");
+    controller.setConfigurationDiagnostics(first);
+    QCOMPARE(controller.configurationDiagnosticsText(), first);
+    QCOMPARE(controller.modal(),
+             WindowUiController::Modal::ConfigurationDiagnostics);
+    QVERIFY(controller.configurationDiagnosticsVisible());
+    QCOMPARE(diagnosticsChanged.count(), 1);
+    QCOMPARE(visibilityChanged.count(), 1);
+
+    controller.setConfigurationDiagnostics(first);
+    QCOMPARE(diagnosticsChanged.count(), 1);
+    QCOMPARE(visibilityChanged.count(), 1);
+    QVERIFY(controller.retryConfigurationDiagnostics());
+    QCOMPARE(retries, 1);
+    QVERIFY(controller.configurationDiagnosticsVisible());
+    QCOMPARE(controller.configurationDiagnosticsText(), first);
+
+    controller.ignoreConfigurationDiagnostics();
+    QVERIFY(!controller.configurationDiagnosticsVisible());
+    QCOMPARE(controller.modal(), WindowUiController::Modal::None);
+    QCOMPARE(visibilityChanged.count(), 2);
+    QVERIFY(!controller.retryConfigurationDiagnostics());
+    controller.setConfigurationDiagnostics(first);
+    QVERIFY(!controller.configurationDiagnosticsVisible());
+    QCOMPARE(diagnosticsChanged.count(), 1);
+    QCOMPARE(visibilityChanged.count(), 2);
+
+    const QString second = QStringLiteral(
+        "ghostty-qt frontend configuration:\ninvalid frontend option");
+    controller.setConfigurationDiagnostics(second);
+    QCOMPARE(controller.configurationDiagnosticsText(), second);
+    QVERIFY(controller.configurationDiagnosticsVisible());
+    QCOMPARE(diagnosticsChanged.count(), 2);
+    QCOMPARE(visibilityChanged.count(), 3);
+
+    controller.setConfigurationDiagnostics({});
+    QVERIFY(controller.configurationDiagnosticsText().isEmpty());
+    QVERIFY(!controller.configurationDiagnosticsVisible());
+    QCOMPARE(controller.modal(), WindowUiController::Modal::None);
+    QCOMPARE(diagnosticsChanged.count(), 3);
+    QCOMPARE(visibilityChanged.count(), 4);
+
+    // A successful generation resets deduplication: the same text is a new
+    // failure cycle and must surface again.
+    controller.setConfigurationDiagnostics(first);
+    QVERIFY(controller.configurationDiagnosticsVisible());
+    QCOMPARE(diagnosticsChanged.count(), 4);
+    QCOMPARE(visibilityChanged.count(), 5);
 }
 
 void WindowUiControllerTest::notificationsHaveExactTextAndDuration()

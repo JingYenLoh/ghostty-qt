@@ -49,6 +49,12 @@ public:
     using WindowFactory =
         std::move_only_function<std::expected<ApplicationWindow, QString>()>;
 
+    enum class ConfigurationSource {
+        Ghostty,
+        Frontend,
+    };
+    Q_ENUM(ConfigurationSource)
+
     ApplicationController(QQmlEngine &engine, LaunchOptions effectiveOptions,
                           bool enableGlobalShortcutsPortal = true,
                           QObject *parent = nullptr);
@@ -90,6 +96,10 @@ public:
     // post-startup reload. Initial bootstrap and failed reloads deliberately
     // never produce an in-application notification.
     void notifyConfigurationReloaded();
+    void reportConfigurationFailure(ConfigurationSource source,
+                                    const QString &message);
+    void clearConfigurationFailure(ConfigurationSource source);
+    [[nodiscard]] QString configurationDiagnosticsText() const;
 
     [[nodiscard]] TerminalWorkspace *activeWorkspace() const;
     [[nodiscard]] int windowCount() const;
@@ -171,6 +181,7 @@ private:
                                             const QString &action);
     [[nodiscard]] bool presentSurface(SurfaceTarget target);
     void updateQuickTerminalAutohide(WindowRecord &record);
+    void syncConfigurationDiagnostics();
     void syncApplicationShell();
     [[nodiscard]] bool
     dispatchFrontendAction(TerminalWorkspace *workspace,
@@ -198,6 +209,8 @@ private:
     QPointer<TerminalWorkspace> lastActiveWorkspace_;
     QPointer<TerminalWorkspace> quitDialogHost_;
     QSet<TerminalWorkspace *> awaitingShutdown_;
+    QString ghosttyConfigurationFailure_;
+    QString frontendConfigurationFailure_;
     QuitState quitState_ = QuitState::Idle;
     bool startupWindowHandled_ = false;
     bool windowCreationInProgress_ = false;

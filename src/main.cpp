@@ -1868,6 +1868,32 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     ApplicationController applicationController(engine,
                                                 effectiveApplicationOptions);
+    QObject::connect(
+        &frontendConfigService, &FrontendConfigService::reloadFailed,
+        &applicationController,
+        [&applicationController](const QString &message) {
+            applicationController.reportConfigurationFailure(
+                ApplicationController::ConfigurationSource::Frontend, message);
+        });
+    if (!frontendConfigService.lastError().isEmpty()) {
+        applicationController.reportConfigurationFailure(
+            ApplicationController::ConfigurationSource::Frontend,
+            frontendConfigService.lastError());
+    }
+#if GHOSTTY_QT_CONFIG_ENABLED
+    QObject::connect(
+        &configService, &GhosttyConfigService::reloadFailed,
+        &applicationController,
+        [&applicationController](const QString &message) {
+            applicationController.reportConfigurationFailure(
+                ApplicationController::ConfigurationSource::Ghostty, message);
+        });
+    if (!configService.lastError().isEmpty()) {
+        applicationController.reportConfigurationFailure(
+            ApplicationController::ConfigurationSource::Ghostty,
+            configService.lastError());
+    }
+#endif
     QObject::connect(&applicationController,
                      &ApplicationController::quitRequested, &application,
                      &QCoreApplication::quit);
@@ -1894,13 +1920,15 @@ int main(int argc, char *argv[])
     const auto applyCurrentOptions = [&] {
         applicationController.applyLaunchOptions(reconcileAppearance(false));
     };
-    QObject::connect(&configService, &GhosttyConfigService::changed,
-                     &applicationController,
-                     [&applyCurrentOptions,
-                      &applicationController](const GhosttyConfigSnapshot &) {
-                         applyCurrentOptions();
-                         applicationController.notifyConfigurationReloaded();
-                     });
+    QObject::connect(
+        &configService, &GhosttyConfigService::changed, &applicationController,
+        [&applyCurrentOptions,
+         &applicationController](const GhosttyConfigSnapshot &) {
+            applicationController.clearConfigurationFailure(
+                ApplicationController::ConfigurationSource::Ghostty);
+            applyCurrentOptions();
+            applicationController.notifyConfigurationReloaded();
+        });
     QObject::connect(&configService, &GhosttyConfigService::changed,
                      &application, &reportConfigDiagnostics);
     QObject::connect(&applicationController,
@@ -1911,13 +1939,16 @@ int main(int argc, char *argv[])
         applicationController.applyLaunchOptions(reconcileAppearance(false));
     };
 #endif
-    QObject::connect(&frontendConfigService, &FrontendConfigService::changed,
-                     &applicationController,
-                     [&applyCurrentOptions,
-                      &applicationController](const FrontendConfigSnapshot &) {
-                         applyCurrentOptions();
-                         applicationController.notifyConfigurationReloaded();
-                     });
+    QObject::connect(
+        &frontendConfigService, &FrontendConfigService::changed,
+        &applicationController,
+        [&applyCurrentOptions,
+         &applicationController](const FrontendConfigSnapshot &) {
+            applicationController.clearConfigurationFailure(
+                ApplicationController::ConfigurationSource::Frontend);
+            applyCurrentOptions();
+            applicationController.notifyConfigurationReloaded();
+        });
     QObject::connect(
         &applicationController, &ApplicationController::configReloadRequested,
         &frontendConfigService, &FrontendConfigService::requestReload);

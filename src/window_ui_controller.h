@@ -102,6 +102,12 @@ class WindowUiController final : public QObject {
                    commandPaletteVisibleChanged)
     Q_PROPERTY(bool tabOverviewVisible READ tabOverviewVisible NOTIFY
                    tabOverviewVisibleChanged)
+    Q_PROPERTY(bool configurationDiagnosticsVisible READ
+                   configurationDiagnosticsVisible NOTIFY
+                       configurationDiagnosticsVisibleChanged)
+    Q_PROPERTY(
+        QString configurationDiagnosticsText READ configurationDiagnosticsText
+            NOTIFY configurationDiagnosticsChanged)
     Q_PROPERTY(CommandPaletteModel *commandPaletteModel READ commandPaletteModel
                    CONSTANT)
     Q_PROPERTY(bool toastVisible READ toastVisible NOTIFY toastChanged)
@@ -116,11 +122,13 @@ public:
     using CommandPaletteRefreshCallback = std::function<void()>;
     using CommandPaletteActivationCallback =
         std::function<void(CommandPaletteCommand)>;
+    using ConfigurationRetryCallback = std::function<void()>;
 
     enum class Modal {
         None,
         CommandPalette,
         TabOverview,
+        ConfigurationDiagnostics,
     };
     Q_ENUM(Modal)
 
@@ -144,6 +152,14 @@ public:
         return modal_ == Modal::CommandPalette;
     }
     bool tabOverviewVisible() const { return modal_ == Modal::TabOverview; }
+    bool configurationDiagnosticsVisible() const
+    {
+        return modal_ == Modal::ConfigurationDiagnostics;
+    }
+    const QString &configurationDiagnosticsText() const
+    {
+        return configurationDiagnosticsText_;
+    }
     CommandPaletteModel *commandPaletteModel() { return &commandPaletteModel_; }
     const CommandPaletteModel *commandPaletteModel() const
     {
@@ -156,12 +172,16 @@ public:
     setCommandPaletteRefreshCallback(CommandPaletteRefreshCallback callback);
     void setCommandPaletteActivationCallback(
         CommandPaletteActivationCallback callback);
+    void setConfigurationRetryCallback(ConfigurationRetryCallback callback);
+    void setConfigurationDiagnostics(QString diagnostics);
     Q_INVOKABLE void showCommandPalette();
     Q_INVOKABLE void showTabOverview();
     Q_INVOKABLE void toggleCommandPalette();
     Q_INVOKABLE void toggleTabOverview();
     Q_INVOKABLE void closeModal();
     Q_INVOKABLE bool activateSelectedCommand();
+    Q_INVOKABLE void ignoreConfigurationDiagnostics();
+    Q_INVOKABLE bool retryConfigurationDiagnostics();
 
     bool toastVisible() const { return !toasts_.empty(); }
     QString toastMessage() const;
@@ -187,6 +207,8 @@ Q_SIGNALS:
     void modalChanged();
     void commandPaletteVisibleChanged();
     void tabOverviewVisibleChanged();
+    void configurationDiagnosticsVisibleChanged();
+    void configurationDiagnosticsChanged();
     void toastChanged();
     void toastQueueDepthChanged();
 
@@ -205,6 +227,8 @@ private:
     CommandPaletteModel commandPaletteModel_{this};
     CommandPaletteRefreshCallback commandPaletteRefreshCallback_;
     CommandPaletteActivationCallback commandPaletteActivationCallback_;
+    ConfigurationRetryCallback configurationRetryCallback_;
+    QString configurationDiagnosticsText_;
     std::optional<CommandPaletteCommand> pendingPaletteCommand_;
     std::deque<Toast> toasts_;
     quint64 toastRevision_ = 0;

@@ -1456,6 +1456,21 @@ last-good generation. The merged result still enters
 `ApplicationController::applyLaunchOptions` once per publication, updating all
 live workspaces and future windows without cumulative overlay state.
 
+Hard reload failures also enter a process-owned diagnostic state with separate
+Ghostty and ghostty-qt frontend sources. Every existing window receives the
+deterministically combined, source-labelled text, and a newly registered
+window receives the current state before presentation. Its window UI exposes
+one modal dialog with a scrollable, selectable read-only error view. Repeating
+the identical state neither duplicates an open dialog nor reopens a
+window-local dismissal; changing either source surfaces the updated state.
+Each successful service publication clears only that source, and clearing the
+last source closes the dialog. Retry leaves the last errors and last-good
+snapshots visible while it emits the same process reload request wired to both
+available services; only their later successful publications remove the
+corresponding errors. Ignore dismisses that state for the current window
+without discarding the process copy, so future windows still see an unresolved
+failure.
+
 The helper process necessarily has Ghostty action arguments, so the pinned
 parser classifies it as a probable CLI launch. An otherwise unset
 `working-directory` therefore finalizes to `inherit`; the GTK desktop-launch

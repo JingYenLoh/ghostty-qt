@@ -18,6 +18,9 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QPointer>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QQuickItem>
 #include <QQuickWindow>
 #include <QScopeGuard>
 #include <QScreen>
@@ -351,6 +354,8 @@ private Q_SLOTS:
     void integratesQuickTerminalLifecycleAndLiveShellReload();
     void quickTerminalAutohideRequiresActivationAndReloadsLive();
     void routesWindowUiActionsAndNotificationPolicy();
+    void configurationFailuresReachExistingAndFutureWindows();
+    void configurationDiagnosticsDialogIsScrollableAndExplicit();
     void remoteNewWindowOverridesOnlyItsFirstSurface();
     void paletteTargetsEveryLiveSurfaceByCompositeIdentity();
     void paletteTargetFocusMayDestroyApplicationController();
@@ -669,6 +674,184 @@ void ApplicationControllerTest::routesWindowUiActionsAndNotificationPolicy()
     // the live clipboard-copy policy on the originating window only.
     Q_EMIT firstPane->standardClipboardCommitted(true);
     QCOMPARE(ui->toastMessage(), QStringLiteral("Cleared clipboard"));
+}
+
+void ApplicationControllerTest::
+    configurationFailuresReachExistingAndFutureWindows()
+{
+    WindowFactoryHarness harness;
+    LaunchOptions options = baseOptions(QDir::currentPath());
+    ApplicationController controller(options, harness.factory(), false);
+
+    int ghosttyReloads = 0;
+    int frontendReloads = 0;
+    connect(&controller, &ApplicationController::configReloadRequested,
+            &controller, [&ghosttyReloads] { ++ghosttyReloads; });
+    connect(&controller, &ApplicationController::configReloadRequested,
+            &controller, [&frontendReloads] { ++frontendReloads; });
+
+    controller.reportConfigurationFailure(
+        ApplicationController::ConfigurationSource::Ghostty,
+        QStringLiteral("invalid shared option"));
+    const QString ghosttyOnly =
+        QStringLiteral("Ghostty configuration:\ninvalid shared option");
+    QCOMPARE(controller.configurationDiagnosticsText(), ghosttyOnly);
+
+    const auto initial = controller.createInitialWindow();
+    QVERIFY(initial.has_value());
+    WindowUiController *const firstUi = windowUiController(initial->window);
+    QVERIFY(firstUi != nullptr);
+    QCOMPARE(firstUi->configurationDiagnosticsText(), ghosttyOnly);
+    QVERIFY(firstUi->configurationDiagnosticsVisible());
+
+    QVERIFY(firstUi->retryConfigurationDiagnostics());
+    QCOMPARE(ghosttyReloads, 1);
+    QCOMPARE(frontendReloads, 1);
+    QVERIFY(firstUi->configurationDiagnosticsVisible());
+    QCOMPARE(firstUi->configurationDiagnosticsText(), ghosttyOnly);
+
+    firstUi->ignoreConfigurationDiagnostics();
+    QVERIFY(!firstUi->configurationDiagnosticsVisible());
+    controller.reportConfigurationFailure(
+        ApplicationController::ConfigurationSource::Ghostty,
+        QStringLiteral("invalid shared option"));
+    QVERIFY(!firstUi->configurationDiagnosticsVisible());
+
+    // The process retains the current failure even after one window dismisses
+    // it, so a later window still presents that state.
+    QVERIFY(controller.activateNoCommand());
+    QCOMPARE(controller.windowCount(), 2);
+    const QVector<ApplicationWindow> windows = controller.windows();
+    WindowUiController *const secondUi =
+        windowUiController(windows.constLast().window);
+    QVERIFY(secondUi != nullptr);
+    QCOMPARE(secondUi->configurationDiagnosticsText(), ghosttyOnly);
+    QVERIFY(secondUi->configurationDiagnosticsVisible());
+
+    controller.reportConfigurationFailure(
+        ApplicationController::ConfigurationSource::Frontend,
+        QStringLiteral("invalid frontend option"));
+    const QString combined = QStringLiteral(
+        "Ghostty configuration:\ninvalid shared option\n\n"
+        "ghostty-qt frontend configuration:\ninvalid frontend option");
+    QCOMPARE(controller.configurationDiagnosticsText(), combined);
+    QCOMPARE(firstUi->configurationDiagnosticsText(), combined);
+    QCOMPARE(secondUi->configurationDiagnosticsText(), combined);
+    QVERIFY(firstUi->configurationDiagnosticsVisible());
+    QVERIFY(secondUi->configurationDiagnosticsVisible());
+
+    controller.clearConfigurationFailure(
+        ApplicationController::ConfigurationSource::Ghostty);
+    const QString frontendOnly = QStringLiteral(
+        "ghostty-qt frontend configuration:\ninvalid frontend option");
+    QCOMPARE(firstUi->configurationDiagnosticsText(), frontendOnly);
+    QCOMPARE(secondUi->configurationDiagnosticsText(), frontendOnly);
+    QVERIFY(firstUi->configurationDiagnosticsVisible());
+    QVERIFY(secondUi->configurationDiagnosticsVisible());
+
+    controller.clearConfigurationFailure(
+        ApplicationController::ConfigurationSource::Frontend);
+    QVERIFY(controller.configurationDiagnosticsText().isEmpty());
+    QVERIFY(firstUi->configurationDiagnosticsText().isEmpty());
+    QVERIFY(secondUi->configurationDiagnosticsText().isEmpty());
+    QVERIFY(!firstUi->configurationDiagnosticsVisible());
+    QVERIFY(!secondUi->configurationDiagnosticsVisible());
+
+    controller.reportConfigurationFailure(
+        ApplicationController::ConfigurationSource::Frontend,
+        QStringLiteral("invalid frontend option"));
+    QVERIFY(firstUi->configurationDiagnosticsVisible());
+    QVERIFY(secondUi->configurationDiagnosticsVisible());
+}
+
+void ApplicationControllerTest::
+    configurationDiagnosticsDialogIsScrollableAndExplicit()
+{
+    WindowUiController ui;
+    int retries = 0;
+    ui.setConfigurationRetryCallback([&retries] { ++retries; });
+    QStringList lines;
+    for (int index = 0; index < 80; ++index) {
+        lines.append(QStringLiteral("invalid option %1").arg(index));
+    }
+    const QString diagnostics =
+        QStringLiteral("Ghostty configuration:\n") + lines.join(u'\n');
+    ui.setConfigurationDiagnostics(diagnostics);
+
+    const QString dialogPath =
+        QFINDTESTDATA("../qml/ConfigDiagnosticsDialog.qml");
+    QVERIFY(!dialogPath.isEmpty());
+    const QFileInfo dialogInfo(dialogPath);
+
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData(
+        QByteArrayLiteral("import QtQuick\n"
+                          "import QtQuick.Controls\n"
+                          "import \".\" as Local\n"
+                          "ApplicationWindow {\n"
+                          "    id: root\n"
+                          "    required property var uiController\n"
+                          "    width: 760\n"
+                          "    height: 520\n"
+                          "    visible: true\n"
+                          "    Local.ConfigDiagnosticsDialog {\n"
+                          "        uiController: root.uiController\n"
+                          "    }\n"
+                          "}\n"),
+        QUrl::fromLocalFile(
+            QDir(dialogInfo.absolutePath())
+                .filePath(QStringLiteral("ConfigDiagnosticsHarness.qml"))));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({
+        {QStringLiteral("uiController"),
+         QVariant::fromValue(static_cast<QObject *>(&ui))},
+    }));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+    auto *const window = qobject_cast<QQuickWindow *>(root.get());
+    QVERIFY(window != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(window->isExposed(), 1000);
+
+    QObject *const dialog = root->findChild<QObject *>(
+        QStringLiteral("configurationDiagnosticsDialog"));
+    auto *const textArea = root->findChild<QQuickItem *>(
+        QStringLiteral("configurationDiagnosticsText"));
+    auto *const scrollView = root->findChild<QQuickItem *>(
+        QStringLiteral("configurationDiagnosticsScrollView"));
+    auto *const retry = root->findChild<QQuickItem *>(
+        QStringLiteral("configurationDiagnosticsRetry"));
+    auto *const ignore = root->findChild<QQuickItem *>(
+        QStringLiteral("configurationDiagnosticsIgnore"));
+    QVERIFY(dialog != nullptr);
+    QVERIFY(textArea != nullptr);
+    QVERIFY(scrollView != nullptr);
+    QVERIFY(retry != nullptr);
+    QVERIFY(ignore != nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(dialog->property("visible").toBool(), 1000);
+    QCOMPARE(textArea->property("text").toString(), diagnostics);
+    QVERIFY(textArea->property("readOnly").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        scrollView->property("contentHeight").toReal()
+            > scrollView->property("availableHeight").toReal(),
+        1000);
+    QCOMPARE(retry->property("text").toString(), QStringLiteral("Retry"));
+    QCOMPARE(ignore->property("text").toString(), QStringLiteral("Ignore"));
+
+    const QPoint retryPosition =
+        retry->mapToScene(QPointF(retry->width() / 2.0, retry->height() / 2.0))
+            .toPoint();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, retryPosition);
+    QCOMPARE(retries, 1);
+    QVERIFY(dialog->property("visible").toBool());
+    QCOMPARE(ui.configurationDiagnosticsText(), diagnostics);
+
+    const QPoint ignorePosition =
+        ignore
+            ->mapToScene(QPointF(ignore->width() / 2.0, ignore->height() / 2.0))
+            .toPoint();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, ignorePosition);
+    QTRY_VERIFY_WITH_TIMEOUT(!dialog->property("visible").toBool(), 1000);
+    QVERIFY(!ui.configurationDiagnosticsVisible());
 }
 
 void ApplicationControllerTest::remoteNewWindowOverridesOnlyItsFirstSurface()

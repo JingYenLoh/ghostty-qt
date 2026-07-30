@@ -277,6 +277,11 @@ ApplicationWindow {
         }
     }
 
+    ConfigDiagnosticsDialog {
+        id: configurationDiagnosticsDialog
+        uiController: window.uiController
+    }
+
     AppToast {
         id: applicationToast
         anchors.horizontalCenter: parent.horizontalCenter
