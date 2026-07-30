@@ -2,6 +2,7 @@
 #include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
+#include "terminal_drop.h"
 #include "terminal_geometry.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
@@ -11,6 +12,9 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFile>
 #include <QFocusEvent>
 #include <QFontDatabase>
@@ -452,6 +456,8 @@ private Q_SLOTS:
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
     void appliesMouseShiftCaptureAcrossPointerRoutes();
     void routesAllPasteEntryPointsThroughController();
+    void convertsTerminalDropContent();
+    void routesTerminalDropsThroughPasteController();
     void routesUnsafePasteConfirmationThroughWorker();
     void reconcilesActivityAfterKamRejectsEnter();
     void hidesPointerOnlyForTerminalTypingAndRestoresOnInteraction();
@@ -5041,6 +5047,131 @@ void TerminalPaneTest::routesAllPasteEntryPointsThroughController()
     }
 }
 
+void TerminalPaneTest::convertsTerminalDropContent()
+{
+    QCOMPARE(escapeTerminalDropPath(QStringLiteral("a\\b\"c'd$e`f*g?h i|j(k)")),
+             QStringLiteral("a\\\\b\\\"c\\'d\\$e\\`f\\*g\\?h\\ i\\|j\\(k\\)"));
+
+    QMimeData urls;
+    urls.setText(QStringLiteral("text fallback must not be used"));
+    urls.setUrls({
+        QUrl(QStringLiteral("https://example.com/remote")),
+        QUrl::fromLocalFile(QStringLiteral("/tmp/a b$'")),
+        QUrl::fromLocalFile(QStringLiteral("/tmp/(x)|y?*")),
+    });
+    const TerminalDropContent urlContent = terminalDropContent(urls);
+    QVERIFY(urlContent.recognized);
+    QCOMPARE(urlContent.text,
+             QStringLiteral("/tmp/a\\ b\\$\\'\n/tmp/\\(x\\)\\|y\\?\\*\n"));
+
+    QMimeData remoteOnly;
+    remoteOnly.setText(QStringLiteral("must remain hidden"));
+    remoteOnly.setUrls({
+        QUrl(QStringLiteral("https://example.com/one")),
+        QUrl(QStringLiteral("sftp://example.com/two")),
+    });
+    const TerminalDropContent remoteContent = terminalDropContent(remoteOnly);
+    QVERIFY(remoteContent.recognized);
+    QVERIFY(remoteContent.text.isEmpty());
+
+    QMimeData text;
+    text.setText(QStringLiteral("λ plain text\nwithout an added newline"));
+    const TerminalDropContent textContent = terminalDropContent(text);
+    QVERIFY(textContent.recognized);
+    QCOMPARE(textContent.text,
+             QStringLiteral("λ plain text\nwithout an added newline"));
+
+    QMimeData binary;
+    binary.setData(QStringLiteral("application/octet-stream"),
+                   QByteArrayLiteral("not text"));
+    const TerminalDropContent binaryContent = terminalDropContent(binary);
+    QVERIFY(!binaryContent.recognized);
+    QVERIFY(binaryContent.text.isEmpty());
+}
+
+void TerminalPaneTest::routesTerminalDropsThroughPasteController()
+{
+    LaunchOptions options;
+    options.workingDirectory = QDir::currentPath();
+    options.clipboardPaste.protection = false;
+    TerminalPane pane(options, nullptr, std::nullopt,
+                      TerminalSessionStartMode::Deferred);
+    QVERIFY(pane.flags().testFlag(QQuickItem::ItemAcceptsDrops));
+
+    auto *const controller = pane.findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy pasted(controller, &TerminalController::pasteRequested);
+
+    QMimeData binary;
+    binary.setData(QStringLiteral("application/octet-stream"),
+                   QByteArrayLiteral("ignored"));
+    QDragEnterEvent binaryEnter(QPoint(2, 3), Qt::CopyAction | Qt::MoveAction,
+                                &binary, Qt::LeftButton, Qt::NoModifier);
+    binaryEnter.ignore();
+    QCoreApplication::sendEvent(&pane, &binaryEnter);
+    QVERIFY(!binaryEnter.isAccepted());
+
+    QMimeData paths;
+    paths.setText(QStringLiteral("fallback"));
+    paths.setUrls({
+        QUrl::fromLocalFile(QStringLiteral("/tmp/first file")),
+        QUrl(QStringLiteral("https://example.com/skip")),
+        QUrl::fromLocalFile(QStringLiteral("/tmp/second")),
+    });
+    QDragEnterEvent pathEnter(QPoint(2, 3), Qt::CopyAction | Qt::MoveAction,
+                              &paths, Qt::LeftButton, Qt::ControlModifier);
+    pathEnter.ignore();
+    QCoreApplication::sendEvent(&pane, &pathEnter);
+    QVERIFY(pathEnter.isAccepted());
+    QCOMPARE(pathEnter.dropAction(), Qt::CopyAction);
+
+    QDragMoveEvent pathMove(QPoint(4, 5), Qt::CopyAction | Qt::MoveAction,
+                            &paths, Qt::LeftButton, Qt::ControlModifier);
+    pathMove.ignore();
+    QCoreApplication::sendEvent(&pane, &pathMove);
+    QVERIFY(pathMove.isAccepted());
+    QCOMPARE(pathMove.dropAction(), Qt::CopyAction);
+
+    QDropEvent pathDrop(QPointF(4, 5), Qt::CopyAction | Qt::MoveAction, &paths,
+                        Qt::LeftButton, Qt::ControlModifier);
+    pathDrop.ignore();
+    QCoreApplication::sendEvent(&pane, &pathDrop);
+    QVERIFY(pathDrop.isAccepted());
+    QCOMPARE(pathDrop.dropAction(), Qt::CopyAction);
+    QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(),
+             QStringLiteral("/tmp/first\\ file\n/tmp/second\n"));
+
+    QMimeData remoteOnly;
+    remoteOnly.setText(QStringLiteral("must not be pasted"));
+    remoteOnly.setUrls({QUrl(QStringLiteral("https://example.com/file"))});
+    QDropEvent remoteDrop(QPointF(1, 1), Qt::CopyAction, &remoteOnly,
+                          Qt::NoButton, Qt::NoModifier);
+    remoteDrop.ignore();
+    QCoreApplication::sendEvent(&pane, &remoteDrop);
+    QVERIFY(remoteDrop.isAccepted());
+    QCOMPARE(remoteDrop.dropAction(), Qt::CopyAction);
+    QCOMPARE(pasted.count(), 1);
+
+    QMimeData text;
+    text.setText(QStringLiteral("λ text\nexact"));
+    QDropEvent textDrop(QPointF(1, 1), Qt::CopyAction, &text, Qt::NoButton,
+                        Qt::NoModifier);
+    textDrop.ignore();
+    QCoreApplication::sendEvent(&pane, &textDrop);
+    QVERIFY(textDrop.isAccepted());
+    QCOMPARE(pasted.count(), 2);
+    QCOMPARE(pasted.constLast().constFirst().toString(),
+             QStringLiteral("λ text\nexact"));
+
+    QDropEvent moveOnlyDrop(QPointF(1, 1), Qt::MoveAction, &text, Qt::NoButton,
+                            Qt::NoModifier);
+    moveOnlyDrop.ignore();
+    QCoreApplication::sendEvent(&pane, &moveOnlyDrop);
+    QVERIFY(!moveOnlyDrop.isAccepted());
+    QCOMPARE(pasted.count(), 2);
+}
+
 void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
 {
     ShellEnvironment shell;
@@ -5064,8 +5195,16 @@ void TerminalPaneTest::routesUnsafePasteConfirmationThroughWorker()
     activity.clear();
 
     const QString rejected = QStringLiteral("cancelled\n");
-    pane.pasteText(rejected);
+    QMimeData droppedText;
+    droppedText.setText(rejected);
+    QDropEvent protectedDrop(QPointF(1, 1), Qt::CopyAction, &droppedText,
+                             Qt::NoButton, Qt::NoModifier);
+    protectedDrop.ignore();
+    QCoreApplication::sendEvent(&pane, &protectedDrop);
+    QVERIFY(protectedDrop.isAccepted());
+    QCOMPARE(protectedDrop.dropAction(), Qt::CopyAction);
     QCOMPARE(pasted.count(), 1);
+    QCOMPARE(pasted.constFirst().constFirst().toString(), rejected);
     QTRY_COMPARE_WITH_TIMEOUT(unsafe.count(), 1, 2000);
     const quint64 cancelledId = unsafe.constFirst().at(0).toULongLong();
     QVERIFY(cancelledId != 0);

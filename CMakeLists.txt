@@ -807,6 +807,8 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_clipboard.cpp
     src/terminal_clipboard.h
     src/terminal_clipboard_codepoint_map.h
+    src/terminal_drop.cpp
+    src/terminal_drop.h
     src/terminal_font_resolver.cpp
     src/terminal_font_resolver.h
     src/terminal_geometry.cpp

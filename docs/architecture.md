@@ -943,6 +943,12 @@ signals:
 - Paste classification, retained unsafe text, and encoding stay on
   `SessionWorker`. One adapter operation snapshots Ghostty's current
   bracketed-paste mode for both the exact safety decision and encoding.
+  File and text drops enter this same protected paste route. A URL MIME
+  representation takes precedence over accompanying text; local paths retain
+  their order, escape Ghostty's shell metacharacter set, and each gain a
+  trailing newline. Remote-only URL sets are consumed without falling back to
+  text, while plain text remains byte-for-byte at the `QString` boundary with
+  no added newline.
   Rejected text receives a nonzero worker-local request ID. The GUI retains an
   immutable display/grouping copy plus queued `(pane, request ID)` targets,
   but never uses that copy as paste input. A separate workspace dialog token

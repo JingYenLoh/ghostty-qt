@@ -40,6 +40,9 @@
 #include <variant>
 
 class QChronoTimer;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
 class QFocusEvent;
 class QEvent;
 class QHoverEvent;
@@ -259,6 +262,9 @@ protected:
     void hoverMoveEvent(QHoverEvent *event) override;
     void hoverLeaveEvent(QHoverEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
 

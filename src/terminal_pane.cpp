@@ -4,6 +4,7 @@
 #include "terminal_cell_metrics.h"
 #include "terminal_clipboard.h"
 #include "terminal_controller.h"
+#include "terminal_drop.h"
 #include "terminal_geometry.h"
 #include "terminal_pane_renderer.h"
 
@@ -12,6 +13,9 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QEvent>
 #include <QFileInfo>
 #include <QFocusEvent>
@@ -245,6 +249,18 @@ TerminalKeyInput terminalKeyInput(const QKeyEvent *event, bool pressed = true)
     };
 }
 
+bool acceptTerminalDrop(QDropEvent *event)
+{
+    if (!event->possibleActions().testFlag(Qt::CopyAction)) {
+        event->ignore();
+        return false;
+    }
+
+    event->setDropAction(Qt::CopyAction);
+    event->accept();
+    return true;
+}
+
 } // namespace
 
 TerminalPane::TerminalPane(
@@ -275,6 +291,7 @@ TerminalPane::TerminalPane(
     TerminalPaneRenderer::publishInitialGeometryProbe(this, initialGeometry);
 #endif
     setFlag(QQuickItem::ItemHasContents, true);
+    setFlag(QQuickItem::ItemAcceptsDrops, true);
     setClip(true);
     setAcceptedMouseButtons(Qt::AllButtons);
     setAcceptHoverEvents(true);
@@ -3653,6 +3670,47 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         .mouseReportingEnabled = controller_->mouseReportingEnabled(),
     });
     event->accept();
+}
+
+void TerminalPane::dragEnterEvent(QDragEnterEvent *event)
+{
+    const QMimeData *const mimeData = event->mimeData();
+    if (mimeData == nullptr || (!mimeData->hasUrls() && !mimeData->hasText())) {
+        event->ignore();
+        return;
+    }
+    (void)acceptTerminalDrop(event);
+}
+
+void TerminalPane::dragMoveEvent(QDragMoveEvent *event)
+{
+    const QMimeData *const mimeData = event->mimeData();
+    if (mimeData == nullptr || (!mimeData->hasUrls() && !mimeData->hasText())) {
+        event->ignore();
+        return;
+    }
+    (void)acceptTerminalDrop(event);
+}
+
+void TerminalPane::dropEvent(QDropEvent *event)
+{
+    const QMimeData *const mimeData = event->mimeData();
+    if (mimeData == nullptr) {
+        event->ignore();
+        return;
+    }
+
+    TerminalDropContent content = terminalDropContent(*mimeData);
+    if (!content.recognized) {
+        event->ignore();
+        return;
+    }
+
+    // Accept before entering the paste path because signal handlers may
+    // synchronously remove this pane.
+    if (acceptTerminalDrop(event) && !content.text.isEmpty()) {
+        pasteText(content.text);
+    }
 }
 
 void TerminalPane::sendMouse(const QPointF &position,
