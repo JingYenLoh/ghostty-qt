@@ -36,7 +36,7 @@ inline constexpr auto GhosttyPinnedCliActions =
     std::to_array<GhosttyCliActionCatalogEntry>({
         {"+version", GhosttyCliFrontendSupport::Delegated},
         {"+help", GhosttyCliFrontendSupport::Delegated},
-        {"+list-fonts", GhosttyCliFrontendSupport::Unsupported},
+        {"+list-fonts", GhosttyCliFrontendSupport::Delegated},
         {"+list-keybinds", GhosttyCliFrontendSupport::Delegated},
         {"+list-themes", GhosttyCliFrontendSupport::Unsupported},
         {"+list-colors", GhosttyCliFrontendSupport::Delegated},

@@ -2388,7 +2388,12 @@ artifacts live in ignored project-local
 config helper links this private shared library. The installed helper is beside
 the main executable and resolves the library from a relative private
 `${CMAKE_INSTALL_LIBDIR}/ghostty-qt` directory; disabling the option omits this
-configuration path entirely.
+configuration path entirely. The helper uses Ghostty's
+`fontconfig_freetype` backend, linking the host Fontconfig library so its parser
+matches the installed configuration schema while retaining Ghostty's private
+FreeType and HarfBuzz stack. Thus `+list-fonts` follows pinned Linux discovery
+without adding font handles or discovery code to the Qt process. This
+describes the helper action; Qt still owns terminal rendering and fallback.
 
 The same isolated helper accepts a second project-private, size-bounded JSON
 transaction for shell launch preparation. Qt supplies one byte-exact
@@ -2766,7 +2771,8 @@ The default CTest suite has focused layers for each ownership boundary:
   working-directory, and exit-status preservation; missing/unexecutable-helper
   and config-disabled failures; every delegated real pinned action;
   action-option order; pre-Qt operation; direct-helper equivalence, including
-  the detailed `+version` report; the
+  the detailed `+version` report; deterministic Fontconfig-backed
+  `+list-fonts` discovery; the
   `+edit-config` editor exec, preferred-file creation, path escaping, and
   environment precedence; plus SSH child argv/streams/status, terminfo fallback
   and cache suppression, and isolated SSH-cache lifecycle and file-mode repair.

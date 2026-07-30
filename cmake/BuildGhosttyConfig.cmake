@@ -28,7 +28,8 @@ execute_process(
         -Dsentry=false
         -Di18n=false
         -Dsimd=false
-        -Dfont-backend=freetype
+        -Dfont-backend=fontconfig_freetype
+        -fsys=fontconfig
         -Doptimize=ReleaseFast
         --prefix "${PREFIX}"
         --summary failures

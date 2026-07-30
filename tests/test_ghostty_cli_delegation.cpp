@@ -208,9 +208,39 @@ QProcessEnvironment controlledEnvironment(const QString &configHome)
     environment.insert(QStringLiteral("PAGER"), QStringLiteral("cat"));
     environment.remove(QStringLiteral("DISPLAY"));
     environment.remove(QStringLiteral("EDITOR"));
+    environment.remove(QStringLiteral("FONTCONFIG_FILE"));
+    environment.remove(QStringLiteral("FONTCONFIG_PATH"));
     environment.remove(QStringLiteral("VISUAL"));
     environment.remove(QStringLiteral("WAYLAND_DISPLAY"));
     return environment;
+}
+
+bool configureIsolatedFontconfig(const QString &root,
+                                 QProcessEnvironment &environment)
+{
+    const QFileInfo font(QStringLiteral(GHOSTTY_QT_TEST_FONT_PATH));
+    const QString cache = QDir(root).filePath(QStringLiteral("font-cache"));
+    const QString config = QDir(root).filePath(QStringLiteral("fonts.conf"));
+    if (!font.isFile() || !QDir().mkpath(cache)) return false;
+
+    const QString document =
+        QStringLiteral(
+            "<?xml version=\"1.0\"?>\n"
+            "<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n"
+            "<fontconfig>\n"
+            "  <dir>%1</dir>\n"
+            "  <cachedir>%2</cachedir>\n"
+            "</fontconfig>\n")
+            .arg(font.absolutePath().toHtmlEscaped(), cache.toHtmlEscaped());
+    QFile file(config);
+    const QByteArray encodedDocument = document.toUtf8();
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || file.write(encodedDocument) != encodedDocument.size()) {
+        return false;
+    }
+    file.close();
+    environment.insert(QStringLiteral("FONTCONFIG_FILE"), config);
+    return true;
 }
 
 QString shellQuote(const QString &value)
@@ -472,6 +502,10 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
         << QStringList{QStringLiteral("--plain"),
                        QStringLiteral("+list-colors")}
         << QByteArrayLiteral("AliceBlue = #f0f8ff") << 0;
+    QTest::newRow("list-fonts")
+        << QStringList{QStringLiteral("+list-fonts"),
+                       QStringLiteral("--family=Fira Code")}
+        << QByteArrayLiteral("Fira Code\n  Fira Code Regular\n") << 0;
     QTest::newRow("list-keybinds")
         << QStringList{QStringLiteral("+list-keybinds"),
                        QStringLiteral("--default"),
@@ -531,8 +565,10 @@ void GhosttyCliDelegationTest::matchesPinnedHelper()
     QTemporaryDir temporary(QDir::current().filePath(
         QStringLiteral("tmp/ghostty-cli-real-XXXXXX")));
     QVERIFY(temporary.isValid());
-    const QProcessEnvironment environment =
-        controlledEnvironment(temporary.path());
+    QProcessEnvironment environment = controlledEnvironment(temporary.path());
+    if (arguments.contains(QStringLiteral("+list-fonts"))) {
+        QVERIFY(configureIsolatedFontconfig(temporary.path(), environment));
+    }
     auto helper = runProcess(
         QStringLiteral(GHOSTTY_QT_TEST_REAL_HELPER), arguments,
         environment, temporary.path());

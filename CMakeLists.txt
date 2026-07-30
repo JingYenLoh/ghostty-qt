@@ -169,6 +169,7 @@ set(GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR
 # the Qt application. The source-local build area is shared by the checked-in
 # CMake presets, with parser outputs isolated by Ghostty revision.
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
+    pkg_check_modules(GHOSTTY_QT_FONTCONFIG REQUIRED fontconfig)
     set(GHOSTTY_QT_CONFIG_BUILD_DIR
         "${CMAKE_CURRENT_SOURCE_DIR}/.cache/ghostty-internal"
         CACHE PATH "Project-local build area for Ghostty's config parser")
@@ -277,6 +278,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/cli/args.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/edit_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ghostty.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/list_fonts.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh_cache.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/DiskCache.zig"
@@ -288,8 +290,14 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/DeferredFace.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/Metrics.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/backend.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/discovery.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/library.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/font/main.zig"
             "${GHOSTTY_SOURCE_DIR}/src/input/Binding.zig"
+            "${GHOSTTY_SOURCE_DIR}/pkg/fontconfig/build.zig"
             "${GHOSTTY_SOURCE_DIR}/src/termio/shell_integration.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminal/color.zig"
             "${GHOSTTY_SOURCE_DIR}/src/terminfo/ghostty.zig"

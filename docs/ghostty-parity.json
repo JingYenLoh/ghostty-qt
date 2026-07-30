@@ -1613,6 +1613,11 @@
           "status": "supported",
           "note": "Delegates the pinned color catalog and its action-specific options before Qt starts."
         },
+        "list-fonts": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "Delegates the pinned Linux implementation before Qt starts. The isolated helper is built with Ghostty's fontconfig_freetype backend, so family/style/bold/italic querying and prioritization, Fontconfig priority ordering for a requested family, and sorted unfiltered output use the exact upstream discovery path. This inventories the helper's Ghostty font stack; Qt still owns terminal shaping and fallback."
+        },
         "list-keybinds": {
           "status": "supported",
           "note": "Delegates the pinned finalized keybinding formatter through the embedded-runtime helper."
@@ -1645,7 +1650,7 @@
         },
         "version": {
           "status": "supported",
-          "note": "Delegates the pinned detailed version report through the relocatable helper before Qt starts. It reports the exact Ghostty revision and release channel; its Zig mode, app-runtime=none, FreeType backend, OpenGL renderer type, and libxev backend describe the embedded helper build, not ghostty-qt's Qt runtime or renderer. The frontend's ordinary --version remains a separate concise ghostty-qt version."
+          "note": "Delegates the pinned detailed version report through the relocatable helper before Qt starts. It reports the exact Ghostty revision and release channel; its Zig mode, app-runtime=none, Fontconfig+FreeType backend, OpenGL renderer type, and libxev backend describe the embedded helper build, not ghostty-qt's Qt runtime or renderer. The frontend's ordinary --version remains a separate concise ghostty-qt version."
         }
       }
     }

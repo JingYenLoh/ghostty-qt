@@ -339,6 +339,7 @@ target_compile_definitions(test-ghostty-cli-delegation PRIVATE
     GHOSTTY_QT_TEST_CONFIG_ENABLED=$<BOOL:${GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG}>
     GHOSTTY_QT_TEST_EXECUTABLE="$<TARGET_FILE:ghostty-qt>"
     GHOSTTY_QT_TEST_FAKE_HELPER="$<TARGET_FILE:fake-ghostty-cli-helper>"
+    GHOSTTY_QT_TEST_FONT_PATH="${GHOSTTY_SOURCE_DIR}/pkg/freetype/res/FiraCode-Regular.ttf"
 )
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     target_compile_definitions(test-ghostty-cli-delegation PRIVATE

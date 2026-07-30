@@ -42,8 +42,8 @@ current compatibility boundary.
   KDE Plasma Wayland.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
 - Zig exactly 0.15.2.
-- `pkg-config`, libxkbcommon development files, Git, `patch`, Python 3.10 or
-  newer, `tic`, Linux PTY headers, and `libutil`.
+- `pkg-config`, libxkbcommon and Fontconfig development files, Git, `patch`,
+  Python 3.10 or newer, `tic`, Linux PTY headers, and `libutil`.
 
 Cgroup isolation additionally needs a user systemd manager on the session
 D-Bus. Its default soft-failure policy allows terminals to start when that
