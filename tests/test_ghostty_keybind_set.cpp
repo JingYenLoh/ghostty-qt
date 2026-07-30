@@ -110,6 +110,7 @@ private Q_SLOTS:
     void preservesLocalFlags();
     void supportsSequencesAndCatchAllWhileRejectingDeferredForms();
     void advancesSharedPrefixSequences();
+    void retainsConfiguredLabelsForActiveSequence();
     void recoversInvalidSequencesAndHonorsCatchAll();
     void preservesLookupPriorityInsideSequences();
     void sharesProgramWithoutSharingMutableState();
@@ -852,6 +853,77 @@ void GhosttyKeybindStateTest::advancesSharedPrefixSequences()
     QCOMPARE(serializedActions(step),
              QStringList({QStringLiteral("previous_tab")}));
     QCOMPARE(step.queuedEvents.size(), 2);
+}
+
+void GhosttyKeybindStateTest::retainsConfiguredLabelsForActiveSequence()
+{
+    GhosttyKeybindConfig config;
+    config.root = {
+        binding(
+            {
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Physical,
+                    .physicalName = QStringLiteral("backslash"),
+                    .modifiers = GhosttyKeybindSuper | GhosttyKeybindCtrl
+                        | GhosttyKeybindAlt | GhosttyKeybindShift,
+                },
+                GhosttyKeybindTrigger{
+                    .kind = GhosttyKeybindKeyKind::Physical,
+                    .physicalName = QStringLiteral("key_a"),
+                    .modifiers = GhosttyKeybindAlt,
+                },
+                unicodeTrigger('z'),
+            },
+            QStringLiteral("new_tab")),
+    };
+
+    GhosttyKeybindState set;
+    (void)installProgram(set, config);
+    QCOMPARE(
+        set.advance({
+                        .qtKey = Qt::Key_Backslash,
+                        .modifiers = Qt::ShiftModifier | Qt::ControlModifier
+                            | Qt::AltModifier | Qt::MetaModifier,
+                        .nativeScanCode = xkbKeycode(KEY_BACKSLASH),
+                    })
+            .kind,
+        GhosttyKeybindStepKind::Leader);
+    QCOMPARE(set.activeSequenceLabels(),
+             QStringList({QStringLiteral("Super+Ctrl+Alt+Shift+Backslash")}));
+
+    QCOMPARE(set.advance({
+                             .qtKey = Qt::Key_A,
+                             .modifiers = Qt::AltModifier,
+                             .text = QStringLiteral("a"),
+                             .nativeScanCode = xkbKeycode(KEY_A),
+                         })
+                 .kind,
+             GhosttyKeybindStepKind::Leader);
+    QCOMPARE(set.activeSequenceLabels(),
+             QStringList({QStringLiteral("Super+Ctrl+Alt+Shift+Backslash"),
+                          QStringLiteral("Alt+A")}));
+
+    // The labels belong to the configured trie edges, not the event text
+    // which happened to match their physical identity.
+    QCOMPARE(set.advance({
+                             .qtKey = Qt::Key_Z,
+                             .text = QStringLiteral("Z"),
+                         })
+                 .kind,
+             GhosttyKeybindStepKind::Binding);
+    QVERIFY(set.activeSequenceLabels().isEmpty());
+
+    QCOMPARE(
+        set.advance({
+                        .qtKey = Qt::Key_Backslash,
+                        .modifiers = Qt::ShiftModifier | Qt::ControlModifier
+                            | Qt::AltModifier | Qt::MetaModifier,
+                        .nativeScanCode = xkbKeycode(KEY_BACKSLASH),
+                    })
+            .kind,
+        GhosttyKeybindStepKind::Leader);
+    set.resetSequence();
+    QVERIFY(set.activeSequenceLabels().isEmpty());
 }
 
 void GhosttyKeybindStateTest::recoversInvalidSequencesAndHonorsCatchAll()

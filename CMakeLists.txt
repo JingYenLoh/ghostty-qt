@@ -1004,6 +1004,7 @@ qt_add_qml_module(ghostty-qt
         qml/AbnormalExitOverlay.qml
         qml/BellBorderOverlay.qml
         qml/CommandPalette.qml
+        qml/KeyStateOverlay.qml
         qml/Main.qml
         qml/ReadOnlyOverlay.qml
         qml/ResizeOverlay.qml

@@ -1939,6 +1939,18 @@ unmodified layout level through `QKeyEvent`, so the fallback unshifted
 codepoint remains US-layout-oriented for shifted punctuation. Reading Wayland
 keymap state directly is a later input-compatibility slice.
 
+Each compiled trie edge also retains the human-readable label of its
+configured trigger. A pane publishes labels from the edges actually matched,
+not from the incoming `QKeyEvent`; this matters when a physical binding wins
+over a different logical layout symbol or a Unicode binding matches through
+case folding. Labels follow Ghostty's `Super+Ctrl+Alt+Shift+Key` order. The
+pane-local QML key-state overlay combines the named-table stack in activation
+order with the pending leader labels, shows a spinner while a continuation is
+required, and otherwise remains absent. Its center alignment and top/bottom
+drag target are local to each overlay instance, so hiding the state or
+changing another split does not reset a pane's chosen edge. Overlay pointer
+handling never takes keyboard focus from the terminal.
+
 Program availability is independent of its binding count. The default
 unavailable program means that no Ghostty binding source was supplied, so a
 pane uses the frontend's legacy fallback shortcuts. An available but empty

@@ -291,6 +291,160 @@ std::optional<PhysicalKey> physicalKey(QStringView rawName)
                                 : std::optional<PhysicalKey>(*found);
 }
 
+QString triggerModifierLabel(quint8 modifiers)
+{
+    QString result;
+    if ((modifiers & GhosttyKeybindSuper) != 0) {
+        result.append(QStringLiteral("Super+"));
+    }
+    if ((modifiers & GhosttyKeybindCtrl) != 0) {
+        result.append(QStringLiteral("Ctrl+"));
+    }
+    if ((modifiers & GhosttyKeybindAlt) != 0) {
+        result.append(QStringLiteral("Alt+"));
+    }
+    if ((modifiers & GhosttyKeybindShift) != 0) {
+        result.append(QStringLiteral("Shift+"));
+    }
+    return result;
+}
+
+QString physicalTriggerKeyLabel(QStringView rawName)
+{
+    const QString name =
+        rawName.contains(u'_') || rawName == rawName.toString().toLower()
+        ? rawName.toString()
+        : w3cToSnake(rawName);
+
+    if (name.startsWith(QLatin1StringView("key_")) && name.size() == 5) {
+        return QString(name.back()).toUpper();
+    }
+    if (name.startsWith(QLatin1StringView("digit_")) && name.size() == 7) {
+        return QString(name.back());
+    }
+    if (name.startsWith(u'f') && name.size() > 1) {
+        bool functionNumber = true;
+        for (qsizetype index = 1; index < name.size(); ++index) {
+            functionNumber = functionNumber && name.at(index).isDigit();
+        }
+        if (functionNumber) return name.toUpper();
+    }
+    if (name.startsWith(QLatin1StringView("numpad_"))) {
+        QString suffix = name.sliced(7);
+        if (suffix.size() == 1 && suffix.front().isDigit()) {
+            return QStringLiteral("KP_%1").arg(suffix);
+        }
+        static const QHash<QString, QString> keypadNames = {
+            {QStringLiteral("add"), QStringLiteral("KP_Add")},
+            {QStringLiteral("decimal"), QStringLiteral("KP_Decimal")},
+            {QStringLiteral("divide"), QStringLiteral("KP_Divide")},
+            {QStringLiteral("enter"), QStringLiteral("KP_Enter")},
+            {QStringLiteral("equal"), QStringLiteral("KP_Equal")},
+            {QStringLiteral("multiply"), QStringLiteral("KP_Multiply")},
+            {QStringLiteral("subtract"), QStringLiteral("KP_Subtract")},
+        };
+        if (const auto found = keypadNames.constFind(suffix);
+            found != keypadNames.cend()) {
+            return *found;
+        }
+    }
+
+    // These names mirror GDK's keyval names, which the upstream GTK frontend
+    // capitalizes at the first character for its key-state overlay.
+    static const QHash<QString, QString> names = {
+        {QStringLiteral("backquote"), QStringLiteral("Grave")},
+        {QStringLiteral("backslash"), QStringLiteral("Backslash")},
+        {QStringLiteral("bracket_left"), QStringLiteral("Bracketleft")},
+        {QStringLiteral("bracket_right"), QStringLiteral("Bracketright")},
+        {QStringLiteral("comma"), QStringLiteral("Comma")},
+        {QStringLiteral("equal"), QStringLiteral("Equal")},
+        {QStringLiteral("minus"), QStringLiteral("Minus")},
+        {QStringLiteral("period"), QStringLiteral("Period")},
+        {QStringLiteral("quote"), QStringLiteral("Apostrophe")},
+        {QStringLiteral("semicolon"), QStringLiteral("Semicolon")},
+        {QStringLiteral("slash"), QStringLiteral("Slash")},
+        {QStringLiteral("alt_left"), QStringLiteral("Alt_L")},
+        {QStringLiteral("alt_right"), QStringLiteral("Alt_R")},
+        {QStringLiteral("backspace"), QStringLiteral("BackSpace")},
+        {QStringLiteral("caps_lock"), QStringLiteral("Caps_Lock")},
+        {QStringLiteral("context_menu"), QStringLiteral("Menu")},
+        {QStringLiteral("control_left"), QStringLiteral("Control_L")},
+        {QStringLiteral("control_right"), QStringLiteral("Control_R")},
+        {QStringLiteral("enter"), QStringLiteral("Return")},
+        {QStringLiteral("meta_left"), QStringLiteral("Super_L")},
+        {QStringLiteral("meta_right"), QStringLiteral("Super_R")},
+        {QStringLiteral("shift_left"), QStringLiteral("Shift_L")},
+        {QStringLiteral("shift_right"), QStringLiteral("Shift_R")},
+        {QStringLiteral("space"), QStringLiteral("Space")},
+        {QStringLiteral("tab"), QStringLiteral("Tab")},
+        {QStringLiteral("delete"), QStringLiteral("Delete")},
+        {QStringLiteral("end"), QStringLiteral("End")},
+        {QStringLiteral("help"), QStringLiteral("Help")},
+        {QStringLiteral("home"), QStringLiteral("Home")},
+        {QStringLiteral("insert"), QStringLiteral("Insert")},
+        {QStringLiteral("page_down"), QStringLiteral("Page_Down")},
+        {QStringLiteral("page_up"), QStringLiteral("Page_Up")},
+        {QStringLiteral("arrow_down"), QStringLiteral("Down")},
+        {QStringLiteral("arrow_left"), QStringLiteral("Left")},
+        {QStringLiteral("arrow_right"), QStringLiteral("Right")},
+        {QStringLiteral("arrow_up"), QStringLiteral("Up")},
+        {QStringLiteral("down"), QStringLiteral("Down")},
+        {QStringLiteral("left"), QStringLiteral("Left")},
+        {QStringLiteral("right"), QStringLiteral("Right")},
+        {QStringLiteral("up"), QStringLiteral("Up")},
+        {QStringLiteral("num_lock"), QStringLiteral("Num_Lock")},
+        {QStringLiteral("escape"), QStringLiteral("Escape")},
+        {QStringLiteral("print_screen"), QStringLiteral("Print")},
+        {QStringLiteral("scroll_lock"), QStringLiteral("Scroll_Lock")},
+        {QStringLiteral("pause"), QStringLiteral("Pause")},
+        {QStringLiteral("copy"), QStringLiteral("Copy")},
+        {QStringLiteral("cut"), QStringLiteral("Cut")},
+        {QStringLiteral("paste"), QStringLiteral("Paste")},
+    };
+    return names.value(name, name);
+}
+
+QString unicodeTriggerKeyLabel(quint32 codepoint)
+{
+    const char32_t scalar = static_cast<char32_t>(codepoint);
+    const QString text = QString::fromUcs4(&scalar, 1);
+    if (text.size() == 1) {
+        const QChar character = text.front();
+        if (character.isLetter()) return text.toUpper();
+        if (character.isDigit()) return text;
+    }
+    static const QHash<quint32, QString> names = {
+        {U' ', QStringLiteral("Space")},
+        {U'`', QStringLiteral("Grave")},
+        {U'\\', QStringLiteral("Backslash")},
+        {U'[', QStringLiteral("Bracketleft")},
+        {U']', QStringLiteral("Bracketright")},
+        {U',', QStringLiteral("Comma")},
+        {U'=', QStringLiteral("Equal")},
+        {U'-', QStringLiteral("Minus")},
+        {U'.', QStringLiteral("Period")},
+        {U'\'', QStringLiteral("Apostrophe")},
+        {U';', QStringLiteral("Semicolon")},
+        {U'/', QStringLiteral("Slash")},
+    };
+    return names.value(codepoint, text);
+}
+
+QString triggerLabel(const GhosttyKeybindTrigger &trigger)
+{
+    QString result = triggerModifierLabel(trigger.modifiers);
+    switch (trigger.kind) {
+    case GhosttyKeybindKeyKind::Physical:
+        result.append(physicalTriggerKeyLabel(trigger.physicalName));
+        break;
+    case GhosttyKeybindKeyKind::Unicode:
+        result.append(unicodeTriggerKeyLabel(trigger.unicodeCodepoint));
+        break;
+    case GhosttyKeybindKeyKind::CatchAll: return {};
+    }
+    return result;
+}
+
 std::expected<ParsedFlags, QString> parseFlags(QStringView input)
 {
     ParsedFlags flags;
@@ -876,6 +1030,7 @@ GhosttyKeybindProgram::compile(const GhosttyKeybindConfig &config)
                 Binding trigger;
                 trigger.modifiers =
                     normalizedModifiers(qtModifiers(source.modifiers));
+                trigger.label = triggerLabel(source);
                 switch (source.kind) {
                 case GhosttyKeybindKeyKind::Physical: {
                     const auto key = physicalKey(source.physicalName);
@@ -1232,8 +1387,12 @@ GhosttyKeybindState::advance(const GhosttyKeybindEvent &event)
     if (found.entry->kind == EntryKind::Leader) {
         if (!continuing) {
             queuedEvents_.clear();
+            activeSequenceLabels_.clear();
         }
         queuedEvents_.append(event);
+        if (!found.entry->trigger.label.isEmpty()) {
+            activeSequenceLabels_.append(found.entry->trigger.label);
+        }
         activeNode_ = found.entry->child;
         return {
             .kind = GhosttyKeybindStepKind::Leader,
@@ -1326,4 +1485,5 @@ void GhosttyKeybindState::resetSequence() noexcept
 {
     activeNode_.reset();
     queuedEvents_.clear();
+    activeSequenceLabels_.clear();
 }

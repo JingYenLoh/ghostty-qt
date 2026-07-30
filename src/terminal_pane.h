@@ -65,6 +65,8 @@ class TerminalPane final : public QQuickItem {
         qreal fontPointSize READ fontPointSize NOTIFY fontPointSizeChanged)
     Q_PROPERTY(QStringList activeKeyTables READ activeKeyTables NOTIFY
                    activeKeyTablesChanged)
+    Q_PROPERTY(QStringList pendingKeySequence READ pendingKeySequence NOTIFY
+                   pendingKeySequenceChanged)
     Q_PROPERTY(
         QString linkPreviewText READ linkPreviewText NOTIFY linkPreviewChanged)
     Q_PROPERTY(
@@ -119,6 +121,7 @@ public:
     QString currentDirectory() const;
     qreal fontPointSize() const;
     QStringList activeKeyTables() const;
+    QStringList pendingKeySequence() const;
     QString linkPreviewText() const;
     QRectF linkPreviewRect() const;
     bool searchUiActive() const { return searchUiActive_; }
@@ -202,6 +205,7 @@ Q_SIGNALS:
     void currentDirectoryChanged();
     void fontPointSizeChanged();
     void activeKeyTablesChanged();
+    void pendingKeySequenceChanged();
     void linkPreviewChanged();
     void searchUiActiveChanged();
     void searchUiTextChanged();

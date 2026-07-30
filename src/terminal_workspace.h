@@ -88,6 +88,9 @@ class TerminalWorkspace : public QQuickItem {
     Q_PROPERTY(
         QQmlComponent *searchOverlayComponent READ searchOverlayComponent WRITE
             setSearchOverlayComponent NOTIFY searchOverlayComponentChanged)
+    Q_PROPERTY(QQmlComponent *keyStateOverlayComponent READ
+                   keyStateOverlayComponent WRITE setKeyStateOverlayComponent
+                       NOTIFY keyStateOverlayComponentChanged)
     Q_PROPERTY(
         QQmlComponent *abnormalExitOverlayComponent READ
             abnormalExitOverlayComponent WRITE setAbnormalExitOverlayComponent
@@ -180,6 +183,11 @@ public:
         return searchOverlay_.component.data();
     }
     void setSearchOverlayComponent(QQmlComponent *component);
+    QQmlComponent *keyStateOverlayComponent() const
+    {
+        return keyStateOverlay_.component.data();
+    }
+    void setKeyStateOverlayComponent(QQmlComponent *component);
     QQmlComponent *abnormalExitOverlayComponent() const
     {
         return abnormalExitOverlay_.component.data();
@@ -277,6 +285,7 @@ Q_SIGNALS:
     void applicationQuitApproved();
     void applicationQuitCancelled();
     void searchOverlayComponentChanged();
+    void keyStateOverlayComponentChanged();
     void abnormalExitOverlayComponentChanged();
     void readOnlyOverlayComponentChanged();
     void resizeOverlayComponentChanged();
@@ -545,6 +554,7 @@ private:
     bool broadActionFanout_ = false;
     bool topologyMutation_ = false;
     PaneOverlaySlot searchOverlay_;
+    PaneOverlaySlot keyStateOverlay_;
     PaneOverlaySlot abnormalExitOverlay_;
     PaneOverlaySlot readOnlyOverlay_;
     PaneOverlaySlot resizeOverlay_;

@@ -39,6 +39,7 @@ constexpr QRgb darkChromeForegroundRgb = 0xffeceff4U;
 constexpr QRgb lightChromeBackgroundRgb = 0xffeceff4U;
 constexpr QRgb lightChromeForegroundRgb = 0xff2e3440U;
 constexpr auto kSearchOverlayProperty = "_ghosttyQtSearchOverlay";
+constexpr auto kKeyStateOverlayProperty = "_ghosttyQtKeyStateOverlay";
 constexpr auto kAbnormalExitOverlayProperty = "_ghosttyQtAbnormalExitOverlay";
 constexpr auto kReadOnlyOverlayProperty = "_ghosttyQtReadOnlyOverlay";
 constexpr auto kResizeOverlayProperty = "_ghosttyQtResizeOverlay";
@@ -455,6 +456,14 @@ void TerminalWorkspace::setSearchOverlayComponent(QQmlComponent *component)
                             &TerminalWorkspace::searchOverlayComponentChanged);
 }
 
+void TerminalWorkspace::setKeyStateOverlayComponent(QQmlComponent *component)
+{
+    setPaneOverlayComponent(
+        keyStateOverlay_, component, kKeyStateOverlayProperty,
+        "terminal key-state overlay",
+        &TerminalWorkspace::keyStateOverlayComponentChanged);
+}
+
 void TerminalWorkspace::setAbnormalExitOverlayComponent(
     QQmlComponent *component)
 {
@@ -560,6 +569,12 @@ bool TerminalWorkspace::attachPaneOverlays(TerminalPane *pane)
     const QPointer<TerminalPane> paneGuard(pane);
     if (!attachPaneOverlay(searchOverlay_.component, paneGuard,
                            kSearchOverlayProperty, "terminal search overlay")
+        || guard == nullptr) {
+        return false;
+    }
+    if (!attachPaneOverlay(keyStateOverlay_.component, paneGuard,
+                           kKeyStateOverlayProperty,
+                           "terminal key-state overlay")
         || guard == nullptr) {
         return false;
     }

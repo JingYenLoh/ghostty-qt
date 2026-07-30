@@ -95,6 +95,11 @@ ApplicationWindow {
     }
 
     Component {
+        id: terminalKeyStateOverlayFactory
+        KeyStateOverlay {}
+    }
+
+    Component {
         id: terminalAbnormalExitOverlayFactory
         AbnormalExitOverlay {}
     }
@@ -248,6 +253,7 @@ ApplicationWindow {
         id: workspace
         anchors.fill: parent
         searchOverlayComponent: terminalSearchOverlayFactory
+        keyStateOverlayComponent: terminalKeyStateOverlayFactory
         abnormalExitOverlayComponent: terminalAbnormalExitOverlayFactory
         readOnlyOverlayComponent: terminalReadOnlyOverlayFactory
         resizeOverlayComponent: terminalResizeOverlayFactory

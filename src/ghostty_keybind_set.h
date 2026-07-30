@@ -100,6 +100,11 @@ private:
         quint32 nativeScanCode = 0;
         bool keypad = false;
         QString foldedUnicode;
+        // Human-readable text comes from the configured trigger that
+        // installed this trie edge. It must not be reconstructed from the
+        // QKeyEvent that happened to match it: physical and case-folded
+        // bindings can intentionally differ from the event's logical label.
+        QString label;
         Qt::KeyboardModifiers modifiers = Qt::NoModifier;
     };
 
@@ -253,6 +258,10 @@ public:
     {
         return activeNode_.has_value();
     }
+    [[nodiscard]] const QStringList &activeSequenceLabels() const noexcept
+    {
+        return activeSequenceLabels_;
+    }
 
     // Named key tables are surface-local stack state. Activation fails for an
     // unknown table, a duplicate top entry, or Ghostty's maximum depth of 8.
@@ -299,4 +308,5 @@ private:
     QVector<ActiveTable> activeTables_;
     std::optional<NodeId> activeNode_;
     QVector<GhosttyKeybindEvent> queuedEvents_;
+    QStringList activeSequenceLabels_;
 };

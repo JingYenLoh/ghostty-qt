@@ -10963,6 +10963,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     QSignalSpy newTab(&pane, &TerminalPane::requestNewTab);
     QSignalSpy applicationActions(
         &pane, &TerminalPane::applicationActionRequested);
+    QSignalSpy keySequenceChanges(&pane,
+                                  &TerminalPane::pendingKeySequenceChanged);
 
     const auto press = [&pane](int key, Qt::KeyboardModifiers modifiers,
                                QString text) {
@@ -10987,11 +10989,16 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     leader();
     QCOMPARE(staged.count(), 1);
     QCOMPARE(forwarded.count(), 0);
+    QCOMPARE(pane.pendingKeySequence(),
+             QStringList({QStringLiteral("Ctrl+X")}));
+    QCOMPARE(keySequenceChanges.count(), 1);
     release(Qt::Key_X, Qt::ControlModifier, QString(QChar(0x18)));
     QCOMPARE(forwarded.count(), 1);
     press(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(newTab.count(), 1);
     QCOMPARE(resolution(), TerminalSequenceResolution::Drop);
+    QVERIFY(pane.pendingKeySequence().isEmpty());
+    QCOMPARE(keySequenceChanges.count(), 2);
     release(Qt::Key_N, Qt::NoModifier, QStringLiteral("n"));
     QCOMPARE(forwarded.count(), 1);
 
@@ -11001,6 +11008,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     press(Qt::Key_Z, Qt::NoModifier, QStringLiteral("z"));
     QCOMPARE(resolution(),
              TerminalSequenceResolution::FlushAndSendCurrent);
+    QVERIFY(pane.pendingKeySequence().isEmpty());
+    QCOMPARE(keySequenceChanges.count(), 4);
     QCOMPARE(forwarded.count(), 1);
 
     // Unconsumed leaves run their action and replay the entire sequence.
@@ -11039,6 +11048,9 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     // before the replacement trie becomes visible.
     leader();
     const int resolutionsBeforeReload = resolved.count();
+    const int keySequenceChangesBeforeReload = keySequenceChanges.count();
+    QCOMPARE(pane.pendingKeySequence(),
+             QStringList({QStringLiteral("Ctrl+X")}));
     LaunchOptions reloaded = options;
     GhosttyKeybindConfig reloadedConfig;
     reloadedConfig.root = {
@@ -11050,6 +11062,8 @@ void TerminalPaneTest::routesStructuredSequencesAndCancelsThemOnReload()
     reloaded.keybindSource =
         GhosttyKeybindSource::structured(std::move(reloadedConfig));
     pane.applyRuntimeOptions(reloaded);
+    QVERIFY(pane.pendingKeySequence().isEmpty());
+    QCOMPARE(keySequenceChanges.count(), keySequenceChangesBeforeReload + 1);
     QCOMPARE(resolved.count(), resolutionsBeforeReload + 1);
     QCOMPARE(resolution(), TerminalSequenceResolution::Drop);
     const int beforeFormerLeaf = forwarded.count();

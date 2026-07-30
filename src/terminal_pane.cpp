@@ -917,6 +917,11 @@ QStringList TerminalPane::activeKeyTables() const
     return keybinds_.activeTableNames();
 }
 
+QStringList TerminalPane::pendingKeySequence() const
+{
+    return keybinds_.activeSequenceLabels();
+}
+
 QString TerminalPane::linkPreviewText() const
 {
     QMutexLocker locker(&renderMutex_);
@@ -1170,9 +1175,11 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
 
     quint64 previousSequenceToken = 0;
     bool keyTablesChanged = false;
+    bool keySequenceChanged = false;
     if (keybindGenerationChanged || modifierRemapsChanged) {
         previousSequenceToken = std::exchange(activeSequenceToken_, 0);
         keyTablesChanged = keybinds_.hasActiveTables();
+        keySequenceChanged = keybinds_.sequenceActive();
         if (keybindGenerationChanged) {
             (void)keybinds_.replaceProgram(keybindProgram);
         } else {
@@ -1193,6 +1200,10 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     }
     if (keyTablesChanged) {
         Q_EMIT activeKeyTablesChanged();
+        if (guard == nullptr) return;
+    }
+    if (keySequenceChanged) {
+        Q_EMIT pendingKeySequenceChanged();
         if (guard == nullptr) return;
     }
     // Always release the old worker staging, even when an earlier observer
@@ -2222,6 +2233,7 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
         .unshiftedCodepoint = unshiftedCodepoint(event->key()),
     };
     const TerminalKeyInput currentInput = terminalKeyInput(event);
+    const bool sequenceWasActive = keybinds_.sequenceActive();
     const GhosttyKeybindStep step = keybinds_.advance(bindingEvent);
 
     if (step.kind == GhosttyKeybindStepKind::Leader) {
@@ -2244,10 +2256,15 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
 
         const bool sameProgram =
             guard->keybindProgram().isSameGeneration(matchedProgram);
-        if (!tokenStillOwned && sameProgram
+        if (tokenStillOwned && sameProgram
             && guard->activeSequenceToken_ == token) {
+            Q_EMIT pendingKeySequenceChanged();
+            if (guard == nullptr) return KeyHandling::ConsumePress;
+        } else if (!tokenStillOwned && sameProgram
+                   && guard->activeSequenceToken_ == token) {
             guard->activeSequenceToken_ = 0;
             guard->keybinds_.resetSequence();
+            Q_EMIT pendingKeySequenceChanged();
         }
         return KeyHandling::ConsumePress;
     }
@@ -2267,6 +2284,13 @@ TerminalPane::handleConfiguredShortcut(QKeyEvent *event,
     });
     const quint64 matchedSequenceToken =
         completesSequence ? std::exchange(activeSequenceToken_, 0) : 0;
+
+    if (completesSequence && sequenceWasActive) {
+        Q_EMIT pendingKeySequenceChanged();
+        if (guard == nullptr) {
+            return KeyHandling::ConsumePressAndRelease;
+        }
+    }
 
     if (step.activeTablesChanged) {
         Q_EMIT activeKeyTablesChanged();
@@ -2971,7 +2995,13 @@ bool TerminalPane::performPaneAction(const GhosttyPaneAction &action)
             },
             [this](const PaneAction::EndKeySequence &) {
                 if (executingSequenceTokens_.isEmpty()) {
+                    const bool sequenceWasActive = keybinds_.sequenceActive();
                     keybinds_.resetSequence();
+                    if (sequenceWasActive) {
+                        const QPointer<TerminalPane> guard(this);
+                        Q_EMIT pendingKeySequenceChanged();
+                        if (guard == nullptr) return true;
+                    }
                 }
                 (void)resolveExecutingSequence(
                     TerminalSequenceResolution::Flush);

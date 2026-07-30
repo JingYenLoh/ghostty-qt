@@ -451,6 +451,7 @@ private Q_SLOTS:
     void readOnlyStateIsPaneLocalAndBroadFanoutIsStable();
     void abnormalExitOverlayPresentsHeldFailureAndCloses();
     void overlayComponentsShareOneLifecycle();
+    void keyStateOverlayPresentsAndRetainsPerPaneDragPosition();
     void pendingPaneReloadsDuringOverlayCompletion();
     void resizeOverlayIsPaneLocalAndScalesWithDpr();
     void scrollbarOverlayIsPaneLocalAndReloadable();
@@ -4250,6 +4251,12 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
             &TerminalWorkspace::searchOverlayComponentChanged,
         },
         OverlayCase{
+            "keyState",
+            &TerminalWorkspace::setKeyStateOverlayComponent,
+            &TerminalWorkspace::keyStateOverlayComponent,
+            &TerminalWorkspace::keyStateOverlayComponentChanged,
+        },
+        OverlayCase{
             "abnormalExit",
             &TerminalWorkspace::setAbnormalExitOverlayComponent,
             &TerminalWorkspace::abnormalExitOverlayComponent,
@@ -4403,6 +4410,166 @@ void TerminalWorkspaceTest::overlayComponentsShareOneLifecycle()
                     == nullptr);
         }
     }
+}
+
+void TerminalWorkspaceTest::
+    keyStateOverlayPresentsAndRetainsPerPaneDragPosition()
+{
+    ShellEnvironment shell(QByteArrayLiteral("/bin/true"));
+    LaunchOptions options = baseOptions();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.confirmCloseMode = ConfirmCloseMode::Never;
+
+    GhosttyKeybindConfig config;
+    config.root = {
+        GhosttyKeybindDefinition{
+            .sequence =
+                {
+                    GhosttyKeybindTrigger{
+                        .kind = GhosttyKeybindKeyKind::Unicode,
+                        .unicodeCodepoint = 'x',
+                        .modifiers = GhosttyKeybindCtrl,
+                    },
+                    GhosttyKeybindTrigger{
+                        .kind = GhosttyKeybindKeyKind::Unicode,
+                        .unicodeCodepoint = 'a',
+                    },
+                },
+            .actions = {QStringLiteral("ignore")},
+        },
+    };
+    config.tables = {
+        GhosttyKeybindTable{
+            .name = QStringLiteral("edit"),
+            .bindings =
+                {
+                    GhosttyKeybindDefinition{
+                        .sequence = {GhosttyKeybindTrigger{
+                            .kind = GhosttyKeybindKeyKind::Unicode,
+                            .unicodeCodepoint = 'z',
+                        }},
+                        .actions = {QStringLiteral("ignore")},
+                    },
+                },
+        },
+    };
+    options.keybindSource = GhosttyKeybindSource::structured(std::move(config));
+    TerminalWorkspace::setDefaultLaunchOptions(options);
+
+    QQmlEngine engine;
+    const QString overlayPath = QFINDTESTDATA("../qml/KeyStateOverlay.qml");
+    QVERIFY(!overlayPath.isEmpty());
+    QQmlComponent overlayComponent(&engine, QUrl::fromLocalFile(overlayPath));
+    QVERIFY2(overlayComponent.isReady(),
+             qPrintable(overlayComponent.errorString()));
+
+    QQuickWindow window;
+    window.resize(900, 600);
+    auto workspace = std::make_unique<TerminalWorkspace>();
+    workspace->setParentItem(window.contentItem());
+    workspace->setSize(window.size());
+    workspace->setKeyStateOverlayComponent(&overlayComponent);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(window.isExposed(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->tabCount(), 1, 1000);
+
+    TerminalPane *const firstPane = workspace->findChild<TerminalPane *>();
+    QVERIFY(firstPane != nullptr);
+    auto *const firstOverlay = firstPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStateOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(firstOverlay != nullptr);
+    QVERIFY(!firstOverlay->isVisible());
+    QCOMPARE(firstOverlay->parentItem(), firstPane);
+
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), false);
+    QVERIFY(qAbs(firstOverlay->x()
+                 - (firstPane->width() - firstOverlay->width()) / 2.0)
+            < 0.01);
+    QVERIFY(qAbs(firstOverlay->y()
+                 - (firstPane->height() - firstOverlay->height() - 8.0))
+            < 0.01);
+
+    auto *const tableLabel = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStateTables"));
+    auto *const sequenceLabel = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStateSequence"));
+    auto *const chevron = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStateChevron"));
+    auto *const pending = firstOverlay->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStatePending"));
+    QVERIFY(tableLabel != nullptr);
+    QVERIFY(sequenceLabel != nullptr);
+    QVERIFY(chevron != nullptr);
+    QVERIFY(pending != nullptr);
+    QCOMPARE(tableLabel->property("text").toString(), QStringLiteral("edit"));
+    QVERIFY(!sequenceLabel->isVisible());
+    QVERIFY(!chevron->isVisible());
+    QVERIFY(!pending->isVisible());
+
+    QKeyEvent leader(QEvent::KeyPress, Qt::Key_X, Qt::ControlModifier,
+                     QString(QChar(0x18)));
+    QCoreApplication::sendEvent(firstPane, &leader);
+    QTRY_COMPARE_WITH_TIMEOUT(sequenceLabel->property("text").toString(),
+                              QStringLiteral("Ctrl+X"), 1000);
+    QVERIFY(sequenceLabel->isVisible());
+    QVERIFY(chevron->isVisible());
+    QVERIFY(pending->isVisible());
+    QVERIFY(pending->property("running").toBool());
+
+    firstPane->forceActiveFocus();
+    QCOMPARE(window.activeFocusItem(), firstPane);
+    const QPoint dragStart =
+        firstOverlay
+            ->mapToScene(QPointF(firstOverlay->width() / 2.0,
+                                 firstOverlay->height() / 2.0))
+            .toPoint();
+    const QPoint dragEnd(dragStart.x(), 12);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, dragStart);
+    QTest::mouseMove(&window, dragEnd);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, dragEnd);
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->property("alignTop").toBool(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(qAbs(firstOverlay->y() - 8.0) < 0.01, 1000);
+    QCOMPARE(window.activeFocusItem(), firstPane);
+
+    QKeyEvent leaf(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier,
+                   QStringLiteral("a"));
+    QCoreApplication::sendEvent(firstPane, &leaf);
+    QVERIFY(firstPane->pendingKeySequence().isEmpty());
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("deactivate_all_key_tables")));
+    QTRY_VERIFY_WITH_TIMEOUT(!firstOverlay->isVisible(), 1000);
+    QVERIFY(firstPane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QTRY_VERIFY_WITH_TIMEOUT(firstOverlay->isVisible(), 1000);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), true);
+    QVERIFY(qAbs(firstOverlay->y() - 8.0) < 0.01);
+
+    workspace->splitRight();
+    QTRY_COMPARE_WITH_TIMEOUT(workspace->findChildren<TerminalPane *>().size(),
+                              2, 1000);
+    TerminalPane *secondPane = nullptr;
+    for (TerminalPane *pane : workspace->findChildren<TerminalPane *>()) {
+        if (pane != firstPane) secondPane = pane;
+    }
+    QVERIFY(secondPane != nullptr);
+    auto *const secondOverlay = secondPane->findChild<QQuickItem *>(
+        QStringLiteral("terminalKeyStateOverlay"), Qt::FindDirectChildrenOnly);
+    QVERIFY(secondOverlay != nullptr);
+    QVERIFY(secondPane->executeConfiguredAction(
+        QStringLiteral("activate_key_table:edit")));
+    QTRY_VERIFY_WITH_TIMEOUT(secondOverlay->isVisible(), 1000);
+    QCOMPARE(secondOverlay->property("alignTop").toBool(), false);
+    QVERIFY(qAbs(secondOverlay->y()
+                 - (secondPane->height() - secondOverlay->height() - 8.0))
+            < 0.01);
+    QCOMPARE(firstOverlay->property("alignTop").toBool(), true);
+
+    workspace.reset();
+    window.close();
 }
 
 void TerminalWorkspaceTest::pendingPaneReloadsDuringOverlayCompletion()
