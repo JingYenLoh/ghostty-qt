@@ -462,6 +462,9 @@ void LaunchOptionsTest::defaults()
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.tabsLocation, TabsLocation::Top);
+    QCOMPARE(options.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
+    QCOMPARE(options.quickTerminalLayerShell.layerNamespace,
+             QStringLiteral("ghostty-quick-terminal"));
     QCOMPARE(options.windowDecoration, WindowDecorationMode::Auto);
     QCOMPARE(options.windowWidth, quint32(0));
     QCOMPARE(options.windowHeight, quint32(0));
@@ -1673,6 +1676,9 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions builtIns =
         resolveLaunchOptions(*parsed, nullptr, nullptr);
     QCOMPARE(builtIns.tabsLocation, TabsLocation::Top);
+    QCOMPARE(builtIns.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
+    QCOMPARE(builtIns.quickTerminalLayerShell.layerNamespace,
+             QStringLiteral("ghostty-quick-terminal"));
     QCOMPARE(builtIns.singleInstanceMode, SingleInstanceMode::Detect);
 
     GhosttyConfigSnapshot shared = completeSnapshot();
@@ -1684,15 +1690,23 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         resolveLaunchOptions(*parsed, &shared, nullptr);
     QCOMPARE(sharedOnly.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(sharedOnly.tabsLocation, TabsLocation::Top);
+    QCOMPARE(sharedOnly.quickTerminalLayerShell,
+             QuickTerminalLayerShellOptions{});
     QCOMPARE(sharedOnly.singleInstanceMode, SingleInstanceMode::Detect);
 
     FrontendConfigSnapshot frontend;
     frontend.values.tabsLocation = TabsLocation::Bottom;
+    frontend.values.quickTerminalLayerShell = {
+        .layer = QuickTerminalLayer::Overlay,
+        .layerNamespace = QStringLiteral("configured-quick-terminal"),
+    };
     frontend.values.singleInstanceMode = SingleInstanceMode::Disabled;
     const LaunchOptions configured =
         resolveLaunchOptions(*parsed, &shared, &frontend);
     QCOMPARE(configured.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(configured.quickTerminalLayerShell,
+             frontend.values.quickTerminalLayerShell);
     QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Disabled);
 
     const auto explicitCli = parseLaunchOptions({
@@ -1703,12 +1717,17 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions overridden =
         resolveLaunchOptions(*explicitCli, &shared, &frontend);
     QCOMPARE(overridden.tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(overridden.quickTerminalLayerShell,
+             frontend.values.quickTerminalLayerShell);
     QCOMPARE(overridden.singleInstanceMode, SingleInstanceMode::Enabled);
     QVERIFY(overridden.singleInstanceModeExplicit);
 
     frontend.values.tabsLocation = TabsLocation::Top;
     QCOMPARE(applyFrontendConfigSnapshot(*parsed, frontend).tabsLocation,
              TabsLocation::Top);
+    QCOMPARE(
+        applyFrontendConfigSnapshot(*parsed, frontend).quickTerminalLayerShell,
+        frontend.values.quickTerminalLayerShell);
 }
 
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()

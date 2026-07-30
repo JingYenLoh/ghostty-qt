@@ -18,10 +18,11 @@ using LayerWindow = LayerShellQt::Window;
 
 std::unique_ptr<QuickTerminalSurface>
 createSurface(QWindow &window, const QuickTerminalOptions &options,
-              QScreen &screen)
+              QScreen &screen,
+              const QuickTerminalLayerShellOptions &layerShellOptions = {})
 {
-    QuickTerminalSurface::CreateResult created =
-        QuickTerminalSurface::create(window, options, screen);
+    QuickTerminalSurface::CreateResult created = QuickTerminalSurface::create(
+        window, options, layerShellOptions, screen);
     if (!created) {
         qFatal("Failed to create a quick-terminal surface: %s",
                qPrintable(created.error()));
@@ -43,12 +44,14 @@ class QuickTerminalSurfaceTest : public QObject {
 
 private Q_SLOTS:
     void configuresInvariantLayerProperties();
+    void mapsEveryLayerAndInitialNamespace();
     void mapsEveryPlacement();
     void mapsEveryKeyboardMode();
     void mapsEveryScreenMode();
     void calculatesEveryPositionFromFullLogicalGeometry();
     void unchangedSyncIsANoOp();
     void liveSyncUpdatesOnlyRelevantLayerProperties();
+    void rejectsAlreadyNativeWindow();
     void rejectsSynchronizationAfterWindowDestruction();
 };
 
@@ -67,6 +70,35 @@ void QuickTerminalSurfaceTest::configuresInvariantLayerProperties()
     QCOMPARE(layer->exclusionZone(), 0);
     QVERIFY(!layer->closeOnDismissed());
     QVERIFY(!window.isVisible());
+}
+
+void QuickTerminalSurfaceTest::mapsEveryLayerAndInitialNamespace()
+{
+    struct Case {
+        QuickTerminalLayer option;
+        LayerWindow::Layer layer;
+    };
+    constexpr std::array cases{
+        Case{QuickTerminalLayer::Background, LayerWindow::LayerBackground},
+        Case{QuickTerminalLayer::Bottom, LayerWindow::LayerBottom},
+        Case{QuickTerminalLayer::Top, LayerWindow::LayerTop},
+        Case{QuickTerminalLayer::Overlay, LayerWindow::LayerOverlay},
+    };
+
+    for (const Case &test : cases) {
+        QWindow window;
+        const QuickTerminalLayerShellOptions layerShellOptions{
+            .layer = test.option,
+            .layerNamespace = QStringLiteral("custom-quick-terminal"),
+        };
+        const std::unique_ptr<QuickTerminalSurface> surface = createSurface(
+            window, QuickTerminalOptions{}, primaryScreen(), layerShellOptions);
+        const LayerWindow *const layer = surface->layerShellWindow();
+
+        QCOMPARE(layer->layer(), test.layer);
+        QCOMPARE(layer->scope(), QStringLiteral("custom-quick-terminal"));
+        QVERIFY(window.handle() == nullptr);
+    }
 }
 
 void QuickTerminalSurfaceTest::mapsEveryPlacement()
@@ -124,7 +156,7 @@ void QuickTerminalSurfaceTest::mapsEveryKeyboardMode()
         createSurface(window, options, primaryScreen());
     for (const Case &test : cases) {
         options.keyboardInteractivity = test.option;
-        QVERIFY(surface->syncOptions(options, primaryScreen()));
+        QVERIFY(surface->syncOptions(options, {}, primaryScreen()));
         const LayerWindow *const layer = surface->layerShellWindow();
         QCOMPARE(layer->keyboardInteractivity(), test.layer);
         QCOMPARE(layer->activateOnShow(), test.activateOnShow);
@@ -145,20 +177,20 @@ void QuickTerminalSurfaceTest::mapsEveryScreenMode()
     };
     for (const QuickTerminalScreen selection : explicitSelections) {
         options.screen = selection;
-        QVERIFY(surface->syncOptions(options, screen));
+        QVERIFY(surface->syncOptions(options, {}, screen));
         const LayerWindow *const layer = surface->layerShellWindow();
         QCOMPARE(layer->screen(), &screen);
         QVERIFY(!layer->wantsToBeOnActiveScreen());
     }
 
     options.screen = QuickTerminalScreen::Mouse;
-    QVERIFY(surface->syncOptions(options, screen));
+    QVERIFY(surface->syncOptions(options, {}, screen));
     const LayerWindow *const mouseLayer = surface->layerShellWindow();
     QCOMPARE(mouseLayer->screen(), nullptr);
     QVERIFY(mouseLayer->wantsToBeOnActiveScreen());
 
     options.screen = QuickTerminalScreen::Main;
-    QVERIFY(surface->syncOptions(options, screen));
+    QVERIFY(surface->syncOptions(options, {}, screen));
     const LayerWindow *const mainLayer = surface->layerShellWindow();
     QCOMPARE(mainLayer->screen(), &screen);
     QVERIFY(!mainLayer->wantsToBeOnActiveScreen());
@@ -181,7 +213,7 @@ void QuickTerminalSurfaceTest::calculatesEveryPositionFromFullLogicalGeometry()
     };
     for (const QuickTerminalPosition position : positions) {
         options.position = position;
-        QVERIFY(surface->syncOptions(options, screen));
+        QVERIFY(surface->syncOptions(options, {}, screen));
         QCOMPARE(surface->layerShellWindow()->desiredSize(),
                  quickTerminalSize(options.size, position,
                                    screen.geometry().size()));
@@ -203,8 +235,9 @@ void QuickTerminalSurfaceTest::unchangedSyncIsANoOp()
     QSignalSpy activeScreen(layer,
                             &LayerWindow::wantsToBeOnActiveScreenChanged);
     QSignalSpy explicitScreen(layer, &LayerWindow::screenChanged);
+    QSignalSpy layerChanged(layer, &LayerWindow::layerChanged);
 
-    QVERIFY(surface->syncOptions(options, screen));
+    QVERIFY(surface->syncOptions(options, {}, screen));
 
     QCOMPARE(anchors.count(), 0);
     QCOMPARE(margins.count(), 0);
@@ -212,6 +245,7 @@ void QuickTerminalSurfaceTest::unchangedSyncIsANoOp()
     QCOMPARE(keyboard.count(), 0);
     QCOMPARE(activeScreen.count(), 0);
     QCOMPARE(explicitScreen.count(), 0);
+    QCOMPARE(layerChanged.count(), 0);
 }
 
 void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
@@ -219,8 +253,9 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
     QScreen &screen = primaryScreen();
     QWindow window;
     QuickTerminalOptions options;
+    QuickTerminalLayerShellOptions layerShellOptions;
     const std::unique_ptr<QuickTerminalSurface> surface =
-        createSurface(window, options, screen);
+        createSurface(window, options, screen, layerShellOptions);
     const LayerWindow *const layer = surface->layerShellWindow();
     QSignalSpy anchors(layer, &LayerWindow::anchorsChanged);
     QSignalSpy margins(layer, &LayerWindow::marginsChanged);
@@ -229,21 +264,26 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
     QSignalSpy activeScreen(layer,
                             &LayerWindow::wantsToBeOnActiveScreenChanged);
     QSignalSpy explicitScreen(layer, &LayerWindow::screenChanged);
+    QSignalSpy layerChanged(layer, &LayerWindow::layerChanged);
 
     options.autohide = true;
-    QVERIFY(surface->syncOptions(options, screen));
+    QVERIFY(surface->syncOptions(options, layerShellOptions, screen));
     QCOMPARE(anchors.count(), 0);
     QCOMPARE(margins.count(), 0);
     QCOMPARE(desiredSize.count(), 0);
     QCOMPARE(keyboard.count(), 0);
     QCOMPARE(activeScreen.count(), 0);
     QCOMPARE(explicitScreen.count(), 0);
+    QCOMPARE(layerChanged.count(), 0);
 
     options.position = QuickTerminalPosition::Right;
     options.size.primary = QuickTerminalPixels{537};
     options.keyboardInteractivity = QuickTerminalKeyboardInteractivity::None;
     options.screen = QuickTerminalScreen::Mouse;
-    QVERIFY(surface->syncOptions(options, screen));
+    layerShellOptions.layer = QuickTerminalLayer::Overlay;
+    layerShellOptions.layerNamespace =
+        QStringLiteral("recreated-quick-terminal");
+    QVERIFY(surface->syncOptions(options, layerShellOptions, screen));
 
     QCOMPARE(layer->anchors(), LayerWindow::Anchors(LayerWindow::AnchorRight));
     QCOMPARE(layer->margins(), QMargins(20, 20, 0, 20));
@@ -255,10 +295,29 @@ void QuickTerminalSurfaceTest::liveSyncUpdatesOnlyRelevantLayerProperties()
     QVERIFY(!layer->activateOnShow());
     QCOMPARE(layer->screen(), nullptr);
     QVERIFY(layer->wantsToBeOnActiveScreen());
+    QCOMPARE(layer->layer(), LayerWindow::LayerOverlay);
+    // LayerShellQt stores the replacement scope for the next native layer
+    // role. Wayland provides no request that can rename the current role.
+    QCOMPARE(layer->scope(), QStringLiteral("recreated-quick-terminal"));
     QVERIFY(anchors.count() > 0);
     QVERIFY(margins.count() > 0);
     QVERIFY(desiredSize.count() > 0);
     QVERIFY(keyboard.count() > 0);
+    QCOMPARE(layerChanged.count(), 1);
+}
+
+void QuickTerminalSurfaceTest::rejectsAlreadyNativeWindow()
+{
+    QWindow window;
+    window.create();
+    QVERIFY(window.handle() != nullptr);
+
+    const QuickTerminalSurface::CreateResult created =
+        QuickTerminalSurface::create(window, QuickTerminalOptions{}, {},
+                                     primaryScreen());
+    QVERIFY(!created);
+    QVERIFY(created.error().contains(
+        QStringLiteral("native platform surface is created")));
 }
 
 void QuickTerminalSurfaceTest::rejectsSynchronizationAfterWindowDestruction()
@@ -271,7 +330,7 @@ void QuickTerminalSurfaceTest::rejectsSynchronizationAfterWindowDestruction()
     window.reset();
     QVERIFY(surface->layerShellWindow() == nullptr);
     const std::expected<void, QString> synchronized =
-        surface->syncOptions(QuickTerminalOptions{}, screen);
+        surface->syncOptions(QuickTerminalOptions{}, {}, screen);
     QVERIFY(!synchronized);
     QVERIFY(
         synchronized.error().contains(QStringLiteral("window was destroyed")));

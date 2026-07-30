@@ -820,12 +820,12 @@
         "gtk-quick-terminal-layer": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
+          "note": "The upstream GTK spelling is not consumed. ghostty-qt provides the independent quick-terminal-layer=background|bottom|top|overlay frontend setting; LayerShellQt applies it live to the retained native layer surface when the compositor supports the version-2 request."
         },
         "gtk-quick-terminal-namespace": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
+          "note": "The upstream GTK spelling is not consumed. ghostty-qt provides the independent quick-terminal-namespace frontend setting. The value is installed before native role construction; reload stages it for a subsequently created or recreated layer role because Wayland cannot rename the mapped role."
         },
         "gtk-single-instance": {
           "status": "not_applicable",
@@ -1515,7 +1515,7 @@
         "toggle_quick_terminal": {
           "status": "supported",
           "scope": "wayland",
-          "note": "The application action creates at most one layer-shell window before its first native presentation, injects exactly GHOSTTY_QUICK_TERMINAL=1 into that window's pane launch environment, forces compositor-owned frameless/deferred geometry, and then retains the same tabs, splits, PTYs, and UI controller across hide/show cycles. Shell-only reloads synchronize live without recompiling keybindings or walking terminal panes; quick-terminal tabs retain a tab strip while ordinary header chrome remains hidden."
+          "note": "The application action creates at most one layer-shell window, installs the Qt-owned layer and namespace before its first native presentation, injects exactly GHOSTTY_QUICK_TERMINAL=1 into that window's pane launch environment, forces compositor-owned frameless/deferred geometry, and then retains the same tabs, splits, PTYs, and UI controller across hide/show cycles. Shell-only reloads synchronize live without recompiling keybindings or walking terminal panes; quick-terminal tabs retain a tab strip while ordinary header chrome remains hidden."
         },
         "toggle_secure_input": {
           "status": "not_applicable",

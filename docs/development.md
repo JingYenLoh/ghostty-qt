@@ -162,8 +162,8 @@ The parser and `FrontendConfigService` are always built, including when
 `GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG=OFF`; that option controls only the shared
 Ghostty parser/helper boundary.
 
-The frontend parser accepts the closed `single-instance` and `tabs-location`
-schema described in
+The frontend parser accepts the closed `single-instance`, `tabs-location`,
+`quick-terminal-layer`, and `quick-terminal-namespace` schema described in
 [Frontend configuration](frontend-configuration.md). It rejects malformed,
 unknown, or duplicate assignments transactionally. The service watches the
 file and nearest existing directory, debounces changes, reloads off the GUI

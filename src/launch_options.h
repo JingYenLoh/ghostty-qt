@@ -156,6 +156,9 @@ struct LaunchOptions {
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
     // Qt-owned placement for the stable window toolbar and tab strip.
     TabsLocation tabsLocation = TabsLocation::Top;
+    // Qt-owned layer-shell policy. Layer changes apply to a retained quick
+    // terminal; namespace changes are staged for its next native surface.
+    QuickTerminalLayerShellOptions quickTerminalLayerShell;
     // Ghostty's normalized top-level decoration preference. The Qt host maps
     // None exactly to a frameless window; ordinary decorated Qt windows retain
     // the Auto, Client, or Server preference even where QPA cannot distinguish

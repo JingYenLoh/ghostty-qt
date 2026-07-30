@@ -80,6 +80,9 @@ void FrontendConfigTest::parsesDefaultsAndFullLineComments()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Detect);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Top);
+    QCOMPARE(parsed->quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
+    QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
+             QStringLiteral("ghostty-quick-terminal"));
 }
 
 void FrontendConfigTest::parsesEveryValue_data()
@@ -87,16 +90,41 @@ void FrontendConfigTest::parsesEveryValue_data()
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<SingleInstanceMode>("singleInstance");
     QTest::addColumn<TabsLocation>("tabsLocation");
+    QTest::addColumn<int>("quickTerminalLayer");
+    QTest::addColumn<QString>("quickTerminalNamespace");
 
-    QTest::newRow("false-top")
-        << QByteArray("single-instance = false\ntabs-location = top\n")
-        << SingleInstanceMode::Disabled << TabsLocation::Top;
-    QTest::newRow("true-bottom")
-        << QByteArray("single-instance = true\ntabs-location = bottom\n")
-        << SingleInstanceMode::Enabled << TabsLocation::Bottom;
-    QTest::newRow("detect-bottom")
-        << QByteArray("single-instance = detect\ntabs-location = bottom\n")
-        << SingleInstanceMode::Detect << TabsLocation::Bottom;
+    QTest::newRow("false-top-background")
+        << QByteArray("single-instance = false\n"
+                      "tabs-location = top\n"
+                      "quick-terminal-layer = background\n"
+                      "quick-terminal-namespace = background-terminal\n")
+        << SingleInstanceMode::Disabled << TabsLocation::Top
+        << static_cast<int>(QuickTerminalLayer::Background)
+        << QStringLiteral("background-terminal");
+    QTest::newRow("true-bottom-bottom")
+        << QByteArray("single-instance = true\n"
+                      "tabs-location = bottom\n"
+                      "quick-terminal-layer = bottom\n"
+                      "quick-terminal-namespace = bottom-terminal\n")
+        << SingleInstanceMode::Enabled << TabsLocation::Bottom
+        << static_cast<int>(QuickTerminalLayer::Bottom)
+        << QStringLiteral("bottom-terminal");
+    QTest::newRow("detect-bottom-top")
+        << QByteArray("single-instance = detect\n"
+                      "tabs-location = bottom\n"
+                      "quick-terminal-layer = top\n"
+                      "quick-terminal-namespace = top-terminal\n")
+        << SingleInstanceMode::Detect << TabsLocation::Bottom
+        << static_cast<int>(QuickTerminalLayer::Top)
+        << QStringLiteral("top-terminal");
+    QTest::newRow("detect-top-overlay")
+        << QByteArray("single-instance = detect\n"
+                      "tabs-location = top\n"
+                      "quick-terminal-layer = overlay\n"
+                      "quick-terminal-namespace = overlay-terminal\n")
+        << SingleInstanceMode::Detect << TabsLocation::Top
+        << static_cast<int>(QuickTerminalLayer::Overlay)
+        << QStringLiteral("overlay-terminal");
 }
 
 void FrontendConfigTest::parsesEveryValue()
@@ -104,24 +132,36 @@ void FrontendConfigTest::parsesEveryValue()
     QFETCH(QByteArray, contents);
     QFETCH(SingleInstanceMode, singleInstance);
     QFETCH(TabsLocation, tabsLocation);
+    QFETCH(int, quickTerminalLayer);
+    QFETCH(QString, quickTerminalNamespace);
 
     const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
     QVERIFY2(parsed.has_value(),
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, singleInstance);
     QCOMPARE(parsed->tabsLocation, tabsLocation);
+    QCOMPARE(static_cast<int>(parsed->quickTerminalLayerShell.layer),
+             quickTerminalLayer);
+    QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
+             quickTerminalNamespace);
 }
 
 void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
 {
     const QByteArray contents = QByteArray::fromHex("efbbbf")
         + QByteArray("\tsingle-instance\t=\ttrue\t\r\n"
-                     " tabs-location = bottom \r\n");
+                     " tabs-location = bottom \r\n"
+                     " quick-terminal-layer = overlay \r\n"
+                     " quick-terminal-namespace = custom-scope \r\n");
     const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
     QVERIFY2(parsed.has_value(),
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Enabled);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Bottom);
+    QCOMPARE(parsed->quickTerminalLayerShell.layer,
+             QuickTerminalLayer::Overlay);
+    QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
+             QStringLiteral("custom-scope"));
 }
 
 void FrontendConfigTest::rejectsInvalidDocuments_data()
@@ -145,6 +185,18 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
         << QStringLiteral("expected false, true, or detect");
     QTest::newRow("tabs-location") << QByteArray("tabs-location = left\n")
                                    << QStringLiteral("expected top or bottom");
+    QTest::newRow("quick-terminal-layer")
+        << QByteArray("quick-terminal-layer = desktop\n")
+        << QStringLiteral("expected background, bottom, top, or overlay");
+    QTest::newRow("quick-terminal-namespace-empty")
+        << QByteArray("quick-terminal-namespace = \n")
+        << QStringLiteral("must not be empty");
+    QTest::newRow("gtk-quick-terminal-layer")
+        << QByteArray("gtk-quick-terminal-layer = overlay\n")
+        << QStringLiteral("unknown key 'gtk-quick-terminal-layer'");
+    QTest::newRow("gtk-quick-terminal-namespace")
+        << QByteArray("gtk-quick-terminal-namespace = custom\n")
+        << QStringLiteral("unknown key 'gtk-quick-terminal-namespace'");
     QTest::newRow("inline-comment")
         << QByteArray("tabs-location = top # not a full-line comment\n")
         << QStringLiteral("expected top or bottom");

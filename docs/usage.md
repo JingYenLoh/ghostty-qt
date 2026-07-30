@@ -38,7 +38,8 @@ files. Qt-owned application policy instead uses:
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-The separate file currently owns `single-instance` and `tabs-location`.
+The separate file owns `single-instance`, `tabs-location`,
+`quick-terminal-layer`, and `quick-terminal-namespace`.
 Ghostty's `gtk-*` configuration keys do not configure Qt equivalents.
 `--gtk-single-instance` is accepted only as a hidden command-line migration
 alias for `--single-instance`.
@@ -52,8 +53,8 @@ configuration, not the Qt-owned file. See
 - Windows, controls, menus, dialogs, text shaping, and final rendering are
   Qt-owned rather than GTK/libadwaita-owned.
 - The quick terminal is a LayerShellQt surface. It uses the portable
-  quick-terminal settings, while GTK-specific layer and namespace settings do
-  not apply.
+  quick-terminal settings plus Qt-owned layer and namespace settings from
+  `ghostty-qt/config`; the GTK-prefixed spellings do not apply.
 - `background-blur` uses KWin's whole-window blur effect when ghostty-qt was
   built with KF6 WindowSystem. Other Wayland compositors ignore it, and KWin's
   protocol does not expose Ghostty's configured radius.

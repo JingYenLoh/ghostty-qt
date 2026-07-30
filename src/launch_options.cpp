@@ -222,6 +222,7 @@ applyFrontendConfigSnapshot(LaunchOptions result,
                             const FrontendConfigSnapshot &snapshot)
 {
     result.tabsLocation = snapshot.values.tabsLocation;
+    result.quickTerminalLayerShell = snapshot.values.quickTerminalLayerShell;
     if (!result.singleInstanceModeExplicit) {
         result.singleInstanceMode = snapshot.values.singleInstanceMode;
     }

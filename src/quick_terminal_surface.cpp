@@ -44,6 +44,17 @@ layerShellKeyboard(QuickTerminalKeyboardInteractivity interactivity) noexcept
     std::unreachable();
 }
 
+LayerWindow::Layer layerShellLayer(QuickTerminalLayer layer) noexcept
+{
+    switch (layer) {
+    case QuickTerminalLayer::Background: return LayerWindow::LayerBackground;
+    case QuickTerminalLayer::Bottom: return LayerWindow::LayerBottom;
+    case QuickTerminalLayer::Top: return LayerWindow::LayerTop;
+    case QuickTerminalLayer::Overlay: return LayerWindow::LayerOverlay;
+    }
+    std::unreachable();
+}
+
 QString destroyedSurfaceError()
 {
     return QStringLiteral(
@@ -54,12 +65,19 @@ QString destroyedSurfaceError()
 } // namespace
 
 QuickTerminalSurface::CreateResult QuickTerminalSurface::create(
-    QWindow &window, const QuickTerminalOptions &options, QScreen &sizingScreen)
+    QWindow &window, const QuickTerminalOptions &options,
+    const QuickTerminalLayerShellOptions &layerShellOptions,
+    QScreen &sizingScreen)
 {
     if (window.isVisible()) {
         return std::unexpected(QStringLiteral(
             "The quick-terminal layer-shell surface must be attached before "
             "the window is shown"));
+    }
+    if (window.handle() != nullptr) {
+        return std::unexpected(QStringLiteral(
+            "The quick-terminal layer-shell surface must be attached before "
+            "the native platform surface is created"));
     }
 
     LayerWindow *const layerShellWindow = LayerWindow::get(&window);
@@ -71,7 +89,8 @@ QuickTerminalSurface::CreateResult QuickTerminalSurface::create(
     auto surface = std::unique_ptr<QuickTerminalSurface>(
         new QuickTerminalSurface(window, *layerShellWindow));
     surface->applyStaticOptions();
-    if (auto synchronized = surface->syncOptions(options, sizingScreen);
+    if (auto synchronized =
+            surface->syncOptions(options, layerShellOptions, sizingScreen);
         !synchronized) {
         return std::unexpected(std::move(synchronized.error()));
     }
@@ -86,15 +105,18 @@ QuickTerminalSurface::QuickTerminalSurface(
 
 QuickTerminalSurface::~QuickTerminalSurface() = default;
 
-std::expected<void, QString>
-QuickTerminalSurface::syncOptions(const QuickTerminalOptions &options,
-                                  QScreen &sizingScreen)
+std::expected<void, QString> QuickTerminalSurface::syncOptions(
+    const QuickTerminalOptions &options,
+    const QuickTerminalLayerShellOptions &layerShellOptions,
+    QScreen &sizingScreen)
 {
     if (window_.isNull() || layerShellWindow_.isNull()) {
         return std::unexpected(destroyedSurfaceError());
     }
 
-    if (initialized_ && options_ == options && sizingScreen_ == &sizingScreen) {
+    if (initialized_ && options_ == options
+        && layerShellOptions_ == layerShellOptions
+        && sizingScreen_ == &sizingScreen) {
         return {};
     }
 
@@ -106,12 +128,22 @@ QuickTerminalSurface::syncOptions(const QuickTerminalOptions &options,
         firstSync || options_.screen != options.screen;
     const bool keyboardChanged = firstSync
         || options_.keyboardInteractivity != options.keyboardInteractivity;
+    const bool layerChanged =
+        firstSync || layerShellOptions_.layer != layerShellOptions.layer;
+    const bool namespaceChanged = firstSync
+        || layerShellOptions_.layerNamespace
+            != layerShellOptions.layerNamespace;
     const bool sizeChanged = firstSync || outputChanged || placementChanged
         || options_.size != options.size;
 
     options_ = options;
+    layerShellOptions_ = layerShellOptions;
     initialized_ = true;
 
+    if (layerChanged) applyLayer(layerShellOptions.layer);
+    if (namespaceChanged) {
+        layerShellWindow_->setScope(layerShellOptions.layerNamespace);
+    }
     if (outputChanged) bindSizingScreen(sizingScreen);
     if (placementChanged) applyPlacement(options.position);
     if (selectionChanged || outputChanged) {
@@ -132,10 +164,15 @@ void QuickTerminalSurface::applyStaticOptions()
 {
     LayerWindow *const layerShellWindow = layerShellWindow_.data();
     Q_ASSERT(layerShellWindow != nullptr);
-    layerShellWindow->setLayer(LayerWindow::LayerTop);
-    layerShellWindow->setScope(QStringLiteral("ghostty-quick-terminal"));
     layerShellWindow->setExclusiveZone(0);
     layerShellWindow->setCloseOnDismissed(false);
+}
+
+void QuickTerminalSurface::applyLayer(QuickTerminalLayer layer)
+{
+    LayerWindow *const layerShellWindow = layerShellWindow_.data();
+    Q_ASSERT(layerShellWindow != nullptr);
+    layerShellWindow->setLayer(layerShellLayer(layer));
 }
 
 void QuickTerminalSurface::applyPlacement(QuickTerminalPosition position)

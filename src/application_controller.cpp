@@ -179,6 +179,7 @@ LaunchOptions terminalRelevantOptions(LaunchOptions options)
     // shell presentation or startup-only loader identity changed.
     options.applicationShell = {};
     options.backgroundBlur = 0;
+    options.quickTerminalLayerShell = {};
     options.applicationClass.reset();
     options.applicationClassExplicit = false;
     options.configDefaultFiles = true;
@@ -486,7 +487,7 @@ std::expected<ApplicationWindow, QString> ApplicationController::createWindow(
     if (role == WindowRole::QuickTerminal) {
         auto attached = QuickTerminalSurface::create(
             *guardedWindow, options.applicationShell.quickTerminal,
-            *preferredScreen);
+            options.quickTerminalLayerShell, *preferredScreen);
         if (!attached.has_value()) {
             const QString error = std::move(attached.error());
             discardCreated();
@@ -775,8 +776,11 @@ ApplicationController::syncQuickTerminal(WindowRecord &record)
         record.quickTerminalSurface.get());
     const QuickTerminalOptions options =
         effectiveOptions_.applicationShell.quickTerminal;
+    const QuickTerminalLayerShellOptions layerShellOptions =
+        effectiveOptions_.quickTerminalLayerShell;
     const QPointer<ApplicationController> guard(this);
-    auto synchronized = surface->syncOptions(options, *screen);
+    auto synchronized =
+        surface->syncOptions(options, layerShellOptions, *screen);
     if (guard == nullptr) return synchronized;
     if (!synchronized) return synchronized;
     WindowRecord *const current = recordForWindowId(windowId);

@@ -23,8 +23,9 @@ Qt-owned settings live in:
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-That file currently owns `single-instance` and `tabs-location`. Its strict
-grammar and complete semantics are documented in
+That file owns `single-instance`, `tabs-location`, `quick-terminal-layer`, and
+`quick-terminal-namespace`. Its strict grammar and complete semantics are
+documented in
 [Frontend configuration](frontend-configuration.md).
 
 If `XDG_CONFIG_HOME` is unset or not absolute, both domains fall back to

@@ -47,6 +47,21 @@ std::optional<TabsLocation> parseTabsLocation(QStringView value)
     return std::nullopt;
 }
 
+std::optional<QuickTerminalLayer> parseQuickTerminalLayer(QStringView value)
+{
+    if (value == QLatin1StringView("background")) {
+        return QuickTerminalLayer::Background;
+    }
+    if (value == QLatin1StringView("bottom")) {
+        return QuickTerminalLayer::Bottom;
+    }
+    if (value == QLatin1StringView("top")) return QuickTerminalLayer::Top;
+    if (value == QLatin1StringView("overlay")) {
+        return QuickTerminalLayer::Overlay;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::expected<FrontendConfigValues, QString>
@@ -130,6 +145,19 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
                         .arg(value)));
             }
             values.tabsLocation = *parsed;
+        } else if (key == QLatin1StringView("quick-terminal-layer")) {
+            const std::optional<QuickTerminalLayer> parsed =
+                parseQuickTerminalLayer(value);
+            if (!parsed) {
+                return std::unexpected(diagnostic(
+                    sourceName, lineNumber,
+                    QStringLiteral(
+                        "invalid quick-terminal-layer value '%1'; expected background, bottom, top, or overlay")
+                        .arg(value)));
+            }
+            values.quickTerminalLayerShell.layer = *parsed;
+        } else if (key == QLatin1StringView("quick-terminal-namespace")) {
+            values.quickTerminalLayerShell.layerNamespace = value;
         } else {
             return std::unexpected(
                 diagnostic(sourceName, lineNumber,

@@ -1437,14 +1437,27 @@ windows. All process consumers continue receiving watched reloads after
 resident window retirement.
 
 `FrontendConfigService` independently parses exactly one strict UTF-8 scalar
-file. Its current complete schema is `single-instance=false|true|detect` and
-`tabs-location=top|bottom`; unknown keys, duplicate keys, malformed
-assignments, unsupported values, invalid UTF-8, and partial documents are
-errors. A missing file is a successful default generation. The service watches
-the file and its nearest existing directory, uses the same 75 ms debounce,
-loads watched generations on its own one-thread pool, suppresses stale
-generations, and retries failures while retaining its last-good snapshot.
-Deleting the file therefore restores the typed frontend defaults.
+file. Its current complete schema is `single-instance=false|true|detect`,
+`tabs-location=top|bottom`,
+`quick-terminal-layer=background|bottom|top|overlay`, and a nonempty
+`quick-terminal-namespace`; the latter two default to `top` and
+`ghostty-quick-terminal`. Unknown keys, duplicate keys, malformed assignments,
+unsupported values, invalid UTF-8, and partial documents are errors. A missing
+file is a successful default generation. The service watches the file and its
+nearest existing directory, uses the same 75 ms debounce, loads watched
+generations on its own one-thread pool, suppresses stale generations, and
+retries failures while retaining its last-good snapshot. Deleting the file
+therefore restores the typed frontend defaults.
+
+`QuickTerminalSurface` maps the four frontend layer values one-to-one onto
+LayerShellQt. LayerShellQt forwards a retained surface's layer changes through
+the version-2 layer-shell request, so this setting reloads live without
+replacing its window, panes, or PTYs. The namespace is instead an immutable
+argument of the Wayland layer role. A reload updates LayerShellQt's stored
+construction value for the next recreated role, while the mapped role keeps
+its original namespace. Creation rejects even a hidden window that already has
+a native platform handle, ensuring the initial namespace is always installed
+before the first role is constructed.
 
 The application retains the latest successful snapshot from each service and
 re-resolves launch options from the immutable process arguments whenever either
@@ -2644,7 +2657,12 @@ The default CTest suite has focused layers for each ownership boundary:
 - `application-controller` verifies source-less first-pane command/cwd/title
   overrides and initial-session lease resolution, duplicate workspace-local
   pane IDs in different windows, cross-window and cross-tab focus, retained
-  hidden quick-terminal presentation, and stale composite-target rejection.
+  hidden quick-terminal presentation and live layer-shell frontend reload,
+  and stale composite-target rejection.
+- `quick-terminal-surface` verifies all four exact LayerShellQt layer mappings,
+  default and custom namespaces before native creation, retained live layer
+  changes, staged namespace changes, no-op synchronization, and rejection of
+  an already-native window.
 - `window-blur-controller` verifies that exact blur values wait for native
   surface creation, collapse to compositor enablement without redundant
   radius-only calls, reapply after surface recreation, and retry an unavailable

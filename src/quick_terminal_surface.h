@@ -28,6 +28,7 @@ public:
 
     [[nodiscard]] static CreateResult
     create(QWindow &window, const QuickTerminalOptions &options,
+           const QuickTerminalLayerShellOptions &layerShellOptions,
            QScreen &sizingScreen);
 
     ~QuickTerminalSurface() override;
@@ -37,11 +38,14 @@ public:
     QuickTerminalSurface(QuickTerminalSurface &&) = delete;
     QuickTerminalSurface &operator=(QuickTerminalSurface &&) = delete;
 
-    // Applies live option and output changes. The sizing screen supplies the
-    // full logical output geometry. Mouse mode still asks the compositor to
-    // choose the active output instead of binding the layer surface to it.
+    // Applies live option and output changes. Layer changes reach the retained
+    // native role. Namespace changes update LayerShellQt's construction value
+    // for a future recreated role because Wayland cannot rename the current
+    // one. The sizing screen supplies the full logical output geometry.
     [[nodiscard]] std::expected<void, QString>
-    syncOptions(const QuickTerminalOptions &options, QScreen &sizingScreen);
+    syncOptions(const QuickTerminalOptions &options,
+                const QuickTerminalLayerShellOptions &layerShellOptions,
+                QScreen &sizingScreen);
 
     // Read-only access is intentionally exposed for diagnostics and tests.
     // LayerShellQt::Window remains owned by the attached QWindow.
@@ -52,6 +56,7 @@ private:
                          LayerShellQt::Window &layerShellWindow);
 
     void applyStaticOptions();
+    void applyLayer(QuickTerminalLayer layer);
     void applyPlacement(QuickTerminalPosition position);
     void applyScreen(QuickTerminalScreen selection, QScreen &sizingScreen);
     void applyKeyboard(QuickTerminalKeyboardInteractivity interactivity);
@@ -63,5 +68,6 @@ private:
     QPointer<QScreen> sizingScreen_;
     QMetaObject::Connection sizingScreenGeometryConnection_;
     QuickTerminalOptions options_;
+    QuickTerminalLayerShellOptions layerShellOptions_;
     bool initialized_ = false;
 };

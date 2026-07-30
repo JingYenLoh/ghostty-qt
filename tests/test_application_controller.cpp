@@ -443,6 +443,10 @@ void ApplicationControllerTest::
         .actionKey = QStringLiteral("initial"),
         .action = QStringLiteral("new_tab"),
     }};
+    options.quickTerminalLayerShell = {
+        .layer = QuickTerminalLayer::Bottom,
+        .layerNamespace = QStringLiteral("initial-quick-terminal"),
+    };
 
     ApplicationController controller(options, harness.factory(), false);
     const auto ordinary = controller.createInitialWindow();
@@ -486,6 +490,8 @@ void ApplicationControllerTest::
     QVERIFY(layer != nullptr);
     QCOMPARE(layer->anchors(),
              LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorTop));
+    QCOMPARE(layer->layer(), LayerShellQt::Window::LayerBottom);
+    QCOMPARE(layer->scope(), QStringLiteral("initial-quick-terminal"));
     WindowUiController *const ordinaryUi = windowUiController(ordinary->window);
     WindowUiController *const quickUi = windowUiController(quick->window);
     QVERIFY(ordinaryUi != nullptr);
@@ -502,6 +508,10 @@ void ApplicationControllerTest::
     reloaded.applicationShell.quickTerminal.keyboardInteractivity =
         QuickTerminalKeyboardInteractivity::None;
     reloaded.backgroundBlur = 20;
+    reloaded.quickTerminalLayerShell = {
+        .layer = QuickTerminalLayer::Overlay,
+        .layerNamespace = QStringLiteral("recreated-quick-terminal"),
+    };
     reloaded.applicationShell.commandPalette = {{
         .title = QStringLiteral("Reloaded command"),
         .actionKey = QStringLiteral("reloaded"),
@@ -516,6 +526,8 @@ void ApplicationControllerTest::
              LayerShellQt::Window::Anchors(LayerShellQt::Window::AnchorBottom));
     QCOMPARE(layer->keyboardInteractivity(),
              LayerShellQt::Window::KeyboardInteractivityNone);
+    QCOMPARE(layer->layer(), LayerShellQt::Window::LayerOverlay);
+    QCOMPARE(layer->scope(), QStringLiteral("recreated-quick-terminal"));
     QVERIFY(!layer->activateOnShow());
     QCOMPARE(ordinaryUi->commandPaletteModel()->count(), 1);
     QCOMPARE(ordinaryUi->commandPaletteModel()

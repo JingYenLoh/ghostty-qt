@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ghostty_config_values.h"
+#include "quick_terminal.h"
 
 #include <QByteArrayView>
 #include <QMetaType>
@@ -18,6 +19,7 @@ enum class TabsLocation {
 struct FrontendConfigValues {
     SingleInstanceMode singleInstanceMode = SingleInstanceMode::Detect;
     TabsLocation tabsLocation = TabsLocation::Top;
+    QuickTerminalLayerShellOptions quickTerminalLayerShell;
 
     bool operator==(const FrontendConfigValues &) const = default;
 };

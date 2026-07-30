@@ -3,6 +3,7 @@
 #include <QMargins>
 #include <QRect>
 #include <QSize>
+#include <QString>
 #include <QtGlobal>
 
 #include <bit>
@@ -27,6 +28,23 @@ enum class QuickTerminalKeyboardInteractivity {
     None,
     OnDemand,
     Exclusive,
+};
+
+enum class QuickTerminalLayer {
+    Background,
+    Bottom,
+    Top,
+    Overlay,
+};
+
+// Qt-owned layer-shell properties that have no portable Ghostty spelling.
+// The layer is mutable after mapping. The namespace is sampled by
+// LayerShellQt whenever it constructs a native layer surface.
+struct QuickTerminalLayerShellOptions {
+    QuickTerminalLayer layer = QuickTerminalLayer::Top;
+    QString layerNamespace = QStringLiteral("ghostty-quick-terminal");
+
+    bool operator==(const QuickTerminalLayerShellOptions &) const = default;
 };
 
 struct QuickTerminalPercentage {
