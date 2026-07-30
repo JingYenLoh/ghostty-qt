@@ -47,7 +47,7 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+show-config", GhosttyCliFrontendSupport::Delegated},
         {"+explain-config", GhosttyCliFrontendSupport::Delegated},
         {"+validate-config", GhosttyCliFrontendSupport::Delegated},
-        {"+show-face", GhosttyCliFrontendSupport::Unsupported},
+        {"+show-face", GhosttyCliFrontendSupport::Delegated},
         {"+crash-report", GhosttyCliFrontendSupport::Unsupported},
         {"+boo", GhosttyCliFrontendSupport::Unsupported},
         {"+new-window", GhosttyCliFrontendSupport::ApplicationIpc},

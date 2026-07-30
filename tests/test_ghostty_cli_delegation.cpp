@@ -506,6 +506,17 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
         << QStringList{QStringLiteral("+list-fonts"),
                        QStringLiteral("--family=Fira Code")}
         << QByteArrayLiteral("Fira Code\n  Fira Code Regular\n") << 0;
+    QTest::newRow("show-face")
+        << QStringList{QStringLiteral("+show-face"),
+                       QStringLiteral("--font-family=Fira Code"),
+                       QStringLiteral("--cp=65")}
+        << QByteArrayLiteral("U+41 « A » found in face “Fira Code”.\n") << 0;
+    QTest::newRow("show-face-missing-query")
+        << QStringList{QStringLiteral("+show-face")}
+        << QByteArrayLiteral(
+               "You must specify a codepoint with --cp or a string with "
+               "--string\n")
+        << 1;
     QTest::newRow("list-keybinds")
         << QStringList{QStringLiteral("+list-keybinds"),
                        QStringLiteral("--default"),
@@ -566,7 +577,8 @@ void GhosttyCliDelegationTest::matchesPinnedHelper()
         QStringLiteral("tmp/ghostty-cli-real-XXXXXX")));
     QVERIFY(temporary.isValid());
     QProcessEnvironment environment = controlledEnvironment(temporary.path());
-    if (arguments.contains(QStringLiteral("+list-fonts"))) {
+    if (arguments.contains(QStringLiteral("+list-fonts"))
+        || arguments.contains(QStringLiteral("+show-face"))) {
         QVERIFY(configureIsolatedFontconfig(temporary.path(), environment));
     }
     auto helper = runProcess(

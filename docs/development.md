@@ -197,9 +197,9 @@ baseline. The loader does not parse or merge the human-oriented
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-fonts`, `+list-keybinds`, `+show-config`, `+ssh`, `+ssh-cache`,
-`+validate-config`, and `+version`. One shared catalog records every pinned
-action spelling and its explicit frontend support decision, so
+`+list-fonts`, `+list-keybinds`, `+show-config`, `+show-face`, `+ssh`,
+`+ssh-cache`, `+validate-config`, and `+version`. One shared catalog records
+every pinned action spelling and its explicit frontend support decision, so
 known-but-unsupported actions remain distinguishable from invalid spellings
 without maintaining parallel allowlists.
 The frontend classifies raw arguments and uses Linux `execv` before QString
@@ -213,7 +213,8 @@ implementation is the exact pinned code. Its Linux
 Fontconfig discovery while keeping the private font stack outside the Qt
 process. The build explicitly uses the system Fontconfig library so its parser
 matches the host configuration. Focused tests point Fontconfig at one pinned
-Fira Code face so output is independent of the developer's installed fonts.
+Fira Code face so `+list-fonts` and `+show-face` output is independent of the
+developer's installed fonts.
 
 `+ssh` remains Ghostty's wrapper: the helper spawns and waits for the selected
 SSH child, prepends the pinned TERM/SendEnv options, optionally installs the

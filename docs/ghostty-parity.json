@@ -1631,6 +1631,11 @@
           "status": "supported",
           "note": "Delegates the pinned implementation through ghostty-qt's app-runtime=none helper; GTK-runtime-specific finalization is intentionally outside this embedded helper contract."
         },
+        "show-face": {
+          "status": "supported",
+          "scope": "linux",
+          "note": "Delegates the pinned implementation before Qt starts. Codepoint/string, regular/bold/italic/bold-italic style, text/emoji presentation, and ordinary font configuration arguments use Ghostty's exact Fontconfig+FreeType resolver. This reports the isolated helper's face selection; Qt continues to own terminal shaping and fallback. The pinned revision writes action parsing and resolution errors to stdout, and delegation intentionally preserves that stream quirk."
+        },
         "ssh": {
           "status": "supported",
           "note": "Delegates the pinned +ssh wrapper through the relocatable embedded-runtime helper before Qt starts. Ghostty owns wrapper-option parsing, destination resolution, exact wrapped-SSH arguments and streams, TERM and SendEnv forwarding, encoded xterm-ghostty installation and fallback, standard XDG-state cache integration, and child exit or signal-status mapping. Tests cover the action boundary, binary streams, environment and cwd inheritance, arbitrary exit and signal status, install failure, successful upload, cache write, and cached install suppression without network access. Automatic Bash, Elvish, Fish, Nushell, and Zsh wrappers invoke this same action through the staged shell-integration resources."
