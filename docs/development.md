@@ -163,7 +163,8 @@ The parser and `FrontendConfigService` are always built, including when
 Ghostty parser/helper boundary.
 
 The frontend parser accepts the closed `single-instance`, `tabs-location`,
-`quick-terminal-layer`, and `quick-terminal-namespace` schema described in
+`wide-tabs`, `horizontal-tab-scroll`, `quick-terminal-layer`, and
+`quick-terminal-namespace` schema described in
 [Frontend configuration](frontend-configuration.md). It rejects malformed,
 unknown, or duplicate assignments transactionally. The service watches the
 file and nearest existing directory, debounces changes, reloads off the GUI
@@ -175,7 +176,9 @@ independently. On either publication it rebuilds effective launch options from
 built-in defaults, the shared Ghostty snapshot, the disjoint frontend snapshot,
 and explicit CLI overrides. The `reload_config` action requests both services.
 The `frontend-config` test covers the strict parser and watched-service
-lifecycle; `application-tabs-location` covers live QML placement, and the
+lifecycle; `application-tabs-location` covers live QML placement, tab
+presentation coverage verifies retained wide/compact resizing, terminal-pane
+tests cover horizontal precision gestures and discrete pass-through, and the
 single-instance integration cases isolate the frontend file explicitly.
 
 ## Ghostty configuration parser

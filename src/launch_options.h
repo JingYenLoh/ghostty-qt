@@ -156,6 +156,10 @@ struct LaunchOptions {
     WindowShowTabBar windowShowTabBar = WindowShowTabBar::Auto;
     // Qt-owned placement for the stable window toolbar and tab strip.
     TabsLocation tabsLocation = TabsLocation::Top;
+    // Qt-owned tab presentation and terminal-surface precision gesture
+    // policies. Discrete horizontal wheel input remains terminal input.
+    bool wideTabs = true;
+    bool horizontalTabScroll = true;
     // Qt-owned layer-shell policy. Layer changes apply to a retained quick
     // terminal; namespace changes are staged for its next native surface.
     QuickTerminalLayerShellOptions quickTerminalLayerShell;

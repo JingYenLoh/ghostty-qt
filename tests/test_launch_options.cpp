@@ -462,6 +462,8 @@ void LaunchOptionsTest::defaults()
              WindowNewTabPosition::Current);
     QCOMPARE(options.windowShowTabBar, WindowShowTabBar::Auto);
     QCOMPARE(options.tabsLocation, TabsLocation::Top);
+    QVERIFY(options.wideTabs);
+    QVERIFY(options.horizontalTabScroll);
     QCOMPARE(options.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
     QCOMPARE(options.quickTerminalLayerShell.layerNamespace,
              QStringLiteral("ghostty-quick-terminal"));
@@ -1676,6 +1678,8 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions builtIns =
         resolveLaunchOptions(*parsed, nullptr, nullptr);
     QCOMPARE(builtIns.tabsLocation, TabsLocation::Top);
+    QVERIFY(builtIns.wideTabs);
+    QVERIFY(builtIns.horizontalTabScroll);
     QCOMPARE(builtIns.quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
     QCOMPARE(builtIns.quickTerminalLayerShell.layerNamespace,
              QStringLiteral("ghostty-quick-terminal"));
@@ -1690,12 +1694,16 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         resolveLaunchOptions(*parsed, &shared, nullptr);
     QCOMPARE(sharedOnly.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(sharedOnly.tabsLocation, TabsLocation::Top);
+    QVERIFY(sharedOnly.wideTabs);
+    QVERIFY(sharedOnly.horizontalTabScroll);
     QCOMPARE(sharedOnly.quickTerminalLayerShell,
              QuickTerminalLayerShellOptions{});
     QCOMPARE(sharedOnly.singleInstanceMode, SingleInstanceMode::Detect);
 
     FrontendConfigSnapshot frontend;
     frontend.values.tabsLocation = TabsLocation::Bottom;
+    frontend.values.wideTabs = false;
+    frontend.values.horizontalTabScroll = false;
     frontend.values.quickTerminalLayerShell = {
         .layer = QuickTerminalLayer::Overlay,
         .layerNamespace = QStringLiteral("configured-quick-terminal"),
@@ -1705,6 +1713,8 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
         resolveLaunchOptions(*parsed, &shared, &frontend);
     QCOMPARE(configured.windowDecoration, WindowDecorationMode::None);
     QCOMPARE(configured.tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!configured.wideTabs);
+    QVERIFY(!configured.horizontalTabScroll);
     QCOMPARE(configured.quickTerminalLayerShell,
              frontend.values.quickTerminalLayerShell);
     QCOMPARE(configured.singleInstanceMode, SingleInstanceMode::Disabled);
@@ -1717,17 +1727,23 @@ void LaunchOptionsTest::mapsFrontendConfigurationPrecedence()
     const LaunchOptions overridden =
         resolveLaunchOptions(*explicitCli, &shared, &frontend);
     QCOMPARE(overridden.tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!overridden.wideTabs);
+    QVERIFY(!overridden.horizontalTabScroll);
     QCOMPARE(overridden.quickTerminalLayerShell,
              frontend.values.quickTerminalLayerShell);
     QCOMPARE(overridden.singleInstanceMode, SingleInstanceMode::Enabled);
     QVERIFY(overridden.singleInstanceModeExplicit);
 
     frontend.values.tabsLocation = TabsLocation::Top;
-    QCOMPARE(applyFrontendConfigSnapshot(*parsed, frontend).tabsLocation,
-             TabsLocation::Top);
-    QCOMPARE(
-        applyFrontendConfigSnapshot(*parsed, frontend).quickTerminalLayerShell,
-        frontend.values.quickTerminalLayerShell);
+    frontend.values.wideTabs = true;
+    frontend.values.horizontalTabScroll = true;
+    const LaunchOptions reapplied =
+        applyFrontendConfigSnapshot(*parsed, frontend);
+    QCOMPARE(reapplied.tabsLocation, TabsLocation::Top);
+    QVERIFY(reapplied.wideTabs);
+    QVERIFY(reapplied.horizontalTabScroll);
+    QCOMPARE(reapplied.quickTerminalLayerShell,
+             frontend.values.quickTerminalLayerShell);
 }
 
 void LaunchOptionsTest::mapsUnfocusedSplitAppearance()
@@ -1968,6 +1984,8 @@ void LaunchOptionsTest::projectsTerminalSessionOptions()
     frontendOnlyChanged.windowNewTabPosition =
         WindowNewTabPosition::End;
     frontendOnlyChanged.windowShowTabBar = WindowShowTabBar::Never;
+    frontendOnlyChanged.wideTabs = false;
+    frontendOnlyChanged.horizontalTabScroll = false;
     frontendOnlyChanged.windowDecoration = WindowDecorationMode::None;
     frontendOnlyChanged.windowAppearance = {
         .theme = WindowTheme::Ghostty,

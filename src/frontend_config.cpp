@@ -47,6 +47,13 @@ std::optional<TabsLocation> parseTabsLocation(QStringView value)
     return std::nullopt;
 }
 
+std::optional<bool> parseBoolean(QStringView value)
+{
+    if (value == QLatin1StringView("true")) return true;
+    if (value == QLatin1StringView("false")) return false;
+    return std::nullopt;
+}
+
 std::optional<QuickTerminalLayer> parseQuickTerminalLayer(QStringView value)
 {
     if (value == QLatin1StringView("background")) {
@@ -145,6 +152,21 @@ parseFrontendConfig(QByteArrayView contents, QStringView sourceName)
                         .arg(value)));
             }
             values.tabsLocation = *parsed;
+        } else if (key == QLatin1StringView("wide-tabs")
+                   || key == QLatin1StringView("horizontal-tab-scroll")) {
+            const std::optional<bool> parsed = parseBoolean(value);
+            if (!parsed) {
+                return std::unexpected(diagnostic(
+                    sourceName, lineNumber,
+                    QStringLiteral(
+                        "invalid %1 value '%2'; expected true or false")
+                        .arg(key, value)));
+            }
+            if (key == QLatin1StringView("wide-tabs")) {
+                values.wideTabs = *parsed;
+            } else {
+                values.horizontalTabScroll = *parsed;
+            }
         } else if (key == QLatin1StringView("quick-terminal-layer")) {
             const std::optional<QuickTerminalLayer> parsed =
                 parseQuickTerminalLayer(value);

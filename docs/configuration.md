@@ -23,7 +23,8 @@ Qt-owned settings live in:
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-That file owns `single-instance`, `tabs-location`, `quick-terminal-layer`, and
+That file owns `single-instance`, `tabs-location`, `wide-tabs`,
+`horizontal-tab-scroll`, `quick-terminal-layer`, and
 `quick-terminal-namespace`. Its strict grammar and complete semantics are
 documented in
 [Frontend configuration](frontend-configuration.md).

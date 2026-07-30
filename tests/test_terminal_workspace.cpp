@@ -10449,6 +10449,7 @@ void TerminalWorkspaceTest::tabsLocationReloadsAsPresentationPolicy()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     options.tabsLocation = TabsLocation::Top;
+    options.wideTabs = true;
     TerminalWorkspace::setDefaultLaunchOptions(options);
 
     TerminalWorkspace workspace;
@@ -10458,27 +10459,37 @@ void TerminalWorkspaceTest::tabsLocationReloadsAsPresentationPolicy()
     const int initialIndex = workspace.currentIndex();
     QSignalSpy locationChanged(&workspace,
                                &TerminalWorkspace::tabsLocationChanged);
+    QSignalSpy wideTabsChanged(&workspace, &TerminalWorkspace::wideTabsChanged);
 
     QVERIFY(!workspace.tabBarAtBottom());
+    QVERIFY(workspace.wideTabs());
     workspace.applyLaunchOptions(options);
     QCOMPARE(locationChanged.count(), 0);
+    QCOMPARE(wideTabsChanged.count(), 0);
 
     LaunchOptions reloaded = options;
     reloaded.tabsLocation = TabsLocation::Bottom;
+    reloaded.wideTabs = false;
     workspace.applyLaunchOptions(reloaded);
     QVERIFY(workspace.tabBarAtBottom());
+    QVERIFY(!workspace.wideTabs());
     QCOMPARE(locationChanged.count(), 1);
+    QCOMPARE(wideTabsChanged.count(), 1);
     QCOMPARE(workspace.findChild<TerminalPane *>(), pane);
     QCOMPARE(workspace.tabCount(), 1);
     QCOMPARE(workspace.currentIndex(), initialIndex);
 
     workspace.applyLaunchOptions(reloaded);
     QCOMPARE(locationChanged.count(), 1);
+    QCOMPARE(wideTabsChanged.count(), 1);
 
     reloaded.tabsLocation = TabsLocation::Top;
+    reloaded.wideTabs = true;
     workspace.applyLaunchOptions(reloaded);
     QVERIFY(!workspace.tabBarAtBottom());
+    QVERIFY(workspace.wideTabs());
     QCOMPARE(locationChanged.count(), 2);
+    QCOMPARE(wideTabsChanged.count(), 2);
     QCOMPARE(workspace.findChild<TerminalPane *>(), pane);
 }
 

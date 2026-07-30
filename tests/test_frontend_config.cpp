@@ -80,6 +80,8 @@ void FrontendConfigTest::parsesDefaultsAndFullLineComments()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Detect);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Top);
+    QVERIFY(parsed->wideTabs);
+    QVERIFY(parsed->horizontalTabScroll);
     QCOMPARE(parsed->quickTerminalLayerShell.layer, QuickTerminalLayer::Top);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
              QStringLiteral("ghostty-quick-terminal"));
@@ -90,39 +92,49 @@ void FrontendConfigTest::parsesEveryValue_data()
     QTest::addColumn<QByteArray>("contents");
     QTest::addColumn<SingleInstanceMode>("singleInstance");
     QTest::addColumn<TabsLocation>("tabsLocation");
+    QTest::addColumn<bool>("wideTabs");
+    QTest::addColumn<bool>("horizontalTabScroll");
     QTest::addColumn<int>("quickTerminalLayer");
     QTest::addColumn<QString>("quickTerminalNamespace");
 
-    QTest::newRow("false-top-background")
+    QTest::newRow("false-top-wide-scroll-background")
         << QByteArray("single-instance = false\n"
                       "tabs-location = top\n"
+                      "wide-tabs = true\n"
+                      "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = background\n"
                       "quick-terminal-namespace = background-terminal\n")
-        << SingleInstanceMode::Disabled << TabsLocation::Top
+        << SingleInstanceMode::Disabled << TabsLocation::Top << true << true
         << static_cast<int>(QuickTerminalLayer::Background)
         << QStringLiteral("background-terminal");
-    QTest::newRow("true-bottom-bottom")
+    QTest::newRow("true-bottom-compact-scroll-bottom")
         << QByteArray("single-instance = true\n"
                       "tabs-location = bottom\n"
+                      "wide-tabs = false\n"
+                      "horizontal-tab-scroll = true\n"
                       "quick-terminal-layer = bottom\n"
                       "quick-terminal-namespace = bottom-terminal\n")
-        << SingleInstanceMode::Enabled << TabsLocation::Bottom
+        << SingleInstanceMode::Enabled << TabsLocation::Bottom << false << true
         << static_cast<int>(QuickTerminalLayer::Bottom)
         << QStringLiteral("bottom-terminal");
-    QTest::newRow("detect-bottom-top")
+    QTest::newRow("detect-bottom-wide-no-scroll-top")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = bottom\n"
+                      "wide-tabs = true\n"
+                      "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = top\n"
                       "quick-terminal-namespace = top-terminal\n")
-        << SingleInstanceMode::Detect << TabsLocation::Bottom
+        << SingleInstanceMode::Detect << TabsLocation::Bottom << true << false
         << static_cast<int>(QuickTerminalLayer::Top)
         << QStringLiteral("top-terminal");
-    QTest::newRow("detect-top-overlay")
+    QTest::newRow("detect-top-compact-no-scroll-overlay")
         << QByteArray("single-instance = detect\n"
                       "tabs-location = top\n"
+                      "wide-tabs = false\n"
+                      "horizontal-tab-scroll = false\n"
                       "quick-terminal-layer = overlay\n"
                       "quick-terminal-namespace = overlay-terminal\n")
-        << SingleInstanceMode::Detect << TabsLocation::Top
+        << SingleInstanceMode::Detect << TabsLocation::Top << false << false
         << static_cast<int>(QuickTerminalLayer::Overlay)
         << QStringLiteral("overlay-terminal");
 }
@@ -132,6 +144,8 @@ void FrontendConfigTest::parsesEveryValue()
     QFETCH(QByteArray, contents);
     QFETCH(SingleInstanceMode, singleInstance);
     QFETCH(TabsLocation, tabsLocation);
+    QFETCH(bool, wideTabs);
+    QFETCH(bool, horizontalTabScroll);
     QFETCH(int, quickTerminalLayer);
     QFETCH(QString, quickTerminalNamespace);
 
@@ -140,6 +154,8 @@ void FrontendConfigTest::parsesEveryValue()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, singleInstance);
     QCOMPARE(parsed->tabsLocation, tabsLocation);
+    QCOMPARE(parsed->wideTabs, wideTabs);
+    QCOMPARE(parsed->horizontalTabScroll, horizontalTabScroll);
     QCOMPARE(static_cast<int>(parsed->quickTerminalLayerShell.layer),
              quickTerminalLayer);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
@@ -151,6 +167,8 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
     const QByteArray contents = QByteArray::fromHex("efbbbf")
         + QByteArray("\tsingle-instance\t=\ttrue\t\r\n"
                      " tabs-location = bottom \r\n"
+                     " wide-tabs = false \r\n"
+                     " horizontal-tab-scroll = false \r\n"
                      " quick-terminal-layer = overlay \r\n"
                      " quick-terminal-namespace = custom-scope \r\n");
     const auto parsed = parseFrontendConfig(contents, QStringLiteral("memory"));
@@ -158,6 +176,8 @@ void FrontendConfigTest::acceptsWhitespaceCrLfAndBom()
              qPrintable(parsed ? QString{} : parsed.error()));
     QCOMPARE(parsed->singleInstanceMode, SingleInstanceMode::Enabled);
     QCOMPARE(parsed->tabsLocation, TabsLocation::Bottom);
+    QVERIFY(!parsed->wideTabs);
+    QVERIFY(!parsed->horizontalTabScroll);
     QCOMPARE(parsed->quickTerminalLayerShell.layer,
              QuickTerminalLayer::Overlay);
     QCOMPARE(parsed->quickTerminalLayerShell.layerNamespace,
@@ -185,6 +205,11 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
         << QStringLiteral("expected false, true, or detect");
     QTest::newRow("tabs-location") << QByteArray("tabs-location = left\n")
                                    << QStringLiteral("expected top or bottom");
+    QTest::newRow("wide-tabs") << QByteArray("wide-tabs = yes\n")
+                               << QStringLiteral("expected true or false");
+    QTest::newRow("horizontal-tab-scroll")
+        << QByteArray("horizontal-tab-scroll = True\n")
+        << QStringLiteral("expected true or false");
     QTest::newRow("quick-terminal-layer")
         << QByteArray("quick-terminal-layer = desktop\n")
         << QStringLiteral("expected background, bottom, top, or overlay");
@@ -197,6 +222,12 @@ void FrontendConfigTest::rejectsInvalidDocuments_data()
     QTest::newRow("gtk-quick-terminal-namespace")
         << QByteArray("gtk-quick-terminal-namespace = custom\n")
         << QStringLiteral("unknown key 'gtk-quick-terminal-namespace'");
+    QTest::newRow("gtk-wide-tabs")
+        << QByteArray("gtk-wide-tabs = false\n")
+        << QStringLiteral("unknown key 'gtk-wide-tabs'");
+    QTest::newRow("gtk-horizontal-tab-scroll")
+        << QByteArray("gtk-horizontal-tab-scroll = false\n")
+        << QStringLiteral("unknown key 'gtk-horizontal-tab-scroll'");
     QTest::newRow("inline-comment")
         << QByteArray("tabs-location = top # not a full-line comment\n")
         << QStringLiteral("expected top or bottom");

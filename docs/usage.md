@@ -38,8 +38,9 @@ files. Qt-owned application policy instead uses:
 $XDG_CONFIG_HOME/ghostty-qt/config
 ```
 
-The separate file owns `single-instance`, `tabs-location`,
-`quick-terminal-layer`, and `quick-terminal-namespace`.
+The separate file owns `single-instance`, `tabs-location`, `wide-tabs`,
+`horizontal-tab-scroll`, `quick-terminal-layer`, and
+`quick-terminal-namespace`.
 Ghostty's `gtk-*` configuration keys do not configure Qt equivalents.
 `--gtk-single-instance` is accepted only as a hidden command-line migration
 alias for `--single-instance`.
@@ -55,6 +56,9 @@ configuration, not the Qt-owned file. See
 - The quick terminal is a LayerShellQt surface. It uses the portable
   quick-terminal settings plus Qt-owned layer and namespace settings from
   `ghostty-qt/config`; the GTK-prefixed spellings do not apply.
+- Precision horizontal scrolling over a terminal switches tabs by default.
+  Set `horizontal-tab-scroll = false` in `ghostty-qt/config` to forward it to
+  the terminal instead; discrete horizontal wheel input is always forwarded.
 - `background-blur` uses KWin's whole-window blur effect when ghostty-qt was
   built with KF6 WindowSystem. Other Wayland compositors ignore it, and KWin's
   protocol does not expose Ghostty's configured radius.

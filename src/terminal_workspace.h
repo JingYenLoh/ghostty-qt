@@ -85,6 +85,7 @@ class TerminalWorkspace : public QQuickItem {
         bool tabBarVisible READ tabBarVisible NOTIFY tabBarVisibleChanged)
     Q_PROPERTY(
         bool tabBarAtBottom READ tabBarAtBottom NOTIFY tabsLocationChanged)
+    Q_PROPERTY(bool wideTabs READ wideTabs NOTIFY wideTabsChanged)
     Q_PROPERTY(
         QQmlComponent *searchOverlayComponent READ searchOverlayComponent WRITE
             setSearchOverlayComponent NOTIFY searchOverlayComponentChanged)
@@ -145,6 +146,7 @@ public:
     {
         return effectiveOptions_.tabsLocation == TabsLocation::Bottom;
     }
+    bool wideTabs() const { return effectiveOptions_.wideTabs; }
     [[nodiscard]] const LaunchOptions &effectiveLaunchOptions() const
     {
         return effectiveOptions_;
@@ -253,6 +255,7 @@ Q_SIGNALS:
     void windowAppearanceChanged();
     void tabBarVisibleChanged();
     void tabsLocationChanged();
+    void wideTabsChanged();
     void currentIndexChanged();
     void closeConfirmationRequested(quint64 confirmationId,
                                     const QString &message);

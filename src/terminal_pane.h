@@ -472,9 +472,11 @@ private:
     // pane-local across live configuration and cell-metric changes.
     double pendingWheelVerticalPixels_ = 0.0;
     double pendingWheelHorizontalPixels_ = 0.0;
+    double pendingHorizontalTabScrollPixels_ = 0.0;
     bool manuallyZoomed_ = false;
     bool cursorBlinkOn_ = true;
     QTimer *cursorTimer_ = nullptr;
+    QChronoTimer *horizontalTabScrollResetTimer_ = nullptr;
     QChronoTimer *resizeOverlayTimer_ = nullptr;
     std::chrono::steady_clock::time_point resizeOverlayStartupSuppressionEnds_;
     std::optional<QSize> resizeOverlayGrid_;

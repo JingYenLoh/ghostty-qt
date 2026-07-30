@@ -749,6 +749,7 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     const QPointer<TerminalWorkspace> guard(this);
     const bool wasTabBarVisible = tabBarVisible();
     const bool wasTabBarAtBottom = tabBarAtBottom();
+    const bool hadWideTabs = wideTabs();
     const WindowDecorationMode previousWindowDecoration = windowDecoration();
     const QColor previousChromeBackground = chromeBackground();
     const QColor previousChromeForeground = chromeForeground();
@@ -779,6 +780,10 @@ void TerminalWorkspace::applyLaunchOptions(const LaunchOptions &options,
     }
     if (tabBarAtBottom() != wasTabBarAtBottom) {
         Q_EMIT tabsLocationChanged();
+        if (!stillCurrentUpdate()) return;
+    }
+    if (wideTabs() != hadWideTabs) {
+        Q_EMIT wideTabsChanged();
         if (!stillCurrentUpdate()) return;
     }
     if (tabBarVisible() != wasTabBarVisible) {

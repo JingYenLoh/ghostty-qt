@@ -124,6 +124,35 @@ ApplicationWindow {
         BellBorderOverlay {}
     }
 
+    Component {
+        id: wideTabButtonFactory
+        TabButton {
+            objectName: "windowTabButton"
+            required property int index
+            required property string title
+            required property bool attention
+            text: title
+            font.bold: attention
+            focusPolicy: Qt.NoFocus
+            onClicked: workspace.setCurrentIndex(index)
+        }
+    }
+
+    Component {
+        id: compactTabButtonFactory
+        TabButton {
+            objectName: "windowTabButton"
+            required property int index
+            required property string title
+            required property bool attention
+            text: title
+            font.bold: attention
+            width: Math.min(Math.max(130, implicitWidth), 240)
+            focusPolicy: Qt.NoFocus
+            onClicked: workspace.setCurrentIndex(index)
+        }
+    }
+
     onClosing: function(close) {
         if (closeApproved) {
             close.accepted = true
@@ -182,21 +211,19 @@ ApplicationWindow {
                 objectName: "windowTabBar"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // Keep layout negotiation independent from delegate widths.
+                // Otherwise an equal-fill width binding feeds the TabBar's
+                // implicit content width back into this RowLayout.
+                Layout.minimumWidth: 0
+                Layout.preferredWidth: 0
                 visible: workspace.tabBarVisible
                 currentIndex: workspace.currentIndex
 
                 Repeater {
                     model: workspace.tabModel
-                    TabButton {
-                        required property int index
-                        required property string title
-                        required property bool attention
-                        text: title
-                        font.bold: attention
-                        width: Math.min(Math.max(130, implicitWidth), 240)
-                        focusPolicy: Qt.NoFocus
-                        onClicked: workspace.setCurrentIndex(index)
-                    }
+                    delegate: workspace.wideTabs
+                              ? wideTabButtonFactory
+                              : compactTabButtonFactory
                 }
             }
 

@@ -451,6 +451,7 @@ private Q_SLOTS:
     void scalesAndAccumulatesDiscreteWheelInputAcrossReloads();
     void prefersPrecisionPixelsAndRetainsPhysicalWheelDistance();
     void normalizesHorizontalWheelInputIndependently();
+    void switchesTabsFromPrecisionHorizontalScroll();
     void forwardsTypedSelectionPointerMetadataOnce();
     void cancelsSelectionWhenMouseGrabIsRevoked();
     void togglesMouseReportingPolicyAcrossGesturesAndReloads();
@@ -4136,6 +4137,7 @@ void TerminalPaneTest::normalizesHorizontalWheelInputIndependently()
     options.program = {QStringLiteral("/bin/true")};
     options.hold = true;
     useSystemFixedFont(options);
+    options.horizontalTabScroll = false;
     // This multiplier must affect only vertical precision movement.
     options.mouseScrollMultiplier.precision = 10'000.0;
 
@@ -4201,6 +4203,96 @@ void TerminalPaneTest::normalizesHorizontalWheelInputIndependently()
     QCOMPARE(wheel.count(), 6);
     QCOMPARE(requestAt(5).rows, qint64{0});
     QCOMPARE(requestAt(5).columns, qint64{10'000});
+
+    delete pane;
+}
+
+void TerminalPaneTest::switchesTabsFromPrecisionHorizontalScroll()
+{
+    qRegisterMetaType<TerminalWheelInput>();
+
+    QQuickWindow window;
+    LaunchOptions options;
+    options.workingDirectory = QDir::tempPath();
+    options.program = {QStringLiteral("/bin/true")};
+    options.hold = true;
+    options.horizontalTabScroll = true;
+    useSystemFixedFont(options);
+
+    auto *pane = new TerminalPane(options, window.contentItem(), std::nullopt,
+                                  TerminalSessionStartMode::Deferred);
+    pane->setSize(QSizeF(320.0, 160.0));
+    auto *controller = pane->findChild<TerminalController *>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy tabChange(pane, &TerminalPane::requestTabChange);
+    QSignalSpy wheel(controller, &TerminalController::wheelRequested);
+    const auto requestAt = [&wheel](int index) {
+        return qvariant_cast<TerminalWheelInput>(wheel.at(index).constFirst());
+    };
+    const auto sendPixel = [pane](int horizontal, int vertical = 0) {
+        return sendWheelEvent(*pane, QPoint(horizontal, vertical), QPoint{});
+    };
+
+    // A partial touchpad gesture expires after 500 ms. The next two halves
+    // therefore cross the threshold only after accumulating together.
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 0);
+    QCOMPARE(wheel.count(), 0);
+    QTest::qWait(600);
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 0);
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 1);
+    QCOMPARE(tabChange.constLast().constFirst().toInt(), 1);
+    QCOMPARE(wheel.count(), 0);
+
+    // Positive movement selects the previous tab. A coalesced gesture changes
+    // at most one tab and discards excess distance.
+    QVERIFY(sendPixel(120));
+    QCOMPARE(tabChange.count(), 2);
+    QCOMPARE(tabChange.constLast().constFirst().toInt(), -1);
+    QVERIFY(sendPixel(-240));
+    QCOMPARE(tabChange.count(), 3);
+    QCOMPARE(tabChange.constLast().constFirst().toInt(), 1);
+    QCOMPARE(wheel.count(), 0);
+
+    // Opposite subthreshold movement cancels without reaching the terminal.
+    QVERIFY(sendPixel(60));
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 3);
+    QCOMPARE(wheel.count(), 0);
+
+    // A diagonal precision gesture consumes X for tab navigation while
+    // preserving Y as an ordinary terminal wheel request.
+    QVERIFY(sendPixel(-120, 10'000));
+    QCOMPARE(tabChange.count(), 4);
+    QCOMPARE(tabChange.constLast().constFirst().toInt(), 1);
+    QCOMPARE(wheel.count(), 1);
+    QVERIFY(requestAt(0).rows > 0);
+    QCOMPARE(requestAt(0).columns, qint64{0});
+
+    // Disabling the frontend gesture live clears partial tab debt and restores
+    // precision X to the terminal's cell-width normalization path.
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 4);
+    LaunchOptions disabled = options;
+    disabled.horizontalTabScroll = false;
+    pane->applyRuntimeOptions(disabled);
+    QVERIFY(sendPixel(10'000));
+    QCOMPARE(tabChange.count(), 4);
+    QCOMPARE(wheel.count(), 2);
+    QVERIFY(requestAt(1).columns > 0);
+
+    // Re-enabling starts with an empty accumulator. Discrete wheel buttons
+    // remain terminal input regardless of the precision gesture policy.
+    pane->applyRuntimeOptions(options);
+    QVERIFY(sendPixel(-60));
+    QCOMPARE(tabChange.count(), 4);
+    QVERIFY(sendWheelEvent(*pane, QPoint{}, QPoint(120, 0)));
+    QCOMPARE(tabChange.count(), 4);
+    QCOMPARE(wheel.count(), 3);
+    QCOMPARE(requestAt(2).rows, qint64{0});
+    QCOMPARE(requestAt(2).columns, qint64{1});
 
     delete pane;
 }

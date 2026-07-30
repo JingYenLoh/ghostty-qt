@@ -857,13 +857,26 @@ signals:
   inactive screen leaves that screen's independent selection untouched.
   Hyperlink commit checks libghostty's release-stable dragged state as well,
   covering an immediate Shift extension that produced no GUI motion event.
-- Wheel input is normalized once on the GUI thread. A non-null Qt pixel delta
-  is precision input; otherwise angle deltas remain fractional 120-unit wheel
-  ticks. Ghostty's independently finalized multiplier converts vertical travel
-  to physical distance against the current cell height. Precision horizontal
-  travel instead accumulates raw physical pixels against cell width without a
-  multiplier, while discrete horizontal ticks round independently to whole
-  steps. Each pane retains separate signed X/Y precision distances, so
+- Wheel input is normalized once on the GUI thread. Before terminal
+  normalization, the default-true frontend `horizontal-tab-scroll` policy
+  intercepts only a nonzero horizontal component of precision pixel input over
+  a terminal surface. Each pane accumulates its signed raw logical pixels
+  against an absolute 120-pixel threshold, emits at most one relative tab
+  change per event, discards excess after that change, and resets an incomplete
+  gesture after 500 milliseconds. Negative travel selects the next tab and
+  positive travel the previous. A simultaneous precision vertical component
+  continues through the terminal path. Disabling the policy live resets the
+  gesture and forwards subsequent precision horizontal input to the terminal.
+  Angle-delta horizontal input is never intercepted, preserving discrete DEC
+  buttons 6/7.
+
+  For terminal-directed input, a non-null Qt pixel delta is precision input;
+  otherwise angle deltas remain fractional 120-unit wheel ticks. Ghostty's
+  independently finalized multiplier converts vertical travel to physical
+  distance against the current cell height. Precision horizontal travel
+  accumulates raw physical pixels against cell width without a multiplier,
+  while discrete horizontal ticks round independently to whole steps. Each
+  pane retains separate signed X/Y precision distances, so
   high-resolution input and direction reversals are not lost. Whole rows and
   columns cross once as one value request carrying the pane-owned reporting
   policy, modifiers, and physical pointer position. The worker chooses against
@@ -1304,6 +1317,12 @@ the terminal content, rather than replacing either control or any pane. A
 frontend reload applies the placement to every existing workspace and becomes
 the default for future windows while preserving the outer window size.
 
+Frontend `wide-tabs` is another live Qt presentation policy. Its default-true
+value divides the available tab-strip width equally between every tab. False
+restores compact content-based widths. Reloading it replaces only the
+presentation delegates without replacing their tab records, workspaces, panes,
+or PTYs.
+
 A split starts the default shell using the workspace's effective directory and
 policy: when
 `split-inherit-working-directory` is true, the explicit source pane's latest
@@ -1438,9 +1457,11 @@ resident window retirement.
 
 `FrontendConfigService` independently parses exactly one strict UTF-8 scalar
 file. Its current complete schema is `single-instance=false|true|detect`,
-`tabs-location=top|bottom`,
+`tabs-location=top|bottom`, `wide-tabs=false|true`,
+`horizontal-tab-scroll=false|true`,
 `quick-terminal-layer=background|bottom|top|overlay`, and a nonempty
-`quick-terminal-namespace`; the latter two default to `top` and
+`quick-terminal-namespace`. The tab width and horizontal gesture booleans
+default to true; the quick-terminal values default to `top` and
 `ghostty-quick-terminal`. Unknown keys, duplicate keys, malformed assignments,
 unsupported values, invalid UTF-8, and partial documents are errors. A missing
 file is a successful default generation. The service watches the file and its
@@ -2699,6 +2720,10 @@ The default CTest suite has focused layers for each ownership boundary:
   also checks the pre-window alpha-buffer request, the created window format,
   transparent host clear color, opaque top/bottom chrome, and stable window,
   content item, workspace, and split panes across live reparenting.
+  Workspace and QML tab tests additionally verify live wide/compact tab sizing,
+  while pane wheel tests cover precision threshold, timeout, direction,
+  simultaneous-axis, reload-reset, and discrete-horizontal pass-through
+  behavior.
 - `ghostty-config-export` verifies strict decoding of the complete schema-v1
   frontend projection, including tagged nullable command objects and their raw
   bytes, finalized non-empty byte-valued `term`, ordered tagged raw/path input,

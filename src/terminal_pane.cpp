@@ -58,6 +58,9 @@ constexpr qsizetype kMaximumLinkPreviewBytes = 4096;
 constexpr double kMinimumMouseScrollMultiplier = 0.01;
 constexpr double kMaximumMouseScrollMultiplier = 10'000.0;
 constexpr qint64 kMaximumMouseScrollStepsPerAxis = 10'000;
+constexpr double kHorizontalTabScrollThreshold = 120.0;
+constexpr auto kHorizontalTabScrollResetInterval =
+    std::chrono::milliseconds(500);
 
 [[nodiscard]] double normalizedMouseScrollMultiplier(double value,
                                                      double fallback) noexcept
@@ -321,6 +324,12 @@ TerminalPane::TerminalPane(
         cursorBlinkOn_ = !cursorBlinkOn_;
         update();
     });
+    horizontalTabScrollResetTimer_ = new QChronoTimer(this);
+    horizontalTabScrollResetTimer_->setSingleShot(true);
+    horizontalTabScrollResetTimer_->setInterval(
+        kHorizontalTabScrollResetInterval);
+    connect(horizontalTabScrollResetTimer_, &QChronoTimer::timeout, this,
+            [this] { pendingHorizontalTabScrollPixels_ = 0.0; });
     resizeOverlayTimer_ = new QChronoTimer(this);
     resizeOverlayTimer_->setSingleShot(true);
     connect(resizeOverlayTimer_, &QChronoTimer::timeout, this,
@@ -1073,6 +1082,7 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
     updated.mouseReporting = options.mouseReporting;
     updated.mouseShiftCapture = options.mouseShiftCapture;
     updated.mouseScrollMultiplier = options.mouseScrollMultiplier;
+    updated.horizontalTabScroll = options.horizontalTabScroll;
     updated.vtKamAllowed = options.vtKamAllowed;
     updated.linkUrl = options.linkUrl;
     updated.linkPreviews = options.linkPreviews;
@@ -1125,6 +1135,8 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         options_.mouseShiftCapture != updated.mouseShiftCapture;
     const bool mouseHidePolicyChanged =
         options_.mouseHideWhileTyping != updated.mouseHideWhileTyping;
+    const bool horizontalTabScrollChanged =
+        options_.horizontalTabScroll != updated.horizontalTabScroll;
     const BellFeatures previousBellFeatures = options_.bellFeatures;
     const ResizeOverlayOptions previousResizeOverlay = options_.resizeOverlay;
     const bool paddingLayoutChanged =
@@ -1182,6 +1194,10 @@ void TerminalPane::applyRuntimeOptions(const LaunchOptions &options,
         splitAppearance_ = updated.splitAppearance;
     }
     options_ = updated;
+    if (horizontalTabScrollChanged) {
+        pendingHorizontalTabScrollPixels_ = 0.0;
+        horizontalTabScrollResetTimer_->stop();
+    }
     // Order every policy transition ahead of pending performable fallbacks.
     // Enabling must not retroactively make an older key eligible, while
     // disabling must invalidate an older hide even if a reentrant same-policy
@@ -3546,6 +3562,36 @@ void TerminalPane::hoverLeaveEvent(QHoverEvent *event)
 void TerminalPane::wheelEvent(QWheelEvent *event)
 {
     revealMouseAfterActivity();
+    QPoint pixelDelta = event->pixelDelta();
+    const QPoint angleDelta = event->angleDelta();
+    const bool precision = !pixelDelta.isNull();
+    if (precision && options_.horizontalTabScroll && pixelDelta.x() != 0) {
+        pendingHorizontalTabScrollPixels_ +=
+            static_cast<double>(pixelDelta.x());
+        pixelDelta.setX(0);
+
+        if (std::abs(pendingHorizontalTabScrollPixels_)
+            >= kHorizontalTabScrollThreshold) {
+            const int direction =
+                pendingHorizontalTabScrollPixels_ < 0.0 ? 1 : -1;
+            pendingHorizontalTabScrollPixels_ = 0.0;
+            horizontalTabScrollResetTimer_->stop();
+            const QPointer<TerminalPane> guard(this);
+            Q_EMIT requestTabChange(direction);
+            if (guard == nullptr) return;
+        } else {
+            horizontalTabScrollResetTimer_->start();
+        }
+
+        // The frontend owns the precision X component, including movement
+        // below the tab-switch threshold. An accompanying Y component remains
+        // terminal scroll input.
+        if (pixelDelta.isNull()) {
+            event->accept();
+            return;
+        }
+    }
+
     qreal logicalCellWidth = 0.0;
     qreal logicalCellHeight = 0.0;
     {
@@ -3563,9 +3609,6 @@ void TerminalPane::wheelEvent(QWheelEvent *event)
         static_cast<double>(TerminalPaneRenderer::physicalPixels(
             logicalCellHeight, devicePixelRatio));
 
-    const QPoint pixelDelta = event->pixelDelta();
-    const QPoint angleDelta = event->angleDelta();
-    const bool precision = !pixelDelta.isNull();
     const QPoint effectiveDelta = precision ? pixelDelta : angleDelta;
     if (effectiveDelta.isNull()) {
         event->ignore();

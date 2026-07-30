@@ -810,7 +810,7 @@
         "gtk-horizontal-tab-scroll": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
+          "note": "The upstream GTK key is not consumed. ghostty-qt provides the independent default-true horizontal-tab-scroll frontend setting. Precision horizontal pixel input over a terminal switches one tab after a signed 120-pixel gesture, with incomplete gestures reset after 500 ms; false forwards that input to the terminal. Discrete horizontal angle input always remains terminal buttons 6/7."
         },
         "gtk-opengl-debug": {
           "status": "not_applicable",
@@ -860,7 +860,7 @@
         "gtk-wide-tabs": {
           "status": "not_applicable",
           "scope": "gtk_only",
-          "note": "This GTK-specific setting is not consumed. Where appropriate, ghostty-qt will represent the behavior through independently designed frontend settings rather than GTK spellings."
+          "note": "The upstream GTK key is not consumed. ghostty-qt provides the independent default-true wide-tabs frontend setting, which switches live between Qt's native equal-fill delegates and compact content-based delegates while retaining tab records, panes, and PTYs."
         },
         "key-remap": {
           "status": "supported",

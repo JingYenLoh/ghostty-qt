@@ -74,6 +74,8 @@ For example:
 # Qt application policy
 single-instance = detect
 tabs-location = bottom
+wide-tabs = false
+horizontal-tab-scroll = true
 quick-terminal-layer = overlay
 quick-terminal-namespace = ghostty-quick-terminal
 ```
@@ -84,6 +86,8 @@ quick-terminal-namespace = ghostty-quick-terminal
 | --- | --- | --- | --- |
 | `single-instance` | `false`, `true`, `detect` | `detect` | Controls whether an eligible source-less launch participates in the process-wide `org.freedesktop.Application` endpoint. `detect` enables arbitration unless the launching environment advertises `TERM_PROGRAM`. The decision for an already-running process is fixed at startup; a fresh launcher reads the latest file. |
 | `tabs-location` | `top`, `bottom` | `top` | Places the stable Qt toolbar and tab strip above or below the terminal content. A successful reload moves existing windows and becomes the default for future windows without recreating panes or changing window size. |
+| `wide-tabs` | `false`, `true` | `true` | When true, tabs have equal widths and fill the available tab strip; when false, each tab uses its compact content-based width. A successful reload resizes retained tabs without recreating panes. |
+| `horizontal-tab-scroll` | `false`, `true` | `true` | When true, precision horizontal scrolling over a terminal surface accumulates toward a 120-pixel gesture and changes one tab per threshold (`left` selects the next tab and `right` the previous); incomplete gestures reset after 500 milliseconds. When false, precision horizontal input is forwarded to the terminal. Discrete horizontal wheel input is always forwarded as buttons 6/7. |
 | `quick-terminal-layer` | `background`, `bottom`, `top`, `overlay` | `top` | Selects the Wayland layer for the LayerShellQt quick terminal. A successful reload changes the retained native layer surface when the compositor supports layer-shell protocol version 2 or newer. |
 | `quick-terminal-namespace` | any non-empty scalar | `ghostty-quick-terminal` | Sets the layer-shell namespace, called `scope` by LayerShellQt. Wayland fixes it when a native layer surface is created, so reload stages the value for a subsequently created or recreated native surface and cannot rename the currently mapped one. |
 

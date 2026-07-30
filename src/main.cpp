@@ -1321,6 +1321,54 @@ bool verifyTabBarTestState(TerminalWorkspace *workspace, QObject *tabBar,
     return false;
 }
 
+bool verifyTabButtonWidths(QObject *tabBar, bool wide, const char *stage)
+{
+    QList<QQuickItem *> buttons;
+    const auto collectButtons = [&buttons](const auto &collect,
+                                           QQuickItem *item) -> void {
+        if (item == nullptr) return;
+        if (item->objectName() == QLatin1StringView("windowTabButton")) {
+            buttons.append(item);
+        }
+        for (QQuickItem *const child : item->childItems()) {
+            collect(collect, child);
+        }
+    };
+    collectButtons(collectButtons, qobject_cast<QQuickItem *>(tabBar));
+    if (buttons.size() != 2) {
+        std::fprintf(stderr,
+                     "Tab-bar test hook found %lld buttons at %s; expected 2\n",
+                     static_cast<long long>(buttons.size()), stage);
+        QCoreApplication::exit(1);
+        return false;
+    }
+
+    const qreal firstWidth = buttons.at(0)->width();
+    const qreal secondWidth = buttons.at(1)->width();
+    bool valid = false;
+    qreal expectedWidth = 0.0;
+    if (wide) {
+        const qreal availableWidth =
+            tabBar->property("availableWidth").toReal();
+        const qreal spacing = tabBar->property("spacing").toReal();
+        expectedWidth =
+            std::max(qreal{0.0}, (availableWidth - spacing) / qreal{2.0});
+        valid = std::abs(firstWidth - expectedWidth) <= 1.0
+            && std::abs(secondWidth - expectedWidth) <= 1.0;
+    } else {
+        valid = firstWidth >= 130.0 && firstWidth <= 240.0
+            && secondWidth >= 130.0 && secondWidth <= 240.0;
+    }
+    if (valid) return true;
+
+    std::fprintf(stderr,
+                 "Tab-bar test hook width mismatch at %s: wide=%d, "
+                 "widths=%g,%g, expected-wide=%g\n",
+                 stage, wide, firstWidth, secondWidth, expectedWidth);
+    QCoreApplication::exit(1);
+    return false;
+}
+
 bool installTabBarVisibilityTestHook(QObject *rootObject,
                                      TerminalWorkspace *workspace)
 {
@@ -1339,7 +1387,14 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
         options.windowShowTabBar = mode;
         workspace->applyLaunchOptions(options);
     };
-    const auto exercise = [workspace, tabBar, windowToolbar, applyMode] {
+    const auto applyWideTabs = [workspace](bool wide) {
+        LaunchOptions options = workspace->effectiveLaunchOptions();
+        options.confirmCloseMode = ConfirmCloseMode::Never;
+        options.wideTabs = wide;
+        workspace->applyLaunchOptions(options);
+    };
+    const auto exercise = [workspace, tabBar, windowToolbar, applyMode,
+                           applyWideTabs] {
         auto *const timer = new QTimer(workspace);
         timer->setSingleShot(true);
         const auto stage = std::make_shared<int>(0);
@@ -1347,8 +1402,8 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
 
         QObject::connect(
             timer, &QTimer::timeout, workspace,
-            [workspace, tabBar, windowToolbar, applyMode, timer, stage,
-             quitObserved] {
+            [workspace, tabBar, windowToolbar, applyMode, applyWideTabs, timer,
+             stage, quitObserved] {
                 switch (*stage) {
                 case 0:
                     if (!verifyTabBarTestState(workspace, tabBar, 1, false,
@@ -1363,9 +1418,29 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                                                "auto with two tabs")) {
                         return;
                     }
-                    workspace->closeCurrentTab();
+                    if (!workspace->wideTabs()
+                        || !verifyTabButtonWidths(tabBar, true, "wide tabs")) {
+                        return;
+                    }
+                    applyWideTabs(false);
                     break;
                 case 2:
+                    if (workspace->wideTabs()
+                        || !verifyTabButtonWidths(tabBar, false,
+                                                  "compact tabs")) {
+                        return;
+                    }
+                    applyWideTabs(true);
+                    break;
+                case 3:
+                    if (!workspace->wideTabs()
+                        || !verifyTabButtonWidths(tabBar, true,
+                                                  "wide tabs restored")) {
+                        return;
+                    }
+                    workspace->closeCurrentTab();
+                    break;
+                case 4:
                     if (!verifyTabBarTestState(
                             workspace, tabBar, 1, false,
                             "auto after returning to one tab")) {
@@ -1373,14 +1448,14 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                     }
                     applyMode(WindowShowTabBar::Always);
                     break;
-                case 3:
+                case 5:
                     if (!verifyTabBarTestState(workspace, tabBar, 1, true,
                                                "always with one tab")) {
                         return;
                     }
                     applyMode(WindowShowTabBar::Never);
                     break;
-                case 4:
+                case 6:
                     if (!verifyTabBarTestState(workspace, tabBar, 1, false,
                                                "never with one tab")) {
                         return;
@@ -1393,7 +1468,7 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                     }
                     applyMode(WindowShowTabBar::Auto);
                     break;
-                case 5:
+                case 7:
                     if (!verifyTabBarTestState(
                             workspace, tabBar, 1, false,
                             "auto restored before shutdown")) {
@@ -1423,7 +1498,7 @@ bool installTabBarVisibilityTestHook(QObject *rootObject,
                 }
 
                 ++*stage;
-                timer->start(*stage == 6 ? 1000 : 0);
+                timer->start(*stage == 8 ? 1000 : 0);
             });
         timer->start(0);
     };
