@@ -180,7 +180,7 @@ int main(int argc, char **argv)
     out << "qt=" << qVersion()
         << " prefix=" << terminalCustomShaderCompilerCacheVersion << '\n';
 
-    for (const int passCount : {1, 2, 4}) {
+    for (const int passCount : {1, 2, 4, 8}) {
         QVector<qint64> coldSamples;
         QVector<qint64> warmSamples;
         int coldCompiled = 0;

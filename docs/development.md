@@ -63,20 +63,30 @@ LIBGL_ALWAYS_SOFTWARE=1 QSG_RHI_BACKEND=opengl \
     --width 1280 --height 720 --warmup 20 --iterations 100
 ```
 
-The custom-shader benchmark reports one-, two-, and four-pass cold
+The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass cold
 `QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
 compiled/cache-hit counters guard the two paths against accidental
 misclassification. It measures configuration-time compilation and cache I/O,
 not GPU pass time.
 
-The custom-shader RHI benchmark measures zero, one, two, and four full-screen
-passes on the OpenGL RHI at one fixed viewport. Shader baking and graphics
-pipeline warm-up happen outside the timed samples. Every sample dirties the
-source and completes a `grabWindow()` readback; distinct affine color
-transforms in each pass validate that the returned frame ran the complete
-ordered chain.
-The readback cost is deliberately present in every case, so use the reported
-zero-pass baseline and deltas when evaluating pass overhead. Remove
+The custom-shader RHI benchmark compares the retained and legacy pipelines at
+zero, one, two, four, and eight full-screen passes on the OpenGL RHI. It runs
+both source-dirty and effect-only workloads. Distinct noncommutative affine
+color transforms validate pass order on every returned frame, while source
+paint counters verify that effect-only animation does not repaint the terminal
+source. Retained telemetry also verifies draw counts and the absence of target,
+pipeline, or resource-binding creation in the measured steady state.
+
+Every timed sample completes a `grabWindow()` readback. The output labels this
+as `completion=grab-readback`; it is an end-to-end latency benchmark, not an
+isolated GPU timestamp. Readback synchronization and image copying are present
+in every case and can dominate on a fast GPU, so evaluate each pass count
+against its renderer's zero-pass baseline and treat small differences as
+noise. The deterministic target counts and memory figures remain useful
+independently: legacy owns one full-size layer per pass, while retained owns
+one source layer plus at most two internal textures.
+
+Remove
 `LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU, and compare results only
 with the same platform plugin and framebuffer size. `LIBGL_ALWAYS_SOFTWARE=1`
 selects Mesa's software implementation behind the OpenGL RHI; it is not Qt
@@ -84,6 +94,10 @@ Quick's unsupported software scene graph. The benchmark exits without results
 when the selected platform plugin cannot initialize an OpenGL RHI context.
 Run it inside a graphical Wayland or X11 session; Qt's `offscreen` platform
 often selects the software scene graph and is deliberately rejected.
+
+Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
+issue specifically against the old nested implementation. The benchmark
+constructs both implementations directly and does not consult this variable.
 
 The current cases measure Kitty graphics' empty-image fast path. Image-specific
 benchmarks should distinguish first texture upload, retained redraw,

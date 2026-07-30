@@ -1,4 +1,5 @@
 #include "terminal_custom_shader_compiler.h"
+#include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
 
 #include <QColor>
@@ -17,6 +18,7 @@
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 
@@ -51,6 +53,23 @@ public:
         effects_.removeAll(effect);
     }
 
+    void terminalCustomShaderPipelineAttached(
+        TerminalCustomShaderPipelineEffect *effect) override
+    {
+        pipelines_.append(effect);
+    }
+
+    void terminalCustomShaderPipelineDetached(
+        TerminalCustomShaderPipelineEffect *effect) override
+    {
+        pipelines_.removeAll(effect);
+    }
+
+    [[nodiscard]] TerminalCustomShaderPipelineEffect *pipeline() const
+    {
+        return pipelines_.isEmpty() ? nullptr : pipelines_.constFirst().data();
+    }
+
     void setColor(const QColor &color)
     {
         auto uniforms = std::make_shared<TerminalCustomShaderUniforms>();
@@ -62,11 +81,16 @@ public:
              std::as_const(effects_)) {
             if (effect != nullptr) effect->update();
         }
+        for (TerminalCustomShaderPipelineEffect *const pipeline :
+             std::as_const(pipelines_)) {
+            if (pipeline != nullptr) pipeline->update();
+        }
     }
 
 private:
     TerminalCustomShaderUniformSnapshot uniforms_;
     QVector<QPointer<TerminalCustomShaderEffect>> effects_;
+    QVector<QPointer<TerminalCustomShaderPipelineEffect>> pipelines_;
 };
 
 bool near(int actual, int expected, int tolerance = 12)
@@ -137,6 +161,53 @@ TerminalCustomShaderStage compileShader(const QString &source,
     return result.stages.constFirst();
 }
 
+QColor orderedExpectedColor(int passCount)
+{
+    const QColor source(QStringLiteral("#204060"));
+    std::array<qreal, 3> color{
+        source.redF(),
+        source.greenF(),
+        source.blueF(),
+    };
+    if (passCount >= 1) color = {color[1], color[2], color[0]};
+    if (passCount >= 2) {
+        color = {
+            color[0] * 0.5 + 0.1,
+            color[1] * 0.75 + 0.05,
+            color[2] * 0.25 + 0.2,
+        };
+    }
+    if (passCount >= 3) {
+        color = {
+            1.0 - color[0],
+            1.0 - color[1],
+            1.0 - color[2],
+        };
+    }
+    if (passCount >= 4) color = {color[2], color[0], color[1]};
+    return QColor::fromRgbF(color[0], color[1], color[2]);
+}
+
+QColor compositeColor(const QColor &source, qreal opacity,
+                      const QColor &background)
+{
+    const qreal sourceAlpha = source.alphaF() * opacity;
+    const qreal backgroundContribution =
+        background.alphaF() * (1.0 - sourceAlpha);
+    const qreal outputAlpha = sourceAlpha + backgroundContribution;
+    const auto component = [&](qreal sourceComponent,
+                               qreal backgroundComponent) {
+        if (outputAlpha <= 0.0) return 0.0;
+        return (sourceComponent * sourceAlpha
+                + backgroundComponent * backgroundContribution)
+            / outputAlpha;
+    };
+    return QColor::fromRgbF(component(source.redF(), background.redF()),
+                            component(source.greenF(), background.greenF()),
+                            component(source.blueF(), background.blueF()),
+                            outputAlpha);
+}
+
 } // namespace
 
 class TerminalCustomShaderRhiTest : public QObject {
@@ -146,11 +217,23 @@ private Q_SLOTS:
     void initTestCase();
     void identityShaderPreservesVerticalOrientation();
     void sharedProgramKeepsPerMaterialUniformsIsolated();
+    void retainedIdentityPreservesAsymmetricOrientation();
+    void retainedOrderedMultipass_data();
+    void retainedOrderedMultipass();
+    void retainedSourceFramesAreFresh();
+    void retainedSharedProgramKeepsPerProviderUniformsIsolated();
+    void retainedTargetsAreBoundedAndReused_data();
+    void retainedTargetsAreBoundedAndReused();
+    void retainedResizeKeepsPipelinesAndUpdatesGeometry();
+    void retainedParentOpacityCompositesPremultipliedContent();
+    void retainedRectangularClipUsesScissor();
+    void retainedRotatedRectangularClipUsesStencil();
 
 private:
     std::unique_ptr<QTemporaryDir> shaderRoot_;
     TerminalCustomShaderStage identityStage_;
     TerminalCustomShaderStage uniformStage_;
+    QVector<TerminalCustomShaderStage> orderedStages_;
 };
 
 void TerminalCustomShaderRhiTest::initTestCase()
@@ -171,6 +254,8 @@ void TerminalCustomShaderRhiTest::initTestCase()
 
     qmlRegisterType<TerminalCustomShaderEffect>("GhosttyQtShaderRhiTest", 1, 0,
                                                 "TerminalCustomShaderEffect");
+    qmlRegisterType<TerminalCustomShaderPipelineEffect>(
+        "GhosttyQtShaderRhiTest", 1, 0, "TerminalCustomShaderPipelineEffect");
 
     shaderRoot_ = std::make_unique<QTemporaryDir>();
     QVERIFY(shaderRoot_->isValid());
@@ -196,6 +281,49 @@ void mainImage(out vec4 color, in vec2 fragCoord)
 )glsl"),
                       QStringLiteral("uniform.glsl"), directory, &diagnostic);
     QVERIFY2(!uniformStage_.qsbPath.isEmpty(), qPrintable(diagnostic));
+
+    const QStringList orderedSources{
+        QStringLiteral(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    vec4 source = texture(iChannel0, fragCoord / iResolution.xy);
+    color = vec4(source.g, source.b, source.r, source.a);
+}
+)glsl"),
+        QStringLiteral(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    vec4 source = texture(iChannel0, fragCoord / iResolution.xy);
+    color = vec4(source.r * 0.5 + 0.1,
+                 source.g * 0.75 + 0.05,
+                 source.b * 0.25 + 0.2,
+                 source.a);
+}
+)glsl"),
+        QStringLiteral(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    vec4 source = texture(iChannel0, fragCoord / iResolution.xy);
+    color = vec4(vec3(1.0) - source.rgb, source.a);
+}
+)glsl"),
+        QStringLiteral(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    vec4 source = texture(iChannel0, fragCoord / iResolution.xy);
+    color = vec4(source.b, source.r, source.g, source.a);
+}
+)glsl"),
+    };
+    orderedStages_.reserve(orderedSources.size());
+    for (qsizetype index = 0; index < orderedSources.size(); ++index) {
+        TerminalCustomShaderStage stage =
+            compileShader(orderedSources.at(index),
+                          QStringLiteral("ordered-%1.glsl").arg(index + 1),
+                          directory, &diagnostic);
+        QVERIFY2(!stage.qsbPath.isEmpty(), qPrintable(diagnostic));
+        orderedStages_.append(std::move(stage));
+    }
 }
 
 void TerminalCustomShaderRhiTest::identityShaderPreservesVerticalOrientation()
@@ -382,6 +510,876 @@ Item {
     QVERIFY2(isMostly(right, Qt::yellow),
              qPrintable(QStringLiteral("unexpected updated right sample %1")
                             .arg(colorDescription(right))));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::
+    retainedIdentityPreservesAsymmetricOrientation()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+
+    Rectangle { width: 16; height: 16; color: "#e02010" }
+    Rectangle { x: 16; width: 16; height: 16; color: "#10d040" }
+    Rectangle { y: 16; width: 16; height: 16; color: "#2040e0" }
+    Rectangle {
+        x: 16
+        y: 16
+        width: 16
+        height: 16
+        color: "#d0b020"
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-identity.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    const QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(), "Retained RHI pipeline produced no frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    struct Sample {
+        QPoint point;
+        QColor expected;
+        const char *name;
+    };
+    const std::array<Sample, 4> samples{{
+        {{8, 8}, QColor(QStringLiteral("#e02010")), "top-left"},
+        {{24, 8}, QColor(QStringLiteral("#10d040")), "top-right"},
+        {{8, 24}, QColor(QStringLiteral("#2040e0")), "bottom-left"},
+        {{24, 24}, QColor(QStringLiteral("#d0b020")), "bottom-right"},
+    }};
+    for (const Sample &sample : samples) {
+        const QColor actual = frame.pixelColor(sample.point);
+        QVERIFY2(isMostly(actual, sample.expected),
+                 qPrintable(QStringLiteral("unexpected %1 sample %2")
+                                .arg(QString::fromUtf8(sample.name),
+                                     colorDescription(actual))));
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    QCOMPARE(pipeline->renderSnapshot().passCount, 1);
+    QVERIFY2(pipeline->renderDiagnostic().isEmpty(),
+             qPrintable(pipeline->renderDiagnostic()));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedOrderedMultipass_data()
+{
+    QTest::addColumn<int>("passCount");
+    QTest::newRow("odd-three-pass") << 3;
+    QTest::newRow("even-four-pass") << 4;
+}
+
+void TerminalCustomShaderRhiTest::retainedOrderedMultipass()
+{
+    QFETCH(int, passCount);
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            orderedStages_.mid(0, passCount)));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    Rectangle { anchors.fill: parent; color: "#204060" }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-ordered.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    const QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(), "Retained RHI pipeline produced no frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    const QColor actual =
+        frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    const QColor expected = orderedExpectedColor(passCount);
+    QVERIFY2(
+        isMostly(actual, expected),
+        qPrintable(
+            QStringLiteral("unexpected ordered %1-pass sample %2; expected %3")
+                .arg(passCount)
+                .arg(colorDescription(actual), colorDescription(expected))));
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot snapshot =
+        pipeline->renderSnapshot();
+    QCOMPARE(snapshot.passCount, passCount);
+    QCOMPARE(snapshot.liveTargetCount, 2);
+    QVERIFY2(snapshot.diagnostic.isEmpty(), qPrintable(snapshot.diagnostic));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedSourceFramesAreFresh()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            {identityStage_, identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    Rectangle {
+        objectName: "sourceRect"
+        anchors.fill: parent
+        color: "#d02040"
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-freshness.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(), "Retained RHI pipeline produced no first frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+    QColor actual = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(isMostly(actual, QColor(QStringLiteral("#d02040"))),
+             qPrintable(QStringLiteral("stale first-frame sample %1")
+                            .arg(colorDescription(actual))));
+
+    auto *const sourceRect =
+        root->findChild<QQuickItem *>(QStringLiteral("sourceRect"));
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(sourceRect != nullptr);
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot before =
+        pipeline->renderSnapshot();
+
+    const QColor updated(QStringLiteral("#20c060"));
+    QVERIFY(sourceRect->setProperty("color", updated));
+    window.update();
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no source-update frame.");
+    actual = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(isMostly(actual, updated),
+             qPrintable(QStringLiteral("stale source-update sample %1")
+                            .arg(colorDescription(actual))));
+
+    const TerminalCustomShaderPipelineSnapshot after =
+        pipeline->renderSnapshot();
+    QVERIFY(after.frameCount > before.frameCount);
+    QCOMPARE(after.targetCreateCount, before.targetCreateCount);
+    QCOMPARE(after.resourceGeneration, before.resourceGeneration);
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::
+    retainedSharedProgramKeepsPerProviderUniformsIsolated()
+{
+    TestUniformProvider leftProvider(Qt::red);
+    TestUniformProvider rightProvider(Qt::green);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({uniformStage_}));
+    engine.rootContext()->setContextProperty(QStringLiteral("leftProvider"),
+                                             &leftProvider);
+    engine.rootContext()->setContextProperty(QStringLiteral("rightProvider"),
+                                             &rightProvider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 64
+    height: 32
+
+    Item {
+        width: 32
+        height: 32
+        layer.enabled: true
+        layer.live: true
+        layer.smooth: false
+        layer.textureMirroring: ShaderEffectSource.NoMirroring
+        layer.textureSize: Qt.size(width, height)
+        layer.effect: Component {
+            TerminalCustomShaderPipelineEffect {
+                shaderStages: pipelineStages
+                uniformProvider: leftProvider
+            }
+        }
+        Rectangle { anchors.fill: parent; color: "white" }
+    }
+
+    Item {
+        x: 32
+        width: 32
+        height: 32
+        layer.enabled: true
+        layer.live: true
+        layer.smooth: false
+        layer.textureMirroring: ShaderEffectSource.NoMirroring
+        layer.textureSize: Qt.size(width, height)
+        layer.effect: Component {
+            TerminalCustomShaderPipelineEffect {
+                shaderStages: pipelineStages
+                uniformProvider: rightProvider
+            }
+        }
+        Rectangle { anchors.fill: parent; color: "white" }
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-uniforms.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(64, 32);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(), "Retained RHI pipeline produced no frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    QColor left = frame.pixelColor(frame.width() / 4, frame.height() / 2);
+    QColor right = frame.pixelColor(frame.width() * 3 / 4, frame.height() / 2);
+    QVERIFY2(isMostly(left, Qt::red),
+             qPrintable(QStringLiteral("unexpected retained left sample %1")
+                            .arg(colorDescription(left))));
+    QVERIFY2(isMostly(right, Qt::green),
+             qPrintable(QStringLiteral("unexpected retained right sample %1")
+                            .arg(colorDescription(right))));
+
+    leftProvider.setColor(Qt::blue);
+    rightProvider.setColor(Qt::yellow);
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no updated frame.");
+    left = frame.pixelColor(frame.width() / 4, frame.height() / 2);
+    right = frame.pixelColor(frame.width() * 3 / 4, frame.height() / 2);
+    QVERIFY2(
+        isMostly(left, Qt::blue),
+        qPrintable(QStringLiteral("unexpected retained updated left sample %1")
+                       .arg(colorDescription(left))));
+    QVERIFY2(
+        isMostly(right, Qt::yellow),
+        qPrintable(QStringLiteral("unexpected retained updated right sample %1")
+                       .arg(colorDescription(right))));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedTargetsAreBoundedAndReused_data()
+{
+    QTest::addColumn<int>("passCount");
+    QTest::addColumn<int>("expectedTargets");
+    QTest::newRow("one-pass") << 1 << 0;
+    QTest::newRow("two-pass") << 2 << 1;
+    QTest::newRow("three-pass") << 3 << 2;
+    QTest::newRow("four-pass") << 4 << 2;
+}
+
+void TerminalCustomShaderRhiTest::retainedTargetsAreBoundedAndReused()
+{
+    QFETCH(int, passCount);
+    QFETCH(int, expectedTargets);
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            orderedStages_.mid(0, passCount)));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            objectName: "pipeline"
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    Rectangle { anchors.fill: parent; color: "#204060" }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-targets.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    const QImage firstFrame = renderWindow(window);
+    QVERIFY2(!firstFrame.isNull(),
+             "Retained RHI pipeline produced no first frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot first =
+        pipeline->renderSnapshot();
+    QVERIFY2(first.diagnostic.isEmpty(), qPrintable(first.diagnostic));
+    QCOMPARE(first.passCount, passCount);
+    QCOMPARE(first.liveTargetCount, expectedTargets);
+    QCOMPARE(first.targetCreateCount,
+             static_cast<std::uint64_t>(expectedTargets));
+    QCOMPARE(first.targetPixelSize, QSize(32, 32));
+    QCOMPARE(first.ownedTextureBytes,
+             static_cast<std::uint64_t>(expectedTargets * 32 * 32 * 4));
+    QVERIFY(first.frameCount >= 1);
+    QVERIFY(first.drawCount >= static_cast<std::uint64_t>(passCount));
+
+    pipeline->update();
+    window.update();
+    const QImage secondFrame = window.grabWindow();
+    QVERIFY2(!secondFrame.isNull(),
+             "Retained RHI pipeline produced no reuse frame.");
+    const TerminalCustomShaderPipelineSnapshot second =
+        pipeline->renderSnapshot();
+    QVERIFY2(second.diagnostic.isEmpty(), qPrintable(second.diagnostic));
+    QCOMPARE(second.liveTargetCount, first.liveTargetCount);
+    QCOMPARE(second.targetCreateCount, first.targetCreateCount);
+    QCOMPARE(second.targetDestroyCount, first.targetDestroyCount);
+    QCOMPARE(second.resourceGeneration, first.resourceGeneration);
+    QCOMPARE(second.pipelineCreateCount, first.pipelineCreateCount);
+    QCOMPARE(second.sourceBindingUpdateCount, first.sourceBindingUpdateCount);
+    QVERIFY(second.frameCount > first.frameCount);
+    QVERIFY(second.drawCount
+            >= first.drawCount + static_cast<std::uint64_t>(passCount));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::
+    retainedResizeKeepsPipelinesAndUpdatesGeometry()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            {identityStage_, identityStage_, identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 24
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+
+    Rectangle {
+        width: parent.width / 2
+        height: parent.height
+        color: "#d02040"
+    }
+    Rectangle {
+        x: parent.width / 2
+        width: parent.width / 2
+        height: parent.height
+        color: "#2040d0"
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-resize.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    // Keep the native toplevel size fixed. Some Wayland compositors are free
+    // to reject a requested toplevel resize, while the layer item itself must
+    // still support deterministic in-place target resizing.
+    window.resize(48, 40);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no pre-resize frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot before =
+        pipeline->renderSnapshot();
+    QVERIFY2(before.diagnostic.isEmpty(), qPrintable(before.diagnostic));
+    QCOMPARE(before.liveTargetCount, 2);
+    QCOMPARE(before.targetPixelSize, QSize(32, 24));
+    QVERIFY(before.pipelineCreateCount >= 3);
+
+    root->setSize(QSizeF(48.0, 40.0));
+    window.update();
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no post-resize frame.");
+    QCOMPARE(frame.size(), QSize(48, 40));
+
+    const QColor left = frame.pixelColor(12, 20);
+    const QColor right = frame.pixelColor(36, 20);
+    QVERIFY2(isMostly(left, QColor(QStringLiteral("#d02040"))),
+             qPrintable(QStringLiteral("unexpected resized left sample %1")
+                            .arg(colorDescription(left))));
+    QVERIFY2(isMostly(right, QColor(QStringLiteral("#2040d0"))),
+             qPrintable(QStringLiteral("unexpected resized right sample %1")
+                            .arg(colorDescription(right))));
+
+    const TerminalCustomShaderPipelineSnapshot after =
+        pipeline->renderSnapshot();
+    QVERIFY2(after.diagnostic.isEmpty(), qPrintable(after.diagnostic));
+    QCOMPARE(after.liveTargetCount, before.liveTargetCount);
+    QCOMPARE(after.targetPixelSize, QSize(48, 40));
+    QCOMPARE(after.ownedTextureBytes,
+             static_cast<std::uint64_t>(2 * 48 * 40 * 4));
+    QCOMPARE(after.targetCreateCount, before.targetCreateCount);
+    QCOMPARE(after.targetDestroyCount, before.targetDestroyCount);
+    QVERIFY(after.resourceGeneration > before.resourceGeneration);
+    QCOMPARE(after.pipelineCreateCount, before.pipelineCreateCount);
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::
+    retainedParentOpacityCompositesPremultipliedContent()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#204060"
+    }
+
+    Item {
+        anchors.fill: parent
+        opacity: 0.5
+
+        Item {
+            x: 4
+            y: 4
+            width: 24
+            height: 24
+            layer.enabled: true
+            layer.live: true
+            layer.smooth: false
+            layer.textureMirroring: ShaderEffectSource.NoMirroring
+            layer.textureSize: Qt.size(width, height)
+            layer.effect: Component {
+                TerminalCustomShaderPipelineEffect {
+                    shaderStages: pipelineStages
+                    uniformProvider: testUniformProvider
+                }
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: "#80e04020"
+            }
+        }
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-opacity.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    const QColor background(QStringLiteral("#204060"));
+    const QColor source(QStringLiteral("#80e04020"));
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    const QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no opacity frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    const QColor outside = frame.pixelColor(1, 1);
+    const QColor inside = frame.pixelColor(16, 16);
+    const QColor expected = compositeColor(source, 0.5, background);
+    QVERIFY2(isMostly(outside, background),
+             qPrintable(QStringLiteral("unexpected background sample %1")
+                            .arg(colorDescription(outside))));
+    QVERIFY2(
+        isMostly(inside, expected),
+        qPrintable(
+            QStringLiteral("unexpected premultiplied opacity sample %1; "
+                           "expected %2")
+                .arg(colorDescription(inside), colorDescription(expected))));
+    QVERIFY(near(inside.alpha(), expected.alpha()));
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    QVERIFY2(pipeline->renderDiagnostic().isEmpty(),
+             qPrintable(pipeline->renderDiagnostic()));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedRectangularClipUsesScissor()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#203040"
+    }
+
+    Item {
+        x: 8
+        y: 6
+        width: 16
+        height: 20
+        clip: true
+
+        Item {
+            x: -8
+            y: -6
+            width: 32
+            height: 32
+            layer.enabled: true
+            layer.live: true
+            layer.smooth: false
+            layer.textureMirroring: ShaderEffectSource.NoMirroring
+            layer.textureSize: Qt.size(width, height)
+            layer.effect: Component {
+                TerminalCustomShaderPipelineEffect {
+                    shaderStages: pipelineStages
+                    uniformProvider: testUniformProvider
+                }
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: "#20d060"
+            }
+        }
+    }
+}
+)qml",
+        QUrl(QStringLiteral("qrc:/test/custom-shader-retained-clip.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    const QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no clipped frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    const QColor background(QStringLiteral("#203040"));
+    const QColor foreground(QStringLiteral("#20d060"));
+    const std::array<QPoint, 4> outsideSamples{{
+        {4, 16},
+        {28, 16},
+        {16, 3},
+        {16, 29},
+    }};
+    QVERIFY2(isMostly(frame.pixelColor(16, 16), foreground),
+             qPrintable(QStringLiteral("unexpected clipped interior sample %1")
+                            .arg(colorDescription(frame.pixelColor(16, 16)))));
+    for (const QPoint &point : outsideSamples) {
+        const QColor actual = frame.pixelColor(point);
+        QVERIFY2(isMostly(actual, background),
+                 qPrintable(QStringLiteral("clip leaked at (%1,%2): %3")
+                                .arg(point.x())
+                                .arg(point.y())
+                                .arg(colorDescription(actual))));
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot snapshot =
+        pipeline->renderSnapshot();
+    QVERIFY2(snapshot.diagnostic.isEmpty(), qPrintable(snapshot.diagnostic));
+    QCOMPARE(snapshot.pipelineCreateCount, static_cast<std::uint64_t>(2));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedRotatedRectangularClipUsesStencil()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList({identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 48
+    height: 48
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#203040"
+    }
+
+    Item {
+        x: 12
+        y: 12
+        width: 24
+        height: 24
+        transformOrigin: Item.Center
+        rotation: 45
+        clip: true
+
+        Item {
+            x: -12
+            y: -12
+            width: 48
+            height: 48
+            layer.enabled: true
+            layer.live: true
+            layer.smooth: false
+            layer.textureMirroring: ShaderEffectSource.NoMirroring
+            layer.textureSize: Qt.size(width, height)
+            layer.effect: Component {
+                TerminalCustomShaderPipelineEffect {
+                    shaderStages: pipelineStages
+                    uniformProvider: testUniformProvider
+                }
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: "#20d060"
+            }
+        }
+    }
+}
+)qml",
+        QUrl(QStringLiteral(
+            "qrc:/test/custom-shader-retained-stencil-clip.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(48, 48);
+    root->setParentItem(window.contentItem());
+    const QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no stencil-clipped frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    const QColor background(QStringLiteral("#203040"));
+    const QColor foreground(QStringLiteral("#20d060"));
+    const std::array<QPoint, 4> outsideSamples{{
+        {24, 4},
+        {44, 24},
+        {24, 44},
+        {4, 24},
+    }};
+    QVERIFY2(isMostly(frame.pixelColor(24, 24), foreground),
+             qPrintable(QStringLiteral("unexpected stencil interior sample %1")
+                            .arg(colorDescription(frame.pixelColor(24, 24)))));
+    for (const QPoint &point : outsideSamples) {
+        const QColor actual = frame.pixelColor(point);
+        QVERIFY2(isMostly(actual, background),
+                 qPrintable(QStringLiteral("stencil clip leaked at (%1,%2): %3")
+                                .arg(point.x())
+                                .arg(point.y())
+                                .arg(colorDescription(actual))));
+    }
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot snapshot =
+        pipeline->renderSnapshot();
+    QVERIFY2(snapshot.diagnostic.isEmpty(), qPrintable(snapshot.diagnostic));
+    QCOMPARE(snapshot.pipelineCreateCount, static_cast<std::uint64_t>(2));
 
     root.reset();
 }

@@ -603,7 +603,7 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
 6. Without custom shaders, `TerminalPane` paints its scene-graph node directly.
    An active custom-shader chain moves the same paint-node implementation into
    a private `TerminalPaneRenderItem` so only terminal pixels enter the effect
-   layers. The node keeps fixed before-text/main-text/after-text groups, three
+   pipeline. The node keeps fixed before-text/main-text/after-text groups, three
    persistent Kitty-graphics insertion points, and frontend overlays followed
    by one persistent full-pane unfocused-split rectangle.
    The image insertion points are ordered below cell backgrounds, between cell
@@ -723,10 +723,33 @@ item, so terminal pixels and Kitty graphics are filtered while Qt-owned pane
 chrome remains outside the effect. With no `custom-shader` entries,
 `TerminalPane` keeps its original direct paint-node path: no render child,
 layer texture, shader item, timer, or per-frame uniform update exists. With
-shaders configured, nested `Item.layer` stages preserve declaration order:
-each pass samples the previous pass through `iChannel0`, and only the final
-stage is composed into the pane. Every enabled pass therefore adds one
-full-pane physical-resolution layer texture and one full-screen draw.
+shaders configured, one physical-resolution `Item.layer` flattens the terminal
+source. A retained `QSGRenderNode` records all passes in declaration order:
+the first pass samples that layer, intermediate passes ping-pong through at
+most two retained RGBA8 textures, and the final pass records inline into Qt
+Quick's active render target. One pass therefore owns no intermediate texture,
+two passes own one, and any longer chain owns two. Resizing rebuilds those
+textures in place without recreating compatible graphics pipelines. Dynamic
+layer sources are refreshed during scene-graph preprocessing, before the
+node's offscreen passes are recorded, so the first frame and source-dirty
+frames cannot sample stale content.
+
+The final pass honors the scene graph's transform, inherited opacity, scissor,
+and stencil state and uses premultiplied-alpha composition. Its render-pass
+format is tracked because an ancestor layer can replace the active target.
+Programs, pipelines, resource bindings, vertex data, uniform scratch storage,
+and ping textures remain retained across ordinary frames. A runtime RHI
+allocation or pipeline failure is published as a configuration diagnostic and
+queues that pane back to direct unfiltered rendering rather than mutating the
+layer tree during frame delivery or leaving its hidden source blank. A newer
+successful shader reload or scene-graph reinitialization allows one fresh
+retained attempt.
+
+For controlled A/B diagnosis,
+`GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` restores the former nested
+item-per-pass implementation; `retained` is the default. The legacy path is
+kept as a comparison and compatibility tool, not as a second configuration
+surface.
 
 The pinned parser supplies finalized required/optional paths and the exact
 `custom-shader-animation` policy. A process-wide broker reads and bakes changed

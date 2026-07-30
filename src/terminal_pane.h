@@ -11,6 +11,7 @@
 #include "terminal_bell.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_custom_shader_compiler.h"
+#include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
 #include "terminal_geometry.h"
 #include "terminal_types.h"
@@ -196,6 +197,10 @@ public:
                                             int stageIndex) override;
     void terminalCustomShaderEffectDetached(TerminalCustomShaderEffect *effect,
                                             int stageIndex) override;
+    void terminalCustomShaderPipelineAttached(
+        TerminalCustomShaderPipelineEffect *effect) override;
+    void terminalCustomShaderPipelineDetached(
+        TerminalCustomShaderPipelineEffect *effect) override;
 
     void focusTerminal();
     void setSurfaceTitle(QString title);
@@ -468,6 +473,7 @@ private:
     void refreshCustomShaderUniformBase();
     void prepareCustomShaderFrame();
     [[nodiscard]] bool updateCustomShaderEffects();
+    void syncCustomShaderPipelineDiagnostic();
     void scheduleCustomShaderAnimationFrame();
     [[nodiscard]] bool shouldAnimateCustomShaders() const;
     QSGNode *updateTerminalPaintNode(QSGNode *oldNode,
@@ -501,11 +507,17 @@ private:
     QVector<std::shared_ptr<TerminalCustomShaderUniforms>>
         customShaderUniformPool_;
     QVector<QPointer<TerminalCustomShaderEffect>> customShaderEffects_;
+    QPointer<TerminalCustomShaderPipelineEffect> customShaderPipelineEffect_;
+    QPointer<TerminalCustomShaderPipelineEffect>
+        customShaderFallbackPendingEffect_;
     std::optional<std::chrono::steady_clock::time_point>
         customShaderFirstFrameTime_;
     std::optional<std::chrono::steady_clock::time_point>
         customShaderLastFrameTime_;
+    quint64 customShaderStageGeneration_ = 0;
+    quint64 customShaderRetainedFailureGeneration_ = 0;
     bool customShaderFramePending_ = false;
+    bool customShaderRetainedFailed_ = false;
     std::optional<QString> surfaceTitleOverride_;
     TerminalCellMetrics metrics_;
     double defaultFontPointSize_ = 12.0;

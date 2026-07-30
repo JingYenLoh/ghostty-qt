@@ -20,6 +20,7 @@ class QSGGeometry;
 class QSGTexture;
 class QShader;
 class TerminalCustomShaderEffect;
+class TerminalCustomShaderPipelineEffect;
 class TerminalCustomShaderQsgMaterial;
 struct QSGMaterialType;
 struct TerminalCustomShaderStage;
@@ -161,6 +162,12 @@ public:
     virtual void
     terminalCustomShaderEffectDetached(TerminalCustomShaderEffect *, int)
     {}
+    virtual void
+    terminalCustomShaderPipelineAttached(TerminalCustomShaderPipelineEffect *)
+    {}
+    virtual void
+    terminalCustomShaderPipelineDetached(TerminalCustomShaderPipelineEffect *)
+    {}
 };
 
 #define TerminalCustomShaderUniformProvider_iid                                \
@@ -208,6 +215,7 @@ public:
     void clear();
 
     [[nodiscard]] bool isDrawable() const noexcept;
+    void preprocess() override;
 
 private:
     QSGGeometry *geometry_ = nullptr;

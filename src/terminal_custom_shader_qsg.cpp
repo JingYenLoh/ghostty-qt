@@ -327,6 +327,7 @@ TerminalCustomShaderQsgNode::TerminalCustomShaderQsgNode()
     geometry_->setVertexDataPattern(QSGGeometry::DynamicPattern);
     geometry_->setVertexCount(0);
     setGeometry(geometry_);
+    setFlag(QSGNode::UsePreprocess);
     setFlag(QSGNode::OwnsGeometry);
     setFlag(QSGNode::OwnsMaterial);
 }
@@ -339,8 +340,10 @@ bool TerminalCustomShaderQsgNode::update(
     TerminalCustomShaderUniformSnapshot uniforms)
 {
     if (source == nullptr || source->isAtlasTexture()
-        || source->textureSize().isEmpty() || !finiteRect(viewport)
-        || program == nullptr || !program->isValid() || uniforms == nullptr) {
+        || (source->textureSize().isEmpty()
+            && qobject_cast<QSGDynamicTexture *>(source) == nullptr)
+        || !finiteRect(viewport) || program == nullptr || !program->isValid()
+        || uniforms == nullptr) {
         clear();
         return false;
     }
@@ -386,6 +389,24 @@ bool TerminalCustomShaderQsgNode::isDrawable() const noexcept
 {
     return geometry_->vertexCount() == 4 && material_ != nullptr
         && material_->source() != nullptr;
+}
+
+void TerminalCustomShaderQsgNode::preprocess()
+{
+    if (material_ == nullptr) return;
+    if (auto *const dynamicTexture =
+            qobject_cast<QSGDynamicTexture *>(material_->source())) {
+        (void)dynamicTexture->updateTexture();
+        const QRectF textureCoordinates =
+            dynamicTexture->normalizedTextureSubRect();
+        if (geometry_->vertexCount() == 4
+            && textureCoordinates_ != textureCoordinates) {
+            QSGGeometry::updateTexturedRectGeometry(geometry_, viewport_,
+                                                    textureCoordinates);
+            textureCoordinates_ = textureCoordinates;
+            markDirty(QSGNode::DirtyGeometry);
+        }
+    }
 }
 
 TerminalCustomShaderEffect::TerminalCustomShaderEffect(QQuickItem *parent)

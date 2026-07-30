@@ -34,6 +34,7 @@
 #include <QSGRendererInterface>
 #include <QStyleHints>
 #include <QTimer>
+#include <QVariant>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -69,6 +70,25 @@ TerminalCustomShaderCompileBroker *customShaderCompileBroker()
     static TerminalCustomShaderCompileBroker *const broker =
         new TerminalCustomShaderCompileBroker(qGuiApp);
     return broker;
+}
+
+bool useRetainedCustomShaderPipeline()
+{
+    static const bool retained = [] {
+        const QString requested =
+            qEnvironmentVariable("GHOSTTY_QT_CUSTOM_SHADER_PIPELINE")
+                .trimmed()
+                .toLower();
+        if (requested.isEmpty() || requested == QStringLiteral("retained")) {
+            return true;
+        }
+        if (requested == QStringLiteral("legacy")) return false;
+        qWarning().noquote()
+            << "Ignoring unknown GHOSTTY_QT_CUSTOM_SHADER_PIPELINE value"
+            << requested << "(expected retained or legacy).";
+        return true;
+    }();
+    return retained;
 }
 
 TerminalCustomShaderVec4 shaderColor(const QColor &color,
@@ -689,9 +709,27 @@ void TerminalPane::terminalCustomShaderEffectDetached(
         });
 }
 
+void TerminalPane::terminalCustomShaderPipelineAttached(
+    TerminalCustomShaderPipelineEffect *effect)
+{
+    if (effect == nullptr || customShaderPipelineEffect_ == effect) return;
+    customShaderPipelineEffect_ = effect;
+    requestRenderUpdate();
+}
+
+void TerminalPane::terminalCustomShaderPipelineDetached(
+    TerminalCustomShaderPipelineEffect *effect)
+{
+    if (customShaderPipelineEffect_ == effect) {
+        customShaderPipelineEffect_.clear();
+    }
+}
+
 bool TerminalPane::shouldAnimateCustomShaders() const
 {
-    if (customShaderStageItems_.isEmpty() || customShaderEffects_.isEmpty()
+    if (customShaderStageItems_.isEmpty()
+        || (customShaderEffects_.isEmpty()
+            && customShaderPipelineEffect_ == nullptr)
         || !isVisible() || width() <= 0.0 || height() <= 0.0
         || window() == nullptr || !window()->isVisible()
         || !window()->isExposed()) {
@@ -770,6 +808,11 @@ void TerminalPane::scheduleCustomShaderAnimationFrame()
 bool TerminalPane::updateCustomShaderEffects()
 {
     bool updated = false;
+    if (customShaderPipelineEffect_ != nullptr
+        && customShaderPipelineEffect_->isActive()) {
+        customShaderPipelineEffect_->update();
+        updated = true;
+    }
     customShaderEffects_.removeIf(
         [&updated](const QPointer<TerminalCustomShaderEffect> &effect) {
             if (effect == nullptr) {
@@ -782,6 +825,51 @@ bool TerminalPane::updateCustomShaderEffects()
             return false;
         });
     return updated;
+}
+
+void TerminalPane::syncCustomShaderPipelineDiagnostic()
+{
+    TerminalCustomShaderPipelineEffect *const effect =
+        customShaderPipelineEffect_.data();
+    if (effect == nullptr) return;
+    const QString diagnostic = effect->renderDiagnostic();
+    if (customShaderRenderDiagnostic_ == diagnostic) return;
+    if (!diagnostic.isEmpty() && useRetainedCustomShaderPipeline()
+        && !customShaderRetainedFailed_) {
+        if (customShaderFallbackPendingEffect_ == effect) return;
+        customShaderFallbackPendingEffect_ = effect;
+        const QPointer<TerminalPane> guard(this);
+        const QPointer<TerminalCustomShaderPipelineEffect> failingEffect(
+            effect);
+        const quint64 stageGeneration = customShaderStageGeneration_;
+        QTimer::singleShot(0, this, [guard, failingEffect, stageGeneration] {
+            if (guard == nullptr) return;
+            if (guard->customShaderFallbackPendingEffect_ == failingEffect) {
+                guard->customShaderFallbackPendingEffect_.clear();
+            }
+            if (failingEffect == nullptr
+                || guard->customShaderPipelineEffect_ != failingEffect
+                || guard->customShaderStageGeneration_ != stageGeneration) {
+                return;
+            }
+            const QString currentDiagnostic = failingEffect->renderDiagnostic();
+            if (currentDiagnostic.isEmpty()) return;
+
+            guard->customShaderRetainedFailed_ = true;
+            guard->customShaderRetainedFailureGeneration_ = stageGeneration;
+            guard->customShaderRenderDiagnostic_ =
+                currentDiagnostic
+                + QStringLiteral(
+                    "; retained pipeline disabled for this pane; terminal "
+                    "rendering is unchanged");
+            qWarning().noquote() << guard->customShaderRenderDiagnostic_;
+            guard->rebuildCustomShaderStages();
+        });
+        return;
+    }
+    customShaderRenderDiagnostic_ = diagnostic;
+    if (!diagnostic.isEmpty()) qWarning().noquote() << diagnostic;
+    publishCustomShaderDiagnostic();
 }
 
 void TerminalPane::refreshCustomShaderUniformBase()
@@ -973,10 +1061,12 @@ void TerminalPane::reloadCustomShaders(
     const quint64 generation = ++customShaderCompileGeneration_;
     if (options.sources.isEmpty()) {
         customShaderStages_.clear();
+        customShaderStageGeneration_ = generation;
+        customShaderRetainedFailed_ = false;
+        customShaderRetainedFailureGeneration_ = 0;
         customShaderCompileDiagnostic_.clear();
         customShaderRenderDiagnostic_.clear();
         customShaderFramePending_ = false;
-        publishCustomShaderDiagnostic();
         rebuildCustomShaderStages();
         return;
     }
@@ -991,12 +1081,24 @@ void TerminalPane::reloadCustomShaders(
             }
             bool rebuild = true;
             if (result.succeeded()) {
-                rebuild = guard->customShaderStages_ != result.stages
+                const bool retryRetainedPipeline =
+                    guard->customShaderRetainedFailed_
+                    && guard->customShaderRetainedFailureGeneration_
+                        < generation;
+                rebuild = retryRetainedPipeline
+                    || guard->customShaderStages_ != result.stages
                     || (guard->customShaderStageItems_.isEmpty()
                         && !result.stages.isEmpty()
                         && guard->customShaderStageComponent_ != nullptr
                         && guard->customShaderRenderingSupported());
                 guard->customShaderStages_ = std::move(result.stages);
+                if (rebuild) {
+                    guard->customShaderStageGeneration_ = generation;
+                }
+                if (retryRetainedPipeline) {
+                    guard->customShaderRetainedFailed_ = false;
+                    guard->customShaderRetainedFailureGeneration_ = 0;
+                }
                 guard->customShaderCompileDiagnostic_.clear();
                 if (rebuild) {
                     guard->customShaderRenderDiagnostic_.clear();
@@ -1008,10 +1110,11 @@ void TerminalPane::reloadCustomShaders(
                 guard->customShaderRenderDiagnostic_.clear();
                 qWarning().noquote() << guard->customShaderCompileDiagnostic_;
             }
-            guard->publishCustomShaderDiagnostic();
             if (rebuild) {
                 guard->customShaderFramePending_ = false;
                 guard->rebuildCustomShaderStages();
+            } else {
+                guard->publishCustomShaderDiagnostic();
             }
         });
 }
@@ -1087,8 +1190,14 @@ void TerminalPane::rebuildCustomShaderStages()
         || customShaderStageComponent_ == nullptr) {
         useDirectTerminalRendering();
         customShaderRenderDiagnostic_.clear();
-        publishCustomShaderDiagnostic();
         requestRenderUpdate();
+        publishCustomShaderDiagnostic();
+        return;
+    }
+    if (useRetainedCustomShaderPipeline() && customShaderRetainedFailed_) {
+        useDirectTerminalRendering();
+        requestRenderUpdate();
+        publishCustomShaderDiagnostic();
         return;
     }
     if (!customShaderRenderingSupported()) {
@@ -1105,12 +1214,13 @@ void TerminalPane::rebuildCustomShaderStages()
         } else {
             customShaderRenderDiagnostic_.clear();
         }
-        publishCustomShaderDiagnostic();
         requestRenderUpdate();
+        publishCustomShaderDiagnostic();
         return;
     }
-    customShaderRenderDiagnostic_.clear();
-    publishCustomShaderDiagnostic();
+    if (!customShaderRetainedFailed_) {
+        customShaderRenderDiagnostic_.clear();
+    }
 
     if (renderItem_ == nullptr) {
         renderItem_ = TerminalPaneRenderer::createRenderItem(this);
@@ -1124,20 +1234,15 @@ void TerminalPane::rebuildCustomShaderStages()
     const qreal devicePixelRatio =
         TerminalPaneRenderer::normalizedDevicePixelRatio(
             window() != nullptr ? window()->devicePixelRatio() : 1.0);
-    for (qsizetype index = 0; index < customShaderStages_.size(); ++index) {
-        const TerminalCustomShaderStage &compiled =
-            customShaderStages_.at(index);
+    const auto createStage =
+        [this, devicePixelRatio](QVariantMap properties) -> QQuickItem * {
+        properties.insert(QStringLiteral("uniformProvider"),
+                          QVariant::fromValue(static_cast<QObject *>(this)));
+        properties.insert(QStringLiteral("sourceDevicePixelRatio"),
+                          devicePixelRatio);
         QObject *const created =
-            customShaderStageComponent_->createWithInitialProperties({
-                {QStringLiteral("fragmentShaderFileName"), compiled.qsbPath},
-                {QStringLiteral("fragmentShaderData"),
-                 compiled.serializedShader},
-                {QStringLiteral("uniformProvider"),
-                 QVariant::fromValue(static_cast<QObject *>(this))},
-                {QStringLiteral("stageIndex"),
-                 QVariant::fromValue(static_cast<int>(index))},
-                {QStringLiteral("sourceDevicePixelRatio"), devicePixelRatio},
-            });
+            customShaderStageComponent_->createWithInitialProperties(
+                properties);
         auto *const stage = qobject_cast<QQuickItem *>(created);
         if (stage == nullptr) {
             if (customShaderStageComponent_ != nullptr) {
@@ -1146,15 +1251,10 @@ void TerminalPane::rebuildCustomShaderStages()
                     << customShaderStageComponent_->errorString();
             }
             delete created;
-            clearCustomShaderStages();
-            useDirectTerminalRendering();
-            customShaderRenderDiagnostic_ =
-                QStringLiteral("custom-shader: unable to create Qt render "
-                               "stage; terminal rendering is unchanged");
-            publishCustomShaderDiagnostic();
-            return;
         }
-
+        return stage;
+    };
+    const auto appendStage = [this, &source](QQuickItem *stage) {
         stage->setParent(this);
         stage->setSize(size());
         stage->setZ(-1'000.0);
@@ -1162,6 +1262,44 @@ void TerminalPane::rebuildCustomShaderStages()
         source->setParentItem(stage);
         source = stage;
         customShaderStageItems_.append(stage);
+    };
+
+    bool creationFailed = false;
+    if (useRetainedCustomShaderPipeline()) {
+        QQuickItem *const stage = createStage({
+            {QStringLiteral("retainedPipeline"), true},
+            {QStringLiteral("shaderStages"),
+             terminalCustomShaderStagesToVariantList(customShaderStages_)},
+        });
+        creationFailed = stage == nullptr;
+        if (stage != nullptr) appendStage(stage);
+    } else {
+        for (qsizetype index = 0; index < customShaderStages_.size(); ++index) {
+            const TerminalCustomShaderStage &compiled =
+                customShaderStages_.at(index);
+            QQuickItem *const stage = createStage({
+                {QStringLiteral("retainedPipeline"), false},
+                {QStringLiteral("fragmentShaderFileName"), compiled.qsbPath},
+                {QStringLiteral("fragmentShaderData"),
+                 compiled.serializedShader},
+                {QStringLiteral("stageIndex"),
+                 QVariant::fromValue(static_cast<int>(index))},
+            });
+            if (stage == nullptr) {
+                creationFailed = true;
+                break;
+            }
+            appendStage(stage);
+        }
+    }
+    if (creationFailed) {
+        clearCustomShaderStages();
+        useDirectTerminalRendering();
+        customShaderRenderDiagnostic_ =
+            QStringLiteral("custom-shader: unable to create Qt render stage; "
+                           "terminal rendering is unchanged");
+        publishCustomShaderDiagnostic();
+        return;
     }
     source->setParent(this);
     source->setParentItem(this);
@@ -1170,10 +1308,14 @@ void TerminalPane::rebuildCustomShaderStages()
         customShaderFrameSwappedConnection_ =
             connect(quickWindow, &QQuickWindow::frameSwapped, this, [this] {
                 customShaderFramePending_ = false;
+                const QPointer<TerminalPane> guard(this);
+                syncCustomShaderPipelineDiagnostic();
+                if (guard == nullptr) return;
                 scheduleCustomShaderAnimationFrame();
             });
     }
     requestRenderUpdate();
+    publishCustomShaderDiagnostic();
 }
 
 void TerminalPane::syncCustomShaderStageGeometry()
@@ -1220,6 +1362,10 @@ bool TerminalPane::eventFilter(QObject *watched, QEvent *event)
 
 void TerminalPane::watchWindow(QQuickWindow *quickWindow)
 {
+    if (observedWindow_ != quickWindow) {
+        customShaderRetainedFailed_ = false;
+        customShaderRetainedFailureGeneration_ = 0;
+    }
     if (observedWindow_ != nullptr) {
         observedWindow_->removeEventFilter(this);
     }
@@ -1241,9 +1387,14 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         windowActiveConnection_ =
             connect(quickWindow, &QWindow::activeChanged, this,
                     [this] { requestRenderUpdate(); });
-        windowSceneGraphInitializedConnection_ =
-            connect(quickWindow, &QQuickWindow::sceneGraphInitialized, this,
-                    [this] { rebuildCustomShaderStages(); });
+        windowSceneGraphInitializedConnection_ = connect(
+            quickWindow, &QQuickWindow::sceneGraphInitialized, this,
+            [this] {
+                customShaderRetainedFailed_ = false;
+                customShaderRetainedFailureGeneration_ = 0;
+                rebuildCustomShaderStages();
+            },
+            Qt::QueuedConnection);
         windowScreenConnection_ = connect(
             quickWindow, &QWindow::screenChanged, this, [this](QScreen *) {
                 (void)updateMetrics();
@@ -1285,7 +1436,9 @@ void TerminalPane::watchWindow(QQuickWindow *quickWindow)
         (void)updateMetrics();
     }
     scheduleDeferredSessionStart();
+    const QPointer<TerminalPane> guard(this);
     rebuildCustomShaderStages();
+    if (guard == nullptr) return;
     requestRenderUpdate();
 }
 

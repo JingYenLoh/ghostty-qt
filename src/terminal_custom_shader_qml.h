@@ -1,5 +1,6 @@
 #pragma once
 
+#include "terminal_custom_shader_pipeline.h"
 #include "terminal_custom_shader_qsg.h"
 
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -11,5 +12,12 @@ struct TerminalCustomShaderEffectForeign {
     Q_GADGET
     QML_FOREIGN(TerminalCustomShaderEffect)
     QML_NAMED_ELEMENT(TerminalCustomShaderEffect)
+    QML_ADDED_IN_VERSION(1, 0)
+};
+
+struct TerminalCustomShaderPipelineEffectForeign {
+    Q_GADGET
+    QML_FOREIGN(TerminalCustomShaderPipelineEffect)
+    QML_NAMED_ELEMENT(TerminalCustomShaderPipelineEffect)
     QML_ADDED_IN_VERSION(1, 0)
 };

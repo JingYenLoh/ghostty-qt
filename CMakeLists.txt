@@ -784,6 +784,8 @@ add_library(ghostty-qt-terminal-rendering STATIC
     src/terminal_custom_shader_compiler.cpp
     src/terminal_custom_shader_compiler.h
     src/terminal_custom_shader_options.h
+    src/terminal_custom_shader_pipeline.cpp
+    src/terminal_custom_shader_pipeline.h
     src/terminal_custom_shader_qsg.cpp
     src/terminal_custom_shader_qsg.h
     src/terminal_backdrop.cpp
@@ -807,6 +809,7 @@ target_link_libraries(ghostty-qt-terminal-rendering
         Qt6::Quick
         ghostty-qt-config-export
     PRIVATE
+        Qt6::GuiPrivate
         Qt6::ShaderToolsPrivate
 )
 target_compile_options(ghostty-qt-terminal-rendering PRIVATE
