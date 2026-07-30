@@ -131,6 +131,24 @@ set_tests_properties(quick-terminal-surface PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+qt_add_executable(test-window-blur-controller
+    test_window_blur_controller.cpp
+)
+target_include_directories(test-window-blur-controller PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+)
+target_link_libraries(test-window-blur-controller PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Test
+    ghostty-qt-window-effects
+)
+add_test(NAME window-blur-controller COMMAND test-window-blur-controller)
+set_tests_properties(window-blur-controller PROPERTIES
+    TIMEOUT 10
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
+
 qt_add_executable(test-window-ui-controller
     test_window_ui_controller.cpp
 )

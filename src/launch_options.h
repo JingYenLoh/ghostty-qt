@@ -90,6 +90,9 @@ struct LaunchOptions {
     // TerminalSessionRuntimeOptions, so opacity reloads repaint existing panes
     // without waking SessionWorker or mutating libghostty terminal state.
     TerminalBackgroundOptions background;
+    // Frontend-owned pinned Ghostty blur value. Keep its two negative glass
+    // sentinels intact even though Linux treats either as an enabled blur.
+    qint16 backgroundBlur = 0;
     // Padding dimensions are captured per pane; balance and color are
     // frontend-owned policies that can be repainted/relaid out live.
     TerminalPaddingOptions padding;

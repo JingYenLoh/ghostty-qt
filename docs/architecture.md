@@ -2283,6 +2283,25 @@ the native window could recover negotiation, but would add a separate
 surface/session handoff problem and is deliberately deferred rather than
 hidden inside this incremental action.
 
+`background-blur` retains Ghostty's exact signed C value in process launch
+options: zero disables it, positive values retain the configured radius, and
+the two negative macOS glass sentinels remain distinct. A blur-only reload is
+window-owned and bypasses the terminal key-event barrier, pane walk, workers,
+and PTYs. Each registered normal or quick-terminal window installs a
+`WindowBlurController` before its first presentation. The controller waits for
+`QPlatformSurfaceEvent::SurfaceCreated`, so it never forces a native Wayland
+surface before LayerShellQt or ordinary window setup is complete, and reapplies
+the current request when a surface is recreated.
+
+The optional KF6 WindowSystem backend calls KWin's whole-client
+`BlurBehind` effect only on the Qt Wayland platform and checks compositor
+availability on every failed enable attempt. KWin exposes only a boolean and
+therefore cannot consume the retained radius; every nonzero Ghostty value maps
+to enabled. Disabling explicitly clears a prior compositor request. Builds
+without KF6 WindowSystem, non-KWin compositors, and unavailable KWin effects
+remain deterministic no-ops rather than substituting a QML blur that would
+blur terminal content itself.
+
 Qt Quick exposes only one dominant visibility state, so QML retains whether a
 fullscreen window should restore maximized, windowed, minimized, or another
 prior visibility state. A maximize toggle during fullscreen changes that
@@ -2626,6 +2645,10 @@ The default CTest suite has focused layers for each ownership boundary:
   overrides and initial-session lease resolution, duplicate workspace-local
   pane IDs in different windows, cross-window and cross-tab focus, retained
   hidden quick-terminal presentation, and stale composite-target rejection.
+- `window-blur-controller` verifies that exact blur values wait for native
+  surface creation, collapse to compositor enablement without redundant
+  radius-only calls, reapply after surface recreation, and retry an unavailable
+  backend instead of caching failure.
 - `ghostty-action-catalog` verifies the supported subset of pinned Ghostty
   action-string parsing—including the five search actions, exact navigation
   grammar, payload-specific owning alternatives, compiled positional chains,
@@ -2666,7 +2689,8 @@ The default CTest suite has focused layers for each ownership boundary:
   exact nullable uint64 limits, exact shapes, four role-family lists, tagged
   automatic/disabled/named font styles, nullable tagged absolute/percentage
   metric modifiers, semantic enums, typed nullable fields and include entries,
-  canonical colors, clamped background opacity and exact cell-opacity boolean,
+  canonical colors, exact signed background blur, clamped background opacity
+  and exact cell-opacity boolean,
   the finalized optional image path and all four image policies, two exact
   padding-point pairs, balance and padding-color enums, the fixed 256-color
   palette, the full unsigned scrollback range, finalized clipboard u21 ranges
@@ -2683,8 +2707,9 @@ The default CTest suite has focused layers for each ownership boundary:
   environment transport, default/forced/reset shell-integration policy and
   feature finalization,
   default/custom/empty cgroup policy and full-width limits,
-  nullable/capped application-lifetime duration export, and nullable X11
-  divider-color canonicalization.
+  nullable/capped application-lifetime duration export, exact boolean/radius
+  and legacy-alias background-blur finalization, and nullable X11 divider-color
+  canonicalization.
 - `shell-integration-resources` checks the staged pinned file inventory and
   every zero-fuzz SSH executable rewrite. `ghostty-shell-integration` verifies
   the strict byte-exact private protocol, limits and invalid inputs, relocatable

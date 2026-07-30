@@ -9,6 +9,7 @@
 #include "terminal_cell_metrics.h"
 #include "terminal_geometry.h"
 #include "terminal_workspace.h"
+#include "window_blur_controller.h"
 #include "window_ui_controller.h"
 
 #include <QCursor>
@@ -177,6 +178,7 @@ LaunchOptions terminalRelevantOptions(LaunchOptions options)
     // avoids a key-event barrier and O(panes) reload walk when only application
     // shell presentation or startup-only loader identity changed.
     options.applicationShell = {};
+    options.backgroundBlur = 0;
     options.applicationClass.reset();
     options.applicationClassExplicit = false;
     options.configDefaultFiles = true;
@@ -1014,6 +1016,8 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
     if (!stillCurrentRevision()) return;
 
     effectiveOptions_ = options;
+    syncWindowBlur();
+    if (!stillCurrentRevision()) return;
     const LaunchOptions ordinaryOptions =
         withoutInitialCommand(effectiveOptions_);
     lifetime_.applyLaunchOptions(effectiveOptions_);
@@ -1046,6 +1050,15 @@ void ApplicationController::applyLaunchOptions(const LaunchOptions &options)
             window.workspace->applyLaunchOptions(workspaceOptions,
                                                  keybindProgram);
             if (!stillCurrentUpdate()) return;
+        }
+    }
+}
+
+void ApplicationController::syncWindowBlur()
+{
+    for (WindowRecord &record : windows_) {
+        if (record.blur != nullptr) {
+            record.blur->setBlur(effectiveOptions_.backgroundBlur);
         }
     }
 }
@@ -1488,6 +1501,8 @@ void ApplicationController::registerWindow(
     });
     ui->setConfigurationDiagnostics(configurationDiagnosticsText());
     QQmlEngine::setObjectOwnership(ui.get(), QQmlEngine::CppOwnership);
+    auto blur = std::make_unique<WindowBlurController>(window);
+    blur->setBlur(effectiveOptions_.backgroundBlur);
 
     QTimer *autohideTimer = nullptr;
     if (role == WindowRole::QuickTerminal) {
@@ -1501,6 +1516,7 @@ void ApplicationController::registerWindow(
         .window = window,
         .workspace = workspace,
         .ui = std::move(ui),
+        .blur = std::move(blur),
         .quickTerminalSurface = std::move(quickTerminalSurface),
         .quickTerminalAutohideTimer = autohideTimer,
     });

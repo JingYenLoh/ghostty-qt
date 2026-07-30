@@ -38,6 +38,8 @@ current compatibility boundary.
 - Qt 6.8 or newer with Core, D-Bus, Gui, Multimedia, Qml, Quick,
   Quick Controls 2, ShaderTools, Widgets, and Qt Test development components.
 - LayerShellQt.
+- KF6 WindowSystem is optional; when present, it enables `background-blur` on
+  KDE Plasma Wayland.
 - A C++23 compiler and standard library, CMake 3.24 or newer, and Ninja.
 - Zig exactly 0.15.2.
 - `pkg-config`, libxkbcommon development files, Git, `patch`, Python 3.10 or

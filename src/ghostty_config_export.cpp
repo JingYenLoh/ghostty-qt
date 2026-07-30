@@ -86,6 +86,7 @@ constexpr auto ValueFields = std::to_array<QLatin1StringView>({
     QLatin1StringView("background"),
     QLatin1StringView("background-opacity"),
     QLatin1StringView("background-opacity-cells"),
+    QLatin1StringView("background-blur"),
     QLatin1StringView("background-image"),
     QLatin1StringView("background-image-opacity"),
     QLatin1StringView("background-image-position"),
@@ -601,6 +602,27 @@ readMouseScrollMultiplier(const QJsonValue &value, const QString &context)
         *destination = *parsed;
     }
     return result;
+}
+
+ParseResult<qint16> readBackgroundBlur(const QJsonValue &value,
+                                       const QString &context)
+{
+    if (!value.isDouble()) {
+        return std::unexpected(
+            QStringLiteral("%1 must be an integer").arg(context));
+    }
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || std::trunc(number) != number) {
+        return std::unexpected(
+            QStringLiteral("%1 must be an integer").arg(context));
+    }
+    if (number < -2.0 || number > 255.0) {
+        return std::unexpected(
+            QStringLiteral(
+                "%1 must be -2, -1, or an integer from 0 through 255")
+                .arg(context));
+    }
+    return static_cast<qint16>(number);
 }
 
 template <std::unsigned_integral Integer>
@@ -1936,6 +1958,11 @@ ParseResult<GhosttyConfigValues> readValues(const QJsonValue &value)
     if (auto parsed =
             assignBoolean(QLatin1StringView("background-opacity-cells"),
                           result.background.opacityCells);
+        !parsed) {
+        return std::unexpected(std::move(parsed.error()));
+    }
+    if (auto parsed = assign(QLatin1StringView("background-blur"),
+                             result.backgroundBlur, readBackgroundBlur);
         !parsed) {
         return std::unexpected(std::move(parsed.error()));
     }

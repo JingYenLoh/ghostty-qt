@@ -54,6 +54,9 @@ configuration, not the Qt-owned file. See
 - The quick terminal is a LayerShellQt surface. It uses the portable
   quick-terminal settings, while GTK-specific layer and namespace settings do
   not apply.
+- `background-blur` uses KWin's whole-window blur effect when ghostty-qt was
+  built with KF6 WindowSystem. Other Wayland compositors ignore it, and KWin's
+  protocol does not expose Ghostty's configured radius.
 - Restoring decorations on an existing Wayland window may use Qt client-side
   framing even when the window initially had compositor-side decorations.
 - Shifted-punctuation fallback matching is currently US-layout-oriented

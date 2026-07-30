@@ -237,6 +237,8 @@ private Q_SLOTS:
     void realHelperFinalizesSurfaceValues();
     void realHelperFinalizesAppearanceAndUnbinds();
     void realHelperExportsBackdropConfiguration();
+    void realHelperExportsBackgroundBlur_data();
+    void realHelperExportsBackgroundBlur();
     void realHelperGeneratesEffectivePalette();
     void realHelperExportsApplicationLifetime();
     void realHelperExportsLinuxCgroup();
@@ -409,6 +411,7 @@ void GhosttyConfigProcessLoaderTest::publishesTypedSnapshotAndSourcePaths()
     QCOMPARE(result->values.background.image.fit,
              TerminalBackgroundImageFit::Cover);
     QVERIFY(result->values.background.image.repeat);
+    QCOMPARE(result->values.backgroundBlur, qint16{-2});
     QCOMPARE(result->values.padding.horizontal.leadingPoints, quint32(3));
     QCOMPARE(result->values.padding.horizontal.trailingPoints, quint32(5));
     QCOMPARE(result->values.padding.vertical.leadingPoints, quint32(7));
@@ -1426,6 +1429,50 @@ void GhosttyConfigProcessLoaderTest::realHelperExportsBackdropConfiguration()
         QVERIFY2(invalid.error().contains(QString::fromUtf8(key)),
                  qPrintable(invalid.error()));
     }
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsBackgroundBlur_data()
+{
+    QTest::addColumn<QByteArray>("configuration");
+    QTest::addColumn<qint16>("expected");
+
+    QTest::newRow("default") << QByteArray{} << qint16{0};
+    QTest::newRow("false") << QByteArrayLiteral("background-blur = false\n")
+                           << qint16{0};
+    QTest::newRow("true") << QByteArrayLiteral("background-blur = true\n")
+                          << qint16{20};
+    QTest::newRow("explicit-zero")
+        << QByteArrayLiteral("background-blur = 0\n") << qint16{0};
+    QTest::newRow("radius")
+        << QByteArrayLiteral("background-blur = 73\n") << qint16{73};
+    QTest::newRow("glass-regular")
+        << QByteArrayLiteral("background-blur = macos-glass-regular\n")
+        << qint16{-1};
+    QTest::newRow("glass-clear")
+        << QByteArrayLiteral("background-blur = macos-glass-clear\n")
+        << qint16{-2};
+    QTest::newRow("renamed-radius")
+        << QByteArrayLiteral("background-blur-radius = 91\n") << qint16{91};
+}
+
+void GhosttyConfigProcessLoaderTest::realHelperExportsBackgroundBlur()
+{
+    QFETCH(QByteArray, configuration);
+    QFETCH(qint16, expected);
+
+    const QString helperPath =
+        QString::fromUtf8(GHOSTTY_QT_REAL_CONFIG_HELPER_PATH);
+    if (helperPath.isEmpty()) {
+        QSKIP("The pinned Ghostty config helper is disabled");
+    }
+
+    ConfigFixture fixture;
+    ConfigFixture::writeFile(fixture.legacyPath, {});
+    ConfigFixture::writeFile(fixture.preferredPath, configuration);
+
+    const auto result = queryRealConfigExport(helperPath, fixture);
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->values.backgroundBlur, expected);
 }
 
 void GhosttyConfigProcessLoaderTest::realHelperGeneratesEffectivePalette()

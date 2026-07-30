@@ -124,6 +124,7 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS
     Widgets
 )
 find_package(LayerShellQt REQUIRED)
+find_package(KF6WindowSystem QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XKBCommon REQUIRED IMPORTED_TARGET xkbcommon)
 qt_standard_project_setup(REQUIRES 6.8)
@@ -540,6 +541,27 @@ target_link_libraries(ghostty-qt-window-ui PUBLIC
     Qt6::Qml
 )
 
+ghostty_qt_add_internal_library(ghostty-qt-window-effects
+    src/window_blur_controller.cpp
+    src/window_blur_controller.h
+)
+target_link_libraries(ghostty-qt-window-effects PUBLIC
+    Qt6::Core
+    Qt6::Gui
+)
+if(TARGET KF6::WindowSystem)
+    target_compile_definitions(ghostty-qt-window-effects PRIVATE
+        GHOSTTY_QT_HAVE_KWINDOWEFFECTS=1
+    )
+    target_link_libraries(ghostty-qt-window-effects PRIVATE
+        KF6::WindowSystem
+    )
+else()
+    target_compile_definitions(ghostty-qt-window-effects PRIVATE
+        GHOSTTY_QT_HAVE_KWINDOWEFFECTS=0
+    )
+endif()
+
 ghostty_qt_add_internal_library(ghostty-qt-modifier-remap
     src/modifier_remap.cpp
     src/modifier_remap.h
@@ -933,6 +955,7 @@ target_link_libraries(ghostty-qt-application-controller
         ghostty-qt-quick-terminal
         ghostty-qt-terminal-foundation
         ghostty-qt-window-ui
+        ghostty-qt-window-effects
 )
 
 ghostty_qt_add_internal_library(ghostty-qt-config-runtime

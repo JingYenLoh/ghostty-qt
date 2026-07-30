@@ -267,6 +267,7 @@ void GhosttyConfigExportTest::parsesEveryValueWithExactSemantics()
     QCOMPARE(appearance.backgroundColor, QColor(QStringLiteral("#445566")));
     QCOMPARE(values.background.opacity, 0.375);
     QVERIFY(values.background.opacityCells);
+    QCOMPARE(values.backgroundBlur, qint16{-2});
     QVERIFY(values.background.image.path.has_value());
     QCOMPARE(values.background.image.path->path,
              QStringLiteral("/fixture/background.png"));
@@ -584,6 +585,14 @@ void GhosttyConfigExportTest::normalizesBoundaryValues()
     QVERIFY(!low->values.linuxCgroup.memoryLimitBytes.has_value());
     QVERIFY(!low->values.linuxCgroup.processesLimit.has_value());
     QVERIFY(low->values.environment.isEmpty());
+
+    for (const qint16 value : std::to_array<qint16>({-1, 0, 20, 255})) {
+        const auto blur = parseGhosttyConfigExportJson(
+            json(withValue(object(), QStringLiteral("background-blur"),
+                           static_cast<int>(value))));
+        QVERIFY2(blur.has_value(), qPrintable(errorMessage(blur)));
+        QCOMPARE(blur->values.backgroundBlur, value);
+    }
 
     QJsonObject emptyCommands = object();
     emptyCommands =
@@ -1907,6 +1916,9 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("missing-background-opacity-cells")
         << withoutValue(object(), QStringLiteral("background-opacity-cells"))
         << QStringLiteral("values is missing field 'background-opacity-cells'");
+    QTest::newRow("missing-background-blur")
+        << withoutValue(object(), QStringLiteral("background-blur"))
+        << QStringLiteral("values is missing field 'background-blur'");
     for (const QString &field : {
              QStringLiteral("background-image"),
              QStringLiteral("background-image-opacity"),
@@ -2678,6 +2690,24 @@ void GhosttyConfigExportTest::rejectsInvalidValues_data()
     QTest::newRow("background-opacity-cells-type")
         << withValue(object(), QStringLiteral("background-opacity-cells"), 1)
         << QStringLiteral("values.background-opacity-cells must be a boolean");
+    QTest::newRow("background-blur-boolean")
+        << withValue(object(), QStringLiteral("background-blur"), true)
+        << QStringLiteral("values.background-blur must be an integer");
+    QTest::newRow("background-blur-string")
+        << withValue(object(), QStringLiteral("background-blur"),
+                     QStringLiteral("20"))
+        << QStringLiteral("values.background-blur must be an integer");
+    QTest::newRow("background-blur-fraction")
+        << withValue(object(), QStringLiteral("background-blur"), 20.5)
+        << QStringLiteral("values.background-blur must be an integer");
+    QTest::newRow("background-blur-below-range")
+        << withValue(object(), QStringLiteral("background-blur"), -3)
+        << QStringLiteral(
+               "values.background-blur must be -2, -1, or an integer from 0 through 255");
+    QTest::newRow("background-blur-above-range")
+        << withValue(object(), QStringLiteral("background-blur"), 256)
+        << QStringLiteral(
+               "values.background-blur must be -2, -1, or an integer from 0 through 255");
     QTest::newRow("background-image-object")
         << withValue(object(), QStringLiteral("background-image"),
                      QJsonObject{})

@@ -162,6 +162,7 @@ GhosttyConfigSnapshot completeSnapshot()
                 .repeat = true,
             },
     };
+    values.backgroundBlur = 42;
     values.padding = {
         .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
         .vertical = {.leadingPoints = 7, .trailingPoints = 11},
@@ -412,6 +413,7 @@ void LaunchOptionsTest::defaults()
              TerminalBackgroundImagePosition::Center);
     QCOMPARE(options.background.image.fit, TerminalBackgroundImageFit::Contain);
     QVERIFY(!options.background.image.repeat);
+    QCOMPARE(options.backgroundBlur, qint16{0});
     QCOMPARE(options.padding.horizontal.leadingPoints, quint32(0));
     QCOMPARE(options.padding.horizontal.trailingPoints, quint32(0));
     QCOMPARE(options.padding.vertical.leadingPoints, quint32(0));
@@ -953,6 +955,7 @@ void LaunchOptionsTest::appliesFinalizedGhosttyTypography()
              TerminalBackgroundImagePosition::BottomRight);
     QCOMPARE(cliResult.background.image.fit, TerminalBackgroundImageFit::Cover);
     QVERIFY(cliResult.background.image.repeat);
+    QCOMPARE(cliResult.backgroundBlur, qint16{42});
     QCOMPARE(cliResult.padding.horizontal.leadingPoints, quint32(3));
     QCOMPARE(cliResult.padding.horizontal.trailingPoints, quint32(5));
     QCOMPARE(cliResult.padding.vertical.leadingPoints, quint32(7));
@@ -1137,6 +1140,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
                 .repeat = false,
             },
     };
+    base.backgroundBlur = -1;
     base.padding = {
         .horizontal = {.leadingPoints = 1, .trailingPoints = 2},
         .vertical = {.leadingPoints = 3, .trailingPoints = 4},
@@ -1149,6 +1153,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
     QCOMPARE(configured.background.opacity, 0.375);
     QVERIFY(configured.background.opacityCells);
     QVERIFY(configured.background == snapshot.values.background);
+    QCOMPARE(configured.backgroundBlur, qint16{42});
     QVERIFY(configured.padding == snapshot.values.padding);
 
     snapshot.values.background = {
@@ -1163,6 +1168,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
                 .repeat = false,
             },
     };
+    snapshot.values.backgroundBlur = 0;
     snapshot.values.padding = {
         .horizontal = {.leadingPoints = 13, .trailingPoints = 17},
         .vertical = {.leadingPoints = 19, .trailingPoints = 23},
@@ -1174,6 +1180,7 @@ void LaunchOptionsTest::mapsBackdropAndPaddingSnapshots()
     QCOMPARE(reloaded.background.opacity, 0.75);
     QVERIFY(!reloaded.background.opacityCells);
     QVERIFY(reloaded.background == snapshot.values.background);
+    QCOMPARE(reloaded.backgroundBlur, qint16{0});
     // The authoritative launch snapshot replaces x/y as well as the live
     // balance/color pair. Existing panes retain their constructed x/y in the
     // pane layer, while future panes consume these newest dimensions.
@@ -2219,6 +2226,7 @@ void LaunchOptionsTest::keepsBackdropGuiOwned()
                 .repeat = true,
             },
     };
+    changed.backgroundBlur = 20;
     changed.padding = {
         .horizontal = {.leadingPoints = 3, .trailingPoints = 5},
         .vertical = {.leadingPoints = 7, .trailingPoints = 11},

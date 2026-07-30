@@ -336,9 +336,9 @@
       "note": "The exact pinned parser supplies the color and the libghostty adapter applies it to new and existing panes."
     },
     "background-blur": {
-      "status": "planned",
+      "status": "supported",
       "scope": "wayland",
-      "note": "Exact compositor blur requires a Wayland background-effect protocol and a per-surface region. A QML content blur would blur the terminal itself rather than the compositor content behind the window."
+      "note": "The strict config wire preserves Ghostty's exact finalized i16 C value: false and zero disable, true maps to 20, explicit radii retain 0 through 255, and both negative macOS glass sentinels remain distinct. Normal and quick-terminal windows apply every nonzero value as KWin's whole-client BlurBehind request through the optional KF6 WindowSystem backend, after native surface creation and across live reload or surface recreation without touching panes, workers, terminals, or PTYs. KWin exposes only a boolean, so it ignores the retained radius; builds without KF6 WindowSystem, other Wayland compositors, and sessions where KWin does not advertise blur are deterministic no-ops."
     },
     "background-image": {
       "status": "supported",

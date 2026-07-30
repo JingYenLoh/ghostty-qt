@@ -608,6 +608,8 @@ fn writeValues(
     try json.write(config.@"background-opacity");
     try json.objectField("background-opacity-cells");
     try json.write(config.@"background-opacity-cells");
+    try json.objectField("background-blur");
+    try json.write(config.@"background-blur".cval());
     try json.objectField("background-image");
     try writeOptionalConfigPath(json, config.@"background-image");
     try json.objectField("background-image-opacity");

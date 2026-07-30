@@ -482,6 +482,7 @@ inline QJsonObject values()
         {QStringLiteral("background"), QStringLiteral("#445566")},
         {QStringLiteral("background-opacity"), 0.375},
         {QStringLiteral("background-opacity-cells"), true},
+        {QStringLiteral("background-blur"), -2},
         {QStringLiteral("background-image"),
          QJsonObject{
              {QStringLiteral("path"),

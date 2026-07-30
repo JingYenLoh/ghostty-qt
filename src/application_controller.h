@@ -27,6 +27,7 @@ class QScreen;
 class QTimer;
 class QuickTerminalSurface;
 class TerminalWorkspace;
+class WindowBlurController;
 class WindowUiController;
 struct FirstSurfaceOverrides;
 struct GhosttyNewWindowTransportOverrides;
@@ -131,6 +132,7 @@ private:
         QPointer<QQuickWindow> window;
         QPointer<TerminalWorkspace> workspace;
         std::unique_ptr<WindowUiController> ui;
+        std::unique_ptr<WindowBlurController> blur;
         std::unique_ptr<QuickTerminalSurface> quickTerminalSurface;
         QPointer<QTimer> quickTerminalAutohideTimer;
         bool quickTerminalActivationAcknowledged = false;
@@ -182,6 +184,7 @@ private:
     [[nodiscard]] bool presentSurface(SurfaceTarget target);
     void updateQuickTerminalAutohide(WindowRecord &record);
     void syncConfigurationDiagnostics();
+    void syncWindowBlur();
     void syncApplicationShell();
     [[nodiscard]] bool
     dispatchFrontendAction(TerminalWorkspace *workspace,

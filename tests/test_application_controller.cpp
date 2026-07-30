@@ -501,6 +501,7 @@ void ApplicationControllerTest::
         QuickTerminalPercentage{37.5F};
     reloaded.applicationShell.quickTerminal.keyboardInteractivity =
         QuickTerminalKeyboardInteractivity::None;
+    reloaded.backgroundBlur = 20;
     reloaded.applicationShell.commandPalette = {{
         .title = QStringLiteral("Reloaded command"),
         .actionKey = QStringLiteral("reloaded"),
