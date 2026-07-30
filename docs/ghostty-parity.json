@@ -1622,6 +1622,10 @@
           "status": "supported",
           "note": "Delegates the pinned finalized keybinding formatter through the embedded-runtime helper."
         },
+        "list-themes": {
+          "status": "supported",
+          "note": "Delegates the pinned implementation before Qt starts, preserving its path/plain/color options, non-TTY plain output, interactive TTY selector, ordering, streams, and exit status. Zig emits the pinned bundled themes into a relocatable helper-only resource tree; a non-empty GHOSTTY_RESOURCES_DIR remains authoritative, otherwise the helper discovers build and installed resources relative to /proc/self/exe. Standard user themes remain under $XDG_CONFIG_HOME/ghostty/themes. Deterministic tests cover bundled and user listings, filtering, paths, explicit overrides, and moved-prefix discovery. Qt terminal rendering and fallback remain independent."
+        },
         "new-window": {
           "status": "supported",
           "scope": "linux",

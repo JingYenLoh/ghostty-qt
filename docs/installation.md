@@ -2,7 +2,7 @@
 
 The build tree is directly runnable, but installing the release preset provides
 relocatable helper binaries, desktop activation metadata, terminfo, and shell
-integration resources.
+integration and theme resources.
 
 ## Install
 
@@ -20,6 +20,7 @@ The install contains:
 - the private Ghostty runtime required by that helper;
 - a desktop entry and D-Bus service;
 - the compiled `xterm-ghostty` terminfo entry;
+- the pinned Ghostty theme bundle;
 - staged Bash, Elvish, Fish, Nushell, and Zsh integration resources.
 
 Relative GNU installation directories are finalized against the actual
@@ -77,6 +78,27 @@ An installed copy keeps its database under
 nonstandard layout, `GHOSTTY_QT_TERMINFO` may point to a directory containing a
 compiled `xterm-ghostty` entry. An invalid explicit override is an error rather
 than a silent fallback.
+
+## Theme resources
+
+Every build stages Ghostty's pinned theme bundle under:
+
+```text
+build/<preset>/themes
+```
+
+An installed bundle lives under
+`${CMAKE_INSTALL_DATADIR}/ghostty-qt/themes`. The `+list-themes` action finds
+either location relative to its helper executable, so moving a complete
+installation prefix preserves theme discovery. A non-empty
+`GHOSTTY_RESOURCES_DIR` remains an authoritative upstream-compatible override.
+User themes continue to live in `$XDG_CONFIG_HOME/ghostty/themes`.
+
+Theme listing, path and color filtering, plain output, and the interactive TTY
+selector are provided by the pinned Ghostty helper. Named bundled themes are
+also finalized by the pinned configuration helper; Qt consumes the resulting
+colors through its existing configuration protocol and continues to own
+terminal rendering.
 
 ## Shell integration resources
 

@@ -1,7 +1,7 @@
 foreach(required_variable
         BUILD_DIR STAGE_DIR INSTALL_BINDIR INSTALL_TERMINFO_DIR
-        INSTALL_SHELL_INTEGRATION_DIR SHELL_INTEGRATION_VALIDATE_SCRIPT
-        PROBE CONFIG_HELPER_NAME CONFIG)
+        INSTALL_SHELL_INTEGRATION_DIR INSTALL_THEMES_DIR
+        SHELL_INTEGRATION_VALIDATE_SCRIPT PROBE CONFIG_HELPER_NAME CONFIG)
     if(NOT DEFINED ${required_variable})
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -51,6 +51,21 @@ if(NOT shell_integration_result EQUAL 0)
 endif()
 
 if(CONFIG_HELPER_NAME)
+    set(relocated_themes
+        "${relocated_prefix}/${INSTALL_THEMES_DIR}")
+    file(GLOB relocated_theme_files
+        LIST_DIRECTORIES FALSE
+        "${relocated_themes}/*")
+    list(LENGTH relocated_theme_files relocated_theme_count)
+    if(NOT relocated_theme_count EQUAL 574
+       OR NOT EXISTS "${relocated_themes}/3024 Day"
+       OR NOT EXISTS "${relocated_themes}/3024 Night"
+       OR NOT EXISTS "${relocated_themes}/Dracula")
+        message(FATAL_ERROR
+            "Relocated pinned theme inventory is incomplete: "
+            "expected 574 files, found ${relocated_theme_count}")
+    endif()
+
     set(relocated_application
         "${relocated_prefix}/${INSTALL_BINDIR}/ghostty-qt")
     set(relocated_config_helper
@@ -112,6 +127,43 @@ if(CONFIG_HELPER_NAME)
             "${direct_help_error}\n"
             "application (${delegated_help_result}):\n"
             "${delegated_help_output}\n${delegated_help_error}")
+    endif()
+
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            --unset=DISPLAY
+            --unset=GHOSTTY_RESOURCES_DIR
+            --unset=WAYLAND_DISPLAY
+            "QT_QPA_PLATFORM=ghostty-cli-relocation-must-not-load-qt"
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_config_helper}" +list-themes --plain
+        RESULT_VARIABLE direct_themes_result
+        OUTPUT_VARIABLE direct_themes_output
+        ERROR_VARIABLE direct_themes_error)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=LD_LIBRARY_PATH
+            --unset=DISPLAY
+            --unset=GHOSTTY_RESOURCES_DIR
+            --unset=WAYLAND_DISPLAY
+            "QT_QPA_PLATFORM=ghostty-cli-relocation-must-not-load-qt"
+            "XDG_CONFIG_HOME=${relocated_config_home}"
+            "${relocated_application}" +list-themes --plain
+        RESULT_VARIABLE delegated_themes_result
+        OUTPUT_VARIABLE delegated_themes_output
+        ERROR_VARIABLE delegated_themes_error)
+    if(NOT direct_themes_result EQUAL 0
+       OR NOT delegated_themes_result EQUAL direct_themes_result
+       OR NOT delegated_themes_output STREQUAL direct_themes_output
+       OR NOT delegated_themes_error STREQUAL direct_themes_error
+       OR NOT delegated_themes_output MATCHES "Dracula \\(resources\\)")
+        message(FATAL_ERROR
+            "Relocated theme CLI delegation differs from its sibling helper\n"
+            "helper (${direct_themes_result}):\n${direct_themes_output}\n"
+            "${direct_themes_error}\n"
+            "application (${delegated_themes_result}):\n"
+            "${delegated_themes_output}\n${delegated_themes_error}")
     endif()
 
     execute_process(

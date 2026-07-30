@@ -5,9 +5,12 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -24,11 +27,41 @@ constexpr auto kShowConfigJsonAction = "+show-config-json";
 constexpr auto kShellIntegrationJsonAction = "+shell-integration-json";
 constexpr std::string_view kColorSchemeOption = "--ghostty-qt-color-scheme=";
 constexpr std::size_t kMaximumShellIntegrationRequestBytes = 4U * 1024U * 1024U;
+constexpr auto kResourcesEnvironment = "GHOSTTY_RESOURCES_DIR";
 
 enum class ConfigColorScheme : std::uint8_t {
     Light,
     Dark,
 };
+
+void configureGhosttyResourcesDirectory()
+{
+    const char *const configured = std::getenv(kResourcesEnvironment);
+    if (configured != nullptr && configured[0] != '\0') return;
+
+    std::error_code error;
+    const std::filesystem::path executable =
+        std::filesystem::read_symlink("/proc/self/exe", error);
+    if (error || executable.empty()) return;
+
+    const std::filesystem::path executableDirectory = executable.parent_path();
+    const std::array candidates{
+        executableDirectory,
+        (executableDirectory
+         / std::filesystem::path(GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR))
+            .lexically_normal(),
+    };
+    for (const std::filesystem::path &candidate : candidates) {
+        error.clear();
+        if (!std::filesystem::is_directory(candidate / "themes", error)
+            || error) {
+            continue;
+        }
+        const std::string encoded = candidate.native();
+        static_cast<void>(::setenv(kResourcesEnvironment, encoded.c_str(), 1));
+        return;
+    }
+}
 
 bool isShowConfigJsonAction(const char *argument)
 {
@@ -231,6 +264,8 @@ bool isPrivateShellIntegration(std::span<char *const> arguments)
 
 int main(int argc, char **argv)
 {
+    configureGhosttyResourcesDirectory();
+
     const std::span<char *const> arguments(argv,
                                            static_cast<std::size_t>(argc));
     if (isPrivateConfigExport(arguments)) {

@@ -20,9 +20,9 @@ CLI actions before Qt starts:
 
 ```text
 +edit-config     +explain-config  +help          +list-actions
-+list-colors     +list-fonts       +list-keybinds +show-config
-+show-face       +ssh              +ssh-cache     +validate-config
-+version
++list-colors     +list-fonts       +list-keybinds +list-themes
++show-config     +show-face        +ssh           +ssh-cache
++validate-config +version
 ```
 
 It implements `+new-window` and `+toggle-quick-terminal` as D-Bus application

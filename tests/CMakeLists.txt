@@ -344,6 +344,7 @@ target_compile_definitions(test-ghostty-cli-delegation PRIVATE
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     target_compile_definitions(test-ghostty-cli-delegation PRIVATE
         GHOSTTY_QT_TEST_REAL_HELPER="$<TARGET_FILE:ghostty-qt-config-helper>"
+        GHOSTTY_QT_TEST_THEMES_PATH="${GHOSTTY_QT_THEMES_STAGE_DIR}"
     )
 else()
     target_compile_definitions(test-ghostty-cli-delegation PRIVATE
@@ -1229,6 +1230,7 @@ if(NOT IS_ABSOLUTE "${CMAKE_INSTALL_BINDIR}"
             "-DINSTALL_BINDIR=${CMAKE_INSTALL_BINDIR}"
             "-DINSTALL_TERMINFO_DIR=${GHOSTTY_QT_INSTALL_TERMINFO_DIR}"
             "-DINSTALL_SHELL_INTEGRATION_DIR=${GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR}"
+            "-DINSTALL_THEMES_DIR=${GHOSTTY_QT_INSTALL_THEMES_DIR}"
             "-DSHELL_INTEGRATION_VALIDATE_SCRIPT=${GHOSTTY_QT_SHELL_INTEGRATION_VALIDATE_SCRIPT}"
             "-DPROBE=$<TARGET_FILE:test-terminfo-path-probe>"
             "-DCONFIG_HELPER_NAME=${_ghostty_qt_relocation_config_helper_name}"

@@ -1,0 +1,26 @@
+diff --git a/build.zig b/build.zig
+--- a/build.zig
++++ b/build.zig
+@@ -183,6 +183,22 @@ pub fn build(b: *std.Build) !void {
+             if (i18n) |v| v.install();
+         }
+     } else if (!config.emit_lib_vt) {
++        // The ghostty-qt helper has no executable runtime, but its delegated
++        // list-themes action still needs the pinned theme bundle. Install only
++        // that archive here: the complete resources step also builds unrelated
++        // host-side terminfo and completion generators.
++        if (config.emit_themes) {
++            if (b.lazyDependency("iterm2_themes", .{})) |upstream| {
++                const install_themes = b.addInstallDirectory(.{
++                    .source_dir = upstream.path(""),
++                    .install_dir = .{ .custom = "share" },
++                    .install_subdir = b.pathJoin(&.{ "ghostty", "themes" }),
++                    .exclude_extensions = &.{".md"},
++                });
++                b.getInstallStep().dependOn(&install_themes.step);
++            }
++        }
++
+         // The macOS Ghostty Library
+         //
+         // This is NOT libghostty (even though its named that for historical

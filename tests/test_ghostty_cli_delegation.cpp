@@ -210,6 +210,7 @@ QProcessEnvironment controlledEnvironment(const QString &configHome)
     environment.remove(QStringLiteral("EDITOR"));
     environment.remove(QStringLiteral("FONTCONFIG_FILE"));
     environment.remove(QStringLiteral("FONTCONFIG_PATH"));
+    environment.remove(QStringLiteral("GHOSTTY_RESOURCES_DIR"));
     environment.remove(QStringLiteral("VISUAL"));
     environment.remove(QStringLiteral("WAYLAND_DISPLAY"));
     return environment;
@@ -263,6 +264,15 @@ std::optional<QByteArray> readFile(const QString &path)
     return file.readAll();
 }
 
+bool writeFile(const QString &path, QByteArrayView contents)
+{
+    if (!QDir().mkpath(QFileInfo(path).path())) return false;
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        && file.write(contents.data(), static_cast<qint64>(contents.size()))
+        == contents.size();
+}
+
 std::optional<unsigned int> fileMode(const QString &path)
 {
     const QByteArray encoded = QFile::encodeName(path);
@@ -306,6 +316,7 @@ private Q_SLOTS:
     void exercisesPinnedSshTerminfoCache();
     void managesPinnedSshCache();
     void editConfigUsesPinnedEditorContract();
+    void listsPinnedThemes();
     void enforcesBuildConfigurationBoundary();
 };
 
@@ -506,6 +517,10 @@ void GhosttyCliDelegationTest::matchesPinnedHelper_data()
         << QStringList{QStringLiteral("+list-fonts"),
                        QStringLiteral("--family=Fira Code")}
         << QByteArrayLiteral("Fira Code\n  Fira Code Regular\n") << 0;
+    QTest::newRow("list-themes")
+        << QStringList{QStringLiteral("+list-themes"),
+                       QStringLiteral("--plain")}
+        << QByteArrayLiteral("Dracula (resources)\n") << 0;
     QTest::newRow("show-face")
         << QStringList{QStringLiteral("+show-face"),
                        QStringLiteral("--font-family=Fira Code"),
@@ -1124,6 +1139,121 @@ void GhosttyCliDelegationTest::editConfigUsesPinnedEditorContract()
              directMissingEditor->standardError);
     QVERIFY(isRegularFile(missingEditorPath));
     QCOMPARE(QFileInfo(missingEditorPath).size(), qint64{0});
+#endif
+}
+
+void GhosttyCliDelegationTest::listsPinnedThemes()
+{
+#if !GHOSTTY_QT_TEST_CONFIG_ENABLED
+    QSKIP("The pinned CLI helper is disabled in this build");
+#else
+    QVERIFY(QDir().mkpath(QStringLiteral("tmp")));
+    QTemporaryDir temporary(QDir::current().filePath(
+        QStringLiteral("tmp/ghostty-cli-themes-XXXXXX")));
+    QVERIFY(temporary.isValid());
+    const QString application = QStringLiteral(GHOSTTY_QT_TEST_EXECUTABLE);
+    const QString configHome = temporary.filePath(QStringLiteral("config"));
+    QProcessEnvironment environment = controlledEnvironment(configHome);
+
+    const auto run = [&](const QStringList &arguments,
+                         const QProcessEnvironment &processEnvironment =
+                             QProcessEnvironment{})
+        -> std::expected<ProcessResult, QString> {
+        return runProcess(application, arguments,
+                          processEnvironment.isEmpty() ? environment
+                                                       : processEnvironment,
+                          temporary.path());
+    };
+
+    auto all = run({QStringLiteral("+list-themes"), QStringLiteral("--plain")});
+    QVERIFY2(all.has_value(),
+             qPrintable(all.has_value() ? QString{} : all.error()));
+    QCOMPARE(all->exitStatus, QProcess::NormalExit);
+    QCOMPARE(all->exitCode, 0);
+    QVERIFY(all->standardError.isEmpty());
+    QCOMPARE(all->standardOutput.count('\n'), 574);
+    QVERIFY(all->standardOutput.startsWith(
+        QByteArrayLiteral("0x96f (resources)\n")));
+    QVERIFY(all->standardOutput.contains(
+        QByteArrayLiteral("3024 Day (resources)\n")));
+    QVERIFY(all->standardOutput.contains(
+        QByteArrayLiteral("3024 Night (resources)\n")));
+    QVERIFY(all->standardOutput.contains(
+        QByteArrayLiteral("Dracula (resources)\n")));
+
+    auto dark = run({QStringLiteral("+list-themes"), QStringLiteral("--plain"),
+                     QStringLiteral("--color=dark")});
+    QVERIFY2(dark.has_value(),
+             qPrintable(dark.has_value() ? QString{} : dark.error()));
+    QCOMPARE(dark->exitCode, 0);
+    QVERIFY(dark->standardError.isEmpty());
+    QCOMPARE(dark->standardOutput.count('\n'), 454);
+    QVERIFY(dark->standardOutput.contains(
+        QByteArrayLiteral("Dracula (resources)\n")));
+
+    auto light = run({QStringLiteral("+list-themes"), QStringLiteral("--plain"),
+                      QStringLiteral("--color=light")});
+    QVERIFY2(light.has_value(),
+             qPrintable(light.has_value() ? QString{} : light.error()));
+    QCOMPARE(light->exitCode, 0);
+    QVERIFY(light->standardError.isEmpty());
+    QCOMPARE(light->standardOutput.count('\n'), 120);
+    QVERIFY(light->standardOutput.contains(
+        QByteArrayLiteral("3024 Day (resources)\n")));
+
+    auto paths = run({QStringLiteral("+list-themes"), QStringLiteral("--plain"),
+                      QStringLiteral("--path")});
+    QVERIFY2(paths.has_value(),
+             qPrintable(paths.has_value() ? QString{} : paths.error()));
+    QCOMPARE(paths->exitCode, 0);
+    QVERIFY(paths->standardError.isEmpty());
+    const QByteArray expectedDraculaPath =
+        QByteArrayLiteral("Dracula (resources) ")
+        + QFile::encodeName(QDir(QStringLiteral(GHOSTTY_QT_TEST_THEMES_PATH))
+                                .filePath(QStringLiteral("Dracula")))
+        + '\n';
+    QVERIFY(paths->standardOutput.contains(expectedDraculaPath));
+
+    const QString userTheme =
+        QDir(configHome).filePath(QStringLiteral("ghostty/themes/Qt Fixture"));
+    QVERIFY(writeFile(userTheme,
+                      QByteArrayLiteral("background = #000000\n"
+                                        "foreground = #ffffff\n")));
+    auto withUser =
+        run({QStringLiteral("+list-themes"), QStringLiteral("--plain")});
+    QVERIFY2(withUser.has_value(),
+             qPrintable(withUser.has_value() ? QString{} : withUser.error()));
+    QCOMPARE(withUser->exitCode, 0);
+    QVERIFY(withUser->standardError.isEmpty());
+    QCOMPARE(withUser->standardOutput.count('\n'), 575);
+    QVERIFY(withUser->standardOutput.contains(
+        QByteArrayLiteral("Qt Fixture (user)\n")));
+
+    const QString overrideRoot = temporary.filePath(QStringLiteral("override"));
+    QVERIFY(writeFile(
+        QDir(overrideRoot).filePath(QStringLiteral("themes/Override Fixture")),
+        QByteArrayLiteral("background = #101010\n"
+                          "foreground = #f0f0f0\n")));
+    QVERIFY(writeFile(
+        QDir(overrideRoot).filePath(QStringLiteral("themes/.DS_Store")),
+        QByteArrayLiteral("ignored")));
+    QVERIFY(QDir().mkpath(
+        QDir(overrideRoot)
+            .filePath(QStringLiteral("themes/ignored-directory"))));
+    QProcessEnvironment overrideEnvironment = controlledEnvironment(
+        temporary.filePath(QStringLiteral("override-config")));
+    overrideEnvironment.insert(QStringLiteral("GHOSTTY_RESOURCES_DIR"),
+                               overrideRoot);
+    auto overridden =
+        run({QStringLiteral("+list-themes"), QStringLiteral("--plain")},
+            overrideEnvironment);
+    QVERIFY2(
+        overridden.has_value(),
+        qPrintable(overridden.has_value() ? QString{} : overridden.error()));
+    QCOMPARE(overridden->exitCode, 0);
+    QVERIFY(overridden->standardError.isEmpty());
+    QCOMPARE(overridden->standardOutput,
+             QByteArrayLiteral("Override Fixture (resources)\n"));
 #endif
 }
 

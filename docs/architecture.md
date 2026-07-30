@@ -2396,6 +2396,20 @@ and `+show-face` uses the pinned codepoint/style/presentation resolver without
 adding font handles or discovery code to the Qt process. These describe helper
 actions; Qt still owns terminal rendering and fallback.
 
+The Zig build emits Ghostty's pinned themes for the same helper-only stack.
+Because an `app-runtime=none` upstream build normally skips application
+resources, the source shadow applies one zero-fuzz build-only patch that
+installs just the lazy pinned theme archive without invoking unrelated
+resource generators. CMake stages it as `build/<preset>/themes` and installs
+it under `${CMAKE_INSTALL_DATADIR}/ghostty-qt/themes`. A non-empty
+`GHOSTTY_RESOURCES_DIR` remains authoritative; otherwise the helper resolves
+the build-tree or installed theme root relative to its physical
+`/proc/self/exe` path. Ghostty still discovers user themes at
+`$XDG_CONFIG_HOME/ghostty/themes`. The pinned parser can therefore resolve
+bundled theme names and export their finalized colors through the existing
+configuration protocol; Qt still owns rendering and receives no Ghostty
+resource handles.
+
 The same isolated helper accepts a second project-private, size-bounded JSON
 transaction for shell launch preparation. Qt supplies one byte-exact
 shell/direct command, the complete inherited and frontend-injected environment,
@@ -2476,6 +2490,13 @@ byte-identical to the GTK executable. Likewise, upstream action catalogs are
 inventories rather than claims that every printed frontend action is already
 implemented by ghostty-qt.
 
+`+list-themes` is one such direct pinned action. It preserves upstream
+`--path`, `--plain`, and `--color=all|dark|light` handling, combines the
+standard user theme directory with the bundled resource directory, and uses
+the upstream plain format whenever stdout is not a TTY. On a TTY without
+`--plain`, Ghostty's interactive selector owns the terminal UI. The frontend
+does not reinterpret theme names, filtering, ordering, streams, or exit status.
+
 The build also runs a small Zig generator against Ghostty's terminfo source and
 compiles the result with `tic -x`. The generated database is a dependency of the
 application and PTY integration test. A build-tree run finds `share/terminfo`
@@ -2496,7 +2517,8 @@ developer and release CMake trees. Those presets must not build concurrently.
 The staged relocation test installs into a temporary prefix, moves the prefix,
 runs the moved main executable through its sibling helper, and runs a Qt
 Core-only probe from the moved `bin` directory to verify that it selects the
-moved private database. A separate staged-install test verifies the
+moved private database. It also runs `+list-themes` against the moved bundled
+resources. A separate staged-install test verifies the
 configuration-specific desktop entry and direct D-Bus service, their distinct
 fallback/zero-window commands, exact service identity, actual install-prefix
 or configured-absolute executable path, DESTDIR exclusion from embedded paths,
@@ -2774,7 +2796,8 @@ The default CTest suite has focused layers for each ownership boundary:
   action-option order; pre-Qt operation; direct-helper equivalence, including
   the detailed `+version` report; deterministic Fontconfig-backed
   `+list-fonts` discovery and `+show-face` resolution plus its pinned
-  error-stream quirk; the
+  error-stream quirk; deterministic bundled and user theme listing, color
+  filtering, path output, and explicit resource-root behavior; the
   `+edit-config` editor exec, preferred-file creation, path escaping, and
   environment precedence; plus SSH child argv/streams/status, terminfo fallback
   and cache suppression, and isolated SSH-cache lifecycle and file-mode repair.
@@ -2859,8 +2882,8 @@ The default CTest suite has focused layers for each ownership boundary:
   configuration, keybinding-action, and CLI-action inventories.
 - `terminfo-relocatable-install` stages and moves an installation, executes the
   relocated main-to-helper CLI chain plus the helper's private config paths,
-  verifies runtime terminfo lookup, and checks valid and invalid explicit
-  overrides.
+  verifies runtime terminfo and bundled-theme lookup, and checks valid and
+  invalid explicit overrides.
 
 Clipboard and selection-lifecycle tests cover trim policy, copy destinations
 and primary fallback, explicit copy-and-clear ordering, automatic selection

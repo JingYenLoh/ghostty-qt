@@ -1,6 +1,7 @@
 foreach(required_variable
         ZIG_EXECUTABLE SOURCE_DIR CACHE_DIR GLOBAL_CACHE_DIR PREFIX
-        LIBRARY RUNTIME_LIBRARY LOCK_FILE)
+        LIBRARY RUNTIME_LIBRARY THEMES_SOURCE_DIR THEMES_STAGE_DIR THEMES_STAMP
+        LOCK_FILE)
     if(NOT DEFINED ${required_variable} OR "${${required_variable}}" STREQUAL "")
         message(FATAL_ERROR "Missing required variable ${required_variable}")
     endif()
@@ -22,7 +23,7 @@ execute_process(
         -Demit-exe=false
         -Demit-lib-vt=false
         -Demit-docs=false
-        -Demit-themes=false
+        -Demit-themes=true
         -Demit-terminfo=false
         -Demit-xcframework=false
         -Dsentry=false
@@ -46,3 +47,27 @@ execute_process(
 if(NOT copy_result EQUAL 0)
     message(FATAL_ERROR "Unable to stage Ghostty config runtime library (${copy_result})")
 endif()
+
+file(GLOB staged_theme_sources
+    LIST_DIRECTORIES FALSE
+    "${THEMES_SOURCE_DIR}/*")
+list(LENGTH staged_theme_sources staged_theme_count)
+if(NOT staged_theme_count EQUAL 574
+   OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Day"
+   OR NOT EXISTS "${THEMES_SOURCE_DIR}/3024 Night"
+   OR NOT EXISTS "${THEMES_SOURCE_DIR}/Dracula")
+    message(FATAL_ERROR
+        "Pinned Ghostty theme inventory is incomplete: "
+        "expected 574 files, found ${staged_theme_count}")
+endif()
+
+file(REMOVE_RECURSE "${THEMES_STAGE_DIR}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${THEMES_SOURCE_DIR}" "${THEMES_STAGE_DIR}"
+    RESULT_VARIABLE themes_copy_result)
+if(NOT themes_copy_result EQUAL 0)
+    message(FATAL_ERROR
+        "Unable to stage pinned Ghostty themes (${themes_copy_result})")
+endif()
+file(WRITE "${THEMES_STAMP}" "${staged_theme_count}\n")

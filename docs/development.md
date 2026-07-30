@@ -197,11 +197,11 @@ baseline. The loader does not parse or merge the human-oriented
 
 The same private executable is the transparent process-replacement target for
 `+edit-config`, `+explain-config`, `+help`, `+list-actions`, `+list-colors`,
-`+list-fonts`, `+list-keybinds`, `+show-config`, `+show-face`, `+ssh`,
-`+ssh-cache`, `+validate-config`, and `+version`. One shared catalog records
-every pinned action spelling and its explicit frontend support decision, so
-known-but-unsupported actions remain distinguishable from invalid spellings
-without maintaining parallel allowlists.
+`+list-fonts`, `+list-keybinds`, `+list-themes`, `+show-config`, `+show-face`,
+`+ssh`, `+ssh-cache`, `+validate-config`, and `+version`. One shared catalog
+records every pinned action spelling and its explicit frontend support
+decision, so known-but-unsupported actions remain distinguishable from invalid
+spellings without maintaining parallel allowlists.
 The frontend classifies raw arguments and uses Linux `execv` before QString
 conversion or Qt initialization; it does not reuse the buffered, timeout-bound
 `QProcess` configuration protocol. Therefore public CLI streams, TTY/pager
@@ -215,6 +215,19 @@ process. The build explicitly uses the system Fontconfig library so its parser
 matches the host configuration. Focused tests point Fontconfig at one pinned
 Fira Code face so `+list-fonts` and `+show-face` output is independent of the
 developer's installed fonts.
+
+One narrow, zero-fuzz source-shadow patch makes the `app-runtime=none` Zig
+build emit only its lazy pinned theme archive, avoiding
+the unrelated host-side generators in Ghostty's complete resource target.
+CMake stages the bundle under `build/<preset>/themes` and installs it under
+`${CMAKE_INSTALL_DATADIR}/ghostty-qt/themes`. `+list-themes` remains the exact
+pinned action: its path, plain, and color filters are unchanged, non-TTY output
+uses the upstream plain format, and a TTY may launch the upstream interactive
+selector. User themes still come from `$XDG_CONFIG_HOME/ghostty/themes`. The
+helper honors a non-empty `GHOSTTY_RESOURCES_DIR`; otherwise it locates the
+build or installed bundle relative to `/proc/self/exe`. This also gives private
+configuration queries the resource root needed to finalize bundled theme
+names.
 
 `+ssh` remains Ghostty's wrapper: the helper spawns and waits for the selected
 SSH child, prepends the pinned TERM/SendEnv options, optionally installs the
@@ -353,9 +366,12 @@ The five focused config tests have distinct boundaries:
   byte-framed fake helper, every delegated real action, invalid and reordered
   action options, the pinned editor exec and selection contract, deterministic
   SSH argument/stream/exit/signal and terminfo/cache phases, isolated SSH-cache
-  lifecycle and mode repair, missing/unexecutable-helper failure, the
-  config-off boundary, and moved-prefix main-to-helper discovery. Every fixture
-  lives under the repository-local `./tmp` or build tree.
+  lifecycle and mode repair, deterministic bundled/user theme listing,
+  filtering, paths, and explicit-resource overrides,
+  missing/unexecutable-helper failure, the config-off boundary, and
+  moved-prefix main-to-helper discovery. Theme coverage also runs after
+  relocating an installed prefix. Every fixture lives under the
+  repository-local `./tmp` or build tree.
 
 `linux-cgroup` registers a virtual systemd manager on an isolated private
 session bus. It validates the exact `StartTransientUnit` wire and typed

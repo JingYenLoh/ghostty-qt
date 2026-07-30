@@ -38,7 +38,7 @@ inline constexpr auto GhosttyPinnedCliActions =
         {"+help", GhosttyCliFrontendSupport::Delegated},
         {"+list-fonts", GhosttyCliFrontendSupport::Delegated},
         {"+list-keybinds", GhosttyCliFrontendSupport::Delegated},
-        {"+list-themes", GhosttyCliFrontendSupport::Unsupported},
+        {"+list-themes", GhosttyCliFrontendSupport::Delegated},
         {"+list-colors", GhosttyCliFrontendSupport::Delegated},
         {"+list-actions", GhosttyCliFrontendSupport::Delegated},
         {"+ssh", GhosttyCliFrontendSupport::Delegated},

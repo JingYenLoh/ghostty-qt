@@ -71,6 +71,8 @@ set(GHOSTTY_QT_INSTALL_RESOURCES_DIR
     "${CMAKE_INSTALL_DATADIR}/ghostty-qt")
 set(GHOSTTY_QT_INSTALL_SHELL_INTEGRATION_DIR
     "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}/shell-integration")
+set(GHOSTTY_QT_INSTALL_THEMES_DIR
+    "${GHOSTTY_QT_INSTALL_RESOURCES_DIR}/themes")
 file(GLOB_RECURSE GHOSTTY_QT_SHELL_INTEGRATION_SOURCE_FILES
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES FALSE
@@ -170,6 +172,10 @@ set(GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR
 # CMake presets, with parser outputs isolated by Ghostty revision.
 if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     pkg_check_modules(GHOSTTY_QT_FONTCONFIG REQUIRED fontconfig)
+    set(GHOSTTY_QT_CONFIG_BUILD_PATCH
+        "${CMAKE_CURRENT_SOURCE_DIR}/patches/ghostty-build-runtime-none-themes.patch")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${GHOSTTY_QT_CONFIG_BUILD_PATCH}")
     set(GHOSTTY_QT_CONFIG_BUILD_DIR
         "${CMAKE_CURRENT_SOURCE_DIR}/.cache/ghostty-internal"
         CACHE PATH "Project-local build area for Ghostty's config parser")
@@ -202,6 +208,12 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         "${GHOSTTY_QT_CONFIG_PREFIX}/lib/libghostty${CMAKE_SHARED_LIBRARY_SUFFIX}")
     set(GHOSTTY_QT_CONFIG_HEADER
         "${GHOSTTY_QT_CONFIG_PREFIX}/include/ghostty.h")
+    set(GHOSTTY_QT_CONFIG_THEMES_SOURCE_DIR
+        "${GHOSTTY_QT_CONFIG_PREFIX}/share/ghostty/themes")
+    set(GHOSTTY_QT_THEMES_STAGE_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/themes")
+    set(GHOSTTY_QT_THEMES_STAGE_STAMP
+        "${CMAKE_CURRENT_BINARY_DIR}/themes.stamp")
     file(MAKE_DIRECTORY
         "${GHOSTTY_QT_ZIG_GLOBAL_CACHE_DIR}"
         "${GHOSTTY_QT_CONFIG_CACHE_DIR}"
@@ -219,8 +231,6 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         file(MAKE_DIRECTORY "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
         file(COPY "${GHOSTTY_SOURCE_DIR}/src"
             DESTINATION "${GHOSTTY_QT_CONFIG_SHADOW_DIR}")
-        configure_file("${GHOSTTY_SOURCE_DIR}/build.zig"
-            "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig" COPYONLY)
         configure_file("${GHOSTTY_SOURCE_DIR}/build.zig.zon"
             "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig.zon" COPYONLY)
         foreach(_ghostty_qt_shadow_entry IN ITEMS
@@ -250,6 +260,19 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         endif()
         file(WRITE "${GHOSTTY_QT_CONFIG_SHADOW_STAMP}" "ready\n")
     endif()
+    configure_file("${GHOSTTY_SOURCE_DIR}/build.zig"
+        "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/build.zig" COPYONLY)
+    execute_process(
+        COMMAND "${GHOSTTY_QT_PATCH_EXECUTABLE}"
+            --batch --forward --fuzz=0 -p1
+            -i "${GHOSTTY_QT_CONFIG_BUILD_PATCH}"
+        WORKING_DIRECTORY "${GHOSTTY_QT_CONFIG_SHADOW_DIR}"
+        RESULT_VARIABLE GHOSTTY_QT_CONFIG_BUILD_PATCH_RESULT
+        OUTPUT_QUIET)
+    if(NOT GHOSTTY_QT_CONFIG_BUILD_PATCH_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "Unable to patch the pinned Ghostty helper resource build")
+    endif()
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/zig/ghostty_config_capi_overlay.zig"
         "${GHOSTTY_QT_CONFIG_SHADOW_DIR}/src/config/CApi.zig" COPYONLY)
 
@@ -258,6 +281,7 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_QT_CONFIG_LIBRARY}"
             "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
             "${GHOSTTY_QT_CONFIG_HEADER}"
+            "${GHOSTTY_QT_THEMES_STAGE_STAMP}"
         COMMAND "${CMAKE_COMMAND}"
             "-DZIG_EXECUTABLE=${GHOSTTY_QT_ZIG_EXECUTABLE}"
             "-DSOURCE_DIR=${GHOSTTY_QT_CONFIG_SHADOW_DIR}"
@@ -266,11 +290,15 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "-DPREFIX=${GHOSTTY_QT_CONFIG_PREFIX}"
             "-DLIBRARY=${GHOSTTY_QT_CONFIG_LIBRARY}"
             "-DRUNTIME_LIBRARY=${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
+            "-DTHEMES_SOURCE_DIR=${GHOSTTY_QT_CONFIG_THEMES_SOURCE_DIR}"
+            "-DTHEMES_STAGE_DIR=${GHOSTTY_QT_THEMES_STAGE_DIR}"
+            "-DTHEMES_STAMP=${GHOSTTY_QT_THEMES_STAGE_STAMP}"
             "-DLOCK_FILE=${GHOSTTY_QT_CONFIG_REVISION_DIR}/build.lock"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildGhosttyConfig.cmake"
         DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/zig/ghostty_config_capi_overlay.zig"
             "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildGhosttyConfig.cmake"
+            "${GHOSTTY_QT_CONFIG_BUILD_PATCH}"
             "${GHOSTTY_SOURCE_DIR}/build.zig"
             "${GHOSTTY_SOURCE_DIR}/build.zig.zon"
             "${GHOSTTY_SOURCE_DIR}/include/ghostty.h"
@@ -279,18 +307,22 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
             "${GHOSTTY_SOURCE_DIR}/src/cli/edit_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ghostty.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/list_fonts.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/list_themes.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/lorem_ipsum.txt"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh_cache.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/DiskCache.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/ssh-cache/Entry.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/show_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/show_face.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/cli/tui.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/validate_config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/cli/version.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/CApi.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/Config.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter.zig"
             "${GHOSTTY_SOURCE_DIR}/src/config/formatter_file.zig"
+            "${GHOSTTY_SOURCE_DIR}/src/config/theme.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/CodepointMap.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/CodepointResolver.zig"
             "${GHOSTTY_SOURCE_DIR}/src/font/Collection.zig"
@@ -314,7 +346,8 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         DEPENDS
             "${GHOSTTY_QT_CONFIG_LIBRARY}"
             "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
-            "${GHOSTTY_QT_CONFIG_HEADER}")
+            "${GHOSTTY_QT_CONFIG_HEADER}"
+            "${GHOSTTY_QT_THEMES_STAGE_STAMP}")
     add_dependencies(ghostty-qt-config-parser zig_build_lib_vt)
 
     add_library(ghostty-config-internal SHARED IMPORTED GLOBAL)
@@ -1113,6 +1146,9 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
     target_compile_options(ghostty-qt-config-helper PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
     )
+    target_compile_definitions(ghostty-qt-config-helper PRIVATE
+        GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR="${GHOSTTY_QT_INSTALL_RESOURCES_RELATIVE_DIR}"
+    )
 
     set(_ghostty_qt_config_install_dir
         "${CMAKE_INSTALL_LIBDIR}/ghostty-qt")
@@ -1149,6 +1185,8 @@ if(GHOSTTY_QT_ENABLE_GHOSTTY_CONFIG)
         RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
     install(FILES "${GHOSTTY_QT_CONFIG_RUNTIME_LIBRARY}"
         DESTINATION "${_ghostty_qt_config_install_dir}")
+    install(DIRECTORY "${GHOSTTY_QT_THEMES_STAGE_DIR}/"
+        DESTINATION "${GHOSTTY_QT_INSTALL_THEMES_DIR}")
     string(CONCAT _ghostty_qt_install_rpath_code
         "file(RPATH_CHANGE\n"
         "  FILE \"${_ghostty_qt_installed_helper}\"\n"
