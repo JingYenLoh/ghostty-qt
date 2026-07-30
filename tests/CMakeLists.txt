@@ -730,9 +730,9 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
     target_link_libraries(bench-terminal-custom-shader-rhi PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::GuiPrivate
         Qt6::Qml
         Qt6::Quick
-        Qt6::Test
         ghostty-qt-terminal-rendering
     )
 

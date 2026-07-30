@@ -58,9 +58,10 @@ cmake --build --preset release \
     --warmup 20 --iterations 200
 ./build/release/tests/bench-terminal-custom-shader-compiler \
     --cold-iterations 5 --warm-iterations 100
-LIBGL_ALWAYS_SOFTWARE=1 QSG_RHI_BACKEND=opengl \
+LIBGL_ALWAYS_SOFTWARE=1 \
     ./build/release/tests/bench-terminal-custom-shader-rhi \
-    --width 1280 --height 720 --warmup 20 --iterations 100
+    --graphics-api opengl \
+    --width 1280 --height 720 --warmup 200 --iterations 100
 ```
 
 The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass cold
@@ -70,30 +71,51 @@ misclassification. It measures configuration-time compilation and cache I/O,
 not GPU pass time.
 
 The custom-shader RHI benchmark compares the retained and legacy pipelines at
-zero, one, two, four, and eight full-screen passes on the OpenGL RHI. It runs
-both source-dirty and effect-only workloads. Distinct noncommutative affine
-color transforms validate pass order on every returned frame, while source
-paint counters verify that effect-only animation does not repaint the terminal
-source. Retained telemetry also verifies draw counts and the absence of target,
-pipeline, or resource-binding creation in the measured steady state.
+zero, one, two, four, and eight full-screen passes on either OpenGL or Vulkan.
+It runs both source-dirty and effect-only workloads. Distinct noncommutative
+affine color transforms validate pass order with one untimed texture readback
+per scenario. Source paint counters verify that effect-only animation does not
+repaint the terminal source. Retained telemetry also verifies draw counts and
+the absence of target, pipeline, or resource-binding creation in the measured
+steady state.
 
-Every timed sample completes a `grabWindow()` readback. The output labels this
-as `completion=grab-readback`; it is an end-to-end latency benchmark, not an
-isolated GPU timestamp. Readback synchronization and image copying are present
-in every case and can dominate on a fast GPU, so evaluate each pass count
-against its renderer's zero-pass baseline and treat small differences as
-noise. The deterministic target counts and memory figures remain useful
+The benchmark renders through `QQuickRenderControl` into a persistent QRhi
+texture, so measured frames do not perform a readback. It reports:
+
+- `cpu_record_*` for polish, synchronization, and command recording;
+- `cpu_completion_*` for `endFrame()`, including the offscreen GPU wait;
+- `cpu_total_*` for their sum; and
+- `gpu_*` for the whole QRhi command buffer when the backend supports
+  timestamps.
+
+Offscreen `endFrame()` serializes each frame, which makes its GPU timestamp
+unambiguous but does not model pipelined on-screen throughput. QRhi exposes no
+portable per-pass timestamp, so use `gpu_median_delta_us`, which subtracts the
+pooled zero-pass samples for the same workload, to estimate shader work. Treat
+small or negative deltas as measurement noise. The baseline is measured early,
+so longer runs can still experience clock or thermal drift. If any measured
+frame lacks a valid timestamp, that scenario reports GPU timing as unavailable
+while retaining its CPU results.
+
+GPU clock ramp can bias the first scenarios. The default 200 warm-up frames
+are intentional; raise that count when otherwise-identical zero-pass results
+do not converge. `gpu_vs_legacy_ratio` compares whole-frame medians directly
+and is more stable than taking a ratio of two baseline-subtracted deltas.
+The `baseline` lines report the absolute and relative gap between the duplicate
+zero-pass controls; a large gap relative to the shader delta invalidates that
+run's baseline-subtracted result.
+
+The deterministic target counts and memory figures remain useful
 independently: legacy owns one full-size layer per pass, while retained owns
 one source layer plus at most two internal textures.
 
-Remove
-`LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU, and compare results only
-with the same platform plugin and framebuffer size. `LIBGL_ALWAYS_SOFTWARE=1`
-selects Mesa's software implementation behind the OpenGL RHI; it is not Qt
-Quick's unsupported software scene graph. The benchmark exits without results
-when the selected platform plugin cannot initialize an OpenGL RHI context.
-Run it inside a graphical Wayland or X11 session; Qt's `offscreen` platform
-often selects the software scene graph and is deliberately rejected.
+Remove `LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU. The variable selects
+Mesa's software implementation behind the OpenGL RHI; it is not Qt Quick's
+software scene graph. Pass `--graphics-api vulkan` to select Vulkan. Compare
+results only with the same graphics API, device, platform plugin, framebuffer
+size, and build. `QT_QPA_PLATFORM=offscreen` is usable when that plugin can
+initialize the requested RHI; otherwise run the invisible benchmark inside a
+graphical Wayland or X11 session.
 
 Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
 issue specifically against the old nested implementation. The benchmark

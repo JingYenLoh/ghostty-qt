@@ -14,13 +14,24 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQuickGraphicsConfiguration>
 #include <QQuickItem>
+#include <QQuickRenderControl>
+#include <QQuickRenderTarget>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QSGSimpleRectNode>
+#include <QScopeGuard>
 #include <QTemporaryDir>
-#include <QTest>
 #include <QTextStream>
+#include <rhi/qrhi.h>
+
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
+#include <QVulkanInstance>
+#define GHOSTTY_QT_BENCH_HAS_VULKAN 1
+#else
+#define GHOSTTY_QT_BENCH_HAS_VULKAN 0
+#endif
 
 #include <algorithm>
 #include <array>
@@ -111,6 +122,12 @@ struct Summary {
     double maximumMicroseconds = 0.0;
 };
 
+struct FrameTiming {
+    qint64 cpuRecordNanoseconds = 0;
+    qint64 cpuCompletionNanoseconds = 0;
+    std::optional<qint64> gpuNanoseconds;
+};
+
 Summary summarize(QVector<qint64> samples)
 {
     std::ranges::sort(samples);
@@ -124,9 +141,14 @@ Summary summarize(QVector<qint64> samples)
     const auto microseconds = [](qint64 nanoseconds) {
         return static_cast<double>(nanoseconds) / 1'000.0;
     };
+    const double medianNanoseconds = count % 2 == 0
+        ? (static_cast<double>(samples.at(count / 2 - 1))
+           + static_cast<double>(samples.at(count / 2)))
+            / 2.0
+        : static_cast<double>(samples.at(count / 2));
     return {
         .minimumMicroseconds = microseconds(samples.constFirst()),
-        .medianMicroseconds = microseconds(samples.at(count / 2)),
+        .medianMicroseconds = medianNanoseconds / 1'000.0,
         .p90Microseconds = microseconds(samples.at(p90)),
         .meanMicroseconds = microseconds(total) / static_cast<double>(count),
         .maximumMicroseconds = microseconds(samples.constLast()),
@@ -458,8 +480,9 @@ public:
         return true;
     }
 
-    bool render(QQuickWindow *window, Workload workload, quint64 frame,
-                qint64 *elapsed, QString *error)
+    bool render(QQuickRenderControl *renderControl, QRhi *rhi,
+                QRhiTexture *colorBuffer, Workload workload, quint64 frame,
+                FrameTiming *timing, bool validateOutput, QString *error)
     {
         quint64 expectedSourceFrame = 0;
         quint64 expectedEffectFrame = 0;
@@ -471,14 +494,44 @@ public:
             provider_->requestEffectFrame(frame);
         }
 
-        QElapsedTimer timer;
-        if (elapsed != nullptr) timer.start();
-        const QImage image = window->grabWindow();
-        if (elapsed != nullptr) *elapsed = timer.nsecsElapsed();
-        if (image.isNull()) {
-            *error = QStringLiteral("QQuickWindow::grabWindow returned null");
+        QRhiReadbackResult readback;
+        QElapsedTimer recordTimer;
+        if (timing != nullptr) recordTimer.start();
+        renderControl->polishItems();
+        renderControl->beginFrame();
+        renderControl->sync();
+        renderControl->render();
+        QRhiCommandBuffer *const commandBuffer = renderControl->commandBuffer();
+        if (commandBuffer == nullptr) {
+            *error = QStringLiteral(
+                "QQuickRenderControl did not provide a command buffer");
+            renderControl->endFrame();
             return false;
         }
+        if (timing != nullptr) {
+            timing->cpuRecordNanoseconds = recordTimer.nsecsElapsed();
+        }
+        if (validateOutput) {
+            QRhiResourceUpdateBatch *const readbackBatch =
+                rhi->nextResourceUpdateBatch();
+            readbackBatch->readBackTexture(colorBuffer, &readback);
+            commandBuffer->resourceUpdate(readbackBatch);
+        }
+
+        QElapsedTimer completionTimer;
+        if (timing != nullptr) completionTimer.start();
+        renderControl->endFrame();
+        if (timing != nullptr) {
+            timing->cpuCompletionNanoseconds = completionTimer.nsecsElapsed();
+            if (rhi->isFeatureSupported(QRhi::Timestamps)) {
+                const double gpuSeconds = commandBuffer->lastCompletedGpuTime();
+                if (std::isfinite(gpuSeconds) && gpuSeconds > 0.0) {
+                    timing->gpuNanoseconds =
+                        qRound64(gpuSeconds * 1'000'000'000.0);
+                }
+            }
+        }
+
         if (source_->paintedFrame() != expectedSourceFrame) {
             *error = QStringLiteral(
                          "source frame %1 was not rendered (last painted %2)")
@@ -486,9 +539,29 @@ public:
                          .arg(source_->paintedFrame());
             return false;
         }
-        if (!validatePixel(image, expectedSourceFrame, expectedEffectFrame,
-                           error)) {
-            return false;
+        if (validateOutput) {
+            if (readback.data.isEmpty() || readback.pixelSize.isEmpty()) {
+                *error = QStringLiteral(
+                    "offscreen texture readback returned no pixels");
+                return false;
+            }
+            const QImage wrapper(
+                reinterpret_cast<const uchar *>(readback.data.constData()),
+                readback.pixelSize.width(), readback.pixelSize.height(),
+                QImage::Format_RGBA8888_Premultiplied);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+            const QImage image = rhi->isYUpInFramebuffer()
+                ? wrapper.flipped(Qt::Vertical)
+                : wrapper.copy();
+#else
+            const QImage image = rhi->isYUpInFramebuffer()
+                ? wrapper.mirrored(false, true)
+                : wrapper.copy();
+#endif
+            if (!validatePixel(image, expectedSourceFrame, expectedEffectFrame,
+                               error)) {
+                return false;
+            }
         }
 
         if (renderer_ == Renderer::Retained && passCount_ > 0) {
@@ -613,10 +686,26 @@ struct ScenarioResult {
     Renderer renderer = Renderer::Legacy;
     Workload workload = Workload::SourceDirty;
     int passCount = 0;
-    Summary timing;
+    Summary cpuRecordTiming;
+    Summary cpuCompletionTiming;
+    Summary cpuTotalTiming;
+    std::optional<Summary> gpuTiming;
+    int validGpuSampleCount = 0;
+    QVector<qint64> baselineCpuTotalSamples;
+    QVector<qint64> baselineGpuSamples;
     quint64 sourcePaintDelta = 0;
     std::optional<TerminalCustomShaderPipelineSnapshot> before;
     std::optional<TerminalCustomShaderPipelineSnapshot> after;
+};
+
+struct WorkloadBaseline {
+    Workload workload = Workload::SourceDirty;
+    Summary cpuTotalTiming;
+    std::optional<Summary> gpuTiming;
+    double cpuRendererGapMicroseconds = 0.0;
+    std::optional<double> gpuRendererGapMicroseconds;
+    qsizetype pooledCpuSampleCount = 0;
+    qsizetype pooledGpuSampleCount = 0;
 };
 
 std::optional<int> nonNegativeInteger(const QString &text)
@@ -652,6 +741,43 @@ const ScenarioResult *findResult(const QVector<ScenarioResult> &results,
     return result != results.cend() ? std::addressof(*result) : nullptr;
 }
 
+std::optional<WorkloadBaseline>
+sharedBaseline(const QVector<ScenarioResult> &results, Workload workload)
+{
+    const ScenarioResult *const legacy =
+        findResult(results, Renderer::Legacy, workload, 0);
+    const ScenarioResult *const retained =
+        findResult(results, Renderer::Retained, workload, 0);
+    if (legacy == nullptr || retained == nullptr
+        || legacy->baselineCpuTotalSamples.isEmpty()
+        || retained->baselineCpuTotalSamples.isEmpty()) {
+        return std::nullopt;
+    }
+
+    QVector<qint64> cpuSamples = legacy->baselineCpuTotalSamples;
+    cpuSamples += retained->baselineCpuTotalSamples;
+    WorkloadBaseline baseline{
+        .workload = workload,
+        .cpuTotalTiming = summarize(cpuSamples),
+        .cpuRendererGapMicroseconds =
+            std::abs(legacy->cpuTotalTiming.medianMicroseconds
+                     - retained->cpuTotalTiming.medianMicroseconds),
+        .pooledCpuSampleCount = cpuSamples.size(),
+    };
+
+    if (!legacy->baselineGpuSamples.isEmpty()
+        && !retained->baselineGpuSamples.isEmpty()) {
+        QVector<qint64> gpuSamples = legacy->baselineGpuSamples;
+        gpuSamples += retained->baselineGpuSamples;
+        baseline.gpuTiming = summarize(gpuSamples);
+        baseline.gpuRendererGapMicroseconds =
+            std::abs(legacy->gpuTiming->medianMicroseconds
+                     - retained->gpuTiming->medianMicroseconds);
+        baseline.pooledGpuSampleCount = gpuSamples.size();
+    }
+    return baseline;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -659,7 +785,6 @@ int main(int argc, char **argv)
     if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR")) {
         qputenv("QT_SCALE_FACTOR", "1");
     }
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
 
     QGuiApplication application(argc, argv);
     QCoreApplication::setApplicationName(
@@ -667,13 +792,13 @@ int main(int argc, char **argv)
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
-        "Ghostty Qt retained-versus-legacy custom-shader OpenGL RHI "
+        "Ghostty Qt retained-versus-legacy custom-shader offscreen RHI "
         "microbenchmark"));
     parser.addHelpOption();
     const QCommandLineOption warmupOption(
         QStringLiteral("warmup"),
         QStringLiteral("Untimed warm-up frames per scenario."),
-        QStringLiteral("count"), QStringLiteral("20"));
+        QStringLiteral("count"), QStringLiteral("200"));
     const QCommandLineOption iterationsOption(
         QStringLiteral("iterations"),
         QStringLiteral("Measured frames per scenario."),
@@ -684,8 +809,12 @@ int main(int argc, char **argv)
     const QCommandLineOption heightOption(
         QStringLiteral("height"), QStringLiteral("Logical viewport height."),
         QStringLiteral("pixels"), QStringLiteral("720"));
-    parser.addOptions(
-        {warmupOption, iterationsOption, widthOption, heightOption});
+    const QCommandLineOption graphicsApiOption(
+        QStringLiteral("graphics-api"),
+        QStringLiteral("Graphics API: opengl or vulkan."),
+        QStringLiteral("api"), QStringLiteral("opengl"));
+    parser.addOptions({warmupOption, iterationsOption, widthOption,
+                       heightOption, graphicsApiOption});
     parser.process(application);
 
     const std::optional<int> warmup =
@@ -702,6 +831,26 @@ int main(int argc, char **argv)
                "must be positive integers\n";
         return 2;
     }
+
+    const QString requestedGraphicsApi =
+        parser.value(graphicsApiOption).trimmed().toLower();
+    QSGRendererInterface::GraphicsApi graphicsApi =
+        QSGRendererInterface::Unknown;
+    if (requestedGraphicsApi == QStringLiteral("opengl")) {
+        graphicsApi = QSGRendererInterface::OpenGL;
+    } else if (requestedGraphicsApi == QStringLiteral("vulkan")) {
+#if GHOSTTY_QT_BENCH_HAS_VULKAN
+        graphicsApi = QSGRendererInterface::Vulkan;
+#else
+        QTextStream(stderr)
+            << "this build cannot provide the requested Vulkan API\n";
+        return 2;
+#endif
+    } else {
+        QTextStream(stderr) << "graphics-api must be either opengl or vulkan\n";
+        return 2;
+    }
+    QQuickWindow::setGraphicsApi(graphicsApi);
 
     qmlRegisterType<BenchmarkSourceItem>("GhosttyShaderBench", 1, 0,
                                          "BenchmarkSource");
@@ -738,24 +887,111 @@ int main(int argc, char **argv)
     }
 
     const QSize logicalSize(*width, *height);
-    QQuickWindow window;
+#if GHOSTTY_QT_BENCH_HAS_VULKAN
+    std::unique_ptr<QVulkanInstance> vulkanInstance;
+    if (graphicsApi == QSGRendererInterface::Vulkan) {
+        vulkanInstance = std::make_unique<QVulkanInstance>();
+        vulkanInstance->setExtensions(
+            QQuickGraphicsConfiguration::preferredInstanceExtensions());
+        if (!vulkanInstance->create()) {
+            QTextStream(stderr) << "unable to create Vulkan instance (VkResult "
+                                << vulkanInstance->errorCode() << ")\n";
+            return 3;
+        }
+    }
+#endif
+    QQuickRenderControl renderControl;
+    QQuickWindow window(&renderControl);
     window.setColor(Qt::black);
-    window.resize(logicalSize);
-    window.show();
-    if (!QTest::qWaitForWindowExposed(&window, 5'000)) {
-        QTextStream(stderr) << "window did not become exposed on platform "
+    window.setGeometry(0, 0, logicalSize.width(), logicalSize.height());
+    window.contentItem()->setSize(logicalSize);
+    QQuickGraphicsConfiguration graphicsConfiguration;
+    graphicsConfiguration.setTimestamps(true);
+    window.setGraphicsConfiguration(graphicsConfiguration);
+#if GHOSTTY_QT_BENCH_HAS_VULKAN
+    if (vulkanInstance != nullptr) {
+        window.setVulkanInstance(vulkanInstance.get());
+    }
+#endif
+    if (!renderControl.initialize()) {
+        QTextStream(stderr) << "QQuickRenderControl could not initialize "
+                            << requestedGraphicsApi << " on platform "
                             << QGuiApplication::platformName() << '\n';
+        return 3;
+    }
+    if (window.rendererInterface()->graphicsApi() != graphicsApi) {
+        QTextStream(stderr)
+            << requestedGraphicsApi
+            << " RHI was requested, but Qt selected graphics API "
+            << static_cast<int>(window.rendererInterface()->graphicsApi())
+            << '\n';
+        renderControl.invalidate();
+        return 3;
+    }
+    QRhi *const rhi = renderControl.rhi();
+    if (rhi == nullptr) {
+        QTextStream(stderr) << "QQuickRenderControl did not provide a QRhi\n";
+        renderControl.invalidate();
         return 1;
     }
     const qreal dpr = window.devicePixelRatio();
     const QSize physicalSize(qMax(1, qRound(logicalSize.width() * dpr)),
                              qMax(1, qRound(logicalSize.height() * dpr)));
 
+    std::unique_ptr<QRhiTexture> colorBuffer(rhi->newTexture(
+        QRhiTexture::RGBA8, physicalSize, 1,
+        QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+    if (!colorBuffer->create()) {
+        QTextStream(stderr) << "unable to create offscreen color buffer\n";
+        renderControl.invalidate();
+        colorBuffer.reset();
+        return 1;
+    }
+    std::unique_ptr<QRhiRenderBuffer> depthStencil(
+        rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, physicalSize, 1));
+    if (!depthStencil->create()) {
+        QTextStream(stderr)
+            << "unable to create offscreen depth-stencil buffer\n";
+        renderControl.invalidate();
+        depthStencil.reset();
+        colorBuffer.reset();
+        return 1;
+    }
+    const QRhiTextureRenderTargetDescription targetDescription(
+        QRhiColorAttachment(colorBuffer.get()), depthStencil.get());
+    std::unique_ptr<QRhiTextureRenderTarget> renderTarget(
+        rhi->newTextureRenderTarget(targetDescription));
+    std::unique_ptr<QRhiRenderPassDescriptor> renderPassDescriptor(
+        renderTarget->newCompatibleRenderPassDescriptor());
+    renderTarget->setRenderPassDescriptor(renderPassDescriptor.get());
+    if (!renderTarget->create()) {
+        QTextStream(stderr) << "unable to create offscreen render target\n";
+        renderControl.invalidate();
+        renderTarget.reset();
+        renderPassDescriptor.reset();
+        depthStencil.reset();
+        colorBuffer.reset();
+        return 1;
+    }
+    QQuickRenderTarget quickRenderTarget =
+        QQuickRenderTarget::fromRhiRenderTarget(renderTarget.get());
+    quickRenderTarget.setDevicePixelRatio(dpr);
+    window.setRenderTarget(quickRenderTarget);
+    const auto rendererCleanup =
+        qScopeGuard([&window, &renderControl, &renderTarget,
+                     &renderPassDescriptor, &depthStencil, &colorBuffer] {
+            window.setRenderTarget({});
+            renderControl.invalidate();
+            renderTarget.reset();
+            renderPassDescriptor.reset();
+            depthStencil.reset();
+            colorBuffer.reset();
+        });
+
     QQmlEngine engine;
     QVector<ScenarioResult> results;
     results.reserve(static_cast<qsizetype>(passCounts.size()) * 2 * 2);
     quint64 frame = 0;
-    bool graphicsApiChecked = false;
     for (const Workload workload :
          {Workload::SourceDirty, Workload::EffectOnly}) {
         for (const int passCount : passCounts) {
@@ -773,7 +1009,8 @@ int main(int argc, char **argv)
                     return 1;
                 }
 
-                if (!scenario.render(&window, workload, ++frame, nullptr,
+                if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                                     workload, ++frame, nullptr, true,
                                      &error)) {
                     QTextStream(stderr)
                         << "renderer=" << rendererName(renderer)
@@ -781,21 +1018,9 @@ int main(int argc, char **argv)
                         << " passes=" << passCount << ": " << error << '\n';
                     return 1;
                 }
-                if (!graphicsApiChecked) {
-                    graphicsApiChecked = true;
-                    if (window.rendererInterface()->graphicsApi()
-                        != QSGRendererInterface::OpenGL) {
-                        QTextStream(stderr)
-                            << "OpenGL RHI was requested, but Qt selected "
-                               "graphics API "
-                            << static_cast<int>(
-                                   window.rendererInterface()->graphicsApi())
-                            << '\n';
-                        return 3;
-                    }
-                }
                 for (int iteration = 0; iteration < *warmup; ++iteration) {
-                    if (!scenario.render(&window, workload, ++frame, nullptr,
+                    if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                                         workload, ++frame, nullptr, false,
                                          &error)) {
                         QTextStream(stderr)
                             << "renderer=" << rendererName(renderer)
@@ -809,11 +1034,18 @@ int main(int argc, char **argv)
                 const std::optional<TerminalCustomShaderPipelineSnapshot>
                     before = scenario.pipelineSnapshot();
                 const quint64 paintCountBefore = scenario.sourcePaintCount();
-                QVector<qint64> samples;
-                samples.reserve(*iterations);
+                QVector<qint64> cpuRecordSamples;
+                QVector<qint64> cpuCompletionSamples;
+                QVector<qint64> cpuTotalSamples;
+                QVector<qint64> gpuSamples;
+                cpuRecordSamples.reserve(*iterations);
+                cpuCompletionSamples.reserve(*iterations);
+                cpuTotalSamples.reserve(*iterations);
+                gpuSamples.reserve(*iterations);
                 for (int iteration = 0; iteration < *iterations; ++iteration) {
-                    qint64 elapsed = 0;
-                    if (!scenario.render(&window, workload, ++frame, &elapsed,
+                    FrameTiming timing;
+                    if (!scenario.render(&renderControl, rhi, colorBuffer.get(),
+                                         workload, ++frame, &timing, false,
                                          &error)) {
                         QTextStream(stderr)
                             << "renderer=" << rendererName(renderer)
@@ -823,10 +1055,19 @@ int main(int argc, char **argv)
                             << '\n';
                         return 1;
                     }
-                    samples.append(elapsed);
+                    cpuRecordSamples.append(timing.cpuRecordNanoseconds);
+                    cpuCompletionSamples.append(
+                        timing.cpuCompletionNanoseconds);
+                    cpuTotalSamples.append(timing.cpuRecordNanoseconds
+                                           + timing.cpuCompletionNanoseconds);
+                    if (timing.gpuNanoseconds.has_value()) {
+                        gpuSamples.append(*timing.gpuNanoseconds);
+                    }
                 }
                 const quint64 sourcePaintDelta =
                     scenario.sourcePaintCount() - paintCountBefore;
+                const std::optional<TerminalCustomShaderPipelineSnapshot>
+                    after = scenario.pipelineSnapshot();
                 if ((workload == Workload::SourceDirty
                      && sourcePaintDelta != static_cast<quint64>(*iterations))
                     || (workload == Workload::EffectOnly
@@ -841,17 +1082,68 @@ int main(int argc, char **argv)
                         << '\n';
                     return 1;
                 }
+                if (before.has_value() && after.has_value()) {
+                    const std::uint64_t expectedFrames =
+                        static_cast<std::uint64_t>(*iterations);
+                    const std::uint64_t expectedDraws =
+                        expectedFrames * static_cast<std::uint64_t>(passCount);
+                    if (counterDelta(after->frameCount, before->frameCount)
+                            != expectedFrames
+                        || counterDelta(after->drawCount, before->drawCount)
+                            != expectedDraws
+                        || after->targetCreateCount != before->targetCreateCount
+                        || after->targetDestroyCount
+                            != before->targetDestroyCount
+                        || after->pipelineCreateCount
+                            != before->pipelineCreateCount
+                        || after->sourceBindingUpdateCount
+                            != before->sourceBindingUpdateCount
+                        || after->resourceGeneration
+                            != before->resourceGeneration) {
+                        QTextStream(stderr)
+                            << "renderer=" << rendererName(renderer)
+                            << " workload=" << workloadName(workload)
+                            << " passes=" << passCount
+                            << ": retained steady-state telemetry changed "
+                               "unexpectedly\n";
+                        return 1;
+                    }
+                }
                 results.append({
                     .renderer = renderer,
                     .workload = workload,
                     .passCount = passCount,
-                    .timing = summarize(std::move(samples)),
+                    .cpuRecordTiming = summarize(std::move(cpuRecordSamples)),
+                    .cpuCompletionTiming =
+                        summarize(std::move(cpuCompletionSamples)),
+                    .cpuTotalTiming = summarize(cpuTotalSamples),
+                    .gpuTiming = gpuSamples.size() == *iterations
+                        ? std::optional<Summary>(summarize(gpuSamples))
+                        : std::nullopt,
+                    .validGpuSampleCount = static_cast<int>(gpuSamples.size()),
+                    .baselineCpuTotalSamples = passCount == 0
+                        ? std::move(cpuTotalSamples)
+                        : QVector<qint64>{},
+                    .baselineGpuSamples =
+                        passCount == 0 && gpuSamples.size() == *iterations
+                        ? std::move(gpuSamples)
+                        : QVector<qint64>{},
                     .sourcePaintDelta = sourcePaintDelta,
                     .before = before,
-                    .after = scenario.pipelineSnapshot(),
+                    .after = after,
                 });
             }
         }
+    }
+
+    const std::optional<WorkloadBaseline> sourceDirtyBaseline =
+        sharedBaseline(results, Workload::SourceDirty);
+    const std::optional<WorkloadBaseline> effectOnlyBaseline =
+        sharedBaseline(results, Workload::EffectOnly);
+    if (!sourceDirtyBaseline.has_value() || !effectOnlyBaseline.has_value()) {
+        QTextStream(stderr)
+            << "unable to construct shared zero-pass baselines\n";
+        return 1;
     }
 
     QTextStream output(stdout);
@@ -859,25 +1151,68 @@ int main(int argc, char **argv)
     output.setRealNumberPrecision(2);
     output << "qt=" << qVersion()
            << " platform=" << QGuiApplication::platformName()
-           << " graphics_api=opengl-rhi"
+           << " graphics_api=" << requestedGraphicsApi
+           << " rhi_backend=" << rhi->backendName() << " gpu_timestamps="
+           << (rhi->isFeatureSupported(QRhi::Timestamps) ? "supported"
+                                                         : "unavailable")
            << " viewport=" << logicalSize.width() << 'x' << logicalSize.height()
            << " framebuffer=" << physicalSize.width() << 'x'
            << physicalSize.height() << " dpr=" << dpr << " warmup=" << *warmup
-           << " iterations=" << *iterations
-           << " completion=grab-readback transforms=ordered-affine\n";
+           << " iterations=" << *iterations << " completion=offscreen-end-frame"
+           << " validation_readbacks_per_scenario=1"
+           << " gpu_scope=whole-command-buffer"
+           << " gpu_delta_baseline=pooled-workload-pass0"
+           << " transforms=ordered-affine\n";
+
+    for (const WorkloadBaseline *const baseline :
+         {std::addressof(*sourceDirtyBaseline),
+          std::addressof(*effectOnlyBaseline)}) {
+        output << "baseline workload=" << workloadName(baseline->workload)
+               << " cpu_total_median_us="
+               << baseline->cpuTotalTiming.medianMicroseconds
+               << " pass0_cpu_renderer_gap_us="
+               << baseline->cpuRendererGapMicroseconds
+               << " pass0_cpu_renderer_gap_ratio="
+               << baseline->cpuRendererGapMicroseconds
+                / baseline->cpuTotalTiming.medianMicroseconds
+               << " cpu_pooled_samples=" << baseline->pooledCpuSampleCount;
+        if (baseline->gpuTiming.has_value()) {
+            output << " gpu_median_us="
+                   << baseline->gpuTiming->medianMicroseconds
+                   << " pass0_gpu_renderer_gap_us="
+                   << *baseline->gpuRendererGapMicroseconds
+                   << " pass0_gpu_renderer_gap_ratio="
+                   << *baseline->gpuRendererGapMicroseconds
+                    / baseline->gpuTiming->medianMicroseconds
+                   << " gpu_pooled_samples=" << baseline->pooledGpuSampleCount;
+        } else {
+            output << " gpu_timing=unavailable gpu_pooled_samples=0";
+        }
+        output << '\n';
+    }
 
     const std::uint64_t bytesPerTarget =
         static_cast<std::uint64_t>(physicalSize.width())
         * static_cast<std::uint64_t>(physicalSize.height()) * 4U;
     for (const ScenarioResult &result : std::as_const(results)) {
-        const ScenarioResult *const baseline =
-            findResult(results, result.renderer, result.workload, 0);
+        const WorkloadBaseline &baseline =
+            result.workload == Workload::SourceDirty ? *sourceDirtyBaseline
+                                                     : *effectOnlyBaseline;
         const ScenarioResult *const legacy = findResult(
             results, Renderer::Legacy, result.workload, result.passCount);
         const double baselineMedian =
-            baseline != nullptr ? baseline->timing.medianMicroseconds : 0.0;
+            baseline.cpuTotalTiming.medianMicroseconds;
         const double legacyMedian =
-            legacy != nullptr ? legacy->timing.medianMicroseconds : 0.0;
+            legacy != nullptr ? legacy->cpuTotalTiming.medianMicroseconds : 0.0;
+        const std::optional<double> gpuBaselineMedian =
+            baseline.gpuTiming.has_value()
+            ? std::optional<double>(baseline.gpuTiming->medianMicroseconds)
+            : std::nullopt;
+        const std::optional<double> gpuMedianDelta =
+            result.gpuTiming.has_value() && gpuBaselineMedian.has_value()
+            ? std::optional<double>(result.gpuTiming->medianMicroseconds
+                                    - *gpuBaselineMedian)
+            : std::nullopt;
         const int offscreenTargetCount = result.renderer == Renderer::Legacy
             ? result.passCount
             : (result.passCount == 0 ? 0
@@ -889,23 +1224,66 @@ int main(int argc, char **argv)
 
         output << "renderer=" << rendererName(result.renderer)
                << " workload=" << workloadName(result.workload)
-               << " passes=" << result.passCount
-               << " min_us=" << result.timing.minimumMicroseconds
-               << " median_us=" << result.timing.medianMicroseconds
-               << " p90_us=" << result.timing.p90Microseconds
-               << " mean_us=" << result.timing.meanMicroseconds
-               << " max_us=" << result.timing.maximumMicroseconds
-               << " median_delta_us="
-               << result.timing.medianMicroseconds - baselineMedian
-               << " retained_vs_legacy_ratio="
+               << " passes=" << result.passCount << " cpu_record_min_us="
+               << result.cpuRecordTiming.minimumMicroseconds
+               << " cpu_record_median_us="
+               << result.cpuRecordTiming.medianMicroseconds
+               << " cpu_record_p90_us="
+               << result.cpuRecordTiming.p90Microseconds
+               << " cpu_record_mean_us="
+               << result.cpuRecordTiming.meanMicroseconds
+               << " cpu_record_max_us="
+               << result.cpuRecordTiming.maximumMicroseconds
+               << " cpu_completion_min_us="
+               << result.cpuCompletionTiming.minimumMicroseconds
+               << " cpu_completion_median_us="
+               << result.cpuCompletionTiming.medianMicroseconds
+               << " cpu_completion_p90_us="
+               << result.cpuCompletionTiming.p90Microseconds
+               << " cpu_completion_mean_us="
+               << result.cpuCompletionTiming.meanMicroseconds
+               << " cpu_completion_max_us="
+               << result.cpuCompletionTiming.maximumMicroseconds
+               << " cpu_total_median_us="
+               << result.cpuTotalTiming.medianMicroseconds
+               << " cpu_total_p90_us=" << result.cpuTotalTiming.p90Microseconds
+               << " cpu_total_median_delta_us="
+               << result.cpuTotalTiming.medianMicroseconds - baselineMedian
+               << " cpu_total_vs_legacy_ratio="
                << (legacyMedian > 0.0
-                       ? result.timing.medianMicroseconds / legacyMedian
+                       ? result.cpuTotalTiming.medianMicroseconds / legacyMedian
                        : 0.0)
                << " estimated_offscreen_targets=" << offscreenTargetCount
                << " estimated_offscreen_bytes="
                << static_cast<std::uint64_t>(offscreenTargetCount)
                 * bytesPerTarget
                << " source_paints=" << result.sourcePaintDelta;
+
+        if (result.gpuTiming.has_value()) {
+            output << " gpu_min_us=" << result.gpuTiming->minimumMicroseconds
+                   << " gpu_median_us=" << result.gpuTiming->medianMicroseconds
+                   << " gpu_p90_us=" << result.gpuTiming->p90Microseconds
+                   << " gpu_mean_us=" << result.gpuTiming->meanMicroseconds
+                   << " gpu_max_us=" << result.gpuTiming->maximumMicroseconds
+                   << " gpu_median_delta_us=";
+            if (gpuMedianDelta.has_value()) {
+                output << *gpuMedianDelta;
+            } else {
+                output << "na";
+            }
+            output << " gpu_vs_legacy_ratio=";
+            if (legacy != nullptr && legacy->gpuTiming.has_value()
+                && legacy->gpuTiming->medianMicroseconds > 0.0) {
+                output << result.gpuTiming->medianMicroseconds
+                        / legacy->gpuTiming->medianMicroseconds;
+            } else {
+                output << "na";
+            }
+            output << " gpu_valid_samples=" << result.validGpuSampleCount;
+        } else {
+            output << " gpu_timing=unavailable"
+                   << " gpu_valid_samples=" << result.validGpuSampleCount;
+        }
 
         if (result.after.has_value()) {
             const TerminalCustomShaderPipelineSnapshot empty;
@@ -942,7 +1320,8 @@ int main(int argc, char **argv)
                    << " source_binding_updates=na"
                    << " resource_generation=na";
         }
-        output << " verified_frames=" << *iterations << '\n';
+        output << " measured_frames=" << *iterations
+               << " validation_readbacks=1\n";
     }
     return 0;
 }
