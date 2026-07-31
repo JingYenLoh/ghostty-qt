@@ -264,8 +264,8 @@ public:
                 pingTargets_.at(static_cast<std::size_t>(targetIndex)).get();
             cb->beginPass(target, Qt::transparent, {1.0F, 0},
                           index == 0 ? resourceUpdates : nullptr);
-            recordDraw(cb, resources.pipeline.get(), resources.bindings.get(),
-                       index, index == 0 ? 0 : quadByteSize, targetSize);
+            recordDraw(cb, resources.pipeline.get(), resources.bindings, index,
+                       index == 0 ? 0 : quadByteSize, targetSize);
             cb->endPass();
         }
         if (finalIndex == 0) cb->resourceUpdate(resourceUpdates);
@@ -328,7 +328,7 @@ public:
             0,
             static_cast<quint32>(stageUniformSlots_.at(finalIndex)
                                  * uniformStride_)};
-        cb->setShaderResources(resources.bindings.get(), 1, &dynamicOffset);
+        cb->setShaderResources(resources.bindings, 1, &dynamicOffset);
         const QRhiCommandBuffer::VertexInput vertexBinding{
             vertexBuffer_.get(), finalIndex == 0 ? 0 : quadByteSize};
         cb->setVertexInput(0, 1, &vertexBinding);
@@ -377,8 +377,13 @@ public:
     QRectF rect() const override { return viewport_; }
 
 private:
-    struct PassResources {
+    struct BindingResources {
+        QRhiTexture *input = nullptr;
         std::unique_ptr<QRhiShaderResourceBindings> bindings;
+    };
+
+    struct PassResources {
+        QRhiShaderResourceBindings *bindings = nullptr;
         std::unique_ptr<QRhiGraphicsPipeline> pipeline;
         std::unique_ptr<QRhiGraphicsPipeline> stencilPipeline;
         QByteArray debugMarkerLabel;
@@ -387,8 +392,15 @@ private:
     void resetPassResources()
     {
         passResources_.clear();
+        const bool hadBindings = !bindingResources_.empty();
+        bindingResources_.clear();
+        if (hadBindings) {
+            QMutexLocker locker(&telemetry_->mutex);
+            telemetry_->snapshot.liveBindingCount = 0;
+        }
         builtPrograms_.clear();
-        builtInputs_.clear();
+        builtBindingInputs_.clear();
+        builtPassBindingIndices_.clear();
         builtFinalRenderPassFormat_.clear();
         builtFinalSampleCount_ = 0;
         builtNeedsStencil_ = false;
@@ -681,6 +693,91 @@ private:
         return passInputs_;
     }
 
+    void planInputBindings(const QVector<QRhiTexture *> &inputs)
+    {
+        bindingInputs_.clear();
+        bindingInputs_.reserve(inputs.size());
+        passBindingIndices_.resize(inputs.size());
+        for (qsizetype passIndex = 0; passIndex < inputs.size(); ++passIndex) {
+            QRhiTexture *const input = inputs.at(passIndex);
+            qsizetype bindingIndex = bindingInputs_.indexOf(input);
+            if (bindingIndex < 0) {
+                bindingIndex = bindingInputs_.size();
+                bindingInputs_.append(inputs.at(passIndex));
+            }
+            passBindingIndices_[passIndex] = bindingIndex;
+        }
+    }
+
+    void setBindingResources(QRhiShaderResourceBindings *bindings,
+                             QRhiTexture *input)
+    {
+        bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
+                0,
+                QRhiShaderResourceBinding::VertexStage
+                    | QRhiShaderResourceBinding::FragmentStage,
+                uniformBuffer_.get(),
+                static_cast<quint32>(TerminalCustomShaderUniformLayout::size)),
+            QRhiShaderResourceBinding::sampledTexture(
+                1, QRhiShaderResourceBinding::FragmentStage, input,
+                sampler_.get()),
+        });
+    }
+
+    bool createBindingResources()
+    {
+        bindingResources_.clear();
+        bindingResources_.reserve(
+            static_cast<std::size_t>(bindingInputs_.size()));
+        for (qsizetype index = 0; index < bindingInputs_.size(); ++index) {
+            BindingResources resources;
+            resources.input = bindingInputs_.at(index);
+            resources.bindings.reset(rhi_->newShaderResourceBindings());
+            if (resources.bindings == nullptr) {
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to allocate retained "
+                                   "resource bindings for input %1")
+                        .arg(index + 1));
+                return false;
+            }
+            setBindingResources(resources.bindings.get(), resources.input);
+            resources.bindings->setName(
+                QByteArrayLiteral("ghostty-qt custom shader bindings ")
+                + (index == 0 ? QByteArrayLiteral("source")
+                              : QByteArrayLiteral("ping ")
+                           + QByteArray::number(index - 1)));
+            if (!resources.bindings->create()) {
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: unable to create retained "
+                                   "resource bindings for input %1")
+                        .arg(index + 1));
+                return false;
+            }
+            {
+                QMutexLocker locker(&telemetry_->mutex);
+                ++telemetry_->snapshot.bindingCreateCount;
+            }
+            if (!bindingResources_.empty()
+                && !bindingResources_.front().bindings->isLayoutCompatible(
+                    resources.bindings.get())) {
+                setTelemetryDiagnostic(
+                    telemetry_,
+                    QStringLiteral("custom-shader: retained resource bindings "
+                                   "have incompatible layouts"));
+                return false;
+            }
+            bindingResources_.push_back(std::move(resources));
+        }
+
+        QMutexLocker locker(&telemetry_->mutex);
+        telemetry_->snapshot.liveBindingCount =
+            static_cast<int>(bindingResources_.size());
+        return true;
+    }
+
     std::unique_ptr<QRhiGraphicsPipeline>
     createPipeline(qsizetype stageIndex, QRhiShaderResourceBindings *bindings,
                    QRhiRenderPassDescriptor *renderPassDescriptor,
@@ -755,43 +852,47 @@ private:
             finalTarget->renderPassDescriptor()->serializedFormat();
         const int finalSampleCount = finalTarget->sampleCount();
         const QVector<QRhiTexture *> &inputs = passInputs(sourceTexture);
+        planInputBindings(inputs);
         const bool rebuild = programsChanged_
             || !samePrograms(programs_, builtPrograms_)
             || passResources_.size()
                 != static_cast<std::size_t>(programs_.size())
-            || builtInputs_.size() != inputs.size()
+            || bindingResources_.size()
+                != static_cast<std::size_t>(bindingInputs_.size())
+            || builtBindingInputs_.size() != bindingInputs_.size()
+            || builtPassBindingIndices_ != passBindingIndices_
             || builtUniformBuffer_ != uniformBuffer_.get()
             || builtFinalRenderPassFormat_ != finalFormat
             || builtFinalSampleCount_ != finalSampleCount
             || builtNeedsStencil_ != needsStencil;
 
         if (!rebuild) {
-            for (qsizetype index = 0; index < inputs.size(); ++index) {
-                if (builtInputs_.at(index) == inputs.at(index)) continue;
-                PassResources &resources =
-                    passResources_[static_cast<std::size_t>(index)];
-                resources.bindings->setBindings({
-                    QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
-                        0,
-                        QRhiShaderResourceBinding::VertexStage
-                            | QRhiShaderResourceBinding::FragmentStage,
-                        uniformBuffer_.get(),
-                        static_cast<quint32>(
-                            TerminalCustomShaderUniformLayout::size)),
-                    QRhiShaderResourceBinding::sampledTexture(
-                        1, QRhiShaderResourceBinding::FragmentStage,
-                        inputs.at(index), sampler_.get()),
-                });
+            std::uint64_t updateCount = 0;
+            for (qsizetype index = 0; index < bindingInputs_.size(); ++index) {
+                if (builtBindingInputs_.at(index) == bindingInputs_.at(index)) {
+                    continue;
+                }
+                BindingResources &resources =
+                    bindingResources_[static_cast<std::size_t>(index)];
+                resources.input = bindingInputs_.at(index);
+                setBindingResources(resources.bindings.get(), resources.input);
                 resources.bindings->updateResources(
                     QRhiShaderResourceBindings::BindingsAreSorted);
-                builtInputs_[index] = inputs.at(index);
+                builtBindingInputs_[index] = bindingInputs_.at(index);
+                ++updateCount;
+            }
+            if (updateCount > 0) {
                 QMutexLocker locker(&telemetry_->mutex);
-                ++telemetry_->snapshot.sourceBindingUpdateCount;
+                telemetry_->snapshot.sourceBindingUpdateCount += updateCount;
             }
             return true;
         }
 
-        passResources_.clear();
+        resetPassResources();
+        if (!createBindingResources()) {
+            resetPassResources();
+            return false;
+        }
         passResources_.resize(static_cast<std::size_t>(programs_.size()));
         for (qsizetype index = 0; index < programs_.size(); ++index) {
             PassResources &resources =
@@ -802,47 +903,17 @@ private:
                 programs_.size(),
                 final ? TerminalCustomShaderPassRole::Final
                       : TerminalCustomShaderPassRole::Intermediate);
-            resources.bindings.reset(rhi_->newShaderResourceBindings());
-            if (resources.bindings == nullptr) {
-                setTelemetryDiagnostic(
-                    telemetry_,
-                    QStringLiteral("custom-shader: unable to allocate retained "
-                                   "resource bindings for pass %1")
-                        .arg(index + 1));
-                passResources_.clear();
-                return false;
-            }
-            resources.bindings->setBindings({
-                QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
-                    0,
-                    QRhiShaderResourceBinding::VertexStage
-                        | QRhiShaderResourceBinding::FragmentStage,
-                    uniformBuffer_.get(),
-                    static_cast<quint32>(
-                        TerminalCustomShaderUniformLayout::size)),
-                QRhiShaderResourceBinding::sampledTexture(
-                    1, QRhiShaderResourceBinding::FragmentStage,
-                    inputs.at(index), sampler_.get()),
-            });
-            resources.bindings->setName(
-                QByteArrayLiteral("ghostty-qt custom shader bindings ")
-                + QByteArray::number(index));
-            if (!resources.bindings->create()) {
-                setTelemetryDiagnostic(
-                    telemetry_,
-                    QStringLiteral("custom-shader: unable to create retained "
-                                   "resource bindings for pass %1")
-                        .arg(index + 1));
-                passResources_.clear();
-                return false;
-            }
+            const qsizetype bindingIndex = passBindingIndices_.at(index);
+            resources.bindings =
+                bindingResources_.at(static_cast<std::size_t>(bindingIndex))
+                    .bindings.get();
 
             QRhiRenderPassDescriptor *const descriptor = final
                 ? finalTarget->renderPassDescriptor()
                 : pingRenderPass_.get();
             const int sampleCount = final ? finalSampleCount : 1;
             resources.pipeline =
-                createPipeline(index, resources.bindings.get(), descriptor,
+                createPipeline(index, resources.bindings, descriptor,
                                sampleCount, final, false);
             if (resources.pipeline == nullptr) {
                 setTelemetryDiagnostic(
@@ -850,12 +921,12 @@ private:
                     QStringLiteral("custom-shader: unable to create retained "
                                    "graphics pipeline for pass %1")
                         .arg(index + 1));
-                passResources_.clear();
+                resetPassResources();
                 return false;
             }
             if (final && needsStencil) {
                 resources.stencilPipeline =
-                    createPipeline(index, resources.bindings.get(), descriptor,
+                    createPipeline(index, resources.bindings, descriptor,
                                    sampleCount, true, true);
                 if (resources.stencilPipeline == nullptr) {
                     setTelemetryDiagnostic(
@@ -863,14 +934,15 @@ private:
                         QStringLiteral(
                             "custom-shader: unable to create retained stencil "
                             "pipeline for the final pass"));
-                    passResources_.clear();
+                    resetPassResources();
                     return false;
                 }
             }
         }
 
         builtPrograms_ = programs_;
-        builtInputs_ = inputs;
+        builtBindingInputs_ = bindingInputs_;
+        builtPassBindingIndices_ = passBindingIndices_;
         builtUniformBuffer_ = uniformBuffer_.get();
         builtFinalRenderPassFormat_ = finalFormat;
         builtFinalSampleCount_ = finalSampleCount;
@@ -1012,6 +1084,8 @@ private:
     std::unique_ptr<QRhiBuffer> uniformBuffer_;
     std::unique_ptr<QRhiSampler> sampler_;
     QVector<QRhiTexture *> passInputs_;
+    QVector<QRhiTexture *> bindingInputs_;
+    QVector<qsizetype> passBindingIndices_;
     QRectF uploadedViewport_;
     QRectF uploadedSourceCoordinates_;
     bool vertexDataDirty_ = true;
@@ -1020,9 +1094,11 @@ private:
     QVector<qsizetype> stageUniformSlots_;
     QVector<qsizetype> uniformSlotStages_;
 
+    std::vector<BindingResources> bindingResources_;
     std::vector<PassResources> passResources_;
     QVector<std::shared_ptr<const TerminalCustomShaderProgram>> builtPrograms_;
-    QVector<QRhiTexture *> builtInputs_;
+    QVector<QRhiTexture *> builtBindingInputs_;
+    QVector<qsizetype> builtPassBindingIndices_;
     QVector<quint32> builtFinalRenderPassFormat_;
     int builtFinalSampleCount_ = 0;
     bool builtNeedsStencil_ = false;
@@ -1037,6 +1113,13 @@ int terminalCustomShaderPipelineTargetCount(qsizetype passCount) noexcept
 {
     if (passCount <= 1) return 0;
     return passCount == 2 ? 1 : 2;
+}
+
+int terminalCustomShaderPipelineBindingCount(qsizetype passCount) noexcept
+{
+    return passCount <= 0
+        ? 0
+        : 1 + terminalCustomShaderPipelineTargetCount(passCount);
 }
 
 std::optional<TerminalCustomShaderUniformSlotPlan>

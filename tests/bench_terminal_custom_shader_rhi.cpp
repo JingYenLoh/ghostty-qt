@@ -601,6 +601,8 @@ public:
             }
             const int expectedTargets =
                 terminalCustomShaderPipelineTargetCount(passCount_);
+            const int expectedBindings =
+                terminalCustomShaderPipelineBindingCount(passCount_);
             const int expectedUniformSlots = provider_->distinctStageSnapshots()
                 ? passCount_
                 : (passCount_ == 1 ? 1 : 2);
@@ -609,6 +611,7 @@ public:
                 * TerminalCustomShaderUniformLayout::size;
             if (snapshot.passCount != passCount_
                 || snapshot.liveTargetCount != expectedTargets
+                || snapshot.liveBindingCount != expectedBindings
                 || snapshot.uniformSlotCount != expectedUniformSlots
                 || snapshot.uniformUploadBytesPerFrame
                     != expectedUniformUploadBytes
@@ -616,12 +619,15 @@ public:
                     < snapshot.uniformUploadBytesPerFrame) {
                 *error =
                     QStringLiteral("retained telemetry mismatch: passes=%1/%2, "
-                                   "targets=%3/%4, uniform-slots=%5/%6, "
-                                   "uniform-buffer=%7, uniform-upload=%8/%9")
+                                   "targets=%3/%4, bindings=%5/%6, "
+                                   "uniform-slots=%7/%8, uniform-buffer=%9, "
+                                   "uniform-upload=%10/%11")
                         .arg(snapshot.passCount)
                         .arg(passCount_)
                         .arg(snapshot.liveTargetCount)
                         .arg(expectedTargets)
+                        .arg(snapshot.liveBindingCount)
+                        .arg(expectedBindings)
                         .arg(snapshot.uniformSlotCount)
                         .arg(expectedUniformSlots)
                         .arg(snapshot.uniformBufferBytes)
@@ -765,6 +771,7 @@ struct ScenarioAccumulator {
     std::uint64_t targetCreateCount = 0;
     std::uint64_t targetDestroyCount = 0;
     std::uint64_t pipelineCreateCount = 0;
+    std::uint64_t bindingCreateCount = 0;
     std::uint64_t sourceBindingUpdateCount = 0;
     std::optional<TerminalCustomShaderPipelineSnapshot> latestSnapshot;
 };
@@ -1415,6 +1422,8 @@ int main(int argc, char **argv)
                                 != before->targetDestroyCount
                             || after->pipelineCreateCount
                                 != before->pipelineCreateCount
+                            || after->bindingCreateCount
+                                != before->bindingCreateCount
                             || after->sourceBindingUpdateCount
                                 != before->sourceBindingUpdateCount
                             || after->resourceGeneration
@@ -1446,6 +1455,9 @@ int main(int argc, char **argv)
                         accumulator.pipelineCreateCount +=
                             counterDelta(after->pipelineCreateCount,
                                          before->pipelineCreateCount);
+                        accumulator.bindingCreateCount +=
+                            counterDelta(after->bindingCreateCount,
+                                         before->bindingCreateCount);
                         accumulator.sourceBindingUpdateCount +=
                             counterDelta(after->sourceBindingUpdateCount,
                                          before->sourceBindingUpdateCount);
@@ -1476,6 +1488,7 @@ int main(int argc, char **argv)
                     before->targetCreateCount = 0;
                     before->targetDestroyCount = 0;
                     before->pipelineCreateCount = 0;
+                    before->bindingCreateCount = 0;
                     before->sourceBindingUpdateCount = 0;
                     after->frameCount = accumulator.renderedFrameCount;
                     after->drawCount = accumulator.recordedDrawCount;
@@ -1483,6 +1496,7 @@ int main(int argc, char **argv)
                     after->targetDestroyCount = accumulator.targetDestroyCount;
                     after->pipelineCreateCount =
                         accumulator.pipelineCreateCount;
+                    after->bindingCreateCount = accumulator.bindingCreateCount;
                     after->sourceBindingUpdateCount =
                         accumulator.sourceBindingUpdateCount;
                 }
@@ -1687,6 +1701,7 @@ int main(int argc, char **argv)
             const TerminalCustomShaderPipelineSnapshot &after = *result.after;
             output << " internal_targets=" << after.liveTargetCount
                    << " internal_texture_bytes=" << after.ownedTextureBytes
+                   << " live_bindings=" << after.liveBindingCount
                    << " uniform_slots=" << after.uniformSlotCount
                    << " uniform_buffer_bytes=" << after.uniformBufferBytes
                    << " uniform_upload_bytes_per_frame="
@@ -1703,6 +1718,9 @@ int main(int argc, char **argv)
                    << " pipeline_creates="
                    << counterDelta(after.pipelineCreateCount,
                                    before.pipelineCreateCount)
+                   << " binding_creates="
+                   << counterDelta(after.bindingCreateCount,
+                                   before.bindingCreateCount)
                    << " source_binding_updates="
                    << counterDelta(after.sourceBindingUpdateCount,
                                    before.sourceBindingUpdateCount)
@@ -1710,6 +1728,7 @@ int main(int argc, char **argv)
         } else {
             output << " internal_targets=na"
                    << " internal_texture_bytes=na"
+                   << " live_bindings=na"
                    << " uniform_slots=na"
                    << " uniform_buffer_bytes=na"
                    << " uniform_upload_bytes_per_frame=na"
@@ -1718,6 +1737,7 @@ int main(int argc, char **argv)
                    << " target_creates=na"
                    << " target_destroys=na"
                    << " pipeline_creates=na"
+                   << " binding_creates=na"
                    << " source_binding_updates=na"
                    << " resource_generation=na";
         }

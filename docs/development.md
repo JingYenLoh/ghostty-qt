@@ -112,7 +112,9 @@ run's baseline-subtracted result.
 
 The deterministic target counts and memory figures remain useful
 independently: legacy owns one full-size layer per pass, while retained owns
-one source layer plus at most two internal textures.
+one source layer plus at most two internal textures. Retained shader-resource
+bindings are likewise bounded by unique inputs: one source binding plus at
+most two ping-texture bindings, reported as `live_bindings`.
 
 The normal benchmark provider returns one immutable uniform snapshot shared by
 all stages. Pass `--distinct-stage-uniforms` to force one snapshot per stage

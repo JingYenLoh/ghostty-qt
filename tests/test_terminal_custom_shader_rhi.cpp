@@ -236,6 +236,7 @@ private Q_SLOTS:
     void retainedOrderedMultipass();
     void retainedStageSpecificUniformsRemainDistinct();
     void retainedSourceFramesAreFresh();
+    void retainedSourceTextureSwapReusesBindings();
     void retainedSharedProgramKeepsPerProviderUniformsIsolated();
     void retainedTargetsAreBoundedAndReused_data();
     void retainedTargetsAreBoundedAndReused();
@@ -709,6 +710,8 @@ Item {
         pipeline->renderSnapshot();
     QCOMPARE(snapshot.passCount, passCount);
     QCOMPARE(snapshot.liveTargetCount, 2);
+    QCOMPARE(snapshot.liveBindingCount,
+             terminalCustomShaderPipelineBindingCount(passCount));
     QCOMPARE(snapshot.uniformSlotCount, 2);
     QCOMPARE(snapshot.uniformUploadBytesPerFrame,
              static_cast<std::uint64_t>(
@@ -910,6 +913,145 @@ Item {
     root.reset();
 }
 
+void TerminalCustomShaderRhiTest::retainedSourceTextureSwapReusesBindings()
+{
+    TestUniformProvider provider(Qt::white);
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            {identityStage_, identityStage_, identityStage_, identityStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    id: root
+    width: 32
+    height: 32
+    property bool useSecond: false
+
+    Rectangle {
+        id: firstRect
+        anchors.fill: parent
+        color: "#d02040"
+    }
+    Rectangle {
+        id: secondRect
+        anchors.fill: parent
+        color: "#2040d0"
+    }
+    ShaderEffectSource {
+        id: firstSource
+        anchors.fill: parent
+        sourceItem: firstRect
+        hideSource: true
+        live: true
+        smooth: false
+        textureMirroring: ShaderEffectSource.NoMirroring
+        textureSize: Qt.size(width, height)
+    }
+    ShaderEffectSource {
+        id: secondSource
+        anchors.fill: parent
+        sourceItem: secondRect
+        hideSource: true
+        live: true
+        smooth: false
+        textureMirroring: ShaderEffectSource.NoMirroring
+        textureSize: Qt.size(width, height)
+    }
+    TerminalCustomShaderPipelineEffect {
+        objectName: "pipeline"
+        anchors.fill: parent
+        source: root.useSecond ? secondSource : firstSource
+        shaderStages: pipelineStages
+        uniformProvider: testUniformProvider
+    }
+}
+)qml",
+        QUrl(QStringLiteral(
+            "qrc:/test/custom-shader-retained-source-swap.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no source-swap frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+    QColor actual = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(isMostly(actual, QColor(QStringLiteral("#d02040"))),
+             qPrintable(QStringLiteral("unexpected first source sample %1")
+                            .arg(colorDescription(actual))));
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot before =
+        pipeline->renderSnapshot();
+    QVERIFY2(before.diagnostic.isEmpty(), qPrintable(before.diagnostic));
+    QCOMPARE(before.liveBindingCount, 3);
+    QCOMPARE(before.bindingCreateCount, std::uint64_t{3});
+
+    QVERIFY(root->setProperty("useSecond", true));
+    window.update();
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no updated source-swap frame.");
+    actual = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(isMostly(actual, QColor(QStringLiteral("#2040d0"))),
+             qPrintable(QStringLiteral("unexpected second source sample %1")
+                            .arg(colorDescription(actual))));
+
+    const TerminalCustomShaderPipelineSnapshot after =
+        pipeline->renderSnapshot();
+    QVERIFY2(after.diagnostic.isEmpty(), qPrintable(after.diagnostic));
+    QCOMPARE(after.sourceBindingUpdateCount,
+             before.sourceBindingUpdateCount + 1);
+    QCOMPARE(after.liveBindingCount, before.liveBindingCount);
+    QCOMPARE(after.bindingCreateCount, before.bindingCreateCount);
+    QCOMPARE(after.pipelineCreateCount, before.pipelineCreateCount);
+    QCOMPARE(after.targetCreateCount, before.targetCreateCount);
+    QCOMPARE(after.targetDestroyCount, before.targetDestroyCount);
+    QCOMPARE(after.resourceGeneration, before.resourceGeneration);
+
+    QVERIFY(root->setProperty("useSecond", false));
+    window.update();
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no restored source-swap frame.");
+    actual = frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    QVERIFY2(isMostly(actual, QColor(QStringLiteral("#d02040"))),
+             qPrintable(QStringLiteral("unexpected restored source sample %1")
+                            .arg(colorDescription(actual))));
+
+    const TerminalCustomShaderPipelineSnapshot restored =
+        pipeline->renderSnapshot();
+    QVERIFY2(restored.diagnostic.isEmpty(), qPrintable(restored.diagnostic));
+    QCOMPARE(restored.sourceBindingUpdateCount,
+             before.sourceBindingUpdateCount + 2);
+    QCOMPARE(restored.liveBindingCount, before.liveBindingCount);
+    QCOMPARE(restored.bindingCreateCount, before.bindingCreateCount);
+    QCOMPARE(restored.pipelineCreateCount, before.pipelineCreateCount);
+    QCOMPARE(restored.targetCreateCount, before.targetCreateCount);
+    QCOMPARE(restored.targetDestroyCount, before.targetDestroyCount);
+    QCOMPARE(restored.resourceGeneration, before.resourceGeneration);
+
+    root.reset();
+}
+
 void TerminalCustomShaderRhiTest::
     retainedSharedProgramKeepsPerProviderUniformsIsolated()
 {
@@ -1085,6 +1227,11 @@ Item {
     QVERIFY2(first.diagnostic.isEmpty(), qPrintable(first.diagnostic));
     QCOMPARE(first.passCount, passCount);
     QCOMPARE(first.liveTargetCount, expectedTargets);
+    const int expectedBindings =
+        terminalCustomShaderPipelineBindingCount(passCount);
+    QCOMPARE(first.liveBindingCount, expectedBindings);
+    QCOMPARE(first.bindingCreateCount,
+             static_cast<std::uint64_t>(expectedBindings));
     QCOMPARE(first.targetCreateCount,
              static_cast<std::uint64_t>(expectedTargets));
     QCOMPARE(first.targetPixelSize, QSize(32, 32));
@@ -1106,6 +1253,8 @@ Item {
     QCOMPARE(second.targetDestroyCount, first.targetDestroyCount);
     QCOMPARE(second.resourceGeneration, first.resourceGeneration);
     QCOMPARE(second.pipelineCreateCount, first.pipelineCreateCount);
+    QCOMPARE(second.liveBindingCount, first.liveBindingCount);
+    QCOMPARE(second.bindingCreateCount, first.bindingCreateCount);
     QCOMPARE(second.sourceBindingUpdateCount, first.sourceBindingUpdateCount);
     QVERIFY(second.frameCount > first.frameCount);
     QVERIFY(second.drawCount
@@ -1216,6 +1365,8 @@ Item {
     QCOMPARE(after.targetDestroyCount, before.targetDestroyCount);
     QVERIFY(after.resourceGeneration > before.resourceGeneration);
     QCOMPARE(after.pipelineCreateCount, before.pipelineCreateCount);
+    QCOMPARE(after.liveBindingCount, before.liveBindingCount);
+    QCOMPARE(after.bindingCreateCount, before.bindingCreateCount);
 
     root.reset();
 }

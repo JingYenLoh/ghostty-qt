@@ -257,10 +257,19 @@ void TerminalCustomShaderQsgTest::debugMarkerLabelsAreStable()
 
 void TerminalCustomShaderQsgTest::pipelineTargetCountIsBounded()
 {
+    QCOMPARE(terminalCustomShaderPipelineTargetCount(-1), 0);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(1), 0);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(2), 1);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(4), 2);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(8), 2);
+
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(-1), 0);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(0), 0);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(1), 1);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(2), 2);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(3), 3);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(4), 3);
+    QCOMPARE(terminalCustomShaderPipelineBindingCount(8), 3);
 }
 
 void TerminalCustomShaderQsgTest::

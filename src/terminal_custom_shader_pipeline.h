@@ -22,9 +22,11 @@ struct TerminalCustomShaderPipelineSnapshot {
     std::uint64_t targetCreateCount = 0;
     std::uint64_t targetDestroyCount = 0;
     std::uint64_t pipelineCreateCount = 0;
+    std::uint64_t bindingCreateCount = 0;
     std::uint64_t sourceBindingUpdateCount = 0;
     std::uint64_t resourceGeneration = 0;
     int liveTargetCount = 0;
+    int liveBindingCount = 0;
     int passCount = 0;
     int uniformSlotCount = 0;
     QSize targetPixelSize;
@@ -39,6 +41,9 @@ struct TerminalCustomShaderPipelineSnapshot {
 
 [[nodiscard]] int
 terminalCustomShaderPipelineTargetCount(qsizetype passCount) noexcept;
+
+[[nodiscard]] int
+terminalCustomShaderPipelineBindingCount(qsizetype passCount) noexcept;
 
 struct TerminalCustomShaderUniformSlotPlan {
     QVector<qsizetype> stageSlots;
