@@ -34,13 +34,16 @@ using namespace TerminalKittyGraphicsShaderLayout;
 static_assert(matrixSize == 64);
 static_assert(uniformBufferSize == 68);
 
-void clearNodeChildren(QSGNode *node)
+quint64 clearNodeChildren(QSGNode *node)
 {
-    if (node == nullptr) return;
+    if (node == nullptr) return 0;
+    quint64 removed = 0;
     while (QSGNode *child = node->firstChild()) {
         node->removeChildNode(child);
         delete child;
+        ++removed;
     }
+    return removed;
 }
 
 bool validImage(const TerminalKittyGraphicsImage &image)
@@ -234,6 +237,19 @@ class TerminalKittyGraphicsScene::Impl final {
 public:
     ~Impl() { clear(); }
 
+    void clearPlacementNodes()
+    {
+        nodeDeletionCount += clearNodeChildren(belowBackground);
+        nodeDeletionCount += clearNodeChildren(belowText);
+        nodeDeletionCount += clearNodeChildren(aboveText);
+    }
+
+    void clearTextures()
+    {
+        textureSetEvictionCount += static_cast<quint64>(textures.size());
+        textures.clear();
+    }
+
     TextureSet *
     texture(QQuickWindow *quickWindow,
             const std::shared_ptr<const TerminalKittyGraphicsImage> &asset,
@@ -288,10 +304,8 @@ public:
 
     void clear()
     {
-        clearNodeChildren(belowBackground);
-        clearNodeChildren(belowText);
-        clearNodeChildren(aboveText);
-        textures.clear();
+        clearPlacementNodes();
+        clearTextures();
         opaqueAlpha.reset();
         rendered.clear();
         snapshot.reset();
@@ -315,6 +329,11 @@ public:
     std::unique_ptr<QSGTexture> opaqueAlpha;
     QVector<TerminalKittyGraphicsRenderPlacement> rendered;
     quint64 textureUploadCount = 0;
+    quint64 nodeCreationCount = 0;
+    quint64 nodeDeletionCount = 0;
+    quint64 geometryWriteCount = 0;
+    quint64 materialAssignmentCount = 0;
+    quint64 textureSetEvictionCount = 0;
 };
 
 TerminalKittyGraphicsScene::TerminalKittyGraphicsScene()
@@ -338,11 +357,9 @@ void TerminalKittyGraphicsScene::update(
         return;
     }
 
-    clearNodeChildren(impl_->belowBackground);
-    clearNodeChildren(impl_->belowText);
-    clearNodeChildren(impl_->aboveText);
+    impl_->clearPlacementNodes();
     if (impl_->window != window || impl_->custom != useCustomMaterial) {
-        impl_->textures.clear();
+        impl_->clearTextures();
         impl_->opaqueAlpha.reset();
     }
     impl_->window = window;
@@ -393,6 +410,9 @@ void TerminalKittyGraphicsScene::update(
                 node->setSourceRect(renderPlacement->source);
                 parent->appendChildNode(node);
             }
+            ++impl_->nodeCreationCount;
+            ++impl_->geometryWriteCount;
+            ++impl_->materialAssignmentCount;
             activeTextures.insert(renderPlacement->image->generation);
             impl_->rendered.append(std::move(*renderPlacement));
         }
@@ -402,6 +422,7 @@ void TerminalKittyGraphicsScene::update(
          iterator != impl_->textures.end();) {
         if (!activeTextures.contains(iterator->first)) {
             iterator = impl_->textures.erase(iterator);
+            ++impl_->textureSetEvictionCount;
         } else {
             ++iterator;
         }
@@ -428,6 +449,31 @@ TerminalKittyGraphicsScene::renderedPlacements() const noexcept
 quint64 TerminalKittyGraphicsScene::textureUploadCount() const noexcept
 {
     return impl_->textureUploadCount;
+}
+
+quint64 TerminalKittyGraphicsScene::nodeCreationCount() const noexcept
+{
+    return impl_->nodeCreationCount;
+}
+
+quint64 TerminalKittyGraphicsScene::nodeDeletionCount() const noexcept
+{
+    return impl_->nodeDeletionCount;
+}
+
+quint64 TerminalKittyGraphicsScene::geometryWriteCount() const noexcept
+{
+    return impl_->geometryWriteCount;
+}
+
+quint64 TerminalKittyGraphicsScene::materialAssignmentCount() const noexcept
+{
+    return impl_->materialAssignmentCount;
+}
+
+quint64 TerminalKittyGraphicsScene::textureSetEvictionCount() const noexcept
+{
+    return impl_->textureSetEvictionCount;
 }
 
 qsizetype TerminalKittyGraphicsScene::textureCount() const noexcept

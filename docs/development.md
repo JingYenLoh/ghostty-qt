@@ -38,9 +38,14 @@ ctest --preset dev -j"$(nproc)" --output-on-failure
 ## Rendering microbenchmarks
 
 The rendering benchmarks are opt-in and deliberately excluded from CTest. The
-pane benchmark measures the end-to-end cost of installing a terminal update
-and grabbing the result through Qt's offscreen software scene graph. Damage
-counters assert that metadata, one-row, cursor, and full-frame cases visit the
+pane benchmark measures metadata, one-row, cursor, full-frame, search, and
+Kitty graphics updates. Its software mode preserves the end-to-end
+`grabWindow()` baseline. OpenGL and Vulkan use `QQuickRenderControl` with a
+persistent offscreen QRhi target, exercising the production renderer through a
+single-threaded, production-like scene-graph path without a swapchain or
+present. Untimed initialization readbacks verify both terminal output and a
+known-color Kitty placement on the selected backend; measured frames do not
+read the target back. Damage counters assert that the text scenarios visit the
 intended number of cells, preventing a faster result caused by accidentally
 skipping work.
 
@@ -56,7 +61,16 @@ cmake --build --preset release \
              bench-terminal-kitty-graphics \
     -j"$(nproc)"
 ./build/release/tests/bench-terminal-pane-renderer \
-    --warmup 20 --iterations 200
+    --graphics-api software --warmup 20 --iterations 200
+QT_QPA_PLATFORM=xcb \
+    ./build/release/tests/bench-terminal-pane-renderer \
+    --graphics-api opengl --warmup 200 --iterations 200
+QT_QPA_PLATFORM=xcb \
+    ./build/release/tests/bench-terminal-pane-renderer \
+    --graphics-api vulkan --warmup 200 --iterations 200
+LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
+    ./build/release/tests/bench-terminal-pane-renderer \
+    --graphics-api opengl --warmup 200 --iterations 200
 ./build/release/tests/bench-terminal-custom-shader-compiler \
     --cold-iterations 5 --warm-iterations 100
 LIBGL_ALWAYS_SOFTWARE=1 \
@@ -67,8 +81,23 @@ LIBGL_ALWAYS_SOFTWARE=1 \
     --width 640 --height 360 --warmup 10 --iterations 100
 ```
 
-The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass cold
-`QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
+The pane RHI mode separately reports CPU synthetic-update preparation and
+delivery, scene-graph command recording, completion, and total timings, plus
+whole-command-buffer GPU timestamps where supported. Each scenario also reports
+and validates paint and cell-visit counts plus Kitty texture uploads, live
+generation-keyed texture-set cache entries, texture-set evictions,
+placement-node creation/deletion, geometry writes, and node material
+assignments. A texture set owns one GPU texture for an opaque image and two for
+a translucent image; the shared opaque alpha texture is not counted. The Kitty
+cases use 512 placements sharing opaque assets and separately exercise first
+upload, a same-snapshot redraw, movement, same-ID replacement, and eviction.
+Their node-churn counters establish the baseline for placement-node retention
+work. Offscreen `endFrame()` waits for completion, so it is suitable for
+comparing renderer work but does not model pipelined on-screen throughput.
+Software mode reports CPU update and end-to-end total timing.
+
+The custom-shader compiler benchmark reports one-, two-, four-, and eight-pass
+cold `QShaderBaker` latency and content-addressed QSB cache-hit latency. Its
 compiled/cache-hit counters guard the two paths against accidental
 misclassification. It measures configuration-time compilation and cache I/O,
 not GPU pass time.
@@ -131,14 +160,16 @@ Mesa's software implementation behind the OpenGL RHI; it is not Qt Quick's
 software scene graph. Pass `--graphics-api vulkan` to select Vulkan. Compare
 results only with the same graphics API, device, platform plugin, framebuffer
 size, and build. `QT_QPA_PLATFORM=offscreen` is usable when that plugin can
-initialize the requested RHI; otherwise run the invisible benchmark inside a
-graphical Wayland or X11 session.
+initialize the requested RHI. Otherwise run the invisible benchmark inside a
+graphical session with `QT_QPA_PLATFORM=wayland` or
+`QT_QPA_PLATFORM=xcb`; replace `xcb` in the examples above when native Wayland
+works with the selected backend.
 
 Set `GHOSTTY_QT_CUSTOM_SHADER_PIPELINE=legacy` when reproducing an application
 issue specifically against the old nested implementation. The benchmark
 constructs both implementations directly and does not consult this variable.
 
-### RenderDoc custom-shader captures
+### RenderDoc captures
 
 Install RenderDoc so that both `renderdoccmd` and `qrenderdoc` are available,
 then capture a warmed, untimed benchmark frame with:
@@ -171,20 +202,40 @@ capture fails, check the layer with `renderdoccmd vulkanlayer --explain`. If
 OpenGL injection fails under native Wayland EGL, retry the launcher with
 `QT_QPA_PLATFORM=xcb`.
 
-The current cases measure Kitty graphics' empty-image fast path. Image-specific
-GPU benchmarks should distinguish first texture upload, retained redraw,
-placement-only movement, same-ID replacement, and eviction. The Kitty import
-benchmark separately feeds sustained mpv-shaped RGB24 frames through
-libghostty and the Qt snapshot boundary. It reports parse/materialization
-latency, raw and wire throughput, the exact retained Qt plane bytes, and Linux
-resident-set growth. It also prints the estimated libghostty raw history and
-the theoretical pre-change uncull cost of retaining two four-byte Qt planes
-for every submitted frame. Its one-placement and zero-alpha-plane checks guard
-the opaque replacement cull and single-plane path. RSS includes libghostty's
-image history and allocator behavior, so compare it only with identical
-dimensions, frame counts, storage limits, and builds. The benchmark rejects a
-run whose complete history exceeds the default image-storage limit, ensuring
-libghostty eviction cannot make an unbounded Qt snapshot look bounded.
+The pane benchmark can capture one warmed scenario through the same injected
+RenderDoc bridge. The helper builds the benchmark, creates the output
+directory, selects the current Wayland/X11 platform when possible, verifies
+the benchmark's post-capture success record, and checks that RenderDoc wrote a
+non-empty capture:
+
+```sh
+./scripts/capture-terminal-pane-renderdoc.sh \
+    vulkan kitty-replacement
+```
+
+Accepted scenario names are `metadata`, `one-dirty-row`, `cursor-only`,
+`full-invalidation`, `search-update`, `kitty-first-upload`,
+`kitty-retained-redraw`, `kitty-movement`, `kitty-replacement`, and
+`kitty-eviction`. Capture mode records one frame of the selected scenario on
+the 120×40 grid after warmup and intentionally suppresses its instrumented
+timings. The output texture is named
+`ghostty-qt terminal-pane benchmark output`. Pass `opengl` as the first
+argument to select it instead; Vulkan is preferred. Set
+`QT_QPA_PLATFORM=xcb` or `wayland` before the command when automatic platform
+selection is unsuitable.
+
+The Kitty import benchmark separately feeds sustained mpv-shaped RGB24 frames
+through libghostty and the Qt snapshot boundary. It reports
+parse/materialization latency, raw and wire throughput, the exact retained Qt
+plane bytes, and Linux resident-set growth. It also prints the estimated
+libghostty raw history and the theoretical pre-change uncull cost of retaining
+two four-byte Qt planes for every submitted frame. Its one-placement and
+zero-alpha-plane checks guard the opaque replacement cull and single-plane
+path. RSS includes libghostty's image history and allocator behavior, so
+compare it only with identical dimensions, frame counts, storage limits, and
+builds. The benchmark rejects a run whose complete history exceeds the default
+image-storage limit, ensuring libghostty eviction cannot make an unbounded Qt
+snapshot look bounded.
 
 ## C++ formatting
 

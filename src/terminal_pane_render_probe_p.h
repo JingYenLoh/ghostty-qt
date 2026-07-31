@@ -48,6 +48,11 @@ struct TerminalPaneRenderProbeSnapshot {
     QRectF backgroundImageRect;
     QRectF backgroundImageSourceRect;
     quint64 kittyGraphicsTextureUploadCount = 0;
+    quint64 kittyGraphicsNodeCreationCount = 0;
+    quint64 kittyGraphicsNodeDeletionCount = 0;
+    quint64 kittyGraphicsGeometryWriteCount = 0;
+    quint64 kittyGraphicsMaterialAssignmentCount = 0;
+    quint64 kittyGraphicsTextureSetEvictionCount = 0;
     qsizetype kittyGraphicsTextureCount = 0;
     QVector<QRectF> kittyGraphicsDestinations;
     QVector<QRectF> kittyGraphicsSources;

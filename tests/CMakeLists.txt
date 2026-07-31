@@ -763,6 +763,8 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
 
     qt_add_executable(bench-terminal-pane-renderer
         bench_terminal_pane_renderer.cpp
+        renderdoc_capture.cpp
+        renderdoc_capture.h
         ../src/terminal_pane_render_probe_p.h
     )
     target_include_directories(bench-terminal-pane-renderer PRIVATE
@@ -771,9 +773,12 @@ if(GHOSTTY_QT_BUILD_RENDER_BENCHMARKS)
     target_link_libraries(bench-terminal-pane-renderer PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::GuiPrivate
+        Qt6::Qml
         Qt6::Quick
         Qt6::Test
         ghostty-qt-render-test-support
+        ${CMAKE_DL_LIBS}
     )
     add_dependencies(bench-terminal-pane-renderer ghostty-qt-terminfo)
 

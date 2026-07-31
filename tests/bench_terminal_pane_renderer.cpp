@@ -1,6 +1,8 @@
 #include "launch_options.h"
+#include "renderdoc_capture.h"
 #include "terminal_cell_metrics.h"
 #include "terminal_controller.h"
+#include "terminal_kitty_graphics.h"
 #include "terminal_pane.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_types.h"
@@ -11,10 +13,23 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImage>
+#include <QQuickGraphicsConfiguration>
+#include <QQuickRenderControl>
+#include <QQuickRenderTarget>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QTest>
 #include <QTextStream>
+#include <rhi/qrhi.h>
+
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
+#include <QVulkanInstance>
+#define GHOSTTY_QT_PANE_BENCH_HAS_VULKAN 1
+#else
+#define GHOSTTY_QT_PANE_BENCH_HAS_VULKAN 0
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -25,10 +40,28 @@
 
 namespace {
 
+constexpr int kittyPlacementCount = 512;
+
 struct GridSize {
     int columns = 0;
     int rows = 0;
 };
+
+enum class GraphicsApi {
+    Software,
+    OpenGl,
+    Vulkan,
+};
+
+QStringView graphicsApiName(GraphicsApi graphicsApi)
+{
+    switch (graphicsApi) {
+    case GraphicsApi::Software: return u"software";
+    case GraphicsApi::OpenGl: return u"opengl";
+    case GraphicsApi::Vulkan: return u"vulkan";
+    }
+    return {};
+}
 
 struct TimingSummary {
     double minimumMicroseconds = 0.0;
@@ -37,20 +70,93 @@ struct TimingSummary {
     double meanMicroseconds = 0.0;
 };
 
-struct ScenarioResult {
-    QString name;
-    TimingSummary timing;
-    std::optional<quint64> solidCellVisits;
-    quint64 expectedSolidCellVisits = 0;
+struct FrameTiming {
+    std::optional<qint64> cpuUpdateNanoseconds;
+    std::optional<qint64> cpuRecordNanoseconds;
+    std::optional<qint64> cpuCompletionNanoseconds;
+    qint64 cpuTotalNanoseconds = 0;
+    std::optional<qint64> gpuNanoseconds;
 };
 
-template <typename Snapshot>
-std::optional<quint64> solidCellVisitCount(const Snapshot &snapshot)
-{
-    if constexpr (requires { snapshot.solidCellVisitCount; }) {
-        return snapshot.solidCellVisitCount;
+struct ProbeDelta {
+    quint64 paintSerial = 0;
+    quint64 solidCellVisits = 0;
+    quint64 kittyTextureUploads = 0;
+    quint64 kittyNodeCreations = 0;
+    quint64 kittyNodeDeletions = 0;
+    quint64 kittyGeometryWrites = 0;
+    quint64 kittyMaterialAssignments = 0;
+    quint64 kittyTextureSetEvictions = 0;
+    qint64 kittyTextureSetCount = 0;
+
+    ProbeDelta &operator+=(const ProbeDelta &other)
+    {
+        paintSerial += other.paintSerial;
+        solidCellVisits += other.solidCellVisits;
+        kittyTextureUploads += other.kittyTextureUploads;
+        kittyNodeCreations += other.kittyNodeCreations;
+        kittyNodeDeletions += other.kittyNodeDeletions;
+        kittyGeometryWrites += other.kittyGeometryWrites;
+        kittyMaterialAssignments += other.kittyMaterialAssignments;
+        kittyTextureSetEvictions += other.kittyTextureSetEvictions;
+        kittyTextureSetCount += other.kittyTextureSetCount;
+        return *this;
     }
-    return std::nullopt;
+};
+
+struct ScenarioResult {
+    QString name;
+    bool captureFrame = false;
+    std::optional<TimingSummary> cpuUpdateTiming;
+    std::optional<TimingSummary> cpuRecordTiming;
+    std::optional<TimingSummary> cpuCompletionTiming;
+    TimingSummary cpuTotalTiming;
+    std::optional<TimingSummary> gpuTiming;
+    int validGpuSamples = 0;
+    ProbeDelta probeDelta;
+    ProbeDelta expectedProbeDelta;
+    qsizetype finalKittyTextureSetCount = 0;
+    qsizetype expectedFinalKittyTextureSetCount = 0;
+    int measuredFrames = 0;
+};
+
+ProbeDelta operator-(const TerminalPaneRenderProbeSnapshot &after,
+                     const TerminalPaneRenderProbeSnapshot &before)
+{
+    return {
+        .paintSerial = after.paintSerial - before.paintSerial,
+        .solidCellVisits =
+            after.solidCellVisitCount - before.solidCellVisitCount,
+        .kittyTextureUploads = after.kittyGraphicsTextureUploadCount
+            - before.kittyGraphicsTextureUploadCount,
+        .kittyNodeCreations = after.kittyGraphicsNodeCreationCount
+            - before.kittyGraphicsNodeCreationCount,
+        .kittyNodeDeletions = after.kittyGraphicsNodeDeletionCount
+            - before.kittyGraphicsNodeDeletionCount,
+        .kittyGeometryWrites = after.kittyGraphicsGeometryWriteCount
+            - before.kittyGraphicsGeometryWriteCount,
+        .kittyMaterialAssignments = after.kittyGraphicsMaterialAssignmentCount
+            - before.kittyGraphicsMaterialAssignmentCount,
+        .kittyTextureSetEvictions = after.kittyGraphicsTextureSetEvictionCount
+            - before.kittyGraphicsTextureSetEvictionCount,
+        .kittyTextureSetCount =
+            static_cast<qint64>(after.kittyGraphicsTextureCount)
+            - static_cast<qint64>(before.kittyGraphicsTextureCount),
+    };
+}
+
+ProbeDelta operator*(ProbeDelta delta, quint64 count)
+{
+    delta.paintSerial *= count;
+    delta.solidCellVisits *= count;
+    delta.kittyTextureUploads *= count;
+    delta.kittyNodeCreations *= count;
+    delta.kittyNodeDeletions *= count;
+    delta.kittyGeometryWrites *= count;
+    delta.kittyMaterialAssignments *= count;
+    delta.kittyTextureSetEvictions *= count;
+    delta.kittyTextureSetCount *= static_cast<qint64>(count);
+    return delta;
 }
 
 void useSystemFixedFont(LaunchOptions &options)
@@ -79,25 +185,66 @@ TimingSummary summarize(QVector<qint64> samples)
     const auto microseconds = [](qint64 nanoseconds) {
         return static_cast<double>(nanoseconds) / 1'000.0;
     };
-    const qsizetype medianIndex = count / 2;
     const qsizetype percentile90Index =
         std::min(count - 1,
                  static_cast<qsizetype>(
                      std::ceil(static_cast<double>(count) * 0.9) - 1.0));
     const qint64 total =
         std::accumulate(samples.cbegin(), samples.cend(), qint64{0});
+    const double medianNanoseconds = count % 2 == 0
+        ? (static_cast<double>(samples.at(count / 2 - 1))
+           + static_cast<double>(samples.at(count / 2)))
+            / 2.0
+        : static_cast<double>(samples.at(count / 2));
     return {
         .minimumMicroseconds = microseconds(samples.constFirst()),
-        .medianMicroseconds = microseconds(samples.at(medianIndex)),
+        .medianMicroseconds = medianNanoseconds / 1'000.0,
         .percentile90Microseconds = microseconds(samples.at(percentile90Index)),
         .meanMicroseconds = microseconds(total) / static_cast<double>(count),
     };
 }
 
+bool containsNonBlackPixel(const QImage &image)
+{
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QRgb pixel = image.pixel(x, y);
+            if (qRed(pixel) != 0 || qGreen(pixel) != 0 || qBlue(pixel) != 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool containsColorPixel(const QImage &image, const QColor &expected,
+                        int tolerance = 3)
+{
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor actual = image.pixelColor(x, y);
+            if (std::abs(actual.red() - expected.red()) <= tolerance
+                && std::abs(actual.green() - expected.green()) <= tolerance
+                && std::abs(actual.blue() - expected.blue()) <= tolerance) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 class RendererBenchmark {
 public:
-    explicit RendererBenchmark(GridSize grid)
+    RendererBenchmark(GridSize grid, GraphicsApi graphicsApi,
+                      bool renderDocCapture)
         : grid_(grid)
+        , graphicsApi_(graphicsApi)
+        , renderControl_(graphicsApi == GraphicsApi::Software
+                             ? nullptr
+                             : std::make_unique<QQuickRenderControl>())
+        , window_(renderControl_ != nullptr
+                      ? std::make_unique<QQuickWindow>(renderControl_.get())
+                      : std::make_unique<QQuickWindow>())
     {
         LaunchOptions options;
         options.workingDirectory = QDir::currentPath();
@@ -113,100 +260,395 @@ public:
 
         const TerminalCellMetrics metrics =
             terminalCellMetrics(options.typography);
-        window_.setColor(Qt::black);
-        window_.resize(
-            qCeil(metrics.cellWidth * static_cast<qreal>(grid_.columns)),
-            qCeil(metrics.cellHeight * static_cast<qreal>(grid_.rows)));
-        pane_ = new TerminalPane(options, window_.contentItem(), std::nullopt,
+        logicalSize_ =
+            QSize(qCeil(metrics.cellWidth * static_cast<qreal>(grid_.columns)),
+                  qCeil(metrics.cellHeight * static_cast<qreal>(grid_.rows)));
+        window_->setColor(Qt::black);
+        window_->setGeometry(QRect(QPoint{}, logicalSize_));
+        window_->contentItem()->setSize(logicalSize_);
+        if (renderControl_ != nullptr) {
+            QQuickGraphicsConfiguration configuration;
+            configuration.setTimestamps(!renderDocCapture);
+            configuration.setDebugMarkers(renderDocCapture);
+            window_->setGraphicsConfiguration(configuration);
+        }
+        pane_ = new TerminalPane(options, window_->contentItem(), std::nullopt,
                                  TerminalSessionStartMode::Deferred);
-        pane_->setSize(window_.size());
+        pane_->setSize(logicalSize_);
         controller_ = pane_->findChild<TerminalController *>();
     }
 
     ~RendererBenchmark()
     {
-        window_.close();
         delete pane_;
+        pane_ = nullptr;
+        if (renderControl_ == nullptr) {
+            window_->close();
+            return;
+        }
+        window_->setRenderTarget({});
+        renderControl_->invalidate();
+        renderTarget_.reset();
+        renderPassDescriptor_.reset();
+        depthStencil_.reset();
+        colorBuffer_.reset();
     }
 
-    bool initialize()
+    bool initialize(QString *error)
     {
-        if (controller_ == nullptr) return false;
-        window_.show();
-        if (!waitUntil([this] { return window_.isExposed(); }, 3'000)) {
+        if (controller_ == nullptr) {
+            *error = QStringLiteral("terminal controller was not created");
+            return false;
+        }
+        if (renderControl_ == nullptr) {
+            window_->show();
+            if (!waitUntil([this] { return window_->isExposed(); }, 3'000)) {
+                *error =
+                    QStringLiteral("software benchmark window was not exposed");
+                return false;
+            }
+        } else if (!initializeRhi(error)) {
             return false;
         }
         pane_->forceActiveFocus();
         publishFullFrame(false);
-        return render();
+        if (!renderUntimed(error, true)) return false;
+
+        const QColor kittyValidationColor(23, 211, 149);
+        publishKitty(makeKittySnapshot(
+            makeKittyImage(++kittyGeneration_, kittyValidationColor), 0));
+        if (!renderUntimed(error, true, kittyValidationColor)) return false;
+        publishKitty(nullptr);
+        return renderUntimed(error);
     }
 
-    ScenarioResult metadata(int warmupIterations, int measuredIterations)
+    QString rhiBackendName() const
+    {
+        return renderControl_ != nullptr && renderControl_->rhi() != nullptr
+            ? QString::fromLatin1(renderControl_->rhi()->backendName())
+            : QStringLiteral("software-scenegraph");
+    }
+
+    ScenarioResult metadata(int warmupIterations, int measuredIterations,
+                            RenderDocCapture *capture, QString *error)
     {
         bool odd = false;
-        return measure(QStringLiteral("metadata-only"), warmupIterations,
-                       measuredIterations, 0, [this, &odd] {
-                           odd = !odd;
-                           TerminalUpdate update;
-                           update.columns = grid_.columns;
-                           update.rows = grid_.rows;
-                           update.scrollbarChanged = true;
-                           update.scrollTotal = 10'000;
-                           update.scrollOffset = odd ? 3'000 : 3'001;
-                           update.scrollLength =
-                               static_cast<quint64>(grid_.rows);
-                           update.contentRevision = ++revision_;
-                           controller_->terminalUpdated(update);
-                       });
+        return measure(
+            QStringLiteral("metadata"), warmupIterations, measuredIterations,
+            {.paintSerial = 1}, 0, {},
+            [this, &odd] {
+                odd = !odd;
+                TerminalUpdate update;
+                update.columns = grid_.columns;
+                update.rows = grid_.rows;
+                update.scrollbarChanged = true;
+                update.scrollTotal = 10'000;
+                update.scrollOffset = odd ? 3'000 : 3'001;
+                update.scrollLength = static_cast<quint64>(grid_.rows);
+                update.contentRevision = ++revision_;
+                controller_->terminalUpdated(update);
+            },
+            capture, error);
     }
 
-    ScenarioResult oneDirtyRow(int warmupIterations, int measuredIterations)
+    ScenarioResult oneDirtyRow(int warmupIterations, int measuredIterations,
+                               RenderDocCapture *capture, QString *error)
     {
         bool odd = false;
-        return measure(QStringLiteral("one-dirty-row"), warmupIterations,
-                       measuredIterations, static_cast<quint64>(grid_.columns),
-                       [this, &odd] {
-                           odd = !odd;
-                           TerminalUpdate update;
-                           update.columns = grid_.columns;
-                           update.rows = grid_.rows;
-                           update.dirtyRows.append(makeRow(
-                               grid_.rows / 2,
-                               odd ? QColor(QStringLiteral("#18222c"))
-                                   : QColor(QStringLiteral("#202a34"))));
-                           update.contentRevision = ++revision_;
-                           controller_->terminalUpdated(update);
-                       });
+        return measure(
+            QStringLiteral("one-dirty-row"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = static_cast<quint64>(grid_.columns)},
+            0, {},
+            [this, &odd] {
+                odd = !odd;
+                TerminalUpdate update;
+                update.columns = grid_.columns;
+                update.rows = grid_.rows;
+                update.dirtyRows.append(
+                    makeRow(grid_.rows / 2,
+                            odd ? QColor(QStringLiteral("#18222c"))
+                                : QColor(QStringLiteral("#202a34"))));
+                update.contentRevision = ++revision_;
+                controller_->terminalUpdated(update);
+            },
+            capture, error);
     }
 
-    ScenarioResult blockCursorMove(int warmupIterations, int measuredIterations)
+    ScenarioResult cursorOnly(int warmupIterations, int measuredIterations,
+                              RenderDocCapture *capture, QString *error)
     {
         cursorRow_ = 0;
         publishCursor();
-        if (!render()) return {};
+        if (!renderUntimed(error)) return {};
 
-        return measure(QStringLiteral("block-cursor-row-move"),
-                       warmupIterations, measuredIterations,
-                       static_cast<quint64>(2 * grid_.columns), [this] {
-                           cursorRow_ = cursorRow_ == 0 ? grid_.rows - 1 : 0;
-                           publishCursor();
-                       });
+        return measure(
+            QStringLiteral("cursor-only"), warmupIterations, measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
+            0, {},
+            [this] {
+                cursorRow_ = cursorRow_ == 0 ? grid_.rows - 1 : 0;
+                publishCursor();
+            },
+            capture, error);
     }
 
     ScenarioResult fullInvalidation(int warmupIterations,
-                                    int measuredIterations)
+                                    int measuredIterations,
+                                    RenderDocCapture *capture, QString *error)
     {
         bool odd = false;
-        return measure(QStringLiteral("full-invalidation"), warmupIterations,
-                       measuredIterations,
-                       static_cast<quint64>(grid_.columns * grid_.rows),
-                       [this, &odd] {
-                           odd = !odd;
-                           publishFullFrame(odd);
-                       });
+        return measure(
+            QStringLiteral("full-invalidation"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits =
+                 static_cast<quint64>(grid_.columns * grid_.rows)},
+            0, {},
+            [this, &odd] {
+                odd = !odd;
+                publishFullFrame(odd);
+            },
+            capture, error);
+    }
+
+    ScenarioResult searchUpdate(int warmupIterations, int measuredIterations,
+                                RenderDocCapture *capture, QString *error)
+    {
+        publishSearch(0);
+        if (!renderUntimed(error)) return {};
+        int row = 0;
+        return measure(
+            QStringLiteral("search-update"), warmupIterations,
+            measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits = static_cast<quint64>(2 * grid_.columns)},
+            0, {},
+            [this, &row] {
+                row = row == 1 ? 2 : 1;
+                publishSearch(row);
+            },
+            capture, error);
+    }
+
+    ScenarioResult kittyFirstUpload(int warmupIterations,
+                                    int measuredIterations,
+                                    RenderDocCapture *capture, QString *error)
+    {
+        clearSearch();
+        quint64 generation = ++kittyGeneration_;
+        std::shared_ptr<const TerminalKittyGraphicsSnapshot> nextSnapshot;
+        return measure(
+            QStringLiteral("kitty-first-upload"), warmupIterations,
+            measuredIterations,
+            {
+                .paintSerial = 1,
+                .kittyTextureUploads = 1,
+                .kittyNodeCreations = kittyPlacementCount,
+                .kittyGeometryWrites = kittyPlacementCount,
+                .kittyMaterialAssignments = kittyPlacementCount,
+                .kittyTextureSetCount = 1,
+            },
+            1,
+            [this, &generation, &nextSnapshot, error] {
+                publishKitty(nullptr);
+                if (!renderUntimed(error)) return false;
+                nextSnapshot = makeKittySnapshot(
+                    makeKittyImage(++generation, QColor(32, 96, 192)), 0);
+                return true;
+            },
+            [this, &nextSnapshot] { publishKitty(nextSnapshot); }, capture,
+            error);
+    }
+
+    ScenarioResult kittyRetainedRedraw(int warmupIterations,
+                                       int measuredIterations,
+                                       RenderDocCapture *capture,
+                                       QString *error)
+    {
+        clearSearch();
+        const auto snapshot = makeKittySnapshot(
+            makeKittyImage(++kittyGeneration_, QColor(48, 144, 208)), 0);
+        publishKitty(snapshot);
+        if (!renderUntimed(error)) return {};
+        return measure(
+            QStringLiteral("kitty-retained-redraw"), warmupIterations,
+            measuredIterations, {.paintSerial = 1}, 1, {},
+            [this, snapshot] { publishKitty(snapshot); }, capture, error);
+    }
+
+    ScenarioResult kittyMovement(int warmupIterations, int measuredIterations,
+                                 RenderDocCapture *capture, QString *error)
+    {
+        clearSearch();
+        const auto asset =
+            makeKittyImage(++kittyGeneration_, QColor(64, 176, 112));
+        const auto left = makeKittySnapshot(asset, 0);
+        const auto right = makeKittySnapshot(asset, 1);
+        publishKitty(left);
+        if (!renderUntimed(error)) return {};
+        bool moved = false;
+        return measure(
+            QStringLiteral("kitty-movement"), warmupIterations,
+            measuredIterations,
+            {
+                .paintSerial = 1,
+                .kittyNodeCreations = kittyPlacementCount,
+                .kittyNodeDeletions = kittyPlacementCount,
+                .kittyGeometryWrites = kittyPlacementCount,
+                .kittyMaterialAssignments = kittyPlacementCount,
+            },
+            1, {},
+            [this, left, right, &moved] {
+                moved = !moved;
+                publishKitty(moved ? right : left);
+            },
+            capture, error);
+    }
+
+    ScenarioResult kittyReplacement(int warmupIterations,
+                                    int measuredIterations,
+                                    RenderDocCapture *capture, QString *error)
+    {
+        clearSearch();
+        const auto first = makeKittySnapshot(
+            makeKittyImage(++kittyGeneration_, QColor(224, 96, 48)), 0);
+        const auto second = makeKittySnapshot(
+            makeKittyImage(++kittyGeneration_, QColor(240, 192, 48)), 0);
+        publishKitty(first);
+        if (!renderUntimed(error)) return {};
+        bool replaced = false;
+        return measure(
+            QStringLiteral("kitty-replacement"), warmupIterations,
+            measuredIterations,
+            {
+                .paintSerial = 1,
+                .kittyTextureUploads = 1,
+                .kittyNodeCreations = kittyPlacementCount,
+                .kittyNodeDeletions = kittyPlacementCount,
+                .kittyGeometryWrites = kittyPlacementCount,
+                .kittyMaterialAssignments = kittyPlacementCount,
+                .kittyTextureSetEvictions = 1,
+            },
+            1, {},
+            [this, first, second, &replaced] {
+                replaced = !replaced;
+                publishKitty(replaced ? second : first);
+            },
+            capture, error);
+    }
+
+    ScenarioResult kittyEviction(int warmupIterations, int measuredIterations,
+                                 RenderDocCapture *capture, QString *error)
+    {
+        clearSearch();
+        quint64 generation = ++kittyGeneration_;
+        return measure(
+            QStringLiteral("kitty-eviction"), warmupIterations,
+            measuredIterations,
+            {
+                .paintSerial = 1,
+                .kittyNodeDeletions = kittyPlacementCount,
+                .kittyTextureSetEvictions = 1,
+                .kittyTextureSetCount = -1,
+            },
+            0,
+            [this, &generation, error] {
+                publishKitty(makeKittySnapshot(
+                    makeKittyImage(++generation, QColor(128, 64, 192)), 0));
+                return renderUntimed(error);
+            },
+            [this] { publishKitty(nullptr); }, capture, error);
     }
 
 private:
+    bool initializeRhi(QString *error)
+    {
+#if GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
+        if (graphicsApi_ == GraphicsApi::Vulkan) {
+            vulkanInstance_ = std::make_unique<QVulkanInstance>();
+            vulkanInstance_->setExtensions(
+                QQuickGraphicsConfiguration::preferredInstanceExtensions());
+            if (!vulkanInstance_->create()) {
+                *error = QStringLiteral(
+                             "unable to create Vulkan instance (VkResult %1)")
+                             .arg(vulkanInstance_->errorCode());
+                return false;
+            }
+            window_->setVulkanInstance(vulkanInstance_.get());
+        }
+#endif
+        if (!renderControl_->initialize()) {
+            *error = QStringLiteral(
+                         "QQuickRenderControl could not initialize %1 on %2")
+                         .arg(graphicsApiName(graphicsApi_))
+                         .arg(QGuiApplication::platformName());
+            return false;
+        }
+        const QSGRendererInterface::GraphicsApi expectedApi =
+            graphicsApi_ == GraphicsApi::OpenGl ? QSGRendererInterface::OpenGL
+                                                : QSGRendererInterface::Vulkan;
+        if (window_->rendererInterface()->graphicsApi() != expectedApi) {
+            *error =
+                QStringLiteral("requested %1, but Qt selected graphics API %2")
+                    .arg(graphicsApiName(graphicsApi_))
+                    .arg(static_cast<int>(
+                        window_->rendererInterface()->graphicsApi()));
+            return false;
+        }
+        QRhi *const rhi = renderControl_->rhi();
+        if (rhi == nullptr) {
+            *error =
+                QStringLiteral("QQuickRenderControl did not provide a QRhi");
+            return false;
+        }
+        const qreal dpr = window_->devicePixelRatio();
+        const QSize physicalSize(
+            qMax(1, qRound(static_cast<qreal>(logicalSize_.width()) * dpr)),
+            qMax(1, qRound(static_cast<qreal>(logicalSize_.height()) * dpr)));
+        colorBuffer_.reset(rhi->newTexture(
+            QRhiTexture::RGBA8, physicalSize, 1,
+            QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+        colorBuffer_->setName(
+            QByteArrayLiteral("ghostty-qt terminal-pane benchmark output"));
+        if (!colorBuffer_->create()) {
+            *error =
+                QStringLiteral("unable to create pane benchmark color buffer");
+            return false;
+        }
+        depthStencil_.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil,
+                                                 physicalSize, 1));
+        depthStencil_->setName(QByteArrayLiteral(
+            "ghostty-qt terminal-pane benchmark depth-stencil"));
+        if (!depthStencil_->create()) {
+            *error = QStringLiteral(
+                "unable to create pane benchmark depth-stencil buffer");
+            return false;
+        }
+        const QRhiTextureRenderTargetDescription description(
+            QRhiColorAttachment(colorBuffer_.get()), depthStencil_.get());
+        renderTarget_.reset(rhi->newTextureRenderTarget(description));
+        renderPassDescriptor_.reset(
+            renderTarget_->newCompatibleRenderPassDescriptor());
+        renderPassDescriptor_->setName(
+            QByteArrayLiteral("ghostty-qt terminal-pane benchmark pass"));
+        renderTarget_->setRenderPassDescriptor(renderPassDescriptor_.get());
+        renderTarget_->setName(
+            QByteArrayLiteral("ghostty-qt terminal-pane benchmark target"));
+        if (!renderTarget_->create()) {
+            *error =
+                QStringLiteral("unable to create pane benchmark render target");
+            return false;
+        }
+        QQuickRenderTarget quickTarget =
+            QQuickRenderTarget::fromRhiRenderTarget(renderTarget_.get());
+        quickTarget.setDevicePixelRatio(dpr);
+        window_->setRenderTarget(quickTarget);
+        return true;
+    }
+
     TerminalRowUpdate makeRow(int row, const QColor &background) const
     {
         TerminalRowUpdate update;
@@ -216,9 +658,7 @@ private:
             TerminalCell &cell = update.cells[column];
             cell.foreground = QColor(QStringLiteral("#d8dee9"));
             cell.background = background;
-            if (column % 16 == 0) {
-                cell.text = QString(QChar(0x2588));
-            }
+            if (column % 16 == 0) cell.text = QString(QChar(0x2588));
         }
         return update;
     }
@@ -262,55 +702,352 @@ private:
         controller_->terminalUpdated(update);
     }
 
-    bool render()
+    void publishSearch(int row)
     {
-        const QImage image = window_.grabWindow();
-        return !image.isNull();
+        TerminalSearchUpdate search;
+        search.generation = ++searchGeneration_;
+        search.contentRevision = revision_;
+        search.active = true;
+        search.complete = true;
+        search.scannedRows = static_cast<quint64>(grid_.rows);
+        search.totalRows = static_cast<quint64>(grid_.rows);
+        search.totalMatches = 1;
+        search.selectedMatch = 0;
+        search.columns = grid_.columns;
+        search.rows = grid_.rows;
+        const qsizetype cellCount =
+            static_cast<qsizetype>(grid_.columns) * grid_.rows;
+        search.visibleCellMask = QBitArray(cellCount);
+        search.selectedCellMask = QBitArray(cellCount);
+        const qsizetype index =
+            static_cast<qsizetype>(std::clamp(row, 0, grid_.rows - 1))
+                * grid_.columns
+            + grid_.columns / 2;
+        search.visibleCellMask.setBit(index);
+        controller_->searchUpdated(search);
+    }
+
+    void clearSearch()
+    {
+        TerminalSearchUpdate search;
+        search.generation = ++searchGeneration_;
+        search.contentRevision = revision_;
+        controller_->searchUpdated(search);
+    }
+
+    std::shared_ptr<const TerminalKittyGraphicsImage>
+    makeKittyImage(quint64 generation, const QColor &color) const
+    {
+        QImage rgb(QSize(64, 64), QImage::Format_RGBX8888);
+        rgb.fill(color);
+        return std::make_shared<const TerminalKittyGraphicsImage>(
+            TerminalKittyGraphicsImage{
+                .imageId = 42,
+                .generation = generation,
+                .fullyOpaque = true,
+                .straightRgbPlane = std::move(rgb),
+            });
+    }
+
+    std::shared_ptr<const TerminalKittyGraphicsSnapshot> makeKittySnapshot(
+        const std::shared_ptr<const TerminalKittyGraphicsImage> &asset,
+        int columnOffset) const
+    {
+        auto snapshot = std::make_shared<TerminalKittyGraphicsSnapshot>();
+        snapshot->storageGeneration = asset->generation;
+        const TerminalPaneRenderProbeSnapshot probe =
+            terminalPaneRenderProbe(pane_);
+        const qreal dpr = window_->devicePixelRatio();
+        snapshot->cellWidthPixels = static_cast<quint32>(
+            qMax(1, qRound(probe.metrics.cellWidth * dpr)));
+        snapshot->cellHeightPixels = static_cast<quint32>(
+            qMax(1, qRound(probe.metrics.cellHeight * dpr)));
+        snapshot->placements.reserve(kittyPlacementCount);
+        for (int index = 0; index < kittyPlacementCount; ++index) {
+            const int column =
+                (index % qMax(1, grid_.columns - 1)) + columnOffset;
+            const int row = (index / qMax(1, grid_.columns - 1)) % grid_.rows;
+            snapshot->placements.append({
+                .image = asset,
+                .placementId = static_cast<quint32>(index + 1),
+                .z = 1,
+                .layer = TerminalKittyGraphicsLayer::AboveText,
+                .viewportColumn = column,
+                .viewportRow = row,
+                .destinationWidthPixels = snapshot->cellWidthPixels,
+                .destinationHeightPixels = snapshot->cellHeightPixels,
+                .sourceWidth =
+                    static_cast<quint32>(asset->straightRgbPlane.width()),
+                .sourceHeight =
+                    static_cast<quint32>(asset->straightRgbPlane.height()),
+            });
+        }
+        return snapshot;
+    }
+
+    void publishKitty(
+        const std::shared_ptr<const TerminalKittyGraphicsSnapshot> &snapshot)
+    {
+        auto empty = std::make_shared<TerminalKittyGraphicsSnapshot>();
+        if (snapshot == nullptr) {
+            empty->storageGeneration = ++kittyGeneration_;
+            const TerminalPaneRenderProbeSnapshot probe =
+                terminalPaneRenderProbe(pane_);
+            const qreal dpr = window_->devicePixelRatio();
+            empty->cellWidthPixels = static_cast<quint32>(
+                qMax(1, qRound(probe.metrics.cellWidth * dpr)));
+            empty->cellHeightPixels = static_cast<quint32>(
+                qMax(1, qRound(probe.metrics.cellHeight * dpr)));
+        }
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.kittyGraphicsChanged = true;
+        update.kittyGraphics = snapshot != nullptr ? snapshot : empty;
+        update.contentRevision = ++revision_;
+        controller_->terminalUpdated(update);
+    }
+
+    bool renderUntimed(QString *error, bool validateOutput = false,
+                       const QColor &expectedColor = {})
+    {
+        FrameTiming ignored;
+        return renderFrame({}, &ignored, error, validateOutput, expectedColor);
+    }
+
+    bool renderFrame(const std::function<void()> &prepare, FrameTiming *timing,
+                     QString *error, bool validateOutput = false,
+                     const QColor &expectedColor = {})
+    {
+        QElapsedTimer totalTimer;
+        totalTimer.start();
+        QElapsedTimer updateTimer;
+        updateTimer.start();
+        if (prepare) prepare();
+        timing->cpuUpdateNanoseconds = updateTimer.nsecsElapsed();
+
+        if (renderControl_ == nullptr) {
+            const QImage image = window_->grabWindow();
+            timing->cpuTotalNanoseconds = totalTimer.nsecsElapsed();
+            if (image.isNull()) {
+                *error = QStringLiteral(
+                    "software scene-graph grab returned no image");
+                return false;
+            }
+            if (validateOutput && !containsNonBlackPixel(image)) {
+                *error = QStringLiteral(
+                    "software scene-graph validation rendered only black");
+                return false;
+            }
+            if (expectedColor.isValid()
+                && !containsColorPixel(image, expectedColor)) {
+                *error = QStringLiteral(
+                             "software scene-graph validation did not render "
+                             "expected color %1")
+                             .arg(expectedColor.name());
+                return false;
+            }
+            return true;
+        }
+
+        QRhiReadbackResult readback;
+        QElapsedTimer recordTimer;
+        recordTimer.start();
+        renderControl_->polishItems();
+        renderControl_->beginFrame();
+        renderControl_->sync();
+        renderControl_->render();
+        QRhiCommandBuffer *const commandBuffer =
+            renderControl_->commandBuffer();
+        if (commandBuffer == nullptr) {
+            renderControl_->endFrame();
+            *error = QStringLiteral(
+                "QQuickRenderControl did not provide a command buffer");
+            return false;
+        }
+        if (validateOutput) {
+            QRhiResourceUpdateBatch *const readbackBatch =
+                renderControl_->rhi()->nextResourceUpdateBatch();
+            readbackBatch->readBackTexture(colorBuffer_.get(), &readback);
+            commandBuffer->resourceUpdate(readbackBatch);
+        }
+        timing->cpuRecordNanoseconds = recordTimer.nsecsElapsed();
+
+        QElapsedTimer completionTimer;
+        completionTimer.start();
+        renderControl_->endFrame();
+        timing->cpuCompletionNanoseconds = completionTimer.nsecsElapsed();
+        timing->cpuTotalNanoseconds = *timing->cpuUpdateNanoseconds
+            + *timing->cpuRecordNanoseconds + *timing->cpuCompletionNanoseconds;
+        QRhi *const rhi = renderControl_->rhi();
+        if (rhi->isFeatureSupported(QRhi::Timestamps)) {
+            const double gpuSeconds = commandBuffer->lastCompletedGpuTime();
+            if (std::isfinite(gpuSeconds) && gpuSeconds > 0.0) {
+                timing->gpuNanoseconds = qRound64(gpuSeconds * 1'000'000'000.0);
+            }
+        }
+        if (validateOutput) {
+            if (readback.data.isEmpty() || readback.pixelSize.isEmpty()) {
+                *error = QStringLiteral(
+                    "offscreen texture validation returned no pixels");
+                return false;
+            }
+            const qsizetype expectedBytes =
+                static_cast<qsizetype>(readback.pixelSize.width())
+                * readback.pixelSize.height() * 4;
+            if (readback.data.size() < expectedBytes) {
+                *error = QStringLiteral(
+                             "offscreen texture validation returned %1 bytes; "
+                             "expected at least %2")
+                             .arg(readback.data.size())
+                             .arg(expectedBytes);
+                return false;
+            }
+            const QImage image(
+                reinterpret_cast<const uchar *>(readback.data.constData()),
+                readback.pixelSize.width(), readback.pixelSize.height(),
+                QImage::Format_RGBA8888_Premultiplied);
+            if (!containsNonBlackPixel(image)) {
+                *error = QStringLiteral(
+                    "offscreen texture validation rendered only black");
+                return false;
+            }
+            if (expectedColor.isValid()
+                && !containsColorPixel(image, expectedColor)) {
+                *error = QStringLiteral(
+                             "offscreen texture validation did not render "
+                             "expected color %1")
+                             .arg(expectedColor.name());
+                return false;
+            }
+        }
+        return true;
     }
 
     ScenarioResult measure(const QString &name, int warmupIterations,
                            int measuredIterations,
-                           quint64 expectedSolidCellVisitsPerFrame,
-                           const std::function<void()> &prepare)
+                           ProbeDelta expectedProbeDeltaPerFrame,
+                           qsizetype expectedFinalKittyTextureSetCount,
+                           const std::function<bool()> &setupIteration,
+                           const std::function<void()> &prepare,
+                           RenderDocCapture *capture, QString *error)
     {
+        const auto setup = [&] { return !setupIteration || setupIteration(); };
         for (int iteration = 0; iteration < warmupIterations; ++iteration) {
-            prepare();
-            if (!render()) return {};
+            if (!setup() || !renderFrame(prepare, nullptrTiming(), error)) {
+                return {};
+            }
         }
 
-        const TerminalPaneRenderProbeSnapshot before =
-            terminalPaneRenderProbe(pane_);
-        QVector<qint64> samples;
-        samples.reserve(measuredIterations);
-        for (int iteration = 0; iteration < measuredIterations; ++iteration) {
-            QElapsedTimer timer;
-            timer.start();
-            prepare();
-            if (!render()) return {};
-            samples.append(timer.nsecsElapsed());
+        const int frameCount = capture != nullptr ? 1 : measuredIterations;
+        QVector<qint64> cpuUpdateSamples;
+        QVector<qint64> cpuRecordSamples;
+        QVector<qint64> cpuCompletionSamples;
+        QVector<qint64> cpuTotalSamples;
+        QVector<qint64> gpuSamples;
+        cpuUpdateSamples.reserve(frameCount);
+        cpuRecordSamples.reserve(frameCount);
+        cpuCompletionSamples.reserve(frameCount);
+        cpuTotalSamples.reserve(frameCount);
+        gpuSamples.reserve(frameCount);
+        ProbeDelta accumulatedDelta;
+        qsizetype finalTextureSetCount = 0;
+        for (int iteration = 0; iteration < frameCount; ++iteration) {
+            if (!setup()) return {};
+            const TerminalPaneRenderProbeSnapshot before =
+                terminalPaneRenderProbe(pane_);
+            FrameTiming timing;
+            std::optional<RenderDocCaptureScope> captureScope;
+            if (capture != nullptr) {
+                captureScope.emplace(*capture);
+                if (!captureScope->started()) {
+                    *error =
+                        QStringLiteral("unable to start RenderDoc capture: %1")
+                            .arg(capture->errorString());
+                    return {};
+                }
+            }
+            if (!renderFrame(prepare, &timing, error)) return {};
+            if (captureScope.has_value() && !captureScope->finish()) {
+                *error =
+                    QStringLiteral("unable to finish RenderDoc capture: %1")
+                        .arg(capture->errorString());
+                return {};
+            }
+            const TerminalPaneRenderProbeSnapshot after =
+                terminalPaneRenderProbe(pane_);
+            accumulatedDelta += after - before;
+            finalTextureSetCount = after.kittyGraphicsTextureCount;
+            if (timing.cpuUpdateNanoseconds.has_value()) {
+                cpuUpdateSamples.append(*timing.cpuUpdateNanoseconds);
+            }
+            if (timing.cpuRecordNanoseconds.has_value()) {
+                cpuRecordSamples.append(*timing.cpuRecordNanoseconds);
+            }
+            if (timing.cpuCompletionNanoseconds.has_value()) {
+                cpuCompletionSamples.append(*timing.cpuCompletionNanoseconds);
+            }
+            cpuTotalSamples.append(timing.cpuTotalNanoseconds);
+            if (timing.gpuNanoseconds.has_value()) {
+                gpuSamples.append(*timing.gpuNanoseconds);
+            }
         }
-        const TerminalPaneRenderProbeSnapshot after =
-            terminalPaneRenderProbe(pane_);
-        const std::optional<quint64> beforeVisits = solidCellVisitCount(before);
-        const std::optional<quint64> afterVisits = solidCellVisitCount(after);
+
         return {
             .name = name,
-            .timing = summarize(std::move(samples)),
-            .solidCellVisits =
-                beforeVisits.has_value() && afterVisits.has_value()
-                ? std::optional<quint64>(*afterVisits - *beforeVisits)
+            .captureFrame = capture != nullptr,
+            .cpuUpdateTiming = cpuUpdateSamples.size() == frameCount
+                ? std::optional<TimingSummary>(
+                      summarize(std::move(cpuUpdateSamples)))
                 : std::nullopt,
-            .expectedSolidCellVisits = expectedSolidCellVisitsPerFrame
-                * static_cast<quint64>(measuredIterations),
+            .cpuRecordTiming = cpuRecordSamples.size() == frameCount
+                ? std::optional<TimingSummary>(
+                      summarize(std::move(cpuRecordSamples)))
+                : std::nullopt,
+            .cpuCompletionTiming = cpuCompletionSamples.size() == frameCount
+                ? std::optional<TimingSummary>(
+                      summarize(std::move(cpuCompletionSamples)))
+                : std::nullopt,
+            .cpuTotalTiming = summarize(std::move(cpuTotalSamples)),
+            .gpuTiming = gpuSamples.size() == frameCount
+                ? std::optional<TimingSummary>(summarize(gpuSamples))
+                : std::nullopt,
+            .validGpuSamples = static_cast<int>(gpuSamples.size()),
+            .probeDelta = accumulatedDelta,
+            .expectedProbeDelta =
+                expectedProbeDeltaPerFrame * static_cast<quint64>(frameCount),
+            .finalKittyTextureSetCount = finalTextureSetCount,
+            .expectedFinalKittyTextureSetCount =
+                expectedFinalKittyTextureSetCount,
+            .measuredFrames = frameCount,
         };
     }
 
+    FrameTiming *nullptrTiming()
+    {
+        warmupTiming_ = {};
+        return &warmupTiming_;
+    }
+
     GridSize grid_;
-    QQuickWindow window_;
+    GraphicsApi graphicsApi_ = GraphicsApi::Software;
+#if GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
+    std::unique_ptr<QVulkanInstance> vulkanInstance_;
+#endif
+    std::unique_ptr<QQuickRenderControl> renderControl_;
+    std::unique_ptr<QQuickWindow> window_;
+    std::unique_ptr<QRhiTexture> colorBuffer_;
+    std::unique_ptr<QRhiRenderBuffer> depthStencil_;
+    std::unique_ptr<QRhiRenderPassDescriptor> renderPassDescriptor_;
+    std::unique_ptr<QRhiTextureRenderTarget> renderTarget_;
     TerminalPane *pane_ = nullptr;
     TerminalController *controller_ = nullptr;
+    QSize logicalSize_;
     quint64 revision_ = 0;
+    quint64 searchGeneration_ = 0;
+    quint64 kittyGeneration_ = 0;
     int cursorRow_ = 0;
+    FrameTiming warmupTiming_;
 };
 
 std::optional<int> positiveInteger(const QString &value)
@@ -321,58 +1058,168 @@ std::optional<int> positiveInteger(const QString &value)
     return result;
 }
 
-int runGrid(GridSize grid, int warmupIterations, int measuredIterations,
-            QTextStream &output)
+std::optional<GraphicsApi> parseGraphicsApi(const QString &value)
 {
-    RendererBenchmark benchmark(grid);
-    if (!benchmark.initialize()) {
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == QLatin1StringView("software")) {
+        return GraphicsApi::Software;
+    }
+    if (normalized == QLatin1StringView("opengl")) {
+        return GraphicsApi::OpenGl;
+    }
+    if (normalized == QLatin1StringView("vulkan")) {
+#if GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
+        return GraphicsApi::Vulkan;
+#else
+        return std::nullopt;
+#endif
+    }
+    return std::nullopt;
+}
+
+using ScenarioFunction = ScenarioResult (RendererBenchmark::*)(
+    int, int, RenderDocCapture *, QString *);
+
+const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
+{
+    static const QVector<std::pair<QString, ScenarioFunction>> functions{
+        {QStringLiteral("metadata"), &RendererBenchmark::metadata},
+        {QStringLiteral("one-dirty-row"), &RendererBenchmark::oneDirtyRow},
+        {QStringLiteral("cursor-only"), &RendererBenchmark::cursorOnly},
+        {QStringLiteral("full-invalidation"),
+         &RendererBenchmark::fullInvalidation},
+        {QStringLiteral("search-update"), &RendererBenchmark::searchUpdate},
+        {QStringLiteral("kitty-first-upload"),
+         &RendererBenchmark::kittyFirstUpload},
+        {QStringLiteral("kitty-retained-redraw"),
+         &RendererBenchmark::kittyRetainedRedraw},
+        {QStringLiteral("kitty-movement"), &RendererBenchmark::kittyMovement},
+        {QStringLiteral("kitty-replacement"),
+         &RendererBenchmark::kittyReplacement},
+        {QStringLiteral("kitty-eviction"), &RendererBenchmark::kittyEviction},
+    };
+    return functions;
+}
+
+void printSummary(QTextStream &output, QStringView prefix,
+                  const std::optional<TimingSummary> &summary)
+{
+    output << ' ' << prefix << "_median_us=";
+    if (!summary.has_value()) {
+        output << "unavailable";
+        return;
+    }
+    output << QString::number(summary->medianMicroseconds, 'f', 1) << ' '
+           << prefix << "_p90_us="
+           << QString::number(summary->percentile90Microseconds, 'f', 1) << ' '
+           << prefix
+           << "_mean_us=" << QString::number(summary->meanMicroseconds, 'f', 1)
+           << ' ' << prefix << "_min_us="
+           << QString::number(summary->minimumMicroseconds, 'f', 1);
+}
+
+bool printResult(GridSize grid, const ScenarioResult &result,
+                 QTextStream &output)
+{
+    output << grid.columns << 'x' << grid.rows << ' ' << result.name;
+    if (result.captureFrame) {
+        output << " capture_frame=true";
+    } else {
+        printSummary(output, u"cpu_update", result.cpuUpdateTiming);
+        printSummary(output, u"cpu_record", result.cpuRecordTiming);
+        printSummary(output, u"cpu_completion", result.cpuCompletionTiming);
+        printSummary(output, u"cpu_total", result.cpuTotalTiming);
+        printSummary(output, u"gpu", result.gpuTiming);
+        output << " gpu_valid_samples=" << result.validGpuSamples << '/'
+               << result.measuredFrames;
+    }
+    output << " measured_frames=" << result.measuredFrames
+           << " paints=" << result.probeDelta.paintSerial
+           << " solid_cell_visits=" << result.probeDelta.solidCellVisits
+           << " solid_cell_visits_per_frame="
+           << QString::number(
+                  static_cast<double>(result.probeDelta.solidCellVisits)
+                      / static_cast<double>(result.measuredFrames),
+                  'f', 1)
+           << " expected_solid_cell_visits="
+           << result.expectedProbeDelta.solidCellVisits
+           << " kitty_texture_uploads=" << result.probeDelta.kittyTextureUploads
+           << " kitty_node_creations=" << result.probeDelta.kittyNodeCreations
+           << " kitty_node_deletions=" << result.probeDelta.kittyNodeDeletions
+           << " kitty_geometry_writes=" << result.probeDelta.kittyGeometryWrites
+           << " kitty_material_assignments="
+           << result.probeDelta.kittyMaterialAssignments
+           << " kitty_texture_set_evictions="
+           << result.probeDelta.kittyTextureSetEvictions
+           << " kitty_texture_set_count_delta="
+           << result.probeDelta.kittyTextureSetCount
+           << " kitty_texture_set_count_final="
+           << result.finalKittyTextureSetCount << '\n';
+
+    bool valid = true;
+    const auto requireEqual = [&](auto actual, auto expected,
+                                  QStringView field) {
+        if (actual == expected) return;
+        output << "unexpected " << field << " for " << result.name
+               << ": actual=" << actual << " expected=" << expected << '\n';
+        valid = false;
+    };
+    requireEqual(result.probeDelta.paintSerial,
+                 result.expectedProbeDelta.paintSerial, u"paint count");
+    requireEqual(result.probeDelta.solidCellVisits,
+                 result.expectedProbeDelta.solidCellVisits,
+                 u"solid-cell visit count");
+    requireEqual(result.probeDelta.kittyTextureUploads,
+                 result.expectedProbeDelta.kittyTextureUploads,
+                 u"Kitty texture upload count");
+    requireEqual(result.probeDelta.kittyNodeCreations,
+                 result.expectedProbeDelta.kittyNodeCreations,
+                 u"Kitty node creation count");
+    requireEqual(result.probeDelta.kittyNodeDeletions,
+                 result.expectedProbeDelta.kittyNodeDeletions,
+                 u"Kitty node deletion count");
+    requireEqual(result.probeDelta.kittyGeometryWrites,
+                 result.expectedProbeDelta.kittyGeometryWrites,
+                 u"Kitty geometry write count");
+    requireEqual(result.probeDelta.kittyMaterialAssignments,
+                 result.expectedProbeDelta.kittyMaterialAssignments,
+                 u"Kitty material assignment count");
+    requireEqual(result.probeDelta.kittyTextureSetEvictions,
+                 result.expectedProbeDelta.kittyTextureSetEvictions,
+                 u"Kitty texture-set eviction count");
+    requireEqual(result.probeDelta.kittyTextureSetCount,
+                 result.expectedProbeDelta.kittyTextureSetCount,
+                 u"Kitty texture-set count delta");
+    requireEqual(result.finalKittyTextureSetCount,
+                 result.expectedFinalKittyTextureSetCount,
+                 u"final Kitty texture-set count");
+    return valid;
+}
+
+int runGrid(GridSize grid, GraphicsApi graphicsApi, int warmupIterations,
+            int measuredIterations, const QString &captureScenario,
+            RenderDocCapture *capture, QTextStream &output)
+{
+    QString error;
+    RendererBenchmark benchmark(grid, graphicsApi, capture != nullptr);
+    if (!benchmark.initialize(&error)) {
         output << "failed to initialize " << grid.columns << 'x' << grid.rows
-               << '\n';
+               << ": " << error << '\n';
         return 1;
     }
+    output << "grid=" << grid.columns << 'x' << grid.rows
+           << " rhi_backend=" << benchmark.rhiBackendName() << '\n';
 
-    const QVector<ScenarioResult> results{
-        benchmark.metadata(warmupIterations, measuredIterations),
-        benchmark.oneDirtyRow(warmupIterations, measuredIterations),
-        benchmark.blockCursorMove(warmupIterations, measuredIterations),
-        benchmark.fullInvalidation(warmupIterations, measuredIterations),
-    };
-    for (const ScenarioResult &result : results) {
+    for (const auto &[name, function] : scenarioFunctions()) {
+        if (!captureScenario.isEmpty() && name != captureScenario) continue;
+        const ScenarioResult result = (benchmark.*function)(
+            warmupIterations, measuredIterations, capture, &error);
         if (result.name.isEmpty()) {
             output << "failed to render " << grid.columns << 'x' << grid.rows
-                   << '\n';
+                   << ' ' << name << ": " << error << '\n';
             return 1;
         }
-        output << grid.columns << 'x' << grid.rows << ' ' << result.name
-               << " median_us="
-               << QString::number(result.timing.medianMicroseconds, 'f', 1)
-               << " p90_us="
-               << QString::number(result.timing.percentile90Microseconds, 'f',
-                                  1)
-               << " mean_us="
-               << QString::number(result.timing.meanMicroseconds, 'f', 1)
-               << " min_us="
-               << QString::number(result.timing.minimumMicroseconds, 'f', 1)
-               << " solid_cell_visits_per_frame=";
-        if (result.solidCellVisits.has_value()) {
-            const double visitsPerFrame =
-                static_cast<double>(*result.solidCellVisits)
-                / static_cast<double>(measuredIterations);
-            output << QString::number(visitsPerFrame, 'f', 1) << " expected="
-                   << QString::number(
-                          static_cast<double>(result.expectedSolidCellVisits)
-                              / static_cast<double>(measuredIterations),
-                          'f', 1);
-        } else {
-            output << "unavailable";
-        }
-        output << '\n';
-        if (result.solidCellVisits.has_value()
-            && *result.solidCellVisits != result.expectedSolidCellVisits) {
-            output << "unexpected solid-cell visit count for " << result.name
-                   << '\n';
-            return 2;
-        }
+        if (!printResult(grid, result, output)) return 2;
     }
     return 0;
 }
@@ -381,9 +1228,10 @@ int runGrid(GridSize grid, int warmupIterations, int measuredIterations,
 
 int main(int argc, char *argv[])
 {
-    qputenv("QT_QPA_PLATFORM", "offscreen");
-    qputenv("QT_QUICK_BACKEND", "software");
-    qputenv("QT_SCALE_FACTOR", "1");
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) {
+        qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    }
+    qputenv("QT_SCALE_FACTOR", QByteArrayLiteral("1"));
     QStandardPaths::setTestModeEnabled(true);
 
     QGuiApplication application(argc, argv);
@@ -394,6 +1242,10 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(
         QStringLiteral("Warmed ghostty-qt incremental-render benchmark"));
     parser.addHelpOption();
+    const QCommandLineOption graphicsApiOption(
+        QStringLiteral("graphics-api"),
+        QStringLiteral("Scene-graph backend: software, opengl, or vulkan."),
+        QStringLiteral("api"), QStringLiteral("software"));
     const QCommandLineOption warmupOption(
         QStringList{QStringLiteral("w"), QStringLiteral("warmup")},
         QStringLiteral("Warmup frames per scenario."), QStringLiteral("count"),
@@ -402,8 +1254,19 @@ int main(int argc, char *argv[])
         QStringList{QStringLiteral("n"), QStringLiteral("iterations")},
         QStringLiteral("Measured frames per scenario."),
         QStringLiteral("count"), QStringLiteral("30"));
+    const QCommandLineOption renderDocCaptureOption(
+        QStringLiteral("renderdoc-capture"),
+        QStringLiteral("Capture one named scenario after warmup."),
+        QStringLiteral("scenario"));
+    const QCommandLineOption renderDocCapturePathOption(
+        QStringLiteral("renderdoc-capture-path"),
+        QStringLiteral("UTF-8 RenderDoc capture filename template."),
+        QStringLiteral("path"));
+    parser.addOption(graphicsApiOption);
     parser.addOption(warmupOption);
     parser.addOption(iterationsOption);
+    parser.addOption(renderDocCaptureOption);
+    parser.addOption(renderDocCapturePathOption);
     parser.process(application);
 
     const std::optional<int> warmup =
@@ -415,17 +1278,92 @@ int main(int argc, char *argv[])
             << "--warmup and --iterations must be positive integers\n";
         return 2;
     }
+    const std::optional<GraphicsApi> graphicsApi =
+        parseGraphicsApi(parser.value(graphicsApiOption));
+    if (!graphicsApi.has_value()) {
+        QTextStream(stderr)
+            << "graphics-api must be software, opengl, or a supported vulkan "
+               "build\n";
+        return 2;
+    }
+    switch (*graphicsApi) {
+    case GraphicsApi::Software:
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+        break;
+    case GraphicsApi::OpenGl:
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+        break;
+    case GraphicsApi::Vulkan:
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        break;
+    }
+
+    const QString captureScenario =
+        parser.value(renderDocCaptureOption).trimmed();
+    if (!captureScenario.isEmpty()) {
+        const auto found = std::ranges::find_if(
+            scenarioFunctions(), [&captureScenario](const auto &entry) {
+                return entry.first == captureScenario;
+            });
+        if (found == scenarioFunctions().cend()) {
+            QTextStream(stderr)
+                << "unknown RenderDoc scenario " << captureScenario << '\n';
+            return 2;
+        }
+        if (*graphicsApi == GraphicsApi::Software) {
+            QTextStream(stderr)
+                << "RenderDoc capture requires opengl or vulkan\n";
+            return 2;
+        }
+    } else if (parser.isSet(renderDocCapturePathOption)) {
+        QTextStream(stderr)
+            << "renderdoc-capture-path requires renderdoc-capture\n";
+        return 2;
+    }
+
+    std::unique_ptr<RenderDocCapture> capture;
+    if (!captureScenario.isEmpty()) {
+        capture = std::make_unique<RenderDocCapture>();
+        if (!capture->isAvailable()) {
+            QTextStream(stderr) << "unable to initialize RenderDoc capture: "
+                                << capture->errorString() << '\n';
+            return 4;
+        }
+        if (parser.isSet(renderDocCapturePathOption)
+            && !capture->setCapturePathTemplate(
+                parser.value(renderDocCapturePathOption).toUtf8())) {
+            QTextStream(stderr) << "unable to configure RenderDoc capture: "
+                                << capture->errorString() << '\n';
+            return 4;
+        }
+    }
 
     QTextStream output(stdout);
-    output << "backend=software warmup=" << *warmup
-           << " iterations=" << *iterations << '\n';
-    const QVector<GridSize> grids{
-        {.columns = 120, .rows = 40},
-        {.columns = 240, .rows = 80},
-    };
+    output << "backend=" << graphicsApiName(*graphicsApi)
+           << " platform=" << QGuiApplication::platformName()
+           << " warmup=" << *warmup
+           << " iterations=" << (capture != nullptr ? 1 : *iterations)
+           << " kitty_placements=" << kittyPlacementCount;
+    if (capture != nullptr) {
+        output << " renderdoc_capture=" << captureScenario
+               << " renderdoc_api=" << capture->apiVersion()
+               << " requested_iterations=" << *iterations;
+    }
+    output << '\n';
+
+    const QVector<GridSize> grids = capture != nullptr
+        ? QVector<GridSize>{{.columns = 120, .rows = 40}}
+        : QVector<GridSize>{
+              {.columns = 120, .rows = 40},
+              {.columns = 240, .rows = 80},
+          };
     for (const GridSize grid : grids) {
-        const int result = runGrid(grid, *warmup, *iterations, output);
+        const int result = runGrid(grid, *graphicsApi, *warmup, *iterations,
+                                   captureScenario, capture.get(), output);
         if (result != 0) return result;
+    }
+    if (capture != nullptr) {
+        output << "renderdoc_capture_complete=" << captureScenario << '\n';
     }
     return 0;
 }

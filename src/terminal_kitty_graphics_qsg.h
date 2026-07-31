@@ -45,6 +45,13 @@ public:
     [[nodiscard]] const QVector<TerminalKittyGraphicsRenderPlacement> &
     renderedPlacements() const noexcept;
     [[nodiscard]] quint64 textureUploadCount() const noexcept;
+    // The following five counts are cumulative scene-lifetime churn telemetry;
+    // clear() intentionally leaves them intact.
+    [[nodiscard]] quint64 nodeCreationCount() const noexcept;
+    [[nodiscard]] quint64 nodeDeletionCount() const noexcept;
+    [[nodiscard]] quint64 geometryWriteCount() const noexcept;
+    [[nodiscard]] quint64 materialAssignmentCount() const noexcept;
+    [[nodiscard]] quint64 textureSetEvictionCount() const noexcept;
     [[nodiscard]] qsizetype textureCount() const noexcept;
 
 private:

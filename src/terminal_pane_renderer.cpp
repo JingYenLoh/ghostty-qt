@@ -1374,6 +1374,16 @@ void publishRenderProbe(
     snapshot.backgroundImageSourceRect = root.backdrop->sourceRect();
     snapshot.kittyGraphicsTextureUploadCount =
         root.kittyGraphics.textureUploadCount();
+    snapshot.kittyGraphicsNodeCreationCount =
+        root.kittyGraphics.nodeCreationCount();
+    snapshot.kittyGraphicsNodeDeletionCount =
+        root.kittyGraphics.nodeDeletionCount();
+    snapshot.kittyGraphicsGeometryWriteCount =
+        root.kittyGraphics.geometryWriteCount();
+    snapshot.kittyGraphicsMaterialAssignmentCount =
+        root.kittyGraphics.materialAssignmentCount();
+    snapshot.kittyGraphicsTextureSetEvictionCount =
+        root.kittyGraphics.textureSetEvictionCount();
     snapshot.kittyGraphicsTextureCount = root.kittyGraphics.textureCount();
     snapshot.kittyGraphicsDestinations.clear();
     snapshot.kittyGraphicsSources.clear();
