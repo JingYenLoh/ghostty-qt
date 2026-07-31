@@ -42,6 +42,7 @@ namespace {
 
 constexpr int kittyPlacementCount = 512;
 constexpr quint64 kittyTextureLogicalBytes = 64ULL * 64ULL * 4ULL;
+constexpr quint32 discretionaryLigaturesTag = 0x646c6967U;
 
 struct GridSize {
     int columns = 0;
@@ -82,6 +83,9 @@ struct FrameTiming {
 struct ProbeDelta {
     quint64 paintSerial = 0;
     quint64 solidCellVisits = 0;
+    quint64 textRowBuilds = 0;
+    quint64 textLayouts = 0;
+    quint64 textFallbackCells = 0;
     quint64 kittyTextureUploads = 0;
     quint64 kittyNodeCreations = 0;
     quint64 kittyNodeDeletions = 0;
@@ -94,6 +98,9 @@ struct ProbeDelta {
     {
         paintSerial += other.paintSerial;
         solidCellVisits += other.solidCellVisits;
+        textRowBuilds += other.textRowBuilds;
+        textLayouts += other.textLayouts;
+        textFallbackCells += other.textFallbackCells;
         kittyTextureUploads += other.kittyTextureUploads;
         kittyNodeCreations += other.kittyNodeCreations;
         kittyNodeDeletions += other.kittyNodeDeletions;
@@ -126,7 +133,7 @@ struct ScenarioResult {
 ProbeDelta operator-(const TerminalPaneRenderProbeSnapshot &after,
                      const TerminalPaneRenderProbeSnapshot &before)
 {
-    return {
+    ProbeDelta result{
         .paintSerial = after.paintSerial - before.paintSerial,
         .solidCellVisits =
             after.solidCellVisitCount - before.solidCellVisitCount,
@@ -146,12 +153,33 @@ ProbeDelta operator-(const TerminalPaneRenderProbeSnapshot &after,
             static_cast<qint64>(after.kittyGraphicsTextureCount)
             - static_cast<qint64>(before.kittyGraphicsTextureCount),
     };
+    for (qsizetype row = 0; row < after.rowBuildCounts.size(); ++row) {
+        const quint64 beforeBuilds = row < before.rowBuildCounts.size()
+            ? before.rowBuildCounts.at(row)
+            : 0;
+        const quint64 afterBuilds = after.rowBuildCounts.at(row);
+        if (afterBuilds <= beforeBuilds) continue;
+
+        const quint64 builds = afterBuilds - beforeBuilds;
+        result.textRowBuilds += builds;
+        if (row < after.rowLayoutCounts.size()) {
+            result.textLayouts += builds * after.rowLayoutCounts.at(row);
+        }
+        if (row < after.rowFallbackCellCounts.size()) {
+            result.textFallbackCells +=
+                builds * after.rowFallbackCellCounts.at(row);
+        }
+    }
+    return result;
 }
 
 ProbeDelta operator*(ProbeDelta delta, quint64 count)
 {
     delta.paintSerial *= count;
     delta.solidCellVisits *= count;
+    delta.textRowBuilds *= count;
+    delta.textLayouts *= count;
+    delta.textFallbackCells *= count;
     delta.kittyTextureUploads *= count;
     delta.kittyNodeCreations *= count;
     delta.kittyNodeDeletions *= count;
@@ -167,6 +195,36 @@ void useSystemFixedFont(LaunchOptions &options)
     options.typography.face(TerminalFontRole::Regular).families = {
         QFontDatabase::systemFont(QFontDatabase::FixedFont).family(),
     };
+}
+
+bool useLigatureBenchmarkFont(LaunchOptions &options, QString *error)
+{
+    const QString path =
+        QFINDTESTDATA("../ghostty/src/font/res/Inconsolata-Regular.ttf");
+    if (path.isEmpty()) {
+        *error =
+            QStringLiteral("pinned Inconsolata benchmark font was not found");
+        return false;
+    }
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    if (fontId < 0) {
+        *error =
+            QStringLiteral("unable to load pinned Inconsolata benchmark font");
+        return false;
+    }
+    const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+    if (families.isEmpty()) {
+        *error =
+            QStringLiteral("pinned Inconsolata benchmark font has no family");
+        return false;
+    }
+    options.typography.face(TerminalFontRole::Regular).families = {
+        families.constFirst(),
+    };
+    options.typography.features = {
+        {.tag = discretionaryLigaturesTag, .value = 1},
+    };
+    return true;
 }
 
 bool waitUntil(const std::function<bool()> &condition, int timeoutMilliseconds)
@@ -253,7 +311,9 @@ public:
         options.workingDirectory = QDir::currentPath();
         options.program = {QStringLiteral("/bin/true")};
         options.hold = true;
-        useSystemFixedFont(options);
+        if (!useLigatureBenchmarkFont(options, &fontError_)) {
+            useSystemFixedFont(options);
+        }
         options.appearance.foregroundColor = Qt::white;
         options.appearance.backgroundColor = Qt::black;
         options.appearance.cursorColor =
@@ -299,6 +359,10 @@ public:
 
     bool initialize(QString *error)
     {
+        if (!fontError_.isEmpty()) {
+            *error = fontError_;
+            return false;
+        }
         if (controller_ == nullptr) {
             *error = QStringLiteral("terminal controller was not created");
             return false;
@@ -389,6 +453,48 @@ public:
                 controller_->terminalUpdated(update);
             },
             capture, error);
+    }
+
+    ScenarioResult textAsciiDirtyRow(int warmupIterations,
+                                     int measuredIterations,
+                                     RenderDocCapture *capture, QString *error)
+    {
+        return textShapingScenario(QStringLiteral("text-ascii-dirty-row"),
+                                   u"ab+cd=ef+gh-", u"ij-kl+mn=op+", false,
+                                   warmupIterations, measuredIterations,
+                                   capture, error);
+    }
+
+    ScenarioResult textLigatureDirtyRow(int warmupIterations,
+                                        int measuredIterations,
+                                        RenderDocCapture *capture,
+                                        QString *error)
+    {
+        return textShapingScenario(QStringLiteral("text-ligature-dirty-row"),
+                                   u"ab>=cd===ef=", u"ij===kl>=mn=", false,
+                                   warmupIterations, measuredIterations,
+                                   capture, error);
+    }
+
+    ScenarioResult textAsciiFullFrame(int warmupIterations,
+                                      int measuredIterations,
+                                      RenderDocCapture *capture, QString *error)
+    {
+        return textShapingScenario(QStringLiteral("text-ascii-full-frame"),
+                                   u"ab+cd=ef+gh-", u"ij-kl+mn=op+", true,
+                                   warmupIterations, measuredIterations,
+                                   capture, error);
+    }
+
+    ScenarioResult textLigatureFullFrame(int warmupIterations,
+                                         int measuredIterations,
+                                         RenderDocCapture *capture,
+                                         QString *error)
+    {
+        return textShapingScenario(QStringLiteral("text-ligature-full-frame"),
+                                   u"ab>=cd===ef=", u"ij===kl>=mn=", true,
+                                   warmupIterations, measuredIterations,
+                                   capture, error);
     }
 
     ScenarioResult cursorOnly(int warmupIterations, int measuredIterations,
@@ -638,6 +744,37 @@ public:
     }
 
 private:
+    ScenarioResult
+    textShapingScenario(const QString &name, QStringView firstPattern,
+                        QStringView secondPattern, bool fullFrame,
+                        int warmupIterations, int measuredIterations,
+                        RenderDocCapture *capture, QString *error)
+    {
+        Q_ASSERT(firstPattern.size() == secondPattern.size());
+        bool alternate = false;
+        const quint64 rebuiltRows =
+            static_cast<quint64>(fullFrame ? grid_.rows : 1);
+        return measure(
+            name, warmupIterations, measuredIterations,
+            {.paintSerial = 1,
+             .solidCellVisits =
+                 static_cast<quint64>(grid_.columns) * rebuiltRows,
+             .textRowBuilds = rebuiltRows,
+             .textLayouts = rebuiltRows},
+            0, 0, {},
+            [this, firstPattern, secondPattern, fullFrame, &alternate] {
+                alternate = !alternate;
+                const QStringView pattern =
+                    alternate ? secondPattern : firstPattern;
+                if (fullFrame) {
+                    publishTextFrame(pattern);
+                } else {
+                    publishTextRow(pattern);
+                }
+            },
+            capture, error);
+    }
+
     bool initializeRhi(QString *error)
     {
 #if GHOSTTY_QT_PANE_BENCH_HAS_VULKAN
@@ -737,6 +874,25 @@ private:
         return update;
     }
 
+    TerminalRowUpdate makeTextRow(int row, QStringView pattern) const
+    {
+        Q_ASSERT(!pattern.isEmpty());
+        TerminalRowUpdate update;
+        update.row = row;
+        update.cells.reserve(grid_.columns);
+        for (int column = 0; column < grid_.columns; ++column) {
+            const QChar character = pattern.at(column % pattern.size());
+            TerminalCell cell;
+            cell.text = QString(character);
+            cell.baseCodepoint = character.unicode();
+            cell.plainCodepoint = true;
+            cell.foreground = QColor(QStringLiteral("#d8dee9"));
+            cell.background = Qt::black;
+            update.cells.append(std::move(cell));
+        }
+        return update;
+    }
+
     void publishFullFrame(bool alternate)
     {
         TerminalUpdate update;
@@ -756,6 +912,34 @@ private:
         for (int row = 0; row < grid_.rows; ++row) {
             update.dirtyRows.append(
                 makeRow(row, row % 2 == 0 ? first : second));
+        }
+        controller_->terminalUpdated(update);
+    }
+
+    void publishTextRow(QStringView pattern)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.dirtyRows.append(makeTextRow(grid_.rows / 2, pattern));
+        update.contentRevision = ++revision_;
+        controller_->terminalUpdated(update);
+    }
+
+    void publishTextFrame(QStringView pattern)
+    {
+        TerminalUpdate update;
+        update.columns = grid_.columns;
+        update.rows = grid_.rows;
+        update.fullFrame = true;
+        update.foreground = QColor(QStringLiteral("#d8dee9"));
+        update.background = Qt::black;
+        update.cursorColor = QColor(QStringLiteral("#f0f0f0"));
+        update.cursorColorExplicit = true;
+        update.contentRevision = ++revision_;
+        update.dirtyRows.reserve(grid_.rows);
+        for (int row = 0; row < grid_.rows; ++row) {
+            update.dirtyRows.append(makeTextRow(row, pattern));
         }
         controller_->terminalUpdated(update);
     }
@@ -1125,6 +1309,7 @@ private:
     TerminalPane *pane_ = nullptr;
     TerminalController *controller_ = nullptr;
     QSize logicalSize_;
+    QString fontError_;
     quint64 revision_ = 0;
     quint64 searchGeneration_ = 0;
     quint64 kittyGeneration_ = 0;
@@ -1167,6 +1352,14 @@ const QVector<std::pair<QString, ScenarioFunction>> &scenarioFunctions()
     static const QVector<std::pair<QString, ScenarioFunction>> functions{
         {QStringLiteral("metadata"), &RendererBenchmark::metadata},
         {QStringLiteral("one-dirty-row"), &RendererBenchmark::oneDirtyRow},
+        {QStringLiteral("text-ascii-dirty-row"),
+         &RendererBenchmark::textAsciiDirtyRow},
+        {QStringLiteral("text-ligature-dirty-row"),
+         &RendererBenchmark::textLigatureDirtyRow},
+        {QStringLiteral("text-ascii-full-frame"),
+         &RendererBenchmark::textAsciiFullFrame},
+        {QStringLiteral("text-ligature-full-frame"),
+         &RendererBenchmark::textLigatureFullFrame},
         {QStringLiteral("cursor-only"), &RendererBenchmark::cursorOnly},
         {QStringLiteral("full-invalidation"),
          &RendererBenchmark::fullInvalidation},
@@ -1231,6 +1424,20 @@ bool printResult(GridSize grid, const ScenarioResult &result,
                   'f', 1)
            << " expected_solid_cell_visits="
            << result.expectedProbeDelta.solidCellVisits
+           << " text_row_builds=" << result.probeDelta.textRowBuilds
+           << " expected_text_row_builds="
+           << result.expectedProbeDelta.textRowBuilds
+           << " text_layouts=" << result.probeDelta.textLayouts
+           << " text_layouts_per_frame="
+           << QString::number(static_cast<double>(result.probeDelta.textLayouts)
+                                  / static_cast<double>(result.measuredFrames),
+                              'f', 1)
+           << " text_fallback_cells=" << result.probeDelta.textFallbackCells
+           << " text_fallback_cells_per_frame="
+           << QString::number(
+                  static_cast<double>(result.probeDelta.textFallbackCells)
+                      / static_cast<double>(result.measuredFrames),
+                  'f', 1)
            << " kitty_texture_uploads=" << result.probeDelta.kittyTextureUploads
            << " kitty_node_creations=" << result.probeDelta.kittyNodeCreations
            << " kitty_node_deletions=" << result.probeDelta.kittyNodeDeletions
@@ -1259,6 +1466,17 @@ bool printResult(GridSize grid, const ScenarioResult &result,
     requireEqual(result.probeDelta.solidCellVisits,
                  result.expectedProbeDelta.solidCellVisits,
                  u"solid-cell visit count");
+    if (result.expectedProbeDelta.textRowBuilds > 0) {
+        requireEqual(result.probeDelta.textRowBuilds,
+                     result.expectedProbeDelta.textRowBuilds,
+                     u"text-row build count");
+        requireEqual(result.probeDelta.textLayouts,
+                     result.expectedProbeDelta.textLayouts,
+                     u"text layout count");
+        requireEqual(result.probeDelta.textFallbackCells,
+                     result.expectedProbeDelta.textFallbackCells,
+                     u"text fallback-cell count");
+    }
     requireEqual(result.probeDelta.kittyTextureUploads,
                  result.expectedProbeDelta.kittyTextureUploads,
                  u"Kitty texture upload count");

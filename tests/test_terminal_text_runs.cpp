@@ -1,7 +1,13 @@
+#include "terminal_text_grid_fit.h"
 #include "terminal_text_runs.h"
 
+#include <QFontDatabase>
+#include <QGlyphRun>
 #include <QTest>
+#include <QTextLayout>
+#include <QTextOption>
 
+#include <algorithm>
 #include <initializer_list>
 #include <span>
 
@@ -34,6 +40,29 @@ plan(std::initializer_list<TerminalTextCell> cells,
         breakAtCursor);
 }
 
+struct ShapingMetadata {
+    qsizetype glyphCount = 0;
+    QVector<int> clusterStarts;
+};
+
+ShapingMetadata shapingMetadata(const QTextLine &line)
+{
+    ShapingMetadata result;
+    const QList<QGlyphRun> glyphRuns = line.glyphRuns(
+        -1, -1,
+        QTextLayout::RetrieveGlyphIndexes | QTextLayout::RetrieveStringIndexes);
+    for (const QGlyphRun &glyphRun : glyphRuns) {
+        result.glyphCount += glyphRun.glyphIndexes().size();
+        for (const qsizetype index : glyphRun.stringIndexes()) {
+            result.clusterStarts.append(static_cast<int>(index));
+        }
+    }
+    std::ranges::sort(result.clusterStarts);
+    const auto uniqueEnd = std::ranges::unique(result.clusterStarts).begin();
+    result.clusterStarts.erase(uniqueEnd, result.clusterStarts.end());
+    return result;
+}
+
 } // namespace
 
 class TerminalTextRunsTest : public QObject {
@@ -48,6 +77,10 @@ private Q_SLOTS:
     void blocksDefensiveLigaturesOnlyForPlainCodepoints();
     void isolatesCursorCellsWithoutExtraGraphemesWhenEnabled();
     void excludesBackgroundFromTheStyleKey();
+    void acceptsExactGridFit();
+    void acceptsInternalLigatureClusterDrift();
+    void rejectsExposedLigatureClusterDrift();
+    void rejectsMalformedBoundaryMap();
 };
 
 void TerminalTextRunsTest::combinesCompatibleCells()
@@ -157,6 +190,14 @@ void TerminalTextRunsTest::blocksDefensiveLigaturesOnlyForPlainCodepoints()
         plan({grapheme, cell(QStringLiteral("i"), 1)});
     QCOMPARE(graphemeRuns.size(), 1);
     QCOMPARE(graphemeRuns.front().text, QStringLiteral("fi"));
+
+    const QVector<TerminalTextRun> programmingRuns =
+        plan({cell(QStringLiteral("!"), 0), cell(QStringLiteral("="), 1),
+              cell(QStringLiteral(">"), 2), cell(QStringLiteral("="), 3),
+              cell(QStringLiteral("="), 4), cell(QStringLiteral("-"), 5),
+              cell(QStringLiteral(">"), 6)});
+    QCOMPARE(programmingRuns.size(), 1);
+    QCOMPARE(programmingRuns.front().text, QStringLiteral("!=>==->"));
 }
 
 void TerminalTextRunsTest::
@@ -206,6 +247,171 @@ void TerminalTextRunsTest::excludesBackgroundFromTheStyleKey()
     right.backgroundExplicit = true;
 
     QCOMPARE(terminalShapingStyle(left), terminalShapingStyle(right));
+}
+
+void TerminalTextRunsTest::acceptsExactGridFit()
+{
+    TerminalTextRun run{
+        .text = QStringLiteral("abc"),
+        .columnSpan = 3,
+        .boundaries =
+            {
+                {.textPosition = 1, .column = 1},
+                {.textPosition = 2, .column = 2},
+                {.textPosition = 3, .column = 3},
+            },
+    };
+    run.font = cell(QStringLiteral("a"), 0).font;
+    run.font.setPixelSize(40);
+
+    QTextLayout layout(run.text, run.font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::NoWrap);
+    option.setTextDirection(Qt::LeftToRight);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    QVERIFY(line.isValid());
+    line.setLineWidth(1'000.0);
+    layout.endLayout();
+
+    const qreal totalAdvance = line.cursorToX(run.text.size());
+    QVERIFY(totalAdvance > 0.0);
+    QCOMPARE(terminalTextGridFit(line, run, totalAdvance / 3.0, 1.0),
+             TerminalTextGridFit::Exact);
+}
+
+void TerminalTextRunsTest::acceptsInternalLigatureClusterDrift()
+{
+    const QString path =
+        QFINDTESTDATA("../ghostty/src/font/res/Inconsolata-Regular.ttf");
+    QVERIFY2(!path.isEmpty(), "Bundled ligature test font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    const QString family =
+        QFontDatabase::applicationFontFamilies(fontId).value(0);
+    QVERIFY(!family.isEmpty());
+
+    QFont font(family);
+    font.setPixelSize(40);
+    font.setFixedPitch(true);
+    font.setFeature(QFont::Tag("dlig"), 1);
+    TerminalTextRun run{
+        .text = QStringLiteral(">="),
+        .font = font,
+        .columnSpan = 4,
+        .boundaries =
+            {
+                {.textPosition = 1, .column = 1},
+                {.textPosition = 2, .column = 4},
+            },
+    };
+
+    QTextLayout layout(run.text, run.font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::NoWrap);
+    option.setTextDirection(Qt::LeftToRight);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    QVERIFY(line.isValid());
+    line.setLineWidth(1'000.0);
+    layout.endLayout();
+
+    const qreal totalAdvance = line.cursorToX(run.text.size());
+    QVERIFY(totalAdvance > 0.0);
+    const ShapingMetadata enabled = shapingMetadata(line);
+    QCOMPARE(enabled.glyphCount, qsizetype{1});
+    QCOMPARE(enabled.clusterStarts, QVector<int>({0}));
+    QCOMPARE(terminalTextGridFit(line, run, totalAdvance / 4.0, 1.0),
+             TerminalTextGridFit::ShapedClusters);
+    QCOMPARE(terminalTextGridFit(line, run, totalAdvance / 4.0, 1.25),
+             TerminalTextGridFit::ShapedClusters);
+
+    QFont disabledFont = font;
+    disabledFont.setFeature(QFont::Tag("dlig"), 0);
+    QTextLayout disabledLayout(run.text, disabledFont);
+    disabledLayout.setTextOption(option);
+    disabledLayout.beginLayout();
+    QTextLine disabledLine = disabledLayout.createLine();
+    QVERIFY(disabledLine.isValid());
+    disabledLine.setLineWidth(1'000.0);
+    disabledLayout.endLayout();
+    const ShapingMetadata disabled = shapingMetadata(disabledLine);
+    QCOMPARE(disabled.glyphCount, qsizetype{2});
+    QCOMPARE(disabled.clusterStarts, QVector<int>({0, 1}));
+    const qreal disabledAdvance = disabledLine.cursorToX(run.text.size());
+    QCOMPARE(terminalTextGridFit(disabledLine, run, disabledAdvance / 4.0, 1.0),
+             TerminalTextGridFit::Rejected);
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+}
+
+void TerminalTextRunsTest::rejectsExposedLigatureClusterDrift()
+{
+    const QString path =
+        QFINDTESTDATA("../ghostty/src/font/res/Inconsolata-Regular.ttf");
+    QVERIFY2(!path.isEmpty(), "Bundled ligature test font was not found");
+    const int fontId = QFontDatabase::addApplicationFont(path);
+    QVERIFY(fontId >= 0);
+    const QString family =
+        QFontDatabase::applicationFontFamilies(fontId).value(0);
+    QVERIFY(!family.isEmpty());
+
+    QFont font(family);
+    font.setPixelSize(40);
+    font.setFixedPitch(true);
+    font.setFeature(QFont::Tag("dlig"), 1);
+    TerminalTextRun run{
+        .text = QStringLiteral(">=x"),
+        .font = font,
+        .columnSpan = 6,
+        .boundaries =
+            {
+                {.textPosition = 1, .column = 1},
+                {.textPosition = 2, .column = 5},
+                {.textPosition = 3, .column = 6},
+            },
+    };
+
+    QTextLayout layout(run.text, run.font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::NoWrap);
+    option.setTextDirection(Qt::LeftToRight);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QTextLine line = layout.createLine();
+    QVERIFY(line.isValid());
+    line.setLineWidth(1'000.0);
+    layout.endLayout();
+
+    const qreal totalAdvance = line.cursorToX(run.text.size());
+    QVERIFY(totalAdvance > 0.0);
+    QCOMPARE(terminalTextGridFit(line, run, totalAdvance / 6.0, 1.0),
+             TerminalTextGridFit::Rejected);
+    QVERIFY(QFontDatabase::removeApplicationFont(fontId));
+}
+
+void TerminalTextRunsTest::rejectsMalformedBoundaryMap()
+{
+    TerminalTextRun run{
+        .text = QStringLiteral("ab"),
+        .columnSpan = 2,
+        .boundaries =
+            {
+                {.textPosition = 1, .column = 1},
+                {.textPosition = 1, .column = 2},
+            },
+    };
+    run.font = cell(QStringLiteral("a"), 0).font;
+
+    QTextLayout layout(run.text, run.font);
+    layout.beginLayout();
+    const QTextLine line = layout.createLine();
+    QVERIFY(line.isValid());
+    layout.endLayout();
+
+    QCOMPARE(terminalTextGridFit(line, run, 10.0, 1.0),
+             TerminalTextGridFit::Rejected);
 }
 
 QTEST_MAIN(TerminalTextRunsTest)

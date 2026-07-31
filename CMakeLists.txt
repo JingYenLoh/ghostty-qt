@@ -923,6 +923,8 @@ ghostty_qt_add_internal_library(ghostty-qt-terminal-foundation
     src/terminal_geometry.cpp
     src/terminal_geometry.h
     src/terminal_session_options.h
+    src/terminal_text_grid_fit.cpp
+    src/terminal_text_grid_fit.h
     src/terminal_text_runs.cpp
     src/terminal_text_runs.h
     src/terminal_typography.h

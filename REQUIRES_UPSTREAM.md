@@ -680,8 +680,11 @@ ghostty-qt therefore implements the largest safe frontend-owned subset:
   selection, font, invisible-cell, defensive ligature, and configured cursor
   boundary while retaining wide spacers with their head;
 - Qt shapes those runs with `QTextLayout`; and
-- every run boundary is checked against the terminal grid in device pixels,
-  with exact per-cell placement when the result does not fit.
+- an all-boundary device-pixel check handles ordinary runs without inspecting
+  glyph metadata. If only internal caret positions differ, Qt's glyph string
+  indexes identify shaping clusters and the renderer instead validates their
+  starts plus the run endpoint. Incomplete metadata or a remaining mismatch
+  keeps exact per-cell placement for the complete run.
 
 This gives visible feature and ligature support without allowing a platform
 shaper to move later cells off-grid. The parity ledger remains conservative:

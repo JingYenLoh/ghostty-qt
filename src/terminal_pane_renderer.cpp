@@ -6,6 +6,7 @@
 #include "terminal_kitty_graphics_qsg.h"
 #include "terminal_pane_render_probe_p.h"
 #include "terminal_rect_batch.h"
+#include "terminal_text_grid_fit.h"
 #include "terminal_text_runs.h"
 
 #include <QBitArray>
@@ -638,21 +639,6 @@ struct TerminalRunLayoutResult {
     return aligned;
 }
 
-[[nodiscard]] bool terminalRunFitsGrid(const QTextLine &line,
-                                       const TerminalTextRun &run,
-                                       qreal cellWidth, qreal devicePixelRatio)
-{
-    const qreal dpr = normalizedDevicePixelRatio(devicePixelRatio);
-    return std::ranges::all_of(
-        run.boundaries, [&](const TerminalTextBoundary &boundary) {
-            const qint64 actual =
-                qRound64(line.cursorToX(boundary.textPosition) * dpr);
-            const qint64 expected =
-                qRound64(static_cast<qreal>(boundary.column) * cellWidth * dpr);
-            return actual == expected;
-        });
-}
-
 TerminalRunLayoutResult
 appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
                       qreal baseline, qreal cellWidth, qreal devicePixelRatio)
@@ -684,7 +670,8 @@ appendTerminalTextRun(QSGTextNode *node, const TerminalTextRun &run, qreal top,
     }
     layout.endLayout();
     if (line.isValid()
-        && terminalRunFitsGrid(line, run, cellWidth, devicePixelRatio)) {
+        && terminalTextGridFit(line, run, cellWidth, devicePixelRatio)
+            != TerminalTextGridFit::Rejected) {
         node->addTextLayout(
             QPointF(static_cast<qreal>(run.column) * cellWidth, top), &layout);
         return {.layoutCount = 1};

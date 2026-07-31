@@ -650,9 +650,10 @@ pane. That cwd/font asymmetry matches the pinned GTK null-parent path.
    no GPU upload to save. Each batch's two CPU vectors exchange storage instead
    of copying, identical batches do not dirty the scene graph, and RHI geometry
    grows only when its retained capacity is insufficient. Each nonempty
-   cell in a rebuilt text row is shaped with `QTextLayout` and placed at an
-   explicit grid coordinate. This avoids fallback-font and wide-cell advances
-   shifting later cells. Cell values retain foreground provenance, a separate
+   compatible text run in a rebuilt row is shaped with `QTextLayout` and
+   anchored to an explicit grid coordinate. Physical grid validation prevents
+   fallback-font, wide-cell, or unsafe shaping advances from shifting later
+   cells. Cell values retain foreground provenance, a separate
    explicit-background bit, and bold, faint, inverse, invisible, underline,
    strike-through, overline, and text-blink attributes so frontend-only
    appearance rules do not have to be flattened at the worker boundary. The
@@ -1702,9 +1703,18 @@ plain `fi`/`fl`/`st` boundaries, and—when configured—the logical cursor spli
 runs; wide spacer records remain attached to their head cell. `QTextLayout`
 shapes each run left-to-right on the physical terminal grid. Fixed-pitch,
 single-UTF-16-unit runs can receive one constant letter-spacing correction,
-but every text boundary is still checked in device pixels. A mismatch falls
-back to exact per-cell layout for that run. This preserves grid correctness
-while allowing ligatures and avoiding one layout per ordinary cell.
+and an all-boundary device-pixel check remains the fast path. When only
+internal caret positions differ, the renderer reads Qt's shaped glyph runs and
+their UTF-16 string indexes, treats repeated indexes as one shaping cluster,
+and checks cluster starts plus the terminal run endpoint against the physical
+grid. Internal character boundaries belonging to an accepted multi-cell
+cluster may therefore deviate without rejecting a programming ligature. An
+incomplete, out-of-range, or otherwise inconsistent cluster map, or any
+validated grid mismatch, falls back to exact per-cell layout for the complete
+run. The defensive plain `fi`/`fl`/`st` planner breaks deliberately remain, so
+this support does not enable the typographic ligatures Ghostty also suppresses.
+The result preserves terminal geometry and safe fallback while avoiding one
+layout per ordinary cell.
 
 These mappings do not claim Ghostty's embedded production fallback stack,
 FreeType load and synthesis internals, or HarfBuzz positioned-glyph plan:
@@ -3052,7 +3062,8 @@ be checked interactively in a real Wayland session.
 - Dirty-row value updates keep the thread boundary small for ordinary output,
   and persistent row text nodes restrict `QTextLayout` work to those rows.
   Maximal compatible text runs replace ordinary per-cell layouts, with
-  boundary validation and per-cell fallback for unsafe runs. Solid
+  exact all-boundary validation or cluster-aware ligature validation and
+  per-cell fallback for unsafe runs. Solid
   presentation and its three cell-derived RHI geometry batches are retained by
   row, so sparse output and cursor-only updates plan and commit only damaged
   rows on the GPU path. The software fallback still flattens cached plans into
