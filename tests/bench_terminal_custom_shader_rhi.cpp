@@ -217,18 +217,23 @@ class BenchmarkUniformProvider final
 
 public:
     explicit BenchmarkUniformProvider(QSize physicalSize,
+                                      bool distinctStageSnapshots,
                                       QObject *parent = nullptr)
         : QObject(parent)
         , physicalSize_(physicalSize)
+        , distinctStageSnapshots_(distinctStageSnapshots)
     {
         setFrame(0);
     }
 
     [[nodiscard]] TerminalCustomShaderUniformSnapshot
-    terminalCustomShaderUniformSnapshot(int) const override
+    terminalCustomShaderUniformSnapshot(int stageIndex) const override
     {
         QMutexLocker locker(&mutex_);
-        return uniforms_;
+        if (uniforms_.size() == 1) return uniforms_.constFirst();
+        return stageIndex >= 0 && stageIndex < uniforms_.size()
+            ? uniforms_.at(stageIndex)
+            : TerminalCustomShaderUniformSnapshot{};
     }
 
     void terminalCustomShaderEffectAttached(TerminalCustomShaderEffect *effect,
@@ -285,24 +290,37 @@ public:
         return pipeline_;
     }
 
+    [[nodiscard]] bool distinctStageSnapshots() const noexcept
+    {
+        return distinctStageSnapshots_;
+    }
+
 private:
     void setFrame(quint64 frame)
     {
-        auto uniforms = std::make_shared<TerminalCustomShaderUniforms>();
-        uniforms->resolution = {
-            static_cast<float>(physicalSize_.width()),
-            static_cast<float>(physicalSize_.height()),
-            1.0F,
-        };
-        uniforms->frame = static_cast<std::int32_t>(frame % 2);
-        uniforms->time = static_cast<float>(frame % 2);
+        QVector<TerminalCustomShaderUniformSnapshot> uniforms;
+        uniforms.reserve(distinctStageSnapshots_ ? maximumPassCount : 1);
+        const int snapshotCount =
+            distinctStageSnapshots_ ? maximumPassCount : 1;
+        for (int index = 0; index < snapshotCount; ++index) {
+            auto snapshot = std::make_shared<TerminalCustomShaderUniforms>();
+            snapshot->resolution = {
+                static_cast<float>(physicalSize_.width()),
+                static_cast<float>(physicalSize_.height()),
+                1.0F,
+            };
+            snapshot->frame = static_cast<std::int32_t>(frame % 2);
+            snapshot->time = static_cast<float>(frame % 2);
+            uniforms.append(std::move(snapshot));
+        }
         QMutexLocker locker(&mutex_);
         uniforms_ = std::move(uniforms);
     }
 
     QSize physicalSize_;
+    bool distinctStageSnapshots_ = false;
     mutable QMutex mutex_;
-    TerminalCustomShaderUniformSnapshot uniforms_;
+    QVector<TerminalCustomShaderUniformSnapshot> uniforms_;
     QVector<QPointer<TerminalCustomShaderEffect>> effects_;
     QPointer<TerminalCustomShaderPipelineEffect> pipeline_;
 };
@@ -583,15 +601,32 @@ public:
             }
             const int expectedTargets =
                 terminalCustomShaderPipelineTargetCount(passCount_);
+            const int expectedUniformSlots = provider_->distinctStageSnapshots()
+                ? passCount_
+                : (passCount_ == 1 ? 1 : 2);
+            const std::uint64_t expectedUniformUploadBytes =
+                static_cast<std::uint64_t>(expectedUniformSlots)
+                * TerminalCustomShaderUniformLayout::size;
             if (snapshot.passCount != passCount_
-                || snapshot.liveTargetCount != expectedTargets) {
+                || snapshot.liveTargetCount != expectedTargets
+                || snapshot.uniformSlotCount != expectedUniformSlots
+                || snapshot.uniformUploadBytesPerFrame
+                    != expectedUniformUploadBytes
+                || snapshot.uniformBufferBytes
+                    < snapshot.uniformUploadBytesPerFrame) {
                 *error =
                     QStringLiteral("retained telemetry mismatch: passes=%1/%2, "
-                                   "targets=%3/%4")
+                                   "targets=%3/%4, uniform-slots=%5/%6, "
+                                   "uniform-buffer=%7, uniform-upload=%8/%9")
                         .arg(snapshot.passCount)
                         .arg(passCount_)
                         .arg(snapshot.liveTargetCount)
-                        .arg(expectedTargets);
+                        .arg(expectedTargets)
+                        .arg(snapshot.uniformSlotCount)
+                        .arg(expectedUniformSlots)
+                        .arg(snapshot.uniformBufferBytes)
+                        .arg(snapshot.uniformUploadBytesPerFrame)
+                        .arg(expectedUniformUploadBytes);
                 return false;
             }
         }
@@ -915,9 +950,16 @@ int main(int argc, char **argv)
         QStringLiteral("renderdoc-capture-path"),
         QStringLiteral("UTF-8 RenderDoc capture filename template."),
         QStringLiteral("path"));
+    const QCommandLineOption distinctStageUniformsOption(
+        QStringLiteral("distinct-stage-uniforms"),
+        QStringLiteral(
+            "Use a distinct immutable uniform snapshot for every shader "
+            "stage, disabling identity-based slot sharing for A/B "
+            "measurement."));
     parser.addOptions({warmupOption, iterationsOption, widthOption,
                        heightOption, graphicsApiOption, renderDocCaptureOption,
-                       renderDocCapturePathOption});
+                       renderDocCapturePathOption,
+                       distinctStageUniformsOption});
     parser.process(application);
 
     QString error;
@@ -952,6 +994,8 @@ int main(int argc, char **argv)
 
     const QString requestedGraphicsApi =
         parser.value(graphicsApiOption).trimmed().toLower();
+    const bool distinctStageUniforms =
+        parser.isSet(distinctStageUniformsOption);
     QSGRendererInterface::GraphicsApi graphicsApi =
         QSGRendererInterface::Unknown;
     if (requestedGraphicsApi == QStringLiteral("opengl")) {
@@ -1156,7 +1200,7 @@ int main(int argc, char **argv)
     QQmlEngine engine;
     if (captureSelection.has_value()) {
         const CaptureSelection selection = *captureSelection;
-        BenchmarkUniformProvider provider(physicalSize);
+        BenchmarkUniformProvider provider(physicalSize, distinctStageUniforms);
         Scenario scenario;
         if (!scenario.initialize(&engine, &window, &provider, compiled.stages,
                                  selection.renderer, selection.passCount,
@@ -1259,7 +1303,8 @@ int main(int argc, char **argv)
                 for (const Renderer renderer : rendererOrder) {
                     ScenarioAccumulator &accumulator =
                         accumulators.at(rendererIndex(renderer));
-                    BenchmarkUniformProvider provider(physicalSize);
+                    BenchmarkUniformProvider provider(physicalSize,
+                                                      distinctStageUniforms);
                     Scenario scenario;
                     if (!scenario.initialize(&engine, &window, &provider,
                                              compiled.stages, renderer,
@@ -1373,7 +1418,13 @@ int main(int argc, char **argv)
                             || after->sourceBindingUpdateCount
                                 != before->sourceBindingUpdateCount
                             || after->resourceGeneration
-                                != before->resourceGeneration) {
+                                != before->resourceGeneration
+                            || after->uniformSlotCount
+                                != before->uniformSlotCount
+                            || after->uniformBufferBytes
+                                != before->uniformBufferBytes
+                            || after->uniformUploadBytesPerFrame
+                                != before->uniformUploadBytesPerFrame) {
                             QTextStream(stderr)
                                 << "renderer=" << rendererName(renderer)
                                 << " workload=" << workloadName(workload)
@@ -1504,6 +1555,8 @@ int main(int argc, char **argv)
            << " validation_readbacks_per_scenario=" << measurementRoundCount
            << " gpu_scope=whole-command-buffer"
            << " gpu_delta_baseline=pooled-workload-pass0"
+           << " uniform_snapshots="
+           << (distinctStageUniforms ? "distinct" : "shared")
            << " transforms=ordered-affine\n";
 
     for (const WorkloadBaseline *const baseline :
@@ -1634,7 +1687,10 @@ int main(int argc, char **argv)
             const TerminalCustomShaderPipelineSnapshot &after = *result.after;
             output << " internal_targets=" << after.liveTargetCount
                    << " internal_texture_bytes=" << after.ownedTextureBytes
-                   << " rendered_frames="
+                   << " uniform_slots=" << after.uniformSlotCount
+                   << " uniform_buffer_bytes=" << after.uniformBufferBytes
+                   << " uniform_upload_bytes_per_frame="
+                   << after.uniformUploadBytesPerFrame << " rendered_frames="
                    << counterDelta(after.frameCount, before.frameCount)
                    << " recorded_draws="
                    << counterDelta(after.drawCount, before.drawCount)
@@ -1654,6 +1710,9 @@ int main(int argc, char **argv)
         } else {
             output << " internal_targets=na"
                    << " internal_texture_bytes=na"
+                   << " uniform_slots=na"
+                   << " uniform_buffer_bytes=na"
+                   << " uniform_upload_bytes_per_frame=na"
                    << " rendered_frames=na"
                    << " recorded_draws=na"
                    << " target_creates=na"

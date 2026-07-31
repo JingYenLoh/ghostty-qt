@@ -76,6 +76,7 @@ private Q_SLOTS:
     void nodeRejectsIncompleteRenderState();
     void debugMarkerLabelsAreStable();
     void pipelineTargetCountIsBounded();
+    void pipelineUniformSlotPlanDeduplicatesByIdentityAndRole();
     void pipelineEffectTracksStagesAndProviderAttachment();
     void pipelineTelemetryStartsEmptyAndReportsInvalidStages();
     void destroyedPipelineInputsDeactivateEffectSafely();
@@ -260,6 +261,41 @@ void TerminalCustomShaderQsgTest::pipelineTargetCountIsBounded()
     QCOMPARE(terminalCustomShaderPipelineTargetCount(2), 1);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(4), 2);
     QCOMPARE(terminalCustomShaderPipelineTargetCount(8), 2);
+}
+
+void TerminalCustomShaderQsgTest::
+    pipelineUniformSlotPlanDeduplicatesByIdentityAndRole()
+{
+    const auto first = std::make_shared<const TerminalCustomShaderUniforms>();
+    const auto second = std::make_shared<const TerminalCustomShaderUniforms>();
+    const auto third = std::make_shared<const TerminalCustomShaderUniforms>();
+
+    QVERIFY(!terminalCustomShaderUniformSlotPlan({}).has_value());
+    QVERIFY(!terminalCustomShaderUniformSlotPlan(
+                 {first, TerminalCustomShaderUniformSnapshot{}})
+                 .has_value());
+
+    std::optional<TerminalCustomShaderUniformSlotPlan> plan =
+        terminalCustomShaderUniformSlotPlan({first});
+    QVERIFY(plan.has_value());
+    QCOMPARE(plan->stageSlots, (QVector<qsizetype>{0}));
+    QCOMPARE(plan->slotStages, (QVector<qsizetype>{0}));
+
+    plan = terminalCustomShaderUniformSlotPlan(
+        {first, first, first, first, first, first, first, first});
+    QVERIFY(plan.has_value());
+    QCOMPARE(plan->stageSlots, (QVector<qsizetype>{0, 0, 0, 0, 0, 0, 0, 1}));
+    QCOMPARE(plan->slotStages, (QVector<qsizetype>{0, 7}));
+
+    plan = terminalCustomShaderUniformSlotPlan({first, second, first, second});
+    QVERIFY(plan.has_value());
+    QCOMPARE(plan->stageSlots, (QVector<qsizetype>{0, 1, 0, 2}));
+    QCOMPARE(plan->slotStages, (QVector<qsizetype>{0, 1, 3}));
+
+    plan = terminalCustomShaderUniformSlotPlan({first, second, third});
+    QVERIFY(plan.has_value());
+    QCOMPARE(plan->stageSlots, (QVector<qsizetype>{0, 1, 2}));
+    QCOMPARE(plan->slotStages, (QVector<qsizetype>{0, 1, 2}));
 }
 
 void TerminalCustomShaderQsgTest::

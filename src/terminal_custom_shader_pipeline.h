@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 struct TerminalCustomShaderPipelineSnapshot {
     std::uint64_t frameCount = 0;
@@ -25,8 +26,11 @@ struct TerminalCustomShaderPipelineSnapshot {
     std::uint64_t resourceGeneration = 0;
     int liveTargetCount = 0;
     int passCount = 0;
+    int uniformSlotCount = 0;
     QSize targetPixelSize;
     std::uint64_t ownedTextureBytes = 0;
+    std::uint64_t uniformBufferBytes = 0;
+    std::uint64_t uniformUploadBytesPerFrame = 0;
     QString diagnostic;
 
     bool
@@ -35,6 +39,18 @@ struct TerminalCustomShaderPipelineSnapshot {
 
 [[nodiscard]] int
 terminalCustomShaderPipelineTargetCount(qsizetype passCount) noexcept;
+
+struct TerminalCustomShaderUniformSlotPlan {
+    QVector<qsizetype> stageSlots;
+    QVector<qsizetype> slotStages;
+
+    bool
+    operator==(const TerminalCustomShaderUniformSlotPlan &) const = default;
+};
+
+[[nodiscard]] std::optional<TerminalCustomShaderUniformSlotPlan>
+terminalCustomShaderUniformSlotPlan(
+    const QVector<TerminalCustomShaderUniformSnapshot> &uniforms);
 
 [[nodiscard]] QVariantList terminalCustomShaderStagesToVariantList(
     const QVector<TerminalCustomShaderStage> &stages);

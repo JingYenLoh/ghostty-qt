@@ -111,6 +111,47 @@ bool samePrograms(
     return true;
 }
 
+bool buildTerminalCustomShaderUniformSlotPlan(
+    const QVector<TerminalCustomShaderUniformSnapshot> &uniforms,
+    QVector<qsizetype> *stageSlots, QVector<qsizetype> *slotStages)
+{
+    Q_ASSERT(stageSlots != nullptr);
+    Q_ASSERT(slotStages != nullptr);
+    stageSlots->clear();
+    slotStages->clear();
+    if (uniforms.isEmpty()
+        || std::ranges::any_of(
+            uniforms, [](const TerminalCustomShaderUniformSnapshot &snapshot) {
+                return snapshot == nullptr;
+            })) {
+        return false;
+    }
+
+    stageSlots->resize(uniforms.size());
+    slotStages->reserve(uniforms.size());
+    const qsizetype finalStage = uniforms.size() - 1;
+    for (qsizetype stage = 0; stage < uniforms.size(); ++stage) {
+        const bool final = stage == finalStage;
+        qsizetype slot = -1;
+        for (qsizetype candidate = 0; candidate < slotStages->size();
+             ++candidate) {
+            const qsizetype candidateStage = slotStages->at(candidate);
+            if ((candidateStage == finalStage) == final
+                && uniforms.at(candidateStage).get()
+                    == uniforms.at(stage).get()) {
+                slot = candidate;
+                break;
+            }
+        }
+        if (slot < 0) {
+            slot = slotStages->size();
+            slotStages->append(stage);
+        }
+        (*stageSlots)[stage] = slot;
+    }
+    return true;
+}
+
 class TerminalCustomShaderPipelineNode final : public QSGRenderNode {
 public:
     explicit TerminalCustomShaderPipelineNode(
@@ -137,6 +178,8 @@ public:
             programsChanged_ = true;
         }
         uniforms_ = std::move(uniforms);
+        (void)buildTerminalCustomShaderUniformSlotPlan(
+            uniforms_, &stageUniformSlots_, &uniformSlotStages_);
 
         QMutexLocker locker(&telemetry_->mutex);
         telemetry_->snapshot.passCount = static_cast<int>(programs_.size());
@@ -151,6 +194,14 @@ public:
                 telemetry_,
                 QStringLiteral("custom-shader: retained pipeline has "
                                "incomplete render state"));
+            return;
+        }
+        if (stageUniformSlots_.size() != programs_.size()
+            || uniformSlotStages_.isEmpty()) {
+            setTelemetryDiagnostic(
+                telemetry_,
+                QStringLiteral("custom-shader: retained pipeline has an "
+                               "invalid uniform-slot plan"));
             return;
         }
 
@@ -274,7 +325,9 @@ public:
         }
 
         const QRhiCommandBuffer::DynamicOffset dynamicOffset{
-            0, static_cast<quint32>(finalIndex * uniformStride_)};
+            0,
+            static_cast<quint32>(stageUniformSlots_.at(finalIndex)
+                                 * uniformStride_)};
         cb->setShaderResources(resources.bindings.get(), 1, &dynamicOffset);
         const QRhiCommandBuffer::VertexInput vertexBinding{
             vertexBuffer_.get(), finalIndex == 0 ? 0 : quadByteSize};
@@ -299,6 +352,12 @@ public:
         uploadedSourceCoordinates_ = {};
         uniformStride_ = 0;
         uniformBufferSize_ = 0;
+        {
+            QMutexLocker locker(&telemetry_->mutex);
+            telemetry_->snapshot.uniformSlotCount = 0;
+            telemetry_->snapshot.uniformBufferBytes = 0;
+            telemetry_->snapshot.uniformUploadBytesPerFrame = 0;
+        }
         resetTargets();
         rhi_ = nullptr;
         prepared_ = false;
@@ -527,7 +586,7 @@ private:
         const int stride = rhi_->ubufAligned(
             static_cast<int>(TerminalCustomShaderUniformLayout::size));
         const qsizetype requestedSize =
-            static_cast<qsizetype>(stride) * programs_.size();
+            static_cast<qsizetype>(stride) * uniformSlotStages_.size();
         if (stride <= 0 || requestedSize <= 0
             || requestedSize
                 > static_cast<qsizetype>(std::numeric_limits<quint32>::max())) {
@@ -567,6 +626,14 @@ private:
             uniformStride_ = stride;
             uniformBufferSize_ = requestedSize;
             programsChanged_ = true;
+            QMutexLocker locker(&telemetry_->mutex);
+            telemetry_->snapshot.uniformSlotCount =
+                static_cast<int>(uniformSlotStages_.size());
+            telemetry_->snapshot.uniformBufferBytes =
+                static_cast<std::uint64_t>(requestedSize);
+            telemetry_->snapshot.uniformUploadBytesPerFrame =
+                static_cast<std::uint64_t>(uniformSlotStages_.size())
+                * TerminalCustomShaderUniformLayout::size;
         }
 
         if (sampler_ == nullptr) {
@@ -860,6 +927,8 @@ private:
         Q_ASSERT(uniformBuffer_ != nullptr);
         Q_ASSERT(uniformBuffer_->size()
                  == static_cast<quint32>(uniformBufferSize_));
+        Q_ASSERT(stageUniformSlots_.size() == programs_.size());
+        Q_ASSERT(!uniformSlotStages_.isEmpty());
 
         // Every slot read this frame is rewritten below. Direct current-frame
         // mapping avoids copying this medium-sized UBO into a resource-update
@@ -886,15 +955,18 @@ private:
             ? *projectionMatrix() * *matrix()
             : QMatrix4x4{};
 
-        for (qsizetype index = 0; index < programs_.size(); ++index) {
+        for (qsizetype slotIndex = 0; slotIndex < uniformSlotStages_.size();
+             ++slotIndex) {
+            const qsizetype stageIndex = uniformSlotStages_.at(slotIndex);
             TerminalCustomShaderUniforms uniforms =
-                uniforms_.at(index) != nullptr ? *uniforms_.at(index)
-                                               : TerminalCustomShaderUniforms{};
-            const bool final = index == programs_.size() - 1;
+                uniforms_.at(stageIndex) != nullptr
+                ? *uniforms_.at(stageIndex)
+                : TerminalCustomShaderUniforms{};
+            const bool final = stageIndex == programs_.size() - 1;
             setUniformMatrix(&uniforms, final ? finalMatrix : offscreenMatrix);
             uniforms.qtOpacity =
                 final ? static_cast<float>(inheritedOpacity()) : 1.0F;
-            std::memcpy(uniformBytes + index * uniformStride_, &uniforms,
+            std::memcpy(uniformBytes + slotIndex * uniformStride_, &uniforms,
                         TerminalCustomShaderUniformLayout::size);
         }
         uniformBuffer_->endFullDynamicBufferUpdateForCurrentFrame();
@@ -910,7 +982,9 @@ private:
                                      static_cast<float>(targetSize.width()),
                                      static_cast<float>(targetSize.height())));
         const QRhiCommandBuffer::DynamicOffset dynamicOffset{
-            0, static_cast<quint32>(stageIndex * uniformStride_)};
+            0,
+            static_cast<quint32>(stageUniformSlots_.at(stageIndex)
+                                 * uniformStride_)};
         cb->setShaderResources(bindings, 1, &dynamicOffset);
         const QRhiCommandBuffer::VertexInput vertexBinding{
             vertexBuffer_.get(), static_cast<quint32>(vertexOffset)};
@@ -943,6 +1017,8 @@ private:
     bool vertexDataDirty_ = true;
     qsizetype uniformStride_ = 0;
     qsizetype uniformBufferSize_ = 0;
+    QVector<qsizetype> stageUniformSlots_;
+    QVector<qsizetype> uniformSlotStages_;
 
     std::vector<PassResources> passResources_;
     QVector<std::shared_ptr<const TerminalCustomShaderProgram>> builtPrograms_;
@@ -961,6 +1037,18 @@ int terminalCustomShaderPipelineTargetCount(qsizetype passCount) noexcept
 {
     if (passCount <= 1) return 0;
     return passCount == 2 ? 1 : 2;
+}
+
+std::optional<TerminalCustomShaderUniformSlotPlan>
+terminalCustomShaderUniformSlotPlan(
+    const QVector<TerminalCustomShaderUniformSnapshot> &uniforms)
+{
+    TerminalCustomShaderUniformSlotPlan plan;
+    if (!buildTerminalCustomShaderUniformSlotPlan(uniforms, &plan.stageSlots,
+                                                  &plan.slotStages)) {
+        return std::nullopt;
+    }
+    return plan;
 }
 
 QVariantList terminalCustomShaderStagesToVariantList(

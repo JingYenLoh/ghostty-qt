@@ -114,6 +114,13 @@ The deterministic target counts and memory figures remain useful
 independently: legacy owns one full-size layer per pass, while retained owns
 one source layer plus at most two internal textures.
 
+The normal benchmark provider returns one immutable uniform snapshot shared by
+all stages. Pass `--distinct-stage-uniforms` to force one snapshot per stage
+as an A/B control for retained uniform-slot sharing. Compare
+`uniform_slots`, `uniform_buffer_bytes`, and
+`uniform_upload_bytes_per_frame`; the distinct mode intentionally disables
+identity-based sharing without changing the shader values.
+
 Remove `LIBGL_ALWAYS_SOFTWARE=1` to measure the host GPU. The variable selects
 Mesa's software implementation behind the OpenGL RHI; it is not Qt Quick's
 software scene graph. Pass `--graphics-api vulkan` to select Vulkan. Compare

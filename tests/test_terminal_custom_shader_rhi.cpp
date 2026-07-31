@@ -34,11 +34,18 @@ class TestUniformProvider final : public QObject,
 
 public:
     explicit TestUniformProvider(const QColor &color) { setColor(color); }
+    explicit TestUniformProvider(const QVector<QColor> &stageColors)
+    {
+        setColors(stageColors);
+    }
 
     TerminalCustomShaderUniformSnapshot
-    terminalCustomShaderUniformSnapshot(int) const override
+    terminalCustomShaderUniformSnapshot(int stageIndex) const override
     {
-        return uniforms_;
+        if (uniforms_.size() == 1) return uniforms_.constFirst();
+        return stageIndex >= 0 && stageIndex < uniforms_.size()
+            ? uniforms_.at(stageIndex)
+            : TerminalCustomShaderUniformSnapshot{};
     }
 
     void terminalCustomShaderEffectAttached(TerminalCustomShaderEffect *effect,
@@ -70,12 +77,19 @@ public:
         return pipelines_.isEmpty() ? nullptr : pipelines_.constFirst().data();
     }
 
-    void setColor(const QColor &color)
+    void setColor(const QColor &color) { setColors({color}); }
+
+    void setColors(const QVector<QColor> &stageColors)
     {
-        auto uniforms = std::make_shared<TerminalCustomShaderUniforms>();
-        uniforms->resolution = {32.0F, 32.0F, 1.0F};
-        uniforms->backgroundColor = {color.redF(), color.greenF(),
-                                     color.blueF(), color.alphaF()};
+        QVector<TerminalCustomShaderUniformSnapshot> uniforms;
+        uniforms.reserve(stageColors.size());
+        for (const QColor &color : stageColors) {
+            auto snapshot = std::make_shared<TerminalCustomShaderUniforms>();
+            snapshot->resolution = {32.0F, 32.0F, 1.0F};
+            snapshot->backgroundColor = {color.redF(), color.greenF(),
+                                         color.blueF(), color.alphaF()};
+            uniforms.append(std::move(snapshot));
+        }
         uniforms_ = std::move(uniforms);
         for (TerminalCustomShaderEffect *const effect :
              std::as_const(effects_)) {
@@ -88,7 +102,7 @@ public:
     }
 
 private:
-    TerminalCustomShaderUniformSnapshot uniforms_;
+    QVector<TerminalCustomShaderUniformSnapshot> uniforms_;
     QVector<QPointer<TerminalCustomShaderEffect>> effects_;
     QVector<QPointer<TerminalCustomShaderPipelineEffect>> pipelines_;
 };
@@ -220,6 +234,7 @@ private Q_SLOTS:
     void retainedIdentityPreservesAsymmetricOrientation();
     void retainedOrderedMultipass_data();
     void retainedOrderedMultipass();
+    void retainedStageSpecificUniformsRemainDistinct();
     void retainedSourceFramesAreFresh();
     void retainedSharedProgramKeepsPerProviderUniformsIsolated();
     void retainedTargetsAreBoundedAndReused_data();
@@ -233,6 +248,7 @@ private:
     std::unique_ptr<QTemporaryDir> shaderRoot_;
     TerminalCustomShaderStage identityStage_;
     TerminalCustomShaderStage uniformStage_;
+    TerminalCustomShaderStage uniformMixStage_;
     QVector<TerminalCustomShaderStage> orderedStages_;
 };
 
@@ -281,6 +297,17 @@ void mainImage(out vec4 color, in vec2 fragCoord)
 )glsl"),
                       QStringLiteral("uniform.glsl"), directory, &diagnostic);
     QVERIFY2(!uniformStage_.qsbPath.isEmpty(), qPrintable(diagnostic));
+
+    uniformMixStage_ = compileShader(QStringLiteral(R"glsl(
+void mainImage(out vec4 color, in vec2 fragCoord)
+{
+    vec4 source = texture(iChannel0, fragCoord / iResolution.xy);
+    color = vec4(source.rgb * 0.5 + iBackgroundColor * 0.5, source.a);
+}
+)glsl"),
+                                     QStringLiteral("uniform-mix.glsl"),
+                                     directory, &diagnostic);
+    QVERIFY2(!uniformMixStage_.qsbPath.isEmpty(), qPrintable(diagnostic));
 
     const QStringList orderedSources{
         QStringLiteral(R"glsl(
@@ -597,6 +624,10 @@ Item {
     TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
     QVERIFY(pipeline != nullptr);
     QCOMPARE(pipeline->renderSnapshot().passCount, 1);
+    QCOMPARE(pipeline->renderSnapshot().uniformSlotCount, 1);
+    QCOMPARE(
+        pipeline->renderSnapshot().uniformUploadBytesPerFrame,
+        static_cast<std::uint64_t>(TerminalCustomShaderUniformLayout::size));
     QVERIFY2(pipeline->renderDiagnostic().isEmpty(),
              qPrintable(pipeline->renderDiagnostic()));
 
@@ -678,7 +709,116 @@ Item {
         pipeline->renderSnapshot();
     QCOMPARE(snapshot.passCount, passCount);
     QCOMPARE(snapshot.liveTargetCount, 2);
+    QCOMPARE(snapshot.uniformSlotCount, 2);
+    QCOMPARE(snapshot.uniformUploadBytesPerFrame,
+             static_cast<std::uint64_t>(
+                 2 * TerminalCustomShaderUniformLayout::size));
+    QVERIFY(snapshot.uniformBufferBytes >= snapshot.uniformUploadBytesPerFrame);
     QVERIFY2(snapshot.diagnostic.isEmpty(), qPrintable(snapshot.diagnostic));
+
+    root.reset();
+}
+
+void TerminalCustomShaderRhiTest::retainedStageSpecificUniformsRemainDistinct()
+{
+    TestUniformProvider provider(QVector<QColor>{Qt::red, Qt::green, Qt::blue});
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("pipelineStages"),
+        terminalCustomShaderStagesToVariantList(
+            {uniformMixStage_, uniformMixStage_, uniformMixStage_}));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("testUniformProvider"), &provider);
+
+    QQmlComponent component(&engine);
+    component.setData(
+        R"qml(
+import QtQuick
+import GhosttyQtShaderRhiTest 1.0
+
+Item {
+    width: 32
+    height: 32
+    layer.enabled: true
+    layer.live: true
+    layer.smooth: false
+    layer.textureMirroring: ShaderEffectSource.NoMirroring
+    layer.textureSize: Qt.size(width, height)
+    layer.effect: Component {
+        TerminalCustomShaderPipelineEffect {
+            shaderStages: pipelineStages
+            uniformProvider: testUniformProvider
+        }
+    }
+    Rectangle { anchors.fill: parent; color: "black" }
+}
+)qml",
+        QUrl(QStringLiteral(
+            "qrc:/test/custom-shader-retained-stage-uniforms.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QQuickItem> root(
+        qobject_cast<QQuickItem *>(component.create()));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+
+    QQuickWindow window;
+    window.setColor(Qt::black);
+    window.resize(32, 32);
+    root->setParentItem(window.contentItem());
+    QImage frame = renderWindow(window);
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no stage-uniform frame.");
+    if (window.rendererInterface()->graphicsApi() != requestedGraphicsApi) {
+        QSKIP("The platform cannot initialize the requested RHI context.");
+    }
+
+    const QColor actual =
+        frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    const QColor expected = QColor::fromRgb(32, 64, 128);
+    QVERIFY2(isMostly(actual, expected),
+             qPrintable(QStringLiteral("unexpected stage-uniform sample %1; "
+                                       "expected %2")
+                            .arg(colorDescription(actual),
+                                 colorDescription(expected))));
+
+    TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
+    QVERIFY(pipeline != nullptr);
+    const TerminalCustomShaderPipelineSnapshot distinctSnapshot =
+        pipeline->renderSnapshot();
+    QCOMPARE(distinctSnapshot.passCount, 3);
+    QCOMPARE(distinctSnapshot.uniformSlotCount, 3);
+    QCOMPARE(distinctSnapshot.uniformUploadBytesPerFrame,
+             static_cast<std::uint64_t>(
+                 3 * TerminalCustomShaderUniformLayout::size));
+    QVERIFY(distinctSnapshot.uniformBufferBytes
+            >= distinctSnapshot.uniformUploadBytesPerFrame);
+    QVERIFY2(distinctSnapshot.diagnostic.isEmpty(),
+             qPrintable(distinctSnapshot.diagnostic));
+
+    provider.setColor(Qt::yellow);
+    frame = window.grabWindow();
+    QVERIFY2(!frame.isNull(),
+             "Retained RHI pipeline produced no shared-uniform frame.");
+    const QColor sharedActual =
+        frame.pixelColor(frame.width() / 2, frame.height() / 2);
+    const QColor sharedExpected = QColor::fromRgb(223, 223, 0);
+    QVERIFY2(isMostly(sharedActual, sharedExpected),
+             qPrintable(QStringLiteral("unexpected shared-uniform sample %1; "
+                                       "expected %2")
+                            .arg(colorDescription(sharedActual),
+                                 colorDescription(sharedExpected))));
+
+    const TerminalCustomShaderPipelineSnapshot sharedSnapshot =
+        pipeline->renderSnapshot();
+    QCOMPARE(sharedSnapshot.uniformSlotCount, 2);
+    QCOMPARE(sharedSnapshot.uniformUploadBytesPerFrame,
+             static_cast<std::uint64_t>(
+                 2 * TerminalCustomShaderUniformLayout::size));
+    QVERIFY(sharedSnapshot.uniformBufferBytes
+            >= sharedSnapshot.uniformUploadBytesPerFrame);
+    QVERIFY(sharedSnapshot.uniformBufferBytes
+            < distinctSnapshot.uniformBufferBytes);
+    QVERIFY2(sharedSnapshot.diagnostic.isEmpty(),
+             qPrintable(sharedSnapshot.diagnostic));
 
     root.reset();
 }
@@ -1087,7 +1227,8 @@ void TerminalCustomShaderRhiTest::
     QQmlEngine engine;
     engine.rootContext()->setContextProperty(
         QStringLiteral("pipelineStages"),
-        terminalCustomShaderStagesToVariantList({identityStage_}));
+        terminalCustomShaderStagesToVariantList(
+            {identityStage_, identityStage_}));
     engine.rootContext()->setContextProperty(
         QStringLiteral("testUniformProvider"), &provider);
 
@@ -1169,6 +1310,7 @@ Item {
 
     TerminalCustomShaderPipelineEffect *const pipeline = provider.pipeline();
     QVERIFY(pipeline != nullptr);
+    QCOMPARE(pipeline->renderSnapshot().uniformSlotCount, 2);
     QVERIFY2(pipeline->renderDiagnostic().isEmpty(),
              qPrintable(pipeline->renderDiagnostic()));
 
