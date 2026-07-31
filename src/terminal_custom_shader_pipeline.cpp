@@ -196,7 +196,10 @@ public:
         }
 
         updateVertexBuffer(resourceUpdates);
-        updateUniformBuffer(resourceUpdates);
+        if (!updateUniformBuffer()) {
+            cb->resourceUpdate(resourceUpdates);
+            return;
+        }
 
         const qsizetype finalIndex = programs_.size() - 1;
         for (qsizetype index = 0; index < finalIndex; ++index) {
@@ -290,7 +293,6 @@ public:
         sampler_.reset();
         uniformBuffer_.reset();
         vertexBuffer_.reset();
-        uniformBytes_.clear();
         passInputs_.clear();
         vertexDataDirty_ = true;
         uploadedViewport_ = {};
@@ -564,7 +566,6 @@ private:
             }
             uniformStride_ = stride;
             uniformBufferSize_ = requestedSize;
-            uniformBytes_ = QByteArray(requestedSize, '\0');
             programsChanged_ = true;
         }
 
@@ -854,9 +855,24 @@ private:
         vertexDataDirty_ = false;
     }
 
-    void updateUniformBuffer(QRhiResourceUpdateBatch *updates)
+    bool updateUniformBuffer()
     {
-        Q_ASSERT(uniformBytes_.size() == uniformBufferSize_);
+        Q_ASSERT(uniformBuffer_ != nullptr);
+        Q_ASSERT(uniformBuffer_->size()
+                 == static_cast<quint32>(uniformBufferSize_));
+
+        // Every slot read this frame is rewritten below. Direct current-frame
+        // mapping avoids copying this medium-sized UBO into a resource-update
+        // batch; do not mix the two update models for uniformBuffer_.
+        char *const uniformBytes =
+            uniformBuffer_->beginFullDynamicBufferUpdateForCurrentFrame();
+        if (uniformBytes == nullptr) {
+            setTelemetryDiagnostic(
+                telemetry_,
+                QStringLiteral("custom-shader: unable to map the retained "
+                               "uniform buffer for the current frame"));
+            return false;
+        }
 
         QMatrix4x4 offscreenMatrix;
         // Keep logical top at texture V=1 on every backend. Applying QRhi's
@@ -878,12 +894,11 @@ private:
             setUniformMatrix(&uniforms, final ? finalMatrix : offscreenMatrix);
             uniforms.qtOpacity =
                 final ? static_cast<float>(inheritedOpacity()) : 1.0F;
-            std::memcpy(uniformBytes_.data() + index * uniformStride_,
-                        &uniforms, TerminalCustomShaderUniformLayout::size);
+            std::memcpy(uniformBytes + index * uniformStride_, &uniforms,
+                        TerminalCustomShaderUniformLayout::size);
         }
-        updates->updateDynamicBuffer(uniformBuffer_.get(), 0,
-                                     static_cast<quint32>(uniformBytes_.size()),
-                                     uniformBytes_.constData());
+        uniformBuffer_->endFullDynamicBufferUpdateForCurrentFrame();
+        return true;
     }
 
     void recordDraw(QRhiCommandBuffer *cb, QRhiGraphicsPipeline *pipeline,
@@ -922,7 +937,6 @@ private:
     std::unique_ptr<QRhiBuffer> vertexBuffer_;
     std::unique_ptr<QRhiBuffer> uniformBuffer_;
     std::unique_ptr<QRhiSampler> sampler_;
-    QByteArray uniformBytes_;
     QVector<QRhiTexture *> passInputs_;
     QRectF uploadedViewport_;
     QRectF uploadedSourceCoordinates_;
