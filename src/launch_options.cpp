@@ -312,6 +312,18 @@ parseLaunchOptions(const QStringList &arguments)
         parserArguments = arguments.sliced(0, *commandBoundary);
     }
 
+    // QCommandLineParser has no optional-value options. Normalize Ghostty's
+    // bare boolean spelling while retaining explicit true/false values. Stop
+    // at `--` so an earlier-compatible positional command remains opaque.
+    for (qsizetype index = 1; index < parserArguments.size(); ++index) {
+        if (parserArguments.at(index) == QLatin1StringView("--")) break;
+        if (parserArguments.at(index)
+            == QLatin1StringView("--wait-after-command")) {
+            parserArguments[index] =
+                QStringLiteral("--wait-after-command=true");
+        }
+    }
+
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("A Qt terminal emulator powered by libghostty."));
@@ -332,6 +344,10 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("class"),
         QStringLiteral("Use <id> as the application identity."),
         QStringLiteral("id"));
+    const QCommandLineOption titleOption(
+        QStringLiteral("title"),
+        QStringLiteral("Use <title> as the fixed terminal title."),
+        QStringLiteral("title"));
     const QCommandLineOption configDefaultFilesOption(
         QStringLiteral("config-default-files"),
         QStringLiteral(
@@ -345,6 +361,10 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("hold"),
         QStringLiteral(
             "Keep the terminal open after the child process exits."));
+    const QCommandLineOption waitAfterCommandOption(
+        QStringLiteral("wait-after-command"),
+        QStringLiteral("Wait for a key press after the child process exits."),
+        QStringLiteral("boolean"));
     const QCommandLineOption singleInstanceOption(
         QStringLiteral("single-instance"),
         QStringLiteral("Use false, true, or detect process uniqueness."),
@@ -366,8 +386,9 @@ parseLaunchOptions(const QStringList &arguments)
         QStringLiteral("Show version information."));
 
     parser.addOptions({workingDirectoryOption, fontFamilyOption, fontSizeOption,
-                       applicationClassOption, configDefaultFilesOption,
-                       scrollbackLinesOption, holdOption, singleInstanceOption,
+                       applicationClassOption, titleOption,
+                       configDefaultFilesOption, scrollbackLinesOption,
+                       holdOption, waitAfterCommandOption, singleInstanceOption,
                        legacySingleInstanceOption, initialWindowOption,
                        helpOption, versionOption});
     parser.addPositionalArgument(
@@ -447,6 +468,16 @@ parseLaunchOptions(const QStringList &arguments)
         parsed.applicationClassExplicit = true;
     }
 
+    if (parser.isSet(titleOption)) {
+        const QString value = parser.value(titleOption);
+        if (value.isEmpty()) {
+            parsed.configuredTitle.reset();
+        } else {
+            parsed.configuredTitle = value;
+        }
+        parsed.configuredTitleExplicit = true;
+    }
+
     if (parser.isSet(configDefaultFilesOption)) {
         for (const QString &value : parser.values(configDefaultFilesOption)) {
             const std::optional<bool> configDefaultFiles =
@@ -482,6 +513,20 @@ parseLaunchOptions(const QStringList &arguments)
     }
 
     parsed.hold = parser.isSet(holdOption);
+    if (parser.isSet(waitAfterCommandOption)) {
+        for (const QString &value : parser.values(waitAfterCommandOption)) {
+            const std::optional<bool> waitAfterCommand =
+                parseGhosttyBoolean(value);
+            if (!waitAfterCommand.has_value()) {
+                return std::unexpected(
+                    QStringLiteral(
+                        "Invalid wait-after-command value '%1': expected true or false.")
+                        .arg(value));
+            }
+            parsed.waitAfterCommand = *waitAfterCommand;
+        }
+        parsed.waitAfterCommandExplicit = true;
+    }
     parsed.showHelp = parser.isSet(helpOption);
     parsed.showVersion = parser.isSet(versionOption);
     parsed.program = commandBoundary.has_value() ? std::move(explicitCommand)
@@ -534,12 +579,14 @@ QStringList ghosttyConfigurationArguments(const LaunchOptions &options)
     QStringList result;
     const QStringList &families =
         options.typography.face(TerminalFontRole::Regular).families;
-    result.reserve(
-        (options.fontFamilyExplicit ? std::max<qsizetype>(1, families.size())
-                                    : 0)
-        + static_cast<qsizetype>(options.fontSizeExplicit)
-        + static_cast<qsizetype>(options.applicationClassExplicit)
-        + static_cast<qsizetype>(options.configDefaultFilesExplicit));
+    result.reserve((options.fontFamilyExplicit
+                        ? std::max<qsizetype>(1, families.size())
+                        : 0)
+                   + static_cast<qsizetype>(options.fontSizeExplicit)
+                   + static_cast<qsizetype>(options.applicationClassExplicit)
+                   + static_cast<qsizetype>(options.configDefaultFilesExplicit)
+                   + static_cast<qsizetype>(options.configuredTitleExplicit)
+                   + static_cast<qsizetype>(options.waitAfterCommandExplicit));
 
     if (options.fontFamilyExplicit) {
         if (families.isEmpty()) {
@@ -562,10 +609,19 @@ QStringList ghosttyConfigurationArguments(const LaunchOptions &options)
             : QString{};
         result.append(QStringLiteral("--class=") + value);
     }
+    if (options.configuredTitleExplicit) {
+        result.append(QStringLiteral("--title=")
+                      + options.configuredTitle.value_or(QString{}));
+    }
     if (options.configDefaultFilesExplicit) {
         result.append(options.configDefaultFiles
                           ? QStringLiteral("--config-default-files=true")
                           : QStringLiteral("--config-default-files=false"));
+    }
+    if (options.waitAfterCommandExplicit) {
+        result.append(options.waitAfterCommand
+                          ? QStringLiteral("--wait-after-command=true")
+                          : QStringLiteral("--wait-after-command=false"));
     }
 
     return result;

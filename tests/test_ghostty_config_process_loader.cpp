@@ -669,6 +669,8 @@ void GhosttyConfigProcessLoaderTest::
             "font-style-italic = File Italic Style\n"
             "font-style-bold-italic = default\n"
             "font-size = 11\n"
+            "title = File Title\n"
+            "wait-after-command = false\n"
             "adjust-cell-width = 1\n"
             "adjust-cell-height = 25%\n"
             "adjust-font-baseline = -3\n"
@@ -694,6 +696,8 @@ void GhosttyConfigProcessLoaderTest::
         QStringLiteral("--font-style=default"),
         QStringLiteral("--font-style-bold=false"),
         QStringLiteral("--font-size=17.25"),
+        QStringLiteral("--title=  CLI Title  "),
+        QStringLiteral("--wait-after-command=true"),
     };
 
     auto direct = queryRealConfigExport(helperPath, fixture, arguments);
@@ -726,6 +730,11 @@ void GhosttyConfigProcessLoaderTest::
     QVERIFY(std::holds_alternative<TerminalFontStyles::Automatic>(
         typography.face(TerminalFontRole::BoldItalic).style));
     QCOMPARE(typography.pointSize, 17.25);
+    QCOMPARE(loaded->values.title,
+             std::optional<QString>(QStringLiteral("  CLI Title  ")));
+    QVERIFY(loaded->values.waitAfterCommand);
+    QCOMPARE(direct->values.title, loaded->values.title);
+    QCOMPARE(direct->values.waitAfterCommand, loaded->values.waitAfterCommand);
 
     const auto expectedModifiers =
         std::to_array<std::pair<TerminalMetric, TerminalMetricModifier>>({

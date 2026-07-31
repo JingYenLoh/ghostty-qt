@@ -565,9 +565,9 @@ GUI process resolves frontend `detect` from its real invocation and
 `TERM_PROGRAM`. Parsing
 records whether an invocation has unforwarded window/session payload, so the
 exact `--single-instance` and `--initial-window` coordination flags remain
-eligible while cwd, font, hold, scrollback, and program arguments stay
-independent. Explicit coordination values outrank both configuration domains on
-initial load and reload.
+eligible while cwd, font, configured title, wait policy, hold, scrollback, and
+program arguments stay independent. Explicit coordination values outrank both
+configuration domains on initial load and reload.
 
 Role and name ownership stay fixed across live reload, matching
 GApplication construction-time policy. A fresh launcher samples its own latest
@@ -1492,6 +1492,12 @@ standard-file discovery, legacy/preferred-file precedence, include handling,
 validation, defaults, and finalization. The private selector installs the
 current concrete desktop color scheme before parsing conditional theme state
 and is stripped before Ghostty processes ordinary configuration arguments.
+Explicit shared CLI overrides, including configured title and
+wait-after-command, are serialized back into Ghostty spellings for every helper
+invocation so the pinned parser retains ownership of reset, recursive-file
+precedence, and finalization semantics. The launch value keeps separate
+explicitness bits so source-less single-instance activation cannot silently
+drop those arguments.
 The CLI-only `config-default-files` switch is forwarded to every helper
 invocation. When false, the helper omits standard candidates before replaying
 explicit CLI and recursive `config-file` sources, and the successful snapshot

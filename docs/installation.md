@@ -41,10 +41,10 @@ it cannot activate a Release process.
 
 The desktop entry names the installed executable through `TryExec`, requests
 single-instance startup, and provides a New Window desktop action. Its
-`X-TerminalArgExec`, `X-TerminalArgAppId`, and `X-TerminalArgDir` fields expose
-the supported `-e`, `--class=`, and `--working-directory=` spellings to desktop
-terminal launchers. Title and hold metadata are deliberately absent until the
-corresponding Ghostty-compatible CLI options exist.
+`X-TerminalArgExec`, `X-TerminalArgTitle`, `X-TerminalArgAppId`,
+`X-TerminalArgDir`, and `X-TerminalArgHold` fields expose the supported `-e`,
+`--title=`, `--class=`, `--working-directory=`, and
+`--wait-after-command` spellings to desktop terminal launchers.
 
 The D-Bus service starts a resident zero-window host and lets the queued
 activation create one window. Warm and cold activation support ordinary

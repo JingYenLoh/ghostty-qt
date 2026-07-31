@@ -12,8 +12,10 @@ StartupWMClass=@GHOSTTY_QT_EFFECTIVE_APPLICATION_ID@
 Terminal=false
 Actions=new-window;
 X-TerminalArgExec=-e
+X-TerminalArgTitle=--title=
 X-TerminalArgAppId=--class=
 X-TerminalArgDir=--working-directory=
+X-TerminalArgHold=--wait-after-command
 DBusActivatable=true
 
 [Desktop Action new-window]

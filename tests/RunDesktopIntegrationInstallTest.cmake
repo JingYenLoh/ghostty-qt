@@ -115,10 +115,11 @@ if(NOT desktop_contents MATCHES "(^|\n)DBusActivatable=true(\n|$)"
    OR desktop_new_window_action_position EQUAL -1
    OR NOT desktop_contents MATCHES "(^|\n)Actions=new-window;(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgExec=-e(\n|$)"
+   OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgTitle=--title=(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgAppId=--class=(\n|$)"
    OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgDir=--working-directory=(\n|$)"
+   OR NOT desktop_contents MATCHES "(^|\n)X-TerminalArgHold=--wait-after-command(\n|$)"
    OR desktop_contents MATCHES "initial-window=false"
-   OR desktop_contents MATCHES "(^|\n)X-TerminalArg(Title|Hold)="
    OR desktop_contents MATCHES "(^|\n)(MimeType|Icon)="
    OR desktop_contents MATCHES "__GHOSTTY_QT_INSTALL_(TRY_|DBUS_)?EXECUTABLE__")
     message(FATAL_ERROR "Invalid installed desktop entry:\n${desktop_contents}")

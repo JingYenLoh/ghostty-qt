@@ -42,6 +42,10 @@ struct LaunchOptions {
     // Shared live wait policy. The CLI --hold bit below remains a distinct
     // initial-session override.
     bool waitAfterCommand = false;
+    // The CLI accepts Ghostty's bare true spelling and explicit booleans.
+    // Preserve their origin so config-helper forwarding and startup
+    // arbitration cannot mistake an explicit value for the built-in default.
+    bool waitAfterCommandExplicit = false;
     // Finalized raw environment overrides for future terminal children.
     TerminalEnvironment environment;
     // Automatic shell integration is resolved once for each future pane. A
@@ -68,6 +72,9 @@ struct LaunchOptions {
     // options; window chrome remains on the GUI thread.
     TerminalColorScheme colorScheme = TerminalColorScheme::Light;
     std::optional<QString> configuredTitle;
+    // An empty explicit title clears the shared configured title, while a
+    // nonempty value (including whitespace) remains an exact forced title.
+    bool configuredTitleExplicit = false;
     // Startup-only application identity. The explicit bit distinguishes an
     // omitted CLI option from `--class=`, which clears the configured value
     // back to the frontend fallback.
@@ -200,7 +207,8 @@ struct LaunchOptions {
     {
         return workingDirectoryExplicit || fontFamilyExplicit
             || fontSizeExplicit || applicationClassExplicit
-            || configDefaultFilesExplicit || scrollbackLimitExplicit || hold
+            || configDefaultFilesExplicit || configuredTitleExplicit
+            || waitAfterCommandExplicit || scrollbackLimitExplicit || hold
             || !program.isEmpty();
     }
     // Detect additionally excludes launches from a terminal advertising

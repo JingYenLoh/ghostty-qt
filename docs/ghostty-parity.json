@@ -789,7 +789,7 @@
     },
     "title": {
       "status": "supported",
-      "note": "The finalized nullable configured title applies live as each pane's base title, preserving an explicit empty string. While present it masks terminal OSC title updates; clearing it retains the current base until the next OSC update. Reapplication replaces a set_surface_title base, while persistent surface and tab overrides continue to mask it. The native Qt window title is the exact effective active-tab title."
+      "note": "The finalized nullable configured title applies live as each pane's base title, preserving an explicit empty string. While present it masks terminal OSC title updates; clearing it retains the current base until the next OSC update. Reapplication replaces a set_surface_title base, while persistent surface and tab overrides continue to mask it. The native Qt window title is the exact effective active-tab title. Normal --title= launch parsing preserves quoted whitespace and explicit reset through the pinned config helper, prevents source-less activation from dropping the override, and is advertised to desktop terminal launchers."
     },
     "title-report": {
       "status": "blocked_upstream",
@@ -1023,7 +1023,7 @@
         },
         "wait-after-command": {
           "status": "supported",
-          "note": "The exact default-false boolean applies live and is sampled when each child exits. A waiting pane reports the exit and closes only when a pressed key or IME commit produces libghostty-encoded bytes; modifiers, consumed bindings, and unresolved or dropped key sequences are inert. The CLI --hold path remains a distinct indefinite initial-pane policy."
+          "note": "The exact default-false boolean applies live and is sampled when each child exits. A waiting pane reports the exit and closes only when a pressed key or IME commit produces libghostty-encoded bytes; modifiers, consumed bindings, and unresolved or dropped key sequences are inert. Bare and explicit-boolean --wait-after-command launch spellings pass through the pinned config helper, are protected from source-less activation loss, and expose the desktop terminal-launcher hold mapping. The CLI --hold path remains a distinct indefinite initial-pane policy."
         },
         "window-colorspace": {
           "status": "not_applicable",

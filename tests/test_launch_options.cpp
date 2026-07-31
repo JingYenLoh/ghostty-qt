@@ -289,6 +289,7 @@ private Q_SLOTS:
     void defaults();
     void parsesActivationBootstrapOptions();
     void parsesEveryOptionAndProgramArguments();
+    void parsesDesktopTerminalLaunchOptions();
     void parsesGhosttyDashECommand();
     void preservesDashEAfterDoubleDashAndInInlineValues();
     void rejectsInvalidDashEUsage();
@@ -350,6 +351,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.initialCommand.has_value());
     QCOMPARE(options.abnormalCommandExitRuntimeMilliseconds, quint32{250});
     QVERIFY(!options.waitAfterCommand);
+    QVERIFY(!options.waitAfterCommandExplicit);
     QVERIFY(options.environment.isEmpty());
     QCOMPARE(options.shellIntegration, GhosttyShellIntegrationMode::None);
     QVERIFY(options.shellIntegrationFeatures.cursor);
@@ -385,6 +387,7 @@ void LaunchOptionsTest::defaults()
     QVERIFY(!options.configDefaultFilesExplicit);
     QCOMPARE(options.colorScheme, TerminalColorScheme::Light);
     QVERIFY(!options.configuredTitle.has_value());
+    QVERIFY(!options.configuredTitleExplicit);
     QVERIFY(!options.applicationClass.has_value());
     QVERIFY(!options.applicationClassExplicit);
     QCOMPARE(options.windowAppearance.theme, WindowTheme::Auto);
@@ -680,6 +683,67 @@ void LaunchOptionsTest::parsesEveryOptionAndProgramArguments()
                           QStringLiteral("printf hello")}));
 }
 
+void LaunchOptionsTest::parsesDesktopTerminalLaunchOptions()
+{
+    const QString spacedTitle = QStringLiteral("  terminal title  ");
+    const auto result = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--title=ignored"),
+        QStringLiteral("--title=") + spacedTitle,
+        QStringLiteral("--wait-after-command"),
+    });
+    QVERIFY2(result.has_value(), qPrintable(errorMessage(result)));
+    QCOMPARE(result->configuredTitle, std::optional<QString>(spacedTitle));
+    QVERIFY(result->configuredTitleExplicit);
+    QVERIFY(result->waitAfterCommand);
+    QVERIFY(result->waitAfterCommandExplicit);
+    QVERIFY(result->hasUnforwardedLaunchPayload());
+    QVERIFY(!shouldUseSingleInstance(*result, QByteArrayView{}));
+    QCOMPARE(ghosttyConfigurationArguments(*result),
+             QStringList({QStringLiteral("--title=") + spacedTitle,
+                          QStringLiteral("--wait-after-command=true")}));
+
+    GhosttyConfigSnapshot snapshot = completeSnapshot();
+    const LaunchOptions configured =
+        applyGhosttyConfigSnapshot(*result, snapshot);
+    QVERIFY(configured.configuredTitleExplicit);
+    QVERIFY(configured.waitAfterCommandExplicit);
+
+    const auto emptyTitle = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--title=previous"),
+        QStringLiteral("--title="),
+    });
+    QVERIFY2(emptyTitle.has_value(), qPrintable(errorMessage(emptyTitle)));
+    QVERIFY(!emptyTitle->configuredTitle.has_value());
+    QVERIFY(emptyTitle->configuredTitleExplicit);
+    QVERIFY(!emptyTitle->waitAfterCommand);
+    QVERIFY(!emptyTitle->waitAfterCommandExplicit);
+    QVERIFY(emptyTitle->hasUnforwardedLaunchPayload());
+    QCOMPARE(ghosttyConfigurationArguments(*emptyTitle),
+             QStringList{QStringLiteral("--title=")});
+
+    const auto disabledWait = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--wait-after-command"),
+        QStringLiteral("--wait-after-command=false"),
+    });
+    QVERIFY2(disabledWait.has_value(), qPrintable(errorMessage(disabledWait)));
+    QVERIFY(!disabledWait->waitAfterCommand);
+    QVERIFY(disabledWait->waitAfterCommandExplicit);
+    QVERIFY(disabledWait->hasUnforwardedLaunchPayload());
+    QCOMPARE(ghosttyConfigurationArguments(*disabledWait),
+             QStringList{QStringLiteral("--wait-after-command=false")});
+
+    const auto invalidWait = parseLaunchOptions({
+        QStringLiteral("ghostty-qt"),
+        QStringLiteral("--wait-after-command=yes"),
+    });
+    QVERIFY(!invalidWait.has_value());
+    QVERIFY(invalidWait.error().contains(
+        QStringLiteral("Invalid wait-after-command")));
+}
+
 void LaunchOptionsTest::parsesGhosttyDashECommand()
 {
     const auto result = parseLaunchOptions({
@@ -693,6 +757,8 @@ void LaunchOptionsTest::parsesGhosttyDashECommand()
         QStringLiteral("--working-directory=/ignored"),
         QStringLiteral("--single-instance=true"),
         QStringLiteral("--initial-window=false"),
+        QStringLiteral("--title=opaque title"),
+        QStringLiteral("--wait-after-command"),
         QStringLiteral("-e"),
         QStringLiteral("+help"),
         QStringLiteral("--"),
@@ -706,11 +772,17 @@ void LaunchOptionsTest::parsesGhosttyDashECommand()
                           QStringLiteral("--working-directory=/ignored"),
                           QStringLiteral("--single-instance=true"),
                           QStringLiteral("--initial-window=false"),
+                          QStringLiteral("--title=opaque title"),
+                          QStringLiteral("--wait-after-command"),
                           QStringLiteral("-e"), QStringLiteral("+help"),
                           QStringLiteral("--"), QString{}}));
     QVERIFY(!result->showHelp);
     QVERIFY(!result->showVersion);
     QVERIFY(!result->hold);
+    QVERIFY(!result->configuredTitle.has_value());
+    QVERIFY(!result->configuredTitleExplicit);
+    QVERIFY(!result->waitAfterCommand);
+    QVERIFY(!result->waitAfterCommandExplicit);
     QCOMPARE(result->workingDirectory, QDir::currentPath());
     QVERIFY(!result->workingDirectoryExplicit);
     QCOMPARE(result->singleInstanceMode, SingleInstanceMode::Detect);
@@ -737,13 +809,15 @@ void LaunchOptionsTest::preservesDashEAfterDoubleDashAndInInlineValues()
         QStringLiteral("ghostty-qt"),
         QStringLiteral("--"),
         QStringLiteral("-e"),
+        QStringLiteral("--wait-after-command"),
         QStringLiteral("literal-argument"),
     });
     QVERIFY2(afterDoubleDash.has_value(),
              qPrintable(errorMessage(afterDoubleDash)));
     QCOMPARE(afterDoubleDash->program,
-             QStringList(
-                 {QStringLiteral("-e"), QStringLiteral("literal-argument")}));
+             QStringList({QStringLiteral("-e"),
+                          QStringLiteral("--wait-after-command"),
+                          QStringLiteral("literal-argument")}));
 
     const auto reservedBoundary = parseLaunchOptions({
         QStringLiteral("ghostty-qt"),
